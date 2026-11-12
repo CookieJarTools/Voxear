@@ -631,6 +631,7 @@ impl BoxModel {
             materials: Vec::new(),
             nodes: Vec::new(),
             animation: Some(ModelAnimation { skeleton, skins: vec![skin], clips: Vec::new() }),
+            roles: self.bones.iter().map(|bone| bone.role).collect(),
         };
         let data = self.mesh();
         if data.indices.is_empty() {

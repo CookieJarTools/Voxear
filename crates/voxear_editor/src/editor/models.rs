@@ -66,6 +66,11 @@ impl Editor {
         self.model.set_tool(&mut self.ui, tool);
     }
 
+    /// How fast the Model window shows its model moving, in its Motion mode.
+    pub fn set_model_pace(&mut self, pace: crate::model_panel::Pace) {
+        self.model.set_pace(&mut self.ui, pace);
+    }
+
     /// Whether a stroke on the model in the Model window paints the other
     /// side of the body too.
     pub fn set_model_symmetry(&mut self, on: bool) {

@@ -29,8 +29,9 @@ use crate::{
 /// meshlet order, and its meshlets ship in the payload. 5: coarse LODs past
 /// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
-/// and clips. 11: whether a material's pixels are drawn sharp.
-pub const COOKED_VERSION: u32 = 11;
+/// and clips. 11: whether a material's pixels are drawn sharp. 12: what part of
+/// a body each bone moves, for a model that says.
+pub const COOKED_VERSION: u32 = 12;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -45,6 +46,8 @@ pub struct CookedModel {
     pub(crate) materials: Vec<PreparedMaterial>,
     pub(crate) nodes: Vec<PreparedNode>,
     pub(crate) animation: Option<ModelAnimation>,
+    /// What part of a body each bone moves, for a model that says.
+    pub(crate) roles: Vec<crate::BoneRole>,
     pub(crate) payload: Payload,
 }
 
@@ -143,6 +146,7 @@ impl PreparedModel {
             materials: self.materials.clone(),
             nodes: self.nodes.clone(),
             animation: self.animation.clone(),
+            roles: self.roles.clone(),
             payload: Payload::compress(data)?,
         })
     }
@@ -152,6 +156,11 @@ impl CookedModel {
     /// Its skeleton, skins and clips, for a model made to animate.
     pub fn animation(&self) -> Option<&ModelAnimation> {
         self.animation.as_ref()
+    }
+
+    /// What part of a body each of its bones moves, for a model that says.
+    pub fn roles(&self) -> &[crate::BoneRole] {
+        &self.roles
     }
 
     pub fn path(&self) -> &str {
@@ -250,6 +259,10 @@ impl CookedModel {
             w.option(node.skin.map(|skin| skin as u32));
         }
         w.animation(self.animation.as_ref());
+        w.u32(self.roles.len() as u32);
+        for role in &self.roles {
+            w.u32(crate::BoneRole::ALL.iter().position(|other| other == role).unwrap_or(0) as u32);
+        }
         match &self.payload {
             Payload::Raw(bytes) => {
                 w.u32(0);
@@ -359,6 +372,10 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         nodes.push(PreparedNode { name, position, rotation, scale, mesh, material, mesh_part, material_part, skin });
     }
     let animation = r.animation()?;
+    let mut roles = Vec::new();
+    for _ in 0..r.u32()? {
+        roles.push(crate::BoneRole::ALL.get(r.u32()? as usize).copied().unwrap_or_default());
+    }
     if let Some(skin) = nodes.iter().filter_map(|node| node.skin).max() {
         let found = animation.as_ref().is_some_and(|a| skin < a.skins.len());
         ensure!(found, "a node uses skin {skin}, which is not there");
@@ -412,7 +429,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             texture.name
         );
     }
-    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, animation, payload })
+    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, animation, roles, payload })
 }
 
 struct Writer(Vec<u8>);

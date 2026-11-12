@@ -109,6 +109,7 @@ pub enum Part {
     ScreenUi,
     NetObject,
     Animator,
+    MobMotion,
     MotionMatcher,
     BoneAttachment,
     FirstPersonView,
@@ -172,6 +173,7 @@ impl Part {
             Part::ScreenUi => "screen_ui".into(),
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
+            Part::MobMotion => "mob_motion".into(),
             Part::MotionMatcher => "motion_matcher".into(),
             Part::BoneAttachment => "bone_attachment".into(),
             Part::FirstPersonView => "first_person".into(),
@@ -238,6 +240,7 @@ impl Part {
             Part::ScreenUi => "Screen UI",
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
+            Part::MobMotion => "Mob Motion",
             Part::MotionMatcher => "Motion Matcher",
             Part::BoneAttachment => "Bone Attachment",
             Part::FirstPersonView => "First-Person View",
@@ -316,6 +319,7 @@ impl Part {
             Part::UiPanel | Part::ScreenUi => "panels",
             Part::NetObject => "globe",
             Part::Animator => "play",
+            Part::MobMotion => "play",
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
             Part::FirstPersonView => "camera",
@@ -483,6 +487,16 @@ pub enum Prop {
     AnimatorLooping,
     AnimatorBlend,
     AnimatorRootMotion,
+    /// A Mob Motion's amounts: how far legs and arms swing, how long a step is, how much the body bobs and
+    /// breathes, how the head looks, and how much tails trail.
+    MobLegSwing,
+    MobArmSwing,
+    MobStride,
+    MobBounce,
+    MobIdle,
+    MobLookSpeed,
+    MobLookLimit,
+    MobLag,
     /// A Motion Matcher's settings: the clip it stands with and below what
     /// speed, how often it searches, how its clips fade and pace, and how
     /// its body turns.
@@ -902,6 +916,14 @@ impl Prop {
             | Prop::AnimatorLooping
             | Prop::AnimatorBlend
             | Prop::AnimatorRootMotion => Part::Animator,
+            Prop::MobLegSwing
+            | Prop::MobArmSwing
+            | Prop::MobStride
+            | Prop::MobBounce
+            | Prop::MobIdle
+            | Prop::MobLookSpeed
+            | Prop::MobLookLimit
+            | Prop::MobLag => Part::MobMotion,
             Prop::MatcherMotionSet
             | Prop::MatcherIdleSpeed
             | Prop::MatcherSearchEvery
@@ -1223,6 +1245,14 @@ impl Prop {
             Prop::AnimatorLooping => "looping",
             Prop::AnimatorBlend => "blend",
             Prop::AnimatorRootMotion => "root_motion",
+            Prop::MobLegSwing => "leg_swing",
+            Prop::MobArmSwing => "arm_swing",
+            Prop::MobStride => "stride",
+            Prop::MobBounce => "bounce",
+            Prop::MobIdle => "idle",
+            Prop::MobLookSpeed => "look_speed",
+            Prop::MobLookLimit => "look_limit",
+            Prop::MobLag => "lag",
             Prop::MatcherMotionSet => "motion_set",
             Prop::MatcherIdleSpeed => "idle_speed",
             Prop::MatcherSearchEvery => "search_every",
@@ -1521,6 +1551,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::animation::Animator>(entity) {
         parts.push(Part::Animator);
     }
+    if world.has::<voxear_engine::animation::MobMotion>(entity) {
+        parts.push(Part::MobMotion);
+    }
     if world.has::<voxear_engine::animation::MotionMatcher>(entity) {
         parts.push(Part::MotionMatcher);
     }
@@ -1730,6 +1763,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::AnimatorLooping,
             Prop::AnimatorBlend,
             Prop::AnimatorRootMotion,
+        ],
+        Part::MobMotion => vec![
+            Prop::MobLegSwing,
+            Prop::MobArmSwing,
+            Prop::MobStride,
+            Prop::MobBounce,
+            Prop::MobIdle,
+            Prop::MobLookSpeed,
+            Prop::MobLookLimit,
+            Prop::MobLag,
         ],
         Part::MotionMatcher => vec![
             Prop::MatcherMotionSet,
@@ -2179,6 +2222,14 @@ pub fn label(prop: &Prop) -> String {
         Prop::AnimatorLooping => "Looping",
         Prop::AnimatorBlend => "Blend Time",
         Prop::AnimatorRootMotion => "Root Motion",
+        Prop::MobLegSwing => "Leg Swing",
+        Prop::MobArmSwing => "Arm Swing",
+        Prop::MobStride => "Stride",
+        Prop::MobBounce => "Bounce",
+        Prop::MobIdle => "Idle",
+        Prop::MobLookSpeed => "Look Speed",
+        Prop::MobLookLimit => "Look Limit",
+        Prop::MobLag => "Lag",
         Prop::MatcherMotionSet => "Motion Set",
         Prop::MatcherRootMotion => "Root Motion",
         Prop::MatcherIdleSpeed => "Idle Speed",
@@ -2564,6 +2615,9 @@ pub fn add(
         Part::Animator => {
             world.insert(entity, voxear_engine::animation::Animator::default());
         }
+        Part::MobMotion => {
+            world.insert(entity, voxear_engine::animation::MobMotion::default());
+        }
         Part::MotionMatcher => {
             world.insert(entity, voxear_engine::animation::MotionMatcher::default());
         }
@@ -2673,6 +2727,12 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Animator => {
             world.remove::<voxear_engine::animation::Animator>(entity);
             world.remove::<voxear_engine::animation::AnimatorState>(entity);
+            world.remove::<voxear_render::Pose>(entity);
+        }
+        Part::MobMotion => {
+            world.remove::<voxear_engine::animation::MobMotion>(entity);
+            world.remove::<voxear_engine::animation::MobMotionState>(entity);
+            world.remove::<voxear_engine::animation::MobBones>(entity);
             world.remove::<voxear_render::Pose>(entity);
         }
         Part::MotionMatcher => {
@@ -3020,6 +3080,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
         Prop::AnimatorBlend => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.blend),
         Prop::AnimatorRootMotion => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.root_motion),
+        Prop::MobLegSwing => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.leg_swing),
+        Prop::MobArmSwing => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.arm_swing),
+        Prop::MobStride => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.stride),
+        Prop::MobBounce => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.bounce),
+        Prop::MobIdle => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.idle),
+        Prop::MobLookSpeed => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.look_speed),
+        Prop::MobLookLimit => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.look_limit),
+        Prop::MobLag => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.lag),
         Prop::AttachBone => {
             // The parent's model's bones, none first.
             let attachment = world.get::<voxear_engine::animation::BoneAttachment>(entity)?;
@@ -4199,6 +4267,14 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::AnimatorRootMotion, Value::Toggle(on)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.root_motion = on)
         }
+        (Prop::MobLegSwing, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.leg_swing = n.clamp(0.0, 90.0)),
+        (Prop::MobArmSwing, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.arm_swing = n.clamp(0.0, 120.0)),
+        (Prop::MobStride, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.stride = n.clamp(0.0, 20.0)),
+        (Prop::MobBounce, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.bounce = n.clamp(0.0, 5.0)),
+        (Prop::MobIdle, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.idle = n.clamp(0.0, 5.0)),
+        (Prop::MobLookSpeed, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.look_speed = n.clamp(0.0, 60.0)),
+        (Prop::MobLookLimit, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.look_limit = n.clamp(0.0, 180.0)),
+        (Prop::MobLag, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.lag = n.clamp(0.0, 5.0)),
         (Prop::AttachBone, Value::Choice(index, _)) => {
             let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
             let model = parent

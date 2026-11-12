@@ -462,6 +462,8 @@ pub struct Content {
     /// Model files' skeletons, skins and clips read without the GPU, for
     /// clips played from files not loaded to draw; `None` for one without.
     clip_files: HashMap<AssetGuid, Option<Arc<ModelAnimation>>>,
+    /// What part of a body each bone moves, for the model files read that say: box models.
+    file_roles: HashMap<AssetGuid, Arc<[voxear_render::BoneRole]>>,
     /// Each clip file's clip settings, from its `.meta`.
     clip_settings: HashMap<AssetGuid, ClipSettings>,
     /// Goes up whenever a clip file or its settings change.
@@ -652,6 +654,7 @@ impl Content {
             material_sources: HashMap::new(),
             remaps: HashMap::new(),
             clip_files: HashMap::new(),
+            file_roles: HashMap::new(),
             clip_settings: HashMap::new(),
             clips_version: 0,
             motion_sets: HashMap::new(),
@@ -993,11 +996,26 @@ impl Content {
         let path = entry.path.clone();
         if self.cooked.contains(&guid) {
             let cooked = CookedModel::from_bytes(&path, &self.read(&path)?)?;
+            self.file_roles.insert(guid, cooked.roles().into());
             return Ok(cooked.animation().cloned().map(Arc::new));
         }
         let reader = self.reader();
         let model = voxear_render::prepare_model(&path, &mut |file| reader.read(file))?;
+        self.file_roles.insert(guid, model.roles().into());
         Ok(model.animation().cloned().map(Arc::new))
+    }
+
+    /// What part of a body each bone of a model moves, one for each bone of
+    /// its skeleton, for a model that says, as a box model does; empty for
+    /// any other. Read without the GPU for a model not loaded to draw.
+    pub fn bone_roles(&mut self, guid: AssetGuid) -> Arc<[voxear_render::BoneRole]> {
+        if let Some(model) = self.models.get(&guid) {
+            return model.roles.as_slice().into();
+        }
+        if !self.file_roles.contains_key(&guid) {
+            self.clip_file(guid);
+        }
+        self.file_roles.get(&guid).cloned().unwrap_or_default()
     }
 
     /// The clip a reference names, `Models/Walks.glb#clip:Walk_Loop`, with
@@ -1047,6 +1065,7 @@ impl Content {
     /// for, as after the file or its `.meta` changed.
     pub fn forget_clips(&mut self, guid: AssetGuid) {
         self.clip_files.remove(&guid);
+        self.file_roles.remove(&guid);
         self.clip_settings.remove(&guid);
         self.clips_version += 1;
     }

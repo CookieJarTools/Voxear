@@ -640,6 +640,7 @@ impl Game {
         }
         // After the handlings, whose actions may be based on clips.
         crate::animation::give_clips(&mut self.engine.world, &mut self.content);
+        crate::animation::give_mob_bones(&mut self.engine.world, &mut self.content);
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;

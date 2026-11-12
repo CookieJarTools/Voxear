@@ -184,6 +184,7 @@ mod tests {
                 part("UCX_Crate_LOD0_01", 3, Vec3::Z),
             ],
             animation: None,
+            roles: Vec::new(),
         }
     }
 

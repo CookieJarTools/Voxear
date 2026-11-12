@@ -410,6 +410,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.mist = instance.mist.or(root.mist);
     root.net = instance.net.or(root.net);
     root.animator = instance.animator.clone().or(root.animator.clone());
+    root.mob_motion = instance.mob_motion.clone().or(root.mob_motion.clone());
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
     root.first_person = instance.first_person.clone().or(root.first_person.clone());
@@ -487,6 +488,7 @@ pub struct TemplateObj {
     pub mist: Option<voxear_render::Mist>,
     pub net: Option<crate::net::NetObject>,
     pub animator: Option<crate::animation::Animator>,
+    pub mob_motion: Option<crate::animation::MobMotion>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
     pub first_person: Option<crate::first_person::FirstPersonView>,
@@ -672,6 +674,9 @@ impl Template {
             }
             if let Some(animator) = obj.animator.clone() {
                 world.insert(entity, animator);
+            }
+            if let Some(motion) = obj.mob_motion.clone() {
+                world.insert(entity, motion);
             }
             if let Some(matcher) = obj.motion_matcher.clone() {
                 world.insert(entity, matcher);
@@ -1218,7 +1223,7 @@ pub(crate) fn resolve_obj(
     };
     // Without a GPU nothing is drawn, but a model something animates still has its skeleton and clips, for a server's
     // characters to move, pose and pass their actions' marks. Reading a model is costly, so only those are read.
-    let animates = data.animator.is_some() || data.motion_matcher.is_some();
+    let animates = data.animator.is_some() || data.motion_matcher.is_some() || data.mob_motion.is_some();
     let model = match (&data.model, gpu) {
         (Some(data), Some(renderer)) => Some(Box::new((Some(model_renderer(content, renderer, data)?), ModelSource(data.clone())))),
         (Some(data), None) if animates => Some(Box::new((animated(content, data), ModelSource(data.clone())))),
@@ -1257,6 +1262,7 @@ pub(crate) fn resolve_obj(
         mist: data.mist,
         net: data.net,
         animator: data.animator.clone(),
+        mob_motion: data.mob_motion.clone(),
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
         first_person: data.first_person.clone(),

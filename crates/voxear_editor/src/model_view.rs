@@ -92,6 +92,8 @@ pub enum ViewMode {
     /// A press on the model paints the pixel under it, and with `mirror`
     /// the pixel across the body from it too.
     Paint { mirror: bool },
+    /// The model is only looked at, as while it is shown moving.
+    Look,
 }
 
 /// Where the camera is: going round `target`, `distance` metres from it.
@@ -456,6 +458,7 @@ impl ModelView {
                     (ui.clicked(self.frame), dragged, turned, stroked, local)
                 {
                     match mode {
+                        ViewMode::Look => {}
                         ViewMode::Shape => {
                             let (origin, direction) = seen.ray(local);
                             let hit = model.pick(&model.rest_matrices(), origin, direction);
@@ -492,6 +495,20 @@ impl ModelView {
             }
         }
         true
+    }
+
+    /// Draws the model with its bones where `bones` puts them rather than
+    /// at rest, one for each bone, for showing it move.
+    pub fn show_posed(&mut self, renderer: &mut Renderer, model: &BoxModel, bones: &[Mat4]) {
+        let Some((mesh, texture, material)) = self.drawn else { return self.model_changed(renderer, model) };
+        let data = MeshData { skin: Vec::new(), ..model.mesh_posed(bones) };
+        if data.indices.is_empty() {
+            return;
+        }
+        if let Ok(posed) = renderer.add_mesh(&data) {
+            renderer.free_mesh(mesh);
+            (self.drawn, self.stale) = (Some((posed, texture, material)), true);
+        }
     }
 
     /// The model's sheet changed and nothing else: its pixels are uploaded

@@ -42,6 +42,9 @@ pub struct ImportedModel {
     /// Each material part, `material<index>`, with its name in the file, in
     /// the order the parts first draw.
     pub materials: Vec<(String, String)>,
+    /// What part of a body each of its bones moves, one for each bone of
+    /// its skeleton, for a model that says: a box model. Empty for others.
+    pub roles: Vec<crate::BoneRole>,
 }
 
 /// One drawable piece of the imported scene, with its transform relative to
@@ -78,6 +81,8 @@ pub struct PreparedModel {
     pub(crate) materials: Vec<PreparedMaterial>,
     pub(crate) nodes: Vec<PreparedNode>,
     pub(crate) animation: Option<ModelAnimation>,
+    /// What part of a body each bone moves (see [`ImportedModel::roles`]).
+    pub(crate) roles: Vec<crate::BoneRole>,
 }
 
 pub(crate) struct PreparedTexture {
@@ -200,6 +205,11 @@ impl PreparedModel {
     /// Its skeleton, skins and clips, for a model made to animate.
     pub fn animation(&self) -> Option<&ModelAnimation> {
         self.animation.as_ref()
+    }
+
+    /// What part of a body each of its bones moves, for a model that says.
+    pub fn roles(&self) -> &[crate::BoneRole] {
+        &self.roles
     }
 
     /// The triangles of a part's mesh, by its name (`mesh0.0`), or of the
@@ -354,6 +364,7 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
             materials: Vec::new(),
             nodes: Vec::new(),
             animation: None,
+            roles: Vec::new(),
         },
         meshes: HashMap::new(),
         textures: HashMap::new(),
@@ -378,7 +389,7 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
         meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
     }
     let animation = model.animation.clone().map(std::sync::Arc::new);
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation, &model.roles)))
 }
 
 /// Puts a model prepared again, as with other import settings, behind the
@@ -424,7 +435,7 @@ pub fn reupload(
     }
     old.textures.iter().for_each(|&texture| assets.free_texture(texture, frame));
     let animation = model.animation.clone().map(std::sync::Arc::new);
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation, &model.roles)))
 }
 
 fn upload_textures(
@@ -473,7 +484,7 @@ pub fn upload_cooked(
     let (meshes, textures) = assets.add_cooked(gpu, bindless, model, device)?;
     let materials = add_materials(gpu, assets, &model.materials, &textures)?;
     let animation = model.animation.clone().map(std::sync::Arc::new);
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation, &model.roles)))
 }
 
 fn add_materials(
@@ -503,7 +514,7 @@ fn imported(
     nodes: &[PreparedNode],
     meshes: &[MeshHandle],
     materials: &[MaterialHandle],
-    (textures, animation): (Vec<TextureId>, Option<std::sync::Arc<ModelAnimation>>),
+    (textures, animation, roles): (Vec<TextureId>, Option<std::sync::Arc<ModelAnimation>>, &[crate::BoneRole]),
 ) -> ImportedModel {
     let mut names: Vec<(String, String)> = Vec::new();
     for node in nodes {
@@ -526,7 +537,7 @@ fn imported(
             skin: node.skin,
         })
         .collect();
-    ImportedModel { nodes, textures, materials: names, animation }
+    ImportedModel { nodes, textures, materials: names, animation, roles: roles.to_vec() }
 }
 
 /// Reads, processes and uploads a model in one go.

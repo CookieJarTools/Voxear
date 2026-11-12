@@ -584,6 +584,7 @@ impl Engine {
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);
+            crate::animation::animate_mobs(&mut self.world, self.time.delta);
             // The pose stage's systems read the frame's time from the world.
             self.world.insert_resource(self.time);
             self.schedule.run_stage(POSE, &mut self.world);

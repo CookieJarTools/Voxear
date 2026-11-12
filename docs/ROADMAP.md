@@ -1362,7 +1362,18 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     Joint in the bar, a bone's Role in the Inspector. Tests: a figure on two legs, a beast on four with head and
     tail, a blob, wings, a knee and an elbow; the editor making bones, showing a role, cutting a leg and undoing.
     Manual: Box Models.
-  - [ ] **Motion from how it moves:** walking by its gait, idling, looking, attacking, and parts that lag behind
+  - ~~**Motion from how it moves:**~~ done: `animation::MobMotion` (`mob_motion.rs`, `[obj.mob_motion]`, Add
+    Component ▸ Animation ▸ Mob Motion) poses a model each frame from how its Obj moved, with no clips. `MobPoser`
+    is the motion alone, from a skeleton, its bones' roles and a `MotionInput`: legs by gait (two in turn, four as
+    diagonal pairs, more as two sets) stepping by ground covered, lower halves bending as they come through, arms
+    against the legs, the body bobbing, leaning and rolling, the head turned to a point within its limit and not
+    at once, a tail sprung by turning, wings lifting, breathing at rest, an attack and a flinch over it all.
+    Roles reach it through the model: `PreparedModel`/`CookedModel`/`ImportedModel::roles` (`COOKED_VERSION` 12),
+    `Content::bone_roles`, `give_mob_bones`. The Model window's Motion mode shows it on the model, posed on the
+    CPU (`BoxModel::mesh_posed`), standing, walking or running. Tests: gaits, knees, steps matching ground
+    covered, look limit and lag, tail, attack and flinch; the engine walking a model from its file and from built
+    content; the editor showing it walk and putting it back. Manual: Mob Motion. Still to come with the block
+    world component: its C# side.
   - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away
   - [ ] **In a block world:** a component that walks one over blocks and through water, paths on the blocks, and
     the C# API

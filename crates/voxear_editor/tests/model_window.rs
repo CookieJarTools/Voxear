@@ -6,7 +6,7 @@
 
 use voxear_core::logging::LogCapture;
 use voxear_core::math::Vec3;
-use voxear_editor::model_panel::{Mode, Tool};
+use voxear_editor::model_panel::{Mode, Pace, Tool};
 use voxear_editor::model_view::{Handle, Picked};
 use voxear_engine::Project;
 use voxear_render::{BoneRole, BoxModel, BoxSkin, Face, Renderer, RendererSettings};
@@ -449,4 +449,59 @@ fn bones_are_made_from_a_models_shape_and_a_leg_is_cut_for_a_knee() {
     assert!(editor.model_window_mut().undo());
     frames(&mut editor, &mut renderer, 2);
     assert_eq!(editor.model_window().model(), Some(&heap));
+}
+
+#[test]
+fn the_model_window_shows_a_model_walking_and_puts_it_back_at_rest() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    // The figure with two legs under it, every bone saying what it is.
+    let mut walker = figure();
+    for (name, x) in [("RightLeg", 2.0), ("LeftLeg", -2.0)] {
+        let leg = walker.add_bone(name, Some(0), Vec3::new(x, 0.0, 0.0));
+        walker.add_box(leg, Vec3::new(-2.0, -12.0, -2.0), [4, 12, 4], [0, 32]);
+        walker.bones[leg].role = BoneRole::Leg;
+    }
+    (walker.bones[0].role, walker.bones[1].role) = (BoneRole::Body, BoneRole::Head);
+    for place in walker.used_places() {
+        walker.sheet.fill([place[0], place[1]], [place[2], place[3]], [150, 150, 150, 255]);
+    }
+    std::fs::write(dir.join(PATH), walker.to_text()).unwrap();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().walk_phase(), None, "nothing moves it while it is shaped");
+
+    editor.set_model_mode(Mode::Motion);
+    editor.set_model_pace(Pace::Walk);
+    let mut phases = Vec::new();
+    for _ in 0..12 {
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        frame(&mut editor, &mut renderer);
+        phases.extend(editor.model_window().walk_phase());
+    }
+    assert!(phases.len() >= 10, "it is moved each frame");
+    let turned: f32 = phases.windows(2).map(|pair| (pair[1] - pair[0]).rem_euclid(1.0)).sum();
+    assert!(turned > 0.05, "its walk goes on as time does: {phases:?}");
+    assert!(
+        texts_in(&editor.ui, editor.ui.find(editor.ui.root(), "model-panel").unwrap()).contains(&"Attack".to_string())
+    );
+    keep_picture(&mut renderer, "model window motion.png");
+    // A click on it picks nothing, and the model itself is as it was: watching changes nothing.
+    let at = editor.model_window().view().point(&editor.ui, Vec3::new(0.0, 1.75, 0.25)).unwrap();
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(editor.model_window().picked(), None);
+    assert_eq!(editor.model_window().model(), Some(&walker));
+    assert_eq!(saved(&dir), walker);
+
+    editor.set_model_mode(Mode::Shape);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().walk_phase(), None, "at rest again");
 }

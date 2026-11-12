@@ -22,6 +22,7 @@ use std::{
 };
 
 use voxear_core::math::Vec3;
+use voxear_engine::animation::{MobMotion, MobPoser, MotionInput};
 use voxear_render::{BoxModel, BoxSkin, Face, Renderer};
 use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
@@ -55,12 +56,34 @@ pub enum EditKey {
     Stroke,
 }
 
-/// What the window is for at the moment: shaping the model, or painting it.
+/// What the window is for at the moment: shaping the model, painting it,
+/// or watching it move.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     #[default]
     Shape,
     Paint,
+    Motion,
+}
+
+/// How fast the model is shown moving.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pace {
+    #[default]
+    Stand,
+    Walk,
+    Run,
+}
+
+impl Pace {
+    /// How many of its legs' lengths it covers a second.
+    fn legs_a_second(self) -> f32 {
+        match self {
+            Pace::Stand => 0.0,
+            Pace::Walk => 1.6,
+            Pace::Run => 4.5,
+        }
+    }
 }
 
 /// What a stroke does to the pixels it passes over.
@@ -243,6 +266,14 @@ pub struct ModelPanel {
     color_shown: Option<[u8; 4]>,
     symmetry: NodeId,
     lay_out: NodeId,
+    /// Watching it move: how fast, and the buttons that have it attack and flinch.
+    motion_bar: NodeId,
+    paces: NodeId,
+    attack: NodeId,
+    hurt: NodeId,
+    /// What moves it while it is watched, made for the model's bones as they now are, and when it last moved.
+    poser: Option<(MobPoser, Vec<voxear_render::BoneRole>, usize)>,
+    moved_at: Option<Instant>,
     mode: Mode,
     tool: Tool,
     tree: NodeId,
@@ -273,6 +304,7 @@ impl ModelPanel {
         let modes = ui.segmented(bar);
         ui.add_segment(modes, "Shape", None);
         ui.add_segment(modes, "Paint", None);
+        ui.add_segment(modes, "Motion", None);
         let group = |ui: &mut Ui| {
             let group = ui.panel(bar, Style::row());
             ui.add_class(group, "model-bar-group");
@@ -313,6 +345,15 @@ impl ModelPanel {
         let lay_out = button(ui, paint_bar, "Lay Out", tip);
         ui.set_visible(paint_bar, false);
 
+        let motion_bar = group(ui);
+        let paces = ui.segmented(motion_bar);
+        for pace in ["Stand", "Walk", "Run"] {
+            ui.add_segment(paces, pace, None);
+        }
+        let attack = button(ui, motion_bar, "Attack", "Has it swing at what is before it");
+        let hurt = button(ui, motion_bar, "Hurt", "Has it flinch, as when it is hit");
+        ui.set_visible(motion_bar, false);
+
         let frame = button(ui, bar, "Frame", "Looks at the whole model");
         let summary = ui.add_label(bar, "");
         ui.add_class(summary, "profiler-summary");
@@ -351,6 +392,12 @@ impl ModelPanel {
             color_shown: None,
             symmetry,
             lay_out,
+            motion_bar,
+            paces,
+            attack,
+            hurt,
+            poser: None,
+            moved_at: None,
             mode: Mode::Shape,
             tool: Tool::Pencil,
             sheet,
@@ -482,8 +529,8 @@ impl ModelPanel {
 
     /// Shapes the model, or paints it.
     pub fn set_mode(&mut self, ui: &mut Ui, mode: Mode) {
+        // Taken up at the next frame, as a press on the bar is.
         ui.set_segment(self.modes, mode as usize);
-        self.mode = mode;
     }
 
     pub fn tool(&self) -> Tool {
@@ -735,6 +782,7 @@ impl ModelPanel {
             self.update_tree(ui);
             self.update_view(ui, renderer, scale);
             self.show(ui, renderer);
+            self.update_motion(ui, renderer);
         }
         let mut events = std::mem::take(&mut self.pending);
         // Saved once nothing is held: when a drag ends, not at each step of it.
@@ -749,12 +797,24 @@ impl ModelPanel {
     /// The mode, and while painting the tool, the colour and its picker,
     /// the sheet's colours to take again, Symmetry and Lay Out.
     fn update_paint_bar(&mut self, ui: &mut Ui) {
-        let mode = if ui.segment(self.modes) == 1 { Mode::Paint } else { Mode::Shape };
+        let mode = match ui.segment(self.modes) {
+            1 => Mode::Paint,
+            2 => Mode::Motion,
+            _ => Mode::Shape,
+        };
         let painting = mode == Mode::Paint;
+        if mode != self.mode {
+            // Back from being watched moving, it stands at rest again.
+            if let (Mode::Motion, Some(open)) = (self.mode, self.open.as_mut()) {
+                open.stale = true;
+            }
+            (self.poser, self.moved_at) = (None, None);
+        }
         self.mode = mode;
-        if ui.is_visible(self.paint_bar) != painting {
+        if ui.is_visible(self.paint_bar) != painting || ui.is_visible(self.motion_bar) != (mode == Mode::Motion) {
             ui.set_visible(self.paint_bar, painting);
-            ui.set_visible(self.shape_bar, !painting);
+            ui.set_visible(self.shape_bar, mode == Mode::Shape);
+            ui.set_visible(self.motion_bar, mode == Mode::Motion);
             ui.set_visible(self.sheet.frame_node(), painting);
             ui.set_visible(self.picker_frame, false);
         }
@@ -804,6 +864,50 @@ impl ModelPanel {
             ui.set_inline_style(self.swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
             self.picker.set(ui, PickedColor::srgb([r, g, b].map(|channel| f32::from(channel) / 255.0)), false);
         }
+    }
+
+    /// How fast the model is shown moving, while it is watched.
+    pub fn pace(&self, ui: &Ui) -> Pace {
+        [Pace::Stand, Pace::Walk, Pace::Run][ui.segment(self.paces).min(2)]
+    }
+
+    pub fn set_pace(&mut self, ui: &mut Ui, pace: Pace) {
+        ui.set_segment(self.paces, pace as usize);
+    }
+
+    /// How far through its walk the model being watched is, from 0 to 1.
+    pub fn walk_phase(&self) -> Option<f32> {
+        self.poser.as_ref().map(|(poser, ..)| poser.walk_phase())
+    }
+
+    /// Watching the model move: its bones posed for this frame by what a
+    /// Mob Motion would do at the pace picked, and drawn so.
+    fn update_motion(&mut self, ui: &mut Ui, renderer: &mut Renderer) {
+        let Some(open) = self.open.as_ref().filter(|_| self.mode == Mode::Motion) else { return };
+        let skeleton = open.model.skeleton();
+        let roles: Vec<voxear_render::BoneRole> = open.model.bones.iter().map(|bone| bone.role).collect();
+        let fits = self.poser.as_ref().is_some_and(|(_, made, bones)| *made == roles && *bones == skeleton.bones.len());
+        if !fits {
+            self.poser = Some((MobPoser::new(&skeleton, &roles), roles, skeleton.bones.len()));
+        }
+        let now = Instant::now();
+        let delta = self.moved_at.replace(now).map_or(1.0 / 60.0, |last| (now - last).as_secs_f32().min(0.1));
+        let pace = self.pace(ui);
+        let (attack, hurt) = (ui.clicked(self.attack), ui.clicked(self.hurt));
+        let Some((poser, ..)) = self.poser.as_mut() else { return };
+        if attack {
+            poser.attack();
+        }
+        if hurt {
+            poser.hurt();
+        }
+        // By its own legs: a small beast and a tall one both walk at a walk.
+        let placed = skeleton.model_matrices(&skeleton.rest());
+        let legs = open.model.bones.iter().zip(&placed).filter(|(bone, _)| bone.role == voxear_render::BoneRole::Leg);
+        let leg = legs.map(|(_, at)| at.w_axis.y).fold(0.0, f32::max).max(0.25);
+        let input = MotionInput { velocity: Vec3::Z * leg * pace.legs_a_second(), delta, ..MotionInput::default() };
+        let pose = poser.pose(&skeleton, &MobMotion::default(), input);
+        self.view.show_posed(renderer, &open.model, &skeleton.model_matrices(&pose));
     }
 
     /// One pixel of a stroke: coloured, made a hole, filled from, or its
@@ -904,6 +1008,7 @@ impl ModelPanel {
         let mode = match self.mode {
             Mode::Shape => ViewMode::Shape,
             Mode::Paint => ViewMode::Paint { mirror: ui.is_checked(self.symmetry) },
+            Mode::Motion => ViewMode::Look,
         };
         let mut events = self.view.update(ui, renderer, &open.model, open.picked, mode, scale);
         if self.mode == Mode::Paint {

@@ -2826,8 +2826,11 @@ poses, previews, reimports or cooks a model does a box model with no path of its
 - **Bones from shape** (`box_model/rig.rs`): `make_bones` reads the boxes as a body with parts round it and gives
   each a bone with a `BoneRole` (body, head, leg, arm, tail, wing). Roles, not names, are what animation goes
   by, so a renamed bone still walks. `add_joint` splits a limb's box for a knee or an elbow.
-- **Planned on top:** motion made from how a
-  character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
+- **Mob Motion** (`voxear_engine::animation::mob_motion`) is the easy path to animation for these: a component
+  that poses a model from how its Obj moved, by its bones' roles, writing the same `Pose` an Animator does. The
+  motion is a pure `MobPoser`, so the Model window shows it on a model that stands nowhere. Roles travel with the
+  model through import and cooking, since a build has no `.boxmodel` to read them from.
+- **Planned on top:** a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
   one through a block world.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*

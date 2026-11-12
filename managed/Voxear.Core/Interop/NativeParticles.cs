@@ -41,6 +41,11 @@ internal static unsafe class NativeParticles
 	public const int Turbulence = 30;
 	public const int TurbulenceSize = 31;
 	public const int Simulated = 32;
+	public const int Collision = 33;
+	public const int Bounce = 34;
+	public const int Friction = 35;
+	public const int LifeLost = 36;
+	public const int Forces = 37;
 
 	/// <summary>A value of an Obj's Particle System, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

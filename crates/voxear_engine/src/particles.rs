@@ -4,7 +4,10 @@
 //! system through one call, by number, as `lights` does a Light's.
 
 use voxear_ecs::{Entity, World};
-use voxear_render::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSpace, ParticleSystem};
+use voxear_render::{
+    Blast, EmitShape, ForceField, ForceKind, ParticleBlasts, ParticleBlend, ParticleCollision, ParticlePlayback,
+    ParticleSpace, ParticleSystem,
+};
 
 use crate::content::{linear, srgb};
 
@@ -42,19 +45,92 @@ const WIND: i32 = 29;
 const TURBULENCE: i32 = 30;
 const TURBULENCE_SIZE: i32 = 31;
 const SIMULATED: i32 = 32;
+const COLLISION: i32 = 33;
+const BOUNCE: i32 = 34;
+const FRICTION: i32 = 35;
+const LIFE_LOST: i32 = 36;
+const FORCES: i32 = 37;
 
 /// The engine's time, as Particle Systems are played and stopped by.
 #[derive(Clone, Copy, Debug, Default)]
 struct ParticleClock(f64);
 
-/// Sets what answers `ParticleSystem` in scripts.
+/// Sets what answers `ParticleSystem`, `ForceField` and `Particles.Push` in
+/// scripts.
 pub(crate) fn register() {
     voxear_scripting::set_particle_values(values);
+    voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::ForceField, field_values);
+    voxear_scripting::set_particle_blaster(|world, at, radius, speed| blast(world, at.into(), radius, speed));
+}
+
+/// Sets off a blast at `at`, `radius` metres wide: the particles of every
+/// Particle System that takes forces are thrown out from it, those at its
+/// middle to `speed` metres a second. Over in a moment
+/// (`voxear_render::BLAST_TIME`).
+pub fn blast(world: &mut World, at: voxear_core::math::Vec3, radius: f32, speed: f32) {
+    if !(radius > 0.0 && speed > 0.0 && at.is_finite()) {
+        return;
+    }
+    let started = world.resource::<ParticleClock>().map_or(0.0, |clock| clock.0) as f32;
+    let blast = Blast { at, radius, speed, started };
+    match world.resource_mut::<ParticleBlasts>() {
+        Some(blasts) => blasts.0.push(blast),
+        None => world.insert_resource(ParticleBlasts(vec![blast])),
+    }
+}
+
+// What `field_values` reads or writes, as `ForceField` in Voxear.Core numbers them.
+const FIELD_KIND: i32 = 3;
+const FIELD_STRENGTH: i32 = 4;
+const FIELD_RADIUS: i32 = 5;
+
+/// Reads value `what` of `entity`'s Force Field, or with `written`, writes
+/// it: `None` when it has none, or is gone.
+fn field_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    if !world.is_alive(entity) {
+        return None;
+    }
+    match (what, written) {
+        (HAS, None) => return Some(flag(world.has::<ForceField>(entity))),
+        (ADD, Some(_)) => {
+            if !world.has::<ForceField>(entity) {
+                world.insert(entity, ForceField::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => return world.remove::<ForceField>(entity).map(|_| [0.0; 4]),
+        _ => {}
+    }
+    let field = world.get_mut::<ForceField>(entity)?;
+    match (what, written) {
+        (FIELD_KIND, None) => {
+            Some(number(ForceKind::ALL.iter().position(|kind| *kind == field.kind).unwrap_or_default() as f32))
+        }
+        (FIELD_STRENGTH, None) => Some(number(field.strength)),
+        (FIELD_RADIUS, None) => Some(number(field.radius)),
+        (FIELD_KIND, Some([x, ..])) => {
+            field.kind = ForceKind::ALL[(x.max(0.0) as usize).min(ForceKind::ALL.len() - 1)];
+            Some([0.0; 4])
+        }
+        (FIELD_STRENGTH, Some([x, ..])) => {
+            field.strength = x;
+            Some([0.0; 4])
+        }
+        (FIELD_RADIUS, Some([x, ..])) => {
+            field.radius = x.max(0.0);
+            Some([0.0; 4])
+        }
+        _ => None,
+    }
 }
 
 /// Starts every Particle System that has not started yet, at `now`.
 pub fn start(world: &mut World, now: f64) {
     world.insert_resource(ParticleClock(now));
+    // Blasts that are over are forgotten.
+    if let Some(blasts) = world.resource_mut::<ParticleBlasts>() {
+        blasts.keep_live(now as f32);
+    }
     let waiting: Vec<Entity> = world
         .query_ref::<(Entity, &ParticleSystem)>()
         .without::<ParticlePlayback>()
@@ -140,6 +216,13 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         TURBULENCE => number(system.turbulence),
         TURBULENCE_SIZE => number(system.turbulence_size),
         SIMULATED => flag(system.is_simulated()),
+        COLLISION => {
+            number(ParticleCollision::ALL.iter().position(|c| *c == system.collision).unwrap_or_default() as f32)
+        }
+        BOUNCE => number(system.bounce),
+        FRICTION => number(system.friction),
+        LIFE_LOST => number(system.life_lost),
+        FORCES => number(system.forces),
         _ => return None,
     })
 }
@@ -178,6 +261,11 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         WIND => system.wind = x.max(0.0),
         TURBULENCE => system.turbulence = x.max(0.0),
         TURBULENCE_SIZE => system.turbulence_size = x.max(0.01),
+        COLLISION => system.collision = ParticleCollision::ALL[pick(ParticleCollision::ALL.len())],
+        BOUNCE => system.bounce = x.clamp(0.0, 1.0),
+        FRICTION => system.friction = x.clamp(0.0, 1.0),
+        LIFE_LOST => system.life_lost = x.clamp(0.0, 1.0),
+        FORCES => system.forces = x.max(0.0),
         _ => {}
     }
 }
@@ -238,5 +326,34 @@ mod tests {
         let system = *world.get::<ParticleSystem>(obj).unwrap();
         assert_eq!((system.space, system.wind, system.turbulence_size), (ParticleSpace::World, 0.8, 0.01));
         assert_eq!(values(&mut world, obj, SIMULATED, None), Some([1.0, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, COLLISION, Some([1.0, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, BOUNCE, Some([2.0, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, LIFE_LOST, Some([0.25, 0.0, 0.0, 0.0]));
+        let system = *world.get::<ParticleSystem>(obj).unwrap();
+        assert_eq!((system.collision, system.bounce, system.life_lost), (ParticleCollision::Depth, 1.0, 0.25));
+    }
+
+    #[test]
+    fn scripts_set_off_blasts_that_are_forgotten_once_over_and_change_force_fields() {
+        let mut world = World::new();
+        start(&mut world, 5.0);
+        blast(&mut world, voxear_core::math::Vec3::new(1.0, 2.0, 3.0), 4.0, 6.0);
+        blast(&mut world, voxear_core::math::Vec3::ZERO, 0.0, 6.0);
+        let blasts = world.resource::<ParticleBlasts>().unwrap().0.clone();
+        assert_eq!(blasts.len(), 1, "one of no width sets nothing off");
+        assert_eq!((blasts[0].started, blasts[0].radius, blasts[0].speed), (5.0, 4.0, 6.0));
+        start(&mut world, 5.1);
+        assert_eq!(world.resource::<ParticleBlasts>().unwrap().0.len(), 1, "still going off");
+        start(&mut world, 5.0 + f64::from(voxear_render::BLAST_TIME) + 0.01);
+        assert!(world.resource::<ParticleBlasts>().unwrap().0.is_empty(), "over, and forgotten");
+
+        let obj = world.spawn(());
+        assert_eq!(field_values(&mut world, obj, FIELD_RADIUS, None), None, "nothing to read without one");
+        field_values(&mut world, obj, ADD, Some([0.0; 4]));
+        field_values(&mut world, obj, FIELD_KIND, Some([2.0, 0.0, 0.0, 0.0]));
+        field_values(&mut world, obj, FIELD_RADIUS, Some([-3.0, 0.0, 0.0, 0.0]));
+        let field = *world.get::<ForceField>(obj).unwrap();
+        assert_eq!((field.kind, field.radius), (ForceKind::Vortex, 0.0));
+        assert_eq!(field_values(&mut world, obj, FIELD_KIND, None), Some([2.0, 0.0, 0.0, 0.0]));
     }
 }

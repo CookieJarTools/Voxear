@@ -40,6 +40,7 @@ mod meshlets;
 mod model_lods;
 mod model_renderer;
 mod impostors;
+mod forces;
 mod particle_sim;
 mod particles;
 mod passes;
@@ -124,8 +125,9 @@ pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
+pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
-pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSpace, ParticleSystem};
+pub use particles::{EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
@@ -1170,7 +1172,7 @@ impl Renderer {
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
         let particle_pool = particle_sim.import(&mut fg);
-        particle_sim.record(&mut fg, *pipelines, frame.slot, particle_pool);
+        let particle_step = particle_sim.step(&mut fg, frame.slot);
         let terrain_draws = terrains.record(&mut fg, frames);
         let block_draws = blocks.record(&mut fg, frames);
         let ui = &ui_buffers[frame.slot];
@@ -1229,6 +1231,7 @@ impl Renderer {
                 software_rays,
                 posed: skinning.posed.clone(),
                 simulated: (particle_sim.placed.clone(), particle_sim.pool_address(), particle_pool),
+                particle_step,
                 panels: panel_textures.clone(),
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
@@ -1582,6 +1585,9 @@ struct ViewSetup {
     /// This frame's simulated Particle Systems with particles out, the pool
     /// their particles are in, and the pool as the graph knows it.
     simulated: (std::sync::Arc<particles::PlacedSystems>, u64, Option<graph::BufferId>),
+    /// This frame's step of the simulated particles, which the first view
+    /// records among its passes.
+    particle_step: Option<particles::Step>,
     /// This frame's UI panels' textures, which each view draws its panels with.
     panels: Vec<ui_panels::PanelTexture>,
     /// This frame's terrains, as every view draws them.
@@ -2279,6 +2285,8 @@ impl View {
         let culling = if meshlet_capacity.is_some() { MESHLET_CULLING } else { 0 };
         frame_data.meshlet_flags = cones | runs | culling;
         buffers.frame.write(0, &[frame_data]);
+        // The first view steps the simulated particles, for every view.
+        let particle_step = setup.particle_step.filter(|_| self.number == 0);
         buffers.pointers.write(
             0,
             &[GpuBuffers {
@@ -2343,9 +2351,10 @@ impl View {
                 grass_draws: grass::addresses(&buffers.grass)[1],
                 block_worlds: buffers.blocks.address,
                 particles: setup.simulated.1,
-                particle_chunks: 0,
-                particle_sim: 0,
-                particle_counters: 0,
+                particle_chunks: particle_step.map_or(0, |step| step.chunks),
+                particle_sim: particle_step.map_or(0, |step| step.frame),
+                particle_counters: particle_step.map_or(0, |step| step.counters_address),
+                particle_steps: particle_step.map_or(0, |step| step.systems),
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2430,6 +2439,7 @@ impl View {
             glass,
             particles,
             particle_pool: setup.simulated.2,
+            particle_step,
             spray,
             rapids,
             smokes: smokes.len() as u32,

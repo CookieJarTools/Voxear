@@ -1,5 +1,5 @@
 ---
-order: 3
+order: 4
 ---
 
 **Mist** leaves a trail of fog behind its Obj as the Obj moves, as a wizard dashing in a cloud of mist does. Make one with the Hierarchy's **+ ▸ Mist**, or add one to any Obj with **Add Component ▸ Effects ▸ Mist**. While it's **Emitting**, the trail follows the Obj wherever it goes. Each piece of trail widens, rises and frays into wisps as it ages, then thins away. Stop emitting and what it left lingers a moment, then is gone.

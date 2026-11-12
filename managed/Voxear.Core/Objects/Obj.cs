@@ -313,6 +313,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new ParticleSystem(this);
 	}
 
+	/// <summary>The Obj's Force Field, which moves the particles round it. Not valid when it has none.</summary>
+	public ForceField ForceField => new ForceField(this);
+
+	/// <summary>Gives the Obj a Force Field with the usual settings, unless it has one, and returns it.</summary>
+	public ForceField AddForceField()
+	{
+		NativeComponent.Set(NativeComponent.ForceField, this, NativeComponent.Add, Vector4.Zero);
+		return new ForceField(this);
+	}
+
 	/// <summary>The Obj's Smoke. Not valid when it has none.</summary>
 	public Smoke Smoke => new Smoke(this);
 

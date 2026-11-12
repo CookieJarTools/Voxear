@@ -126,6 +126,7 @@ pub fn shapes(
         post_volume(&mut shapes, world, camera, entity);
         ui_panel(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
+        force_field(&mut shapes, world, camera, entity);
         water_body(&mut shapes, world, camera, entity);
         path_curve(&mut shapes, world, camera, entity);
         gun_marks(&mut shapes, world, camera, entity);
@@ -350,6 +351,24 @@ fn water_body(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entit
         // The mesh shows its own shape where the Obj draws it.
         DryShape::Mesh => {}
     }
+}
+
+/// How far the selected Force Field reaches: a sphere of three rings, and
+/// for one that swirls or blows, the axis it does it along.
+fn force_field(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    use voxear_render::{ForceField, ForceKind};
+    let Some(field) = world.get::<ForceField>(entity) else { return };
+    let Some(transform) = world.get::<Transform>(entity) else { return };
+    let (position, rotation) = placement(transform, world.get::<WorldTransform>(entity));
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        polyline(shapes, camera, &ring(camera, position, axis, field.radius), Color::hex(REACH));
+    }
+    let along = match field.kind {
+        ForceKind::Vortex => rotation * Vec3::Y,
+        ForceKind::Blow => rotation * Vec3::Z,
+        ForceKind::Attract | ForceKind::Repel => return,
+    };
+    facing(shapes, camera, position, along, field.radius, Color::hex(REACH));
 }
 
 /// How far the selected Audio Source carries: a sphere of three rings at

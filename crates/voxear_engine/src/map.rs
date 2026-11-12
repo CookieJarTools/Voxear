@@ -121,6 +121,8 @@ struct View {
     /// How many frames it has been drawn the same way: left alone, it is
     /// drawn once more with smoother edges.
     still: u32,
+    /// How far its slab reached from its middle when last shown, in cells.
+    reach: f32,
     drawn: Option<MapDraw>,
     /// The frame it was last seen in the UI.
     seen: u64,
@@ -144,6 +146,7 @@ impl View {
             moved: Vec2::ZERO,
             held: None,
             still: 0,
+            reach: side as f32 * 0.3,
             drawn: None,
             seen: 0,
         }
@@ -530,7 +533,12 @@ impl Maps {
             view.corner = wanted;
         }
         let corner = view.corner;
-        let reach = (side as f32 * 0.5 - tile as f32 * 0.5 - 2.0).max(8.0);
+        // A map's slab shows more ground the further it is zoomed out, and stays the size it is on the screen:
+        // so as its cells change size at the next level, the same ground is shown as large as before, in
+        // cells half or twice the size.
+        let most = (side as f32 * 0.5 - tile as f32 * 0.5 - 2.0).max(8.0);
+        let reach = if large { (most / std::f32::consts::SQRT_2 / within.max(0.05)).min(most) } else { most };
+        view.reach = reach;
 
         // The renderer's window, made with the view and given the blocks' colours as they are now.
         if let Some(renderer) = renderer.as_deref_mut() {
@@ -616,7 +624,7 @@ impl Maps {
         let looked = Vec3::new(looked.x, looked.y.clamp(0.0, (high - low) as f32), looked.z);
         let tilt = view.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2);
         let fits = reach * if large { 1.45 } else { 1.02 } / (FOV * 0.5).tan();
-        let camera = MapCamera { middle: looked, turn: view.turn, tilt, distance: fits / within.max(0.05), fov: FOV };
+        let camera = MapCamera { middle: looked, turn: view.turn, tilt, distance: fits, fov: FOV };
         let mut draw = MapDraw {
             size,
             corner,
@@ -659,9 +667,10 @@ impl Maps {
 /// middle button moves it over the ground, and the wheel zooms it.
 fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId) {
     ui.take_wheel(node, true);
+    // The wheel turned away brings the ground nearer, as it does in the editor's views.
     let wheel = ui.wheeled(node)[1];
     if wheel != 0.0 {
-        view.zoom = (view.zoom * (1.0 + wheel.signum() * 0.12)).clamp(1.0 / 64.0, 8.0);
+        view.zoom = (view.zoom * (1.0 - wheel.signum() * 0.12)).clamp(1.0 / 64.0, 8.0);
     }
     let (turning, moving) = (ui.is_pressed(node), ui.is_middle_pressed(node));
     let (Some(now), true) = (ui.pointer_position(), turning || moving) else {
@@ -677,7 +686,7 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId) {
     }
     // Moved with the ground under the pointer: a pixel is as many cells as the slab is wide over the view.
     let rect = ui.rect(node);
-    let cells = MAP_SIDE as f32 * 1.45 / rect[3].max(1.0) / view.zoom.max(0.05);
+    let cells = view.reach * 2.0 * 1.45 / rect[3].max(1.0);
     let (sin, cos) = view.turn.sin_cos();
     let (right, ahead) = (Vec2::new(cos, -sin), Vec2::new(sin, cos));
     view.moved -= (right * dx - ahead * dy / view.tilt.sin().max(0.3)) * cells;

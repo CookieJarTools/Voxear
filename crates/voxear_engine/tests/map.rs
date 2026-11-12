@@ -282,3 +282,107 @@ fn ground_a_map_does_not_know_is_drawn_as_paper_and_news_colours_what_it_does() 
     assert!(danger[0] > danger[1] + 40, "red where it is dangerous: {danger:?}");
     assert!((paper[0] - paper[2]).abs() < 90 && paper[0] > paper[2] && paper[0] > 110, "paper: {paper:?}");
 }
+
+const ACTIONS: &str = "format = 1\n\n[[map]]\nname = \"Player\"\n\n[[map.action]]\nname = \"Jump\"\n\
+                       bindings = [\"Keyboard/Space\"]\n\n[[map]]\nname = \"Map\"\n\n[[map.action]]\n\
+                       name = \"Open Map\"\nid = \"open-map\"\nbindings = [\"Keyboard/M\"]\n";
+
+/// One frame as a window runs it: the tick, then the screen laid out.
+fn frame(game: &mut Game) {
+    game.tick(1.0 / 60.0, None);
+    game.ui.frame(1.0 / 60.0, (1280, 720), 1.0);
+}
+
+#[test]
+fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it() {
+    let dir = project();
+    std::fs::write(dir.path().join("Input.inputactions"), ACTIONS).unwrap();
+    let scene = SCENE.replace("[obj.map]\n", "[obj.map]\nopen_action = \"open-map\"\n");
+    std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    let (mini, large) = (view(&mut game, MapViewKind::Minimap), view(&mut game, MapViewKind::Map));
+    game.display.cursor_visible = false;
+    let press = |game: &mut Game| {
+        game.input.devices_mut().set_key("M", true);
+        frame(game);
+        game.input.devices_mut().set_key("M", false);
+        frame(game);
+    };
+
+    // Its action opens it: the map in place of the minimap, the mouse free, and only the action's own input map on.
+    press(&mut game);
+    assert!(game.engine.world.get::<Map>(hud).unwrap().open);
+    assert!(game.ui.ui().is_visible(large) && !game.ui.ui().is_visible(mini));
+    assert!(game.display.cursor_visible, "the mouse shows while the map is open");
+    assert!(game.input.map_enabled("Map") && !game.input.map_enabled("Player"));
+    settle(&mut game, None);
+    let shown = |game: &Game| *game.maps.shown(large).expect("the open map shows the world");
+    let looks_at = |game: &Game| {
+        let shown = shown(game);
+        [shown.corner[0] as f32 + shown.camera.middle.x, shown.corner[1] as f32 + shown.camera.middle.z]
+    };
+    let (before, at) = (shown(&game).camera, looks_at(&game));
+
+    // A drag turns and tilts it.
+    game.ui.ui().pointer_move(640.0, 360.0);
+    game.ui.ui().pointer_button(true);
+    frame(&mut game);
+    game.ui.ui().pointer_move(700.0, 330.0);
+    frame(&mut game);
+    game.ui.ui().pointer_button(false);
+    frame(&mut game);
+    let turned = shown(&game).camera;
+    assert!(
+        (turned.turn - (before.turn - 0.48)).abs() < 0.01,
+        "sixty pixels across: {} to {}",
+        before.turn,
+        turned.turn
+    );
+    assert!(turned.tilt < before.tilt - 0.1, "thirty pixels up tilts it lower: {} to {}", before.tilt, turned.tilt);
+    assert_eq!(looks_at(&game), at, "turning does not move it");
+
+    // A drag with the middle button moves it over the ground, the way the pointer goes.
+    game.ui.ui().pointer_middle(true);
+    frame(&mut game);
+    game.ui.ui().pointer_move(600.0, 330.0);
+    frame(&mut game);
+    game.ui.ui().pointer_middle(false);
+    frame(&mut game);
+    let moved = looks_at(&game);
+    let by = ((moved[0] - at[0]).powi(2) + (moved[1] - at[1]).powi(2)).sqrt();
+    assert!(by > 5.0, "a hundred pixels moves it some cells: {at:?} to {moved:?}");
+    assert_eq!(shown(&game).camera.turn, turned.turn, "moving does not turn it");
+
+    // The wheel turned away zooms in: each notch shows a little less ground, the slab as large on the screen as
+    // it was, and past a point its cells are half the size, 1:4 becoming 1:2, with no jump in what is shown.
+    assert_eq!(shown(&game).cell, 4.0);
+    let ground = |game: &Game| shown(game).reach * shown(game).cell;
+    let on_screen = |game: &Game| shown(game).camera.distance / shown(game).reach;
+    let (mut metres, size) = (ground(&game), on_screen(&game));
+    for _ in 0..4 {
+        game.ui.ui().pointer_scroll(0.0, -40.0);
+        frame(&mut game);
+        frame(&mut game);
+        let now = ground(&game);
+        assert!(now < metres && now > metres * 0.85, "a notch nearer, never a jump: {metres} m to {now} m");
+        assert!((on_screen(&game) - size).abs() < 1e-3, "the slab stays the size it is on the screen");
+        metres = now;
+    }
+    settle(&mut game, None);
+    assert_eq!(shown(&game).cell, 2.0, "zoomed in");
+    for _ in 0..10 {
+        game.ui.ui().pointer_scroll(0.0, 40.0);
+        frame(&mut game);
+    }
+    settle(&mut game, None);
+    assert_eq!(shown(&game).cell, 8.0, "and out past where it began");
+
+    // Its action shuts it: the minimap back, the mouse and the input maps as they were.
+    press(&mut game);
+    assert!(!game.engine.world.get::<Map>(hud).unwrap().open);
+    assert!(game.ui.ui().is_visible(mini) && !game.ui.ui().is_visible(large));
+    assert!(!game.display.cursor_visible && game.input.map_enabled("Player"));
+}

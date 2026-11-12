@@ -3385,6 +3385,53 @@ Terrain.Apply(TerrainEdit.Flatten(at, 4f, floor));            // advanced
 var edits = Terrain.CaptureEdits();                           // for a save, or a player joining
 ```
 
+## Maps *(implemented for block worlds: tiles, drawing, the Map and Map Marker components, UI elements, knowledge; other terrains planned)*
+
+A map is a small model of a world of blocks: a slab of the ground cut out round a point, seen turned and tilted,
+as a minimap on the HUD or a map opened over the game.
+
+- **Tiles** (`voxear_terrain::blocks::map`): a `MapTile` is 32 by 32 `MapColumn`s of one level, as the far view's
+  levels are (level L's cells are 2^L blocks). A column is its ground's top, its top block and the two layers under
+  it with their depths, the water over it, and up to two `MapPiece`s standing free of the ground. `map_tile(ground,
+  level, at)` makes one on any thread from a `MapGround`: `Made`, a world without end, whose tile is the far view's
+  (`far_tile_kept`, so levels 3 and up share `.voxear/FarView`) with every change put in, exact at level 0 and by
+  shares coarser (built from an eighth, dug past a half); or `Held`, a world whose chunks are all held, read from
+  its blocks. `MapColumn::of_runs` is the one place runs become a column.
+- **Drawing** (`voxear_render::map`, `shaders/map.slang`): a map keeps a window of columns, a power of two cells a
+  side, each at its place modulo the side, in a buffer on the GPU alone, written through a staging buffer as tiles
+  come (`write_map_tile`); beside them, the highest block of each 8 by 8 cells and of each tile. The fragment shader
+  walks each pixel's ray through the cells, stepping over a group none of whose columns reaches up to it, and shades
+  what it meets: tops with the corner shade blocks have, sides by their layer, water by its depth, a short walk
+  towards the lamp for shadows. It reads no textures and none of the frame's buffers; its push constants point at
+  its own. A map is drawn into a kept image of its own before the UI pass, which samples it as any picture, and
+  only on frames where its `MapDraw` or its columns changed. `MapCamera` is the one camera both the shader and the
+  CPU use, so a marker stands where the ground under it is drawn.
+- **The game's maps** (`voxear_engine::map`, `Maps`): each frame, for every map view in the screen's UI
+  (`voxear_ui::map_view`, the `Minimap` and `Map` elements), it keeps what the world's tiles are made from, marks
+  the tiles a change lies in to be made again, asks for the tiles the view's window needs on the terrain's threads,
+  nearest first, writes those that came, and asks the renderer to draw. A map opened large hears the pointer: a
+  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two.
+- **Components** (`map::parts`): `Map` puts a minimap and a map on the screen in a document of its own and opens
+  the map by an input action, freeing the mouse and leaving on only that action's input map; `MapMarker` marks its
+  Obj. Both are saved in scenes and prefabs as `[obj.map]` and `[obj.map_marker]`, and shown in the Inspector.
+- **Knowledge** (`voxear_terrain::blocks::map_known`, `map::known`): a `MapKnowledge` is ground seen, a bit for each
+  8 m square, and layers of news, a value and when it was heard for each 32 m square, by regions of 512 m. It is
+  never read from the world: scripts write it. The world's `MapKnown` holds any number by number, the one the maps
+  show, and each layer's colours; as a tile is written to a view, ground not known becomes paper, which the shader
+  stands at the slab's lowest ground, and news tints its column. Bytes are runs, compressed; `merge` keeps the
+  newer news; `changes_since` writes only the regions changed since a stamp.
+- **Scripts**: no native entries of their own. `Map` and `MapMarker` answer through `kind_value` and `kind_text`
+  (`ComponentKind::Map` = 20, `MapMarker` = 21), every map's settings, placed markers and knowledge among them
+  (`map::scripts`, `MapScript`); a map view's settings go through `ui_set_string`.
+
+```csharp
+Map.AddMarker(town, MapIcon.Town, "Oakrest");                 // easy
+Map.Follow = player;
+var pin = Map.AddMarker(place, MapIcon.Camp, "Old camp");     // a place, to move or remove
+MapKnowledge.Shown.Paint(Threat, dungeon, 150f, 0.8f, today); // what this player's map was told
+var news = theirs.ChangesSince(stamp);                        // advanced: a map for each player, sent what is new
+```
+
 ## Navigation
 
 Modelled on Aron Granberg's **A\* Pathfinding Project**, not Unity's NavMesh.

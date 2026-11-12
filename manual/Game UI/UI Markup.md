@@ -43,6 +43,8 @@ A `.vui` file lists what is on screen, as elements inside elements, in a form li
 | `ScrollView` | A box whose content scrolls when it does not fit | |
 | `SplitView` | Two elements side by side, with a bar to drag between them | `direction="column"` to stack them, `size` of the first in pixels or as `"40%"` |
 | `Icon` | One of Voxear's icons, drawn in the text colour | `icon`, as `"play"`, `"settings"` or `"check"` |
+| `Minimap` | A small map of the world for the HUD (see [[Maps and Minimaps]]) | `zoom`, the blocks to a cell; `turns`, `round`, `tilt` in degrees |
+| `Map` | A map of the world opened large, which covers what it is in | `zoom` |
 | `Style` | Not shown: links a style sheet to the element it is in | `src`, the sheet's path from this file's folder |
 
 Most icons are the editor's own, such as `play`, `pause`, `check`, `close`, `plus`, `search`, `settings`, `eye`, `lock`, `info` and `alert`.

@@ -102,6 +102,8 @@ From the third ring out, the world is the **far view**: up to five more rings, t
 
 Each piece of the far view is kept in the project's `.voxear/FarView` folder once made, so ground seen once comes back at once, and is made again when the world or its generator changes. What you build shows in every ring once the camera has gone from it, wherever it fills at least an eighth of a ring's block: a castle stays on the horizon, and a fence post does not grow into a tower. Ground taken out shows only when the camera is near it again.
 
+A minimap and a map of the world are made from the same ground as the far view, with what was built and dug: see [[Maps and Minimaps]].
+
 Its own blocks are made a column of chunks further out than they are drawn, and each column's faces are made on those threads too, once the columns round it have their blocks. So every column is made once, its edges meeting the ground beside it, and the game never waits for one.
 
 A [[Block Worlds#Water|sea]] runs on across the rings unbroken: it stands as high in every ring, and its water shows no sides where they meet, nor at the edge of what is made, where the world goes on.

@@ -2233,6 +2233,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   levels in place of skirts; overhangs and caves far off (the manual says so); ground taken out showing far off.
   A far column of cubes takes water wherever its ground lies under the sea, its top block at least an eighth full or
   the ground's own top block the sea's, as 64 m blocks and more rounded a shallow sea away to its floor.
+- ~~**Maps:**~~ done: a world of blocks drawn as a small model of itself, a minimap on the HUD and a map opened over
+  the game. A map's tiles are the far view's (`blocks::map`, `map_tile`), 32 by 32 columns at any level, each cut
+  down to its ground with two layers under its top, its water, and two pieces standing free of it, with what was
+  built and dug put in: block for block at 1:1, coarser as the far view shows it; a world whose chunks are all held
+  is read from its blocks. Nothing is meshed: one shader (`shaders/map.slang`, `voxear_render::map`) walks each
+  pixel's ray through the columns, over groups of 8 and 32 cells none reaches up to, so hills, cliffs and the slab's
+  cut sides with their layers are blocks, lit by one lamp with corner shade and short shadows. Each view keeps a
+  window of tiles on the GPU, moved a tile at a time, and is drawn only when it changed. Measured on an RTX 3070,
+  the least of sixty frames: a 256-pixel minimap 0.2 ms; a map of mountains 496 cells across at 2560x1440 1.7 ms,
+  1.2 ms without shadows. A `Map` component puts both on the screen, opened by an input action; `Minimap` and `Map`
+  elements go in a game's own UI; a `Map Marker` marks an Obj, `Map.AddMarker` a place. What a map knows is kept
+  apart from the world (`blocks::map_known`, `MapKnowledge`): ground seen and layers of news with when each was
+  heard, any number of them, joined newest first, 2.7 KB for a four-kilometre walk; ground not known is drawn as
+  paper. Tests: tiles against the far view, a tower and a pit, the shader's pictures, the game's minimap and map
+  drawn, markers, knowledge and its bytes, the C# API on a copy of Hello. Manual: Maps and Minimaps. Not done:
+  heightmap Terrain as ground; trees and structures, which show once the far view carries them; the place under the
+  pointer; turning the map with a gamepad; a map keeping the ground as it was last seen.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

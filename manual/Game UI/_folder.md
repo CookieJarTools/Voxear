@@ -11,3 +11,4 @@ Your game's menus and on-screen displays, such as a score or a health bar, and p
 5. [[Callbacks and Binding]]
 6. [[UI Panels in the World]]
 7. [[UI Shaders]]
+8. [[Maps and Minimaps]]

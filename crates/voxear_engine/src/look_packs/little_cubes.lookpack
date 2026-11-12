@@ -1,0 +1,11 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "Every block's faces cut into little cubes, with clouds built of cubes to match."
+
+[blocks]
+voxels = 8
+relief = 2.0
+
+[sky.clouds]
+kind = "blocks"
+softness = 0.0

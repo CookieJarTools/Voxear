@@ -516,6 +516,8 @@ impl Editor {
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
+        // As a build does: the look pack chosen last time.
+        self.game.wear_remembered_look();
         // The game may change levels as it plays, and let go of what it no longer uses, but not of what the level put aside here draws.
         self.game.content.set_aside(&edit.world);
         self.kept.clear();

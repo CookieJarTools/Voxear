@@ -6813,6 +6813,26 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Lighting));
     assert_eq!(editor.lighting_shown(), None, "Hello's scenes set their own sky");
 
+    // Look pack shows the scene under a pack, as a player who picked it would see it: the first after None is
+    // the engine's Sunlit. The scene's own sky stays as it is, and None takes the pack off again.
+    let own = editor.game.engine.world.resource::<voxear_render::Sky>().map(|sky| sky.haze);
+    let look = editor.lighting_look_menu();
+    editor.ui.focus(look);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxear_engine::look_packs::worn(&editor.game.engine.world), Some("builtin:sunlit"));
+    let worn = editor.game.engine.world.resource::<voxear_render::WornLook>().copied().expect("worn in the Scene view");
+    assert!(worn.sun.is_some_and(|sun| sun.shadow_tint.z > sun.shadow_tint.x), "its blue shade");
+    assert_eq!(editor.game.engine.world.resource::<voxear_render::Sky>().map(|sky| sky.haze), own);
+    assert_eq!(editor.ui.selected_option(look), 1, "the menu shows the pack worn");
+    editor.ui.focus(look);
+    editor.ui.key_down(Key::Up);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(voxear_engine::look_packs::worn(&editor.game.engine.world).is_none());
+    assert!(editor.game.engine.world.resource::<voxear_render::WornLook>().is_none());
+
     // New lighting settings made from a scene without any carry its own sky over, and the scene names them.
     let top = editor.ui.find(editor.ui.root(), "lighting-scene").unwrap();
     let copy = first_with(&editor.ui, top, "lighting-copy").unwrap();

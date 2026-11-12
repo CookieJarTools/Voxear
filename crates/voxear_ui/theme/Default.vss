@@ -1008,6 +1008,87 @@ DockSpace .split-column > .split-divider {
     min-height: 0px;
 }
 
+/* The ready-made menu of look packs (LookPackScreen in C#): a panel down
+   the screen's left, so the game shows beside it as packs are tried, with a
+   row for each pack. */
+.look-pack-screen {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    bottom: 0px;
+    width: 420px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px 24px;
+    background-color: rgba(10, 11, 13, 0.92);
+}
+
+.lps-bar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.lps-title {
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.lps-spacer {
+    flex-grow: 1;
+}
+
+.lps-scroll {
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+.lps-list {
+    flex-direction: column;
+    gap: 6px;
+}
+
+.lps-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    height: auto;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.lps-row.selected {
+    background-color: var(--vx-accent-soft);
+    border-color: var(--vx-accent);
+}
+
+.lps-name {
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.lps-source {
+    font-size: 11px;
+    color: var(--vx-accent);
+}
+
+.lps-description {
+    width: 100%;
+    color: var(--vx-muted);
+    white-space: normal;
+}
+
+.lps-folder {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--vx-muted);
+    white-space: normal;
+}
+
 /* The controls as a list (ControlsList in C#): a row for each action, under
    its category, with a column of bindings for each device. */
 .controls-list {

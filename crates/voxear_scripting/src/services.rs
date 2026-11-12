@@ -249,6 +249,14 @@ pub trait ScriptServices {
         anyhow::bail!("biomes are read only in a running game, not here ({reference})")
     }
 
+    /// Every look pack there is to wear, for `LookPacks` in Voxear.Core, as
+    /// JSON: `packs`, each with what names it, its name, its description
+    /// and where it is from; `worn`, what names the one worn, if any; and
+    /// `folder`, where a player keeps their own.
+    fn look_packs_json(&mut self, _world: &World) -> Result<String> {
+        anyhow::bail!("look packs are listed only in a running game, not here")
+    }
+
     /// The biome the place `at` is, by its GUID, for `Biomes.At` in
     /// Voxear.Core: none where no world of blocks with biomes reaches.
     fn biome_at(&mut self, _world: &World, _at: [f32; 3]) -> Option<String> {
@@ -666,6 +674,14 @@ pub(crate) unsafe extern "C" fn caves_info(
 /// -1 when they cannot be listed here.
 pub(crate) unsafe extern "C" fn data_assets(buffer: *mut u8, capacity: i32) -> i32 {
     unsafe { answer_json(with_services(|services| services.data_assets()), buffer, capacity) }
+}
+
+/// The look packs as JSON for `LookPacks` in Voxear.Core (see
+/// [`ScriptServices::look_packs_json`]), written when it fits: its length,
+/// or -1 when there is none.
+pub(crate) unsafe extern "C" fn look_packs_info(buffer: *mut u8, capacity: i32) -> i32 {
+    let said = crate::interop::with_world(|world| with_services(|services| services.look_packs_json(world)));
+    unsafe { answer_json(said, buffer, capacity) }
 }
 
 /// Writes JSON a service gave into `buffer` when it fits, and gives its

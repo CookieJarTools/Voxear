@@ -457,6 +457,13 @@ impl ScriptRuntime {
         interop::take_lighting_requests()
     }
 
+    /// The look packs scripts asked to wear since the last call, oldest
+    /// first: what names each, an empty one for none, and whether the
+    /// choice is to be kept for the game's next run.
+    pub fn take_look_pack_requests(&mut self) -> Vec<(String, bool)> {
+        interop::take_look_pack_requests()
+    }
+
     /// Tells scripts the level's weather.
     pub fn publish_weather(&mut self, state: interop::WeatherState) {
         interop::publish_weather(state);

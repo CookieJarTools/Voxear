@@ -339,6 +339,7 @@ impl Engine {
         scripts.take_obj_destroys();
         scripts.take_level_requests();
         scripts.take_lighting_requests();
+        scripts.take_look_pack_requests();
         Some(scripts)
     }
 
@@ -522,6 +523,8 @@ impl Engine {
         crate::weather::update(&mut self.world, self.time.delta);
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
+        // The look pack worn is laid over the level's lighting as it is now.
+        crate::look_packs::update(&mut self.world);
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);

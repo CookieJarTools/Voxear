@@ -439,6 +439,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::WorldGen => ("World Generator", "sprout"),
                 AssetKind::BlockWorld => ("Block World", "blocks"),
                 AssetKind::Block => ("Block", "block"),
+                AssetKind::Biome => ("Biome", "sprout"),
                 AssetKind::VoxModel => ("Block Model", "blocks"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
                 AssetKind::Data => ("Data asset", "file"),

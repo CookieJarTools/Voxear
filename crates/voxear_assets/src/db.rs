@@ -83,6 +83,10 @@ pub enum AssetKind {
     /// A `.block` file: one block, how it looks and whether it is a liquid,
     /// which the worlds of blocks made of it list.
     Block,
+    /// A `.biome` file: a kind of country, where it lies by climate and
+    /// height and the blocks its ground is made of, which a world of
+    /// blocks' generated ground lists.
+    Biome,
     /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
     /// tools save it, which a Block World's Model brush builds.
     VoxModel,
@@ -118,6 +122,7 @@ impl AssetKind {
             "worldgen" => Self::WorldGen,
             "blockworld" => Self::BlockWorld,
             "block" => Self::Block,
+            "biome" => Self::Biome,
             "vox" => Self::VoxModel,
             "particles" => Self::Particles,
             _ => return None,

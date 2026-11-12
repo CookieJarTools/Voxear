@@ -264,6 +264,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::WorldGen) => "sprout",
                 FileKind::Asset(AssetKind::BlockWorld) => "blocks",
                 FileKind::Asset(AssetKind::Block) => "block",
+                FileKind::Asset(AssetKind::Biome) => "sprout",
                 FileKind::Asset(AssetKind::VoxModel) => "blocks",
                 FileKind::Asset(AssetKind::Lighting) => "light",
                 FileKind::Asset(AssetKind::Data) => "file",

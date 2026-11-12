@@ -488,6 +488,7 @@ pub struct Content {
     /// Blocks the worlds of blocks list, by GUID, read once.
     blocks: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::block::BlockDef>>>,
     blocks_version: u64,
+    biomes: HashMap<AssetGuid, Option<Arc<voxear_terrain::generate::BiomeDef>>>,
     /// Heightmap pictures terrains' layers read, by GUID.
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// World generators terrains' Generate layers read, by GUID.
@@ -667,6 +668,7 @@ impl Content {
             full_block_worlds: Default::default(),
             blocks: HashMap::new(),
             blocks_version: 0,
+            biomes: HashMap::new(),
             terrain_greys: HashMap::new(),
             world_gens: HashMap::new(),
             handlings_version: 0,
@@ -1600,6 +1602,39 @@ impl Content {
     /// `blocks::refresh`).
     pub fn forget_block(&mut self, guid: AssetGuid) {
         self.blocks.remove(&guid);
+        self.blocks_version += 1;
+    }
+
+    /// The biome `reference` names, read once, with its GUID.
+    pub fn biome(&mut self, reference: &str) -> Option<(AssetGuid, Arc<voxear_terrain::generate::BiomeDef>)> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.biomes.get(&guid) {
+            return kept.clone().map(|biome| (guid, biome));
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::Biome)?.path.clone();
+        let read = self.read_text(&path).and_then(|text| voxear_terrain::generate::BiomeDef::parse(&text));
+        let kept = match read {
+            Ok(biome) => Some(Arc::new(biome)),
+            Err(error) => {
+                tracing::warn!("{path} could not be read: {error:#}");
+                None
+            }
+        };
+        self.biomes.insert(guid, kept.clone());
+        kept.map(|biome| (guid, biome))
+    }
+
+    /// What the biome at `guid` is called: its file's name.
+    pub fn biome_name(&self, guid: AssetGuid) -> Option<String> {
+        let path = &self.db.get(guid).filter(|entry| entry.kind == AssetKind::Biome)?.path;
+        Some(Path::new(path).file_stem()?.to_string_lossy().into_owned())
+    }
+
+    /// Forgets a biome, read again when next asked for, as after it was
+    /// saved. Worlds made from it are made again as their blocks are when
+    /// one of those is saved.
+    pub fn forget_biome(&mut self, guid: AssetGuid) {
+        self.biomes.remove(&guid);
         self.blocks_version += 1;
     }
 

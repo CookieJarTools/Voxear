@@ -1557,6 +1557,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::WorldGen) => "World Generator",
         ItemKind::Asset(AssetKind::BlockWorld) => "Block World",
         ItemKind::Asset(AssetKind::Block) => "Block",
+        ItemKind::Asset(AssetKind::Biome) => "Biome",
         ItemKind::Asset(AssetKind::VoxModel) => "Block Model",
     }
 }
@@ -1588,6 +1589,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::WorldGen) => "sprout",
         ItemKind::Asset(AssetKind::BlockWorld) => "blocks",
         ItemKind::Asset(AssetKind::Block) => "block",
+        ItemKind::Asset(AssetKind::Biome) => "sprout",
         ItemKind::Asset(AssetKind::VoxModel) => "blocks",
     }
 }

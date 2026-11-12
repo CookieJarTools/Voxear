@@ -19,7 +19,9 @@
 //! Clouds of the **Blocks** kind are the same clouds built of cubes: every
 //! place in a cube is cloud or not as the cube's middle is, so the shadows
 //! are square-edged too, and the Clouds pass walks the cubes along each ray
-//! to the first one's face instead, lit a face at a time.
+//! to the first one's face instead, lit a face at a time. With any softness
+//! the cubes are mist: each takes out only some of the light, less at a
+//! cloud's edges, and the walk goes on through them.
 //!
 //! The sky pass lays that picture over the sky it draws, sun, moon and stars
 //! behind it. Clouds are only ever behind what is drawn: a peak higher than
@@ -60,6 +62,7 @@ pub fn gpu(clouds: &Clouds) -> GpuClouds {
             CloudKind::Blocks => 1,
         },
         block: clouds.block.clamp(1.0, 10_000.0),
+        softness: clouds.softness.clamp(0.0, 1.0),
         view: NO_TEXTURE,
         shadow_map: NO_TEXTURE,
         noise: NO_TEXTURE,

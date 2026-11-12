@@ -66,27 +66,14 @@ float cloudPatches(float2 p)
     return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
 }
 
-// How much light a metre of cloud takes out at `at` in the clouds' own pattern, which drifts over the world,
-// `height` of the way up the layer from its undersides (0) to its tops (1): nothing outside clouds. `fine` adds
-// the bites out of their edges, which their shadows and the light through them do without.
-float cloudDensityIn(Frame* frame, float2 at, float height, bool fine)
+// How far inside a cloud `at` is in the clouds' own pattern, which drifts over the world, `height` of the way up the
+// layer: 0 at a cloud's edge, 1 well inside, less than 0 outside. `q` is the place in the noise.
+float cloudInside(Frame* frame, float2 at, float height, out float3 q)
 {
     Clouds clouds = frame->lighting.clouds;
-    bool blocks = clouds.kind == CLOUDS_BLOCKS;
-    if (blocks)
-    {
-        // Every place in a cube is as the cube's middle is.
-        at = (floor(at / clouds.block) + 0.5) * clouds.block;
-        height = (floor(height * clouds.thickness / clouds.block) + 0.5) * clouds.block / clouds.thickness;
-    }
-    if (height <= 0.0 || height >= 1.0)
-    {
-        return 0.0;
-    }
-    // Below a quarter of the way up, a cloud keeps the outline it has there, drawn in a little the lower it goes:
-    // the big ones all stand on the same flat underside, as clouds that formed at one height do, and wisps too thin
-    // to reach it hang above it.
-    float3 q = float3(at.x, max(height, 0.25) * clouds.thickness, at.y) / clouds.size;
+    // Below a quarter of the way up, a cloud keeps the outline it has there: the big ones all stand on the same flat
+    // underside, as clouds that formed at one height do.
+    q = float3(at.x, max(height, 0.25) * clouds.thickness, at.y) / clouds.size;
     // Big round puffs with smaller ones on them.
     float body = cloudNoise(frame, q).a * 0.7 + cloudNoise(frame, q * 2.3 + 3.1).a * 0.3;
     // More cloud here and less there, over several clouds' width; none of that under a clear or an overcast sky.
@@ -94,15 +81,49 @@ float cloudDensityIn(Frame* frame, float2 at, float height, bool fine)
     float cover = saturate(clouds.cover + (patches - 0.5) * 0.6 * (1.0 - abs(clouds.cover * 2.0 - 1.0)));
     // Flat undersides and rounded tops: the higher, the less of each puff is cloud.
     float threshold = lerp(0.82, 0.22, cover) + 0.25 * height * height;
-    // How far inside a cloud this is, from 0 at its edge.
-    float inside = (body - threshold) / 0.25;
-    if (blocks)
+    return (body - threshold) / 0.25;
+}
+
+// How much of a cube of a cloud built of them is cloud, from 0 for none to 1, for the cube `at` and `height` are in:
+// every place in a cube is as the cube's middle is. A solid cube is all cloud or none; a soft one is the fainter the
+// nearer its cloud's edge.
+float cloudCubeAt(Frame* frame, float2 at, float height)
+{
+    Clouds clouds = frame->lighting.clouds;
+    at = (floor(at / clouds.block) + 0.5) * clouds.block;
+    height = (floor(height * clouds.thickness / clouds.block) + 0.5) * clouds.block / clouds.thickness;
+    if (height <= 0.0 || height >= 1.0)
     {
-        // A cube is cloud or it is not, down to the layer's underside; soft clouds lose their thin edges, so as
-        // much is left out here.
-        return inside > 0.2 ? clouds.density * CLOUD_THICK : 0.0;
+        return 0.0;
     }
-    inside = saturate(inside - max(0.25 - height, 0.0) * 1.4);
+    float3 q;
+    // Soft clouds lose their thin edges, so as much is left out here.
+    float inside = cloudInside(frame, at, height, q) - 0.2;
+    if (inside <= 0.0)
+    {
+        return 0.0;
+    }
+    return clouds.softness > 0.0 ? saturate(0.15 + inside / (0.8 * clouds.softness)) : 1.0;
+}
+
+// How much light a metre of cloud takes out at `at` in the clouds' own pattern, `height` of the way up the layer
+// from its undersides (0) to its tops (1): nothing outside clouds. `fine` adds the bites out of their edges, which
+// their shadows and the light through them do without.
+float cloudDensityIn(Frame* frame, float2 at, float height, bool fine)
+{
+    Clouds clouds = frame->lighting.clouds;
+    if (clouds.kind == CLOUDS_BLOCKS)
+    {
+        return cloudCubeAt(frame, at, height) * clouds.density * CLOUD_THICK;
+    }
+    if (height <= 0.0 || height >= 1.0)
+    {
+        return 0.0;
+    }
+    float3 q;
+    // Drawn in a little the lower it goes under a quarter of the way up, so wisps too thin to reach the underside
+    // hang above it.
+    float inside = saturate(cloudInside(frame, at, height, q) - max(0.25 - height, 0.0) * 1.4);
     inside *= saturate(height / 0.06) * saturate((1.0 - height) / 0.15);
     if (inside <= 0.0)
     {

@@ -595,7 +595,9 @@ struct Clouds
     // CLOUDS_SOFT, or CLOUDS_BLOCKS for clouds built of cubes `block` metres wide.
     uint kind;
     float block;
-    float2 pad;
+    // How soft the cubes are: 0 solid, 1 mist.
+    float softness;
+    float pad;
 };
 
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.

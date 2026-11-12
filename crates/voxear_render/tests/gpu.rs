@@ -6845,6 +6845,8 @@ struct CloudView {
     gradient: bool,
     /// The moon for a light, and a camera that gets used to the dark.
     moon: bool,
+    /// The weather laid over it all.
+    weather: voxear_render::weather::WeatherKind,
 }
 
 impl CloudView {
@@ -6859,6 +6861,7 @@ impl CloudView {
             size: (640, 360),
             gradient: false,
             moon: false,
+            weather: voxear_render::weather::WeatherKind::Clear,
         }
     }
 }
@@ -6890,6 +6893,7 @@ fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     let post = if view.moon { PostProcess::default() } else { PostProcess::neutral() };
     world.insert_resource(PostProcess { anti_aliasing, ..post });
+    world.insert_resource(voxear_render::weather::Weather::of(view.weather));
     let mut time = 0.0;
     run(&mut renderer, &world, &mut time, 2);
     // A frame is never taken for longer than a quarter of a second.
@@ -6970,6 +6974,44 @@ fn clouds_show_in_a_sky_of_its_own_colours_and_under_the_moon() {
 }
 
 #[test]
+fn weather_fills_the_sky_dims_the_day_and_hides_the_distance_in_fog() {
+    use voxear_render::{Clouds, weather::WeatherKind};
+    // Over a wide ground, looking a little above the horizon, under a few clouds.
+    let under = |weather: WeatherKind| {
+        let looking = bearing(12.0, 60.0);
+        let view = CloudView { looking, ground: true, weather, ..CloudView::of(Clouds::covering(0.25)) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(clear) = under(WeatherKind::Clear) else { return };
+    let (overcast, storm, fog) =
+        (under(WeatherKind::Overcast).unwrap(), under(WeatherKind::Storm).unwrap(), under(WeatherKind::Fog).unwrap());
+    keep_image("weather clear.png", &clear);
+    keep_image("weather overcast.png", &overcast);
+    keep_image("weather storm.png", &storm);
+    keep_image("weather fog.png", &fog);
+    // The sky is the picture's top half; blue shows where a pixel is far bluer than it is red.
+    let blue = |pixels: &[u8]| {
+        let sky = &pixels[..640 * 150 * 4];
+        sky.chunks_exact(4).filter(|p| u32::from(p[2]) > u32::from(p[0]) * 3 / 2 + 8).count() as f32 / (640.0 * 150.0)
+    };
+    assert!(blue(&clear) > 0.3, "blue sky between a few clouds: {}", blue(&clear));
+    assert!(blue(&overcast) < 0.03, "none under overcast: {}", blue(&overcast));
+    // The ground is its bottom rows: lit by the sun when clear, dull under overcast, darker still in a storm.
+    let ground = |pixels: &[u8]| {
+        let rows = &pixels[640 * 320 * 4..];
+        rows.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 40)
+    };
+    let lit = [&clear, &overcast, &storm].map(|pixels| ground(pixels));
+    assert!(lit[0] > lit[1] + 15 && lit[1] > lit[2] + 10, "dimmer with the weather: {lit:?}");
+    // Fog takes the line between ground and sky: the rows either side of the horizon are nearly alike.
+    let step = |pixels: &[u8]| {
+        let row = |y: usize| (0..640).map(|x| i64::from(pixels[(y * 640 + x) * 4 + 1])).sum::<i64>() / 640;
+        (150..300).map(|y| (row(y) - row(y + 6)).abs()).max().unwrap()
+    };
+    assert!(step(&clear) > step(&fog) * 2, "the horizon is lost in fog: {} against {}", step(&clear), step(&fog));
+}
+
+#[test]
 fn clouds_drift_and_their_shadows_cross_the_ground() {
     use voxear_render::Clouds;
     // Looking down on the ground from high up, under the clouds.
@@ -7021,6 +7063,17 @@ fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
     };
     let (in_soft, in_cubes) = (flat(&soft), flat(&cubes));
     assert!(in_cubes > 0.62 && in_cubes > in_soft + 0.12, "flat faces: {in_cubes} of cubes' pixels, {in_soft} of soft");
+    // Soft cubes are mist the sky shows through: far more of the picture is part sky and part cloud, its colour
+    // somewhere between the two, than solid cubes' edges alone.
+    let (misty, _) = cloud_render(&CloudView::of(Clouds { softness: 1.0, ..Clouds::blocks(0.5) })).unwrap();
+    keep_image("clouds of soft cubes.png", &misty);
+    let between = |pixels: &[u8]| {
+        let partly = |(a, b): &(&[u8], &[u8])| (10..70).contains(&a[1].abs_diff(b[1]));
+        pixels.chunks_exact(4).zip(clear.chunks_exact(4)).filter(partly).count()
+    };
+    let (in_solid, in_misty) = (between(&cubes), between(&misty));
+    assert!(cloud_share(&misty, &clear) > 0.15, "soft cubes are still clouds");
+    assert!(in_misty * 10 > in_solid * 12, "the sky shows through soft cubes: {in_misty} pixels against {in_solid}");
     // Their shadows on the ground are cubes' too.
     let looking = bearing(-60.0, 60.0);
     let view = CloudView { looking, from: 800.0, ground: true, ..CloudView::of(Clouds::blocks(0.5)) };
@@ -7036,16 +7089,17 @@ fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
 fn clouds_cost_little_at_full_hd() {
     use voxear_render::Clouds;
     let size = (1920, 1080);
-    for (name, cover, elevation, looking) in [
-        ("clouds fair.png", 0.45, 50.0, bearing(18.0, 70.0)),
-        ("clouds towards the sun.png", 0.55, 25.0, bearing(20.0, 10.0)),
-        ("clouds sunset.png", 0.5, 4.0, bearing(14.0, 25.0)),
-        ("clouds heavy.png", 0.9, 50.0, bearing(25.0, 120.0)),
-        ("clouds of cubes fair.png", -0.45, 50.0, bearing(18.0, 70.0)),
-        ("clouds of cubes low.png", -0.3, 30.0, bearing(6.0, 200.0)),
+    let soft_cubes = |cover: f32| Clouds { softness: 0.7, ..Clouds::blocks(cover) };
+    for (name, clouds, elevation, looking) in [
+        ("clouds fair.png", Clouds::covering(0.45), 50.0, bearing(18.0, 70.0)),
+        ("clouds towards the sun.png", Clouds::covering(0.55), 25.0, bearing(20.0, 10.0)),
+        ("clouds sunset.png", Clouds::covering(0.5), 4.0, bearing(14.0, 25.0)),
+        ("clouds heavy.png", Clouds::covering(0.9), 50.0, bearing(25.0, 120.0)),
+        ("clouds of cubes fair.png", Clouds::blocks(0.45), 50.0, bearing(18.0, 70.0)),
+        ("clouds of cubes low.png", Clouds::blocks(0.3), 30.0, bearing(6.0, 200.0)),
+        ("clouds of soft cubes low.png", soft_cubes(0.3), 30.0, bearing(6.0, 200.0)),
+        ("clouds of soft cubes fair.png", soft_cubes(0.45), 50.0, bearing(18.0, 70.0)),
     ] {
-        // A cover below nothing stands for as much cover of cubes.
-        let clouds = if cover < 0.0 { Clouds::blocks(-cover) } else { Clouds::covering(cover) };
         let view = CloudView { elevation, looking, ground: true, size, ..CloudView::of(clouds) };
         let Some((pixels, least)) = cloud_render(&view) else { return };
         keep_sized(name, &pixels, size);

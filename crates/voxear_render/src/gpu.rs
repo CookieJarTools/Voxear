@@ -698,7 +698,9 @@ pub struct GpuClouds {
     /// wide.
     pub kind: u32,
     pub block: f32,
-    pub _pad: [f32; 2],
+    /// How soft the cubes are, 0 solid to 1 mist.
+    pub softness: f32,
+    pub _pad: f32,
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's

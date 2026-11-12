@@ -77,6 +77,7 @@ mod ui_panels;
 mod volumetric;
 mod water;
 pub mod water_bodies;
+pub mod weather;
 mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};

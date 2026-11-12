@@ -339,11 +339,12 @@ void skyLightMain()
     Frame* frame = push.frame;
     SkyLight* light = buffers()->skyLight;
     light->sun = float4(sunThroughAtmosphereNow(frame), 0.0);
-    // Under clouds the sky's light is greyer, the more of it they cover: as bright, less blue.
+    // Under clouds the sky's light is greyer, the more of it they cover: as bright, less blue, and under a sky
+    // all cloud not blue at all.
     float3 sky = skyAroundNow(frame);
     float cover = frame->lighting.clouds.cover;
     float grey = dot(sky, float3(0.2126, 0.7152, 0.0722));
-    light->sky = float4(lerp(sky, grey, cover * 0.7), 0.0);
+    light->sky = float4(lerp(sky, grey, cover * cover), 0.0);
 }
 
 // ---------------------------------------------------------------- Clouds
@@ -503,9 +504,10 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
             along += reach;
             reach *= 2.0;
         }
-        // The sun straight through, and the light scattered round inside the cloud, which reaches far deeper.
+        // The sun straight through, and the light scattered round inside the cloud, which reaches far deeper: it
+        // thins with the cloud in its way rather than dying out, so the underside of a heavy sky is grey, not black.
         float direct = exp(-shade);
-        float scattered = exp(-shade * 0.2);
+        float scattered = 1.0 / (1.0 + 0.35 * shade);
         float lit = (0.3 * direct + 0.7 * scattered) * 0.95 + direct * lining * 0.15;
         // The sky lights their tops more than their undersides, which get the ground's.
         float3 light = sun * lit + sky * (0.3 + 0.7 * saturate(height));
@@ -534,9 +536,10 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
 static const float CLOUD_BLOCK_REACH = 16000.0;
 static const uint CLOUD_BLOCK_STEPS = 128;
 
-// Clouds built of cubes along a ray, as cloudsMarched gives soft ones: the cubes are walked one at a time to the
-// first that is cloud, and its face lit all one colour, by where it faces and by the cubes between it and the sun.
-// Their layer is flat: they are not drawn far enough off for the Earth's curve to show.
+// Clouds built of cubes along a ray, as cloudsMarched gives soft ones: the cubes are walked one at a time. A solid
+// cube ends the walk, its face lit all one colour by where it faces and by the cubes between it and the sun. A soft
+// one takes out some of the light, by how much of it is cloud and how far the ray goes through it, is lit as mist
+// is, and the walk goes on. Their layer is flat: they are not drawn far enough off for the Earth's curve to show.
 float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun, float3 sky, out float distance)
 {
     Clouds clouds = frame->lighting.clouds;
@@ -573,15 +576,53 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
     float3 next = (cell + max(toward, 0.0) - origin) * toward * span;
     // The face the ray comes in by: the layer's own, or none for a camera inside it.
     float3 normal = from > 0.0 ? float3(0.0, -toward.y, 0.0) : float3(0.0);
+    float3 toSun = towardsSun(frame);
+    float soft = clouds.softness;
+    // How much of the light a whole cube takes out for each metre through it: all of it at once when solid, and
+    // from nearly all to a little over half of it across its width as mist gets softer.
+    float thick = soft > 0.0 ? lerp(6.0, 0.9, soft) / block : 1e9;
     float t = from;
-    bool found = false;
+    float3 color = 0.0;
+    float through = 1.0;
+    float weight = 0.0;
     for (uint i = 0; i < CLOUD_BLOCK_STEPS; i++)
     {
         float3 middle = (cell + 0.5) * block;
-        if (cloudDensityIn(frame, middle.xz, middle.y / clouds.thickness, false) > 0.0)
+        float whole = cloudCubeAt(frame, middle.xz, middle.y / clouds.thickness);
+        if (whole > 0.0)
         {
-            found = true;
-            break;
+            float leave = min(min(min(next.x, next.y), next.z), to);
+            float kept = exp(-whole * thick * max(leave - t, 0.0));
+            float added = through * (1.0 - kept);
+            if (added > 0.004)
+            {
+                // The cubes between here and the sun: from the open cube a solid face looks into, or from a soft
+                // cube's own middle.
+                float3 open = (cell + 0.5 + normal * (1.0 - soft)) * block;
+                float shade = 0.0;
+                for (uint j = 1; j <= CLOUD_SUN_STEPS; j++)
+                {
+                    float3 p = open + toSun * (block * 1.2 * float(j));
+                    shade += cloudCubeAt(frame, p.xz, p.y / clouds.thickness);
+                }
+                float facing = saturate(dot(normal, toSun)) * lerp(1.0, 0.3, saturate(shade * 0.5));
+                // Some of the sun gets through a cloud to every face, most to its top and least to its underside,
+                // and the sky lights them in the same order: so each way a face can look has a shade of its own.
+                float3 solid = sun * (0.4 + 0.14 * normal.y + 0.5 * facing) * 0.95 + sky * (0.7 + 0.3 * normal.y);
+                // Mist is lit through: bright where little cloud is between it and the sun, whichever way the ray
+                // came into it, with the sky lighting the layer's top more than its underside.
+                float up = saturate(middle.y / clouds.thickness);
+                float3 mist = sun * (0.3 + 0.65 * exp(-0.7 * shade)) * 0.95 + sky * (0.45 + 0.55 * up);
+                color += lerp(solid, mist, soft) * added;
+                weight += added;
+                distance += t * added;
+            }
+            through *= kept;
+            if (through < 0.02)
+            {
+                through = 0.0;
+                break;
+            }
         }
         if (next.x < next.y && next.x < next.z)
         {
@@ -609,25 +650,12 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
             break;
         }
     }
-    if (!found)
+    if (weight <= 0.0)
     {
         return nothing;
     }
-    // The cubes between the face and the sun, from the open cube it looks into.
-    float3 toSun = towardsSun(frame);
-    float3 open = (cell + 0.5 + normal) * block;
-    float shade = 0.0;
-    for (uint j = 1; j <= CLOUD_SUN_STEPS; j++)
-    {
-        float3 p = open + toSun * (block * 1.2 * float(j));
-        shade += cloudDensityIn(frame, p.xz, p.y / clouds.thickness, false) > 0.0 ? 1.0 : 0.0;
-    }
-    float facing = saturate(dot(normal, toSun)) * lerp(1.0, 0.3, saturate(shade * 0.5));
-    // Some of the sun gets through a cloud to every face, most to its top and least to its underside, and the sky
-    // lights them in the same order: so each way a face can look has a shade of its own.
-    float3 light = sun * (0.4 + 0.14 * normal.y + 0.5 * facing) * 0.95 + sky * (0.7 + 0.3 * normal.y);
-    distance = t;
-    return float4(light, 0.0);
+    distance /= weight;
+    return float4(color, through);
 }
 
 // The clouds as the camera sees them, at half the picture's size: what they add in colour, and in alpha how much of

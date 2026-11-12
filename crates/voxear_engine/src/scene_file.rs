@@ -1321,6 +1321,8 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
         Some((reference, lit)) => {
             engine.world.insert_resource(SceneLighting(reference.to_string()));
             engine.world.insert_resource(LightingPost(lit.post.clone()));
+            // Lighting settings are the level's lighting whole, its weather too: their own, or clear.
+            engine.world.insert_resource(lit.weather.weather());
         }
         None if post.is_some() => {
             engine.world.remove_resource::<SceneLighting>();

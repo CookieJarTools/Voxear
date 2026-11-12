@@ -406,6 +406,10 @@ pub struct Clouds {
     pub kind: CloudKind,
     /// How wide one cube of a cloud built of them is, in metres.
     pub block: f32,
+    /// How soft a cloud built of cubes is, from 0 for solid cubes to 1 for
+    /// cubes of mist: faint at a cloud's edges, where the sky shows through
+    /// them, and lit as mist is rather than a face at a time.
+    pub softness: f32,
 }
 
 /// What a sky's clouds are made of.
@@ -432,6 +436,7 @@ impl Default for Clouds {
             shadows: 0.8,
             kind: CloudKind::Soft,
             block: 100.0,
+            softness: 0.0,
         }
     }
 }
@@ -512,7 +517,9 @@ pub fn extract(
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
-    let sky = world.resource::<Sky>().copied().unwrap_or_default();
+    // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
+    let weather = crate::weather::Weather::in_world(world);
+    let sky = weather.sky(world.resource::<Sky>().copied().unwrap_or_default());
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
@@ -525,7 +532,10 @@ pub fn extract(
     // Post volumes blend in where the camera is, unless a view sets its own settings.
     let scene_post = match options.post_override {
         Some(_) => scene_post,
-        None => crate::post_volume::blend_volumes(world, scene_post, position),
+        None => {
+            let blended = crate::post_volume::blend_volumes(world, scene_post, position);
+            PostProcess { fog: weather.fog(blended.fog), ..blended }
+        }
     };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
@@ -647,7 +657,7 @@ pub fn extract(
             LightKind::Directional if !sun_found => {
                 sun_found = true;
                 frame.sun_direction = vec3(forward);
-                frame.sun_color = vec3(radiance);
+                frame.sun_color = vec3(radiance * weather.sun());
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
@@ -696,7 +706,7 @@ pub fn extract(
     let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
         zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
     };
-    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (*zone, transform.rotation));
+    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (weather.wind(*zone), transform.rotation));
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }

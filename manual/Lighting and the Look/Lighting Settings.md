@@ -8,7 +8,7 @@ order: 6
 
 Click the sun on the left-hand rail to open the **Lighting** page. At its top, **Lighting** picks the settings the open scene is lit by: None, one of the built-in sets, or any lighting settings in the project. The scene names them from then on, once you save it.
 
-Rest the pointer on a setting's name, or on a tab, to read what it does. Below, a tab for each part of the settings shows them all: **Sky**, **Clouds**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading** and **Lens**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value.
+Rest the pointer on a setting's name, or on a tab, to read what it does. Below, a tab for each part of the settings shows them all: **Sky**, **Clouds**, **Weather**, **Sun**, **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading** and **Lens**. Each shows the value in effect, and a change is written into the lighting settings' file at once, so the scene, and every other scene lit by the same settings, changes as you type. Empty a number's field to go back to the look's value.
 
 Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. A scene lit by none has **New Lighting Settings** instead, which carries the scene's own sky and post-processing over into the new settings.
 
@@ -41,6 +41,7 @@ intensity = 0.2
 | `[sky]` | The sky, as a scene's `[sky]` writes it: its mode, colours, haze, sun size, stars and, under `[sky.clouds]`, its clouds (see [[The Sky]]). Only what you write changes |
 | `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, `shadow_tint` colours its shadows where the light has no tint of its own, and `shadow_distance` and `shadow_split` set how far its shadows reach and how sharp they are near and far (see [[Lights]]) |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: exposure, bloom, grading, fog and the rest (see [[Post-Processing]]). Only what you write changes |
+| `[weather]` | The weather the level is in once lit by these settings: a `kind` such as `"rain"`, or `"custom"` and amounts of its own (see [[Weather]]). Clear when left out |
 
 Change them on the Lighting page, or select the file in the Project panel and change them in the Inspector, which shows the same settings in the same tabs; the open scene lit by them changes at once. A setting that does nothing as the others stand is hidden until it would: the fog's settings while there is no fog, light shafts' while there are none, the gradient sky's colours under the atmosphere, auto exposure's limits while exposure is fixed, and the tonemapper's contrast and saturation unless it is AgX. You can also change the file in your text editor: an open scene lit by it changes as soon as you save.
 
@@ -73,4 +74,4 @@ public sealed class StormTrigger : Behaviour
 }
 ```
 
-Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes. The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.
+Applied settings replace the scenes' own lighting, sky and post-processing and all, from the next frame until the level changes. They set the weather too, to their own or to clear; to turn the weather alone, and gradually, use `Weather.Set` (see [[Weather]]). The built-in ones are there by name, such as `LightingSettings.GoldenHour`, `LightingSettings.NightRaid` and `LightingSettings.CandlelitCastle`. Settings that cannot be read are reported in the Console, and the lighting stays as it was.

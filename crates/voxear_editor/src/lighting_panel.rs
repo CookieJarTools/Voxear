@@ -75,6 +75,17 @@ const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
 }
 
+const WEATHER_KINDS: &[(&str, &str)] = &[
+    ("Clear", "clear"),
+    ("Cloudy", "cloudy"),
+    ("Overcast", "overcast"),
+    ("Rain", "rain"),
+    ("Storm", "storm"),
+    ("Snow", "snow"),
+    ("Fog", "fog"),
+    ("Custom", "custom"),
+];
+const CUSTOM_WEATHER: When = &[(&["weather", "kind"], "custom")];
 const CLOUD_KINDS: &[(&str, &str)] = &[("Soft", "soft"), ("Blocks", "blocks")];
 const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
@@ -111,6 +122,8 @@ const SETTINGS: &[Info] = &[
         help: "Soft clouds have billowing edges. Blocks builds the same clouds out of cubes, flat-sided, for a world of blocks." },
     Info { path: &["sky", "clouds", "block"], title: "Block size", group: "Clouds", kind: number(1.0, 2000.0, "m"), when: BLOCK_CLOUDS,
         help: "How wide one cube of the clouds is." },
+    Info { path: &["sky", "clouds", "softness"], title: "Softness", group: "Clouds", kind: number(0.0, 1.0, ""), when: BLOCK_CLOUDS,
+        help: "How soft the cubes are: 0 for solid cubes, 1 for cubes of mist, faint at a cloud's edges where the sky shows through." },
     Info { path: &["sky", "clouds", "cover"], title: "Cover", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "How much of the sky the clouds fill: 0 for none, 0.4 for a fair day, 1 for overcast." },
     Info { path: &["sky", "clouds", "height"], title: "Height", group: "Clouds", kind: number(0.0, 10000.0, "m"), when: ALWAYS,
@@ -125,6 +138,20 @@ const SETTINGS: &[Info] = &[
         help: "How fast the clouds move. They go the way the level's Wind Zone blows." },
     Info { path: &["sky", "clouds", "shadows"], title: "Shadows", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "How dark the clouds' shadows on the world are. 0 turns them off." },
+    Info { path: &["weather", "kind"], title: "Weather", group: "Weather", kind: Kind::Choice(WEATHER_KINDS), when: ALWAYS,
+        help: "The weather the level is in when lit by these settings. Clear leaves the lighting as it is; the others add cloud, gloom, fog, wind, rain or snow over it." },
+    Info { path: &["weather", "cloud"], title: "Cloud", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How far the sky's clouds are filled in: 1 is overcast whatever the Clouds tab's Cover." },
+    Info { path: &["weather", "darkness"], title: "Darkness", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How heavy and dark the clouds are, and how much of the sun's light they take." },
+    Info { path: &["weather", "fog"], title: "Fog", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How much fog and haze the weather adds to the air." },
+    Info { path: &["weather", "wind"], title: "Wind", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How much harder the level's Wind Zone blows: plants, the sea, the clouds and the rain all feel it." },
+    Info { path: &["weather", "rain"], title: "Rain", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How hard it rains round the camera." },
+    Info { path: &["weather", "snow"], title: "Snow", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How hard it snows round the camera." },
     Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS,
         help: "The sun's colour as a temperature, in kelvin: about 2000 K is a candle-orange sunset, 5500 K is white noon light, above 7000 K is cool and blue." },
     Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
@@ -525,6 +552,7 @@ fn group_help(group: &str) -> &'static str {
     match group {
         "Sky" => "The sky, and the light it gives everything from all round.",
         "Clouds" => "The clouds in the sky, and the shadows they cast as they drift.",
+        "Weather" => "The weather laid over this lighting: a kind, or amounts of your own. Scripts can turn it too.",
         "Sun" => "How the sun looks: its colour, brightness and shadows. Where it shines from is the sun Obj's rotation.",
         "Exposure" => "How bright the picture is, and how the camera adjusts to light and dark, as an eye does.",
         "Colour" => "The colour grade: contrast, saturation, warmth and lens effects over the finished picture.",
@@ -609,6 +637,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
     table.insert("post".into(), toml::Value::Table(toml::Table::try_from(post)?));
+    table.insert("weather".into(), toml::Value::try_from(lighting.weather)?);
     Ok(table)
 }
 
@@ -878,6 +907,28 @@ mod tests {
         let indoors = effective(&LightingFile::builtin("candlelit_castle").unwrap()).unwrap();
         assert_eq!(find(&indoors, &["sky", "clouds", "cover"]).and_then(|v| v.as_float()), Some(0.0));
         assert!(find(&indoors, &["sky", "clouds", "height"]).is_some());
+    }
+
+    #[test]
+    fn the_weather_is_written_as_a_kind_and_its_own_amounts_show_only_for_custom() {
+        use voxear_engine::weather::WeatherKind;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Moor.lighting");
+        std::fs::write(&file, "format = 1\nlook = \"highland_summer\"\n").unwrap();
+        let read = |file: &Path| toml::from_str::<LightingFile>(&std::fs::read_to_string(file).unwrap()).unwrap();
+        let shown = effective(&read(&file)).unwrap();
+        assert_eq!(find(&shown, &["weather", "kind"]).and_then(|v| v.as_str()), Some("clear"), "clear unless set");
+        let amounts = SETTINGS.iter().filter(|info| info.group == "Weather" && info.path != ["weather", "kind"]);
+        assert!(amounts.clone().count() == 6 && amounts.clone().all(|info| !applies(&shown, info.when)));
+        write_setting(&file, &["weather", "kind"], Some("storm".into())).unwrap();
+        assert_eq!(read(&file).resolve().unwrap().weather.kind, WeatherKind::Storm);
+        // Custom shows its amounts, and one written is the weather's.
+        write_setting(&file, &["weather", "kind"], Some("custom".into())).unwrap();
+        write_setting(&file, &["weather", "snow"], Some(0.4.into())).unwrap();
+        let lighting = read(&file);
+        assert_eq!(lighting.resolve().unwrap().weather.weather().now().snow, 0.4);
+        let shown = effective(&lighting).unwrap();
+        assert!(amounts.clone().all(|info| applies(&shown, info.when) && find(&shown, info.path).is_some()));
     }
 
     #[test]

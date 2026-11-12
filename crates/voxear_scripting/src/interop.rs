@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 78;
+pub(crate) const API_VERSION: u32 = 79;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -519,6 +519,11 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Block Mob, as
     /// `light_value` does an Obj's Light.
     pub block_mob_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Weather`: the kind the level's weather is or is turning to, with what it adds this moment written to
+    /// `amounts` (cloud, darkness, fog, wind, rain, snow) and whether it is still turning to `turning`; and turning
+    /// it over `seconds` to a kind, or with `amounts` to those.
+    pub weather_state: unsafe extern "C" fn(amounts: *mut [f32; 6], turning: *mut i32) -> i32,
+    pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 6], seconds: f32),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1168,6 +1173,11 @@ thread_local! {
     /// engine takes what they set after the frame.
     static TIME_OF_YEAR: Cell<f32> = const { Cell::new(f32::NAN) };
     static TIME_OF_YEAR_SET: Cell<Option<f32>> = const { Cell::new(None) };
+    /// The level's weather as `Weather` reads it: its kind, what it adds this moment and whether it is turning.
+    /// Scripts turning it change the kind here at once, and the engine takes what they asked after the frame.
+    static WEATHER: Cell<WeatherState> =
+        const { Cell::new(WeatherState { kind: 0, amounts: [0.0; 6], turning: false }) };
+    static WEATHER_SET: Cell<Option<WeatherRequest>> = const { Cell::new(None) };
     /// Which of the sea's costlier looks are on, as `Water.Features` reads
     /// them: none without an Ocean. Scripts setting them change them here at
     /// once, and the engine takes what they set after the frame.
@@ -1220,6 +1230,49 @@ pub(crate) fn take_level_requests() -> Vec<String> {
 
 pub(crate) fn take_lighting_requests() -> Vec<String> {
     LIGHTING_REQUESTS.take()
+}
+
+/// The level's weather as scripts read it: its kind, by its place among the kinds, what it adds this moment
+/// (cloud, darkness, fog, wind, rain, snow), and whether it is still turning.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeatherState {
+    pub kind: i32,
+    pub amounts: [f32; 6],
+    pub turning: bool,
+}
+
+/// What a script asked of the weather: to turn over `seconds` to a kind, or with `amounts` to those.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeatherRequest {
+    pub kind: i32,
+    pub amounts: Option<[f32; 6]>,
+    pub seconds: f32,
+}
+
+pub(crate) fn publish_weather(state: WeatherState) {
+    WEATHER.set(state);
+}
+
+pub(crate) fn take_weather() -> Option<WeatherRequest> {
+    WEATHER_SET.take()
+}
+
+unsafe extern "C" fn weather_state(amounts: *mut [f32; 6], turning: *mut i32) -> i32 {
+    let state = WEATHER.get();
+    if !amounts.is_null() {
+        unsafe { *amounts = state.amounts };
+    }
+    if !turning.is_null() {
+        unsafe { *turning = i32::from(state.turning) };
+    }
+    state.kind
+}
+
+unsafe extern "C" fn weather_set(kind: i32, amounts: *const [f32; 6], seconds: f32) {
+    let amounts = (!amounts.is_null()).then(|| unsafe { *amounts });
+    WEATHER.set(WeatherState { kind, turning: seconds > 0.0, ..WEATHER.get() });
+    let seconds = if seconds.is_finite() { seconds.max(0.0) } else { 0.0 };
+    WEATHER_SET.set(Some(WeatherRequest { kind, amounts, seconds }));
 }
 
 pub(crate) fn publish_time_of_year(time: Option<f32>) {
@@ -2032,6 +2085,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         set_world_budget: crate::blocks::set_world_budget,
         mob_motion_value,
         block_mob_value,
+        weather_state,
+        weather_set,
     }
 }
 

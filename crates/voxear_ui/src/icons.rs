@@ -107,6 +107,7 @@ pub const NAMES: &[&str] = &[
     "map-skull",
     "map-star",
     "map-arrow",
+    "minus",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -115,6 +116,7 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "chevron-down" => &[("M6 9.5l6 6 6-6", STROKE)],
         "check" => &[("M5.5 12.5l4.5 4.5 8.5-9.5", STROKE)],
         "plus" => &[("M12 5v14M5 12h14", STROKE)],
+        "minus" => &[("M5 12h14", STROKE)],
         "close" => &[("M6.5 6.5l11 11M17.5 6.5l-11 11", STROKE)],
         "more" => &[(
             "M3.5 12a1.75 1.75 0 1 0 3.5 0a1.75 1.75 0 1 0-3.5 0ZM10.25 12a1.75 1.75 0 1 0 3.5 0a1.75 1.75 0 1 0-3.5 0Z\

@@ -235,10 +235,11 @@ impl UiNumbers {
                 ui.set_image(node, image.map(|(texture, uv)| voxear_ui::ImageRef { texture, uv }));
             }
             UiAsk::SetMapView(text) => {
-                let numbers: Vec<f32> = text.split_whitespace().filter_map(|number| number.parse().ok()).collect();
-                if let (Some(mut settings), [zoom, turns, round, tilt]) = (ui.map_view_settings(node), &numbers[..]) {
-                    settings.zoom = voxear_ui::MapViewSettings::zoom_of(*zoom);
-                    (settings.turns, settings.round, settings.tilt) = (*turns != 0.0, *round != 0.0, tilt.clamp(20.0, 90.0));
+                if let Some(mut settings) = ui.map_view_settings(node) {
+                    let unknown = settings.set_all(text);
+                    if !unknown.is_empty() {
+                        tracing::warn!(target: "script", "a map view has no setting {}", unknown.join(", "));
+                    }
                     ui.set_map_view_settings(node, settings);
                 }
             }
@@ -914,6 +915,13 @@ impl GameUi {
     /// The element scripts hold by `element`, in the screen's UI.
     pub(crate) fn node(&self, element: u32) -> Option<voxear_ui::NodeId> {
         self.screen.numbers.node(element)
+    }
+
+    /// The number scripts hold each of the screen's map views by, for
+    /// those they hold.
+    pub(crate) fn map_view_numbers(&self) -> HashMap<voxear_ui::NodeId, u32> {
+        let views = self.screen.ui.map_views().into_iter();
+        views.filter_map(|node| Some((node, *self.screen.numbers.numbers.get(&node)?))).collect()
     }
 
     /// How many pixels one of the screen's UI's is, as it was last laid out.

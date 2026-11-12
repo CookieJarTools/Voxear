@@ -35,8 +35,8 @@ impl MapCorner {
 /// a minimap in a corner of the screen and a map opened over the game.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Map {
-    /// Whether the minimap shows, the corner it sits in, and how large it
-    /// is, in the UI's pixels.
+    /// Whether the minimap shows, the corner it sits in, and how wide it
+    /// is, in pixels on a screen 1080 high: it is scaled with the screen.
     pub minimap: bool,
     pub corner: MapCorner,
     pub size: f32,
@@ -47,8 +47,14 @@ pub struct Map {
     pub turns: bool,
     pub round: bool,
     pub tilt: f32,
-    /// How many blocks a cell of the opened map is to begin with.
+    /// How many blocks a cell of the opened map is to begin with, how wide
+    /// its ground is drawn as a share of the screen's height, how far over
+    /// the ground it is seen from, in degrees, and whether the pointer
+    /// turns, moves and zooms it.
     pub map_zoom: u32,
+    pub map_size: f32,
+    pub map_tilt: f32,
+    pub pointer_control: bool,
     /// The input action that opens and closes the map, by its id.
     pub open_action: Option<String>,
     /// What the maps show of the world: all of it, what was explored, or
@@ -56,6 +62,9 @@ pub struct Map {
     pub shows: MapShows,
     /// Whether the map is open now: not saved.
     pub open: bool,
+    /// The numbers scripts hold its minimap and its map by, once they are
+    /// on the screen: not saved.
+    pub views: Option<[u32; 2]>,
 }
 
 impl Default for Map {
@@ -63,15 +72,19 @@ impl Default for Map {
         Map {
             minimap: true,
             corner: MapCorner::TopRight,
-            size: 220.0,
+            size: 380.0,
             zoom: 2,
             turns: true,
             round: false,
             tilt: 58.0,
             map_zoom: 4,
+            map_size: 0.92,
+            map_tilt: 42.0,
+            pointer_control: true,
             open_action: None,
             shows: MapShows::Everything,
             open: false,
+            views: None,
         }
     }
 }
@@ -90,6 +103,9 @@ pub struct MapData {
     pub round: bool,
     pub tilt: f32,
     pub map_zoom: u32,
+    pub map_size: f32,
+    pub map_tilt: f32,
+    pub pointer_control: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_action: Option<String>,
     pub shows: MapShows,
@@ -112,6 +128,9 @@ pub fn map_data(map: &Map) -> MapData {
         round: map.round,
         tilt: map.tilt,
         map_zoom: map.map_zoom,
+        map_size: map.map_size,
+        map_tilt: map.map_tilt,
+        pointer_control: map.pointer_control,
         open_action: map.open_action.clone(),
         shows: map.shows,
     }
@@ -122,15 +141,19 @@ pub fn map_of(data: &MapData) -> Map {
     Map {
         minimap: data.minimap,
         corner: data.corner,
-        size: data.size.clamp(48.0, 1024.0),
+        size: data.size.clamp(120.0, 1024.0),
         zoom: voxear_ui::MapViewSettings::zoom_of(data.zoom as f32),
         turns: data.turns,
         round: data.round,
         tilt: data.tilt.clamp(20.0, 90.0),
         map_zoom: voxear_ui::MapViewSettings::zoom_of(data.map_zoom as f32),
+        map_size: data.map_size.clamp(0.1, 3.0),
+        map_tilt: data.map_tilt.clamp(20.0, 90.0),
+        pointer_control: data.pointer_control,
         open_action: data.open_action.clone(),
         shows: data.shows,
         open: false,
+        views: None,
     }
 }
 

@@ -33,11 +33,18 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	private const int MapZoomValue = 10;
 	private const int OpenValue = 11;
 	private const int ShowsValue = 12;
+	private const int MapSizeValue = 13;
+	private const int MapTiltValue = 14;
+	private const int PointerControlValue = 15;
+	private const int MinimapViewValue = 20;
+	private const int MapViewValue = 21;
 	private const int FollowValue = 100;
 	private const int PlaceClearValue = 105;
 	private const int ActionRead = 1;
 	private const int ActionWrite = 2;
 	private const int TitleText = 100;
+	private const int TimeText = 102;
+	private const int PlayerText = 103;
 
 	public static readonly Map None = default;
 
@@ -66,7 +73,7 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 		set { Write(CornerValue, (int)value); }
 	}
 
-	/// <summary>How large its minimap is, in the UI's pixels.</summary>
+	/// <summary>How wide its minimap is, in pixels on a screen 1080 high: it is scaled with the screen.</summary>
 	public float Size
 	{
 		get { return Number(SizeValue); }
@@ -107,6 +114,40 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 		get { return (int)Number(MapZoomValue); }
 		set { Write(MapZoomValue, value); }
 	}
+
+	/// <summary>How wide its map's ground is drawn, as a share of the screen's height: at 1 it is as wide as the screen is high.</summary>
+	public float MapSize
+	{
+		get { return Number(MapSizeValue); }
+		set { Write(MapSizeValue, value); }
+	}
+
+	/// <summary>How far over the ground its map is seen from when it opens, in degrees: 90 looks straight down.</summary>
+	public float MapTilt
+	{
+		get { return Number(MapTiltValue); }
+		set { Write(MapTiltValue, value); }
+	}
+
+	/// <summary>Whether the pointer turns, moves and zooms its map. Off, only scripts do, through its MapView's Camera.</summary>
+	public bool PointerControl
+	{
+		get { return Number(PointerControlValue) != 0f; }
+		set { Write(PointerControlValue, value ? 1f : 0f); }
+	}
+
+	/// <summary>
+	/// Its map as an element, with every setting a MapView has and the Camera it is seen through: null until it is
+	/// on the screen, a frame after the game starts.
+	/// </summary>
+	public MapView? MapView => NativeComponent.Get(NativeComponent.Map, Obj, MapViewValue, out var view) && view.Y != 0f
+		? new MapView((int)BitConverter.SingleToUInt32Bits(view.X))
+		: null;
+
+	/// <summary>Its minimap as an element, as MapView is its map.</summary>
+	public Minimap? MinimapView => NativeComponent.Get(NativeComponent.Map, Obj, MinimapViewValue, out var view) && view.Y != 0f
+		? new Minimap((int)BitConverter.SingleToUInt32Bits(view.X))
+		: null;
 
 	/// <summary>
 	/// The input action that opens and closes its map. While the map is open the mouse is free and only the input
@@ -152,6 +193,24 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	public static string? Title
 	{
 		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, TitleText, value ?? string.Empty); }
+	}
+
+	/// <summary>
+	/// The time the maps show, written as the game has it: <c>Map.Time = $"{hour:00}:{minute:00}";</c>. Null, as
+	/// it starts, shows none.
+	/// </summary>
+	public static string? Time
+	{
+		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, TimeText, value ?? string.Empty); }
+	}
+
+	/// <summary>
+	/// The name an opened map shows over what the maps follow. Null, as it starts, shows the label of that Obj's
+	/// Map Marker, or no name where it has none.
+	/// </summary>
+	public static string? PlayerName
+	{
+		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, PlayerText, value ?? string.Empty); }
 	}
 
 	/// <summary>Marks an Obj on every map, where it is: gives it a Map Marker, or sets the one it has.</summary>

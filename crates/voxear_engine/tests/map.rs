@@ -21,7 +21,7 @@ use voxear_ui::{MapViewKind, NodeId};
 const SCENE: &str = "format = 1\n\n\
     [[obj]]\nid = 1\nname = \"Blocks\"\nposition = [0.0, 0.0, 0.0]\n[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n\n\
     [[obj]]\nid = 2\nname = \"Eye\"\nposition = [40.0, 40.0, 40.0]\n[obj.camera]\nfov = 60.0\n\n\
-    [[obj]]\nid = 3\nname = \"Hud\"\n[obj.map]\ncorner = \"top_left\"\nsize = 240.0\n\n\
+    [[obj]]\nid = 3\nname = \"Hud\"\n[obj.map]\ncorner = \"top_left\"\n\n\
     [[obj]]\nid = 4\nname = \"Town\"\nposition = [70.0, 30.0, 60.0]\n\
     [obj.map_marker]\nicon = \"town\"\nlabel = \"Oakrest\"\ncolor = [0.2, 0.6, 1.0]\n\n\
     [[obj]]\nid = 5\nname = \"Far\"\nposition = [900.0, 30.0, 40.0]\n\
@@ -68,15 +68,20 @@ fn view(game: &mut Game, kind: MapViewKind) -> NodeId {
 
 /// Ticks until the blocks round the camera and every map tile are made,
 /// laying the UI out each frame as a window does.
-fn settle(game: &mut Game, mut renderer: Option<&mut voxear_render::Renderer>) {
+fn settle(game: &mut Game, renderer: Option<&mut voxear_render::Renderer>) {
+    settle_at(game, renderer, (1280, 720));
+}
+
+/// As [`settle`], on a screen of `size` pixels.
+fn settle_at(game: &mut Game, mut renderer: Option<&mut voxear_render::Renderer>, size: (u32, u32)) {
     for frame in 0..6000 {
         game.tick(1.0 / 60.0, renderer.as_deref_mut());
         match renderer.as_deref_mut() {
             Some(renderer) => {
-                game.ui.draw(renderer, 1.0 / 60.0, [0, 0, 1280, 720], 1.0).unwrap();
+                game.ui.draw(renderer, 1.0 / 60.0, [0, 0, size.0, size.1], 1.0).unwrap();
                 renderer.render(&game.engine.world, frame as f32 / 60.0).unwrap();
             }
-            None => drop(game.ui.frame(1.0 / 60.0, (1280, 720), 1.0)),
+            None => drop(game.ui.frame(1.0 / 60.0, size, 1.0)),
         }
         if frame > 4 && voxear_engine::blocks::streamed(&game.engine.world) && game.maps.settled() {
             return;
@@ -97,7 +102,12 @@ fn a_map_puts_a_minimap_and_a_map_on_the_screen_that_show_the_world_as_it_is() {
 
     // The minimap sits in its corner at its size, and shows; the map is shut.
     let ui = game.ui.ui();
-    assert_eq!(ui.rect(mini), [16.0, 16.0, 240.0, 240.0]);
+    // On a screen two thirds as high as its design's, it is two thirds the size: 40 from the corner, 380 wide.
+    let rect = ui.rect(mini);
+    assert!(
+        (rect[0] - 26.67).abs() < 0.05 && (rect[1] - 26.67).abs() < 0.05 && (rect[2] - 253.33).abs() < 0.05,
+        "{rect:?}"
+    );
     assert!(ui.is_visible(mini) && !ui.is_visible(large));
     let settings = ui.map_view_settings(mini).unwrap();
     assert_eq!((settings.zoom, settings.turns, settings.round), (2, true, false));
@@ -106,7 +116,9 @@ fn a_map_puts_a_minimap_and_a_map_on_the_screen_that_show_the_world_as_it_is() {
     let shown = *game.maps.shown(mini).expect("the minimap shows the world");
     assert_eq!((shown.world, shown.cell), (blocks, 2.0));
     let (at, inside) = shown.point(Vec3::new(40.0, 40.0, 40.0)).unwrap();
-    assert!(inside && (at.x - 120.0).abs() < 1.5, "what it follows is at its middle: {at:?}");
+    // Across, exactly; up and down, by as much as the camera stands over or under the ground the map looks at.
+    let off = at - shown.size * 0.5;
+    assert!(inside && off.x.abs() < 1.5 && off.y.abs() < 12.0, "what it follows is at its middle: {at:?}");
     assert!(game.maps.shown(large).is_none(), "a map that is shut shows nothing");
 
     // Its ground is the world's: a column's top on the map is the highest block there.
@@ -135,10 +147,13 @@ fn a_map_puts_a_minimap_and_a_map_on_the_screen_that_show_the_world_as_it_is() {
     let parts = ui.map_view_parts(large).unwrap();
     let labels: Vec<String> = ui.children(parts.overlay).into_iter().map(|label| ui.text(label)).collect();
     assert_eq!(labels, ["Oakrest"], "the town is on the map; the dungeon, far past its edge, has no label");
-    let readout = ui.text(parts.readout.unwrap());
-    assert!(readout.starts_with("X 40   Z 40") && readout.ends_with("1:4"), "{readout}");
-    assert!(readout.contains("°C") && readout.contains('%'), "{readout}");
-    assert!(!ui.text(parts.title.unwrap()).is_empty(), "the country it looks at has a name");
+    // Its panels say where it looks, how warm and wet it is there, and its zoom; no time, as the game tells none.
+    assert_eq!((ui.text(parts.coords[0]).as_str(), ui.text(parts.coords[1]).as_str()), ("40.000", "40.000"));
+    assert_eq!(ui.text(parts.zoom_value), "1:4");
+    assert!(ui.text(parts.warmth).parse::<i32>().is_ok() && ui.text(parts.wetness).parse::<i32>().is_ok());
+    assert!(!ui.text(parts.title).is_empty(), "the country it looks at has a name");
+    assert!(!ui.is_visible(parts.time_cell) && ui.is_visible(parts.environment));
+    assert!(!ui.is_visible(parts.tag.unwrap()), "what it follows has no name, so no name tag");
     let shown = *game.maps.shown(large).unwrap();
     assert_eq!(shown.cell, 4.0);
     // The map follows the camera as it goes.
@@ -385,4 +400,185 @@ fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it()
     assert!(!game.engine.world.get::<Map>(hud).unwrap().open);
     assert!(game.ui.ui().is_visible(mini) && !game.ui.ui().is_visible(large));
     assert!(!game.display.cursor_visible && game.input.map_enabled("Player"));
+}
+
+/// What scripts ask of the map view they hold by `number`, to change.
+fn wish_of(game: &mut Game, number: u32) -> &mut voxear_engine::map::MapViewWish {
+    game.engine.world.resource_mut::<voxear_engine::map::MapScript>().unwrap().wishes.entry(number).or_default()
+}
+
+#[test]
+fn a_script_steers_how_a_map_is_seen_and_what_it_follows_stays_at_its_edge() {
+    use voxear_core::math::Vec2;
+    use voxear_engine::map::MapScript;
+    use voxear_ui::Shape;
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    Maps::set_open(&mut game.engine.world, hud, true);
+    settle(&mut game, None);
+    let large = view(&mut game, MapViewKind::Map);
+    // Its views are elements scripts hold by number, as any element is.
+    let number = game.engine.world.get::<Map>(hud).unwrap().views.expect("on the screen")[1];
+    let shown = |game: &Game| *game.maps.shown(large).unwrap();
+    let seen = |game: &Game| game.engine.world.resource::<MapScript>().unwrap().seen[&number].clone();
+    // What the map follows is an arrow of the accent colour lying on the ground: strokes from its tip.
+    let accent = voxear_ui::Color::rgb(0xff, 0xd2, 0x3f);
+    let strokes = |game: &mut Game| -> Vec<(Vec2, Vec2)> {
+        let ui = game.ui.ui();
+        let overlay = ui.map_view_parts(large).unwrap().overlay;
+        let lines = ui.shapes(overlay).iter().filter_map(|shape| match shape {
+            Shape::Line { from, to, color, .. } if *color == accent => Some((Vec2::from(*from), Vec2::from(*to))),
+            _ => None,
+        });
+        lines.collect()
+    };
+    let arrow = |game: &mut Game| -> Vec<Vec2> { strokes(game).into_iter().map(|(tip, _)| tip).collect() };
+
+    // Opened, its ground is drawn a little less wide than the screen is high, so all of it is on the screen
+    // however it is tilted, and what it follows is at its middle.
+    let first = shown(&game);
+    let wide = first.reach / (first.camera.distance * (first.camera.fov * 0.5).tan());
+    assert!((wide - 0.92).abs() < 1e-3, "its ground's width over the view's height: {wide}");
+    let middle = first.size * 0.5;
+    assert!((arrow(&mut game)[0] - middle).length() < 30.0);
+    // It points the way what it follows faces: the camera looks north, so its tip is over its back, up the
+    // view; turned to face east, its tip is to the right.
+    let pointing = |game: &mut Game| {
+        let all = strokes(game);
+        let back = all.iter().fold(Vec2::ZERO, |sum, (_, back)| sum + *back) / all.len() as f32;
+        all[0].0 - back
+    };
+    let north = pointing(&mut game);
+    assert!(north.y < -5.0 && north.x.abs() < 1.0, "facing north: {north:?}");
+    let eye = find(&game, "Eye");
+    let east = voxear_core::math::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap().rotation = east;
+    settle(&mut game, None);
+    let turned = pointing(&mut game);
+    assert!(turned.x > 5.0 && turned.y.abs() < 1.0, "facing east: {turned:?}");
+
+    // A map's buttons zoom to the next power of two, and its panel says which.
+    let parts = game.ui.ui().map_view_parts(large).unwrap();
+    let click = |game: &mut Game, button: NodeId| {
+        let [x, y, w, h] = game.ui.ui().rect(button);
+        game.ui.ui().pointer_move(x + w * 0.5, y + h * 0.5);
+        game.ui.ui().pointer_button(true);
+        game.ui.ui().pointer_button(false);
+        settle(game, None);
+    };
+    click(&mut game, parts.zoom_in.unwrap());
+    assert_eq!((shown(&game).cell, game.ui.ui().text(parts.zoom_value).as_str()), (2.0, "1:2"));
+    click(&mut game, parts.zoom_out.unwrap());
+    click(&mut game, parts.zoom_out.unwrap());
+    assert_eq!((shown(&game).cell, game.ui.ui().text(parts.zoom_value).as_str()), (8.0, "1:8"));
+    click(&mut game, parts.zoom_in.unwrap());
+    assert_eq!(shown(&game).cell, 4.0);
+    // Told the time and who it follows, it shows the time, and names its mark over it.
+    let script = game.engine.world.resource_mut::<MapScript>().unwrap();
+    (script.time, script.player) = (Some("14:12".into()), Some("Pixie".into()));
+    settle(&mut game, None);
+    let ui = game.ui.ui();
+    assert!(ui.is_visible(parts.time_cell) && ui.text(parts.time) == "14:12");
+    let tag = ui.rect(parts.tag.unwrap());
+    assert!(ui.is_visible(parts.tag.unwrap()) && ui.text(parts.tag_name.unwrap()) == "Pixie");
+    assert!((tag[0] + tag[2] * 0.5 - middle.x).abs() < 30.0 && tag[1] + tag[3] < middle.y, "over its dot: {tag:?}");
+
+    // Asked to look at a place far to the east, it does, and what it follows stays at its west edge.
+    wish_of(&mut game, number).look_at = Some(Vec3::new(640.0, 0.0, 40.0));
+    settle(&mut game, None);
+    let moved = shown(&game);
+    assert!((moved.corner[0] as f32 + moved.camera.middle.x - 160.0).abs() < 0.01, "640 m is 160 cells");
+    assert_eq!(seen(&game).offset, Vec2::new(600.0, 0.0));
+    let at = arrow(&mut game);
+    assert!(!at.is_empty(), "what it follows is still marked");
+    assert!(
+        at.iter().all(|point| point.x > 0.0 && point.x < middle.x - 100.0 && point.y > 0.0 && point.y < first.size.y)
+    );
+    // Unless the view is set not to keep it there.
+    wish_of(&mut game, number).settings.push("arrow-at-edge=false".into());
+    settle(&mut game, None);
+    assert!(arrow(&mut game).is_empty());
+    assert!(!seen(&game).settings.arrow_at_edge);
+
+    // Turned and zoomed by a script: any number of blocks to a cell, shown in cells of the nearest power of two.
+    *wish_of(&mut game, number) =
+        voxear_engine::map::MapViewWish { turn: Some(1.0), zoom: Some(6.0), ..Default::default() };
+    settle(&mut game, None);
+    let now = seen(&game);
+    assert_eq!((now.turn, now.zoom, now.shown.cell), (1.0, 6.0, 8.0));
+    // The ground under a point of the view: looked up, it shows where it was pointed at.
+    let place = now.place(middle).expect("ground under the view's middle");
+    let (back, inside) = now.shown.point(place).unwrap();
+    assert!(inside && (back - middle).length() < 8.0, "{place:?} shows at {back:?}");
+    assert_eq!(now.place(Vec2::new(4.0, 4.0)), None, "nothing under a corner past the ground");
+
+    // Set back: north up, over what it follows, at its settings' zoom; and kept within the zooms it is given.
+    wish_of(&mut game, number).reset = true;
+    settle(&mut game, None);
+    let now = seen(&game);
+    assert_eq!((now.turn, now.zoom, now.offset), (0.0, 4.0, Vec2::ZERO));
+    wish_of(&mut game, number).settings.push("min-zoom=4 max-zoom=8".into());
+    wish_of(&mut game, number).zoom = Some(1.0);
+    settle(&mut game, None);
+    assert_eq!(seen(&game).shown.cell, 4.0, "no nearer than 1:4");
+    wish_of(&mut game, number).zoom = Some(64.0);
+    settle(&mut game, None);
+    assert_eq!(seen(&game).shown.cell, 8.0, "no further than 1:8");
+}
+
+#[test]
+fn on_a_screen_the_size_of_their_design_the_minimap_and_the_map_are_as_designed() {
+    use voxear_engine::map::MapScript;
+    let settings = voxear_render::RendererSettings::default();
+    let Ok(mut renderer) = voxear_render::Renderer::new_offscreen(1920, 1080, &settings) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    let script = MapScript { time: Some("14:12".into()), player: Some("Pixie".into()), ..MapScript::default() };
+    game.engine.world.insert_resource(script);
+    let size = (1920, 1080);
+    for _ in 0..5 {
+        settle_at(&mut game, Some(&mut renderer), size);
+    }
+    let mini = view(&mut game, MapViewKind::Minimap);
+    let ui = game.ui.ui();
+    let parts = ui.map_view_parts(mini).unwrap();
+    // The widget: 380 wide, 40 from the corner, its window 254 high, with a strip of two rows under it.
+    assert_eq!(ui.rect(mini)[..3], [40.0, 40.0, 380.0]);
+    let (window, strip) = (ui.rect(parts.picture), ui.rect(parts.region));
+    assert!(
+        window[3] == 254.0 && strip[1] >= window[1] + 254.0 && strip[3] > 50.0 && strip[3] < 90.0,
+        "{window:?} {strip:?}"
+    );
+    assert_eq!((ui.text(parts.time).as_str(), ui.text(parts.zoom_value).as_str()), ("14:12", "1:2"));
+    let compass = ui.rect(parts.compass);
+    assert!(
+        (compass[2], compass[3]) == (64.0, 64.0) && (compass[0] + 64.0 - (window[0] + window[2] - 8.0)).abs() < 0.5
+    );
+    keep("design-minimap.png", renderer.read_pixels().unwrap());
+
+    let hud = find(&game, "Hud");
+    Maps::set_open(&mut game.engine.world, hud, true);
+    for _ in 0..8 {
+        settle_at(&mut game, Some(&mut renderer), size);
+    }
+    let large = view(&mut game, MapViewKind::Map);
+    let ui = game.ui.ui();
+    let parts = ui.map_view_parts(large).unwrap();
+    // The region panel and the strip of the air 48 from the top corners; the compass over the zoom, 48 from the
+    // bottom right; nothing in the middle or the bottom left.
+    let (region, air, zoom, compass) =
+        (ui.rect(parts.region), ui.rect(parts.environment), ui.rect(parts.zoom), ui.rect(parts.compass));
+    assert_eq!(region[..2], [48.0, 48.0]);
+    assert!((air[0] + air[2] - 1872.0).abs() < 0.5 && air[1] == 48.0, "{air:?}");
+    assert!((zoom[1] + zoom[3] - 1032.0).abs() < 0.5 && zoom[2] == 68.0 && compass[2] == 168.0, "{zoom:?} {compass:?}");
+    assert!(((compass[1] + compass[3] + 18.0) - zoom[1]).abs() < 0.5, "the compass 18 over the zoom");
+    assert!(region[0] + region[2] < 700.0 && region[1] + region[3] < 300.0 && air[0] > 1200.0 && compass[0] > 1600.0);
+    assert!(ui.is_visible(parts.time_cell) && ui.text(parts.tag_name.unwrap()) == "Pixie");
+    keep("design-map.png", renderer.read_pixels().unwrap());
 }

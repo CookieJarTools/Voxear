@@ -2292,9 +2292,13 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   apart from the world (`blocks::map_known`, `MapKnowledge`): ground seen and layers of news with when each was
   heard, any number of them, joined newest first, 2.7 KB for a four-kilometre walk; ground not known is drawn as
   paper. Tests: tiles against the far view, a tower and a pit, the shader's pictures, the game's minimap and map
-  drawn, markers, knowledge and its bytes, the C# API on a copy of Hello. Manual: Maps and Minimaps. Not done:
-  heightmap Terrain as ground; trees and structures, which show once the far view carries them; the place under the
-  pointer; turning the map with a gamepad; a map keeping the ground as it was last seen.
+  drawn, markers, knowledge and its bytes, the C# API on a copy of Hello. Manual: Maps and Minimaps. Every view has
+  seventeen settings by name (`MapViewSettings`: its size on the screen, pointer control, zoom limits, shadows, the
+  parts shown), set in markup, from C# or on the Map; a `MapCamera` reads and steers how it is seen, and gives the
+  place in the scene under a point of it; what the maps follow stays at the ground's edge once a map is moved off
+  it; zooming keeps a map its size on the screen. Not done: heightmap Terrain as ground; trees and structures,
+  which show once the far view carries them; turning the map with a gamepad without a script; a map keeping the
+  ground as it was last seen.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

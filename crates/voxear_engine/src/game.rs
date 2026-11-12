@@ -681,9 +681,9 @@ impl Game {
         // Maps show while the game plays, as the UI they are in does.
         if !self.engine.is_edit_mode() {
             self.maps.sync_huds(&mut self.engine.world, &mut self.ui, &mut self.input, &mut self.display);
-            let scale = self.ui.scale();
-            let world = &self.engine.world;
-            self.maps.update(world, &mut self.content, renderer.as_deref_mut(), (self.ui.ui(), scale));
+            let (scale, numbers) = (self.ui.scale(), self.ui.map_view_numbers());
+            let world = &mut self.engine.world;
+            self.maps.update(world, &mut self.content, renderer.as_deref_mut(), (self.ui.ui(), scale), &numbers);
         }
         self.ui.show_tooltip(delta);
         // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.

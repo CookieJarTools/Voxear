@@ -2792,6 +2792,55 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
+**Box models.** A `.boxmodel` is a model built of boxes under bones, with pixels on every face, for the blocky
+characters of block worlds (`voxear_render::box_model`). It is not a second kind of model: `prepare_model` reads
+it into the same `PreparedModel` a `.glb` becomes, so it is `AssetKind::Model` and everything that places, draws,
+poses, previews, reimports or cooks a model does a box model with no path of its own.
+- **The file** is TOML, measured in the model's own pixels (`pixels_per_block` of them a metre): the sheet's size
+  and pixels, then the bones, each with a pivot from its parent's, a rest rotation and its boxes. A box has a least
+  corner from its bone's pivot, a size in whole pixels, and its faces' places on the sheet, either unfolded from
+  one corner (`uv`, with `mirror`) or a rectangle a face (`faces`, a face left out not drawn), with `inflate` and a
+  rotation about its middle. A side of no pixels makes a flat two-sided sheet.
+- **The pixels** are kept in the file: a palette and a byte a pixel where the sheet has 256 colours or fewer, raw
+  otherwise, lz4-compressed, as base64 (`Sheet::to_text`).
+- **What it is built as:** one skinned mesh, each box's corners bound whole to its bone's joint; the bones as the
+  skeleton, at rest where their pivots put them; one skin of every bone; one RGBA8 texture, never compressed; one
+  cut-out material. Face corners sit a sixty-fourth of a pixel inside their rectangles.
+- **Sharp pixels** are a material flag, `MaterialDesc::pixels` (`MATERIAL_PIXELS`): the shaders read the base
+  colour at the middle of the pixel a UV falls in, with the UV's own slopes picking the mip
+  (`baseColorUv`, `sampleBaseColor` in `common.slang`), in the forward, depth and preview passes and for traced
+  cut-outs. Cooked models carry the flag (`COOKED_VERSION` 11).
+- **The Model window** (`voxear_editor::model_panel`, `model_view`, `box_part_inspector`, `editor/models.rs`) edits
+  one as the Generator panel edits a graph: the panel owns the model and a history of whole models, the editor
+  saves it when nothing is held and has the level's Objs follow, and the Inspector shows the bone or box picked.
+  Its view is not a second world: the model's mesh and a floor are drawn as a preview with a camera of its own
+  (`PreviewCamera`, up to `MAX_VIEW_SIZE` pixels, square, shown cut to the view), so what is under the pointer is
+  a ray from that camera against the boxes (`BoxModel::pick`, which also gives the face and the sheet's pixel),
+  and outlines and handles are UI shapes projected with it. What changes a model (`box_model/edit.rs`: removing,
+  hanging, copying and mirroring bones, moving pivots, moving boxes between bones, free room on the sheet) is
+  kept with the model, so scripts and tools change one the same way.
+- **Painting** is the same ray: `BoxHit::pixel` is the sheet's pixel under the pointer, so a stroke changes the
+  model's `Sheet` and nothing else, and the views upload the sheet again behind the material they have. The flat
+  sheet beside the model (`model_sheet`) paints the same pixels directly. `box_model/paint.rs` holds what a sheet
+  can do to itself: fill, list its colours, and lay its boxes out again with their pixels.
+- **Bones from shape** (`box_model/rig.rs`): `make_bones` reads the boxes as a body with parts round it and gives
+  each a bone with a `BoneRole` (body, head, leg, arm, tail, wing). Roles, not names, are what animation goes
+  by, so a renamed bone still walks. `add_joint` splits a limb's box for a knee or an elbow.
+- **Mob Motion** (`voxear_engine::animation::mob_motion`) is the easy path to animation for these: a component
+  that poses a model from how its Obj moved, by its bones' roles, writing the same `Pose` an Animator does. The
+  motion is a pure `MobPoser`, so the Model window shows it on a model that stands nowhere. Roles travel with the
+  model through import and cooking, since a build has no `.boxmodel` to read them from.
+- **A raised layer** (`box_model/layer.rs`) is a second skin on a box whose solid pixels become geometry: small
+  blocks over the faces, built with the mesh, bound to the box's bone like everything else, so they bend where
+  the limb is cut for a joint. The cost is vertices, so tops are shared along rows, walls exist only at edges,
+  and the mesh has a flat version of every layer as a coarser LOD for the engine to pick by distance.
+- **Block Mob** (`voxear_engine::block_mob`) is how one gets about a block world: a component that finds a way
+  on the blocks themselves (`voxear_terrain::blocks::path`, a search over places to stand, not a baked mesh, so
+  blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
+  what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
+  is left to games and packages.
+- **Planned on top:** clips keyed on a timeline.
+
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says

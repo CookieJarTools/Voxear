@@ -378,9 +378,12 @@ impl Game {
         }
         // Objs drawing the whole model draw its parts as they are now, where they now sit.
         if let Some(nodes) = self.content.loaded_model(guid).map(<[_]>::to_vec) {
+            let animation = self.content.model_animation(guid);
             let world = &mut self.engine.world;
-            let query = world.query::<(&crate::scene_file::ModelSource, &mut voxear_render::ModelRenderer)>();
-            for (source, drawn) in query {
+            let query = world.query::<(Entity, &crate::scene_file::ModelSource, &mut voxear_render::ModelRenderer)>();
+            // Those whose bones are not the ones they were posed with, as a box model's with a bone added.
+            let mut other_bones = Vec::new();
+            for (entity, source, drawn) in query {
                 if self.content.parse(&source.0.model).ok().and_then(|r| r.guid()) != Some(guid) {
                     continue;
                 }
@@ -388,6 +391,18 @@ impl Game {
                     Ok(parts) => drawn.parts = parts.into(),
                     Err(error) => tracing::error!("{error:#}"),
                 }
+                let bones = |animation: &Option<std::sync::Arc<voxear_render::ModelAnimation>>| {
+                    animation.as_ref().map(|animation| animation.skeleton.bones.len())
+                };
+                if bones(&drawn.animation) != bones(&animation) {
+                    other_bones.push(entity);
+                }
+                drawn.animation = animation.clone();
+            }
+            // A pose of the old bones would move the new ones' skin wrongly; what animates it poses it afresh.
+            for entity in other_bones {
+                world.remove::<voxear_render::Pose>(entity);
+                world.remove::<crate::animation::AnimatorState>(entity);
             }
         }
         let world = &mut self.engine.world;
@@ -625,6 +640,7 @@ impl Game {
         }
         // After the handlings, whose actions may be based on clips.
         crate::animation::give_clips(&mut self.engine.world, &mut self.content);
+        crate::animation::give_mob_bones(&mut self.engine.world, &mut self.content);
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;
@@ -1214,6 +1230,7 @@ impl ScriptServices for GameServices<'_> {
         };
         let options = PreviewOptions {
             size: options.size.clamp(1, MAX_PREVIEW_SIZE),
+            camera: None,
             background: options.background,
             rotation: Quat::from_array(options.rotation).normalize(),
             offset: Vec2::from(options.offset),

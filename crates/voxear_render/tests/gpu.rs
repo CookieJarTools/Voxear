@@ -1272,6 +1272,60 @@ fn a_previews_pixels_read_back_and_save_as_a_png() {
 }
 
 #[test]
+fn a_preview_with_a_camera_of_its_own_is_seen_from_there_as_large_as_a_view_may_be() {
+    use voxear_render::{MAX_VIEW_SIZE, PreviewCamera, PreviewOptions, PreviewPart};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let red =
+        renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let part = PreviewPart { mesh: cube, material: red, transform: voxear_core::math::Mat4::IDENTITY };
+    // A few small previews first, so the view has to find room among them.
+    let small: Vec<_> = (0..3).map(|_| renderer.add_preview(vec![part], PreviewOptions::default())).collect();
+    // The cube from straight in front, four metres back, a little to one side: not where framing would put it.
+    let camera = PreviewCamera { position: Vec3::new(0.6, 0.0, -4.0), target: Vec3::new(0.6, 0.0, 0.0), near: 0.05 };
+    let options = PreviewOptions {
+        size: 4096,
+        camera: Some(camera),
+        rotation: Quat::IDENTITY,
+        background: [0.0, 0.0, 1.0, 1.0],
+        ..PreviewOptions::default()
+    };
+    let view = renderer.add_preview(vec![part], options);
+    renderer.read_preview(view);
+    let mut time = 0.0;
+    let mut pixels = None;
+    for _ in 0..8 {
+        run(&mut renderer, &world, &mut time, 0);
+        small.iter().for_each(|&id| drop(renderer.preview(id)));
+        pixels = pixels.or_else(|| renderer.preview_pixels(view));
+    }
+    let pixels = pixels.expect("read back within a few frames");
+    assert_eq!(pixels.size, MAX_VIEW_SIZE, "a view asked larger is drawn at the most a view may be");
+    assert_eq!(renderer.preview(view).unwrap().size, MAX_VIEW_SIZE);
+    assert!(small.iter().all(|&id| renderer.preview(id).is_some()), "the small ones are still drawn");
+
+    // Where its camera puts a point is where the point is drawn: just inside the cube's near upper corner is
+    // the cube, just outside is the background.
+    let size = pixels.size as f32;
+    let drawn = |point: Vec3| {
+        let clip = camera.view_projection(options.fov_degrees) * point.extend(1.0);
+        let (x, y) = ((clip.x / clip.w * 0.5 + 0.5) * size, (clip.y / clip.w * 0.5 + 0.5) * size);
+        let at = ((y as usize) * pixels.size as usize + x as usize) * 4;
+        [pixels.rgba[at], pixels.rgba[at + 1], pixels.rgba[at + 2]]
+    };
+    let inside = drawn(Vec3::new(0.47, 0.47, -0.5));
+    let outside = drawn(Vec3::new(0.53, 0.53, -0.5));
+    assert!(inside[0] > 80 && inside[0] > inside[2] * 2, "the red cube, got {inside:?}");
+    assert!(outside[2] > 200 && outside[0] < 40, "the blue background, got {outside:?}");
+    // To one side of the middle, as the camera is to the other.
+    let middle = drawn(Vec3::new(0.6, 0.0, -0.5));
+    assert!(middle[2] > 200, "the cube is left of the image's middle, got {middle:?}");
+}
+
+#[test]
 fn a_full_preview_atlas_grows_and_draws_everything_again() {
     use voxear_render::{PreviewOptions, PreviewPart};
 
@@ -6279,4 +6333,110 @@ float4 customUi(uint shader, uint first, UiInput input)
     assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [0, 255, 0], "the shader's green");
+}
+
+/// A box model of a body with a head on it, each a block across, their
+/// fronts four pixels of the sheet: red and green over blue and white.
+fn four_pixel_figure() -> voxear_render::BoxModel {
+    use voxear_render::{BoxModel, BoxSkin, Face, Sheet};
+    let mut sheet = Sheet::filled(2, 2, [255; 4]);
+    sheet.set(0, 0, [255, 0, 0, 255]);
+    sheet.set(1, 0, [0, 255, 0, 255]);
+    sheet.set(0, 1, [0, 0, 255, 255]);
+    let mut model = BoxModel { pixels_per_block: 2.0, sheet, ..BoxModel::default() };
+    let mut faces = [None; 6];
+    faces[Face::Front.index()] = Some([0.0, 0.0, 2.0, 2.0]);
+    let body = model.add_bone("Body", None, Vec3::ZERO);
+    model.add_box(body, Vec3::new(-1.0, 0.0, -1.0), [2, 2, 2], [0, 0]).skin = BoxSkin::Faces(faces);
+    let head = model.add_bone("Head", Some(body), Vec3::new(0.0, 2.0, 0.0));
+    model.add_box(head, Vec3::new(-1.0, 0.0, -1.0), [2, 2, 2], [0, 0]).skin = BoxSkin::Faces(faces);
+    model
+}
+
+/// The figure seen from in front, read from its file's text or cooked
+/// first, at rest or with its head turned a quarter over onto its side.
+fn figure_render(cooked: bool, turned_head: bool) -> Option<Vec<u8>> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
+    let mut renderer = renderer()?;
+    let text = four_pixel_figure().to_text();
+    let model = voxear_render::prepare_model("Figure.boxmodel", &mut |file| match file {
+        "Figure.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let imported = match cooked {
+        true => {
+            let bytes = model.cook().unwrap().to_bytes();
+            renderer.upload_cooked(&CookedModel::from_bytes("Figure.boxmodel", &bytes).unwrap()).unwrap()
+        }
+        false => renderer.upload_model(&model).unwrap(),
+    };
+    let mut world = World::new();
+    let toward = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 4.0), toward, Vec3::ONE)));
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, toward, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let parts = imported
+        .nodes
+        .iter()
+        .map(|node| ModelPart {
+            mesh: node.mesh,
+            material: node.material,
+            transform: voxear_core::math::Mat4::IDENTITY,
+            node: 0,
+            skin: node.skin.map(|s| s as u32),
+        })
+        .collect();
+    let animation = imported.animation.clone().unwrap();
+    let mut pose = animation.skeleton.rest();
+    if turned_head {
+        pose[1].rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    }
+    let bones: Arc<[voxear_core::math::Mat4]> = animation.skeleton.model_matrices(&pose).into();
+    world.spawn((ModelRenderer { animation: Some(animation), ..ModelRenderer::new(parts) }, Pose { bones }, Transform::default()));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_box_model_draws_its_pixels_sharp_and_its_boxes_follow_their_bones() {
+    let Some(rest) = figure_render(false, false) else { return };
+    let turned = figure_render(false, true).unwrap();
+    let cooked = figure_render(true, false).unwrap();
+    keep_image("box model rest.png", &rest);
+    keep_image("box model head turned.png", &turned);
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let at = |pixels: &[u8], x: f32, y: f32| rgb_at(pixels, on_screen(eye, ahead, Vec3::new(x, y, 0.5)));
+    let red = |[r, g, b]: [i32; 3]| r > g.max(b) + 80;
+    let green = |[r, g, b]: [i32; 3]| g > r.max(b) + 80;
+    let blue = |[r, g, b]: [i32; 3]| b > r.max(g) + 80;
+    let grey = |[r, g, b]: [i32; 3]| r.max(g).max(b) - r.min(g).min(b) < 20;
+    let white = |colour: [i32; 3]| grey(colour) && colour[0] > 170;
+    // The dark wall behind, which the exposure lifts to a middle grey.
+    let wall = |colour: [i32; 3]| grey(colour) && colour[0] < 150;
+
+    for pixels in [&rest, &cooked] {
+        // The body's front: the sheet's upper left pixel at the model's right, which is the left as it is faced.
+        assert!(red(at(pixels, 0.25, 0.75)), "{:?}", at(pixels, 0.25, 0.75));
+        assert!(green(at(pixels, -0.25, 0.75)), "{:?}", at(pixels, -0.25, 0.75));
+        assert!(blue(at(pixels, 0.25, 0.25)), "{:?}", at(pixels, 0.25, 0.25));
+        assert!(white(at(pixels, -0.25, 0.25)), "{:?}", at(pixels, -0.25, 0.25));
+        // Each pixel is one colour right up to the next: nothing of the green a twentieth of a pixel from it.
+        let (edge, middle) = (at(pixels, 0.025, 0.75), at(pixels, 0.25, 0.75));
+        assert!(red(edge) && (0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{edge:?} beside {middle:?}");
+        let (edge, middle) = (at(pixels, -0.025, 0.75), at(pixels, -0.25, 0.75));
+        assert!(green(edge) && (0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{edge:?} beside {middle:?}");
+        // The head stands on the body.
+        assert!(red(at(pixels, 0.25, 1.75)) && wall(at(pixels, -0.75, 1.25)));
+    }
+    // Turned a quarter about where it meets the body, the head lies out to one side, its pixels turned with it.
+    assert!(wall(at(&turned, 0.25, 1.75)), "{:?}", at(&turned, 0.25, 1.75));
+    assert!(red(at(&turned, -0.75, 1.25)), "{:?}", at(&turned, -0.75, 1.25));
+    assert!(green(at(&turned, -0.75, 0.75)), "{:?}", at(&turned, -0.75, 0.75));
+    assert!(red(at(&turned, 0.25, 0.75)), "the body stays");
 }

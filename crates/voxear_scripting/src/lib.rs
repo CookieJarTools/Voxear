@@ -36,7 +36,8 @@ pub use display::CursorLock;
 pub use interop::{
     ComponentKind, ComponentTexts, ComponentValues, LightValues, MotionMatcherTexts, NetCalls, NetFields, NetRaycast, NetRpcs, ParticleBlaster, RpcSend, RpcTaken, SmokeActions,
     set_particle_blaster,
-    WaterSampler, set_bone_attachment_values, set_light_values, set_mist_values, set_motion_matcher_texts,
+    WaterSampler, set_block_mob_values, set_bone_attachment_values, set_light_values, set_mist_values,
+    set_mob_motion_values, set_motion_matcher_texts,
     set_motion_matcher_values, set_net_calls, set_net_fields, set_net_object_values, set_net_raycast, set_net_rpcs,
     set_kind_texts, set_kind_values, set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler, set_water_splasher,
     PoseOps, set_pose_ops,

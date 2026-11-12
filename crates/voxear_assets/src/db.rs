@@ -95,7 +95,7 @@ impl AssetKind {
     pub fn from_path(path: &Path) -> Option<Self> {
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         Some(match extension.as_str() {
-            "gltf" | "glb" | "fbx" => Self::Model,
+            "gltf" | "glb" | "fbx" | "boxmodel" => Self::Model,
             "png" | "jpg" | "jpeg" => Self::Texture,
             "material" => Self::Material,
             "scene" => Self::Scene,

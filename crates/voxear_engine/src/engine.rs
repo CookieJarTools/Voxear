@@ -91,6 +91,8 @@ impl Engine {
         crate::net::register();
         crate::animation::register();
         crate::animation::register_bone_attachments();
+        crate::animation::register_mob_motion();
+        crate::block_mob::register();
         let mut world = World::new();
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
@@ -581,9 +583,12 @@ impl Engine {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
             // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
+            // What walks by itself takes its step first, for what animates it to see.
+            crate::block_mob::walk_block_mobs(&mut self.world, self.time.delta);
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);
+            crate::animation::animate_mobs(&mut self.world, self.time.delta);
             // The pose stage's systems read the frame's time from the world.
             self.world.insert_resource(self.time);
             self.schedule.run_stage(POSE, &mut self.world);

@@ -346,6 +346,8 @@ pub struct Inspector {
     layers: Option<LayersView>,
     /// A node of a World Generator's graph, when that is what it shows.
     node: Option<crate::world_gen_inspector::NodeView>,
+    /// A bone or box of the box model open in the Model window, when that is what it shows.
+    box_part: Option<crate::box_part_inspector::BoxPartView>,
     /// Add Layer… was picked from the Layer menu, for the editor to show
     /// the project's layers.
     wants_layers: bool,
@@ -460,6 +462,7 @@ impl Inspector {
             part: None,
             layers: None,
             node: None,
+            box_part: None,
             wants_layers: false,
             conditions: Vec::new(),
             group_tabs: Vec::new(),
@@ -906,7 +909,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.layers, self.node) = (None, None);
+        (self.layers, self.node, self.box_part) = (None, None, None);
         self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
     }
 
@@ -922,7 +925,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.asset, self.layers, self.node) = (None, None, None);
+        (self.asset, self.layers, self.node, self.box_part) = (None, None, None, None);
         self.part = Some(view);
     }
 
@@ -944,7 +947,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.asset, self.node) = (None, None);
+        (self.asset, self.node, self.box_part) = (None, None, None);
         for child in ui.children(self.root) {
             ui.remove(child);
         }
@@ -966,12 +969,43 @@ impl Inspector {
             return false;
         };
         self.shown = None;
-        (self.part, self.data, self.asset, self.layers) = (None, None, None, None);
+        (self.part, self.data, self.asset, self.layers, self.box_part) = (None, None, None, None, None);
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
         self.node = Some(view);
         true
+    }
+
+    /// Shows a bone or box of `model`, the box model at `path`, in place of an Obj (see
+    /// `box_part_inspector`). False, and nothing changed, where the model has no such part.
+    pub fn show_box_part(
+        &mut self,
+        ui: &mut Ui,
+        path: &str,
+        model: &voxear_render::BoxModel,
+        part: crate::model_view::Picked,
+    ) -> bool {
+        let Some(view) = crate::box_part_inspector::BoxPartView::build(ui, self.root, path, model, part) else {
+            return false;
+        };
+        self.shown = None;
+        (self.part, self.data, self.asset, self.layers, self.node) = (None, None, None, None, None);
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        self.box_part = Some(view);
+        true
+    }
+
+    /// The box model's part shown, with its model's file, when it shows one.
+    pub fn shown_box_part(&self) -> Option<(&str, crate::model_view::Picked)> {
+        self.box_part.as_ref().map(crate::box_part_inspector::BoxPartView::shown)
+    }
+
+    /// The view of the box model's part shown.
+    pub fn box_part_view(&mut self) -> Option<&mut crate::box_part_inspector::BoxPartView> {
+        self.box_part.as_mut()
     }
 
     /// The graph's node shown, with its generator's file, when it shows one.
@@ -1048,6 +1082,7 @@ impl Inspector {
         self.asset = None;
         self.layers = None;
         self.node = None;
+        self.box_part = None;
         self.part = None;
         // A data asset shows while its Obj does, built again as any Obj is; anything else shown ends it.
         if self.data.as_ref().is_some_and(|(_, holder)| Some(*holder) != entity) {
@@ -2171,6 +2206,8 @@ impl Inspector {
             (Part::ScreenUi, "UI"),
             (Part::NetObject, "Networking"),
             (Part::Animator, "Animation"),
+            (Part::MobMotion, "Animation"),
+            (Part::BlockMob, "Terrain"),
             (Part::MotionMatcher, "Animation"),
             (Part::BoneAttachment, "Animation"),
             (Part::FirstPersonView, "Animation"),
@@ -2910,6 +2947,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::ScreenUi) => "screen_ui",
         Some(Part::NetObject) => "net",
         Some(Part::Animator) => "animator",
+        Some(Part::MobMotion) => "mob_motion",
+        Some(Part::BlockMob) => "block_mob",
         Some(Part::MotionMatcher) => "motion_matcher",
         Some(Part::BoneAttachment) => "bone_attachment",
         Some(Part::FirstPersonView) => "first_person",
@@ -3091,7 +3130,7 @@ fn write(ui: &mut Ui, fields: &[NodeId; 3], value: Vec3) {
 
 /// What a row of number fields says, keeping `current` for any that is not
 /// a number or that the user has not changed.
-fn read_numbers(ui: &Ui, fields: &[NodeId], current: &[f32]) -> Vec<f32> {
+pub(crate) fn read_numbers(ui: &Ui, fields: &[NodeId], current: &[f32]) -> Vec<f32> {
     let mut values = current.to_vec();
     for (value, field) in values.iter_mut().zip(fields) {
         if ui.changed(*field)
@@ -3104,7 +3143,7 @@ fn read_numbers(ui: &Ui, fields: &[NodeId], current: &[f32]) -> Vec<f32> {
 }
 
 /// Shows numbers in fields the user is not editing.
-fn write_numbers(ui: &mut Ui, fields: &[NodeId], values: &[f32]) {
+pub(crate) fn write_numbers(ui: &mut Ui, fields: &[NodeId], values: &[f32]) {
     for (field, value) in fields.iter().zip(values) {
         let text = number(*value);
         if ui.focused() != Some(*field) && ui.text(*field) != text {

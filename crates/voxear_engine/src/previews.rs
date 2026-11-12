@@ -61,15 +61,20 @@ pub fn preview_parts(content: &mut Content, renderer: &mut Renderer, reference: 
             let material = default(content, renderer)?;
             Ok(vec![PreviewPart { mesh, material, transform: Mat4::IDENTITY }])
         }
-        AssetKind::Model => Ok(content
-            .model(renderer, guid)?
-            .iter()
-            .map(|node| PreviewPart {
-                mesh: node.mesh,
-                material: node.material,
-                transform: Mat4::from_scale_rotation_translation(node.scale, node.rotation, node.position),
-            })
-            .collect()),
+        AssetKind::Model => {
+            // A box model looks along +Z, away from where a preview is seen from: it is turned to show its face.
+            let faces_away = content.db().get(guid).is_some_and(|entry| voxear_render::is_box_model(&entry.path));
+            let turned = if faces_away { Mat4::from_rotation_y(std::f32::consts::PI) } else { Mat4::IDENTITY };
+            Ok(content
+                .model(renderer, guid)?
+                .iter()
+                .map(|node| PreviewPart {
+                    mesh: node.mesh,
+                    material: node.material,
+                    transform: turned * Mat4::from_scale_rotation_translation(node.scale, node.rotation, node.position),
+                })
+                .collect())
+        }
         AssetKind::Material => {
             let mesh = renderer.primitive(Primitive::Sphere)?;
             let material = content.material(renderer, &MaterialSource::Asset(parsed))?;

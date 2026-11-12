@@ -18,6 +18,7 @@ use taffy::{LengthPercentageAuto, Position};
 use crate::{
     NodeId, Style, Ui,
     controls::Control,
+    style::Overflow,
     tree::{Element, Kind, Text},
 };
 
@@ -128,8 +129,9 @@ impl Ui {
     /// Moves a popup opened since the last layout back inside the screen, now
     /// its size is known: a menu or a dropdown's list goes left at the right
     /// edge, and above the pointer or the dropdown when it has no room below,
-    /// or else as low as the screen lets it. Returns whether it moved, which
-    /// then needs laying out again.
+    /// or else as low as the screen lets it; one taller than the screen is
+    /// kept to it and scrolls. Returns whether it changed, which then needs
+    /// laying out again.
     pub(crate) fn place_menu(&mut self) -> bool {
         let Some((popup, above)) = self.placing_menu.take() else { return false };
         if self.open_popup.map(|(_, open)| open) != Some(popup) {
@@ -139,6 +141,7 @@ impl Ui {
         let [x, y, width, height] = self.rect(popup);
         let (screen_width, screen_height) = self.screen_size_of(popup);
         let left = x.min(screen_width - width - MARGIN).max(MARGIN);
+        let room = screen_height - 2.0 * MARGIN;
         let top = if y + height + MARGIN <= screen_height {
             y
         } else if above - height >= MARGIN {
@@ -146,12 +149,17 @@ impl Ui {
         } else {
             (screen_height - height - MARGIN).max(MARGIN)
         };
-        if (left, top) == (x, y) {
+        if (left, top) == (x, y) && height <= room {
             return false;
         }
         let mut style = self.element(popup).map(|e| e.base.clone()).unwrap_or_default();
         style.layout.inset.left = LengthPercentageAuto::length(left);
         style.layout.inset.top = LengthPercentageAuto::length(top);
+        // One with more items than the screen has room for keeps to the screen, and the wheel moves through it.
+        if height > room {
+            style.overflow = Overflow::Scroll;
+            style.layout.max_size.height = LengthPercentageAuto::length(room);
+        }
         self.set_style(popup, style);
         true
     }

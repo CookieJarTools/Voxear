@@ -181,4 +181,6 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<byte*, int, int> BlocksAll;
 	public delegate* unmanaged[Cdecl]<int, float> WorldBudget;
 	public delegate* unmanaged[Cdecl]<int, float, void> SetWorldBudget;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> MobMotionValue;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> BlockMobValue;
 }

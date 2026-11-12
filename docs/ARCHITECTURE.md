@@ -3360,7 +3360,16 @@ colour or material a face is drawn with: a quad names its look in eight bits, an
 renderer's buffer of surfaces. Past that a block gets no number, and the Console is told once (`say_full`). A world
 written while worlds kept all their kinds themselves still reads and draws as it did; in the editor its kinds made
 by hand become blocks beside it as it opens (`block_props::make_kinds_blocks`). The editor's Blocks panel
-(`block_database`) is the project's blocks as a grid of tiles made a row at a time. Items, tool kinds, stations and recipes
+(`block_database`) is the project's blocks as a grid of tiles made a row at a time. Generated ground takes its
+blocks from biomes: `.biome` assets (`generate::biomes`), each the climate and heights it lies in and its ground's
+blocks by reference, which a world lists in its `[generate]`. The engine reads them with the world
+(`blocks::with_biomes`), numbering the blocks they name in its palette, and gives generation the result
+(`BlockGenerate::placed`), which is no part of the file. Each column is the biome its climate and height are within
+or nearest (`Biomes::at`) and takes that biome's top, under, deep, steep and shore blocks, the world's own where the
+biome names none. A biome saved counts as a block saved does: `blocks::refresh` places every stale world's biomes
+again and, where they are others, makes its ground again with its changes kept, the same in the editor and in play;
+the editor's `change_file` places them again before anything else, so a list of biomes changed is ground made again
+as one edit. Items, tool kinds, stations and recipes
 are C# Definitions of Voxear.Core's own, so games derive from them; `Blocks.Mine`, `Place`, `Scoop` and
 `Recipes.Match` apply the rules, and what holds items is a package's. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from

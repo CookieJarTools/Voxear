@@ -2172,6 +2172,30 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     block once and full at 256 looks said once, the brush numbering what it builds with as one step to undo, the
     picker's order, the Blocks panel's grid, search, copies and deletes, an older world made blocks and drawn as it
     was, every block in a build, `Blocks.All` in a game.
+  - ~~**Biomes for worlds of blocks:**~~ done: a biome is an asset (`.biome`, `generate::biomes::BiomeDef`): its
+    colour, the temperatures, humidities and, where it keeps to any, heights it lies in, and its ground's blocks by
+    reference: top, under and how deep, deep, steep with its slope, shore with its height. A generated world lists
+    its biomes in its `[generate]` (`BlockGenerate::biomes`). The engine reads them with the world
+    (`blocks::with_biomes`), numbering the blocks they name in its palette, and gives generation the result
+    (`BlockGenerate::placed`, no part of the file); `columns_at` gives each column the blocks of the biome its
+    climate and height make it (`Biomes::at`: within its ranges or the nearest, one that keeps to a height first,
+    then the narrowest, borders wandering by noise), for near chunks and the far view alike, the world's own
+    blocks wherever a biome names none. A biome saved is read again, and every world listing it has its biomes
+    placed again and its ground made again with its changes kept (`blocks::refresh`, and `Content::block_world`
+    for one kept), in the editor and in play. Editor: a **Biomes** list under a generated world's generator rows
+    (`block_panel`, `BlockField::Biomes`), with Add Biome from the picker or a drop, a grip and a cross, each one
+    step to undo; a biome's Inspector (`biome_inspector`: Color; Preset of the eight climates, Temperature,
+    Humidity, Height and Heights; the ground's blocks as pickers with a cross), saved as it is edited; New Biome in
+    the Project panel's menu and the command palette; **Add Starter Biomes** (`starter_biomes`): Snow, Tundra,
+    Taiga, Grassland, Forest, Desert, Savanna and Rainforest in a Biomes folder beside the world with fifteen
+    colour blocks in its Blocks folder, a project's own blocks and biomes of those names used as they are. Tuned in
+    renders of mountains and hills at 1 m and 8 m blocks: the Snow keeps to heights from 260 m in any but a warm
+    place, since cooling 6.5 °C a kilometre alone leaves most peaks green, so mountains are white on top, rock on
+    their steep faces, and low ground never snow. A block's Cover rows hide where a world lists biomes and work as
+    they did where it lists none. Scripts: `Biome`, `Biomes.At(position)` (native API 78). Tests: generated ground
+    by biome, biomes numbered as a world loads, a saved biome making worlds again, a place's biome, the list added
+    to, moved, taken from and undone, the Inspector's fields saved, the starters made once and listed, snow by
+    height through the editor, scripts asking a place's biome.
 - **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
   origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

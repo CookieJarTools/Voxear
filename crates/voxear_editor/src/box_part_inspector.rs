@@ -6,7 +6,7 @@
 //! them, as when a handle moves what they show.
 
 use voxear_core::math::Vec3;
-use voxear_render::{BoxModel, BoxSkin};
+use voxear_render::{BoneRole, BoxModel, BoxSkin};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::{
@@ -19,6 +19,8 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub enum BoxPartEdit {
     Name(String),
+    /// What part of the body a bone moves.
+    Role(BoneRole),
     Pivot(Vec3),
     BoneRotation(Vec3),
     Position(Vec3),
@@ -42,6 +44,7 @@ impl BoxPartEdit {
             BoxPartEdit::Sheet(_) => 4,
             BoxPartEdit::Mirror(_) => 5,
             BoxPartEdit::Inflate(_) => 6,
+            BoxPartEdit::Role(_) => 7,
         }
     }
 }
@@ -50,6 +53,7 @@ impl BoxPartEdit {
 enum Rows {
     Bone {
         name: NodeId,
+        role: NodeId,
         pivot: [NodeId; 3],
         rotation: [NodeId; 3],
     },
@@ -99,10 +103,14 @@ impl BoxPartView {
                 let row = prop(ui, rows, "Name");
                 let name = ui.text_field(row, &bone.name);
                 ui.add_class(name, "value-input");
+                let row = prop(ui, rows, "Role");
+                let labels = BoneRole::ALL.map(BoneRole::label);
+                let chosen = BoneRole::ALL.iter().position(|role| *role == bone.role).unwrap_or(0);
+                let role = ui.dropdown(row, &labels, chosen);
                 let rows = part_rows(ui, root, "Transform", "transform");
                 let pivot = vector_row(ui, rows, "Pivot").1;
                 let rotation = vector_row(ui, rows, "Rotation").1;
-                Rows::Bone { name, pivot, rotation }
+                Rows::Bone { name, role, pivot, rotation }
             }
             Some(model_box) => {
                 let rows = part_rows(ui, root, "Transform", "transform");
@@ -189,10 +197,14 @@ impl BoxPartView {
             (read != now && read.is_finite()).then_some(read)
         };
         match (&self.rows, self.part) {
-            (Rows::Bone { name, pivot, rotation }, _) => {
+            (Rows::Bone { name, role, pivot, rotation }, _) => {
                 let typed = ui.text(*name).trim().to_string();
                 if ui.submitted(*name) && !typed.is_empty() && typed != bone.name {
                     return Some(BoxPartEdit::Name(typed));
+                }
+                let chosen = BoneRole::ALL.get(ui.selected_option(*role)).copied().unwrap_or_default();
+                if chosen != bone.role {
+                    return Some(BoxPartEdit::Role(chosen));
                 }
                 let pivot = vector(pivot, bone.pivot).map(BoxPartEdit::Pivot);
                 pivot.or_else(|| vector(rotation, bone.rotation).map(BoxPartEdit::BoneRotation))
@@ -240,9 +252,13 @@ impl BoxPartView {
             ui.set_text(self.title, &title);
         }
         match (&self.rows, self.part) {
-            (Rows::Bone { name, pivot, rotation }, _) => {
+            (Rows::Bone { name, role, pivot, rotation }, _) => {
                 if ui.focused() != Some(*name) && ui.text(*name) != bone.name {
                     ui.set_text(*name, &bone.name);
+                }
+                let chosen = BoneRole::ALL.iter().position(|other| *other == bone.role).unwrap_or(0);
+                if ui.selected_option(*role) != chosen {
+                    ui.set_selected_option(*role, chosen);
                 }
                 write_numbers(ui, pivot, &bone.pivot.to_array());
                 write_numbers(ui, rotation, &bone.rotation.to_array());

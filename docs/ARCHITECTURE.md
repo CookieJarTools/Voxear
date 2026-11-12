@@ -2823,7 +2823,10 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   model's `Sheet` and nothing else, and the views upload the sheet again behind the material they have. The flat
   sheet beside the model (`model_sheet`) paints the same pixels directly. `box_model/paint.rs` holds what a sheet
   can do to itself: fill, list its colours, and lay its boxes out again with their pixels.
-- **Planned on top:** bones made from a model's shape, motion made from how a
+- **Bones from shape** (`box_model/rig.rs`): `make_bones` reads the boxes as a body with parts round it and gives
+  each a bone with a `BoneRole` (body, head, leg, arm, tail, wing). Roles, not names, are what animation goes
+  by, so a renamed bone still walks. `add_joint` splits a limb's box for a knee or an elbow.
+- **Planned on top:** motion made from how a
   character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
   one through a block world.
 

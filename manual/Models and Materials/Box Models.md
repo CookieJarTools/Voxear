@@ -53,6 +53,23 @@ The bar along the top changes the model:
 | Delete | Takes out what is picked. A bone goes with everything under it. The **Delete** key does the same |
 | Pivot Only | While this is on, moving a bone moves only the point it turns about, and its boxes stay where they are |
 
+### Bones made for you
+
+You can build a whole model on one bone and let the editor work out its bones afterwards. Click **Make Bones**, and the editor looks at where the boxes are:
+
+- the box that most others touch is the **Body**
+- boxes standing on the ground under or beside the body are **legs**
+- tall boxes at the body's sides are **arms**, and flat ones are **wings**
+- the largest box on top of the body, or in front of it, is the **Head**
+- a box behind the body is the **Tail**
+- every other box goes to the part it is nearest, so a snout goes with the head
+
+Each part gets a bone that turns where it meets the body: a leg at its hip, an arm at its shoulder, a head at its neck. The bones are named for what they are and where they are, such as `Head`, `LeftArm` or `BackRightLeg`, and nothing moves in the view.
+
+Make Bones replaces the bones the model had. If it guesses a part wrong, undo it, or pick the bone and change its **Role** in the Inspector.
+
+**Add Joint** cuts the picked box in two across its longest side and hangs the far half from a new bone at the cut. Use it on a leg to give it a knee, or on an arm for an elbow. Each half keeps the pixels it showed.
+
 In the tree, drag a bone onto another bone to hang it from that bone, or drag a box onto a bone to give it to that bone. Nothing moves in the view when you do: only what it hangs from changes.
 
 ### Moving and sizing
@@ -68,6 +85,7 @@ A picked **bone** shows:
 | Row | What it is |
 | --- | --- |
 | Name | What the bone is called. Press Enter to rename it |
+| Role | The part of the body it moves: None, Body, Head, Leg, Arm, Tail or Wing. What animates the model goes by this, not by the bone's name |
 | Pivot | The point it turns about, in pixels from its parent's pivot |
 | Rotation | How it stands when nothing poses it, in degrees |
 
@@ -165,6 +183,7 @@ Each `[[bones]]` table is one bone. A bone has to come after its parent in the f
 | Setting | What it does |
 | --- | --- |
 | `name` | What the bone is called. No two bones share a name |
+| `role` | The part of the body it moves: `body`, `head`, `leg`, `arm`, `tail` or `wing`. Left out for a bone that is none of them |
 | `parent` | The bone it hangs from, by name. Left out, the bone hangs from the model itself |
 | `pivot` | The point the bone turns about, in pixels from its parent's pivot, or from the model's feet when it has no parent |
 | `rotation` | How the bone stands when nothing poses it, in degrees about X, Y and Z |
@@ -222,7 +241,6 @@ A box model's bones are a skeleton like any animated model's, and every box move
 ## Not done yet
 
 - A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
-- Bones made for you from the model's shape.
 - Motion made for you from how a model moves: walking, idling, looking, attacking.
 - A raised second layer, where painted pixels stand out from the surface as small blocks.
 - Animation clips made on a timeline.

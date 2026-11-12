@@ -1353,7 +1353,15 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     small). A stroke is one step to undo; pixels alone changed upload the sheet behind the same material. Tests:
     fills, a sheet's colours, faces' places, laying out; the editor painting on the model and the sheet, a drag
     filling a row however fast, symmetry, fill, pick, erase, laying out and undoing each. Manual: Box Models.
-  - [ ] **Bones from its shape:** legs, arms, head, body and tail found from the boxes, and a limb split for a joint
+  - ~~**Bones from its shape:**~~ done: `BoxModel::make_bones` (`box_model/rig.rs`) takes the box most others
+    touch for the body, what stands on the ground under or beside it for legs, what hangs tall at its sides for
+    arms and flat for wings, the largest on or before it for the head, what trails it for the tail, and gives the
+    rest to the part nearest; each gets a bone pivoted where it meets the body, named by part and side, with a
+    `BoneRole` (kept in the file) for what animates it to go by. `add_joint` cuts a box across its longest side and
+    hangs the far half from a bone at the cut, each half showing the pixels it showed. Editor: Make Bones and Add
+    Joint in the bar, a bone's Role in the Inspector. Tests: a figure on two legs, a beast on four with head and
+    tail, a blob, wings, a knee and an elbow; the editor making bones, showing a role, cutting a leg and undoing.
+    Manual: Box Models.
   - [ ] **Motion from how it moves:** walking by its gait, idling, looking, attacking, and parts that lag behind
   - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away
   - [ ] **In a block world:** a component that walks one over blocks and through water, paths on the blocks, and

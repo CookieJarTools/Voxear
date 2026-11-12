@@ -53,6 +53,7 @@ use crate::{
 
 mod edit;
 mod paint;
+mod rig;
 
 pub use edit::BoxHit;
 
@@ -202,10 +203,48 @@ impl ModelBox {
     }
 }
 
+/// What part of a body a bone moves, for what animates the model to know
+/// its legs from its arms without going by their names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BoneRole {
+    /// Nothing in particular.
+    #[default]
+    None,
+    Body,
+    Head,
+    /// A leg, or under a leg its lower half.
+    Leg,
+    /// An arm, or under an arm its lower half.
+    Arm,
+    Tail,
+    Wing,
+}
+
+impl BoneRole {
+    pub const ALL: [BoneRole; 7] =
+        [BoneRole::None, BoneRole::Body, BoneRole::Head, BoneRole::Leg, BoneRole::Arm, BoneRole::Tail, BoneRole::Wing];
+
+    /// As a list offers it.
+    pub fn label(self) -> &'static str {
+        match self {
+            BoneRole::None => "None",
+            BoneRole::Body => "Body",
+            BoneRole::Head => "Head",
+            BoneRole::Leg => "Leg",
+            BoneRole::Arm => "Arm",
+            BoneRole::Tail => "Tail",
+            BoneRole::Wing => "Wing",
+        }
+    }
+}
+
 /// A bone and the boxes it carries.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoxBone {
     pub name: String,
+    /// The part of the body it moves.
+    pub role: BoneRole,
     /// Its parent, always before it among the model's bones.
     pub parent: Option<usize>,
     /// The point it turns about, in pixels from its parent's pivot, or from
@@ -218,7 +257,7 @@ pub struct BoxBone {
 
 impl BoxBone {
     pub fn new(name: &str, parent: Option<usize>, pivot: Vec3) -> Self {
-        Self { name: name.to_string(), parent, pivot, rotation: Vec3::ZERO, boxes: Vec::new() }
+        Self { name: name.to_string(), role: BoneRole::None, parent, pivot, rotation: Vec3::ZERO, boxes: Vec::new() }
     }
 }
 
@@ -354,6 +393,8 @@ fn pixels_per_block() -> f32 {
 #[derive(Serialize, Deserialize)]
 struct FileBone {
     name: String,
+    #[serde(default, skip_serializing_if = "is_no_role")]
+    role: BoneRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -404,6 +445,10 @@ fn is_none(value: &f32) -> bool {
     *value == 0.0
 }
 
+fn is_no_role(role: &BoneRole) -> bool {
+    *role == BoneRole::None
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -439,6 +484,7 @@ impl BoxModel {
             let boxes = bone.boxes.into_iter().map(read_box).collect::<Result<_>>();
             bones.push(BoxBone {
                 parent,
+                role: bone.role,
                 pivot: bone.pivot.into(),
                 rotation: bone.rotation.into(),
                 boxes: boxes.with_context(|| format!("reading {}'s boxes", bone.name))?,
@@ -459,6 +505,7 @@ impl BoxModel {
                 .iter()
                 .map(|bone| FileBone {
                     name: bone.name.clone(),
+                    role: bone.role,
                     parent: bone.parent.and_then(|parent| Some(self.bones.get(parent)?.name.clone())),
                     pivot: bone.pivot.into(),
                     rotation: bone.rotation.into(),

@@ -222,6 +222,8 @@ pub struct ModelPanel {
     mirror: NodeId,
     delete: NodeId,
     pivot_only: NodeId,
+    make_bones: NodeId,
+    add_joint: NodeId,
     frame: NodeId,
     summary: NodeId,
     /// Shape or Paint, and the buttons of each, shown while it is the mode.
@@ -290,6 +292,10 @@ impl ModelPanel {
         let delete = button(ui, shape_bar, "Delete", "Takes out what is picked");
         let tip = "Moving a bone moves its pivot and leaves its boxes where they are";
         let pivot_only = button(ui, shape_bar, "Pivot Only", tip);
+        let tip = "Makes the model's bones afresh from its shape: a body, a head, legs, arms, wings and a tail";
+        let make_bones = button(ui, shape_bar, "Make Bones", tip);
+        let tip = "Cuts the box picked in two across its longest side, for a knee or an elbow";
+        let add_joint = button(ui, shape_bar, "Add Joint", tip);
 
         let paint_bar = group(ui);
         let tools = ui.segmented(paint_bar);
@@ -357,6 +363,8 @@ impl ModelPanel {
             mirror,
             delete,
             pivot_only,
+            make_bones,
+            add_joint,
             frame,
             summary,
             tree,
@@ -632,6 +640,30 @@ impl ModelPanel {
         self.pick(Some(made));
     }
 
+    /// Makes the model's bones afresh from its shape (see
+    /// `BoxModel::make_bones`), with nothing picked after.
+    pub fn make_bones(&mut self) {
+        let Some(mut model) = self.open.as_ref().map(|open| open.model.clone()) else { return };
+        if model.make_bones() {
+            self.pick(None);
+            self.change(model, None);
+        }
+    }
+
+    /// Cuts the box picked in two for a joint, and picks the bone its far
+    /// half now hangs from.
+    pub fn add_joint(&mut self) {
+        let Some((open, Picked::Box(bone, index))) = self.open.as_ref().and_then(|open| Some((open, open.picked?)))
+        else {
+            return;
+        };
+        let mut model = open.model.clone();
+        if let Some(made) = model.add_joint(bone, index) {
+            self.change(model, None);
+            self.pick(Some(Picked::Bone(made)));
+        }
+    }
+
     /// Looks at the whole model.
     pub fn frame(&mut self) {
         if let Some(open) = self.open.as_ref() {
@@ -658,6 +690,7 @@ impl ModelPanel {
                 false => model.bones[at].pivot = pivot,
             },
             (BoxPartEdit::BoneRotation(rotation), Picked::Bone(at)) => model.bones[at].rotation = rotation,
+            (BoxPartEdit::Role(role), Picked::Bone(at)) => model.bones[at].role = role,
             (edit, Picked::Box(at, index)) => {
                 let model_box = &mut model.bones[at].boxes[index];
                 match edit {
@@ -816,6 +849,16 @@ impl ModelPanel {
         }
         if ui.clicked(self.frame) {
             self.frame();
+        }
+        if ui.clicked(self.make_bones) {
+            self.make_bones();
+        }
+        if ui.clicked(self.add_joint) {
+            self.add_joint();
+        }
+        let boxed = matches!(self.picked(), Some(Picked::Box(..)));
+        if ui.is_enabled(self.add_joint) != boxed {
+            ui.set_enabled(self.add_joint, boxed);
         }
         let picked = self.picked().is_some();
         for button in [self.duplicate, self.mirror, self.delete] {

@@ -88,7 +88,7 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
-pub use box_model::{BoxBone, BoxHit, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model};
+pub use box_model::{BoneRole, BoxBone, BoxHit, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};

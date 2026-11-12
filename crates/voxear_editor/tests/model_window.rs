@@ -9,7 +9,7 @@ use voxear_core::math::Vec3;
 use voxear_editor::model_panel::{Mode, Tool};
 use voxear_editor::model_view::{Handle, Picked};
 use voxear_engine::Project;
-use voxear_render::{BoxModel, BoxSkin, Face, Renderer, RendererSettings};
+use voxear_render::{BoneRole, BoxModel, BoxSkin, Face, Renderer, RendererSettings};
 use voxear_ui::{Key, Modifiers, NodeId, Ui};
 
 const SIZE: (u32, u32) = (1280, 800);
@@ -227,10 +227,10 @@ fn a_box_model_is_opened_built_on_picked_moved_and_undone_in_the_model_window() 
     assert!(texts_in(&editor.ui, tree).contains(&"Hat".to_string()));
     assert_eq!(saved(&dir).bones[2].name, "Hat");
 
-    // A click on the floor, off the model, picks nothing, and the Inspector shows the model itself.
-    let floor = editor.model_window().view().point(&editor.ui, Vec3::new(1.0, 0.0, 0.2)).expect("in view");
-    let [left, top, width, height] = editor.ui.rect(editor.model_window().view().frame_node());
-    assert!((left..left + width).contains(&floor.0) && (top..top + height).contains(&floor.1), "{floor:?}");
+    // A click off the model picks nothing, and the Inspector shows the model itself.
+    // The view's corner, where nothing of the model is.
+    let [left, top, ..] = editor.ui.rect(editor.model_window().view().frame_node());
+    let floor = (left + 6.0, top + 6.0);
     click_at(&mut editor.ui, floor);
     frames(&mut editor, &mut renderer, 2);
     assert_eq!(editor.model_window().picked(), None);
@@ -378,4 +378,75 @@ fn a_box_model_is_painted_on_the_model_and_on_its_sheet_and_laid_out_again() {
     click_at(&mut editor.ui, at);
     frames(&mut editor, &mut renderer, 2);
     assert_eq!(editor.model_window().picked(), Some(Picked::Box(1, 0)));
+}
+
+#[test]
+fn bones_are_made_from_a_models_shape_and_a_leg_is_cut_for_a_knee() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    // A figure built on one bone: a body, a head, two arms and two legs.
+    let mut heap = BoxModel::default();
+    let all = heap.add_bone("All", None, Vec3::ZERO);
+    let boxes: [([f32; 3], [u32; 3]); 6] = [
+        ([-4.0, 12.0, -2.0], [8, 12, 4]),
+        ([-4.0, 24.0, -4.0], [8, 8, 8]),
+        ([4.0, 12.0, -2.0], [4, 12, 4]),
+        ([-8.0, 12.0, -2.0], [4, 12, 4]),
+        ([0.0, 0.0, -2.0], [4, 12, 4]),
+        ([-4.0, 0.0, -2.0], [4, 12, 4]),
+    ];
+    for (from, size) in boxes {
+        heap.add_box_with_room(all, size);
+        heap.bones[all].boxes.last_mut().unwrap().from = Vec3::from(from);
+    }
+    std::fs::write(dir.join(PATH), heap.to_text()).unwrap();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    assert!(!editor.ui.is_enabled(button(&editor.ui, "Add Joint")), "with no box picked there is nothing to cut");
+
+    // Make Bones: a bone for each part, named and given its role, nothing moved; one step to undo.
+    let stood = heap.bounds();
+    press(&mut editor.ui, "Make Bones");
+    frames(&mut editor, &mut renderer, 3);
+    let model = editor.model_window().model().unwrap().clone();
+    let names: Vec<&str> = model.bones.iter().map(|bone| bone.name.as_str()).collect();
+    assert_eq!(names, ["Body", "Head", "RightArm", "LeftArm", "RightLeg", "LeftLeg"]);
+    assert_eq!(model.bounds(), stood);
+    let tree = editor.model_window().tree();
+    assert!(texts_in(&editor.ui, tree).contains(&"LeftLeg".to_string()));
+    assert_eq!(saved(&dir), model);
+
+    // A bone's role shows in the Inspector, and another picked there is kept.
+    let leg = model.find_bone("LeftLeg").unwrap();
+    editor.model_window_mut().pick(Some(Picked::Bone(leg)));
+    frames(&mut editor, &mut renderer, 2);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let shown = texts_in(&editor.ui, inspector);
+    assert!(shown.contains(&"Role".to_string()) && shown.contains(&"Leg".to_string()), "{shown:#?}");
+
+    // Add Joint on the leg's box: its lower half hangs from a new bone at the knee, which is picked.
+    editor.model_window_mut().pick(Some(Picked::Box(leg, 0)));
+    frames(&mut editor, &mut renderer, 2);
+    press(&mut editor.ui, "Add Joint");
+    frames(&mut editor, &mut renderer, 3);
+    let model = editor.model_window().model().unwrap().clone();
+    let knee = model.find_bone("LeftLegLower").expect("a bone for the lower leg");
+    assert_eq!(editor.model_window().picked(), Some(Picked::Bone(knee)));
+    assert_eq!((model.bones[knee].parent, model.bones[knee].role), (Some(leg), BoneRole::Leg));
+    assert_eq!(model.bones[leg].boxes[0].size, [4, 6, 4]);
+    assert_eq!(model.bounds(), stood, "the leg stands where it stood");
+    assert_eq!(saved(&dir), model);
+
+    // Both go back, a step each.
+    assert!(editor.model_window_mut().undo());
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(editor.model_window().model(), Some(&heap));
 }

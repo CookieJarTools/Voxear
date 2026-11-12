@@ -386,3 +386,86 @@ fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it()
     assert!(game.ui.ui().is_visible(mini) && !game.ui.ui().is_visible(large));
     assert!(!game.display.cursor_visible && game.input.map_enabled("Player"));
 }
+
+/// What scripts ask of the map view they hold by `number`, to change.
+fn wish_of(game: &mut Game, number: u32) -> &mut voxear_engine::map::MapViewWish {
+    game.engine.world.resource_mut::<voxear_engine::map::MapScript>().unwrap().wishes.entry(number).or_default()
+}
+
+#[test]
+fn a_script_steers_how_a_map_is_seen_and_what_it_follows_stays_at_its_edge() {
+    use voxear_core::math::Vec2;
+    use voxear_engine::map::MapScript;
+    use voxear_ui::Shape;
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    Maps::set_open(&mut game.engine.world, hud, true);
+    settle(&mut game, None);
+    let large = view(&mut game, MapViewKind::Map);
+    // Its views are elements scripts hold by number, as any element is.
+    let number = game.engine.world.get::<Map>(hud).unwrap().views.expect("on the screen")[1];
+    let shown = |game: &Game| *game.maps.shown(large).unwrap();
+    let seen = |game: &Game| game.engine.world.resource::<MapScript>().unwrap().seen[&number].clone();
+    // What the map follows is an arrow of white lines over the ground.
+    let arrow = |game: &mut Game| -> Vec<Vec2> {
+        let ui = game.ui.ui();
+        let overlay = ui.map_view_parts(large).unwrap().overlay;
+        let lines = ui.shapes(overlay).iter().filter_map(|shape| match shape {
+            Shape::Line { from, width, .. } if *width == 2.5 => Some(Vec2::from(*from)),
+            _ => None,
+        });
+        lines.collect()
+    };
+
+    // Opened, its ground is drawn wider than the screen is high, and what it follows is at its middle.
+    let first = shown(&game);
+    let wide = first.reach / (first.camera.distance * (first.camera.fov * 0.5).tan());
+    assert!((wide - 1.15).abs() < 1e-3, "its ground's width over the view's height: {wide}");
+    let middle = first.size * 0.5;
+    assert!((arrow(&mut game)[0] - middle).length() < 30.0);
+
+    // Asked to look at a place far to the east, it does, and what it follows stays at its west edge.
+    wish_of(&mut game, number).look_at = Some(Vec3::new(640.0, 0.0, 40.0));
+    settle(&mut game, None);
+    let moved = shown(&game);
+    assert!((moved.corner[0] as f32 + moved.camera.middle.x - 160.0).abs() < 0.01, "640 m is 160 cells");
+    assert_eq!(seen(&game).offset, Vec2::new(600.0, 0.0));
+    let at = arrow(&mut game);
+    assert!(!at.is_empty(), "what it follows is still marked");
+    assert!(
+        at.iter().all(|point| point.x > 0.0 && point.x < middle.x - 100.0 && point.y > 0.0 && point.y < first.size.y)
+    );
+    // Unless the view is set not to keep it there.
+    wish_of(&mut game, number).settings.push("arrow-at-edge=false".into());
+    settle(&mut game, None);
+    assert!(arrow(&mut game).is_empty());
+    assert!(!seen(&game).settings.arrow_at_edge);
+
+    // Turned and zoomed by a script: any number of blocks to a cell, shown in cells of the nearest power of two.
+    *wish_of(&mut game, number) =
+        voxear_engine::map::MapViewWish { turn: Some(1.0), zoom: Some(6.0), ..Default::default() };
+    settle(&mut game, None);
+    let now = seen(&game);
+    assert_eq!((now.turn, now.zoom, now.shown.cell), (1.0, 6.0, 8.0));
+    // The ground under a point of the view: looked up, it shows where it was pointed at.
+    let place = now.place(middle).expect("ground under the view's middle");
+    let (back, inside) = now.shown.point(place).unwrap();
+    assert!(inside && (back - middle).length() < 8.0, "{place:?} shows at {back:?}");
+    assert_eq!(now.place(Vec2::new(4.0, 4.0)), None, "nothing under a corner past the ground");
+
+    // Set back: north up, over what it follows, at its settings' zoom; and kept within the zooms it is given.
+    wish_of(&mut game, number).reset = true;
+    settle(&mut game, None);
+    let now = seen(&game);
+    assert_eq!((now.turn, now.zoom, now.offset), (0.0, 4.0, Vec2::ZERO));
+    wish_of(&mut game, number).settings.push("min-zoom=4 max-zoom=8".into());
+    wish_of(&mut game, number).zoom = Some(1.0);
+    settle(&mut game, None);
+    assert_eq!(seen(&game).shown.cell, 4.0, "no nearer than 1:4");
+    wish_of(&mut game, number).zoom = Some(64.0);
+    settle(&mut game, None);
+    assert_eq!(seen(&game).shown.cell, 8.0, "no further than 1:8");
+}

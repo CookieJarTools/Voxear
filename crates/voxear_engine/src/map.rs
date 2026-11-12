@@ -38,8 +38,8 @@ mod scripts;
 pub use hud::PlacedMarker;
 pub use known::{MapKnown, MapLayerLook, MapShows};
 pub use parts::{Map, MapCorner, MapData, MapIcon, MapMarker, MarkerShows, map_data, map_of};
-pub use scripts::MapScript;
 pub(crate) use scripts::register;
+pub use scripts::{MapScript, MapViewSeen, MapViewWish};
 
 /// The cells a minimap's window has along a side, and a map's.
 const MINIMAP_SIDE: u32 = 128;
@@ -109,12 +109,18 @@ struct View {
     /// The blocks' colours its palette was made from, and the paper's.
     faces: Option<Arc<[BlockFaces]>>,
     paper: [u8; 3],
-    /// A map's own turn and tilt, in radians, how far it is zoomed in, and
-    /// how far it was moved from what it follows, in cells.
+    /// Its own turn and tilt, in radians, how far it is zoomed in from its
+    /// settings' zoom, and how far it was moved from what it follows, in
+    /// metres along x and z.
     turn: f32,
     tilt: f32,
     zoom: f32,
     moved: Vec2,
+    /// The zoom and tilt its settings last gave it: changed, they are its
+    /// own again.
+    given: Option<(u32, f32)>,
+    /// How many metres a cell was when it was last shown.
+    cell: f32,
     /// Where the pointer was when last looked at, while it is held on the
     /// map.
     held: Option<(f32, f32)>,
@@ -144,6 +150,8 @@ impl View {
             tilt: settings.tilt.to_radians(),
             zoom: 1.0,
             moved: Vec2::ZERO,
+            given: None,
+            cell: 1.0,
             held: None,
             still: 0,
             reach: side as f32 * 0.3,
@@ -199,7 +207,7 @@ impl ShownMap {
 
     /// How far past the slab's edge a place is, in cells from the window's
     /// corner: 1 at the edge, less inside it.
-    fn past(&self, cells: Vec3) -> f32 {
+    pub fn past(&self, cells: Vec3) -> f32 {
         let off = Vec2::new(cells.x - self.camera.middle.x, cells.z - self.camera.middle.z);
         let far = if self.round { off.length() } else { off.x.abs().max(off.y.abs()) };
         far / self.reach.max(1.0)
@@ -290,16 +298,21 @@ fn viewer_of(local: &Transform, placed: Option<&WorldTransform>) -> MapViewer {
     MapViewer { position: matrix.w_axis.truncate(), heading: forward.x.atan2(forward.z) }
 }
 
+/// Where maps are seen from: `follow` where it is an Obj that is there, or
+/// else the game's camera.
+fn follows(world: &World, follow: Option<Entity>) -> Option<MapViewer> {
+    let followed = follow.filter(|entity| world.is_alive(*entity)).and_then(|entity| {
+        let local = world.get::<Transform>(entity)?;
+        Some(viewer_of(local, world.get::<WorldTransform>(entity)))
+    });
+    followed.or_else(|| camera(world))
+}
+
 impl Maps {
     /// Where maps are seen from: the Obj scripts gave them to follow (see
     /// [`MapScript`]), or else the game's camera.
     pub fn viewer(&self, world: &World) -> Option<MapViewer> {
-        let follow = world.resource::<MapScript>().and_then(|script| script.follow);
-        let followed = follow.filter(|entity| world.is_alive(*entity)).and_then(|entity| {
-            let local = world.get::<Transform>(entity)?;
-            Some(viewer_of(local, world.get::<WorldTransform>(entity)))
-        });
-        followed.or_else(|| camera(world))
+        follows(world, world.resource::<MapScript>().and_then(|script| script.follow))
     }
 
     /// What a map view showed when it was last drawn.
@@ -327,12 +340,33 @@ impl Maps {
     /// is seen from: makes the tiles each needs, moves its window, hears
     /// the pointer on a map, and has `renderer` draw it. `scale` is how
     /// many pixels one of the UI's is.
+    ///
+    /// `numbers` are the numbers scripts hold each map view by: what a
+    /// script asked of a view (see [`MapViewWish`]) is done here, and how
+    /// each was seen is left for scripts to read (see [`MapViewSeen`]).
     pub fn update(
         &mut self,
+        world: &mut World,
+        content: &mut Content,
+        renderer: Option<&mut Renderer>,
+        (ui, scale): (&mut Ui, f32),
+        numbers: &HashMap<NodeId, u32>,
+    ) {
+        // Taken out of the world while the maps are shown, so the world is only read meanwhile.
+        let mut script = world.remove_resource::<MapScript>().unwrap_or_default();
+        self.update_with(world, &mut script, content, renderer, (ui, scale), numbers);
+        script.seen.retain(|number, _| numbers.values().any(|kept| kept == number));
+        world.insert_resource(script);
+    }
+
+    fn update_with(
+        &mut self,
         world: &World,
+        script: &mut MapScript,
         content: &mut Content,
         mut renderer: Option<&mut Renderer>,
         (ui, scale): (&mut Ui, f32),
+        numbers: &HashMap<NodeId, u32>,
     ) {
         voxear_core::profile_scope!("Maps");
         self.frame += 1;
@@ -358,7 +392,7 @@ impl Maps {
         }
         self.grounds.retain(|entity, _| found.as_ref().is_some_and(|(found, ..)| found == entity));
         self.take_made();
-        let viewer = self.viewer(world);
+        let viewer = follows(world, script.follow);
         let unset = MapKnown::default();
         let known = world.resource::<MapKnown>().unwrap_or(&unset);
         for node in nodes {
@@ -372,8 +406,16 @@ impl Maps {
             if !ui.is_visible(node) {
                 continue;
             }
-            self.show((*entity, known), viewer, (node, &settings), renderer.as_deref_mut(), (ui, scale));
-            self.overlay(world, ui, (node, &settings), viewer);
+            let number = numbers.get(&node).copied();
+            let wish = number.and_then(|number| script.wishes.remove(&number));
+            let seen =
+                self.show((*entity, known), viewer, (node, settings, wish), renderer.as_deref_mut(), (ui, scale));
+            // Its settings as scripts may just have changed them.
+            let settings = ui.map_view_settings(node).unwrap_or(settings);
+            self.overlay((world, &*script), ui, (node, &settings), viewer);
+            if let (Some(number), Some(seen)) = (number, seen) {
+                script.seen.insert(number, seen);
+            }
         }
         self.written.retain(|node, _| ui.is_visible(*node));
         self.forget_unshown(frame);
@@ -480,50 +522,76 @@ impl Maps {
         });
     }
 
-    /// Shows the world round `viewer` in one view.
+    /// Shows the world round `viewer` in one view, seen as its settings,
+    /// the pointer and what a script wished of it say; how it was seen.
     fn show(
         &mut self,
         (entity, known): (Entity, &MapKnown),
         viewer: MapViewer,
-        (node, settings): (NodeId, &MapViewSettings),
+        (node, mut settings, wish): (NodeId, MapViewSettings, Option<MapViewWish>),
         mut renderer: Option<&mut Renderer>,
         (ui, scale): (&mut Ui, f32),
-    ) {
-        let Some(ground) = self.grounds.get(&entity) else { return };
+    ) -> Option<MapViewSeen> {
+        let ground = self.grounds.get(&entity)?;
         let (faces, origin, block_size) = (ground.faces.clone(), ground.corner, ground.block_size.max(0.01));
-        let Some(parts) = ui.map_view_parts(node) else { return };
+        let parts = ui.map_view_parts(node)?;
         let rect = ui.rect(node);
         let size = [(rect[2] * scale).round().max(1.0) as u32, (rect[3] * scale).round().max(1.0) as u32];
         if rect[2] < 2.0 || rect[3] < 2.0 {
-            return;
+            return None;
         }
         let large = settings.kind == MapViewKind::Map;
         let frame = self.frame;
         let view = self.views.get_mut(&node).expect("kept by update");
-        if large {
-            hear_pointer(view, ui, node);
-        } else {
-            (view.tilt, view.moved, view.zoom) = (settings.tilt.to_radians(), Vec2::ZERO, 1.0);
-            view.turn = if settings.turns { viewer.heading } else { 0.0 };
+        // What a script wished of it: settings by their names first, then how it is seen.
+        let wish = wish.unwrap_or_default();
+        if !wish.settings.is_empty() {
+            wish.settings.iter().for_each(|text| drop(settings.set_all(text)));
+            ui.set_map_view_settings(node, settings);
         }
-        // Zoomed out past twice or in past half, a map goes to the next level, its cells twice the size.
-        let mut level = settings.zoom.max(1).ilog2();
-        if large {
-            let steps = (-view.zoom.log2()).round() as i32;
-            level = (level as i32 + steps).clamp(0, 8) as u32;
+        // Its settings' zoom and tilt are its own until the pointer or a script changes them, and again when
+        // they change.
+        if view.given != Some((settings.zoom, settings.tilt)) || wish.reset {
+            (view.tilt, view.zoom) = (settings.tilt.to_radians(), 1.0);
+            view.given = Some((settings.zoom, settings.tilt));
         }
-        let within = if large { view.zoom * (1 << level) as f32 / settings.zoom.max(1) as f32 } else { 1.0 };
+        if wish.reset {
+            (view.turn, view.moved) = (0.0, Vec2::ZERO);
+        }
+        view.turn = wish.turn.unwrap_or(view.turn);
+        view.tilt = wish.tilt.unwrap_or(view.tilt);
+        view.zoom = wish.zoom.map_or(view.zoom, |blocks| settings.zoom as f32 / blocks.max(0.01));
+        view.moved = wish.offset.unwrap_or(view.moved);
+        if let Some(place) = wish.look_at {
+            view.moved = Vec2::new(place.x - viewer.position.x, place.z - viewer.position.z);
+        }
+        if settings.controls {
+            hear_pointer(view, ui, node, settings.fill);
+        }
+        if settings.turns {
+            view.turn = viewer.heading;
+        }
+        // How many blocks a cell is, within what its settings let it be: past half way to the next power of
+        // two, the map goes to the next level, its cells twice or half the size.
+        let [least, most_blocks] = settings.zoom_range.map(|blocks| blocks.max(1) as f32);
+        let blocks = (settings.zoom as f32 / view.zoom.max(1e-3)).clamp(least * 0.75, most_blocks * 1.4);
+        view.zoom = settings.zoom as f32 / blocks;
+        let level =
+            (blocks.log2().round() as i32).clamp(least.log2() as i32, most_blocks.log2() as i32).clamp(0, 8) as u32;
+        let within = (1 << level) as f32 / blocks;
         let cell = block_size * (1 << level) as f32;
+        view.cell = cell;
         // What it looks at: what it follows, moved as the player moved the map, in this level's cells.
         let followed = (viewer.position - origin) / cell;
         if view.world != Some(entity) || view.level != level {
             // Another world, or another size of cell: everything in the window is something else now.
-            let per = (1 << view.level) as f32 / (1 << level) as f32;
-            view.moved *= if view.world == Some(entity) { per } else { 0.0 };
+            if view.world != Some(entity) {
+                view.moved = Vec2::ZERO;
+            }
             (view.world, view.level) = (Some(entity), level);
             view.written.clear();
         }
-        let middle = Vec2::new(followed.x, followed.z) + view.moved;
+        let middle = Vec2::new(followed.x, followed.z) + view.moved / cell;
         // The window moves a tile at a time, to keep what is looked at near its middle.
         let (side, tile) = (view.side as i32, MAP_TILE as i32);
         let wanted = [middle.x, middle.y].map(|at| ((at - side as f32 * 0.5) / tile as f32).round() as i32 * tile);
@@ -537,7 +605,8 @@ impl Maps {
         // so as its cells change size at the next level, the same ground is shown as large as before, in
         // cells half or twice the size.
         let most = (side as f32 * 0.5 - tile as f32 * 0.5 - 2.0).max(8.0);
-        let reach = if large { (most / std::f32::consts::SQRT_2 / within.max(0.05)).min(most) } else { most };
+        let rest = if large { most / std::f32::consts::SQRT_2 } else { most };
+        let reach = (rest / within.max(0.05)).min(most);
         view.reach = reach;
 
         // The renderer's window, made with the view and given the blocks' colours as they are now.
@@ -571,6 +640,7 @@ impl Maps {
         let map = view.map;
         let mut heights: Option<[i32; 2]> = None;
         let mut wanted_tiles = Vec::new();
+        let mut held: HashMap<[i32; 2], Arc<MapTile>> = HashMap::new();
         for at in places {
             let key = TileKey { world: entity, level, at };
             let cells = at.map(|tile_at| tile_at * tile);
@@ -578,6 +648,7 @@ impl Maps {
             match self.tiles.get_mut(&key) {
                 Some(kept) => {
                     kept.shown = frame;
+                    held.insert(at, kept.tile.clone());
                     // Written again when it was made again, or when what the maps know of it changed.
                     let low = cells.map(|at| at as f32 * cell);
                     let stamp = known.stamp_within(low, low.map(|at| at + tile as f32 * cell));
@@ -617,13 +688,14 @@ impl Maps {
         let view = self.views.get_mut(&node).expect("kept by update");
         let Some([low, high]) = heights else {
             ui.set_image(parts.picture, None);
-            return;
+            return None;
         };
         // Its camera: looking at what it follows, as high as that stands, far enough to see the slab whole.
         let looked = Vec3::new(middle.x - corner[0] as f32, followed.y - low as f32, middle.y - corner[1] as f32);
         let looked = Vec3::new(looked.x, looked.y.clamp(0.0, (high - low) as f32), looked.z);
         let tilt = view.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2);
-        let fits = reach * if large { 1.45 } else { 1.02 } / (FOV * 0.5).tan();
+        // As wide on the screen as its settings say: its fill is its width over the view's height.
+        let fits = reach / settings.fill.max(0.05) / (FOV * 0.5).tan();
         let camera = MapCamera { middle: looked, turn: view.turn, tilt, distance: fits, fov: FOV };
         let mut draw = MapDraw {
             size,
@@ -633,9 +705,9 @@ impl Maps {
             reach,
             round: settings.round,
             heights: [0.0, (high - low) as f32],
-            thick: if large { 4.0 } else { 2.0 },
+            thick: settings.thick,
             samples: if large { 1 } else { 2 },
-            look: MapLook::default(),
+            look: MapLook { shadows: settings.shadows, edges: settings.edges, ..MapLook::default() },
         };
         // Left alone for a few frames, a map is drawn once more with smoother edges.
         let same = view.drawn.is_some_and(|drawn| MapDraw { samples: draw.samples, ..drawn } == draw);
@@ -656,16 +728,26 @@ impl Maps {
             round: settings.round,
         };
         self.shown.insert(node, shown);
-        let (Some(map), Some(renderer)) = (map, renderer.as_deref_mut()) else { return };
+        let seen = MapViewSeen {
+            turn: view.turn,
+            tilt,
+            zoom: blocks,
+            offset: view.moved,
+            shown,
+            settings,
+            tiles: Arc::new(held),
+        };
+        let (Some(map), Some(renderer)) = (map, renderer.as_deref_mut()) else { return Some(seen) };
         renderer.draw_map(map, draw);
         let image = renderer.map_image(map).filter(|image| image.size == size);
         ui.set_image(parts.picture, image.map(|image| ImageRef { texture: image.texture.0, uv: [0.0, 0.0, 1.0, 1.0] }));
+        Some(seen)
     }
 }
 
 /// Hears the pointer on a map: a drag turns and tilts it, a drag with the
 /// middle button moves it over the ground, and the wheel zooms it.
-fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId) {
+fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId, fill: f32) {
     ui.take_wheel(node, true);
     // The wheel turned away brings the ground nearer, as it does in the editor's views.
     let wheel = ui.wheeled(node)[1];
@@ -684,10 +766,10 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId) {
         view.tilt = (view.tilt + dy * 0.006).clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2);
         return;
     }
-    // Moved with the ground under the pointer: a pixel is as many cells as the slab is wide over the view.
+    // Moved with the ground under the pointer: a pixel is as many metres as the slab is wide over the view.
     let rect = ui.rect(node);
-    let cells = view.reach * 2.0 * 1.45 / rect[3].max(1.0);
+    let metres = view.reach * 2.0 / fill.max(0.05) / rect[3].max(1.0) * view.cell;
     let (sin, cos) = view.turn.sin_cos();
     let (right, ahead) = (Vec2::new(cos, -sin), Vec2::new(sin, cos));
-    view.moved -= (right * dx - ahead * dy / view.tilt.sin().max(0.3)) * cells;
+    view.moved -= (right * dx - ahead * dy / view.tilt.sin().max(0.3)) * metres;
 }

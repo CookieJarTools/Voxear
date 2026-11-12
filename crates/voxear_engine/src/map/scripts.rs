@@ -3,13 +3,16 @@
 //! follows, is titled and has placed on it, kept in the world as a
 //! [`MapScript`] for the game's maps to read.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use voxear_core::math::Vec3;
+use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scripting::ComponentKind;
+use voxear_terrain::blocks::map::{MAP_TILE, MapTile};
+use voxear_ui::MapViewSettings;
 
 use super::{
+    ShownMap,
     hud::PlacedMarker,
     known::{MapKnown, MapLayerLook, MapShows},
     parts::{Map, MapCorner, MapIcon, MapMarker, MarkerShows},
@@ -24,6 +27,72 @@ pub struct MapScript {
     pub follow: Option<Entity>,
     pub title: Option<String>,
     pub placed: HashMap<u32, PlacedMarker>,
+    /// What scripts asked of a map view since it was last shown, by the
+    /// number they hold its element by: done the next time it is.
+    pub wishes: HashMap<u32, MapViewWish>,
+    /// How each map view was last seen, for scripts to read.
+    pub seen: HashMap<u32, MapViewSeen>,
+}
+
+/// What a script asked of one map view: each part none for as it is.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MapViewWish {
+    /// Radians from north, and over the ground.
+    pub turn: Option<f32>,
+    pub tilt: Option<f32>,
+    /// Blocks to a cell: any number, not only the powers of two.
+    pub zoom: Option<f32>,
+    /// Metres along x and z from what the maps follow.
+    pub offset: Option<Vec2>,
+    /// A place in the scene to look at, in place of an offset.
+    pub look_at: Option<Vec3>,
+    /// Back to how its settings have it: north up, over what it follows.
+    pub reset: bool,
+    /// Settings by their names, as `MapViewSettings::set_all` reads them.
+    pub settings: Vec<String>,
+}
+
+/// How a map view was seen when it was last shown.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapViewSeen {
+    pub turn: f32,
+    pub tilt: f32,
+    pub zoom: f32,
+    pub offset: Vec2,
+    pub shown: ShownMap,
+    pub settings: MapViewSettings,
+    /// The tiles its window held, by where each is, for finding the ground
+    /// under a point of the view.
+    pub tiles: Arc<HashMap<[i32; 2], Arc<MapTile>>>,
+}
+
+impl MapViewSeen {
+    /// The place in the scene under a point of the view, in the UI's pixels
+    /// from its top left: where a ray through it first comes down onto the
+    /// map's ground. None off the ground it shows.
+    pub fn place(&self, point: Vec2) -> Option<Vec3> {
+        let shown = &self.shown;
+        let (origin, direction) = shown.camera.ray(point, shown.size);
+        let tile = MAP_TILE as i32;
+        // From a little before the slab to a little past it, a quarter of a cell at a time.
+        let (near, far) = (shown.camera.distance - shown.reach * 3.0, shown.camera.distance + shown.reach * 3.0);
+        let steps = ((far - near.max(0.0)) * 4.0) as usize;
+        (0..steps).map(|step| origin + direction * (near.max(0.0) + step as f32 * 0.25)).find_map(|at| {
+            if shown.past(at) > 1.0 {
+                return None;
+            }
+            let cell = [at.x.floor() as i32 + shown.corner[0], at.z.floor() as i32 + shown.corner[1]];
+            let held = self.tiles.get(&[cell[0].div_euclid(tile), cell[1].div_euclid(tile)])?;
+            let column = held.column([cell[0].rem_euclid(tile) as u32, cell[1].rem_euclid(tile) as u32]);
+            let under = column.is_some() && at.y + shown.base as f32 <= column.highest() as f32;
+            let cells = Vec3::new(
+                cell[0] as f32 + at.x.fract().abs(),
+                column.highest() as f32,
+                cell[1] as f32 + at.z.fract().abs(),
+            );
+            under.then(|| shown.origin + cells * shown.cell)
+        })
+    }
 }
 
 /// Sets what answers `Map` and `MapMarker` in scripts.
@@ -48,6 +117,12 @@ const TILT: i32 = 9;
 const MAP_ZOOM: i32 = 10;
 const OPEN: i32 = 11;
 const SHOWS_WHAT: i32 = 12;
+const MAP_SIZE: i32 = 13;
+const MAP_TILT: i32 = 14;
+const POINTER_CONTROL: i32 = 15;
+// The numbers scripts hold its minimap and its map by, bit for bit, and whether they are on the screen yet.
+const MINIMAP_VIEW: i32 = 20;
+const MAP_VIEW: i32 = 21;
 // Of every map, whatever Obj is named.
 const FOLLOW: i32 = 100;
 const PLACE_AT: i32 = 101;
@@ -163,6 +238,13 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
         (MAP_ZOOM, None) => number(map.map_zoom as f32),
         (OPEN, None) => flag(map.open),
         (SHOWS_WHAT, None) => number(place_of(&MapShows::ALL, &map.shows)),
+        (MAP_SIZE, None) => number(map.map_size),
+        (MAP_TILT, None) => number(map.map_tilt),
+        (POINTER_CONTROL, None) => flag(map.pointer_control),
+        (MINIMAP_VIEW | MAP_VIEW, None) => {
+            let view = map.views.map(|views| views[usize::from(what == MAP_VIEW)]);
+            Some([f32::from_bits(view.unwrap_or(0)), f32::from(u8::from(view.is_some())), 0.0, 0.0])
+        }
         (_, None) => None,
         (_, Some([value, ..])) => {
             match what {
@@ -176,6 +258,9 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
                 MAP_ZOOM => map.map_zoom = voxear_ui::MapViewSettings::zoom_of(value),
                 OPEN => map.open = value != 0.0,
                 SHOWS_WHAT => map.shows = pick(&MapShows::ALL, value),
+                MAP_SIZE => map.map_size = value.clamp(0.1, 3.0),
+                MAP_TILT => map.map_tilt = value.clamp(20.0, 90.0),
+                POINTER_CONTROL => map.pointer_control = value != 0.0,
                 _ => return None,
             }
             DONE
@@ -187,6 +272,9 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
 /// map: its title, and a placed marker's label, as its number, a line
 /// break and the label.
 fn map_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    if what == VIEW {
+        return view_texts(world, text);
+    }
     if what >= KNOWN_NEW {
         return known_texts(world, what, text);
     }
@@ -340,6 +428,55 @@ fn known_texts(world: &mut World, what: i32, text: &str) -> Option<String> {
     }
 }
 
+// What scripts ask of one map view: its element's number, a word for what, and that word's numbers. Angles are in
+// degrees, as scripts have them.
+const VIEW: i32 = 300;
+
+/// Answers what a script asks of a map view: what it sets is done when the
+/// view is next shown, and what it reads is the view as it was last shown.
+/// `None` for what cannot be read, or for a view not shown yet.
+fn view_texts(world: &mut World, text: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    let view: u32 = words.next()?.parse().ok()?;
+    let verb = words.next()?;
+    let rest: Vec<&str> = words.collect();
+    let numbers: Vec<f32> = rest.iter().map_while(|word| word.parse().ok()).collect();
+    let done = Some(String::new());
+    let script = script(world);
+    if let Some(seen) = script.seen.get(&view) {
+        match (verb, &numbers[..]) {
+            ("get", _) => {
+                let (turn, tilt) = (seen.turn.to_degrees(), seen.tilt.to_degrees());
+                return Some(format!("{turn} {tilt} {} {} {}", seen.zoom, seen.offset.x, seen.offset.y));
+            }
+            ("settings", _) => return Some(seen.settings.to_text()),
+            ("point", [x, y, z]) => {
+                let (at, inside) = seen.shown.point(Vec3::new(*x, *y, *z))?;
+                return Some(format!("{} {} {}", at.x, at.y, u8::from(inside)));
+            }
+            ("place", [x, y]) => {
+                let at = seen.place(Vec2::new(*x, *y));
+                return Some(at.map_or(String::new(), |at| format!("{} {} {}", at.x, at.y, at.z)));
+            }
+            _ => {}
+        }
+    }
+    let wish = script.wishes.entry(view).or_default();
+    match (verb, &numbers[..]) {
+        ("turn", [degrees]) => wish.turn = Some(degrees.to_radians()),
+        ("tilt", [degrees]) => wish.tilt = Some(degrees.to_radians()),
+        ("zoom", [blocks]) => wish.zoom = Some(blocks.max(0.1)),
+        ("offset", [x, z]) => (wish.offset, wish.look_at) = (Some(Vec2::new(*x, *z)), None),
+        ("look", [x, y, z]) => (wish.look_at, wish.offset) = (Some(Vec3::new(*x, *y, *z)), None),
+        ("reset", _) => {
+            *wish = MapViewWish { reset: true, settings: std::mem::take(&mut wish.settings), ..Default::default() }
+        }
+        ("set", _) => wish.settings.push(rest.join(" ")),
+        _ => return None,
+    }
+    done
+}
+
 /// Reads value `what` of `entity`'s Map Marker, or with `written`, writes
 /// it.
 fn marker_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
@@ -441,6 +578,27 @@ mod tests {
         assert!(pit.marker.stays_at_edge && pit.marker.label == "The Pit");
         map_values(&mut world, none, PLACE_REMOVE, Some([id, 0.0, 0.0, 0.0]));
         assert!(world.resource::<MapScript>().unwrap().placed.is_empty());
+
+        // How a view is seen: what a script asks waits for the view to be shown; nothing is read of one not shown.
+        assert_eq!(map_texts(&mut world, none, VIEW, "12 get"), None);
+        map_texts(&mut world, none, VIEW, "12 turn 90");
+        map_texts(&mut world, none, VIEW, "12 zoom 6");
+        map_texts(&mut world, none, VIEW, "12 look 5 0 7");
+        map_texts(&mut world, none, VIEW, "12 set fill=1.5 controls=false");
+        let wish = &world.resource::<MapScript>().unwrap().wishes[&12];
+        assert!((wish.turn.unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!((wish.zoom, wish.look_at, wish.offset), (Some(6.0), Some(Vec3::new(5.0, 0.0, 7.0)), None));
+        assert_eq!(wish.settings, ["fill=1.5 controls=false"]);
+        // Reset forgets how it was asked to be seen, and keeps the settings asked.
+        map_texts(&mut world, none, VIEW, "12 reset");
+        let wish = &world.resource::<MapScript>().unwrap().wishes[&12];
+        assert!(wish.reset && wish.turn.is_none() && wish.settings.len() == 1);
+        // The Map's own settings for its opened map.
+        map_values(&mut world, obj, MAP_SIZE, Some([1.4, 0.0, 0.0, 0.0]));
+        map_values(&mut world, obj, POINTER_CONTROL, Some([0.0; 4]));
+        let map = world.get::<Map>(obj).unwrap();
+        assert_eq!((map.map_size, map.pointer_control), (1.4, false));
+        assert_eq!(map_values(&mut world, obj, MAP_VIEW, None).unwrap()[1], 0.0, "not on the screen yet");
     }
 
     #[test]

@@ -53,6 +53,26 @@ fn markup_makes_map_views_with_their_zoom_turning_shape_and_tilt() {
     let settings = ui.map_view_settings(large).unwrap();
     assert_eq!((settings.kind, settings.zoom, settings.turns), (MapViewKind::Map, 4, false), "5 is nearest 1:4");
 
+    // Every setting has a name markup and scripts set it by, kept within what a map can show.
+    let markup = r#"<vui><Map name="m" fill="1.5" controls="false" min-zoom="2" max-zoom="16" shadows="0" thick="9"
+        arrow-at-edge="false" title="false" compass="false" /></vui>"#;
+    let document = ui.load_markup(root, "Map.vui", markup, &mut |_| Err("no files".into())).unwrap();
+    let set = ui.map_view_settings(ui.find(document, "m").unwrap()).unwrap();
+    assert_eq!((set.fill, set.controls, set.zoom_range, set.shadows, set.thick), (1.5, false, [2, 16], 0.0, 9.0));
+    assert!(!set.arrow_at_edge && !set.title && !set.compass && set.readout && set.arrow);
+    let mut text = MapViewSettings::of(MapViewKind::Map);
+    assert_eq!(text.set_all("zoom=9 tilt=5 fill=99 edges=0.25 labels=0 wobble=3 round=maybe"), ["wobble", "round"]);
+    assert_eq!((text.zoom, text.tilt, text.fill, text.edges, text.labels), (8, 20.0, 3.0, 0.25, false));
+    assert!(ui.load_markup(root, "Bad.vui", r#"<vui><Map fill="wide" /></vui>"#, &mut |_| Err("no".into())).is_err());
+    // Written out and read back, settings are the same.
+    let mut read = MapViewSettings::of(MapViewKind::Map);
+    assert!(read.set_all(&set.to_text()).is_empty());
+    assert_eq!(read, set);
+    for name in MapViewSettings::NAMES {
+        let value = if text.clone().set(name, "1") { "1" } else { "true" };
+        assert!(text.set(name, value), "{name}");
+    }
+
     // Settings changed in code keep the view's kind.
     ui.set_map_view_settings(large, MapViewSettings { zoom: 16, ..MapViewSettings::of(MapViewKind::Minimap) });
     let settings = ui.map_view_settings(large).unwrap();

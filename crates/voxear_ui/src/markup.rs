@@ -22,8 +22,9 @@
 //! `Segmented` (of `Segment`s with `text` and `icon`, and `value`), `Icon`
 //! (`icon`, one of [`crate::ICONS`]), `Keymap` (a device drawn as its keys, given them from code with
 //! [`Ui::set_keymap`]), `Image` (given a texture from code
-//! with [`Ui::set_image`]), `Minimap` and `Map` (a map of the game's world, see [`crate::MapViewSettings`]: `zoom`,
-//! the blocks to a cell, `turns`, `round` and `tilt` in degrees) and `FieldRow` (`field`, a panel the editor's
+//! with [`Ui::set_image`]), `Minimap` and `Map` (a map of the game's world, with any of
+//! [`crate::MapViewSettings::NAMES`]: `zoom`, the blocks to a cell, `turns`, `round`, `tilt` in degrees, `fill`,
+//! `controls` and the rest) and `FieldRow` (`field`, a panel the editor's
 //! Inspector puts that field's rows in), each taking `name`, `class`
 //! (several, separated by spaces), `style` (declarations that win over
 //! sheets) and `tooltip` (what shows when the pointer rests on it, which
@@ -296,15 +297,15 @@ impl Ui {
                 tag @ ("Minimap" | "Map") => {
                     let kind = if tag == "Map" { crate::MapViewKind::Map } else { crate::MapViewKind::Minimap };
                     let node = self.map_view(parent, kind);
-                    self.attributes(node, child, &["name", "class", "style", "zoom", "turns", "round", "tilt"], builder);
+                    let mut known = vec!["name", "class", "style"];
+                    known.extend(crate::MapViewSettings::NAMES);
+                    self.attributes(node, child, &known, builder);
                     let mut settings = crate::MapViewSettings::of(kind);
-                    settings.zoom = crate::MapViewSettings::zoom_of(number(child, "zoom", settings.zoom as f32, builder)?);
-                    settings.tilt = number(child, "tilt", settings.tilt, builder)?;
-                    if child.attribute("turns").is_some() {
-                        settings.turns = flag(child, "turns", builder)?;
-                    }
-                    if child.attribute("round").is_some() {
-                        settings.round = flag(child, "round", builder)?;
+                    for attribute in child.attributes().filter(|a| crate::MapViewSettings::NAMES.contains(&a.name())) {
+                        if !settings.set(attribute.name(), attribute.value().trim_end_matches("px")) {
+                            let (name, value) = (attribute.name(), attribute.value());
+                            return Err(builder.error(child, format!("{name} is a number, or true or false, not '{value}'")));
+                        }
                     }
                     self.set_map_view_settings(node, settings);
                 }

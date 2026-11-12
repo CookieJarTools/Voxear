@@ -916,6 +916,13 @@ impl GameUi {
         self.screen.numbers.node(element)
     }
 
+    /// The number scripts hold each of the screen's map views by, for
+    /// those they hold.
+    pub(crate) fn map_view_numbers(&self) -> HashMap<voxear_ui::NodeId, u32> {
+        let views = self.screen.ui.map_views().into_iter();
+        views.filter_map(|node| Some((node, *self.screen.numbers.numbers.get(&node)?))).collect()
+    }
+
     /// How many pixels one of the screen's UI's is, as it was last laid out.
     pub fn scale(&self) -> f32 {
         if self.scale > 0.0 { self.scale } else { 1.0 }

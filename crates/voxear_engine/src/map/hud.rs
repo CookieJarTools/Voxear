@@ -22,6 +22,8 @@ pub(super) struct Hud {
     document: u32,
     mini: NodeId,
     large: NodeId,
+    /// The numbers scripts hold the two by.
+    numbers: [u32; 2],
     given: Option<Map>,
     held: Option<Held>,
 }
@@ -85,6 +87,13 @@ impl Maps {
                 self.huds.insert(entity, hud);
             }
             let hud = self.huds.get_mut(&entity).expect("made above");
+            // Its views' numbers, for scripts to reach them as elements.
+            if map.views != Some(hud.numbers) {
+                map.views = Some(hud.numbers);
+                if let Some(kept) = world.get_mut::<Map>(entity) {
+                    kept.views = map.views;
+                }
+            }
             let action = map.open_action.as_deref().and_then(|id| input.action(id));
             if action.is_some_and(|action| input.state(action).pressed) {
                 map.open = !map.open;
@@ -135,7 +144,7 @@ impl Maps {
     /// compass.
     pub(super) fn overlay(
         &mut self,
-        world: &World,
+        (world, script): (&World, &MapScript),
         ui: &mut Ui,
         (node, settings): (NodeId, &MapViewSettings),
         viewer: MapViewer,
@@ -150,7 +159,7 @@ impl Maps {
         let centre = shown.size * 0.5;
         let mut shapes = Vec::new();
         let mut labels: Vec<(Vec2, String)> = Vec::new();
-        for (position, marker) in self.markers(world) {
+        for (position, marker) in self.markers(world, script) {
             let on_this = match marker.shows {
                 MarkerShows::Both => true,
                 MarkerShows::Minimap => !large,
@@ -179,12 +188,24 @@ impl Maps {
                 size: radius * 1.35,
                 color: Color::WHITE,
             });
-            if large && inside && in_view && !marker.label.is_empty() {
+            if settings.labels && inside && in_view && !marker.label.is_empty() {
                 labels.push((at + Vec2::new(radius + 5.0, -10.0), marker.label.clone()));
             }
         }
-        // What the map follows: an arrow the way it faces, as the map is turned.
-        if let Some((at, _)) = shown.point(viewer.position) {
+        // What the map follows: an arrow the way it faces, as the map is turned; at the slab's edge, towards
+        // where it is, once the map was moved off it.
+        let followed = shown.point(viewer.position).filter(|_| settings.arrow);
+        let arrow = followed.and_then(|(at, inside)| {
+            let in_view = at.x >= 0.0 && at.y >= 0.0 && at.x <= shown.size.x && at.y <= shown.size.y;
+            if inside && in_view {
+                return Some(at);
+            }
+            let edge = shown.edge_towards(viewer.position).filter(|_| settings.arrow_at_edge)?;
+            let (from, room) = (edge - centre, centre - Vec2::splat(9.0 + EDGE));
+            let fits = (room.x / from.x.abs().max(1e-3)).min(room.y / from.y.abs().max(1e-3)).min(1.0);
+            Some(centre + from * fits)
+        });
+        if let Some(at) = arrow {
             let (sin, cos) = (viewer.heading - shown.camera.turn).sin_cos();
             let ahead = Vec2::new(sin, -cos);
             let side = Vec2::new(-ahead.y, ahead.x);
@@ -200,23 +221,27 @@ impl Maps {
         self.label(ui, node, parts.overlay, labels);
         if let (Some(title), Some(readout), Some(compass)) = (parts.title, parts.readout, parts.compass) {
             let (place, readout_text) = self.readout(world, &shown);
-            let named = world.resource::<MapScript>().and_then(|script| script.title.clone());
-            let title_text = named.unwrap_or(place);
+            let title_text = script.title.clone().unwrap_or(place);
             self.write(ui, title, title_text);
             self.write(ui, readout, readout_text);
             draw_compass(ui, compass, &shown);
+            // Each shows or not as the view's settings say.
+            for (part, on) in [(title, settings.title), (readout, settings.readout), (compass, settings.compass)] {
+                if ui.is_visible(part) != on {
+                    ui.set_visible(part, on);
+                }
+            }
         }
     }
 
     /// Every marker to show: each Map Marker's, where its Obj is, and those
     /// scripts placed.
-    fn markers(&self, world: &World) -> Vec<(Vec3, MapMarker)> {
+    fn markers(&self, world: &World, script: &MapScript) -> Vec<(Vec3, MapMarker)> {
         let objs =
             world.query_ref::<(Entity, &MapMarker, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
         let objs = objs.into_iter().filter(|(entity, ..)| voxear_scene::is_active(world, *entity));
         let objs = objs.map(|(_, marker, local, placed)| (voxear_terrain::corner(local, placed), marker.clone()));
-        let placed = world.resource::<MapScript>().into_iter().flat_map(|script| script.placed.values());
-        objs.chain(placed.map(|placed| (placed.at, placed.marker.clone()))).collect()
+        objs.chain(script.placed.values().map(|placed| (placed.at, placed.marker.clone()))).collect()
     }
 
     /// Keeps a view's labels as `labels` says: each where it is, with its
@@ -294,14 +319,14 @@ fn make(ui: &mut GameUi) -> Option<Hud> {
     let document = ui.new_document();
     // Elements are made in a document's own container, found by no name.
     let root = ui.find(document, "");
-    let mut create = |kind| ui.create(root?, kind, "").and_then(|element| ui.node(element));
+    let mut create = |kind| ui.create(root?, kind, "").and_then(|element| Some((element, ui.node(element)?)));
     let (mini, large) = (create(ElementKind::Minimap), create(ElementKind::Map));
-    let (Some(mini), Some(large)) = (mini, large) else {
+    let (Some((mini_number, mini)), Some((large_number, large))) = (mini, large) else {
         ui.close(document);
         return None;
     };
     ui.ui().set_visible(large, false);
-    Some(Hud { document, mini, large, given: None, held: None })
+    Some(Hud { document, mini, large, numbers: [mini_number, large_number], given: None, held: None })
 }
 
 /// Sets a Map's minimap and map as it says.
@@ -316,15 +341,18 @@ fn give(ui: &mut Ui, hud: &Hud, map: &Map) {
     let size = map.size;
     let place = format!("position: absolute; {across}: {gap}px; {down}: {gap}px; width: {size}px; height: {size}px");
     ui.set_inline_style(hud.mini, &place);
-    let mini = MapViewSettings {
-        zoom: map.zoom,
-        turns: map.turns,
-        round: map.round,
-        tilt: map.tilt,
-        ..MapViewSettings::of(MapViewKind::Minimap)
-    };
+    // Its own settings over whatever else scripts set on the two views.
+    let mini = ui.map_view_settings(hud.mini).unwrap_or(MapViewSettings::of(MapViewKind::Minimap));
+    let mini = MapViewSettings { zoom: map.zoom, turns: map.turns, round: map.round, tilt: map.tilt, ..mini };
     ui.set_map_view_settings(hud.mini, mini);
-    let large = MapViewSettings { zoom: map.map_zoom, ..MapViewSettings::of(MapViewKind::Map) };
+    let large = ui.map_view_settings(hud.large).unwrap_or(MapViewSettings::of(MapViewKind::Map));
+    let large = MapViewSettings {
+        zoom: map.map_zoom,
+        fill: map.map_size,
+        tilt: map.map_tilt,
+        controls: map.pointer_control,
+        ..large
+    };
     ui.set_map_view_settings(hud.large, large);
     // The minimap gives way to the map while it is open.
     ui.set_visible(hud.mini, map.minimap && !map.open);

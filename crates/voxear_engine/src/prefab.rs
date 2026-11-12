@@ -59,7 +59,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, Ocean, PostVolume, Renderer,
-    ParticleSystem, Seasons, Stream, WindZone, DryArea, Pool,
+    ForceField, ParticleSystem, Seasons, Stream, WindZone, DryArea, Pool,
 };
 use voxear_scene::{BehaviourSpec, Inactive, Name, OffComponents, Parent, Path, Placement, ScenePersistence, Transform};
 
@@ -405,6 +405,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.collider = instance.collider.or(root.collider);
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
     root.particles = instance.particles.or(root.particles);
+    root.force_field = instance.force_field.or(root.force_field);
     root.smoke = instance.smoke.or(root.smoke);
     root.mist = instance.mist.or(root.mist);
     root.net = instance.net.or(root.net);
@@ -481,6 +482,7 @@ pub struct TemplateObj {
     pub character: Option<CharacterController>,
     pub wind_zone: Option<WindZone>,
     pub particles: Option<ParticleSystem>,
+    pub force_field: Option<ForceField>,
     pub smoke: Option<voxear_render::Smoke>,
     pub mist: Option<voxear_render::Mist>,
     pub net: Option<crate::net::NetObject>,
@@ -655,6 +657,9 @@ impl Template {
             }
             if let Some(particles) = obj.particles {
                 world.insert(entity, particles);
+            }
+            if let Some(field) = obj.force_field {
+                world.insert(entity, field);
             }
             if let Some(smoke) = obj.smoke {
                 world.insert(entity, smoke);
@@ -1247,6 +1252,7 @@ pub(crate) fn resolve_obj(
         character: data.character,
         wind_zone: data.wind_zone,
         particles: data.particles,
+        force_field: data.force_field,
         smoke: data.smoke,
         mist: data.mist,
         net: data.net,

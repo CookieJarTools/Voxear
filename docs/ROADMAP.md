@@ -1425,9 +1425,21 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   `Space`, `Wind`, `Turbulence`, `TurbulenceSize`, `IsSimulated`. Tests: emission and the pool's room without a
   GPU; on one, a simulated system against one worked out from age, wind either way, turbulence, particles left
   behind, the budget, and a million timed.
+- **Particle collision and forces ✅.** **Collision** set to Depth lands a system's particles on what the main
+  view sees, by its depth: put back on the surface they have come to, whose facing is found from the pixels
+  beside it, and sent off it by their **Bounce** and **Friction**, losing **Life Lost** of what life they have
+  left; what is out of view stops nothing. The simulated particles' step moved in among the main view's passes,
+  after its depth is drawn, for this. A **Force Field** component (`voxear_render::forces`: Attract, Repel,
+  Vortex or Blow, a strength and a radius) moves the particles of systems whose **Forces** take it, as do
+  blasts (`Particles.Push` from C#, `voxear_engine::particles::blast`), over in 0.3 s, and the pushers that part
+  plants, which drive particles out of their way; 16 fields and blasts a frame. Scenes, prefabs, the Inspector,
+  copy and paste, undo, the Hierarchy's + menu, Add Component ▸ Effects, and the field's reach drawn in the
+  Scene view; C# `Obj.ForceField`, `AddForceField`, `ParticleSystem.Collision`, `Bounce`, `Friction`,
+  `LifeLost`, `Forces`. `samples/Effects` has sparks bouncing down steps and a whirl in its dust. The manual's
+  Force Fields. Tests: fields and blasts gathered without a GPU; on one, sparks landing, dying and bouncing on
+  a floor, a field pulling either way, and a blast.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
-  - collision (last frame's depth, the ground and colliders, the scene's rays), Force Fields, blasts, and
-    particles pushed by characters
+  - collision with what is out of view: the ground and colliders, and the scene's rays
   - the effect asset (`.particles`) of several emitters as stacks of modules, sub-emitters and events, the
     preset gallery, and its panel with play, pause and scrub
   - textures and flipbooks blended by motion vectors, smoke lit from six sides, stretched quads, meshes, trails,
@@ -1919,7 +1931,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     **Blocks** panel (`block_database`, Window ▸ Blocks) shows every block as tiles made a row at a time, with
     search, New Block, Duplicate and Delete, which says which worlds hold a block and asks again. An older world's
     kinds made by hand become blocks in a Blocks folder beside it as it opens in the editor, its file written at
-    once (`make_kinds_blocks`); a game still loads one as it is. Scripts: `Blocks.All` (native API 74). A build
+    once (`make_kinds_blocks`); a game still loads one as it is. Scripts: `Blocks.All` (native API 75). A build
     ships every block of the project. Tests: a file's ground unchanged by later numbers, a world numbering each
     block once and full at 256 looks said once, the brush numbering what it builds with as one step to undo, the
     picker's order, the Blocks panel's grid, search, copies and deletes, an older world made blocks and drawn as it

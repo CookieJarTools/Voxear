@@ -1,6 +1,7 @@
 // Simulated particles (src/particle_sim.rs): the particles of every system
 // that needs more than its age to say where a particle is, kept in one pool
-// from frame to frame and stepped here, once a frame for every view. A
+// from frame to frame and stepped here, once a frame for every view, among
+// the main view's passes, once its depth is drawn. A
 // system has a run of the pool to itself and fills it in a ring, each new
 // particle taking the place of its oldest, which has died by then; so
 // nothing is counted or sorted, and particles are drawn in the order they
@@ -12,6 +13,15 @@
 // It starts where its age alone would have it (particleFlown, as a system
 // that is not simulated draws its own), then the wind and turbulence take
 // it from there.
+//
+// A system that collides meets what the main view sees: a particle that
+// has come within its own radius of the surface under it, by the view's
+// depth, is put back on it and bounces off, as much as the system says. What
+// the view cannot see, behind it or hidden, stops nothing.
+//
+// A system that takes forces is moved by the frame's Force Fields and
+// blasts (src/forces.rs), and driven out of the way of what passes through
+// it, the same pushers that part plants.
 
 #include "particle_motion.slang"
 #include "wind.slang"
@@ -20,6 +30,9 @@
 static const float WIND_PULL = 2.0;
 // How fast turbulence's swirls change, in swirls a second.
 static const float TURBULENCE_DRIFT = 0.3;
+// How hard what passes through particles (the pushers that part plants) drives them out of its way at its middle,
+// in metres a second each second.
+static const float PUSHER_FORCE = 40.0;
 
 // Where `place` is from the level's real middle, wrapped as levelPosition wraps it.
 float3 simLevelPosition(ParticleSim* sim, float3 place, float period)
@@ -70,6 +83,140 @@ float3 swirl(float3 p)
     return float3(alongY.z - alongZ.y, alongZ.x - alongX.z, alongX.y - alongY.x);
 }
 
+// Where the scene's surface under `pixel` of the main view is in the world; false where there is none, only sky.
+// The view's depth is push.textures.x.
+bool surfaceUnder(Frame* frame, int2 pixel, out float3 at)
+{
+    int2 size = int2(frame->viewport);
+    pixel = clamp(pixel, 0, size - 1);
+    float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+    float2 uv = (float2(pixel) + 0.5) / float2(size);
+    float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));
+    at = world.xyz / world.w;
+    return depth > 0.0;
+}
+
+// Which way the surface at `at`, under `pixel`, faces: across to the pixel beside it and the one above or below,
+// whichever of each pair is nearer it in the world, so an edge does not tilt it.
+float3 surfaceFacing(Frame* frame, int2 pixel, float3 at)
+{
+    float3 right, left, down, up;
+    bool hasRight = surfaceUnder(frame, pixel + int2(1, 0), right);
+    bool hasLeft = surfaceUnder(frame, pixel - int2(1, 0), left);
+    bool hasDown = surfaceUnder(frame, pixel + int2(0, 1), down);
+    bool hasUp = surfaceUnder(frame, pixel - int2(0, 1), up);
+    float3 acrossRight = right - at;
+    float3 acrossLeft = at - left;
+    float3 acrossDown = down - at;
+    float3 acrossUp = at - up;
+    float3 across = (!hasLeft || (hasRight && dot(acrossRight, acrossRight) < dot(acrossLeft, acrossLeft))) ? acrossRight : acrossLeft;
+    float3 along = (!hasUp || (hasDown && dot(acrossDown, acrossDown) < dot(acrossUp, acrossUp))) ? acrossDown : acrossUp;
+    float3 facing = normalizeOr(cross(across, along), float3(0.0, 1.0, 0.0));
+    return dot(facing, frame->cameraPosition - at) < 0.0 ? -facing : facing;
+}
+
+// A particle `radius` wide at `position` in the world, going at `velocity`, against what the main view sees: put
+// back on the surface it has come to and sent off it, keeping `bounce` of its speed into it and losing `friction`
+// of its speed along it. True when it struck it, rather than rested on it or met nothing.
+bool meetScene(Frame* frame, float radius, float bounce, float friction, float step, inout float3 position, inout float3 velocity)
+{
+    float4 clip = transform(frame->viewProj, float4(position, 1.0));
+    if (clip.w <= frame->near)
+    {
+        return false;
+    }
+    float2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0))
+    {
+        return false;
+    }
+    int2 pixel = int2(uv * float2(frame->viewport));
+    float3 surface;
+    if (!surfaceUnder(frame, pixel, surface))
+    {
+        return false;
+    }
+    // Only near the surface, in front or a little way in: one far behind it is behind a wall, not in it.
+    float speed = length(velocity);
+    float reach = radius + speed * step * 1.5 + 0.1;
+    float3 toSurface = surface - position;
+    if (dot(toSurface, toSurface) > reach * reach * 16.0)
+    {
+        return false;
+    }
+    float3 facing = surfaceFacing(frame, pixel, surface);
+    float above = dot(position - surface, facing);
+    if (above >= radius || above < -reach)
+    {
+        return false;
+    }
+    position += facing * (radius - above);
+    float into = dot(velocity, facing);
+    if (into >= 0.0)
+    {
+        return false;
+    }
+    velocity -= facing * into * (1.0 + bounce);
+    float3 sliding = velocity - facing * dot(velocity, facing);
+    velocity -= sliding * friction;
+    // Falling onto it for a frame, as one resting on it does, is no strike.
+    return -into > PARTICLE_GRAVITY * step * 2.0 + 0.1;
+}
+
+// How the frame's forces speed up a particle at `at` in the world, in metres a second each second: each Force Field
+// and blast within reach, the less the further out; and what passes through, driving it out of its way.
+float3 forcesAt(ParticleSim* sim, Frame* frame, float3 at)
+{
+    float3 pushed = 0.0;
+    for (uint i = 0; i < sim->forceCount; i++)
+    {
+        Force force = sim->forces[i];
+        float3 from = at - force.position;
+        float out2 = dot(from, from);
+        if (out2 >= force.radius * force.radius)
+        {
+            continue;
+        }
+        float out = sqrt(out2);
+        float near = 1.0 - out / force.radius;
+        float hard = force.strength * near * near;
+        float3 away = out > 1e-4 ? from / out : float3(0.0, 1.0, 0.0);
+        if (force.kind == FORCE_ATTRACT)
+        {
+            pushed -= away * hard;
+        }
+        else if (force.kind == FORCE_REPEL)
+        {
+            pushed += away * hard;
+        }
+        else if (force.kind == FORCE_VORTEX)
+        {
+            // Round its axis, and in toward it by as much, so they circle it rather than fly off.
+            float3 fromAxis = from - force.axis * dot(from, force.axis);
+            float off = length(fromAxis);
+            float3 outward = off > 1e-4 ? fromAxis / off : 0.0;
+            pushed += (cross(force.axis, outward) - outward * 0.5) * hard;
+        }
+        else
+        {
+            pushed += force.axis * hard;
+        }
+    }
+    Pushes pushes = frame->pushes;
+    for (uint p = 0; p < pushes.count; p++)
+    {
+        float4 pusher = pushes.pushers[p];
+        float3 from = at - pusher.xyz;
+        float out = length(from);
+        if (out < pusher.w && out > 1e-4)
+        {
+            float strength = pushes.strengths[p / 4][p % 4];
+            pushed += from / out * (PUSHER_FORCE * strength * (1.0 - out / pusher.w));
+        }
+    }
+    return pushed;
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void simulateMain(uint3 id : SV_DispatchThreadID)
@@ -81,7 +228,7 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
         return;
     }
     uint2 work = buffers()->particleChunks[chunk];
-    ParticleSystem* system = &buffers()->particleSystems[work.x];
+    ParticleSystem* system = &buffers()->particleSteps[work.x];
     uint slot = work.y + id.x % PARTICLE_CHUNK;
     uint capacity = system->capacity;
     if (slot >= capacity)
@@ -171,6 +318,16 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
             }
             velocity += (air - velocity) * (1.0 - exp(-WIND_PULL * step));
         }
+        float taken = system->forces;
+        if (taken > 0.0)
+        {
+            float3 pushed = forcesAt(sim, push.frame, world) * taken;
+            if (!inWorld)
+            {
+                pushed = transform(system->toLocal, float4(pushed, 0.0)).xyz;
+            }
+            velocity += pushed * step;
+        }
         float turbulence = system->turbulence;
         if (turbulence > 0.0)
         {
@@ -186,6 +343,29 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
         velocity *= exp(-drag * step);
         float pace = speedKeys > 0 ? curveAt(system->speedCurve, speedKeys, particle.age / particle.life) : 1.0;
         particle.position += (velocity * pace + carried) * step;
+        if ((flags & PARTICLES_COLLIDE) != 0)
+        {
+            // In the world, where the view's depth is; then back to where the particle is kept.
+            float3 at = particle.position;
+            float3 going = velocity;
+            if (!inWorld)
+            {
+                at = transform(system->model, float4(at, 1.0)).xyz;
+                going = transform(system->model, float4(going, 0.0)).xyz;
+            }
+            float radius = (system->size.x + system->size.y) * 0.25;
+            if (meetScene(push.frame, radius, system->bounce, system->friction, step, at, going))
+            {
+                particle.life = particle.age + (particle.life - particle.age) * (1.0 - system->lifeLost);
+            }
+            if (!inWorld)
+            {
+                at = transform(system->toLocal, float4(at, 1.0)).xyz;
+                going = transform(system->toLocal, float4(going, 0.0)).xyz;
+            }
+            particle.position = at;
+            velocity = going;
+        }
         particle.velocity = velocity;
     }
     *kept = particle;

@@ -2792,7 +2792,7 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
-## Particles *(the stateless and simulated paths implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, depth collision and forces implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2802,7 +2802,7 @@ next.
    worked out where it is drawn (`shaders/particles.slang`) from its system's settings, its slot and the system's
    time. Nothing is kept between frames and every machine draws the same particles.
 2. **Simulated** *(implemented)*. Once a setting needs more (the wind, turbulence, particles left behind in the
-   world; later collision, forces and trails), the system's particles are kept on the GPU and stepped each frame
+   world, collision, forces; later trails), the system's particles are kept on the GPU and stepped each frame
    by one compute pass for every system and every view (`voxear_render::particle_sim`,
    `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
 3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
@@ -2832,6 +2832,21 @@ sorting).
   read from one hash of each lattice cell, which stirs particles without gathering or thinning them.
 - A system simulates in its Obj's space or in the world. The world's particles are moved with the floating
   origin at their system's next step.
+- The main view records the step among its own passes, once its depth is drawn and before the particles are,
+  with its frame and buffers; the other views draw what it stepped. Chose that over a step before every view:
+  colliding particles read this frame's depth with this frame's camera, nothing kept or reprojected, and the
+  step can read whatever else the view has (its pushers now; its lights and its traced scene later). A frame
+  that does not draw the main view steps nothing.
+- **Depth collision** *(implemented)*: a particle within its own radius of the surface under it, by the view's
+  depth, is put back on the plane through that surface and reflected off it, keeping its Bounce into it and
+  losing its Friction along it. The surface's facing is the cross of the steps to the pixel beside it and the
+  one above or below, whichever of each pair is nearer, so an edge does not tilt it. A particle far behind the
+  surface is behind a wall, not in it, and is left alone; what is out of view or hidden stops nothing.
+- **Forces** *(implemented)*: up to 16 a frame, in the step's own header: the world's Force Fields
+  (`voxear_render::forces`), each an acceleration at its middle falling to nothing at its radius, toward it,
+  away from it, round its axis (with half as much inward, so particles circle rather than fly off) or along
+  it; blasts, which are Repel fields lasting 0.3 s and strong enough to reach their speed in it, kept in a
+  resource of the world that whoever set them off prunes; and the view's pushers, the ones that part plants.
 - Alive particles are counted on the GPU, a subgroup at a time, into the GPU's own memory and copied out for
   the stats: adding to host-visible memory cost nine times the whole step.
 - On an RTX 3070, 1,048,576 particles blown and stirred are stepped in 0.19 ms and drawn as 2 cm sparks in
@@ -2839,12 +2854,10 @@ sorting).
 
 **Planned, in the order it is built.**
 
-- **Physics.** Collision as one checkbox with three levels: last frame's depth; the terrain's heights and the
-  nearest colliders, which work off screen; and the scene's rays, hardware or software, capped per frame, for
-  what must land behind things. A Force Field component for attractors, vortices and blasts; particles pushed
-  by characters through the grid that bends plants. Particles stay visual
-  only: gameplay gets hit events a frame or two late for sounds and marks, effects start on every machine by
-  RPC with a seed, and a server simulates none.
+- **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
+  which work off screen; and the scene's rays, hardware or software, capped per frame, for what must land
+  behind things. Particles stay visual only: gameplay gets hit events a frame or two late for sounds and
+  marks, effects start on every machine by RPC with a seed, and a server simulates none.
 - **Effects as assets.** A `.particles` asset of several emitters, each a stack of modules in fixed stages
   (spawn, start, update, events, draw), with sub-emitters and exposed values; a gallery of starters built from
   generated textures; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.

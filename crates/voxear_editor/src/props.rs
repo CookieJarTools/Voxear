@@ -42,7 +42,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
-    EmitShape, ParticleBlend, ParticleSpace, ParticleSystem,
+    EmitShape, ForceField, ForceKind, ParticleBlend, ParticleCollision, ParticleSpace, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
 use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
@@ -99,6 +99,8 @@ pub enum Part {
     PostVolume,
     WindZone,
     ParticleSystem,
+    /// A Force Field: what moves the particles round its Obj.
+    ForceField,
     Smoke,
     Mist,
     /// A UI Panel: a UI document shown on a rectangle in the world.
@@ -163,6 +165,7 @@ impl Part {
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
+            Part::ForceField => "force_field".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
             Part::UiPanel => "ui_panel".into(),
@@ -228,6 +231,7 @@ impl Part {
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
+            Part::ForceField => "Force Field",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
             Part::UiPanel => "UI Panel",
@@ -306,6 +310,7 @@ impl Part {
             Part::PostVolume => "panels",
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
+            Part::ForceField => "move",
             Part::Smoke => "particles",
             Part::Mist => "particles",
             Part::UiPanel | Part::ScreenUi => "panels",
@@ -416,7 +421,18 @@ pub enum Prop {
     ParticleWind,
     ParticleTurbulence,
     ParticleTurbulenceSize,
+    /// What its particles meet, how they bounce and slide off it and what
+    /// life it costs them; and how much forces move them.
+    ParticleCollision,
+    ParticleBounce,
+    ParticleFriction,
+    ParticleLifeLost,
+    ParticleForces,
     ParticleSimulated,
+    /// A Force Field's kind, how hard it moves particles and how far it reaches.
+    ForceKind,
+    ForceStrength,
+    ForceRadius,
     /// A Smoke's size and cells, how thick it is and its colour, how long it
     /// spreads, lasts and fades, and which swirls.
     SmokeSize,
@@ -835,7 +851,13 @@ impl Prop {
             | Prop::ParticleWind
             | Prop::ParticleTurbulence
             | Prop::ParticleTurbulenceSize
+            | Prop::ParticleCollision
+            | Prop::ParticleBounce
+            | Prop::ParticleFriction
+            | Prop::ParticleLifeLost
+            | Prop::ParticleForces
             | Prop::ParticleSimulated => Part::ParticleSystem,
+            Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
             | Prop::SmokeDensity
@@ -1140,7 +1162,15 @@ impl Prop {
             Prop::ParticleWind => "wind",
             Prop::ParticleTurbulence => "turbulence",
             Prop::ParticleTurbulenceSize => "turbulence_size",
+            Prop::ParticleCollision => "collision",
+            Prop::ParticleBounce => "bounce",
+            Prop::ParticleFriction => "friction",
+            Prop::ParticleLifeLost => "life_lost",
+            Prop::ParticleForces => "forces",
             Prop::ParticleSimulated => "simulated",
+            Prop::ForceKind => "kind",
+            Prop::ForceStrength => "strength",
+            Prop::ForceRadius => "radius",
             Prop::SmokeSize => "size",
             Prop::SmokeCell => "cell",
             Prop::SmokeDensity => "density",
@@ -1448,6 +1478,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<ParticleSystem>(entity) {
         parts.push(Part::ParticleSystem);
     }
+    if world.has::<ForceField>(entity) {
+        parts.push(Part::ForceField);
+    }
     if world.has::<voxear_render::Smoke>(entity) {
         parts.push(Part::Smoke);
     }
@@ -1650,6 +1683,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::SmokeSeed,
             Prop::SmokePlayOnStart,
         ],
+        Part::ForceField => vec![Prop::ForceKind, Prop::ForceStrength, Prop::ForceRadius],
         Part::Mist => vec![
             Prop::MistEmitting,
             Prop::MistWidth,
@@ -1777,6 +1811,11 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             // How wide its swirls are only while there are any.
             if system.turbulence > 0.0 {
                 props.push(Prop::ParticleTurbulenceSize);
+            }
+            props.extend([Prop::ParticleForces, Prop::ParticleCollision]);
+            // How they come off what they meet only while they meet anything.
+            if system.collision != ParticleCollision::Off {
+                props.extend([Prop::ParticleBounce, Prop::ParticleFriction, Prop::ParticleLifeLost]);
             }
             props.extend([Prop::ParticleSeed, Prop::ParticleSimulated]);
             props
@@ -2059,7 +2098,15 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleWind => "Wind",
         Prop::ParticleTurbulence => "Turbulence",
         Prop::ParticleTurbulenceSize => "Turbulence Size",
+        Prop::ParticleCollision => "Collision",
+        Prop::ParticleBounce => "Bounce",
+        Prop::ParticleFriction => "Friction",
+        Prop::ParticleLifeLost => "Life Lost",
+        Prop::ParticleForces => "Forces",
         Prop::ParticleSimulated => "Simulated",
+        Prop::ForceKind => "Kind",
+        Prop::ForceStrength => "Strength",
+        Prop::ForceRadius => "Radius",
         Prop::SmokeSize => "Size",
         Prop::SmokeCell => "Cell Size",
         Prop::SmokeDensity => "Density",
@@ -2457,6 +2504,9 @@ pub fn add(
         Part::Smoke => {
             world.insert(entity, voxear_render::Smoke::default());
         }
+        Part::ForceField => {
+            world.insert(entity, ForceField::default());
+        }
         Part::Mist => {
             world.insert(entity, voxear_render::Mist::default());
         }
@@ -2562,6 +2612,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_render::SmokeFill>(entity);
             world.remove::<voxear_render::SmokeCue>(entity);
         }
+        Part::ForceField => drop(world.remove::<ForceField>(entity)),
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
@@ -2863,7 +2914,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleWind
         | Prop::ParticleTurbulence
         | Prop::ParticleTurbulenceSize
+        | Prop::ParticleCollision
+        | Prop::ParticleBounce
+        | Prop::ParticleFriction
+        | Prop::ParticleLifeLost
+        | Prop::ParticleForces
         | Prop::ParticleSimulated => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        Prop::ForceKind => {
+            let kind = world.get::<ForceField>(entity)?.kind;
+            let index = ForceKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
+            Value::Choice(index, ForceKind::ALL.iter().map(|k| k.name().to_string()).collect())
+        }
+        Prop::ForceStrength => Value::Number(world.get::<ForceField>(entity)?.strength),
+        Prop::ForceRadius => Value::Number(world.get::<ForceField>(entity)?.radius),
         Prop::SmokeSize
         | Prop::SmokeCell
         | Prop::SmokeDensity
@@ -4158,6 +4221,14 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)
         }
+        (Prop::ForceKind, Value::Choice(index, _)) => {
+            let kind = ForceKind::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |field: &mut ForceField| field.kind = kind)
+        }
+        (Prop::ForceStrength, Value::Number(n)) => with(world, entity, |field: &mut ForceField| field.strength = n),
+        (Prop::ForceRadius, Value::Number(n)) => {
+            with(world, entity, |field: &mut ForceField| field.radius = n.max(0.0))
+        }
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
         }
@@ -4529,6 +4600,14 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleWind => Value::Number(system.wind),
         Prop::ParticleTurbulence => Value::Number(system.turbulence),
         Prop::ParticleTurbulenceSize => Value::Number(system.turbulence_size),
+        Prop::ParticleCollision => {
+            let index = ParticleCollision::ALL.iter().position(|c| *c == system.collision).unwrap_or(0);
+            choice(index, ParticleCollision::ALL.iter().map(|c| c.name()).collect())
+        }
+        Prop::ParticleBounce => Value::Number(system.bounce),
+        Prop::ParticleFriction => Value::Number(system.friction),
+        Prop::ParticleLifeLost => Value::Number(system.life_lost),
+        Prop::ParticleForces => Value::Number(system.forces),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -4588,6 +4667,13 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleWind, Value::Number(n)) => system.wind = n.max(0.0),
         (Prop::ParticleTurbulence, Value::Number(n)) => system.turbulence = n.max(0.0),
         (Prop::ParticleTurbulenceSize, Value::Number(n)) => system.turbulence_size = n.max(0.01),
+        (Prop::ParticleCollision, Value::Choice(index, _)) => {
+            system.collision = ParticleCollision::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::ParticleBounce, Value::Number(n)) => system.bounce = n.clamp(0.0, 1.0),
+        (Prop::ParticleFriction, Value::Number(n)) => system.friction = n.clamp(0.0, 1.0),
+        (Prop::ParticleLifeLost, Value::Number(n)) => system.life_lost = n.clamp(0.0, 1.0),
+        (Prop::ParticleForces, Value::Number(n)) => system.forces = n.max(0.0),
         _ => {}
     }
 }
@@ -4972,6 +5058,23 @@ mod tests {
     }
 
     #[test]
+    fn a_force_field_shows_its_kind_strength_and_radius() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+        let types = ScriptTypes::default();
+        assert!(!parts(&world, entity).contains(&Part::ForceField));
+        world.insert(entity, ForceField::default());
+        assert!(parts(&world, entity).contains(&Part::ForceField));
+        let shown = props(&world, entity, &Part::ForceField, &types);
+        assert_eq!(shown, [Prop::ForceKind, Prop::ForceStrength, Prop::ForceRadius]);
+        assert!(set_component(&mut world, entity, &Prop::ForceKind, Value::Choice(2, Vec::new())));
+        assert!(set_component(&mut world, entity, &Prop::ForceRadius, Value::Number(-1.0)));
+        let field = *world.get::<ForceField>(entity).unwrap();
+        assert_eq!((field.kind, field.radius), (ForceKind::Vortex, 0.0), "never less than no reach");
+        assert_eq!(Prop::ForceRadius.lock_key(), "radius");
+    }
+
+    #[test]
     fn a_particle_system_says_which_settings_have_it_simulated() {
         let mut world = World::new();
         let entity = world.spawn((ParticleSystem::default(),));
@@ -4987,6 +5090,14 @@ mod tests {
         assert_eq!(simulated, Some(Value::Fixed("Space, Turbulence".into())));
         assert!(set_component(&mut world, entity, &Prop::ParticleWind, Value::Number(-2.0)));
         assert_eq!(world.get::<ParticleSystem>(entity).unwrap().wind, 0.0, "never less than none");
+        // How they bounce shows only once they meet something.
+        assert!(!shown(&world).contains(&Prop::ParticleBounce));
+        assert!(set_component(&mut world, entity, &Prop::ParticleCollision, Value::Choice(1, Vec::new())));
+        assert!(shown(&world).contains(&Prop::ParticleBounce) && shown(&world).contains(&Prop::ParticleLifeLost));
+        assert!(set_component(&mut world, entity, &Prop::ParticleBounce, Value::Number(3.0)));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().bounce, 1.0, "never faster than it came");
+        let simulated = get_particle(&world, entity, Prop::ParticleSimulated);
+        assert_eq!(simulated, Some(Value::Fixed("Space, Turbulence, Collision".into())));
     }
 
     fn get_particle(world: &World, entity: Entity, prop: Prop) -> Option<Value> {

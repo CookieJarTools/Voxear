@@ -1549,6 +1549,26 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   - spread that grows with firing and moving and settles when still, aim down sights, and bloom
   - impacts by surface (decals, particles, sounds), muzzle flash and shell ejection
   - damage with falloff and hit zones, and an interface for anything that can be hit
+- **Heat and cold ✅.** Every place has a temperature (`voxear_engine::heat`): the climate, from a world's
+  generator or the level's **Climate**, warmer in the afternoon and colder before dawn and swinging wider where
+  it is dry; drawn to the deep ground's mild temperature under blocks, or the water's in water; then **Heat
+  Zones** (a box or sphere that sets or adds, with a soft edge) and the hottest and coldest of what is near:
+  **Heat Sources**, blocks with a **Heat** (`BlockDef::heat`, a °C and a reach, each chunk's hot and cold blocks
+  listed once until it changes), lava Pools and Streams, and heat scripts set off for a while. Sums and products
+  only, the same on every machine. The level's Climate holds a clock: time of day, day length, and whether it
+  turns the first Directional Light. A **Heat Body** follows its place's temperature on the fixed steps (Warms
+  In); its **Changes** each count while it is above or below a °C and hold still while not, and once one has
+  counted long enough scripts hear of it by name and the Obj becomes the change's prefab, starting as warm. A
+  character **Feels** Freezing, Cold, Comfortable, Hot or Scorching by its Comfort widened by Cold and Heat
+  Resistance, and `Beyond` gives how far past its band it is; what that does is the game's. An item's
+  **Dropped** prefab is what it is when it lies in the world, so dropped food cooks. Scripts: `Heat.At`,
+  `Heat.Sample` (`HeatSample`), `Heat.AddSource`, `Clock`, `Obj.HeatBody` (`Temperature`, `Feels`,
+  `ColdResistance`, `HeatResistance`, `Progress`), `HeatBody.Changed`, `HeatBody.FeelsChanged`, `HeatSource`
+  and `HeatZone`; native API 81. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
+  Scene view's **Heat** shading, the ground round the camera tinted by temperature. Tests: a generated desert
+  by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
+  in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads; what heat does to the weather;
+  a GPU tint over every surface in place of the Heat shading's squares.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,

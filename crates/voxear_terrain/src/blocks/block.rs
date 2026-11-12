@@ -29,6 +29,11 @@
 //! color = [0.04, 0.46, 0.33]  # the water's own colour
 //! liquid = "water"            # see-through, and things float in it
 //! ```
+//!
+//! ```toml
+//! color = [0.9, 0.3, 0.05]
+//! heat = { celsius = 1100.0, reach = 4.0 }  # magma: hot round it, as ice is cold
+//! ```
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -82,7 +87,29 @@ pub struct BlockDef {
     /// The sounds of breaking it, placing it and stepping on it.
     #[serde(skip_serializing_if = "BlockSounds::is_none")]
     pub sounds: BlockSounds,
+    /// How hot or cold it is, for what is near it: magma, fire, ice and
+    /// snow. None for a block that is as warm as where it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heat: Option<BlockHeat>,
 }
+
+/// A block's own temperature and how far it reaches: at the block it is
+/// `celsius`, and it fades to where it is by `reach` metres away.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockHeat {
+    pub celsius: f32,
+    pub reach: f32,
+}
+
+impl Default for BlockHeat {
+    fn default() -> Self {
+        Self { celsius: 600.0, reach: 3.0 }
+    }
+}
+
+/// The farthest a block's heat reaches, in metres.
+pub const MAX_HEAT_REACH: f32 = 16.0;
 
 fn is_zero(value: &u32) -> bool {
     *value == 0
@@ -157,6 +184,7 @@ impl Default for BlockDef {
             data: None,
             drops: Vec::new(),
             sounds: BlockSounds::default(),
+            heat: None,
         }
     }
 }
@@ -168,6 +196,10 @@ impl BlockDef {
         for drop in &mut block.drops {
             drop.count = [drop.count[0].min(drop.count[1]), drop.count[0].max(drop.count[1])];
             drop.chance = if drop.chance.is_finite() { drop.chance.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        if let Some(heat) = &mut block.heat {
+            heat.celsius = if heat.celsius.is_finite() { heat.celsius.clamp(-273.0, 5000.0) } else { 20.0 };
+            heat.reach = if heat.reach.is_finite() { heat.reach.clamp(0.0, MAX_HEAT_REACH) } else { 0.0 };
         }
         Ok(block)
     }
@@ -268,5 +300,16 @@ mod tests {
         let odd = "hardness = -2.0\n[[drops]]\nitem = \"Items/Flint.asset\"\ncount = [3, 1]\nchance = 4.0\n";
         let read = BlockDef::parse(odd).unwrap();
         assert_eq!((read.hardness, read.drops[0].count, read.drops[0].chance), (0.0, [1, 3], 1.0));
+    }
+
+    #[test]
+    fn a_hot_block_says_how_hot_and_how_far_and_a_block_without_heat_says_nothing() {
+        let magma = BlockDef { heat: Some(BlockHeat { celsius: 1100.0, reach: 4.0 }), ..BlockDef::colored([0.9, 0.3, 0.05]) };
+        let text = magma.to_text();
+        assert!(text.contains("celsius = 1100"), "{text}");
+        assert_eq!(BlockDef::parse(&text).unwrap(), magma);
+        assert!(!BlockDef::default().to_text().contains("heat"));
+        let far = BlockDef::parse("[heat]\ncelsius = -30.0\nreach = 900.0\n").unwrap().heat.unwrap();
+        assert_eq!((far.celsius, far.reach), (-30.0, MAX_HEAT_REACH));
     }
 }

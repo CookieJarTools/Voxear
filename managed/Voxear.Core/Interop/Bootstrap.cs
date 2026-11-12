@@ -45,6 +45,7 @@ internal static unsafe class Bootstrap
 		managed->SetEnabled = &EntryPoints.SetEnabled;
 		managed->OriginMoved = &EntryPoints.OriginMoved;
 		managed->ParticleHits = &EntryPoints.ParticleHits;
+		managed->HeatEvents = &EntryPoints.HeatEvents;
 		MainThreadContext.Instance.Install();
 		return 0;
 	}

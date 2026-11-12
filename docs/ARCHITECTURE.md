@@ -3568,6 +3568,38 @@ Terrain.Apply(TerrainEdit.Flatten(at, 4f, floor));            // advanced
 var edits = Terrain.CaptureEdits();                           // for a save, or a player joining
 ```
 
+## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
+
+Every place has a temperature, in °C, and things there warm and cool towards it: food cooks and freezes, and
+characters feel the cold. All of it is sums and products, so every machine in a networked game agrees.
+
+- **The field** (`voxear_engine::heat::sample`, `heat/field.rs`): a `HeatSample` is the climate, from the first
+  world of blocks' generator that reaches the point (`WorldGen::climate`, given each frame by `heat::prepare`) or
+  the level's `Climate` lapsed with height; what the time of day adds (`day_curve`, coldest at five and warmest at
+  three, smoothsteps, scaled by the Climate's swing and by dryness); shelter, five upward rays through the block
+  worlds, the share that meet ground times how much rock is straight overhead, drawing it to the deep ground's
+  temperature (water's in water); Heat Zones in the order they were made, each setting or adding by how far inside
+  it the point is; and what is near: the hottest and the coldest of Heat Sources, short-lived `Burst`s, lava under
+  or below (`water::sample`) and hot and cold blocks, each faded by `1 - smoothstep(d / reach)`.
+- **Hot and cold blocks:** a `.block`'s `heat` (`BlockDef::heat`, `BlockHeat { celsius, reach }`, reach at most 16
+  m) is kept by each world as `Resolved::heat` by block number. `HeatWorld` keeps each chunk's hot and cold
+  blocks as a list beside the `Arc<Chunk>` it was read from; holding the `Arc` makes a change copy the chunk, so a
+  pointer that differs is a chunk read again. A chunk whose palette holds no hot block is never scanned.
+- **The clock:** the level's first `Climate` has the time of day, which `turn_clock` moves while playing and which
+  turns the first Directional Light where it says (`sun_rotation`, drawn only, so it may use the sine).
+- **Heat Bodies** (`heat::update`, on each fixed step after physics while playing): a `HeatState` beside each
+  `HeatBody` keeps its temperature, the place's (looked at every 0.2 s), each change's held seconds and whether
+  it happened, and how it feels. Temperature moves by `delta / (warms_in + delta)` of the way each step. What is
+  due goes in a `HeatDue` resource; the game (`Game::make_heat_changes`, after the engine's tick, since only it has
+  prefabs) makes each change's prefab in its Obj's place under its parent, starting it as warm, destroys the Obj,
+  and tells scripts.
+- **Scripts:** natives `heat_sample`, `heat_add` and `clock_value` answered through `HeatHooks`; Heat Body, Heat
+  Source and Heat Zone through `ComponentKind` 22 to 24; changes and feelings as `HeatEventData` through the
+  managed `heat_events`, raised as `HeatBody.Changed` and `HeatBody.FeelsChanged`. Native API 81.
+- **Editor:** `heat_props` shows the four components, a Heat Body's changes as a list whose length is a number;
+  the block Inspector's Heat section; and the Scene view's Heat shading (`editor/heat_view.rs`), a grid round the
+  camera looked at a few hundred places a frame and drawn as tinted squares with the gizmos.
+
 ## Maps *(implemented for block worlds: tiles, drawing, the Map and Map Marker components, UI elements, knowledge; other terrains planned)*
 
 A map is a small model of a world of blocks: a slab of the ground cut out round a point, seen turned and tilted,

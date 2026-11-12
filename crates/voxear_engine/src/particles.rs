@@ -52,6 +52,8 @@ const LIFE_LOST: i32 = 36;
 const FORCES: i32 = 37;
 const STRETCH: i32 = 38;
 const DELAY: i32 = 39;
+const LIGHT: i32 = 40;
+const LIGHT_RANGE: i32 = 41;
 
 /// The time Particle Systems are played and stopped by, and blasts go off
 /// in: the engine's, but for how the editor's preview holds it back; and
@@ -125,12 +127,13 @@ pub fn resolve(world: &mut World, content: &mut crate::content::Content, rendere
     let mut wanted = std::collections::HashSet::new();
     for (system,) in world.query_ref::<(&ParticleSystem,)>() {
         let emitters: Vec<ParticleTexture> = match system.effect {
-            None => vec![system.texture],
+            None => vec![system.texture, system.light_map],
             Some(EffectRef::Builtin(_)) => Vec::new(),
             Some(EffectRef::Asset(guid)) => {
                 let found = effects.0.get(&guid).cloned().or_else(|| content.particle_effect(guid));
                 let Some(effect) = found else { continue };
-                let textures = effect.emitters.iter().map(|emitter| emitter.system.texture).collect();
+                let both = |emitter: &voxear_render::Emitter| [emitter.system.texture, emitter.system.light_map];
+                let textures = effect.emitters.iter().flat_map(both).collect();
                 effects.0.insert(guid, effect);
                 textures
             }
@@ -325,6 +328,8 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         FORCES => number(system.forces),
         STRETCH => number(system.stretch),
         DELAY => number(system.delay),
+        LIGHT => number(system.light),
+        LIGHT_RANGE => number(system.light_range),
         _ => return None,
     })
 }
@@ -370,6 +375,8 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         FORCES => system.forces = x.max(0.0),
         STRETCH => system.stretch = x.max(0.0),
         DELAY => system.delay = x.max(0.0),
+        LIGHT => system.light = x.max(0.0),
+        LIGHT_RANGE => system.light_range = x.max(0.0),
         _ => {}
     }
 }

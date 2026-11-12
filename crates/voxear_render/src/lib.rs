@@ -137,7 +137,7 @@ pub use effects::{
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
 pub use particles::{
-    EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
+    MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
 };
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
@@ -2380,7 +2380,8 @@ impl View {
             }
             ParticleTexture::Asset(guid) => pictures.and_then(|pictures| pictures.0.get(&guid)).map(|id| id.0),
         };
-        let drawing = (&*setup.simulated.0, &particle_texture as particles::Textures<'_>);
+        let puff_lit = Some(assets.puff_light_maps.map(|map| map.0));
+        let drawing = (&*setup.simulated.0, particles::Textures { find: &particle_texture, puff_lit });
         let (particle_systems, particles, spray, rapids) =
             particles::gather(world, camera, particles::time_of(world, setup.time), &extracted.water_bodies, drawing);
         buffers.particle_systems.write(0, &particle_systems);

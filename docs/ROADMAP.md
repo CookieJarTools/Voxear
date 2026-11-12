@@ -1548,11 +1548,21 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   a speed (1×, 0.5×, 0.25×, 0.1×, 2×) and a scrubber; an effect that ends plays again. Particles run on a time
   of their own for it (`ParticleTime`, `ParticlePreview`), the engine's but for the preview. Tests: the
   particles' time, an effect to a scene and back, and in the editor an effect opened, played, edited and saved.
+- **Lit smoke and lights from effects ✅.** A lit particle with two maps is lit from six sides: the light from
+  its right, left, top, bottom, front and back is worked out where its quad is placed, the sun's through its
+  shadow and each lamp's from its cluster, and each pixel takes its share of each from the maps
+  (`particleLightSix`). The built-in Puff has maps of its own, made with it as a ball of smoke, so every lit
+  Puff is; a project's picture names its second as its **Light Map**. Animated pictures fade one into the
+  next. A system's **Light** casts a point light in its colour, a stream's flickering and a burst's flashing
+  and fading as its particles die, to its **Light Range**; the 16 nearest shine (`particles::lights`, added
+  beside the lamps). The Fire, Explosion, Muzzle Flash and Magic starters cast one. C# `Light`,
+  `LightRange`. Tests: the maps, a flicker and a flash, and on a GPU a puff lit from either side by a lamp and
+  a floor lit by a system.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
-  - flipbooks blended by motion vectors, smoke lit from six sides, meshes, trails, sorting, half-size drawing,
-    lights from effects, particles in the fog volume
+  - trails, meshes, sorting, half-size drawing, particles in the fog volume, flipbooks blended by motion
+    vectors, and anti-aliasing told about fast particles
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger

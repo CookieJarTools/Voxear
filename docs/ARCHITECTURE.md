@@ -2841,7 +2841,7 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   is left to games and packages.
 - **Planned on top:** clips keyed on a timeline.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke and lights implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2930,6 +2930,22 @@ strip over the Scene view sets how fast it runs (`ParticlePreview`: paused, or a
 the systems being watched; scrubbing pauses it and starts them as long ago as the scrubber says, which the
 simulation answers as it answers any system first seen running, each particle where its age has it.
 
+**Lit from six sides** *(implemented)*. A lit particle with two maps is not lit all over alike but as a puff of
+smoke is. Where its quad is placed, the light reaching it is gathered from six sides of it, its picture's right,
+left, top and bottom as it is turned, its front and its back: the sky's and GI's from all alike, the sun's through
+its shadow and each of its cluster's lamps on the sides that face them (`particleLightSix`). Each pixel then takes
+its share of each from the maps: the first map's red, green and blue are how bright it is lit from the right, from
+above and from behind, the second's from the left, from below and from in front. That is two texture reads a
+pixel and no light worked out there, so smoke that fills the screen costs what unlit smoke does. The built-in
+Puff's maps are made with it, as a ball of smoke: a side lights the half that faces it and the folds that catch
+it, less the further the light has come through the ball, and light from behind comes through where it is thin.
+A puff has no shadow from the puffs beside it; that waits on particles in the fog volume.
+
+**Lights from effects** *(implemented)*. An emitter's Light is a point light at its Obj, worked out on the CPU
+from when it started (`particles::lights`): steady with a flicker while a stream runs, full as a burst goes off
+and fading with the square of how far through its particles' lives it is. They join the frame's lamps before
+clustering, the 16 nearest the camera, with no shadows.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
@@ -2938,9 +2954,10 @@ simulation answers as it answers any system first seen running, each particle wh
   marks, effects start on every machine by RPC with a seed, and a server simulates none.
 - **More in an effect.** Sub-emitters and events, and values an effect shows on the Particle System that plays
   it.
-- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
-  effects; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
-  soft particles at half size, and anti-aliasing told about fast particles.
+- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; lighting
+  worked out once a particle rather than once a corner; mist, dust and lingering smoke put into the fog volume;
+  sorting only where blending needs it, big soft particles at half size, and anti-aliasing told about fast
+  particles.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
   rather than names, hit and finished events, curves and gradients.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least

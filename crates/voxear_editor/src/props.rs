@@ -447,6 +447,11 @@ pub enum Prop {
     ParticleAnimate,
     ParticleStretch,
     ParticleDelay,
+    /// A picture's second map for being lit from six sides; and the light
+    /// the system casts, and how far.
+    ParticleLightMap,
+    ParticleLight,
+    ParticleLightRange,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
     ForceKind,
     ForceStrength,
@@ -895,7 +900,10 @@ impl Prop {
             | Prop::ParticleTiles
             | Prop::ParticleAnimate
             | Prop::ParticleStretch
-            | Prop::ParticleDelay => Part::ParticleSystem,
+            | Prop::ParticleDelay
+            | Prop::ParticleLightMap
+            | Prop::ParticleLight
+            | Prop::ParticleLightRange => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
@@ -1222,6 +1230,9 @@ impl Prop {
             Prop::ParticleAnimate => "animate",
             Prop::ParticleStretch => "stretch",
             Prop::ParticleDelay => "delay",
+            Prop::ParticleLightMap => "light_map",
+            Prop::ParticleLight => "light",
+            Prop::ParticleLightRange => "light_range",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
             Prop::ForceRadius => "radius",
@@ -1891,11 +1902,20 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             // How many pictures a project's picture holds; a built-in one knows.
             if matches!(system.texture, ParticleTexture::Asset(_)) {
                 props.push(Prop::ParticleTiles);
+                // Lit from six sides, when it is lit, by a second picture.
+                if system.lit {
+                    props.push(Prop::ParticleLightMap);
+                }
             }
             if !system.texture.is_builtin(BuiltinTexture::Dot) {
                 props.push(Prop::ParticleAnimate);
             }
-            props.extend([Prop::ParticleStretch, Prop::ParticleShape]);
+            props.extend([Prop::ParticleStretch, Prop::ParticleLight]);
+            // How far its light reaches only while it casts one.
+            if system.light > 0.0 {
+                props.push(Prop::ParticleLightRange);
+            }
+            props.push(Prop::ParticleShape);
             // Only what its shape uses.
             props.extend(match shape {
                 EmitShape::Point => vec![],
@@ -2207,6 +2227,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleAnimate => "Animate",
         Prop::ParticleStretch => "Stretch",
         Prop::ParticleDelay => "Delay",
+        Prop::ParticleLightMap => "Light Map",
+        Prop::ParticleLight => "Light",
+        Prop::ParticleLightRange => "Light Range",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
         Prop::ForceRadius => "Radius",
@@ -3058,7 +3081,13 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleTiles
         | Prop::ParticleAnimate
         | Prop::ParticleStretch
-        | Prop::ParticleDelay => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleDelay
+        | Prop::ParticleLight
+        | Prop::ParticleLightRange => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        Prop::ParticleLightMap => Value::Asset(match world.get::<ParticleSystem>(entity)?.light_map {
+            ParticleTexture::Builtin(_) => "None".into(),
+            ParticleTexture::Asset(guid) => guid_label(game, Some(guid)),
+        }),
         Prop::ParticleEffect => Value::Asset(match world.get::<ParticleSystem>(entity)?.effect {
             None => "None".into(),
             Some(EffectRef::Builtin(starter)) => starter.name().into(),
@@ -3624,6 +3653,16 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.texture = texture)
         }
+        (Prop::ParticleLightMap, Pick::Asset(choice)) => {
+            let map = match choice {
+                None => ParticleTexture::default(),
+                Some(path) => match game.content.parse(path).ok().and_then(|reference| reference.guid()) {
+                    Some(guid) => ParticleTexture::Asset(guid),
+                    None => return false,
+                },
+            };
+            with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.light_map = map)
+        }
         (Prop::GunHandling, Pick::Asset(choice)) => {
             let handling = match choice {
                 None => String::new(),
@@ -3911,6 +3950,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             found.extend(fields::assets_of(game, Some(AssetKind::Particles)).into_iter().skip(1));
             return found;
         }
+        Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::ParticleTexture => {
             // The built-in ones, the Dot first, then the project's pictures.
             let builtin = BuiltinTexture::ALL.map(|texture| (texture.name().to_string(), Pick::Asset(Some(texture.reference()))));
@@ -4828,6 +4868,8 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleAnimate => Value::Toggle(system.animate),
         Prop::ParticleStretch => Value::Number(system.stretch),
         Prop::ParticleDelay => Value::Number(system.delay),
+        Prop::ParticleLight => Value::Number(system.light),
+        Prop::ParticleLightRange => Value::Number(system.light_range),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -4900,6 +4942,8 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleAnimate, Value::Toggle(on)) => system.animate = on,
         (Prop::ParticleStretch, Value::Number(n)) => system.stretch = n.max(0.0),
         (Prop::ParticleDelay, Value::Number(n)) => system.delay = n.max(0.0),
+        (Prop::ParticleLight, Value::Number(n)) => system.light = n.max(0.0),
+        (Prop::ParticleLightRange, Value::Number(n)) => system.light_range = n.max(0.0),
         _ => {}
     }
 }
@@ -5301,6 +5345,12 @@ mod tests {
         assert!(set_component(&mut world, entity, &Prop::ParticleTiles, Value::Vector(vec![4.4, 0.0])));
         let system = *world.get::<ParticleSystem>(entity).unwrap();
         assert_eq!((system.stretch, system.delay, system.tiles), (0.05, 0.0, [4, 1]));
+        // A lit picture can be lit from six sides; and how far its light reaches shows once it casts one.
+        assert!(shown(&world).contains(&Prop::ParticleLightMap) && !shown(&world).contains(&Prop::ParticleLightRange));
+        assert!(set_component(&mut world, entity, &Prop::ParticleLight, Value::Number(6.0)));
+        assert!(shown(&world).contains(&Prop::ParticleLightRange));
+        world.get_mut::<ParticleSystem>(entity).unwrap().lit = false;
+        assert!(!shown(&world).contains(&Prop::ParticleLightMap), "one that is not lit has no use for it");
         world.get_mut::<ParticleSystem>(entity).unwrap().effect = Some(EffectRef::Builtin(Starter::Explosion));
         assert_eq!(shown(&world), [Prop::ParticleEffect], "its own settings are not used");
     }

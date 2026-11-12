@@ -267,11 +267,31 @@ pub struct ParticleSystem {
     /// How long after it starts before it sends anything out, in seconds.
     #[serde(skip_serializing_if = "is_zero")]
     pub delay: f32,
+    /// For a picture of the project's lit from six sides, the second of its
+    /// two maps: how bright each pixel is lit from the left, from below and
+    /// from in front, as the texture says for the right, the top and
+    /// behind. The built-in Puff has its own.
+    #[serde(skip_serializing_if = "ParticleTexture::is_dot")]
+    pub light_map: ParticleTexture,
+    /// How bright a light it casts on what is round it, as a Point Light's
+    /// intensity: 0 none. A stream's flickers; a burst's flashes and fades.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub light: f32,
+    /// How far that light reaches, in metres.
+    #[serde(skip_serializing_if = "is_light_range")]
+    pub light_range: f32,
     /// An effect played in place of all of the above: a starter, or one of
     /// the project's `.particles` assets, each of its emitters a system of
     /// its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<EffectRef>,
+}
+
+/// How far a system's light reaches, to begin with.
+const LIGHT_RANGE: f32 = 8.0;
+
+fn is_light_range(value: &f32) -> bool {
+    *value == LIGHT_RANGE
 }
 
 fn is_one_tile(tiles: &[u32; 2]) -> bool {
@@ -347,6 +367,9 @@ impl Default for ParticleSystem {
             animate: false,
             stretch: 0.0,
             delay: 0.0,
+            light_map: ParticleTexture::default(),
+            light: 0.0,
+            light_range: LIGHT_RANGE,
             effect: None,
         }
     }
@@ -410,7 +433,15 @@ pub(crate) type PlacedSystems = std::collections::HashMap<(Entity, u32), Placed>
 
 /// The texture a system draws with as the shaders find it; `None` for the
 /// Dot, or for a picture not loaded yet, which draws as the Dot.
-pub(crate) type Textures<'a> = &'a dyn Fn(ParticleTexture) -> Option<u32>;
+pub(crate) type FindTexture<'a> = &'a dyn Fn(ParticleTexture) -> Option<u32>;
+
+/// What finds a system's textures: any of them, and the built-in Puff's two
+/// maps for being lit from six sides.
+#[derive(Clone, Copy)]
+pub(crate) struct Textures<'a> {
+    pub find: FindTexture<'a>,
+    pub puff_lit: Option<[u32; 2]>,
+}
 
 /// When a Particle System started, and stopped, in the renderer's time: set
 /// by the engine as it plays and stops it. Without one, it has been going
@@ -699,6 +730,8 @@ const WORLD: u32 = 16;
 const COLLIDE: u32 = 64;
 /// Each particle plays through its texture's pictures over its life.
 const ANIMATE: u32 = 128;
+/// Lit from six sides by its texture and its light map.
+const SIX_WAY: u32 = 256;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -771,6 +804,7 @@ pub(crate) fn gpu(
         life_lost: system.life_lost.clamp(0.0, 1.0),
         forces: system.forces.max(0.0),
         texture: crate::gpu::NO_TEXTURE,
+        light_map: crate::gpu::NO_TEXTURE,
         tiles: [1, 1],
         stretch: system.stretch.max(0.0),
         ..GpuParticleSystem::default()
@@ -790,7 +824,17 @@ pub(crate) fn textured(drawn: GpuParticleSystem, system: &ParticleSystem, textur
         ParticleTexture::Builtin(texture) => texture.tiles(),
         ParticleTexture::Asset(_) => system.tiles.map(|n| n.clamp(1, 64)),
     };
-    match textures(system.texture) {
+    // Lit from six sides: the built-in Puff by its own maps, a project's picture by the light map it names.
+    let puff = system.texture == ParticleTexture::Builtin(crate::effects::BuiltinTexture::Puff);
+    let six = match (system.lit, puff, system.light_map) {
+        (true, true, _) => textures.puff_lit,
+        (true, false, map @ ParticleTexture::Asset(_)) => (textures.find)(system.texture).zip((textures.find)(map)).map(<[u32; 2]>::from),
+        _ => None,
+    };
+    if let Some([texture, light_map]) = six {
+        return GpuParticleSystem { texture, light_map, tiles, flags: drawn.flags | SIX_WAY, ..drawn };
+    }
+    match (textures.find)(system.texture) {
         Some(texture) => GpuParticleSystem { texture, tiles, ..drawn },
         None => drawn,
     }
@@ -815,9 +859,112 @@ fn gradient_keys(gradient: &Gradient) -> [[f32; 4]; 8] {
     rows
 }
 
+/// The most lights Particle Systems cast in a frame, the nearest the camera.
+pub const MAX_PARTICLE_LIGHTS: usize = 16;
+
+/// How bright a system's light is `since` seconds after its emitter
+/// started, from 0 to 1, having `stopped` then if ever: a stream's steady
+/// while it sends particles out, with a flicker of its own (by `seed`), and
+/// fading as its last die; a burst's full as it goes off and fading as fast
+/// again, as a flash does.
+fn light_now(system: &ParticleSystem, since: f32, stopped: f32, seed: u32) -> f32 {
+    if since < 0.0 {
+        return 0.0;
+    }
+    let duration = system.duration.max(0.01);
+    let longest = system.lifetime[0].max(system.lifetime[1]).max(0.01);
+    let until = stopped.min(if system.looping { f32::INFINITY } else { duration });
+    let mut bright: f32 = 0.0;
+    if system.rate > 0.0 {
+        // Two slow wobbles and a quick one, never in step with another system's.
+        let phase = seed as f32 * 0.37;
+        let flicker = 0.8 + 0.1 * (since * 9.0 + phase).sin() + 0.07 * (since * 23.0 + phase * 1.7).sin() + 0.03 * (since * 51.0).sin();
+        bright = flicker * (1.0 - ((since - until) / longest).clamp(0.0, 1.0));
+    }
+    if system.burst > 0 {
+        let round = if system.looping { (since.min(until) / duration).floor() * duration } else { 0.0 };
+        let gone = ((since - round) / longest).clamp(0.0, 1.0);
+        bright = bright.max((1.0 - gone) * (1.0 - gone));
+    }
+    bright
+}
+
+/// The lights this frame's Particle Systems cast, the nearest `camera`
+/// first and no more than [`MAX_PARTICLE_LIGHTS`]: a point light at each
+/// emitter that has a Light, in its colour as it starts.
+pub(crate) fn lights(world: &World, camera: Vec3, time: f32) -> Vec<crate::gpu::GpuLight> {
+    use crate::gpu::{GpuLight, LIGHT_POINT, NO_SHADOW, NO_TEXTURE};
+    let query =
+        world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
+    let effects = world.resource::<ParticleEffects>();
+    let mut found: Vec<(f32, GpuLight)> = Vec::new();
+    for (entity, own, transform, at, playback) in query.without::<Destroying>() {
+        let position = at.map_or(transform.position, |w| w.0.w_axis.truncate());
+        let playback = playback.copied().unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
+        for (emitter, system) in (0u32..).zip(crate::effects::emitters(effects, own)) {
+            if system.light <= 0.0 || system.light_range <= 0.0 {
+                continue;
+            }
+            let started = playback.started + system.delay.max(0.0);
+            let stopped = playback.stopped.map_or(f32::INFINITY, |stopped| stopped - started);
+            let seed = emitter_seed(system.seed, emitter) ^ entity.to_bits() as u32;
+            let bright = light_now(system, time - started, stopped, seed);
+            if bright <= 0.001 {
+                continue;
+            }
+            let [r, g, b] = system.color_gradient.at(0.0).unwrap_or([system.color[0], system.color[1], system.color[2]]);
+            let color = Vec3::new(r, g, b) * (system.light * bright);
+            let light = GpuLight {
+                position: position.to_array(),
+                range: system.light_range,
+                color: color.to_array(),
+                kind: LIGHT_POINT,
+                direction: [0.0, 0.0, 1.0],
+                cos_outer: 0.0,
+                right: [1.0, 0.0, 0.0],
+                cos_inner: 0.0,
+                size: [0.0; 2],
+                cookie: NO_TEXTURE,
+                profile: NO_TEXTURE,
+                shadow: NO_SHADOW,
+                _pad: [0; 3],
+            };
+            found.push((position.distance_squared(camera), light));
+        }
+    }
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    found.into_iter().take(MAX_PARTICLE_LIGHTS).map(|(_, light)| light).collect()
+}
+
+/// Textures for tests that draw none.
+#[cfg(test)]
+const NO_TEXTURES: Textures<'static> = Textures { find: &|_| None, puff_lit: None };
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fire_flickers_and_a_flash_fades_as_fast_as_its_particles_die() {
+        let fire = ParticleSystem { rate: 30.0, lifetime: [1.0, 1.0], light: 5.0, ..ParticleSystem::default() };
+        let seen: Vec<f32> = (0..40).map(|i| light_now(&fire, i as f32 * 0.05, f32::INFINITY, 3)).collect();
+        assert!(seen.iter().all(|bright| (0.55..=1.05).contains(bright)), "always alight: {seen:?}");
+        assert!(seen.iter().cloned().fold(0.0, f32::max) - seen.iter().cloned().fold(1.0, f32::min) > 0.1, "and flickering");
+        assert!(light_now(&fire, 10.4, 10.0, 3) > 0.3 && light_now(&fire, 11.5, 10.0, 3) == 0.0, "out as its last die");
+        let flash = ParticleSystem { rate: 0.0, burst: 3, looping: false, lifetime: [0.1, 0.2], light: 20.0, ..fire };
+        assert_eq!((light_now(&flash, -0.1, f32::INFINITY, 0), light_now(&flash, 0.0, f32::INFINITY, 0)), (0.0, 1.0));
+        assert!((light_now(&flash, 0.1, f32::INFINITY, 0) - 0.25).abs() < 1e-4, "half way, a quarter as bright");
+        assert_eq!(light_now(&flash, 0.3, f32::INFINITY, 0), 0.0);
+        // Only emitters with a Light cast one, at their Obj, in their colour, the nearest first.
+        let mut world = World::new();
+        world.spawn((fire, Transform::from_position(Vec3::new(0.0, 1.0, 9.0))));
+        world.spawn((ParticleSystem { color: [1.0, 0.5, 0.0, 1.0], ..fire }, Transform::from_position(Vec3::new(0.0, 1.0, 2.0))));
+        world.spawn((ParticleSystem::default(), Transform::default()));
+        let cast = lights(&world, Vec3::ZERO, 5.0);
+        assert_eq!(cast.len(), 2);
+        assert_eq!((cast[0].position, cast[0].range), ([0.0, 1.0, 2.0], LIGHT_RANGE));
+        assert!(cast[0].color[1] > 0.0 && cast[0].color[2] == 0.0 && cast[0].color[0] > cast[0].color[1], "{:?}", cast[0].color);
+    }
 
     #[test]
     fn a_system_keeps_slots_for_its_burst_and_its_stream_as_long_as_the_longest_lives() {
@@ -833,7 +980,7 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), (&PlacedSystems::new(), &|_| None));
+        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), (&PlacedSystems::new(), NO_TEXTURES));
         assert_eq!(spray, None, "no sea, no spray");
         assert!(rapids.is_empty(), "no Streams, none over rapids");
         assert_eq!(slots.len(), 2);
@@ -857,10 +1004,10 @@ mod tests {
             crate::water::WaterBodies { bodies: vec![body], pools: 0, streams: vec![points.len() as u32], points, dry_meshes: Vec::new() }
         };
         let world = World::new();
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), (&PlacedSystems::new(), &|_| None));
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), (&PlacedSystems::new(), NO_TEXTURES));
         assert!(systems.is_empty() && rapids.is_empty(), "a level stream throws up none");
         let steep = bodies(&steep);
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, (&PlacedSystems::new(), &|_| None));
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, (&PlacedSystems::new(), NO_TEXTURES));
         assert_eq!((systems.len(), rapids.len()), (1, 1));
         let (system, body, points, drops) = rapids[0];
         assert_eq!((system, body, points), (0, 0, steep.streams[0]), "its own system, for the Stream's body and points");

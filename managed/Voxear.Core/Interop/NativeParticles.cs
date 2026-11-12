@@ -48,6 +48,8 @@ internal static unsafe class NativeParticles
 	public const int Forces = 37;
 	public const int Stretch = 38;
 	public const int Delay = 39;
+	public const int Light = 40;
+	public const int LightRange = 41;
 
 	/// <summary>A value of an Obj's Particle System, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

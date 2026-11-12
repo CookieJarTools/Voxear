@@ -116,6 +116,72 @@ impl BuiltinTexture {
     }
 }
 
+impl BuiltinTexture {
+    /// The Puff's two maps for being lit from six sides, as its picture's
+    /// pixels: in the first, how bright each pixel is lit from the right,
+    /// from above and from behind, with the puff's shape in alpha; in the
+    /// second, from the left, from below and from in front. The puff is
+    /// taken for a ball of smoke as thick as it is opaque: a side lights
+    /// the half that faces it and the folds that catch it, less the further
+    /// the light has come through the ball; light from behind comes through
+    /// where it is thin; and its thin edges are brighter than its folds.
+    /// None for the others, which are lit flat.
+    pub fn light_maps(self) -> Option<(u32, [Vec<u8>; 2])> {
+        if self != Self::Puff {
+            return None;
+        }
+        let [across, down] = self.tiles();
+        let tile = PICTURE_SIDE / across.max(down);
+        let mut maps = [vec![0u8; (PICTURE_SIDE * PICTURE_SIDE * 4) as usize], vec![0u8; (PICTURE_SIDE * PICTURE_SIDE * 4) as usize]];
+        // How thick the puff is at a place in a tile, from 0 to 1, and how opaque.
+        let mound = |x: u32, y: u32, which: f32| {
+            let at = [(x as f32 + 0.5) / tile as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / tile as f32 * 2.0];
+            let [_, alpha] = puff(at, which);
+            let edge = (1.0 - at[0].abs().max(at[1].abs())) * tile as f32 * 0.5;
+            let alpha = alpha.clamp(0.0, 1.0) * ((edge - 1.0) / 2.0).clamp(0.0, 1.0);
+            (alpha.sqrt() * (1.0 - (at[0] * at[0] + at[1] * at[1]).min(1.0)).sqrt().max(0.2), alpha)
+        };
+        for y in 0..PICTURE_SIDE {
+            for x in 0..PICTURE_SIDE {
+                let which = (x / tile + y / tile * across) as f32;
+                let (tx, ty) = (x % tile, y % tile);
+                let (thick, alpha) = mound(tx, ty, which);
+                // Which way its surface faces there, from how its thickness changes across and down the picture.
+                let near = |dx: i32, dy: i32| {
+                    let (nx, ny) = (tx as i32 + dx, ty as i32 + dy);
+                    let inside = (0..tile as i32).contains(&nx) && (0..tile as i32).contains(&ny);
+                    if inside { mound(nx as u32, ny as u32, which).0 } else { 0.0 }
+                };
+                let slope = tile as f32 * 0.09;
+                let (rise_right, rise_up) = ((near(2, 0) - near(-2, 0)) * slope, (near(0, -2) - near(0, 2)) * slope);
+                let long = (rise_right * rise_right + rise_up * rise_up + 1.0).sqrt();
+                let (facing_right, facing_up, facing_front) = (-rise_right / long, -rise_up / long, 1.0 / long);
+                // It is lit as a ball of smoke is: on the side toward the light, its folds catching it or not, and
+                // darker the further the light has come through it; and brighter all over where it is thin.
+                let at = [(tx as f32 + 0.5) / tile as f32 * 2.0 - 1.0, 1.0 - (ty as f32 + 0.5) / tile as f32 * 2.0];
+                let (bx, by) = (at[0] / 0.85, at[1] / 0.85);
+                let round = (1.0 - (bx * bx + by * by).min(1.0)).sqrt();
+                let thin = (-3.0 * thick).exp();
+                let side = |toward: f32, across: f32, facing: f32| {
+                    // How far into the ball the light has come by here, from the side it comes from.
+                    let come = ((1.0 - across * across).max(0.0).sqrt() - toward).clamp(0.0, 2.0);
+                    let lit = (0.5 + 0.5 * (toward * 0.8 + facing * 0.6).clamp(-1.0, 1.0)).powf(1.3);
+                    (lit * (0.15 + 0.85 * (-1.1 * come).exp()) + thin * 0.25).clamp(0.0, 1.0)
+                };
+                let (right, left) = (side(bx, by, facing_right), side(-bx, by, -facing_right));
+                let (top, bottom) = (side(by, bx, facing_up), side(-by, bx, -facing_up));
+                let front = ((0.3 + 0.7 * round) * (0.6 + 0.4 * facing_front)).clamp(0.0, 1.0);
+                let back = ((-2.2 * thick).exp() * 0.9 + 0.05).clamp(0.0, 1.0);
+                let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0) as u8;
+                let i = ((y * PICTURE_SIDE + x) * 4) as usize;
+                maps[0][i..i + 4].copy_from_slice(&[byte(right), byte(top), byte(back), byte(alpha)]);
+                maps[1][i..i + 4].copy_from_slice(&[byte(left), byte(bottom), byte(front), 255]);
+            }
+        }
+        Some((PICTURE_SIDE, maps))
+    }
+}
+
 /// How many pixels a side a built-in texture's picture has.
 const PICTURE_SIDE: u32 = 256;
 
@@ -583,6 +649,8 @@ impl Starter {
                         ]),
                         opacity_curve: swell(0.15),
                         intensity: 1.6,
+                        light: 5.0,
+                        light_range: 7.0,
                         radius: 0.16,
                         angle: 7.0,
                         gravity: -0.12,
@@ -751,6 +819,8 @@ impl Starter {
                         color: [1.0, 0.85, 0.55, 1.0],
                         color_end: [1.0, 0.5, 0.15, 0.0],
                         intensity: 10.0,
+                        light: 14.0,
+                        light_range: 6.0,
                         angle: 4.0,
                         radius: 0.01,
                         softness: 0.05,
@@ -827,6 +897,8 @@ impl Starter {
                         color_gradient: hot,
                         opacity_curve: Curve::new(&[[0.0, 1.0], [0.5, 0.8], [1.0, 0.0]]),
                         intensity: 5.0,
+                        light: 60.0,
+                        light_range: 18.0,
                         shape: EmitShape::Sphere,
                         radius: 0.4,
                         gravity: -0.15,
@@ -955,6 +1027,8 @@ impl Starter {
                         color: [0.4, 0.6, 1.0, 0.6],
                         opacity_curve: swell(0.3),
                         intensity: 3.0,
+                        light: 4.0,
+                        light_range: 6.0,
                         shape: EmitShape::Point,
                         spin: 40.0,
                         softness: 0.3,
@@ -1112,6 +1186,28 @@ mod tests {
         let mut encoder = png::Encoder::new(file, (side * BuiltinTexture::PICTURES.len()) as u32, side as u32);
         encoder.set_color(png::ColorType::Rgb);
         encoder.write_header().unwrap().write_image_data(&sheet).unwrap();
+    }
+
+    #[test]
+    fn the_puffs_light_maps_are_brighter_on_the_side_the_light_comes_from() {
+        assert!(BuiltinTexture::Flame.light_maps().is_none(), "only the Puff is lit from six sides");
+        let (side, [first, second]) = BuiltinTexture::Puff.light_maps().unwrap();
+        // The first puff's tile: its right half against its left, lit from the right and from the left.
+        let tile = side / 2;
+        let lit = |map: &[u8], channel: usize, columns: std::ops::Range<u32>| {
+            let rows = tile / 4..tile * 3 / 4;
+            let pixels = rows.flat_map(|y| columns.clone().map(move |x| (x, y)));
+            pixels.map(|(x, y)| u64::from(map[((y * side + x) * 4) as usize + channel])).sum::<u64>()
+        };
+        let (left, right) = (tile / 8..tile / 2, tile / 2..tile * 7 / 8);
+        assert!(lit(&first, 0, right.clone()) > lit(&first, 0, left.clone()) * 5 / 4, "from the right, its right");
+        assert!(lit(&second, 0, left.clone()) > lit(&second, 0, right.clone()) * 5 / 4, "from the left, its left");
+        // Light from behind comes through its thin edge more than its thick middle.
+        let middle = u32::from(first[(((tile / 2) * side + tile / 2) * 4) as usize + 2]);
+        assert!(middle < 120, "little comes through its middle: {middle}");
+        // Its shape is the Puff's own.
+        let (_, flat) = BuiltinTexture::Puff.picture().unwrap();
+        assert!(flat.chunks(4).zip(first.chunks(4)).all(|(flat, lit)| flat[3] == lit[3]));
     }
 
     #[test]

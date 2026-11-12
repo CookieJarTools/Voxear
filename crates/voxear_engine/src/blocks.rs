@@ -384,6 +384,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
         return;
     }
     let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let budget = voxear_terrain::WorldBudget::of(world);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
@@ -402,7 +403,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();
-        let distances = (far.distance, far.far);
+        // As many columns at once and as far as the game's budget lets it, and no further than the world's own.
+        streamer.at_once = budget.columns as usize;
+        let distances = (far.distance.min(budget.view_distance), far.far.min(budget.far_distance));
         if streamer.update(&mut blocks, &mut asset.base, &mut asset.pending, making, distances, camera) {
             world.insert(entity, blocks);
             world.insert(entity, asset);

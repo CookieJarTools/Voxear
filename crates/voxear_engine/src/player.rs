@@ -69,6 +69,9 @@ pub struct PlayerSettings {
     /// The project's `[quality]` budget for simulated particles.
     #[serde(default = "default_particles")]
     pub particles: u32,
+    /// The project's `[world]` budget for making worlds of blocks.
+    #[serde(default)]
+    pub world: voxear_terrain::WorldBudget,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -240,6 +243,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             network: settings.network.clone(),
             floating_origin: settings.floating_origin.clone(),
             quality: crate::project::QualitySettings { particles: settings.particles },
+            world: settings.world,
             modules: Some(settings.modules),
         },
     };

@@ -13,6 +13,7 @@
 
 pub mod blocks;
 pub mod brush;
+pub mod budget;
 pub mod composite;
 pub mod dig;
 pub mod endless;
@@ -34,6 +35,7 @@ pub mod workers;
 
 use std::sync::Arc;
 
+pub use budget::{WorldBudget, WorldQuality};
 pub use heights::{HeightTile, Heightmap, TILE_QUADS, TILE_SAMPLES};
 pub use ray::GroundHit;
 use voxear_core::math::Vec3;

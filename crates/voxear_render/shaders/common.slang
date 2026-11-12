@@ -597,7 +597,8 @@ struct Clouds
     float block;
     // How soft the cubes are: 0 solid, 1 mist.
     float softness;
-    float pad;
+    // How much light lightning adds to the sky's this moment.
+    float flash;
 };
 
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.
@@ -653,7 +654,10 @@ struct Seasons
     uint enabled;
     // How much of the snow and wetness reach what is not a plant.
     float ground;
-    uint2 pad;
+    // What the weather has left on every surface, 0 to 1: how wet the rain has made it, and how much snow has
+    // settled (weatherSurface in shading.slang).
+    float weatherWet;
+    float weatherSnow;
 };
 
 // The sun's light where the camera is, after its way through the air, and

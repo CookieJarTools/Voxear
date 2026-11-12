@@ -518,8 +518,14 @@ pub fn extract(
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
     // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
-    let weather = crate::weather::Weather::in_world(world);
-    let sky = weather.sky(world.resource::<Sky>().copied().unwrap_or_default());
+    let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
+    let weather = weathered.now();
+    let mut sky = weather.sky(world.resource::<Sky>().copied().unwrap_or_default());
+    // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
+    // sky light as it is worked out.
+    let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
+    sky.zenith += crate::weather::FLASH_COLOUR * flash;
+    sky.horizon += crate::weather::FLASH_COLOUR * flash;
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
@@ -731,6 +737,10 @@ pub fn extract(
     if let Some((_, seasons)) = seasons.into_iter().find(|(entity, _)| on(*entity, Switch::Seasons)) {
         frame.seasons = seasons.gpu();
     }
+    // What the weather has left lying on everything, Seasons or none.
+    frame.seasons.weather_wet = weathered.ground().wet;
+    frame.seasons.weather_snow = weathered.ground().snow;
+    frame.lighting.clouds.flash = flash;
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near, origin };

@@ -2,7 +2,7 @@
 order: 2
 ---
 
-**Weather** is cloud, gloom, fog, wind, rain and snow laid over a level's lighting. The lighting stays as you made it: clear weather is the lighting as it is, and every other kind adds to it. So one set of lighting settings serves a level in sunshine and in a storm, and a script can turn the weather as the game runs.
+**Weather** is cloud, gloom, fog, wind, rain, snow and lightning laid over a level's lighting. The lighting stays as you made it: clear weather is the lighting as it is, and every other kind adds to it. So one set of lighting settings serves a level in sunshine and in a storm, and a script can turn the weather as the game runs.
 
 ## The kinds of weather
 
@@ -12,14 +12,14 @@ order: 2
 | **Cloudy** | Cloud over half of whatever sky was open |
 | **Overcast** | A grey sky from edge to edge and a dull day under it |
 | **Rain** | Steady rain from a dark sky, with some wind and mist |
-| **Storm** | Heavy rain, a gale and a sky near black |
+| **Storm** | Heavy rain, a gale, lightning and a sky near black |
 | **Snow** | Snow falling from a pale, close sky |
 | **Fog** | Thick fog, the sky lost in it |
 | **Custom** | Amounts of your own, below |
 
 ## What weather is made of
 
-Each kind is six amounts, each from 0 for none to 1:
+Each kind is seven amounts, each from 0 for none to 1:
 
 | Amount | What it does |
 | --- | --- |
@@ -29,12 +29,22 @@ Each kind is six amounts, each from 0 for none to 1:
 | **Wind** | Makes the level's Wind Zone blow harder, in harder gusts: plants, the sea, the clouds and the rain all feel it (see [[Wind]]). A level without a Wind Zone stays still |
 | **Rain** | Rain falling round the camera |
 | **Snow** | Snow falling round the camera |
+| **Lightning** | How often lightning strikes: at 1, every eight seconds or so. A strike lights the sky and the level under it for a moment, in two or three flickers |
 
 Rain and snow are the starter Rain and Snow effects (see [[Particle Systems]]), the snow's flakes made bigger, falling from a box 24 metres wide that stays over the camera. They land on what the camera can see, and the wind blows them. In the editor they fall round the Scene view's camera.
 
+## What the weather leaves behind
+
+Rain and snow stay a while after they fall:
+
+- **Rain soaks the level.** Every surface darkens and shines, what faces up most. Dry ground is soaked in about half a minute of rain, and dries over three minutes once the rain stops.
+- **Snow settles** on whatever faces up: in patches at first, then over everything, in a minute and a half of steady snow. It melts over four minutes once the snow stops, and in well under one if it rains.
+
+A level that starts in rain or snow, from its lighting settings, starts already wet or snowed over, as if the weather had been there a while. Weather a script turns to starts on dry ground.
+
 ## Setting the weather
 
-On the **Lighting** page, the **Weather** tab picks the weather the level is in when lit by those settings: a kind, or Custom and its six amounts. In the file it is `[weather]`:
+On the **Lighting** page, the **Weather** tab picks the weather the level is in when lit by those settings: a kind, or Custom and its seven amounts. In the file it is `[weather]`:
 
 ```toml
 [weather]
@@ -74,10 +84,15 @@ public sealed class StormFront : Behaviour
 | Member | What it is |
 | --- | --- |
 | `Weather.Set(kind, seconds)` | Turns the weather to a kind. Ten seconds unless you say; 0 for at once |
-| `Weather.Set(amounts, seconds)` | Turns it to amounts of your own, a `WeatherAmounts` with `Cloud`, `Darkness`, `Fog`, `Wind`, `Rain` and `Snow` |
+| `Weather.Set(amounts, seconds)` | Turns it to amounts of your own, a `WeatherAmounts` with `Cloud`, `Darkness`, `Fog`, `Wind`, `Rain`, `Snow` and `Lightning` |
 | `Weather.Kind` | The kind it is, or is turning to. Setting it turns the weather at once |
 | `Weather.Amounts` | What it adds this moment: part way between two kinds while it turns |
 | `Weather.IsTurning` | Whether it is still turning |
+| `Weather.Wetness` | How wet the rain has left the level, from 0 to 1 |
+| `Weather.SnowCover` | How much snow has settled, from 0 to 1 |
+| `Weather.Flash` | How bright lightning is this moment, 0 between strikes |
+| `Weather.Changed` | An event, raised with the new kind when the weather is set to another, by a script or by lighting settings |
+| `Weather.Struck` | An event, raised as lightning strikes |
 
 Amounts of your own make weather no kind has, such as a light drizzle under a bright sky:
 
@@ -85,5 +100,28 @@ Amounts of your own make weather no kind has, such as a light drizzle under a br
 Weather.Set(new WeatherAmounts { Cloud = 0.4f, Rain = 0.25f }, 20f);
 ```
 
+The engine ships no sounds for weather. Play your own: thunder from `Weather.Struck`, and rain as loud as `Weather.Amounts.Rain`:
+
+```csharp
+public sealed class Thunder : Behaviour
+{
+	protected override void OnEnable()
+	{
+		Weather.Struck += Rumble;
+	}
+
+	protected override void OnDisable()
+	{
+		Weather.Struck -= Rumble;
+	}
+
+	private void Rumble()
+	{
+		// The Obj's Audio Source holds the thunder's sound.
+		Obj.AudioSource.Play();
+	}
+}
+```
+
 > [!NOTE]
-> Rain and snow fall through roofs the camera cannot see the top of, the ground does not get wet or snowy from the weather yet, and there is no lightning or sound of rain. In a networked game each machine turns its own weather: set it on every machine at the same time.
+> Nothing knows what is under a roof: rain and snow fall through roofs the camera cannot see the top of, and floors indoors get wet and snowed on with the rest. Lightning lights the whole sky, without a bolt. In a networked game each machine turns its own weather: set it on every machine at the same time.

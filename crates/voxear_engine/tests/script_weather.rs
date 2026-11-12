@@ -19,6 +19,10 @@ public sealed class Forecast : SystemBase
 	protected override void Update()
 	{
 		frames++;
+		if (frames == 1)
+		{
+			Weather.Changed += kind => Log.Info($"forecast changed to {kind}");
+		}
 		if (frames == 2)
 		{
 			Weather.Set(WeatherKind.Storm, 1f);
@@ -34,6 +38,7 @@ public sealed class Forecast : SystemBase
 		if (frames == 82)
 		{
 			Log.Info($"forecast {Weather.Kind} turning {Weather.IsTurning} snow {Weather.Amounts.Snow}");
+			Log.Info($"forecast wet {Weather.Wetness > 0f} settled {Weather.SnowCover > 0f} flash {Weather.Flash >= 0f}");
 		}
 	}
 }
@@ -100,4 +105,9 @@ fn a_script_turns_the_weather_and_reads_it_as_it_turns() {
     let own = game.engine.world.resource::<Weather>().copied().unwrap();
     assert_eq!((own.kind(), own.now().snow, own.now().fog, own.now().rain), (WeatherKind::Custom, 1.0, 0.5, 0.0));
     assert!(said(&log, "forecast Custom turning False snow 1"), "{:#?}", lines(&log));
+    // The storm's rain had begun to wet the ground, and the first of the snow has settled on it.
+    assert!(said(&log, "forecast wet True settled True flash True"), "{:#?}", lines(&log));
+    assert!(own.ground().wet > 0.0 && own.ground().snow > 0.0, "{own:?}");
+    // Each change of kind was told to whoever listens.
+    assert!(said(&log, "forecast changed to Storm") && said(&log, "forecast changed to Custom"), "{:#?}", lines(&log));
 }

@@ -12,6 +12,12 @@
 //! - **fog** thickens the fog and the air's haze.
 //! - **wind** strengthens the level's Wind Zone, for all it blows.
 //! - **rain** and **snow** fall round the camera, which the engine sees to.
+//! - **lightning** strikes now and then, lighting the sky and the level
+//!   under it for a moment.
+//!
+//! What has fallen stays a while ([`WeatherGround`]): rain soaks every
+//! surface in half a minute and dries off over a few once it stops, and
+//! snow settles on what faces up and melts away, sooner in the rain.
 //!
 //! A [`WeatherKind`] is a set of amounts by name. Setting the weather with
 //! a time eases every amount from what it is now, by time passed, so every
@@ -75,7 +81,9 @@ impl WeatherKind {
             Self::Cloudy => WeatherAmounts { cloud: 0.5, ..none },
             Self::Overcast => WeatherAmounts { cloud: 1.0, darkness: 0.3, fog: 0.05, ..none },
             Self::Rain => WeatherAmounts { cloud: 0.95, darkness: 0.4, fog: 0.2, wind: 0.3, rain: 0.6, ..none },
-            Self::Storm => WeatherAmounts { cloud: 1.0, darkness: 0.75, fog: 0.3, wind: 1.0, rain: 1.0, ..none },
+            Self::Storm => {
+                WeatherAmounts { cloud: 1.0, darkness: 0.75, fog: 0.3, wind: 1.0, rain: 1.0, lightning: 0.8, ..none }
+            }
             Self::Snow => WeatherAmounts { cloud: 0.9, darkness: 0.2, fog: 0.3, wind: 0.15, snow: 0.8, ..none },
             // The sky is covered too: fog is cloud on the ground, and blue overhead would give it away.
             Self::Fog => WeatherAmounts { cloud: 1.0, darkness: 0.1, fog: 1.0, ..none },
@@ -100,18 +108,23 @@ pub struct WeatherAmounts {
     pub rain: f32,
     /// How hard it snows.
     pub snow: f32,
+    /// How often lightning strikes: at 1, every eight seconds or so.
+    pub lightning: f32,
 }
+
+/// How many amounts weather is made of.
+pub const AMOUNTS: usize = 7;
 
 impl WeatherAmounts {
     /// Each amount as a list, in the order scripts and files give them.
-    pub fn to_array(self) -> [f32; 6] {
-        [self.cloud, self.darkness, self.fog, self.wind, self.rain, self.snow]
+    pub fn to_array(self) -> [f32; AMOUNTS] {
+        [self.cloud, self.darkness, self.fog, self.wind, self.rain, self.snow, self.lightning]
     }
 
     /// The amounts a list gives, each kept between 0 and 1.
-    pub fn from_array(amounts: [f32; 6]) -> Self {
-        let [cloud, darkness, fog, wind, rain, snow] = amounts.map(|amount| amount.clamp(0.0, 1.0));
-        Self { cloud, darkness, fog, wind, rain, snow }
+    pub fn from_array(amounts: [f32; AMOUNTS]) -> Self {
+        let [cloud, darkness, fog, wind, rain, snow, lightning] = amounts.map(|amount| amount.clamp(0.0, 1.0));
+        Self { cloud, darkness, fog, wind, rain, snow, lightning }
     }
 
     /// Part of the way from these to `other`.
@@ -185,6 +198,86 @@ impl WeatherAmounts {
 /// tens of metres.
 const FOG_DENSITY: f32 = 0.03;
 
+/// What the weather has left lying on the level: each from 0 to 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeatherGround {
+    /// How wet every surface is from the rain: darker, and shining.
+    pub wet: f32,
+    /// How much snow has settled on what faces up.
+    pub snow: f32,
+}
+
+/// How many seconds rain takes to soak dry ground and wet ground to dry;
+/// snow to settle as deep as it will and to melt, and to melt in heavy rain.
+const SOAK: f32 = 25.0;
+const DRY: f32 = 180.0;
+const SETTLE: f32 = 90.0;
+const MELT: f32 = 240.0;
+const WASH: f32 = 40.0;
+
+impl WeatherGround {
+    /// The ground as weather adding `amounts` leaves it in the end.
+    pub fn under(amounts: WeatherAmounts) -> Self {
+        // Any rain soaks the ground through, given time; snow lies as deep as it falls hard.
+        let wet = if amounts.rain > 0.0 { (0.5 + amounts.rain).min(1.0) } else { 0.0 };
+        let snow = if amounts.rain > 0.0 { 0.0 } else { (amounts.snow * 1.25).min(1.0) };
+        Self { wet, snow }
+    }
+
+    /// The ground `delta` seconds on, under weather adding `amounts`.
+    fn after(self, amounts: WeatherAmounts, delta: f32) -> Self {
+        let wants = Self::under(amounts);
+        let towards = |now: f32, wanted: f32, up: f32, down: f32| match wanted > now {
+            true => (now + delta / up).min(wanted),
+            false => (now - delta / down).max(wanted),
+        };
+        // Snow melts sooner the harder it rains.
+        let melt = MELT + (WASH - MELT) * amounts.rain;
+        Self { wet: towards(self.wet, wants.wet, SOAK, DRY), snow: towards(self.snow, wants.snow, SETTLE, melt) }
+    }
+}
+
+/// How bright lightning at its brightest makes the sky's light, against a
+/// sun of 1, and its colour.
+pub(crate) const FLASH_LIGHT: f32 = 1.5;
+pub(crate) const FLASH_COLOUR: voxear_core::math::Vec3 = voxear_core::math::Vec3::new(0.75, 0.83, 1.0);
+
+/// A number from 0 to 1 for a whole number, the same every time.
+fn chance(of: u64) -> f32 {
+    let mut x = of.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    ((x ^ (x >> 31)) >> 40) as f32 / (1u64 << 24) as f32
+}
+
+/// How long each stretch of time that may hold one strike of lightning is,
+/// and how long a strike's flickers last, in seconds.
+const STRIKE_EVERY: f64 = 3.0;
+const STRIKE_LASTS: f32 = 0.5;
+
+/// How bright lightning is, from 0 to 1, `time` seconds into weather with
+/// this much `lightning`: nothing between strikes, and each strike two or
+/// three flickers, the first the brightest. The same at the same time.
+pub fn flash_at(time: f64, lightning: f32) -> f32 {
+    if lightning <= 0.0 || time < 0.0 {
+        return 0.0;
+    }
+    let stretch = (time / STRIKE_EVERY).floor();
+    let key = stretch as u64;
+    // More of the stretches hold a strike the more lightning there is: at 1, three in eight.
+    if chance(key * 3) > 0.08 + 0.3 * lightning {
+        return 0.0;
+    }
+    let starts = chance(key * 3 + 1) * (STRIKE_EVERY as f32 - STRIKE_LASTS);
+    let since = (time - stretch * STRIKE_EVERY) as f32 - starts;
+    if !(0.0..STRIKE_LASTS).contains(&since) {
+        return 0.0;
+    }
+    let third = if chance(key * 3 + 2) > 0.5 { 0.4 } else { 0.0 };
+    let flicker = |at: f32, bright: f32| if since >= at { bright * (-(since - at) * 30.0).exp() } else { 0.0 };
+    (flicker(0.0, 1.0) + flicker(0.12, 0.6) + flicker(0.27, third)).min(1.0)
+}
+
 /// The level's weather, a resource: what it is now and what it is turning
 /// to. Without one the weather is clear.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -196,19 +289,26 @@ pub struct Weather {
     /// How long the change takes and how much of that has passed, in seconds.
     seconds: f32,
     passed: f32,
+    ground: WeatherGround,
+    /// How long the weather has run, in seconds, which times its lightning.
+    clock: f64,
 }
 
 impl Weather {
-    /// Weather of a kind, as it is once settled.
+    /// Weather of a kind, as it is once it has settled in: the ground as
+    /// wet or as snowed over as that weather leaves it.
     pub fn of(kind: WeatherKind) -> Self {
-        let amounts = kind.amounts();
-        Self { kind, from: amounts, target: amounts, now: amounts, seconds: 0.0, passed: 0.0 }
+        Self::settled_in(kind, kind.amounts())
     }
 
-    /// Weather of amounts of its own, settled.
+    /// Weather of amounts of its own, settled in.
     pub fn custom(amounts: WeatherAmounts) -> Self {
-        let amounts = WeatherAmounts::from_array(amounts.to_array());
-        Self { kind: WeatherKind::Custom, from: amounts, target: amounts, now: amounts, seconds: 0.0, passed: 0.0 }
+        Self::settled_in(WeatherKind::Custom, WeatherAmounts::from_array(amounts.to_array()))
+    }
+
+    fn settled_in(kind: WeatherKind, amounts: WeatherAmounts) -> Self {
+        let ground = WeatherGround::under(amounts);
+        Self { kind, from: amounts, target: amounts, now: amounts, seconds: 0.0, passed: 0.0, ground, clock: 0.0 }
     }
 
     /// Turns the weather to `kind` over `seconds`, from what it is now; at
@@ -224,18 +324,32 @@ impl Weather {
     }
 
     fn turn(&mut self, kind: WeatherKind, target: WeatherAmounts, seconds: f32) {
-        *self = Self { kind, from: self.now, target, now: self.now, seconds: seconds.max(0.0), passed: 0.0 };
+        *self = Self { kind, from: self.now, target, seconds: seconds.max(0.0), passed: 0.0, ..*self };
         self.advance(0.0);
     }
 
-    /// Lets `delta` seconds pass. Says whether the weather changed.
+    /// Lets `delta` seconds pass: the weather turns, and the ground takes
+    /// what falls on it or dries. Says whether anything changed.
     pub fn advance(&mut self, delta: f32) -> bool {
-        let before = self.now;
-        self.passed = (self.passed + delta.max(0.0)).min(self.seconds);
+        let before = (self.now, self.ground);
+        let delta = delta.max(0.0);
+        self.passed = (self.passed + delta).min(self.seconds);
         let part = if self.seconds > 0.0 { self.passed / self.seconds } else { 1.0 };
         // Slow to start and to settle, as weather comes on.
         self.now = self.from.towards(self.target, part * part * (3.0 - 2.0 * part));
-        self.now != before
+        self.ground = self.ground.after(self.now, delta);
+        self.clock += f64::from(delta);
+        (self.now, self.ground) != before
+    }
+
+    /// What it has left lying on the level.
+    pub fn ground(&self) -> WeatherGround {
+        self.ground
+    }
+
+    /// How bright its lightning is this moment, from 0 to 1.
+    pub fn flash(&self) -> f32 {
+        flash_at(self.clock, self.now.lightning)
     }
 
     /// The kind it is, or is turning to.
@@ -289,6 +403,63 @@ mod tests {
         // With no time it is there at once, and amounts keep within 0 and 1.
         weather.set_amounts(WeatherAmounts { snow: 3.0, fog: -1.0, ..WeatherAmounts::default() }, 0.0);
         assert_eq!((weather.now().snow, weather.now().fog, weather.kind()), (1.0, 0.0, WeatherKind::Custom));
+    }
+
+    #[test]
+    fn rain_soaks_the_ground_which_dries_after_and_snow_settles_and_melts() {
+        let mut weather = Weather::default();
+        weather.set(WeatherKind::Rain, 0.0);
+        assert_eq!(weather.ground(), WeatherGround::default(), "dry as the rain starts");
+        weather.advance(SOAK * 0.5);
+        assert!((weather.ground().wet - 0.5).abs() < 0.01, "half soaked: {:?}", weather.ground());
+        weather.advance(SOAK);
+        assert_eq!(weather.ground().wet, 1.0);
+        // The rain stops: still wet, and dry only minutes later.
+        weather.set(WeatherKind::Clear, 0.0);
+        weather.advance(SOAK);
+        assert!(weather.ground().wet > 0.8);
+        assert!(weather.advance(DRY) && weather.ground().wet == 0.0);
+        assert!(!weather.advance(1.0), "nothing more to change");
+        // Snow settles slowly, lies while it is cold, and the rain washes it off far sooner than it melts.
+        weather.set(WeatherKind::Snow, 0.0);
+        weather.advance(SETTLE * 0.5);
+        let half = weather.ground().snow;
+        assert!(half > 0.4 && half < 0.6 && weather.ground().wet == 0.0, "{:?}", weather.ground());
+        weather.advance(SETTLE);
+        assert_eq!(weather.ground().snow, 1.0);
+        weather.set(WeatherKind::Storm, 0.0);
+        weather.advance(WASH + 1.0);
+        assert_eq!(weather.ground().snow, 0.0);
+        // Weather the level starts in has been there a while.
+        assert_eq!(Weather::of(WeatherKind::Rain).ground().wet, 1.0);
+        assert_eq!(Weather::of(WeatherKind::Snow).ground().snow, 1.0);
+    }
+
+    #[test]
+    fn lightning_strikes_now_and_then_in_a_storm_and_never_without() {
+        let brightest = |lightning: f32| {
+            let frames = (0..3600).map(|frame| flash_at(f64::from(frame) / 60.0, lightning));
+            let lit: Vec<f32> = frames.collect();
+            // A strike is a frame bright after a dark one.
+            let strikes = lit.windows(2).filter(|pair| pair[0] == 0.0 && pair[1] > 0.3).count();
+            (strikes, lit.iter().copied().fold(0.0, f32::max))
+        };
+        assert_eq!(brightest(0.0), (0, 0.0));
+        let (strikes, peak) = brightest(1.0);
+        assert!((3..=14).contains(&strikes), "a few a minute: {strikes}");
+        assert!(peak > 0.5 && peak <= 1.0, "{peak}");
+        assert!(brightest(0.3).0 < strikes, "fewer with less");
+        // The same weather, the same lightning; and a storm has it where rain has none.
+        let mut storm = Weather::of(WeatherKind::Storm);
+        let mut rain = Weather::of(WeatherKind::Rain);
+        let mut seen = 0.0f32;
+        for _ in 0..3600 {
+            storm.advance(1.0 / 60.0);
+            rain.advance(1.0 / 60.0);
+            seen = seen.max(storm.flash());
+            assert_eq!(rain.flash(), 0.0);
+        }
+        assert!(seen > 0.5, "a storm's lightning: {seen}");
     }
 
     #[test]

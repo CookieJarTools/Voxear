@@ -531,7 +531,12 @@ impl Engine {
             scripts.publish_water_features(features);
             scripts.publish_weather(voxear_scripting::WeatherState {
                 kind: weather.kind().index() as i32,
-                amounts: weather.now().to_array(),
+                state: {
+                    let mut state = [0.0; 10];
+                    state[..7].copy_from_slice(&weather.now().to_array());
+                    state[7..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
+                    state
+                },
                 turning: !weather.settled(),
             });
         }

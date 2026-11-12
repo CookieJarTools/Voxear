@@ -6846,7 +6846,9 @@ struct CloudView {
     /// The moon for a light, and a camera that gets used to the dark.
     moon: bool,
     /// The weather laid over it all.
-    weather: voxear_render::weather::WeatherKind,
+    weather: voxear_render::weather::Weather,
+    /// A ground as dark as soil rather than a pale one.
+    soil: bool,
 }
 
 impl CloudView {
@@ -6861,7 +6863,8 @@ impl CloudView {
             size: (640, 360),
             gradient: false,
             moon: false,
-            weather: voxear_render::weather::WeatherKind::Clear,
+            weather: voxear_render::weather::Weather::default(),
+            soil: false,
         }
     }
 }
@@ -6884,7 +6887,9 @@ fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     world.spawn((light, Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     if view.ground {
         let plane = renderer.primitive(Primitive::Plane).unwrap();
-        let material = renderer.add_material(&MaterialDesc { roughness: 1.0, ..MaterialDesc::default() }).unwrap();
+        let color = if view.soil { [0.22, 0.17, 0.12, 1.0] } else { MaterialDesc::default().base_color };
+        let desc = MaterialDesc { roughness: 1.0, base_color: color, ..MaterialDesc::default() };
+        let material = renderer.add_material(&desc).unwrap();
         let wide = Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30000.0));
         world.spawn((MeshRenderer::new(plane, material), wide));
     }
@@ -6893,7 +6898,7 @@ fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     let post = if view.moon { PostProcess::default() } else { PostProcess::neutral() };
     world.insert_resource(PostProcess { anti_aliasing, ..post });
-    world.insert_resource(voxear_render::weather::Weather::of(view.weather));
+    world.insert_resource(view.weather);
     let mut time = 0.0;
     run(&mut renderer, &world, &mut time, 2);
     // A frame is never taken for longer than a quarter of a second.
@@ -6975,10 +6980,13 @@ fn clouds_show_in_a_sky_of_its_own_colours_and_under_the_moon() {
 
 #[test]
 fn weather_fills_the_sky_dims_the_day_and_hides_the_distance_in_fog() {
-    use voxear_render::{Clouds, weather::WeatherKind};
+    use voxear_render::{
+        Clouds,
+        weather::{Weather, WeatherKind},
+    };
     // Over a wide ground, looking a little above the horizon, under a few clouds.
     let under = |weather: WeatherKind| {
-        let looking = bearing(12.0, 60.0);
+        let (looking, weather) = (bearing(12.0, 60.0), Weather::of(weather));
         let view = CloudView { looking, ground: true, weather, ..CloudView::of(Clouds::covering(0.25)) };
         cloud_render(&view).map(|(pixels, _)| pixels)
     };
@@ -7009,6 +7017,61 @@ fn weather_fills_the_sky_dims_the_day_and_hides_the_distance_in_fog() {
         (150..300).map(|y| (row(y) - row(y + 6)).abs()).max().unwrap()
     };
     assert!(step(&clear) > step(&fog) * 2, "the horizon is lost in fog: {} against {}", step(&clear), step(&fog));
+}
+
+#[test]
+fn rain_darkens_the_ground_snow_whitens_it_and_lightning_lights_it() {
+    use voxear_render::{
+        Clouds,
+        weather::{Weather, WeatherAmounts, WeatherGround, WeatherKind},
+    };
+    // Looking down at soil under a half-clouded sky, the same every time but for what has fallen.
+    let dull = WeatherAmounts { cloud: 0.5, ..WeatherAmounts::default() };
+    let on = |weather: Weather| {
+        let looking = bearing(-35.0, 60.0);
+        let view = CloudView { looking, ground: true, soil: true, weather, ..CloudView::of(Clouds::covering(0.25)) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let ground = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 360);
+    let Some(dry) = on(Weather::custom(dull)) else { return };
+    // Rain that has been falling: the ground is soaked.
+    let rained = Weather::custom(WeatherAmounts { rain: 0.6, ..dull });
+    assert_eq!(rained.ground(), WeatherGround { wet: 1.0, snow: 0.0 });
+    let wet = on(rained).unwrap();
+    // Snow that has been falling: it lies, in patches when it has only begun.
+    let snowed = Weather::custom(WeatherAmounts { snow: 0.8, ..dull });
+    let mut beginning = Weather::custom(dull);
+    beginning.set_amounts(WeatherAmounts { snow: 0.8, ..dull }, 0.0);
+    beginning.advance(35.0);
+    let (white, patchy) = (on(snowed).unwrap(), on(beginning).unwrap());
+    keep_image("weather ground dry.png", &dry);
+    keep_image("weather ground wet.png", &wet);
+    keep_image("weather ground snow.png", &white);
+    keep_image("weather ground first snow.png", &patchy);
+    let lit = [&dry, &wet, &white, &patchy].map(|pixels| ground(pixels));
+    assert!(lit[1] + 4 < lit[0], "wet soil is darker: {lit:?}");
+    assert!(lit[2] > lit[0] * 2, "snow lies white on it: {lit:?}");
+    assert!(lit[3] > lit[0] + 4 && lit[3] + 8 < lit[2], "less of it when it has only begun: {lit:?}");
+    // First snow is in patches: far more of its picture is neither soil nor snow than is of either.
+    let spread = |pixels: &[u8]| {
+        let mut green: Vec<u8> = pixels.chunks_exact(4).map(|p| p[1]).collect();
+        green.sort_unstable();
+        i32::from(green[green.len() * 9 / 10]) - i32::from(green[green.len() / 10])
+    };
+    assert!(spread(&patchy) > spread(&white) + 10, "patches: {} against {}", spread(&patchy), spread(&white));
+
+    // A storm, at a moment its lightning is bright and at one it is dark.
+    let mut storm = Weather::of(WeatherKind::Storm);
+    while storm.flash() < 0.8 {
+        storm.advance(1.0 / 240.0);
+    }
+    let struck = on(storm).unwrap();
+    while storm.flash() > 0.0 {
+        storm.advance(1.0 / 240.0);
+    }
+    let dark = on(storm).unwrap();
+    keep_image("weather lightning.png", &struck);
+    assert!(ground(&struck) > ground(&dark) * 2, "lightning lights it: {} against {}", ground(&struck), ground(&dark));
 }
 
 #[test]

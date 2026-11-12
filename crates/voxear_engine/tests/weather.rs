@@ -16,7 +16,7 @@ use voxear_scene::Transform;
 
 const SIZE: (u32, u32) = (640, 360);
 
-/// What a camera at head height sees after a few seconds of weather adding `amounts`.
+/// What a camera at head height sees a few seconds after a dull, dry day turns to weather adding `amounts`.
 fn picture(amounts: WeatherAmounts) -> Option<Vec<u8>> {
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         eprintln!("skipping: no usable GPU");
@@ -33,7 +33,9 @@ fn picture(amounts: WeatherAmounts) -> Option<Vec<u8>> {
     world.insert_resource(Sky { mode: SkyMode::Atmosphere, ..Sky::default() });
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
-    world.insert_resource(Weather::custom(amounts));
+    let mut weather = Weather::custom(dull_day());
+    weather.set_amounts(amounts, 0.0);
+    world.insert_resource(weather);
     // Long enough for the first drops to reach the ground and the first flakes to drift down past the camera.
     for _ in 0..240 {
         engine.tick(1.0 / 60.0);
@@ -51,15 +53,23 @@ fn keep(name: &str, pixels: &[u8]) {
     }
 }
 
-/// How many pixels of two pictures are plainly unlike.
+/// A day with rain's sky and wind and nothing falling.
+fn dull_day() -> WeatherAmounts {
+    WeatherAmounts { rain: 0.0, snow: 0.0, ..WeatherKind::Rain.amounts() }
+}
+
+/// How many pixels of two pictures' skies are plainly unlike: the rows above the horizon, where what has fallen on
+/// the ground does not show.
 fn unlike(a: &[u8], b: &[u8]) -> usize {
-    a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 5)).count()
+    let sky = (SIZE.0 * 170 * 4) as usize;
+    let pairs = a[..sky].chunks_exact(4).zip(b[..sky].chunks_exact(4));
+    pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 5)).count()
 }
 
 #[test]
 fn rain_and_snow_fall_in_front_of_the_camera() {
     // The same dull day three ways, so only what falls differs.
-    let day = WeatherAmounts { rain: 0.0, snow: 0.0, ..WeatherKind::Rain.amounts() };
+    let day = dull_day();
     let Some(dry) = picture(day) else { return };
     let wet = picture(WeatherAmounts { rain: 1.0, ..day }).unwrap();
     let snowy = picture(WeatherAmounts { snow: 1.0, ..day }).unwrap();
@@ -67,7 +77,7 @@ fn rain_and_snow_fall_in_front_of_the_camera() {
     keep("weather rain.png", &wet);
     keep("weather snow.png", &snowy);
     let (rain, snow) = (unlike(&wet, &dry), unlike(&snowy, &dry));
-    assert!(rain > 1500, "rain shows all over the picture: {rain} pixels");
-    assert!(snow > 500, "and snow: {snow} pixels");
-    assert!(unlike(&wet, &snowy) > 1000, "which do not look alike");
+    assert!(rain > 1000, "rain shows all over the sky: {rain} pixels");
+    assert!(snow > 300, "and snow: {snow} pixels");
+    assert!(unlike(&wet, &snowy) > 800, "which do not look alike");
 }

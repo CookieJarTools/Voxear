@@ -559,7 +559,10 @@ pub struct GpuSeasons {
     pub enabled: u32,
     /// How much of the snow and wetness reach what is not a plant.
     pub ground: f32,
-    pub _pad: [u32; 2],
+    /// What the weather has left on every surface, from 0 to 1: how wet the
+    /// rain has made it, and how much snow has settled (see `weather`).
+    pub weather_wet: f32,
+    pub weather_snow: f32,
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
@@ -700,7 +703,9 @@ pub struct GpuClouds {
     pub block: f32,
     /// How soft the cubes are, 0 solid to 1 mist.
     pub softness: f32,
-    pub _pad: f32,
+    /// How much light lightning adds to the sky's this moment, against a
+    /// sun of 1.
+    pub flash: f32,
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's

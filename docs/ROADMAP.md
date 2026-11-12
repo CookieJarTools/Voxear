@@ -1030,20 +1030,29 @@ Done so far:
   drawn, so the lighting is never changed and clear weather is the lighting as it is. Six amounts from 0 to 1:
   cloud fills the sky's clouds towards overcast; darkness thickens them, darkens their shadows and takes the sun's
   light; fog thickens the fog (turning it on) and the haze; wind strengthens the Wind Zone for plants, particles,
-  the clouds' drift and a sea that follows it; rain and snow fall round the viewer.
+  the clouds' drift and a sea that follows it; rain and snow fall round the viewer; lightning strikes.
   - **Kinds:** Clear, Cloudy, Overcast, Rain, Storm, Snow, Fog, each a set of amounts, and Custom. Setting one
     with a time eases every amount from what it is now, by time passed.
   - **Rain and snow** (`voxear_engine::weather`): the starter effects over a box 24 m wide that stays over the
     viewer, in the world's space, as four Particle Systems each on Objs of the engine's own. As many are on as the
     amount reaches into; one stopped lets its drops finish and is taken away as a played effect is.
+  - **What stays:** rain soaks every surface in 25 s and it dries over three minutes; snow settles on what
+    faces up in 90 s, in patches first, and melts in four minutes, or in 40 s of heavy rain
+    (`WeatherGround`, `weatherSurface` in `shading.slang`, for meshes, terrain and blocks alike). Weather a level
+    starts in has already settled.
+  - **Lightning:** strikes at times worked out from the weather's own clock, so the same weather has the same
+    lightning; each two or three flickers that light the sky's light, the clouds and a gradient sky's colours.
   - **Lighting settings:** `[weather]` with a `kind`, or `custom` and amounts; applying lighting sets the weather
     to it, or to clear. A Weather tab on the Lighting page, the amounts shown for Custom.
   - **Scripts:** `Weather.Set(kind, seconds)`, `Weather.Set(amounts, seconds)`, `Weather.Kind`, `Weather.Amounts`,
-    `Weather.IsTurning`; `WeatherKind` and `WeatherAmounts`. The script API is version 79.
-  - Tests: easing and what each amount does; lighting files; the page's rows; a C# system turning the weather and
-    reading it back; GPU pictures of overcast, storm and fog against clear, and of rain and snow falling.
-  - Later: wet and snowy ground, lightning, the sound of rain, rain kept out from under roofs, a `Changed` event,
-    the same weather on every machine of a networked game and in saves, weather by climate in generated worlds.
+    `Weather.IsTurning`, `Weather.Wetness`, `Weather.SnowCover`, `Weather.Flash`, and the events
+    `Weather.Changed` and `Weather.Struck`; `WeatherKind` and `WeatherAmounts`. The script API is version 79.
+  - Tests: easing and what each amount does; soaking, drying, settling and melting; lightning's times; lighting
+    files; the page's rows; a C# system turning the weather, reading it back and hearing it change; GPU pictures
+    of overcast, storm and fog against clear, of rain and snow falling, of wet soil, first snow and lying snow,
+    and of a strike.
+  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds, the same weather on every machine
+    of a networked game and in saves, weather by climate in generated worlds.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

@@ -1062,7 +1062,7 @@ reflections. The renderer adds up the drift along the Wind Zone's direction and 
 so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
 passes.
 
-**Weather** *(implemented; wet ground, lightning, sound and networking planned)*. `voxear_render::weather::Weather`
+**Weather** *(implemented; roofs, sound and networking planned)*. `voxear_render::weather::Weather`
 is a resource: a kind, the `WeatherAmounts` it is turning from and to, and how far through the turn it is. It
 changes no other state. `scene::extract` reads what it adds this moment and lays it over what it extracts:
 `WeatherAmounts::sky` on the `Sky` (cloud cover, density, thickness and shadows, haze, a gradient's colours),
@@ -1070,6 +1070,15 @@ changes no other state. `scene::extract` reads what it adds this moment and lays
 post volumes are blended, and `wind` on the first Global Wind Zone, which the particle simulation and the engine's
 sea read through the same call. So the editor, a saved scene and a script reading a component all see the level's
 lighting as its maker left it, and weather needs no undoing.
+
+The resource also keeps what has fallen (`WeatherGround`: wet and snow, each moving towards what the weather now
+would leave, at its own speed up and down) and a clock of its own. `extract` writes the ground into the frame beside
+the seasons, and `weatherSurface` in the shared fragment shader darkens and smooths every surface by the wet and
+lays snow on what faces up, by a noise over the level hashed on whole numbers while there is little: meshes,
+terrain and blocks all pass through it. Lightning is a pure function of the clock and the lightning amount
+(`flash_at`): time is cut into three-second stretches, a hash of each stretch's number says whether it holds a
+strike and when, and a strike is two or three decaying flickers. Its brightness goes into the frame's cloud data,
+where the Sky light pass adds it to the sky's light, and onto a gradient sky's colours.
 
 The engine's `weather::update`, early in each tick, advances the resource by the tick's time and keeps rain and
 snow falling: for each, four Particle Systems made from the starter effect, widened to a 24 m box, in the world's
@@ -1080,7 +1089,9 @@ takes its Obj away once its last drops have fallen.
 
 Lighting settings carry `[weather]` (`lighting::WeatherData`), and `apply_environment` puts the level in it, or
 in clear weather, whenever lighting settings are applied. Scripts reach it as the seasons are reached: the engine
-publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame.
+publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame. The C# side
+raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
+frame's.
 
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.

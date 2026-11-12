@@ -344,7 +344,10 @@ void skyLightMain()
     float3 sky = skyAroundNow(frame);
     float cover = frame->lighting.clouds.cover;
     float grey = dot(sky, float3(0.2126, 0.7152, 0.0722));
-    light->sky = float4(lerp(sky, grey, cover * cover), 0.0);
+    sky = lerp(sky, grey, cover * cover);
+    // Lightning, for as long as it flickers.
+    sky += float3(0.75, 0.83, 1.0) * frame->lighting.clouds.flash;
+    light->sky = float4(sky, 0.0);
 }
 
 // ---------------------------------------------------------------- Clouds

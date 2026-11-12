@@ -23,4 +23,7 @@ public struct WeatherAmounts
 
 	/// <summary>How hard it snows.</summary>
 	public float Snow;
+
+	/// <summary>How often lightning strikes: at 1, every eight seconds or so.</summary>
+	public float Lightning;
 }

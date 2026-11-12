@@ -305,6 +305,108 @@ fn a_generated_block_worlds_biomes_put_their_blocks_on_its_ground_numbered_as_it
 }
 
 #[test]
+fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_it_is() {
+    use voxear_core::math::Vec3;
+    use voxear_engine::blocks::{BlockWorldAsset, biome_at, biome_json};
+    use voxear_terrain::{blocks::generate::BlockGenerate, generate::Preset};
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    let write = |path: &str, text: &str| {
+        std::fs::create_dir_all(dir.path().join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.path().join(path), text).unwrap();
+    };
+    write("Worlds/Hills.worldgen", &hills.to_text());
+    write("Blocks/Moss.block", "color = [0.2, 0.5, 0.2]\n");
+    write("Blocks/Sand.block", "color = [0.9, 0.8, 0.5]\n");
+    write("Blocks/Clay.block", "color = [0.6, 0.4, 0.3]\n");
+    // Two biomes that between them take in every climate, split at how warm the world's middle is.
+    let split = hills.climate(16.0, 16.0, hills.height_at(16.0, 16.0)).0;
+    let cool = |top: &str| {
+        format!("color = [0.1, 0.2, 0.3]\ntemperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"{top}\"\n")
+    };
+    let warm =
+        format!("temperature = [{split}, 60.0]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Sand.block\"\n");
+    write("Biomes/Cool.biome", &cool("Blocks/Moss.block"));
+    write("Biomes/Warm.biome", &warm);
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        biomes: vec!["Biomes/Cool.biome".into(), "Biomes/Warm.biome".into()],
+        ..BlockGenerate::default()
+    });
+    let held = file.blocks.len() as u16;
+    write("Blocks/Field.blockworld", &file.to_text());
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = game.engine.world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    let (moss, sand, clay) = (held + 1, held + 2, held + 3);
+    let tops = |game: &Game| {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        let top = |x: i32, z: i32| (-8..200).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0);
+        let mut counts = std::collections::BTreeMap::new();
+        for (x, z) in (0..32).flat_map(|z| (0..32).map(move |x| (x, z))) {
+            *counts.entry(top(x, z).unwrap()).or_insert(0usize) += 1;
+        }
+        counts
+    };
+    let before = tops(&game);
+    assert!(before[&moss] > 30 && before[&sand] > 30 && before.len() == 2, "{before:?}");
+
+    // A place says which biome it is: by its ground, however high over it the place is, in metres in the level.
+    // The world's Obj is at (-16, 0, -16).
+    let cool_guid = game.content.db().guid_of("Biomes/Cool.biome").unwrap();
+    let warm_guid = game.content.db().guid_of("Biomes/Warm.biome").unwrap();
+    let at = |game: &mut Game, x: i32, z: i32, y: f32| {
+        biome_at(&game.engine.world, &mut game.content, Vec3::new(x as f32 - 15.5, y, z as f32 - 15.5))
+    };
+    let blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let top = |x: i32, z: i32| (-8..200).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0).unwrap();
+    let (mut cool_places, mut warm_places) = (0, 0);
+    for (x, z) in (0..32).step_by(3).flat_map(|z| (0..32).step_by(3).map(move |x| (x, z))) {
+        let said = at(&mut game, x, z, 500.0).expect("a biome everywhere on its ground");
+        assert_eq!(said, if top(x, z) == moss { cool_guid } else { warm_guid }, "column ({x}, {z})");
+        assert_eq!(at(&mut game, x, z, -3.0), Some(said), "and deep under it the same");
+        (cool_places, warm_places) = (cool_places + usize::from(said == cool_guid), warm_places + usize::from(said == warm_guid));
+    }
+    assert!(cool_places > 3 && warm_places > 3);
+    assert_eq!(at(&mut game, 40, 5, 10.0), None, "past the world's edge, none");
+    // What a biome says, for scripts: which it is, its name and its colour.
+    let said: serde_json::Value = serde_json::from_str(&biome_json(&mut game.content, "Biomes/Cool.biome").unwrap()).unwrap();
+    assert_eq!((said["name"].as_str(), said["guid"].as_str()), (Some("Cool"), Some(cool_guid.to_string().as_str())));
+    assert!((said["color"][2].as_f64().unwrap() - 0.3).abs() < 1e-6);
+    assert!(biome_json(&mut game.content, "Biomes/Gone.biome").is_err());
+
+    // Something built in its lowest blocks, then the cool biome saved with clay on top: the world listing it is
+    // made again in the next frame, clay where moss was, the sand as it was, and what was built kept.
+    let built = [5, -8, 5];
+    game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks([(built, 1)]);
+    write("Biomes/Cool.biome", &cool("Blocks/Clay.block"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    let after = tops(&game);
+    assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get(built), 1, "what was built is kept");
+    assert_eq!((after.get(&clay), after.get(&sand), after.len()), (before.get(&moss), before.get(&sand), 2), "{after:?}");
+    // The world numbered clay as it first held it; moss keeps its number, though no ground is moss now.
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert_eq!(asset.file.blocks.len(), usize::from(clay));
+    assert_eq!(asset.drawn.number_of(game.content.db().guid_of("Blocks/Moss.block").unwrap()), Some(moss));
+    // A level loaded again takes the biome as it is now from what was kept, with no file read again.
+    let again = game.content.block_world(asset.guid).expect("the world as kept");
+    assert_eq!(again.file.generate, asset.file.generate);
+    let top_again = (-8..200).rev().map(|y| again.world.blocks.get([0, y, 0])).find(|&block| block != 0).unwrap();
+    assert!(top_again == clay || top_again == sand);
+    // A biome with no blocks named leaves the ground the world's own: grass, the first block.
+    write("Biomes/Cool.biome", &format!("temperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    let own = tops(&game);
+    assert_eq!((own.get(&1), own.get(&sand), own.len()), (before.get(&moss), before.get(&sand), 2), "{own:?}");
+}
+
+#[test]
 fn a_generated_block_world_builds_its_structures_trees_grown_from_a_plant_and_huts_from_a_model() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{

@@ -43,6 +43,11 @@ pub const SNOW_LINE: f32 = 260.0;
 /// ground's own warmth, which is already less for its height.
 const SNOW_UP_TO: f32 = 14.0;
 
+/// How steep ground is rock in place of what lies on it, in degrees: under
+/// anything that grows, and under snow.
+const STEEP: f32 = 45.0;
+const SNOW_STEEP: f32 = 58.0;
+
 /// The folders the starters' biomes and blocks go in, beside the world.
 const BIOMES_FOLDER: &str = "Biomes";
 
@@ -51,8 +56,8 @@ const BLOCKS: [(&str, [f32; 3]); 15] = [
     ("Snow", [0.95, 0.96, 0.98]),
     ("Ice", [0.72, 0.84, 0.92]),
     ("Frozen Dirt", [0.47, 0.44, 0.4]),
-    ("Moss", [0.3, 0.43, 0.2]),
-    ("Needles Floor", [0.4, 0.31, 0.19]),
+    ("Moss", [0.24, 0.4, 0.17]),
+    ("Needles Floor", [0.33, 0.36, 0.2]),
     ("Grass", [0.33, 0.52, 0.2]),
     ("Dirt", [0.45, 0.32, 0.2]),
     ("Sand", [0.86, 0.78, 0.55]),
@@ -170,15 +175,17 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
                 under_depth: starter.under.1,
                 deep: Some(block(starter.deep)),
                 steep: Some(block(starter.steep)),
-                steep_slope: 42.0,
+                steep_slope: STEEP,
                 shore: Some(block(starter.shore)),
                 shore_height: 2.0,
             },
         };
-        // The heights are snow in any place but a warm one, and low ground never.
+        // The heights are snow in any place but a warm one, and low ground never. Snow lies on steeper ground than
+        // anything grows on, so a mountain's top is white with rock only in its faces.
         if starter.climate == Biome::Snow {
             biome.temperature[1] = SNOW_UP_TO;
             biome.height = Some([SNOW_LINE, 10_000.0]);
+            biome.ground.steep_slope = SNOW_STEEP;
         }
         biome
     };

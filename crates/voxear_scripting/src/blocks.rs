@@ -311,6 +311,52 @@ pub(crate) unsafe extern "C" fn blocks_version() -> u64 {
     with_services(|services| services.blocks_version()).unwrap_or(0)
 }
 
+/// `World.Quality` and the numbers under it, by `which`: the preset by its
+/// place in `WorldQuality::ALL`, the threads, the chunk columns made at
+/// once, the megabytes uploaded a frame, and the view and far distances
+/// (see `voxear_terrain::WorldBudget`). NaN for any other.
+pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
+    use voxear_terrain::{WorldBudget, WorldQuality};
+    let read = |world: &mut World| {
+        let budget = WorldBudget::of(world);
+        Some(match which {
+            0 => WorldQuality::ALL.iter().position(|quality| *quality == budget.quality)? as f32,
+            1 => budget.threads as f32,
+            2 => budget.columns as f32,
+            3 => budget.upload as f32,
+            4 => budget.view_distance,
+            5 => budget.far_distance,
+            _ => return None,
+        })
+    };
+    with_world(read).unwrap_or(f32::NAN)
+}
+
+/// Sets `World.Quality` or a number under it, as [`world_budget`] numbers
+/// them: a preset brings its numbers, and a number makes it Custom. Taken
+/// up at once, with nothing made again.
+pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
+    use voxear_terrain::{WorldBudget, WorldQuality};
+    if !value.is_finite() {
+        return;
+    }
+    with_world(|world| {
+        let custom = WorldBudget { quality: WorldQuality::Custom, ..WorldBudget::of(world) };
+        let whole = value.max(0.0).round() as u32;
+        let budget = match which {
+            0 => WorldQuality::ALL.get(value.max(0.0) as usize)?.budget().unwrap_or(custom),
+            1 => WorldBudget { threads: whole, ..custom },
+            2 => WorldBudget { columns: whole, ..custom },
+            3 => WorldBudget { upload: whole, ..custom },
+            4 => WorldBudget { view_distance: value, ..custom },
+            5 => WorldBudget { far_distance: value, ..custom },
+            _ => return None,
+        };
+        budget.put(world);
+        Some(())
+    });
+}
+
 /// What follows the changes in the bytes `capture` gives, where a world
 /// numbered blocks its level does not list: this mark, a version, how many
 /// worlds, and for each its key and the blocks it numbered, each number

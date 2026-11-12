@@ -502,6 +502,11 @@ pub(crate) struct NativeApi {
     /// The cave rooms of a world of blocks, as JSON for `Caves`.
     pub caves_info:
         unsafe extern "C" fn(obj: u64, what: i32, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
+    /// `World.Quality` and the numbers under it: what making worlds of
+    /// blocks may spend, read by number.
+    pub world_budget: unsafe extern "C" fn(which: i32) -> f32,
+    /// Sets one of them, taken up at once.
+    pub set_world_budget: unsafe extern "C" fn(which: i32, value: f32),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1957,6 +1962,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         blocks_version: crate::blocks::blocks_version,
         water_splash,
         caves_info: crate::services::caves_info,
+        world_budget: crate::blocks::world_budget,
+        set_world_budget: crate::blocks::set_world_budget,
     }
 }
 

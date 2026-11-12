@@ -4,7 +4,7 @@ namespace Voxear;
 /// The engine's entities, for code outside systems, such as a behaviour that counts what a system moves. Inside a
 /// system, its own Query is the one to use, since its Changed filters know when the system last ran.
 /// </summary>
-public static class World
+public static partial class World
 {
 	public static EntityQuery Query<T1>()
 		where T1 : unmanaged, IComponent

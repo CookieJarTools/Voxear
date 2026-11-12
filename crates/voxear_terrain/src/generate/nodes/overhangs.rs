@@ -133,6 +133,7 @@ impl Kind for Overhangs {
         let cell = cx.size();
         let row = cx.run(push, &[ground, mask, at.x, at.y, at.z, cell]);
         cx.set_rise(row, cx.rise(ground) + self.amount);
+        cx.set_depth(row, cx.depth(ground) + self.amount);
         row
     }
 }

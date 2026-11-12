@@ -131,6 +131,15 @@ impl Kind for Combine {
                     Combining::Smooth => cx.rise(a).max(cx.rise(b)) + self.blend.max(0.0) * 0.25,
                 };
                 cx.set_rise(row, rise);
+                let deeper = if cx.depth(a) > cx.depth(b) { cx.depth(a) } else { cx.depth(b) };
+                let depth = match self.operation {
+                    Combining::Union => deeper,
+                    // What is taken out only where it says leaves the rest as deep as it was.
+                    Combining::Subtract if cx.hollow(b) => cx.depth(a),
+                    Combining::Subtract => f32::INFINITY,
+                    Combining::Smooth => deeper + self.blend.max(0.0) * 0.25,
+                };
+                cx.set_depth(row, depth);
                 row
             }
             (Some(a), None) => a,

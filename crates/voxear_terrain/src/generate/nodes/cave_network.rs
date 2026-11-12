@@ -290,7 +290,69 @@ impl Kind for CaveNetwork {
         let network = Arc::new(Network::new(set, heights, key.hash()));
         cx.note_caves(network.clone());
         let size = cx.size();
-        cx.run(Hollow { network, key: key.bytes() }, &[ground, at.x, at.y, at.z, size])
+        // An endless network says how low and how high its rooms and tunnels reach over each column, so that
+        // rock far under them, and between them and the ground, is not asked about.
+        let endless = network.level.is_none();
+        if endless {
+            let end = |cx: &mut Compiler, top: bool| {
+                let (network, key) = (network.clone(), key.bytes());
+                cx.column(at, |cx, places| cx.run(Reached { network, key, top }, &[places.x, places.z]))
+            };
+            let (foot, top) = (end(cx, false), end(cx, true));
+            cx.note_span(at, foot, top, false);
+        }
+        let row = cx.run(Hollow { network, key: key.bytes() }, &[ground, at.x, at.y, at.z, size]);
+        if endless {
+            cx.set_hollow(row);
+        }
+        row
+    }
+}
+
+/// How low, or with `top` how high, a network's rooms and tunnels reach
+/// over each column, in metres up, from rows of the columns' x and z: a
+/// top under its foot where none does.
+struct Reached {
+    network: Arc<Network>,
+    key: Vec<u8>,
+    top: bool,
+}
+
+impl std::fmt::Debug for Reached {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Reached({:#x}, {})", self.network.id, self.top)
+    }
+}
+
+impl Kernel for Reached {
+    fn key(&self, key: &mut Key) {
+        key.name("cave reach").whole(u32::from(self.top)).raw(&self.key);
+    }
+
+    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
+        let net = &*self.network;
+        let grid = net.grid();
+        // Walls are moved by their roughness, and a cell's fill is measured against those beside it.
+        let more = net.roughest + 2.0;
+        let mut over: Vec<u16> = Vec::new();
+        for (at, out) in out.iter_mut().enumerate() {
+            let (x, z) = (inputs[0][at], inputs[1][at]);
+            let gathered = net.gathered(&grid, grid.region([x, 0.0, z]));
+            gathered.over(x, z, &mut over);
+            let (mut foot, mut top) = (0.0, -1.0);
+            let rooms = gathered.rooms.len();
+            for (first, &item) in over.iter().enumerate() {
+                let item = usize::from(item);
+                let bounds = match item.checked_sub(rooms) {
+                    Some(tunnel) => gathered.tunnels[tunnel].bounds,
+                    None => gathered.rooms[item].bounds,
+                };
+                let (low, high) = (bounds.low[1] - more, bounds.high[1] + more);
+                foot = if first == 0 || low < foot { low } else { foot };
+                top = if first == 0 || high > top { high } else { top };
+            }
+            *out = if self.top { top } else { foot };
+        }
     }
 }
 

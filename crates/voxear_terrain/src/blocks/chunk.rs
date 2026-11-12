@@ -203,6 +203,17 @@ impl Chunk {
         self.solid == CHUNK_LEN as u32 && self.fills.as_ref().is_none_or(|fills| fills.iter().all(|&f| f == FULL))
     }
 
+    /// The same chunk, kept as one block where every block of it is that
+    /// block wholly: what a chunk of rock made a block at a time comes to.
+    pub fn tidied(self) -> Self {
+        if !self.is_whole() || self.bits == 0 {
+            return self;
+        }
+        let first = self.entries().next().unwrap_or(0);
+        let one = self.entries().all(|entry| entry == first);
+        if one { Self::filled(self.palette[first]) } else { self }
+    }
+
     /// How full each block is, in the order blocks are kept, where it keeps
     /// that: for writing it.
     pub fn fills(&self) -> Option<&[Fill]> {

@@ -437,6 +437,74 @@ mod tests {
         }
     }
 
+    /// The Caves starter's world of blocks, its lowest block `bottom`.
+    fn tall(bottom: i32, smooth: bool) -> (BlockFile, WorldGen) {
+        let (file, _) = networked(crate::generate::nodes::Laid::Endless, false, true);
+        let generate = BlockGenerate { bottom, ..file.generate.clone().unwrap() };
+        let world = crate::generate::starters().into_iter().find(|starter| starter.name == "Caves").unwrap();
+        (BlockFile { smooth, generate: Some(generate), ..file }, world.world(11, 1.0))
+    }
+
+    #[test]
+    fn a_tall_column_leaves_out_deep_rock_and_is_the_blocks_it_is_asked_whole() {
+        for smooth in [false, true] {
+            let (file, world) = tall(-520, smooth);
+            let generate = file.generate.clone().unwrap();
+            let volume = world.volume().unwrap();
+            assert!(volume.spanned() && volume.depth() == 0.0, "caves say where they are: {}", volume.depth());
+            for at in [[0, 0], [3, 5], [-4, 2]] {
+                let made = column_chunks(&file, &generate, &world, 0, at, None);
+                columns::ALL_ASKED.set(true);
+                let whole = column_chunks(&file, &generate, &world, 0, at, None);
+                columns::ALL_ASKED.set(false);
+                assert_eq!(made.len(), whole.len());
+                let mut rock = 0;
+                for ((key, chunk), (whole_key, whole)) in made.iter().zip(&whole) {
+                    assert_eq!(key, whole_key);
+                    assert!(chunk == whole, "smooth {smooth}: chunk {key:?} is not what it is asked whole");
+                    rock += usize::from(chunk.bits() == 0 && chunk.is_whole());
+                }
+                // Three layers of caves reach about 200 blocks down; most of what is under them is whole rock.
+                assert!(made.len() >= 17 && rock >= 6, "{rock} chunks of rock among {}", made.len());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "a timing, to be read: run it optimised"]
+    fn timing_of_a_chunk_column_256_512_and_1024_blocks_tall() {
+        let time = |file: &BlockFile, world: &WorldGen, all: bool| {
+            let generate = file.generate.clone().unwrap();
+            let mut least = f32::MAX;
+            columns::ALL_ASKED.set(all);
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                for at in [[0, 0], [1, 0], [0, 1], [1, 1], [3, 5], [-4, 2], [7, -3], [2, 8]] {
+                    std::hint::black_box(column_chunks(file, &generate, world, 0, at, None));
+                }
+                least = least.min(started.elapsed().as_secs_f32() * 1000.0 / 8.0);
+            }
+            columns::ALL_ASKED.set(false);
+            least
+        };
+        for blocks in [64, 256, 512, 1024] {
+            // The ground's hills stand about 100 blocks over the world's corner.
+            let (cubes, world) = tall(100 - blocks, false);
+            let (smooth, _) = tall(100 - blocks, true);
+            let plain = world.with_graph(world.graph().without_volume());
+            println!(
+                "{blocks} blocks tall: caves in cubes {:.2} ms (all asked {:.2}), smooth {:.2} ms (all asked {:.2}); \
+                 no caves {:.2} ms (all put {:.2})",
+                time(&cubes, &world, false),
+                time(&cubes, &world, true),
+                time(&smooth, &world, false),
+                time(&smooth, &world, true),
+                time(&cubes, &plain, false),
+                time(&cubes, &plain, true),
+            );
+        }
+    }
+
     #[test]
     #[ignore = "a timing, to be read: run it optimised"]
     fn timing_of_a_chunk_column_with_and_without_a_cave_network() {

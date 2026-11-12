@@ -219,7 +219,14 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
     for column in &columns {
         let high = (column.surface.max(sea_top) + 1.0).ceil() as i32;
         let mut runs: Vec<Run> = Vec::new();
-        for y in low..=high {
+        // Under every layer the column is its bottom block all the way down: one run, not asked a block at a time.
+        let layered = column.layers[0].1 + column.layers[1].1 + 3.0;
+        let rock_to = ((column.surface - layered).floor() as i32).clamp(low, high.max(low));
+        if rock_to > low && column.bottom != AIR {
+            runs.push(Run { from: low, to: rock_to, block: column.bottom });
+        }
+        let asked_from = if column.bottom != AIR { rock_to } else { low };
+        for y in asked_from..=high {
             let plainly = column.surface - (y as f32 + 0.5);
             let sea_at = far_sea(sea, sea_top, y, (file.smooth, column.surface));
             let made = cell(column, plainly, plainly, plainly, plainly, sea_at, file.smooth);
@@ -262,12 +269,30 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
             None => chunk.set(x, y, z, block),
         }
     };
+    // Chunks that are one block of rock in every column, from block `rock.0` up to `rock.1`, are not put a block
+    // at a time.
+    let places = || (0..CHUNK).flat_map(|z| (0..CHUNK).map(move |x| [x, z]));
+    let lowest = |at: [u32; 2]| tile.column(at).first().copied();
+    let rock = lowest([0, 0]).filter(|first| first.block != sea || sea == AIR).and_then(|first| {
+        let mut within = (first.from, first.to);
+        for at in places() {
+            let run = lowest(at).filter(|run| run.block == first.block)?;
+            let deep = (tile.surface(at) - 1.5).floor() as i32;
+            within = (within.0.max(run.from), within.1.min(run.to).min(deep));
+        }
+        let from = within.0.div_euclid(side) + i32::from(within.0.rem_euclid(side) != 0);
+        let to = within.1.div_euclid(side);
+        (to > from).then_some((from * side, to * side, first.block))
+    });
     for z in 0..CHUNK {
         for x in 0..CHUNK {
             let surface = tile.surface([x, z]);
             let runs = tile.column([x, z]);
             for run in runs {
                 for y in run.from..run.to {
+                    if rock.is_some_and(|(from, to, _)| (from..to).contains(&y)) {
+                        continue;
+                    }
                     let fill = if sea != AIR && run.block == sea {
                         let over = sea_top - (y as f32 + 0.5);
                         match far_sea(sea, sea_top, y, (smooth, surface)).eighths {
@@ -300,7 +325,12 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
             }
         }
     }
-    chunks.into_iter().map(|(cy, chunk)| ([tile.at[0], cy, tile.at[1]], chunk)).collect()
+    if let Some((from, to, block)) = rock {
+        for cy in from.div_euclid(side)..to.div_euclid(side) {
+            chunks.insert(cy, Chunk::filled(block));
+        }
+    }
+    chunks.into_iter().map(|(cy, chunk)| ([tile.at[0], cy, tile.at[1]], chunk.tidied())).collect()
 }
 
 #[cfg(test)]

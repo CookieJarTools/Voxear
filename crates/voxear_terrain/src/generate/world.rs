@@ -146,6 +146,49 @@ impl Volume<'_> {
         self.voxels.reach
     }
 
+    /// How far under a column's ground its cells may be anything but
+    /// solid, in metres, but for the spans it gives ([`Volume::spans`]):
+    /// without end where nothing says, as noise through space is.
+    pub fn depth(&self) -> f32 {
+        self.voxels.depth
+    }
+
+    /// Whether any column may have ground standing, or hollowed, apart
+    /// from its own ground: whether [`Volume::spans`] can give any.
+    pub fn spanned(&self) -> bool {
+        !self.voxels.spans.is_empty()
+    }
+
+    /// Between which heights, in metres up, column `at` of `carried` has
+    /// ground standing or hollowed apart from its own ground: a foot and a
+    /// top for each span there is.
+    pub fn spans<'c>(&self, carried: &'c Carried, at: usize) -> impl Iterator<Item = [f32; 2]> + use<'c, '_> {
+        let read = move |place: usize| carried.rows.get(place).and_then(|row| row.get(at)).copied();
+        let spans = self.voxels.spans.iter();
+        spans.filter_map(move |([foot, top], _)| Some([read(*foot)?, read(*top)?])).filter(|[foot, top]| top > foot)
+    }
+
+    /// The ground that stands apart from the columns' own at each
+    /// `(xs[i], zs[i])`, whose ground is `heights[i]` high: for each column
+    /// the spans of it, a foot and a top in metres up. Arches and raised
+    /// land, for a far view, which makes its columns from heights alone;
+    /// hollows are left out.
+    pub fn standing(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Vec<Vec<[f32; 2]>> {
+        let count = xs.len().min(zs.len()).min(heights.len());
+        let mut found = vec![Vec::new(); count];
+        if !self.voxels.spans.iter().any(|(_, stands)| *stands) {
+            return found;
+        }
+        let rows = made(&self.voxels.spanned, count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }).rows;
+        for (span, (_, stands)) in self.voxels.spans.iter().enumerate() {
+            let (feet, tops) = (&rows[span * 2], &rows[span * 2 + 1]);
+            for at in (0..count).filter(|&at| *stands && tops[at] > feet[at]) {
+                found[at].push([feet[at], tops[at]]);
+            }
+        }
+        found
+    }
+
     /// What it reads of the columns at each `(xs[i], zs[i])`, in metres in
     /// the generator's world, whose ground is `heights[i]` high: the
     /// generator's own heights there.

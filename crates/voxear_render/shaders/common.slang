@@ -990,6 +990,10 @@ struct ParticleSystem
     uint texture;
     uint2 tiles;
     float stretch;
+    // Lit from six sides (PARTICLES_SIX_WAY), the second of its two maps: how bright each pixel is lit from the
+    // left, from below and from in front, as its texture says for the right, the top and behind.
+    uint lightMap;
+    uint3 padLight;
 };
 
 // A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in

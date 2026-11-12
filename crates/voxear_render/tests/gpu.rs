@@ -4999,6 +4999,109 @@ fn an_emitter_waits_its_delay_and_a_texture_draws_its_pictures() {
     assert!(long * 2 > round * 3, "streaks cover more than dots: {long} against {round}");
 }
 
+/// The floor scene at night, with a lamp `lamp_x` metres to one side of a column of smoke drawn with `texture`,
+/// and `system`'s own light if it casts one; or with no smoke.
+fn lamp_lit_smoke(texture: Option<voxear_render::BuiltinTexture>, lamp_x: f32, light: f32) -> Option<Vec<u8>> {
+    lamp_lit(texture, lamp_x, light, false)
+}
+
+/// The same, or with `one`, a single puff two metres across hanging in the column's place.
+fn lamp_lit(texture: Option<voxear_render::BuiltinTexture>, lamp_x: f32, light: f32, one: bool) -> Option<Vec<u8>> {
+    use voxear_render::{ParticlePlayback, ParticleSystem, ParticleTexture, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 0.02), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if lamp_x != 0.0 {
+        let lamp = Light::point(Vec3::new(1.0, 0.85, 0.6), 30.0, 12.0);
+        world.spawn((lamp, Transform::from_position(Vec3::new(lamp_x, 1.6, -0.5))));
+    }
+    let mut time = 10.0;
+    if let Some(texture) = texture {
+        // A slow fat column of pale smoke, three seconds old.
+        let smoke = ParticleSystem {
+            texture: ParticleTexture::Builtin(texture),
+            rate: 14.0,
+            lifetime: [3.0, 3.0],
+            speed: [0.5, 0.8],
+            size: [0.9, 1.2],
+            size_end: 1.6,
+            color: [0.8, 0.8, 0.8, 1.0],
+            color_end: [0.8, 0.8, 0.8, 0.0],
+            angle: 6.0,
+            radius: 0.2,
+            softness: 0.4,
+            light,
+            ..ParticleSystem::default()
+        };
+        let single = ParticleSystem {
+            rate: 0.0,
+            burst: 1,
+            looping: false,
+            lifetime: [60.0, 60.0],
+            speed: [0.0, 0.0],
+            size: [2.0, 2.0],
+            size_end: 1.0,
+            color_end: [0.8, 0.8, 0.8, 1.0],
+            ..smoke
+        };
+        let playback = ParticlePlayback { started: time - 3.0, stopped: None };
+        let at = Vec3::new(0.0, if one { 1.3 } else { 0.2 }, 0.0);
+        world.spawn((if one { single } else { smoke }, playback, Transform::from_position(at)));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How bright a puff in the middle of the picture is just left and just right of its middle, where it covers what
+/// is behind it: the red of its pixels, added up.
+fn puff_sides(pixels: &[u8]) -> (i64, i64) {
+    let lit = |columns: std::ops::Range<u32>| {
+        let all = (150..215u32).flat_map(|y| columns.clone().map(move |x| (x, y)));
+        all.map(|at| i64::from(rgb_at(pixels, at)[0])).sum::<i64>()
+    };
+    (lit(285..315), lit(325..355))
+}
+
+#[test]
+fn smoke_is_lit_on_the_side_the_lamp_is_on() {
+    use voxear_render::BuiltinTexture::{Flame, Puff};
+    // One puff, lit from six sides by its maps: the half of it toward the lamp is the brighter.
+    let Some(from_left) = lamp_lit(Some(Puff), -3.0, 0.0, true) else { return };
+    let from_right = lamp_lit(Some(Puff), 3.0, 0.0, true).unwrap();
+    keep_image("particles puff lamp left.png", &from_left);
+    keep_image("particles puff lamp right.png", &from_right);
+    let ((left, right), (mirrored_left, mirrored_right)) = (puff_sides(&from_left), puff_sides(&from_right));
+    assert!(left * 10 > right * 11, "lit from the left: {left} against {right}");
+    assert!(mirrored_right > mirrored_left, "and from the right: {mirrored_right} against {mirrored_left}");
+    // The lamp changing sides changes which half is the brighter by a fifth at least.
+    assert!(left * mirrored_right * 10 > right * mirrored_left * 12, "{left}, {right}; {mirrored_left}, {mirrored_right}");
+    // And a column of them, beside one lit all over alike, to look at.
+    keep_image("particles lamp left.png", &lamp_lit_smoke(Some(Puff), -3.0, 0.0).unwrap());
+    keep_image("particles lamp flat.png", &lamp_lit_smoke(Some(Flame), -3.0, 0.0).unwrap());
+}
+
+#[test]
+fn a_particle_systems_light_lights_the_floor_round_it() {
+    use voxear_render::BuiltinTexture::Puff;
+    let Some(unlit) = lamp_lit_smoke(Some(Puff), 0.0, 0.0) else { return };
+    let casting = lamp_lit_smoke(Some(Puff), 0.0, 12.0).unwrap();
+    keep_image("particles own light.png", &casting);
+    // The floor in front of the column, which no particle covers.
+    let floor = |pixels: &[u8]| (300..340u32).flat_map(|x| (300..330u32).map(move |y| rgb_at(pixels, (x, y))[0])).sum::<i32>();
+    assert!(floor(&casting) > floor(&unlit) + 4000, "lit by it: {} against {}", floor(&casting), floor(&unlit));
+}
+
 /// How many pixels of `pixels` in rows `rows` are much brighter in red than in `before`.
 fn brighter_in_rows(pixels: &[u8], before: &[u8], rows: std::ops::Range<u32>) -> usize {
     let all = rows.flat_map(|y| (0..640u32).map(move |x| (x, y)));

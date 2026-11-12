@@ -21,6 +21,19 @@ struct ParticleOut
     // its corner is in the texture, then how much of the texture it takes.
     nointerpolation uint texture : TEXTURE;
     nointerpolation float4 tile : TILE;
+    // Playing through its pictures: the next one, and how far toward it, from 0 to 1.
+    nointerpolation float4 tileNext : TILENEXT;
+    nointerpolation float blend : BLEND;
+    // Lit from six sides: its second map, or NO_TEXTURE when it is not; the light that falls on it from its right,
+    // its left, above, below, in front and behind; and the fog's light over it, which its colour then leaves out.
+    nointerpolation uint lightMap : LIGHTMAP;
+    nointerpolation float3 lightRight : LIGHTRIGHT;
+    nointerpolation float3 lightLeft : LIGHTLEFT;
+    nointerpolation float3 lightTop : LIGHTTOP;
+    nointerpolation float3 lightBottom : LIGHTBOTTOM;
+    nointerpolation float3 lightFront : LIGHTFRONT;
+    nointerpolation float3 lightBack : LIGHTBACK;
+    nointerpolation float3 haze : HAZE;
 };
 
 // When slot `slot` of `system` last set out a particle, up to the system's
@@ -91,6 +104,44 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     return ambient + lit * 0.5 / PI;
 }
 
+// The light falling on a puff at `world` from each of six sides, for one lit by its maps (PARTICLES_SIX_WAY): from
+// along `right`, against it, along `up`, against it, along `front` (toward the camera) and from behind. The sky's
+// and the GI's light comes from every side alike; the sun's and each lamp's from its own, on the sides that face it.
+void particleLightSix(Frame* frame, float3 world, float4 clip, float3 right, float3 up, float3 front, out float3 six[6])
+{
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
+        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+    if (frame->ddgi.enabled != 0)
+    {
+        ambient = ddgiLightAround(frame, world, front, ambient);
+    }
+    float3 sides[6] = { right, -right, up, -up, front, -front };
+    for (uint side = 0; side < 6; side++)
+    {
+        six[side] = ambient;
+    }
+    float3 toSun = -frame->sunDirection;
+    float3 sun = sunLight * sunShadow(frame, world, toSun) / PI;
+    for (uint side = 0; side < 6; side++)
+    {
+        six[side] += sun * saturate(dot(toSun, sides[side]));
+    }
+    float2 pixel = (clip.xy / clip.w * 0.5 + 0.5) * float2(frame->viewport);
+    uint base = clusterAt(frame, pixel, max(clip.w, frame->near)) * (frame->clusterMaxLights + 1);
+    for (uint i = 0; i < buffers()->clusters[base]; i++)
+    {
+        Light lamp = buffers()->lights[buffers()->clusters[base + 1 + i]];
+        float3 toLamp = normalizeOr(lamp.position - world, front);
+        float3 lit = localLightInput(lamp, world, toLamp).color / PI;
+        for (uint side = 0; side < 6; side++)
+        {
+            six[side] += lit * saturate(dot(toLamp, sides[side]));
+        }
+    }
+}
+
 // The corners of a particle's quad, as its six vertices take them.
 static const float2 PARTICLE_CORNERS[6] = { float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0), float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0) };
 
@@ -105,6 +156,16 @@ ParticleOut particleNone(ParticleSystem system, float2 corner)
     output.additive = 0;
     output.texture = NO_TEXTURE;
     output.tile = float4(0.0, 0.0, 1.0, 1.0);
+    output.tileNext = float4(0.0, 0.0, 1.0, 1.0);
+    output.blend = 0.0;
+    output.lightMap = NO_TEXTURE;
+    output.lightRight = 0.0;
+    output.lightLeft = 0.0;
+    output.lightTop = 0.0;
+    output.lightBottom = 0.0;
+    output.lightFront = 0.0;
+    output.lightBack = 0.0;
+    output.haze = 0.0;
     output.position = float4(0.0, 0.0, -1.0, 1.0);
     return output;
 }
@@ -164,6 +225,9 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     float3 right = normalizeOr(cross(float3(0.0, 1.0, 0.0), forward), float3(1.0, 0.0, 0.0));
     float3 up = cross(forward, right);
     float3 at = world + (right * spun.x + up * spun.y) * size * 0.5;
+    // Which way its picture's right and top are in the world, as it is turned.
+    float3 pictureRight = right * cos(turned) + up * sin(turned);
+    float3 pictureUp = up * cos(turned) - right * sin(turned);
     float3 across = velocity - forward * dot(velocity, forward);
     float going = length(across);
     if (system.stretch > 0.0 && going > 1e-3)
@@ -172,15 +236,24 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
         float3 along = across / going;
         float3 side = cross(forward, along);
         at = world + side * corner.x * size * 0.5 + along * corner.y * (size * 0.5 + going * system.stretch * 0.5);
+        pictureRight = side;
+        pictureUp = along;
     }
     float4 clip = transform(frame->viewProj, float4(at, 1.0));
 
     // Which of its texture's pictures: one for good, picked by its own number, or each in turn over its life.
+    // Playing through them, each fades into the next, so a few pictures play smoothly.
     output.texture = system.texture;
-    uint pictures = max(system.tiles.x * system.tiles.y, 1);
-    uint picture = (system.flags & PARTICLES_ANIMATE) != 0 ? min(uint(aged * float(pictures)), pictures - 1) : particleHash(h) % pictures;
-    float2 share = 1.0 / float2(max(system.tiles, 1));
-    output.tile = float4(float2(picture % max(system.tiles.x, 1), picture / max(system.tiles.x, 1)) * share, share);
+    uint2 tiles = max(system.tiles, 1);
+    uint pictures = tiles.x * tiles.y;
+    bool playing = (system.flags & PARTICLES_ANIMATE) != 0;
+    float played = aged * float(pictures);
+    uint picture = playing ? min(uint(played), pictures - 1) : particleHash(h) % pictures;
+    uint next = min(picture + 1, pictures - 1);
+    float2 share = 1.0 / float2(tiles);
+    output.tile = float4(float2(picture % tiles.x, picture / tiles.x) * share, share);
+    output.tileNext = float4(float2(next % tiles.x, next / tiles.x) * share, share);
+    output.blend = playing && next != picture ? saturate(played - float(picture)) : 0.0;
 
     float4 color = lerp(system.color, system.colorEnd, aged);
     if (system.curveCounts.w > 0)
@@ -191,11 +264,42 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     {
         color.a = system.color.a * curveAt(system.opacityCurve, system.curveCounts.y, aged);
     }
-    float3 light = (system.flags & PARTICLES_LIT) != 0 ? particleLight(frame, world, transform(frame->viewProj, float4(world, 1.0))) : 1.0;
+    float4 centre = transform(frame->viewProj, float4(world, 1.0));
+    bool lit = (system.flags & PARTICLES_LIT) != 0;
+    bool sixWay = lit && (system.flags & PARTICLES_SIX_WAY) != 0;
     // Seen through the air to it: a particle that covers what is behind takes on the fog's light too, while one
     // that adds its light only dims, as the fog's light is behind it already.
-    float4 air = particleFog(frame, world, transform(frame->viewProj, float4(world, 1.0)));
-    float3 shown = color.rgb * light * system.intensity * air.a + (output.additive != 0 ? 0.0 : air.rgb);
+    float4 air = particleFog(frame, world, centre);
+    float3 hazed = output.additive != 0 ? 0.0 : air.rgb;
+    output.lightMap = NO_TEXTURE;
+    output.lightRight = 0.0;
+    output.lightLeft = 0.0;
+    output.lightTop = 0.0;
+    output.lightBottom = 0.0;
+    output.lightFront = 0.0;
+    output.lightBack = 0.0;
+    output.haze = 0.0;
+    float3 shown;
+    if (sixWay)
+    {
+        // Lit a pixel at a time from its maps: the light from each side goes with it, and its colour without any.
+        float3 six[6];
+        particleLightSix(frame, world, centre, pictureRight, pictureUp, -forward, six);
+        output.lightMap = system.lightMap;
+        output.lightRight = six[0];
+        output.lightLeft = six[1];
+        output.lightTop = six[2];
+        output.lightBottom = six[3];
+        output.lightFront = six[4];
+        output.lightBack = six[5];
+        output.haze = hazed;
+        shown = color.rgb * system.intensity * air.a;
+    }
+    else
+    {
+        float3 light = lit ? particleLight(frame, world, centre) : 1.0;
+        shown = color.rgb * light * system.intensity * air.a + hazed;
+    }
     output.color = float4(shown, saturate(color.a * fade));
     output.depth = clip.w;
     output.position = clip;
@@ -219,12 +323,30 @@ float4 particleFragment(ParticleOut input) : SV_Target0
     float edge = dot(input.corner, input.corner);
     float3 tint = 1.0;
     float shape = (1.0 - edge) * (1.0 - edge);
+    float3 haze = 0.0;
     if (input.texture != NO_TEXTURE)
     {
         float2 within = float2(input.corner.x, -input.corner.y) * 0.5 + 0.5;
         float4 picture = sampleTexture(input.texture, input.tile.xy + within * input.tile.zw);
+        if (input.blend > 0.0)
+        {
+            picture = lerp(picture, sampleTexture(input.texture, input.tileNext.xy + within * input.tileNext.zw), input.blend);
+        }
         tint = picture.rgb;
         shape = picture.a;
+        if (input.lightMap != NO_TEXTURE)
+        {
+            // Lit from six sides: the picture is how bright from the right, the top and behind, its second map
+            // from the left, below and in front.
+            float4 other = sampleTexture(input.lightMap, input.tile.xy + within * input.tile.zw);
+            if (input.blend > 0.0)
+            {
+                other = lerp(other, sampleTexture(input.lightMap, input.tileNext.xy + within * input.tileNext.zw), input.blend);
+            }
+            tint = picture.r * input.lightRight + other.r * input.lightLeft + picture.g * input.lightTop
+                + other.g * input.lightBottom + other.b * input.lightFront + picture.b * input.lightBack;
+            haze = input.haze;
+        }
     }
     else if (edge >= 1.0)
     {
@@ -238,5 +360,5 @@ float4 particleFragment(ParticleOut input) : SV_Target0
     }
     float soft = input.softness > 0.0 ? saturate(gap / input.softness) : 1.0;
     float alpha = input.color.a * shape * soft;
-    return float4(input.color.rgb * tint * alpha, input.additive != 0 ? 0.0 : alpha);
+    return float4((input.color.rgb * tint + haze) * alpha, input.additive != 0 ? 0.0 : alpha);
 }

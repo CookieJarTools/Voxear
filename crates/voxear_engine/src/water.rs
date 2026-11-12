@@ -791,13 +791,13 @@ mod tests {
         let mut file = BlockFile::default();
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
         let (_, faces) = file.faces();
-        // A river 32 blocks long and 4 deep over a stone bed, flowing along +x at 2 m a second; its top at 0.
+        // A river 32 blocks long and 4 deep over a stone bed, flowing along +x; its top at 0.
         let mut map = BlockMap::default();
         for z in 0..16 {
             for x in 0..32 {
                 map.set([x, 0, z], 3);
                 for y in 1..5 {
-                    map.set_cell([x, y, z], 4, current_fill([2.0, 0.0]));
+                    map.set_cell([x, y, z], 4, current_fill([1.0, 0.0], 8));
                 }
             }
         }

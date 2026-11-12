@@ -334,7 +334,7 @@ impl BlockWorld {
         let fill = self.blocks.fill(block);
         let height = match self.smooth {
             true => 0.5 + flow::smooth_surface(fill),
-            false => f32::from(flow::Water::of(fill).height().0) / 16.0,
+            false => f32::from(flow::water_height(fill).0) / 16.0,
         };
         let top = (block[1] as f32 + height) * self.block_size;
         Some(top - at[1])

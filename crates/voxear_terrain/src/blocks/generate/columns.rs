@@ -160,8 +160,9 @@ pub(super) fn waters_of(
 }
 
 /// Each column's own water as [`waters_of`] gives it, and, with `currents`,
-/// the fill of its whole blocks where it flows along a river's current
-/// (see `flow::current_fill`): of cubes, at the finest level.
+/// which way it flows where it flows along a river's current: of cubes, at
+/// the finest level, where a river's top then lies as high as the river's
+/// water, its top block only partly full (see `flow::current_fill`).
 pub(super) fn waters_and_currents(
     file: &BlockFile,
     generate: &BlockGenerate,
@@ -169,7 +170,7 @@ pub(super) fn waters_and_currents(
     level: u32,
     (xs, zs): (&[f32], &[f32]),
     currents: bool,
-) -> Option<(Vec<(f32, f32)>, Vec<Option<u8>>)> {
+) -> Option<(Vec<(f32, f32)>, Vec<Option<[f32; 2]>>)> {
     let (sea, sea_top) = sea_of(file, generate, world, level);
     if sea == AIR {
         return None;
@@ -183,7 +184,7 @@ pub(super) fn waters_and_currents(
         false => (metres / finest - 0.5).ceil() / scale,
     };
     let none = (f32::MIN, f32::MAX);
-    let made = (0..water.len())
+    let mut made = (0..water.len())
         .map(|at| match water[at] > crate::generate::nodes::NO_WATER * 0.5 {
             true if blocks(water[at]) > sea_top => {
                 let from = if falls[at] > 0.0 { blocks(water[at] - falls[at]) } else { f32::MAX };
@@ -197,14 +198,18 @@ pub(super) fn waters_and_currents(
     }
     let flows = |at: usize| {
         let wet = made[at] != none && made[at].1 == f32::MAX;
-        let current = world.current(xs[at], zs[at]).filter(|_| wet)?;
-        let fill = crate::blocks::flow::current_fill(current);
-        (fill != crate::blocks::chunk::FULL).then_some(fill)
+        world.current(xs[at], zs[at]).filter(|&[x, z]| wet && x * x + z * z > 1e-4)
     };
-    let currents = match currents && !file.smooth && level == 0 {
+    let currents: Vec<Option<[f32; 2]>> = match currents && !file.smooth && level == 0 {
         true => (0..made.len()).map(flows).collect(),
         false => vec![None; made.len()],
     };
+    // A river's top as high as its water, in eighths of a block, as water placed and running out steps down.
+    for (at, current) in currents.iter().enumerate() {
+        if current.is_some() {
+            made[at].0 = water[at] / finest;
+        }
+    }
     Some((made, currents))
 }
 

@@ -153,15 +153,16 @@ pub(super) fn skinned(counted: f32, ground: f32, beside: [[f32; 2]; 3], up: [f32
 /// none; how many blocks under its top the cell's middle is; for flat
 /// ground of cubes, how many eighths of the cell it fills, a coarser level's
 /// top block of it only partly, so every level's sea stands as high;
-/// whether it falls there, a waterfall's curtain; and, of cubes, the fill
-/// of its whole blocks where it flows along a current, a river's.
+/// whether it falls there, a waterfall's curtain; and, of cubes, which way
+/// it flows along a current, a river's, which its blocks keep with how high
+/// each stands.
 #[derive(Clone, Copy)]
 pub(super) struct Sea {
     pub block: BlockId,
     pub over: f32,
     pub eighths: Option<f32>,
     pub falling: bool,
-    pub current: Option<Fill>,
+    pub current: Option<[f32; 2]>,
 }
 
 impl Sea {
@@ -206,8 +207,10 @@ pub(super) fn cell(
             (false, _) if sea.falling => Some(Water::Falling.fill()),
             // The sea's top blocks keep where its surface lies.
             (true, _) => Some(surface_fill(sea.over)),
-            // A river's whole blocks keep which way it flows.
-            (false, Some(eighths)) if eighths >= 8.0 && sea.current.is_some() => sea.current,
+            // A river's blocks keep which way it flows and how high each stands.
+            (false, Some(eighths)) if sea.current.is_some() => {
+                sea.current.map(|flow| crate::blocks::flow::current_fill(flow, eighths as u8))
+            }
             // Kept as flowing water keeps how high it stands; a coarse level's blocks never flow.
             (false, Some(eighths)) if eighths < 8.0 => Some(Water::Flowing { level: eighths as u8, up: 2 }.fill()),
             (false, _) => None,

@@ -244,12 +244,15 @@ pub fn water_shape(quad: [u32; 2]) -> (u8, u8, Option<usize>) {
 }
 
 /// How the water of a quad of a river's top flows, in metres a second along
-/// x and z, where it flows along a current (see `flow::current_fill`): kept
-/// in place of its shape, which such a quad has none of.
+/// x and z, where it flows along a current (see `flow::current_fill`): which
+/// way kept, one more than its number, where a quad's shape keeps how far
+/// its lower corners are raised, which a top has no use for.
 pub fn water_current(quad: [u32; 2]) -> Option<[f32; 2]> {
-    let up = (quad[0] >> 28) & 7;
-    let kept = (quad[1] >> 8) & 0xFF;
-    (up >= 6 && kept > 0).then(|| super::flow::current_of(kept as u8 - 1 + super::flow::CURRENT)).flatten()
+    let (up, facing) = ((quad[0] >> 28) & 7, (quad[0] >> 25) & 7);
+    let way = ((quad[1] >> 12) & 15) as usize;
+    let top = facing == 2 && (up == 7 || up == super::flow::UP as u32);
+    let way = super::flow::WAYS.get(way.checked_sub(1).filter(|_| top)?)?;
+    Some(way.map(|v| v * super::flow::RIVER_SPEED))
 }
 
 /// A chunk's water's faces as quads, merged by surface and shape: one
@@ -266,7 +269,7 @@ pub(super) fn water_quads(
     let side = CHUNK as usize;
     let mut quads = Vec::new();
     let mut mask = vec![0u32; side * side];
-    let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| Water::of(fill(p)).height());
+    let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| super::flow::water_height(fill(p)));
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         for layer in 0..side {
             for j in 0..side {
@@ -297,14 +300,13 @@ pub(super) fn water_quads(
                         Some(up) if up / 2 != axis => (p[up / 2] + 1) as u32,
                         _ => 0,
                     };
-                    // A river's top, unshaped, keeps which way it flows in place of a shape.
-                    let current = match (up, facing) {
-                        (None, 2) => super::flow::current_of(fill(p))
-                            .map_or(0, |_| u32::from(fill(p) - super::flow::CURRENT) + 1),
-                        _ => 0,
+                    // A river's top keeps which way it flows where its lower corners would be raised, which a top's
+                    // never are.
+                    let rise = match (facing, super::flow::current_parts(fill(p))) {
+                        (2, Some((way, _))) => way as u8 + 1,
+                        _ => rise,
                     };
-                    let shaped =
-                        u32::from(rise) << 12 | u32::from(drop) << 8 | current << 8 | (up.unwrap_or(7) as u32) << 16;
+                    let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
                     mask[j * side + i] = (look | shaped | across << 19) + 1;
                 }
             }

@@ -3410,33 +3410,33 @@ struct BlockWaterOut
     nointerpolation float2 flow : FLOW;
 };
 
-// How fast water running out sideways from what feeds it flows, and a river's current at each of its speeds, in
-// metres a second (voxear_terrain::blocks::RUNNING_SPEED, flow::SPEEDS).
+// How fast water running out sideways from what feeds it flows, and a river's current, in metres a second
+// (voxear_terrain::blocks::RUNNING_SPEED, flow::RIVER_SPEED).
 static const float BLOCK_RUNNING = 1.2;
-static const float BLOCK_CURRENTS[4] = { 0.5, 1.0, 2.0, 3.5 };
+static const float BLOCK_RIVER = 1.5;
 
 // How long its ripples drift before they start over, in seconds: so they are never read far from where they began.
 static const float BLOCK_DRIFT_PERIOD = 900.0;
 
-// How the water of a quad flows (voxear_terrain::blocks::mesh::water_current): away from what feeds water running
-// out sideways; along its current, of a river's top, which keeps it in place of a shape, one of sixteen ways round
-// from +x towards +z at one of four speeds.
+// How the water of a quad flows (voxear_terrain::blocks::mesh::water_current): along its current, of a river's top,
+// which keeps which of eight ways round from +x towards +z it flows, one more than its number, where a shape keeps how
+// far its lower corners are raised; away from what feeds water running out sideways.
 float2 blockWaterFlow(uint2 quad, uint up)
 {
+    uint facing = (quad.x >> 25) & 7;
+    uint way = (quad.y >> 12) & 15;
+    if (facing == 2 && way > 0 && (up == 7 || up == 2))
+    {
+        float turn = float(way - 1) * (3.14159265 / 4.0);
+        return float2(cos(turn), sin(turn)) * BLOCK_RIVER;
+    }
     if (up < 6)
     {
         uint axis = up / 2;
         float away = (up & 1) == 0 ? -BLOCK_RUNNING : BLOCK_RUNNING;
         return axis == 0 ? float2(away, 0.0) : (axis == 2 ? float2(0.0, away) : float2(0.0, 0.0));
     }
-    uint kept = (quad.y >> 8) & 0xFF;
-    if (kept == 0)
-    {
-        return float2(0.0, 0.0);
-    }
-    uint at = kept - 1;
-    float turn = float(at / 4) * (3.14159265 / 8.0);
-    return float2(cos(turn), sin(turn)) * BLOCK_CURRENTS[at % 4];
+    return float2(0.0, 0.0);
 }
 
 // A corner of a face of the water of the world push.level names (its number and one): six to a quad, its quads one

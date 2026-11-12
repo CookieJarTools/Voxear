@@ -50,61 +50,65 @@ const SURFACE_STEPS: f32 = 77.0;
 
 /// Where the fills of a source with a current start, in a world of cubes: a
 /// generated river's water, still to flowing as any source is, that moves
-/// things along its current. Then four a way it flows, a speed each, of
-/// [`WAYS`]. They are the fills a world drawn smooth keeps its sea's
-/// surface in, which a world of cubes has no use for.
+/// things along its current and stands as high in its block as the river's
+/// water does, so a river's surface comes down in eighths of a block as
+/// water placed and running out does. Then eight a way it flows, a height
+/// each, of [`WAYS`]. They are the fills a world drawn smooth keeps its
+/// sea's surface in, which a world of cubes has no use for.
 pub(super) const CURRENT: Fill = SURFACE;
 
 /// The ways a current flows, along x and z, from +x round towards +z.
-pub const WAYS: [[f32; 2]; 16] = [
+pub const WAYS: [[f32; 2]; 8] = [
     [1.0, 0.0],
-    [0.923_879_5, 0.382_683_43],
     [0.707_106_77, 0.707_106_77],
-    [0.382_683_43, 0.923_879_5],
     [0.0, 1.0],
-    [-0.382_683_43, 0.923_879_5],
     [-0.707_106_77, 0.707_106_77],
-    [-0.923_879_5, 0.382_683_43],
     [-1.0, 0.0],
-    [-0.923_879_5, -0.382_683_43],
     [-0.707_106_77, -0.707_106_77],
-    [-0.382_683_43, -0.923_879_5],
     [0.0, -1.0],
-    [0.382_683_43, -0.923_879_5],
     [0.707_106_77, -0.707_106_77],
-    [0.923_879_5, -0.382_683_43],
 ];
 
-/// How fast a current flows at each of its speeds, in metres a second.
-pub const SPEEDS: [f32; 4] = [0.5, 1.0, 2.0, 3.5];
+/// How fast a river's current flows, in metres a second.
+pub const RIVER_SPEED: f32 = 1.5;
 
-/// The fill of a source whose water flows at `flow`, metres a second along
-/// x and z: the nearest of [`WAYS`] at the nearest of [`SPEEDS`]. A plain
-/// source's where it hardly flows.
-pub fn current_fill(flow: [f32; 2]) -> Fill {
-    let speed = (flow[0] * flow[0] + flow[1] * flow[1]).sqrt();
-    if speed < SPEEDS[0] * 0.5 {
-        return SOURCE;
-    }
+/// The fill of a river's source flowing along `flow` (x and z, its speed
+/// left out) that stands `eighths` of its block high, 1 to 8: the nearest
+/// of [`WAYS`].
+pub fn current_fill(flow: [f32; 2], eighths: u8) -> Fill {
     let way = (0..WAYS.len())
         .max_by(|&a, &b| {
             let along = |at: usize| WAYS[at][0] * flow[0] + WAYS[at][1] * flow[1];
             along(a).total_cmp(&along(b))
         })
         .unwrap_or(0);
-    let step = (0..SPEEDS.len())
-        .min_by(|&a, &b| (SPEEDS[a] - speed).abs().total_cmp(&(SPEEDS[b] - speed).abs()))
-        .unwrap_or(0);
-    CURRENT + (way * SPEEDS.len() + step) as Fill
+    CURRENT + (way * 8) as Fill + eighths.clamp(1, 8) - 1
+}
+
+/// Which of [`WAYS`] a river's source of fill `fill` flows, and how many
+/// eighths of its block it stands high, where it has a current (see
+/// [`current_fill`]): in a world of cubes alone.
+pub fn current_parts(fill: Fill) -> Option<(usize, u8)> {
+    let at = usize::from(fill.checked_sub(CURRENT)?);
+    (at < WAYS.len() * 8).then_some((at / 8, (at % 8) as u8 + 1))
 }
 
 /// How a source of fill `fill` flows, in metres a second along x and z,
 /// where it has a current (see [`current_fill`]): in a world of cubes alone.
 pub fn current_of(fill: Fill) -> Option<[f32; 2]> {
-    let at = usize::from(fill.checked_sub(CURRENT)?);
-    let (way, step) = (at / SPEEDS.len(), at % SPEEDS.len());
-    let way = WAYS.get(way)?;
-    Some([way[0] * SPEEDS[step], way[1] * SPEEDS[step]])
+    let (way, _) = current_parts(fill)?;
+    Some(WAYS[way].map(|v| v * RIVER_SPEED))
+}
+
+/// How high a block of water of fill `fill` stands in its block, in
+/// sixteenths, and the way up from it where it is not full, in a world of
+/// cubes: a river's source as high as its current's fill says, its way up
+/// straight up, as the top of water does that stands lower than its block.
+pub fn water_height(fill: Fill) -> (u8, Option<usize>) {
+    match (Water::of(fill), current_parts(fill)) {
+        (Water::Source, Some((_, eighths))) if eighths < 8 => (eighths * 2, Some(UP)),
+        (water, _) => water.height(),
+    }
 }
 
 /// The fill of a source whose surface, in a world drawn smooth, stands

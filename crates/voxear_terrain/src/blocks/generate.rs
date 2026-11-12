@@ -824,9 +824,11 @@ mod tests {
                     }
                     wet += 1;
                     flowing += usize::from(crate::blocks::flow::current_of(map.fill([x, y, z])).is_some());
-                    // No water stands beside air: a wall of it.
+                    // No water stands beside air with no water under it: a wall of it. Beside air over lower water,
+                    // it is the river's surface stepping down.
                     let beside = [[x - 1, y, z], [x + 1, y, z], [x, y, z - 1], [x, y, z + 1]];
-                    walls += beside.iter().filter(|&&at| map.get(at) == AIR).count();
+                    let wall = |&&[x, y, z]: &&[i32; 3]| map.get([x, y, z]) == AIR && map.get([x, y - 1, z]) != sea;
+                    walls += beside.iter().filter(wall).count();
                 }
             }
         }

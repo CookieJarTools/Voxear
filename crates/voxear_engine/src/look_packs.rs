@@ -47,7 +47,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::AssetKind;
 use voxear_ecs::World;
-use voxear_render::{BlockVoxels, Look, LookName, PostProcess, Sky, SunLook, WornLook};
+use voxear_render::{BlockVoxels, Look, LookName, PostProcess, Sky, SunLook, WaterLook, WornLook};
 
 use crate::{
     content::Content,
@@ -103,10 +103,49 @@ pub struct LookPackFile {
     pub post: Option<toml::Table>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<BlocksLook>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub water: Option<WaterData>,
 }
 
 fn look_pack_format() -> u32 {
     LOOK_PACK_FORMAT
+}
+
+/// How a pack has water look, wherever it is: the sea, every Pool of water
+/// and the water of Block Worlds. Colours are sRGB. Each setting left out
+/// is the water's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaterData {
+    /// The water's own colour, which it fades into where it is deep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep: Option<[f32; 3]>,
+    /// The colour light takes through the thin tops of waves and ripples.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<[f32; 3]>,
+    /// What a metre of water lets through, by colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clarity: Option<[f32; 3]>,
+    /// How murky it is: 1 as Clarity says, more to see less far into it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub murk: Option<f32>,
+    /// How much foam the sea's breaking crests have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foam: Option<f32>,
+}
+
+impl WaterData {
+    /// As the renderer lays it over the level's water, each kept to what works.
+    fn look(&self) -> WaterLook {
+        let color = |c: [f32; 3]| c.map(|part| part.clamp(0.0, 1.0));
+        WaterLook {
+            deep: self.deep.map(color),
+            scatter: self.scatter.map(color),
+            clarity: self.clarity.map(color),
+            murk: self.murk.map(|murk| murk.clamp(0.0, 20.0)),
+            foam: self.foam.map(|foam| foam.clamp(0.0, 8.0)),
+        }
+    }
 }
 
 /// How a pack has every Block World's faces drawn.
@@ -187,7 +226,8 @@ impl LookPackFile {
             count: blocks.voxels.min(BlockVoxels::MOST),
             relief: blocks.relief.clamp(0.0, BlockVoxels::DEEPEST),
         });
-        Ok(WornLook { sky, sun, post, voxels })
+        let water = self.water.map(|water| water.look()).unwrap_or_default();
+        Ok(WornLook { sky, sun, post, voxels, water })
     }
 }
 
@@ -470,6 +510,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pack_colours_water_wherever_it_is_and_leaves_what_it_does_not_write() {
+        let plain = pack("format = 1").worn(Sky::default(), None, PostProcess::default()).unwrap();
+        assert_eq!(plain.water, WaterLook::default(), "the water's own");
+        let text = "[water]\ndeep = [0.0, 0.5, 2.0]\nmurk = 3.0\nfoam = -1.0\n";
+        let worn = pack(text).worn(Sky::default(), None, PostProcess::default()).unwrap().water;
+        assert_eq!(
+            (worn.deep, worn.murk, worn.foam),
+            (Some([0.0, 0.5, 1.0]), Some(3.0), Some(0.0)),
+            "kept to what works"
+        );
+        assert_eq!((worn.scatter, worn.clarity), (None, None));
+        // The sea and a Pool of water take it; lava keeps its own; and the rest of each is as it was.
+        let (sea, pond) = (voxear_render::Ocean::default(), voxear_render::Pool::default());
+        let (seen, filled) = (worn.over_ocean(sea), worn.over_pool(pond));
+        assert_eq!((seen.deep, seen.murk, seen.foam, seen.scatter), ([0.0, 0.5, 1.0], 3.0, 0.0, sea.scatter));
+        assert_eq!((filled.deep, filled.murk, filled.clarity), ([0.0, 0.5, 1.0], 3.0, pond.clarity));
+        assert_eq!((seen.wave_scale, seen.choppiness, filled.size), (sea.wave_scale, sea.choppiness, pond.size));
+        let lava = voxear_render::Pool { liquid: voxear_render::Liquid::Lava, ..pond };
+        assert_eq!(worn.over_pool(lava), lava);
+        // Blocks' water is drawn in the pack's colour, linear, marked as set; unset where the pack writes none.
+        assert_eq!(worn.block_water()[3], 1.0);
+        assert!(worn.block_water()[2] == 1.0 && worn.block_water()[0] == 0.0);
+        assert_eq!(plain.water.block_water(), [0.0; 4]);
+        assert!(LookPackFile::parse("[water]\nwaves = 2.0").is_err(), "the sea's waves are the level's");
+    }
+
+    #[test]
     fn a_pack_that_names_a_look_starts_from_it_in_place_of_the_levels_lighting() {
         let night = Look::of(LookName::NightRaid);
         let story = Look::of(LookName::Storybook);
@@ -501,7 +568,8 @@ mod tests {
             let same = worn.post == golden.post
                 && worn.sun == Some(golden.sun)
                 && sky_data(&worn.sky) == sky_data(&golden.sky)
-                && worn.voxels.is_none();
+                && worn.voxels.is_none()
+                && worn.water == WaterLook::default();
             assert!(!same, "{key} changes how a level looks");
         }
         assert!(LookPackFile::builtin("gloomy").is_err());

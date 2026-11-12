@@ -129,7 +129,7 @@ pub use previews::{
 };
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
-pub use looks::{Look, LookName, SunLook, WornLook};
+pub use looks::{Look, LookName, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
@@ -2322,6 +2322,8 @@ impl View {
         if let Some(water) = &water {
             frame_data.ocean = water.frame;
         }
+        // A look pack's colour for the water of worlds of blocks, in place of each block's own.
+        frame_data.ocean.block_water = extracted.block_water;
         let glass = match panes.is_empty() {
             true => None,
             false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),

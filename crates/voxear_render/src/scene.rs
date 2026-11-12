@@ -268,6 +268,9 @@ pub struct ExtractedFrame {
     /// The small cubes every world of blocks' faces are drawn as, where a
     /// look pack the player wears says (`WornLook::voxels`).
     pub block_voxels: Option<crate::blocks::BlockVoxels>,
+    /// The colour worlds of blocks' water is drawn in, where the pack says
+    /// (`WaterLook::block_water`).
+    pub block_water: [f32; 4],
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
@@ -732,15 +735,16 @@ pub fn extract(
     }
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
+    let water_look = worn.map(|worn| worn.water).unwrap_or_default();
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();
     let ocean = seas.into_iter().next().map(|(ocean, transform, at, now)| {
         let (_, rotation, position) = at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| {
             w.0.to_scale_rotation_translation()
         });
         let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
-        (*ocean, position.y, now.map_or_else(blown, |now| now.0))
+        (water_look.over_ocean(*ocean), position.y, now.map_or_else(blown, |now| now.0))
     });
-    let water_bodies = water_bodies(world, position);
+    let water_bodies = water_bodies(world, position, water_look);
     // Lava lights what is round it.
     lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
     // And Particle Systems that cast a light: a fire's flicker, an explosion's flash.
@@ -834,6 +838,7 @@ pub fn extract(
 
     ExtractedFrame {
         block_voxels: worn.and_then(|worn| worn.voxels),
+        block_water: water_look.block_water(),
         frame,
         instances,
         lights,
@@ -1030,7 +1035,7 @@ mod tests {
 
 /// The Pools, the Streams and then the Dry Areas nearest `camera`, as many
 /// as a frame draws, and the points along the Streams.
-fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
+fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> crate::water::WaterBodies {
     use crate::water_bodies::{DryArea, MAX_STREAM_POINTS, MAX_WATER_BODIES, Pool, Stream};
     let placed = |transform: &Transform, at: Option<&WorldTransform>| {
         at.map_or((transform.position, transform.rotation), |w| {
@@ -1044,7 +1049,7 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         .into_iter()
         .map(|(pool, transform, at)| {
             let (position, rotation) = placed(transform, at);
-            (position.distance_squared(camera), pool.gpu(position, rotation))
+            (position.distance_squared(camera), look.over_pool(*pool).gpu(position, rotation))
         })
         .collect();
     // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
@@ -1127,7 +1132,7 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
     }
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
     // The blocks' water the camera is in, first: a Pool over the same place is found after it, and is the one seen.
-    if let Some(body) = crate::water_bodies::block_water(world, camera) {
+    if let Some(body) = crate::water_bodies::block_water(world, camera, look.block_water()) {
         pools.insert(0, (0.0, body));
     }
     streams.sort_by(|a, b| a.0.total_cmp(&b.0));

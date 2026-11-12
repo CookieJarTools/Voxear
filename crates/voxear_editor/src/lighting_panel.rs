@@ -265,6 +265,16 @@ const SETTINGS: &[Info] = &[
 const PACK_SETTINGS: &[Info] = &[
     Info { path: &["description"], title: "Description", group: "Pack", kind: Kind::Text, when: ALWAYS,
         help: "A line saying what the pack looks like, for the menu a player picks it from." },
+    Info { path: &["water", "deep"], title: "Deep", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "The water's own colour, which it fades into where it is deep: the sea's, every Pool's and the water of Block Worlds." },
+    Info { path: &["water", "scatter"], title: "Scatter", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "The colour light takes through the thin tops of waves and ripples, on the sea and Pools." },
+    Info { path: &["water", "clarity"], title: "Clarity", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "What a metre of water lets through, by colour, in the sea and Pools. Nearer white is clearer water." },
+    Info { path: &["water", "murk"], title: "Murk", group: "Water", kind: number(0.0, 20.0, ""), when: ALWAYS,
+        help: "How murky the sea and Pools are: 1 as Clarity says, more to see less far into them." },
+    Info { path: &["water", "foam"], title: "Foam", group: "Water", kind: number(0.0, 8.0, ""), when: ALWAYS,
+        help: "How much foam the sea's breaking crests have. 0 for none." },
     Info { path: &["blocks", "voxels"], title: "Voxels", group: "Blocks", kind: Kind::Whole { max: 64 }, when: ALWAYS,
         help: "How many small cubes every Block World's faces are cut into along a block's side. 0 for plain faces, whatever a world's own setting. Empty leaves each world as it is." },
     Info { path: &["blocks", "relief"], title: "Relief", group: "Blocks", kind: number(0.0, 4.0, ""), when: ALWAYS,
@@ -720,6 +730,7 @@ fn group_help(group: &str) -> &'static str {
         "Lens" => "Camera effects: focus blur and motion blur.",
         "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",
         "Blocks" => "How every Block World's faces are drawn under the pack.",
+        "Water" => "How water looks under the pack, wherever it is: the sea, Pools and the water of Block Worlds.",
         _ => "",
     }
 }
@@ -1163,7 +1174,7 @@ mod tests {
             &["post", "bloom", "intensity"],
             &["sky", "clouds", "kind"],
             &["blocks", "voxels"],
-            &["description"],
+            &["water", "deep"],
         ];
         for path in wanted {
             assert!(rows().any(|info| info.path == path), "no row for {path:?}");

@@ -390,6 +390,9 @@ struct Ocean
     // How far into its tile each cascade's waves start, along x and z, as shares of the tile: where the world's
     // middle is from the level's (src/gpu.rs's GpuOcean::phases), so the sea is the same when it moves.
     float2 phases[6];
+    // The colour worlds of blocks' water is drawn in where a look pack sets one, with 1 after it; all 0 for each
+    // block's own (src/looks.rs's WaterLook::block_water).
+    float4 blockWater;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

@@ -641,7 +641,7 @@ fn a_new_generator_is_a_starter_graph_whose_preset_picks_another_and_an_angle_is
     frame(&mut editor, &mut renderer);
     let mut options = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
-    assert_eq!(options.len(), 10, "five kinds of ground, the Caves, three more, the Cave Level, and no Custom");
+    assert_eq!(options.len(), 14, "five kinds of ground, the Caves, seven more, the Cave Level, and no Custom");
     click(&mut editor.ui, options[4]);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);

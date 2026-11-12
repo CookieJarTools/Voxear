@@ -29,6 +29,12 @@
 //! color = [0.04, 0.46, 0.33]  # the water's own colour
 //! liquid = "water"            # see-through, and things float in it
 //! ```
+//!
+//! ```toml
+//! color = [0.3, 0.62, 0.16]
+//! shape = "bushy"             # a cube with tufts of leaves reaching out of it; or "vine"
+//! sways = true
+//! ```
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -59,6 +65,9 @@ pub struct BlockDef {
     /// no still block move a little with the level's wind.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sways: bool,
+    /// Its shape: a cube, a cube with tufts of leaves, or a vine.
+    #[serde(skip_serializing_if = "BlockShape::is_cube")]
+    pub shape: BlockShape,
     /// How many seconds it takes to break by hand.
     pub hardness: f32,
     /// Whether nothing breaks it.
@@ -141,6 +150,42 @@ impl Liquid {
     }
 }
 
+/// The shape a block is drawn in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockShape {
+    /// A cube, as most blocks are.
+    #[default]
+    Cube,
+    /// A cube with tufts of leaves reaching out past it wherever it meets
+    /// open air, so a crown of such blocks is a soft mass of leaves.
+    Bushy,
+    /// A vine: a thin sheet against each block of ground beside it, or two
+    /// crossed sheets where it hangs free. It is no ground: nothing stands
+    /// on it, and it hides nothing.
+    Vine,
+}
+
+impl BlockShape {
+    pub const ALL: [BlockShape; 3] = [BlockShape::Cube, BlockShape::Bushy, BlockShape::Vine];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BlockShape::Cube => "Cube",
+            BlockShape::Bushy => "Bushy",
+            BlockShape::Vine => "Vine",
+        }
+    }
+
+    pub fn is_cube(&self) -> bool {
+        *self == BlockShape::Cube
+    }
+
+    pub fn is_vine(&self) -> bool {
+        *self == BlockShape::Vine
+    }
+}
+
 impl Default for BlockDef {
     fn default() -> Self {
         Self {
@@ -150,6 +195,7 @@ impl Default for BlockDef {
             bottom: None,
             liquid: Liquid::None,
             sways: false,
+            shape: BlockShape::Cube,
             hardness: 1.0,
             unbreakable: false,
             tool: None,
@@ -197,7 +243,7 @@ impl BlockDef {
     /// Whether it is drawn as `other` is, whatever their rules.
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
-        look(self) == look(other) && self.liquid == other.liquid
+        look(self) == look(other) && self.liquid == other.liquid && self.shape == other.shape
     }
 
     /// Gives `kind`, a world's entry naming this block, the block's look.
@@ -208,6 +254,7 @@ impl BlockDef {
         kind.bottom = self.bottom.clone();
         kind.water = self.liquid == Liquid::Water;
         kind.sways = self.sways;
+        kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
     }
 }
 
@@ -238,6 +285,39 @@ mod tests {
         water.fill(&mut kind);
         assert!(kind.water && kind.material.is_none() && kind.top.is_none());
         assert_eq!(BlockDef::from_kind(&kind), water);
+    }
+
+    #[test]
+    fn a_blocks_shape_is_written_only_where_it_is_no_cube_and_reaches_its_worlds_faces() {
+        use crate::blocks::{file::BlockFile, is_bushy, is_ground, is_vine};
+        let leaves = BlockDef { shape: BlockShape::Bushy, sways: true, ..BlockDef::colored([0.3, 0.62, 0.16]) };
+        let vine = BlockDef { shape: BlockShape::Vine, ..BlockDef::colored([0.2, 0.46, 0.14]) };
+        assert!(leaves.to_text().contains("shape = \"bushy\"") && vine.to_text().contains("shape = \"vine\""));
+        assert!(!BlockDef::default().to_text().contains("shape"), "a cube does not say so");
+        assert_eq!(BlockDef::parse(&leaves.to_text()).unwrap(), leaves);
+        assert_eq!(BlockDef::parse(&vine.to_text()).unwrap(), vine);
+        assert!(BlockDef::parse("shape = \"ball\"").is_err(), "a shape there is none of");
+        assert!(!leaves.looks_like(&BlockDef { shape: BlockShape::Cube, ..leaves.clone() }));
+        // A world listing them draws them so: leaves ground with tufts, a vine no ground; water is no shape.
+        let mut file = BlockFile::default();
+        for block in [&leaves, &vine, &BlockDef { liquid: Liquid::Water, shape: BlockShape::Vine, ..vine.clone() }] {
+            let mut kind = BlockKind::of("Blocks/Some.block");
+            block.fill(&mut kind);
+            file.blocks.push(kind);
+        }
+        let (looks, faces) = file.faces();
+        assert!(is_bushy(&faces, 4) && is_ground(&faces, 4) && faces[4].sways);
+        assert!(is_vine(&faces, 5) && !is_ground(&faces, 5) && !crate::blocks::hides(&faces, 5));
+        assert!(faces[6].water && !is_vine(&faces, 6) && faces[6].shape.is_cube());
+        // Their faces are drawn as leaves, a colour's of its own beside a cube's of the same colour.
+        assert!(looks[faces[4].sides as usize].leafy && looks[faces[5].sides as usize].leafy);
+        assert!(!looks[faces[1].sides as usize].leafy);
+        let mut same_colour = BlockKind::of("Blocks/Other.block");
+        BlockDef::colored(leaves.color).fill(&mut same_colour);
+        file.blocks.push(same_colour);
+        let (looks, faces) = file.faces();
+        assert_ne!(faces[7].sides, faces[4].sides);
+        assert!(!looks[faces[7].sides as usize].leafy);
     }
 
     #[test]

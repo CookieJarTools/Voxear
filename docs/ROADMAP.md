@@ -1267,6 +1267,25 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
     frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
     world's first level sways. The face's picture and its bounced light are read where it stands.
+  - A block has a **Shape** (`block::BlockShape`, a dropdown in its Inspector): Cube, Bushy or Vine.
+    - **Bushy leaves:** a bushy block that meets open air has three sheets of leaves crossed through its middle,
+      nearly twice the block's width, thinning out cell by cell to a ragged edge, so a crown of blocks is a soft
+      mass. They are loose quads in the chunk's own pool (`ChunkMesh::loose`, facing 6), two words each, drawn
+      from both sides by one quad whose corners `loosePoint` takes the other way round from behind; drawn with
+      the block's cut-out picture, or as small square leaves from whole-number hashes (`blockSheetLook`), the
+      cube's own faces alike (`blockLeafShade`). Their corners sway with the cube corner nearest each. Out to 160
+      blocks from the camera.
+    - **Vines:** a vine block is no ground (`is_ground`): a sheet against each block of ground beside it, or two
+      crossed sheets where it hangs free (loose quads of facing 7), strands and leaves with no picture. A biome
+      hangs them under ledges, overhangs and cave roofs (`[vines]` in a `.biome`, a Vines part in its Inspector,
+      `hang_vines`), each column from its own blocks alone; a `.voxplant` with `vines` grows them up its trunk and
+      under its crown. The wet starter biomes have them, of a Vine block made with their ground's.
+    - Tests: the mesher (sheets a block, which corners sway, a vine clinging and hanging, water beside a vine),
+      the block file, the generator (vines only in open air under ground, the same from any column, by amount and
+      depth), a tree's vines, and GPU pictures of a tree of blocks with cube, bushy and pictured leaves and with
+      vines, still and in the wind. Manual: Blocks (Bushy leaves, Vines), Biomes (Vines), Wind.
+    - Not done: climbing a vine (the Character Controller has no ladders), a vine falling when what holds it is
+      dug away, vines in a Voxel Terrain, tufts in the far rings, light through leaves.
   - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
     in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
   - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds

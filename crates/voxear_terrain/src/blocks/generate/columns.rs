@@ -24,12 +24,25 @@ use crate::{
     generate::Cells,
 };
 
-/// One column of the ground: its surface's height in blocks, and the blocks
-/// its top layers are, deepest last, as `(block, layers)`.
+/// One column of the ground: its surface's height in blocks, the blocks
+/// its top layers are, deepest last, as `(block, layers)`, and the vines its
+/// biome hangs in it.
 pub(super) struct Column {
     pub surface: f32,
     pub layers: [(BlockId, f32); 2],
     pub bottom: BlockId,
+    pub vines: Vines,
+}
+
+/// The vines of a column's biome: their block (air for none), how many of
+/// the places one could hang from have one, how long they hang in blocks,
+/// and how many metres under the surface they still hang.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Vines {
+    pub block: BlockId,
+    pub amount: f32,
+    pub length: [u32; 2],
+    pub depth: f32,
 }
 
 impl Column {
@@ -109,14 +122,21 @@ pub(super) fn columns_at(
             None => (or(biome_top, ground.top), 1.0),
         };
         let bottom = or(biome.map_or(AIR, |blocks| blocks.deep), ground.bottom);
+        let vines = biome.filter(|blocks| blocks.vine != AIR).map_or(Vines::default(), |blocks| Vines {
+            block: blocks.vine,
+            amount: blocks.vine_amount,
+            length: blocks.vine_length,
+            depth: blocks.vine_depth,
+        });
         if bare(at) {
-            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom };
+            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom, vines };
         }
         let under_depth = biome.filter(|blocks| blocks.under != AIR).map_or(ground.under_depth, |b| b.under_depth);
         Column {
             surface: height / size,
             layers: [top, (or(biome_under, ground.under), under_depth as f32 / scale)],
             bottom,
+            vines,
         }
     };
     (0..heights.len()).map(column).collect()
@@ -142,6 +162,105 @@ pub(super) fn sea_of(
         (false, false) => finest / scale,
     };
     (sea, top)
+}
+
+/// What vines are hung by: every column read, which of them are the chunk
+/// column's own, row after row along x, how many of those make a row, the
+/// sea's block, the generator's seed and how many metres a block is.
+struct Hung<'a> {
+    columns: &'a [Column],
+    own: &'a [usize],
+    across: usize,
+    sea: BlockId,
+    seed: u32,
+    size: f32,
+}
+
+/// A number for a block of the world and `salt`, from whole numbers alone:
+/// the same wherever its column is made.
+fn vine_number(seed: u32, [x, y, z]: [i32; 3], salt: u32) -> u32 {
+    let mut h = seed ^ salt.wrapping_mul(0x27D4_EB2F) ^ (x as u32).wrapping_mul(0x9E37_79B1);
+    h = h.rotate_left(13) ^ (y as u32).wrapping_mul(0x85EB_CA77);
+    h = h.rotate_left(11) ^ (z as u32).wrapping_mul(0xC2B2_AE3D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297A_2D39);
+    h ^ (h >> 15)
+}
+
+/// Hangs each column's biome's vines in `chunks`, a chunk column's chunks
+/// from the lowest up, the first block of the first at `corner`. A vine
+/// starts in a block of open air with ground over it, no deeper under its
+/// column's surface than its biome says, one such block in so many as its
+/// amount says, and three times as often where ground stands beside it in
+/// the column; it hangs down as many blocks as its length says, through
+/// the open air until it meets something. Each is decided from the
+/// column's own blocks, so a column made alone has the vines it has among
+/// its neighbours.
+fn hang_vines(chunks: &mut [Option<Chunk>], hung: &Hung, corner: [i32; 3]) {
+    let side = CHUNK as i32;
+    let tall = chunks.len() as i32 * side;
+    let deep = (hung.own.len() / hung.across.max(1)) as i32;
+    let across = hung.across as i32;
+    let block = |chunks: &[Option<Chunk>], x: i32, y: i32, z: i32| -> BlockId {
+        if y < 0 || y >= tall {
+            return AIR;
+        }
+        chunks[(y / side) as usize].as_ref().map_or(AIR, |chunk| chunk.get(x as u32, (y % side) as u32, z as u32))
+    };
+    // Whether every block of a chunk is the same: air, or one block through and through.
+    let plain = |chunk: &Option<Chunk>| chunk.as_ref().is_none_or(|chunk| chunk.is_air() || chunk.is_whole());
+    for z in 0..deep.min(side) {
+        for x in 0..across.min(side) {
+            let column = &hung.columns[hung.own[(z * across + x) as usize]];
+            let vines = column.vines;
+            if vines.block == AIR || vines.amount <= 0.0 {
+                continue;
+            }
+            let at = [corner[0] + x, corner[2] + z];
+            let ground = |block: BlockId| block != AIR && block != hung.sea && block != vines.block;
+            let mut y = tall - 2;
+            while y >= 0 {
+                // Chunks of one block through and through have no place for one but where they meet.
+                let chunk = (y / side) as usize;
+                if y % side != side - 1 && plain(&chunks[chunk]) {
+                    y = chunk as i32 * side - 1;
+                    continue;
+                }
+                let here = y;
+                y -= 1;
+                if block(chunks, x, here, z) != AIR || !ground(block(chunks, x, here + 1, z)) {
+                    continue;
+                }
+                let height = corner[1] + here;
+                if (column.surface - height as f32) * hung.size > vines.depth {
+                    continue;
+                }
+                let beside = [[1, 0], [-1, 0], [0, 1], [0, -1]].into_iter().any(|[dx, dz]| {
+                    let (bx, bz) = (x + dx, z + dz);
+                    (0..across).contains(&bx) && (0..deep).contains(&bz) && ground(block(chunks, bx, here, bz))
+                });
+                let chance = vines.amount * if beside { 1.0 } else { 0.34 };
+                let place = [at[0], height, at[1]];
+                if (vine_number(hung.seed, place, 1) >> 8) as f32 / 16_777_216.0 >= chance {
+                    continue;
+                }
+                let [from, to] = vines.length;
+                let long = from + vine_number(hung.seed, place, 2) % (to.max(from) - from + 1);
+                for down in 0..long as i32 {
+                    let hangs = here - down;
+                    if hangs < 0 || block(chunks, x, hangs, z) != AIR {
+                        break;
+                    }
+                    let chunk = chunks[(hangs / side) as usize].get_or_insert_with(|| Chunk::filled(AIR));
+                    chunk.set(x as u32, (hangs % side) as u32, z as u32, vines.block);
+                }
+                // On from under the vine.
+                y = y.min(here - long as i32);
+            }
+        }
+    }
 }
 
 /// How many blocks further into or out of the ground than a block's middle
@@ -442,6 +561,12 @@ pub fn column_chunks(
     let whole_rock = (rock_to.div_euclid(side) - low_key) as usize..(rock_from.div_euclid(side) - low_key) as usize;
     for chunk in &mut chunks[whole_rock] {
         *chunk = Some(Chunk::filled(rock));
+    }
+    // Vines, at the world's own level and where it is drawn as cubes: under ledges, overhangs and cave roofs.
+    if level == 0 && !file.smooth && columns.iter().any(|column| column.vines.amount > 0.0) {
+        let own: Vec<usize> = (0..places.len()).filter(|&at| own(places[at])).collect();
+        let hung = Hung { columns: &columns, own: &own, across: across.len(), sea, seed: world.seed(), size };
+        hang_vines(&mut chunks, &hung, [across.start, low_key * side, along.start]);
     }
     let mut chunks: Vec<([i32; 3], Chunk)> =
         (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?))).collect();

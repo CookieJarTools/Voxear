@@ -52,6 +52,19 @@ Right-click in the Project panel and choose **New Biome**, or run **New Biome** 
 
 Each block is picked from the project's [[Blocks|blocks]], and the cross beside it takes it out again. A block left out is the world's own there.
 
+### Vines
+
+| Setting | What it does |
+| --- | --- |
+| Block | The [[Blocks#Vines|vine]] that hangs in the biome: a block whose Shape is Vine. None for no vines |
+| Amount | How many of the places a vine could hang from have one, from 0 to 1 |
+| Length | How long a vine hangs, in blocks, from and to |
+| Depth | How far under the ground's surface vines still hang, in metres: 0 keeps them out of the caves |
+
+A vine starts in open air with ground over it: under a ledge, an overhang, an arch or a cave's roof. It hangs down through the air until it meets something, and clings to any wall it hangs beside. Vines start three times as often beside a wall as out in the open, so most run down rock faces and a few hang free. The same world hangs the same vines every time, and a world without end hangs them as its ground is made.
+
+Only a world's own blocks have vines, not the larger ones of its far rings, and a Voxel Terrain has none.
+
 Each change is written to the biome's file as you make it, and every world listing the biome has its ground made again at once, in the level you are editing and in a game you are playing. There is nothing to save, and nothing to undo.
 
 ## How a place picks its biome

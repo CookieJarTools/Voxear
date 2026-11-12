@@ -432,6 +432,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Shader => ("Shader", "shader"),
                 AssetKind::MotionSet => ("Motion Set", "play"),
                 AssetKind::GunHandling => ("Gun Handling", "crosshair"),
+                AssetKind::Particles => ("Particle Effect", "particles"),
                 AssetKind::PromptIcons => ("Prompt Icons", "gamepad"),
                 AssetKind::Terrain => ("Terrain", "mountain"),
                 AssetKind::WorldGen => ("World Generator", "sprout"),

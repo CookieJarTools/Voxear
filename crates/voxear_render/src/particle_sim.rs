@@ -30,6 +30,7 @@ use voxear_rhi::{Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_scene::{Destroying, Switch, Switched, Transform, WorldOrigin, WorldTransform};
 
 use crate::{
+    effects::ParticleEffects,
     gpu::{GpuParticle, GpuParticleSim, GpuParticleSystem, GpuWind},
     graph::{BufferId, FrameGraph},
     particles::{self, ParticlePlayback, ParticleSpace, ParticleSystem, Placed, PlacedSystems, Step},
@@ -211,7 +212,7 @@ pub(crate) struct ParticleSim {
     /// adding up is fast: how many particles are alive.
     counters: Option<Buffer>,
     spans: Spans,
-    kept: HashMap<Entity, Kept>,
+    kept: HashMap<(Entity, u32), Kept>,
     buffers: Vec<Option<SimBuffers>>,
     /// This frame's systems with particles out, for each view to draw.
     pub placed: Arc<PlacedSystems>,
@@ -283,94 +284,105 @@ impl ParticleSim {
         let mut left_out = 0;
         let query = world
             .query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
-        for (entity, system, transform, at, playback) in query.without::<Destroying>() {
-            let capacity = system.capacity();
-            if !system.is_simulated() || capacity == 0 {
-                continue;
-            }
+        let effects = world.resource::<ParticleEffects>();
+        for (entity, own, transform, at, playback) in query.without::<Destroying>() {
             let model = at.map_or_else(|| transform.matrix(), |w| w.0);
             let origin = model.w_axis.truncate();
-            let playback = playback.copied().unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
-            // Room for it, made again when it needs more or less.
-            if self.kept.get(&entity).is_some_and(|kept| kept.capacity != capacity) {
-                let old = self.kept.remove(&entity).expect("checked above");
-                self.spans.give(old.first, old.chunks);
-            }
-            if !self.kept.contains_key(&entity) {
-                let needed = capacity.div_ceil(CHUNK);
-                let Some(first) = self.spans.take(needed, limit).filter(|_| systems.len() < MAX_SIMULATED_SYSTEMS)
-                else {
-                    left_out += 1;
+            let whole = playback.copied().unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
+            // Its effect's emitters, each a system of its own, or itself.
+            for (emitter, system) in (0u32..).zip(crate::effects::emitters(effects, own)) {
+                let key = (entity, emitter);
+                let capacity = system.capacity();
+                if !system.is_simulated() || capacity == 0 {
                     continue;
-                };
-                let kept = Kept {
-                    first,
-                    chunks: needed,
+                }
+                // Each emitter starts its Delay after the rest, and sends out particles of its own.
+                let started = whole.started + system.delay.max(0.0);
+                let playback = ParticlePlayback { started, stopped: whole.stopped.map(|stopped| stopped.max(started)) };
+                // Room for it, made again when it needs more or less.
+                if self.kept.get(&key).is_some_and(|kept| kept.capacity != capacity) {
+                    let old = self.kept.remove(&key).expect("checked above");
+                    self.spans.give(old.first, old.chunks);
+                }
+                if !self.kept.contains_key(&key) {
+                    let needed = capacity.div_ceil(CHUNK);
+                    let Some(first) = self.spans.take(needed, limit).filter(|_| systems.len() < MAX_SIMULATED_SYSTEMS)
+                    else {
+                        left_out += 1;
+                        continue;
+                    };
+                    let kept = Kept {
+                        first,
+                        chunks: needed,
+                        capacity,
+                        head: 0,
+                        emitted: 0,
+                        started: playback.started,
+                        last: None,
+                        owed: 0.0,
+                        last_out: f32::NEG_INFINITY,
+                        origin,
+                        shift: Vec3::ZERO,
+                        fresh: true,
+                        seen: frame,
+                    };
+                    self.kept.insert(key, kept);
+                }
+                let kept = self.kept.get_mut(&key).expect("made above");
+                kept.seen = frame;
+                if kept.started != playback.started {
+                    // Played again: over from the start, its old particles gone.
+                    (kept.started, kept.last, kept.owed, kept.fresh) = (playback.started, None, 0.0, true);
+                    (kept.head, kept.last_out) = (0, f32::NEG_INFINITY);
+                }
+                let now = time - playback.started;
+                if kept.last.is_some_and(|last| now < last) {
+                    // Time has gone back, as when a level starts over: it starts over with it.
+                    (kept.last, kept.owed, kept.fresh, kept.head, kept.last_out) =
+                        (None, 0.0, true, 0, f32::NEG_INFINITY);
+                }
+                let stopped = playback.stopped.map_or(f32::INFINITY, |stopped| stopped - playback.started);
+                let sent = sent(system, kept.last, now, stopped, &mut kept.owed);
+                kept.last = Some(now);
+                let burst = sent.burst.min(capacity);
+                let count = burst + sent.stream.min(capacity - burst);
+                if count > 0 {
+                    kept.last_out = now;
+                }
+                let longest = system.lifetime[0].max(system.lifetime[1]).max(0.01);
+                // Nothing out and nothing to clear: not stepped, not drawn.
+                if !kept.fresh && now - kept.last_out > longest + SEEN_OUT {
+                    (kept.origin, kept.shift) = (origin, Vec3::ZERO);
+                    continue;
+                }
+                let fresh = if std::mem::take(&mut kept.fresh) { particles::FRESH } else { 0 };
+                let stepped = particles::gpu(system, model, time, Some(whole));
+                let index = systems.len() as u32;
+                systems.push(GpuParticleSystem {
+                    flags: stepped.flags | fresh,
+                    pool_first: kept.first * CHUNK,
                     capacity,
-                    head: 0,
-                    emitted: 0,
-                    started: playback.started,
-                    last: None,
-                    owed: 0.0,
-                    last_out: f32::NEG_INFINITY,
-                    origin,
-                    shift: Vec3::ZERO,
-                    fresh: true,
-                    seen: frame,
-                };
-                self.kept.insert(entity, kept);
-            }
-            let kept = self.kept.get_mut(&entity).expect("made above");
-            kept.seen = frame;
-            if kept.started != playback.started {
-                // Played again: over from the start, its old particles gone.
-                (kept.started, kept.last, kept.owed, kept.fresh) = (playback.started, None, 0.0, true);
-                (kept.head, kept.last_out) = (0, f32::NEG_INFINITY);
-            }
-            let now = time - playback.started;
-            if kept.last.is_some_and(|last| now < last) {
-                // Time has gone back, as when a level starts over: it starts over with it.
-                (kept.last, kept.owed, kept.fresh, kept.head, kept.last_out) = (None, 0.0, true, 0, f32::NEG_INFINITY);
-            }
-            let stopped = playback.stopped.map_or(f32::INFINITY, |stopped| stopped - playback.started);
-            let sent = sent(system, kept.last, now, stopped, &mut kept.owed);
-            kept.last = Some(now);
-            let burst = sent.burst.min(capacity);
-            let count = burst + sent.stream.min(capacity - burst);
-            if count > 0 {
-                kept.last_out = now;
-            }
-            let longest = system.lifetime[0].max(system.lifetime[1]).max(0.01);
-            // Nothing out and nothing to clear: not stepped, not drawn.
-            if !kept.fresh && now - kept.last_out > longest + SEEN_OUT {
+                    head: kept.head,
+                    emit_count: count,
+                    emit_burst: burst,
+                    burst_age: sent.burst_age,
+                    emitted: kept.emitted,
+                    seed: particles::emitter_seed(stepped.seed, emitter),
+                    stream_ages: sent.stream_ages,
+                    moved: (origin - kept.origin).to_array(),
+                    shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },
+                    ..stepped
+                });
+                chunks.extend((0..kept.chunks).map(|chunk| [index, chunk * CHUNK]));
+                kept.head = (kept.head + count) % capacity;
+                kept.emitted = kept.emitted.wrapping_add(count);
                 (kept.origin, kept.shift) = (origin, Vec3::ZERO);
-                continue;
+                placed.insert(key, Placed { first: kept.first * CHUNK, capacity, oldest: kept.head });
             }
-            let fresh = if std::mem::take(&mut kept.fresh) { particles::FRESH } else { 0 };
-            let stepped = particles::gpu(system, model, time, Some(playback));
-            let index = systems.len() as u32;
-            systems.push(GpuParticleSystem {
-                flags: stepped.flags | fresh,
-                pool_first: kept.first * CHUNK,
-                capacity,
-                head: kept.head,
-                emit_count: count,
-                emit_burst: burst,
-                burst_age: sent.burst_age,
-                emitted: kept.emitted,
-                stream_ages: sent.stream_ages,
-                moved: (origin - kept.origin).to_array(),
-                shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },
-                ..stepped
-            });
-            chunks.extend((0..kept.chunks).map(|chunk| [index, chunk * CHUNK]));
-            kept.head = (kept.head + count) % capacity;
-            kept.emitted = kept.emitted.wrapping_add(count);
-            (kept.origin, kept.shift) = (origin, Vec3::ZERO);
-            placed.insert(entity, Placed { first: kept.first * CHUNK, capacity, oldest: kept.head });
         }
         // Systems that have gone give their room back.
-        let gone: Vec<Entity> = self.kept.iter().filter(|(_, kept)| kept.seen != frame).map(|(&e, _)| e).collect();
+        let gone: Vec<(Entity, u32)> =
+            self.kept.iter().filter(|(_, kept)| kept.seen != frame).map(|(&e, _)| e).collect();
         for entity in gone {
             let old = self.kept.remove(&entity).expect("listed above");
             self.spans.give(old.first, old.chunks);

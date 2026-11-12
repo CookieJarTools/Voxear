@@ -26,9 +26,11 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
         {
             return output;
         }
-        float3 at = (system.flags & PARTICLES_WORLD) != 0 ? particle.position : transform(system.model, float4(particle.position, 1.0)).xyz;
+        bool inWorld = (system.flags & PARTICLES_WORLD) != 0;
+        float3 at = inWorld ? particle.position : transform(system.model, float4(particle.position, 1.0)).xyz;
+        float3 going = inWorld ? particle.velocity : transform(system.model, float4(particle.velocity, 0.0)).xyz;
         uint own = particleHash(particle.seed);
-        return particlePlace(frame, system, at, particle.age, particle.age / particle.life, corner, own, 1.0);
+        return particlePlaceGoing(frame, system, at, going, particle.age, particle.age / particle.life, corner, own, 1.0);
     }
     float spawn;
     uint round;
@@ -53,6 +55,7 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
     float3 start = transform(system.model, float4(from, 1.0)).xyz;
     float3 velocity = transform(system.model, float4(way * speed, 0.0)).xyz;
     float3 world = particleFlight(system, start, velocity, age, life);
-    return particlePlace(frame, system, world, age, aged, corner, h, 1.0);
+    float3 going = particleSpeedAfter(float3(0.0, -PARTICLE_GRAVITY * system.gravity, 0.0), system.drag, velocity, age);
+    return particlePlaceGoing(frame, system, world, going, age, aged, corner, h, 1.0);
 }
 

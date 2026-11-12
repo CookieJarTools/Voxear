@@ -433,7 +433,9 @@ fn gather(
                 | AssetKind::WorldGen
                 | AssetKind::BlockWorld
                 | AssetKind::Block
-                | AssetKind::VoxModel => false,
+                | AssetKind::VoxModel
+                // A particle effect is read when a Particle System first plays it.
+                | AssetKind::Particles => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

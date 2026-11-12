@@ -272,3 +272,53 @@ position = [5.0, 0.5, 2.0]
 kind = "vortex"
 strength = 8.0
 radius = 3.5
+
+# The starters, each played by a Particle System's Effect: the ones that play once start over with the level.
+[[obj]]
+id = 18
+name = "Starter Fire"
+position = [8.0, 0.05, 2.5]
+[obj.particles]
+effect = "builtin:fire"
+
+[[obj]]
+id = 19
+name = "Starter Smoke"
+position = [11.0, 0.05, 7.0]
+[obj.particles]
+effect = "builtin:smoke"
+
+[[obj]]
+id = 20
+name = "Starter Magic"
+position = [-2.2, 1.0, -2.5]
+[obj.particles]
+effect = "builtin:magic"
+
+[[obj]]
+id = 21
+name = "Starter Muzzle Flash"
+position = [-0.8, 1.0, -3.5]
+[obj.particles]
+effect = "builtin:muzzle_flash"
+
+[[obj]]
+id = 22
+name = "Starter Explosion"
+position = [3.4, 0.4, -0.5]
+[obj.particles]
+effect = "builtin:explosion"
+
+[[obj]]
+id = 23
+name = "Starter Mud"
+position = [2.6, 0.1, -3.0]
+[obj.particles]
+effect = "builtin:mud"
+
+[[obj]]
+id = 24
+name = "Starter Rain"
+position = [-12.0, 6.0, 6.0]
+[obj.particles]
+effect = "builtin:rain"

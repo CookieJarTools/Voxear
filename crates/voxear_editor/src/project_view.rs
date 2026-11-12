@@ -99,6 +99,10 @@ pub enum ProjectEvent {
     /// under `anchor`, to make the one picked in `folder` (from the
     /// project's folder).
     NewShader { folder: String, anchor: NodeId },
+    /// New Particle Effect was chosen: the editor offers the starters under
+    /// `anchor`, to make a copy of the one picked in `folder` (from the
+    /// project's folder).
+    NewEffect { folder: String, anchor: NodeId },
     /// New Data Asset was chosen: the editor offers the scripts'
     /// Definitions under `anchor`, to make a data asset of the one picked in
     /// `folder` (from the project's folder).
@@ -132,6 +136,7 @@ enum MenuAction {
     Import,
     New(NewFile),
     NewShader,
+    NewEffect,
     NewDataAsset,
 }
 
@@ -253,6 +258,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Shader) => "shader",
                 FileKind::Asset(AssetKind::MotionSet) => "play",
                 FileKind::Asset(AssetKind::GunHandling) => "crosshair",
+                FileKind::Asset(AssetKind::Particles) => "particles",
                 FileKind::Asset(AssetKind::PromptIcons) => "gamepad",
                 FileKind::Asset(AssetKind::Terrain) => "mountain",
                 FileKind::Asset(AssetKind::WorldGen) => "sprout",
@@ -1002,6 +1008,10 @@ impl ProjectView {
                 _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }
+            // Particle effects, after the shaders, as one item offering each starter to copy.
+            if kind == NewFile::UiShader {
+                add(MenuItem::new("New Particle Effect…").enabled(open_to_new), Some(MenuAction::NewEffect));
+            }
             // Data assets, after the scripts that describe them, as one item offering each Definition.
             if kind == NewFile::Script {
                 add(MenuItem::new("New Data Asset…").enabled(open_to_new), Some(MenuAction::NewDataAsset));
@@ -1073,6 +1083,10 @@ impl ProjectView {
             MenuAction::NewShader => {
                 let folder = self.contents.borrow().folders[folder].path.clone();
                 vec![ProjectEvent::NewShader { folder, anchor: self.path }]
+            }
+            MenuAction::NewEffect => {
+                let folder = self.contents.borrow().folders[folder].path.clone();
+                vec![ProjectEvent::NewEffect { folder, anchor: self.path }]
             }
             MenuAction::NewDataAsset => {
                 let folder = self.contents.borrow().folders[folder].path.clone();

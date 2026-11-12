@@ -4,9 +4,34 @@ order: 1
 
 A **Particle System** sends out particles from its Obj: small soft dots that fly, fall, grow and fade. Many together make sparks, smoke, spray, dust or magic. Make one with the Hierarchy's **+ ▸ Particle System**, or add one to any Obj with **Add Component ▸ Effects ▸ Particle System**. It starts playing straight away, in the Scene view too, so you see each change as you make it.
 
+## Effects
+
+The quickest way to something good is the component's **Effect**: pick one and the Particle System plays it in place of its own settings. An effect is several emitters played together, so an explosion is its flash, its fireball, its smoke, its sparks and the debris it throws, all from one Obj.
+
+Every project has these starters:
+
+| Starter | What it is |
+| --- | --- |
+| Fire | Flames, the smoke they leave downwind, and embers |
+| Smoke | A column of smoke that drifts with the wind |
+| Sparks | A stream of sparks that bounce where they land |
+| Dust | Dust hanging over a patch of ground |
+| Rain, Snow | Falling from a box 14 metres across at the Obj, so put it overhead |
+| Blood | A spurt that lands and stays a moment |
+| Muzzle Flash | A flash, sparks and a wisp of smoke, once |
+| Explosion | Flash, fireball, smoke, sparks, debris and a shockwave, once |
+| Magic | Glowing motes round a pulsing light |
+| Mud | Clods and spatter thrown up, once |
+
+An effect that plays once plays over again while its Obj is selected in the editor, so you can watch it. In a game it plays once each time it starts: `Play()` starts it over.
+
+To make an effect of your own, choose **New Particle Effect…** in the Project panel and pick the starter to begin from. That makes a `.particles` file, a copy that's yours to change, and it shows in every Particle System's Effect list. Selecting it shows its emitters. The file is text: each `[[emitter]]` has a `name` and then the same settings a Particle System has, written as a scene writes them, and a Particle System playing it takes up your changes as you save. Editing an effect's emitters in the editor itself is still to come.
+
+With Effect set to None, the Particle System uses its own settings, the rest of this page.
+
 ## How particles are sent out
 
-Each round lasts its **Duration**. While it runs, the system sends out **Rate** particles a second, and a **Burst** of them all at once as it starts. With **Looping** on it starts over when the round ends; with it off, it sends out no more after one round, and the last particles live out their lives.
+Each round lasts its **Duration**, and starts its **Delay** after the system does. While it runs, the system sends out **Rate** particles a second, and a **Burst** of them all at once as it starts. With **Looping** on it starts over when the round ends; with it off, it sends out no more after one round, and the last particles live out their lives.
 
 Each particle sets out from the system's **Shape**:
 
@@ -87,6 +112,10 @@ The stats overlay (**F1** in a game) and the Profiler show **Particles**: how ma
 - **Intensity**: how much brighter than their colour they glow. Sparks and fire want 2 or more, so they glow and bloom.
 - **Lit**: lit by the sun, the sky and lamps, as smoke is. Turn it off for particles that make their own light, such as sparks.
 - **Softness**: how far before the ground or a wall they fade out, in metres, rather than cutting a hard line where they meet it.
+- **Texture**: what each particle is drawn with. **Dot** is a soft round dot. **Puff**, **Flame**, **Ring**, **Flare** and **Shard** are built in, most of them four different shapes so no two particles need look alike, and white, so they take the particle's colour. Or pick one of the project's pictures.
+- **Tiles**: for a picture of your own that holds several, as a flipbook does: how many across and down. Each particle is drawn with one of them.
+- **Animate**: each particle plays through its texture's pictures over its life, rather than keeping one.
+- **Stretch**: draws each particle longer along the way it's going, in metres for each metre a second: sparks and rain become streaks. A stretched particle doesn't spin.
 - Particles sit in the scene's fog and haze as far off as they are: near ones show clearly, far ones fade into the mist.
 - **Seed**: two systems that are alike but for their Seed send out different particles.
 
@@ -119,4 +148,4 @@ A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to 
 
 ## What's coming
 
-Still to come: collision with what's out of view, trails, textures and flipbooks, smoke lit from every side, a gallery of ready-made effects, and editing an effect as a stack of modules or a graph.
+Still to come: editing an effect's emitters in the editor, collision with what's out of view, trails, flipbooks blended frame to frame, smoke lit from every side, and editing an effect as a graph.

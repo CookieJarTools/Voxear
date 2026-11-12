@@ -471,6 +471,8 @@ pub struct Content {
     /// Gun Handlings read, by GUID; `None` for one that could not be. And
     /// how many times one was saved, for what resolved them to ask again.
     gun_handlings: HashMap<AssetGuid, Option<Arc<crate::guns::handling::GunHandling>>>,
+    /// The particle effects read so far, none for one that could not be.
+    particle_effects: HashMap<AssetGuid, Option<Arc<voxear_render::ParticleEffect>>>,
     handlings_version: u64,
     /// Terrains read, by GUID; `None` for one that could not be. And those
     /// changed since they were last written, as the editor changes them.
@@ -654,6 +656,7 @@ impl Content {
             clips_version: 0,
             motion_sets: HashMap::new(),
             gun_handlings: HashMap::new(),
+            particle_effects: HashMap::new(),
             terrains: HashMap::new(),
             unsaved_terrains: Default::default(),
             block_worlds: HashMap::new(),
@@ -1085,6 +1088,38 @@ impl Content {
     pub fn forget_motion_set(&mut self, guid: AssetGuid) {
         self.motion_sets.remove(&guid);
         self.clips_version += 1;
+    }
+
+    /// The particle effect at `guid`, a `.particles` asset, read once.
+    pub fn particle_effect(&mut self, guid: AssetGuid) -> Option<Arc<voxear_render::ParticleEffect>> {
+        if let Some(found) = self.particle_effects.get(&guid) {
+            return found.clone();
+        }
+        let found = self.read_particle_effect(guid).map(Arc::new).map_err(|error| {
+            tracing::warn!("could not read the particle effect {guid}: {error:#}");
+        });
+        self.particle_effects.insert(guid, found.clone().ok());
+        found.ok()
+    }
+
+    fn read_particle_effect(&mut self, guid: AssetGuid) -> Result<voxear_render::ParticleEffect> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Particles, "{} is not a particle effect", entry.path);
+        let path = entry.path.clone();
+        let text = self.read_text(&path)?;
+        voxear_render::ParticleEffect::from_toml(&text).map_err(|error| anyhow::anyhow!("reading {path}: {error}"))
+    }
+
+    /// Forgets a particle effect, read again when next asked for, as after
+    /// its file changed: Particle Systems playing it take it up at once.
+    pub fn forget_particle_effect(&mut self, guid: AssetGuid) {
+        self.particle_effects.remove(&guid);
+    }
+
+    /// A picture asset as particles are drawn with it, in its colours as
+    /// they look, read and uploaded on first use.
+    pub fn particle_picture(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<TextureId> {
+        self.picture(renderer, guid, true)
     }
 
     /// The Gun Handling at `guid`, read once.

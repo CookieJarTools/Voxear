@@ -2792,7 +2792,7 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
-## Particles *(the stateless and simulated paths, depth collision and forces implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2850,7 +2850,21 @@ sorting).
 - Alive particles are counted on the GPU, a subgroup at a time, into the GPU's own memory and copied out for
   the stats: adding to host-visible memory cost nine times the whole step.
 - On an RTX 3070, 1,048,576 particles blown and stirred are stepped in 0.19 ms and drawn as 2 cm sparks in
-  0.8 ms.
+  0.9 ms.
+
+**Effects** *(implemented)*. An effect is a list of emitters, each a name and a Particle System's settings, and a
+Particle System's Effect plays one in place of its own (`voxear_render::effects`). To the renderer and the
+simulation each emitter is a system of its own, keyed by its Obj and its place in the effect, in the effect's
+order, started its Delay after its Obj's playback; nothing else knows effects exist. Chose that over a new
+component or an Obj an emitter: one Obj plays an explosion's six emitters with no entities made or destroyed,
+and everything a system can do an emitter can. An effect is named as a material names its shader, `builtin:fire`
+or an asset's GUID (`EffectRef`), and so is a texture (`ParticleTexture`): both are plain values in the
+component, so scenes, prefabs, undo and copy and paste carry them as they carry a number. The renderer cannot
+read assets, so the engine lists what the world's systems name each frame, effects read and pictures loaded,
+as two resources of the world (`particles::resolve`, `ParticleEffects`, `ParticlePictures`); `Content` keeps each
+once read, so that is a few lookups a system. The starters are made in code from the built-in textures, which
+are made on the CPU when the renderer starts: white shapes in alpha, most of them four to a picture so particles
+differ, their outermost pixels clear so one never shows in the next.
 
 **Planned, in the order it is built.**
 
@@ -2858,11 +2872,10 @@ sorting).
   which work off screen; and the scene's rays, hardware or software, capped per frame, for what must land
   behind things. Particles stay visual only: gameplay gets hit events a frame or two late for sounds and
   marks, effects start on every machine by RPC with a seed, and a server simulates none.
-- **Effects as assets.** A `.particles` asset of several emitters, each a stack of modules in fixed stages
-  (spawn, start, update, events, draw), with sub-emitters and exposed values; a gallery of starters built from
-  generated textures; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.
-- **Drawing.** Stretched quads, meshes, trails as short chains per particle; flipbooks blended by motion
-  vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
+- **Editing effects.** An effect's emitters edited in the editor as stacks of modules in fixed stages (spawn,
+  start, update, events, draw), with sub-emitters and values an effect shows on the Particle System that plays
+  it; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.
+- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
   effects; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
   soft particles at half size, and anti-aliasing told about fast particles.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters

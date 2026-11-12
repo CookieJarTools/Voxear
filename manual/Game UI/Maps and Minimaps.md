@@ -39,6 +39,14 @@ The **map** covers the screen, and keeps its middle and its bottom left clear:
 - Bottom right, a compass lying on the ground as the map does, its needle pointing north, over buttons that zoom in and out a step.
 - Over the player, an arrow lying on the ground, pointing the way they face, and their name on a tag over it. The arrow lies on the ground under the player, though they fly over it or walk under it.
 
+What stands on the ground stands on the map, as small as the map's zoom makes it:
+
+- **Structures** the world's generator builds (see [[Structures]]): houses, a town's streets and roads, a dungeon's way in, and woods of block plants. They are their own blocks at 1:1 and show out to 1:8. In larger cells a house is too small a part of a cell to show.
+- **Plants the world grows** (see [[Block Worlds#Plants a world grows]]) that have a **Far block**: each stands where it grows, drawn in that block, while it is at least a cell across. Zoomed further out they show as woods, as they do in the far view.
+- **What was built and dug**, block for block at 1:1.
+
+Small plants with no Far block (grass, flowers, bushes, rocks) are not on the map, nor are meshes placed in the scene: give those a Map Marker. Under the ground only the first few blocks show, so a dungeon is its way in and not its rooms.
+
 The country's name is how warm and wet the world's generator makes that place, as Forest or Tundra. The time is whatever your game says it is, with `Map.Time`, and shows only once it says. The player's name is `Map.PlayerName`, or the label of their Map Marker.
 
 ## The opened map
@@ -273,7 +281,7 @@ MapKnowledge.Shown.Merge(news);
 ## What maps do not do yet
 
 - They show Block Worlds only, not heightmap Terrain.
-- A world's trees and buildings show once its far view carries them: a map is made from the same ground the far view is.
+- Plants are drawn in one block each, their Far block, so a tree is its leaves' colour from trunk to top.
 - The country's name is of the place at the map's middle. `Camera.PlaceAt` gives the place under the pointer, for a name of your own.
 - The words on the panels (TIME, TEMP, HUMIDITY, ZOOM) are not translated yet.
 - Names and numbers are drawn in the UI's own two typefaces, and labels cannot be letter-spaced.

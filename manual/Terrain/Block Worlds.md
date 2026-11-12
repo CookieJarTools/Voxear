@@ -245,7 +245,7 @@ The row also offers six **starter plants**, each made of small cubes to sit well
 
 A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
 
-A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn, and from there the far view shows them as woods of their **Far block**: for a starter tree, a block of its leaves' colour made beside its model. A plant goes when the block under it is dug or built over.
+A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn, and from there the far view shows them as woods of their **Far block**: for a starter tree, a block of its leaves' colour made beside its model. A map draws a plant in that block too, each where it grows (see [[Maps and Minimaps]]). A plant goes when the block under it is dug or built over.
 
 ## How blocks are drawn
 

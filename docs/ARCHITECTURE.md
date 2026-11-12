@@ -3559,7 +3559,16 @@ as a minimap on the HUD or a map opened over the game.
   level, at)` makes one on any thread from a `MapGround`: `Made`, a world without end, whose tile is the far view's
   (`far_tile_kept`, so levels 3 and up share `.voxear/FarView`) with every change put in, exact at level 0 and by
   shares coarser (built from an eighth, dug past a half); or `Held`, a world whose chunks are all held, read from
-  its blocks. `MapColumn::of_runs` is the one place runs become a column.
+  its blocks. `MapColumn::of_runs` is the one place runs become a column. Before the changes go in, a `Made`
+  tile takes what stands on its ground: the generator's structures, built over the tile's chunk columns at once
+  into a list of blocks (`structure::build_over`, the builder the chunks use, so a map and the world agree), out to
+  level 3; and the plants the world grows (`MapGround::growing`, a `Woods` a kind), each stood where `grow_far`
+  puts it while it is a cell across, as the far view's woods past that.
+- **Structures' sites** (`structure::looks`): building a chunk column, or a map tile, looks for each structure's
+  sites only as far as they can matter there: its own reach, and for each structure listed after it, as far as
+  that one is looked for and then as near as the two may stand. Trees, listed last, are looked for a crown's
+  width off rather than as far as a dungeon reaches under the ground, which is most of what a column with
+  structures costs to make.
 - **Drawing** (`voxear_render::map`, `shaders/map.slang`): a map keeps a window of columns, a power of two cells a
   side, each at its place modulo the side, in a buffer on the GPU alone, written through a staging buffer as tiles
   come (`write_map_tile`); beside them, the highest block of each 8 by 8 cells and of each tile. The fragment shader
@@ -3572,7 +3581,9 @@ as a minimap on the HUD or a map opened over the game.
 - **The game's maps** (`voxear_engine::map`, `Maps`): each frame, for every map view in the screen's UI
   (`voxear_ui::map_view`, the `Minimap` and `Map` elements), it keeps what the world's tiles are made from, marks
   the tiles a change lies in to be made again, asks for the tiles the view's window needs on the terrain's threads,
-  nearest first, writes those that came, and asks the renderer to draw. A map opened large hears the pointer: a
+  nearest first, writes those that came, and asks the renderer to draw. A tile that comes made from older ground
+  is kept as it is unless a change lies in it (`KeptGround::changed_since`): a world streaming round the camera is
+  another ground every frame, and none of that changes a map. A map opened large hears the pointer: a
   drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two. A view
   looks at the ground under what it follows (`ShownMap::ground`), not at how high that is, so the ground is where
   the arrow is though the camera flies. A view its ground covers (`cover`, a minimap) draws all its window's

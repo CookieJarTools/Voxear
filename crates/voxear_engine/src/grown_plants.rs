@@ -539,12 +539,12 @@ pub fn update(world: &mut World, content: &mut Content) {
     world.insert_resource(growth);
 }
 
-/// The wood a growing Foliage shows as far off (see
-/// `voxear_terrain::blocks::grow::Woods`): where it has a far block its
-/// world holds, its world is one without end, and its plants stand thick
-/// enough, as tall and as wide as its mesh at its middle size. It begins
-/// in the first ring past those its plants are drawn on. None where nothing
-/// draws, as on a server: the far view is only seen.
+/// What a growing Foliage shows as where its plants are not drawn, far off
+/// or on a map (see `voxear_terrain::blocks::grow::Woods`): where it has a
+/// far block its world holds and its world is one without end, as tall and
+/// as wide as its mesh at its middle size. As a wood it begins in the
+/// first ring past those its plants are drawn on. None where nothing
+/// draws, as on a server: neither is seen there.
 fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &BlockWorldAsset) -> Option<Woods> {
     let far_block = grower.data.far_block.as_deref()?;
     let endless = asset.file.generate.as_ref()?.endless?;
@@ -558,17 +558,24 @@ fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &Block
     let size = (rule.scale[0] + rule.scale[1]) * 0.5;
     let wide = (most.x - least.x).max(most.z - least.z);
     let from = Woods::first_past(grower.draw_distance, endless.distance);
-    let woods = Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from };
-    woods.shows().then_some(woods)
+    Some(Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from })
 }
 
 /// What the Foliage growing under the Block World on `entity` show as in
-/// its far view, each a wood (see [`woods_of`]).
+/// its far view, each a wood (see [`woods_of`]): those whose plants stand
+/// thick enough to show so far off.
 pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Arc<dyn FarBuilt>> {
+    let woods = on_maps(world, content, entity).into_iter().filter(Woods::shows);
+    woods.map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+}
+
+/// The Foliage growing under the Block World on `entity` that a map of it
+/// shows, a kind each (see [`woods_of`]): every one with a far block,
+/// however thin it stands, as a map near enough shows each plant.
+pub fn on_maps(world: &World, content: &mut Content, entity: Entity) -> Vec<Woods> {
     let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Vec::new() };
     let growers = growers(world).into_iter().filter(|grower| grower.world == entity);
-    let woods = growers.filter_map(|grower| woods_of(world, content, &grower, asset));
-    woods.map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+    growers.filter_map(|grower| woods_of(world, content, &grower, asset)).collect()
 }
 
 /// Gives a column's Obj what its plants share with their Foliage.

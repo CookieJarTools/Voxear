@@ -97,6 +97,22 @@ struct KeptGround {
     /// Counted up each time the ground changes, so a tile made from the
     /// ground as it was is known for it.
     number: u64,
+    /// The number it had when all of it last changed, and each chunk column
+    /// a change lay in since, by the number it had then: a tile made from
+    /// an older ground is as good as one made now unless one lies in it. A
+    /// world being made round the camera is another ground with every chunk
+    /// that comes, and none of those change what a map shows.
+    remade: u64,
+    touched: HashMap<[i32; 2], u64>,
+}
+
+impl KeptGround {
+    /// Whether tile `key`, made from the ground when its number was
+    /// `number`, would be made another way now.
+    fn changed_since(&self, key: &TileKey, number: u64) -> bool {
+        let lies_in = |column: &[i32; 2]| [column[0] >> key.level, column[1] >> key.level] == key.at;
+        self.remade > number || self.touched.iter().any(|(column, at)| *at > number && lies_in(column))
+    }
 }
 
 /// A map view's own state: its window in the renderer and how it is seen.
@@ -401,7 +417,7 @@ impl Maps {
         }
         let found = block_world(world);
         if let Some((entity, blocks, asset, corner)) = &found {
-            self.keep_ground(content, *entity, blocks, asset, *corner);
+            self.keep_ground((world, content), *entity, blocks, asset, *corner);
         }
         self.grounds.retain(|entity, _| found.as_ref().is_some_and(|(found, ..)| found == entity));
         self.take_made();
@@ -438,27 +454,30 @@ impl Maps {
     /// marks the tiles a change to it lies in to be made again.
     fn keep_ground(
         &mut self,
-        content: &mut Content,
+        (world, content): (&World, &mut Content),
         entity: Entity,
         blocks: &BlockWorld,
         asset: &BlockWorldAsset,
         corner: Vec3,
     ) {
+        let endless = asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
+        // The plants the world grows by itself that a map shows, as their Foliage are now.
+        let plants = if endless { crate::grown_plants::on_maps(world, content, entity) } else { Vec::new() };
         if let Some(kept) = self.grounds.get_mut(&entity) {
             (kept.corner, kept.block_size) = (corner, blocks.block_size);
             let same = Arc::ptr_eq(&kept.blocks, &blocks.blocks)
                 && Arc::ptr_eq(&kept.changes, &asset.pending)
-                && Arc::ptr_eq(&kept.faces, &blocks.faces);
+                && Arc::ptr_eq(&kept.faces, &blocks.faces)
+                && kept.ground.plants() == &plants[..];
             if same {
                 return;
             }
         }
-        let endless = asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
         let making = if endless { crate::blocks::making(content, asset) } else { None };
         let (ground, changes) = match making {
             Some(making) => {
                 let changes = Arc::new(all_changes(&asset.base, &blocks.blocks, &asset.pending));
-                (MapGround::made(making, changes.clone()), Some(changes))
+                (MapGround::made(making, changes.clone()).growing(plants), Some(changes))
             }
             None => (MapGround::held(blocks.blocks.clone(), blocks.faces.clone()), None),
         };
@@ -471,7 +490,10 @@ impl Maps {
                 Some(KeptGround { ground: MapGround::Made { making: old, changes: was, .. }, .. }),
                 MapGround::Made { making, .. },
                 Some(now),
-            ) if old.file == making.file && Arc::ptr_eq(&old.world, &making.world) => {
+            ) if old.file == making.file
+                && Arc::ptr_eq(&old.world, &making.world)
+                && before.is_some_and(|kept| kept.ground.plants() == ground.plants()) =>
+            {
                 let differs = |key: &[i32; 3]| was.chunks.get(key) != now.chunks.get(key);
                 let keys = was.chunks.keys().chain(now.chunks.keys()).filter(|key| differs(key));
                 Some(keys.map(|key| [key[0], key[2]]).collect())
@@ -487,10 +509,21 @@ impl Maps {
             let lies_in = |column: &[i32; 2]| [column[0] >> key.level, column[1] >> key.level] == key.at;
             kept.stale |= changed.as_ref().is_none_or(|columns| columns.iter().any(lies_in));
         }
-        // What is being made was asked of the old ground: made again when it comes, by its number.
+        // What is being made was asked of the old ground: made again when it comes, where a change lies in it.
         let number = before.map_or(0, |kept| kept.number) + 1;
+        let (remade, touched) = match (&changed, before) {
+            (Some(columns), Some(kept)) => {
+                // With no tile being made, none can come that was asked of an older ground.
+                let mut touched = if self.asked.is_empty() { HashMap::new() } else { kept.touched.clone() };
+                touched.extend(columns.iter().map(|column| (*column, number)));
+                (kept.remade, touched)
+            }
+            _ => (number, HashMap::new()),
+        };
         let kept = KeptGround {
             number,
+            remade,
+            touched,
             ground,
             blocks: blocks.blocks.clone(),
             changes: asset.pending.clone(),
@@ -509,7 +542,7 @@ impl Maps {
             let heights = tile.heights();
             let shown = self.tiles.get(&key).map_or(self.frame, |kept| kept.shown);
             // One the world changed under while it was made is shown, and made again.
-            let stale = self.grounds.get(&key.world).is_some_and(|ground| ground.number != number);
+            let stale = self.grounds.get(&key.world).is_some_and(|ground| ground.changed_since(&key, number));
             let kept = KeptTile { tile: Arc::new(tile), heights, made: self.made_count, shown, stale };
             self.tiles.insert(key, kept);
         }
@@ -883,6 +916,34 @@ mod tests {
             if any_turn { Vec2::new(at.x, at.z).length() } else { at.x.abs().max(at.z.abs()) }
         });
         far.into_iter().fold(0.0, f32::max) / reach
+    }
+
+    #[test]
+    fn a_tile_made_from_older_ground_is_made_again_only_where_a_change_lies_in_it() {
+        let world = World::new().spawn(());
+        let ground = MapGround::held(Arc::new(BlockMap::default()), Arc::from(Vec::new()));
+        let kept = |remade: u64, touched: &[([i32; 2], u64)]| KeptGround {
+            ground: ground.clone(),
+            blocks: Arc::new(BlockMap::default()),
+            changes: Arc::default(),
+            faces: Arc::from(Vec::new()),
+            block_size: 1.0,
+            corner: Vec3::ZERO,
+            number: 9,
+            remade,
+            touched: touched.iter().copied().collect(),
+        };
+        // Cells of four blocks: a tile is four chunk columns a side.
+        let tile = TileKey { world, level: 2, at: [1, -1] };
+        // The ground is another with every chunk that comes round the camera: a tile asked for long before
+        // is still the tile, while nothing changed in it.
+        assert!(!kept(3, &[]).changed_since(&tile, 5));
+        // All of it changed since: its blocks' colours, or what it grows.
+        assert!(kept(6, &[]).changed_since(&tile, 5));
+        // A block set in one of its chunk columns since, and not before, nor in another tile's.
+        assert!(kept(3, &[([5, -2], 7)]).changed_since(&tile, 5));
+        assert!(!kept(3, &[([5, -2], 4)]).changed_since(&tile, 5));
+        assert!(!kept(3, &[([8, -2], 7), ([5, 0], 7)]).changed_since(&tile, 5));
     }
 
     #[test]

@@ -379,3 +379,56 @@ FragmentOut particleMeshFragment(MeshParticleOut input)
     output.color = float4(lit * input.air.a + input.air.rgb, 1.0);
     return output;
 }
+
+// The whole screen, for laying the particles drawn at half size over the scene.
+struct ParticleScreenOut
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+[shader("vertex")]
+ParticleScreenOut particleScreenVertex(uint vertexId : SV_VertexID)
+{
+    ParticleScreenOut output;
+    float2 ndc = fullscreenNdc(vertexId);
+    output.position = float4(ndc, 0.0, 1.0);
+    output.uv = ndc * 0.5 + 0.5;
+    return output;
+}
+
+// How far along the view what the scene has under `pixel` is, by its depth (push.textures.x); far off for the sky.
+float particleSceneDepth(Frame* frame, int2 pixel)
+{
+    float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+    return depth > 0.0 ? frame->near / depth : 1e4;
+}
+
+// The particles drawn at half size (push.texture, push.size across) laid over the scene: each pixel from the four
+// half-size ones round it, weighted most to those that tested themselves against a depth like this pixel's own,
+// so particles behind an edge do not bleed over what stands in front of them, nor leave a rim round it.
+[shader("fragment")]
+float4 particleCompositeFragment(ParticleScreenOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    Texture2D drawn = textures[NonUniformResourceIndex(push.texture)];
+    int2 half = int2(push.size);
+    float own = particleSceneDepth(frame, int2(input.position.xy));
+    float2 at = input.uv * float2(half) - 0.5;
+    int2 base = int2(floor(at));
+    float2 f = at - float2(base);
+    float4 total = 0.0;
+    float weights = 0.0;
+    for (uint k = 0; k < 4; k++)
+    {
+        int2 o = int2(k & 1, k >> 1);
+        int2 c = clamp(base + o, int2(0, 0), half - 1);
+        // The depth that pixel tested itself against (particleFragment).
+        float theirs = particleSceneDepth(frame, c * 2 + 1);
+        float2 w = lerp(1.0 - f, f, float2(o));
+        float weight = (w.x * w.y + 1e-4) / (1e-3 + abs(theirs - own) / max(own, 1e-3));
+        total += drawn.Load(int3(c, 0)) * weight;
+        weights += weight;
+    }
+    return total / max(weights, 1e-6);
+}

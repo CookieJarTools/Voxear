@@ -501,6 +501,15 @@ impl ParticleSystem {
         self.capacity().saturating_mul(1 + tails)
     }
 
+    /// How wide its widest particle ever is, in metres.
+    pub fn largest(&self) -> f32 {
+        let grown = match self.size_curve.keys() {
+            [] => self.size_end.max(1.0),
+            keys => keys.iter().map(|key| key[1]).fold(0.0, f32::max),
+        };
+        self.size[0].max(self.size[1]).max(0.0) * grown
+    }
+
     /// How long between the points a tail keeps, in seconds.
     pub(crate) fn trail_interval(&self) -> f32 {
         self.trail_time.max(0.01) / (TRAIL_POINTS - 1) as f32
@@ -543,7 +552,20 @@ pub struct Drawn {
     pub count: u32,
     pub trails: ParticleTrails,
     pub mesh: Option<(u32, u32)>,
+    /// Drawn at half size and laid over the scene: soft particles that are
+    /// large on screen, which cover many pixels many times over and show no
+    /// less for it.
+    pub half: bool,
 }
+
+/// Whether soft particles large on screen are drawn at half size: a
+/// resource of the world, for comparing the two; without one, they are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParticleHalfSize(pub bool);
+
+/// How large a soft particle looks before its system is drawn at half size:
+/// its width against how far its system is from the camera.
+const HALF_SIZE_FROM: f32 = 0.06;
 
 /// When a Particle System started, and stopped, in the renderer's time: set
 /// by the engine as it plays and stops it. Without one, it has been going
@@ -594,6 +616,7 @@ pub(crate) fn gather(
     let query =
         world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let effects = world.resource::<ParticleEffects>();
+    let halving = world.resource::<ParticleHalfSize>().is_none_or(|halving| halving.0);
     let mut systems: Vec<(f32, GpuParticleSystem, Drawn)> = Vec::new();
     for (entity, system, transform, at, playback) in query.without::<Destroying>() {
         let model = at.map_or_else(|| transform.matrix(), |w| w.0);
@@ -609,15 +632,19 @@ pub(crate) fn gather(
                 (drawn.mesh, drawn.mesh_material, drawn.flags) = (mesh.mesh, mesh.material, drawn.flags | MESH);
             }
             let mesh = mesh.flatten().map(|mesh| (mesh.first_index, mesh.index_count));
+            // Soft, flat and large on screen: at half size.
+            let flat = mesh.is_none() && system.trails == ParticleTrails::Off && system.softness > 0.0;
+            let half = halving && flat && system.largest() > HALF_SIZE_FROM * distance.sqrt().max(1.0);
             if !system.is_simulated() {
                 if system.slots() > 0 {
-                    systems.push((distance, drawn, Drawn { count: system.slots(), trails: ParticleTrails::Off, mesh }));
+                    let how = Drawn { count: system.slots(), trails: ParticleTrails::Off, mesh, half };
+                    systems.push((distance, drawn, how));
                 }
                 continue;
             }
             let Some(at) = placed.get(&(entity, emitter)) else { continue };
             let drawn = GpuParticleSystem { pool_first: at.first, capacity: at.capacity, head: at.oldest, ..drawn };
-            systems.push((distance, drawn, Drawn { count: at.capacity, trails: system.trails, mesh }));
+            systems.push((distance, drawn, Drawn { count: at.capacity, trails: system.trails, mesh, half }));
         }
     }
     // The farthest first; one Obj's emitters stay in their effect's order.
@@ -751,16 +778,18 @@ pub struct Targets {
 /// particles, in the order they are listed: first those whose particles are
 /// meshes, in a pass of their own that draws them into the depth as well, so
 /// they hide one another and what is drawn after fades before them; then the
-/// rest, a quad a particle with its tail or their ribbon under it; then the
+/// rest, a quad a particle with its tail or their ribbon under it, those
+/// that are large on screen at half size (see [`Drawn::half`]); then the
 /// sea's spray, listed after them, with as many drops as `spray` says. Each
 /// is fogged as far off as it is, through the volumetric fog's integrated
 /// volume when there is one.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
+    (gpu, bindless): (&voxear_rhi::Gpu, &mut voxear_rhi::Bindless),
     (pipelines, push): (Pipelines, Push),
     draw: Draw,
     fog_volume: Option<ImageId>,
-) {
+) -> anyhow::Result<()> {
     let Draw { step, counts, spray, rapids, targets } = draw;
     let Targets { hdr, velocity, depth, sampled, clusters, pool, index_buffer, extent } = targets;
     let depth_texture = fg.texture(depth);
@@ -792,35 +821,52 @@ pub(crate) fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    // The flat ones in three goes. Those big enough on screen are drawn at half size and laid over the scene;
+    // the systems further off than any of them are drawn before that, so the big ones cover them, and the rest
+    // after, over them.
+    let listed: Vec<(u32, Drawn)> = (0..).zip(counts.iter().copied()).collect();
+    let (behind, rest) = listed.split_at(listed.iter().position(|(_, drawn)| drawn.half).unwrap_or(0));
+    let halved: Vec<(u32, Drawn)> = rest.iter().filter(|(_, drawn)| drawn.half).copied().collect();
+    let front: Vec<(u32, Drawn)> = rest.iter().filter(|(_, drawn)| !drawn.half).copied().collect();
     let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
     images.extend(&read);
     let push = Push { textures: [depth_texture.0, volume, 0, 0], ..push };
+    if !behind.is_empty() {
+        let behind = behind.to_vec();
+        fg.add_pass("Particles (far)", &images, &buffers, move |ctx| {
+            let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+            begin_rendering(ctx, extent, &color, None);
+            draw_flat(ctx, pipelines, &push, &behind);
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    if !halved.is_empty() {
+        let half = vk::Extent2D { width: extent.width.div_ceil(2), height: extent.height.div_ceil(2) };
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let desc = voxear_rhi::ImageDesc::new(half.width, half.height, crate::pipelines::HDR_FORMAT, usage);
+        let target = fg.create_image(gpu, bindless, "particles at half size", desc)?;
+        let mut images = vec![(target, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
+        images.extend(&read);
+        // Each of its pixels tests itself against the scene's depth two pixels on for each of its own.
+        let halving = Push { textures: [depth_texture.0, volume, 2, 0], ..push };
+        fg.add_pass("Particles (half size)", &images, &buffers, move |ctx| {
+            let nothing = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0; 4] } };
+            let color = [attachment(ctx.view(target), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(nothing))];
+            begin_rendering(ctx, half, &color, None);
+            draw_flat(ctx, pipelines, &halving, &halved);
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+        let laid = [(hdr, ImageAccess::ColorAttachment), (target, ImageAccess::Sampled), (depth, ImageAccess::Sampled)];
+        let textures = [depth_texture.0, 0, 0, 0];
+        let lay = Push { texture: fg.texture(target).0, textures, size: [half.width, half.height], ..push };
+        fg.add_pass("Particles (half size) over the scene", &laid, &[], move |ctx| {
+            crate::post_passes::draw(ctx, pipelines.particle_composite, &lay, hdr, true);
+        });
+    }
     fg.add_pass("Particles", &images, &buffers, move |ctx| {
         let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
         begin_rendering(ctx, extent, &color, None);
-        // Each system with the pipeline for what it draws, bound again only when it changes.
-        let mut bound = vk::Pipeline::null();
-        let mut draw = |pipeline: vk::Pipeline, system: u32, vertices: u32| {
-            if std::mem::replace(&mut bound, pipeline) != pipeline {
-                bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
-            }
-            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system, ..push });
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
-        };
-        for (system, drawn) in (0..).zip(&counts) {
-            match drawn.trails {
-                ParticleTrails::Off => {}
-                ParticleTrails::Particles => draw(pipelines.particle_trails, system, drawn.count * TRAIL_POINTS * 6),
-                // The ribbon in place of the particles it joins.
-                ParticleTrails::Ribbon => {
-                    draw(pipelines.particle_ribbon, system, drawn.count * 6);
-                    continue;
-                }
-            }
-            if drawn.mesh.is_none() {
-                draw(pipelines.particles, system, drawn.count * 6);
-            }
-        }
+        draw_flat(ctx, pipelines, &push, &front);
         if let Some(drops) = spray {
             bind(ctx, pipelines.sea_spray, vk::PipelineBindPoint::GRAPHICS, &push);
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: counts.len() as u32, ..push });
@@ -835,6 +881,35 @@ pub(crate) fn record(
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
+    Ok(())
+}
+
+/// Draws the flat particles of `systems`, each its place among the frame's and how it is drawn: its tail or
+/// their ribbon, then a quad a particle. Those drawn as meshes have a pass of their own.
+fn draw_flat(ctx: &crate::graph::PassContext, pipelines: Pipelines, push: &Push, systems: &[(u32, Drawn)]) {
+    // Each system with the pipeline for what it draws, bound again only when it changes.
+    let mut bound = vk::Pipeline::null();
+    let mut draw = |pipeline: vk::Pipeline, system: u32, vertices: u32| {
+        if std::mem::replace(&mut bound, pipeline) != pipeline {
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+        }
+        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system, ..*push });
+        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+    };
+    for &(system, drawn) in systems {
+        match drawn.trails {
+            ParticleTrails::Off => {}
+            ParticleTrails::Particles => draw(pipelines.particle_trails, system, drawn.count * TRAIL_POINTS * 6),
+            // The ribbon in place of the particles it joins.
+            ParticleTrails::Ribbon => {
+                draw(pipelines.particle_ribbon, system, drawn.count * 6);
+                continue;
+            }
+        }
+        if drawn.mesh.is_none() {
+            draw(pipelines.particles, system, drawn.count * 6);
+        }
+    }
 }
 
 /// Records the simulated particles' step: every chunk of the pool with

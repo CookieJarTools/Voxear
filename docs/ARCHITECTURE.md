@@ -2841,7 +2841,7 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   is left to games and packages.
 - **Planned on top:** clips keyed on a timeline.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails and meshes implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2979,6 +2979,18 @@ is going, so rubble that has landed lies still rather than spinning where it lie
 built in or a model's GUID (`ParticleMesh`), and the engine lists the models' meshes and materials for the
 renderer with the pictures (`ParticleMeshes`).
 
+**Half size** *(implemented)*. Thick smoke costs by the pixel: dozens of puffs each covering a good part of the
+screen. A system of soft flat particles whose widest is more than 0.06 of its distance from the camera is drawn
+into a target half the size each way (`Drawn::half`, decided where the frame's systems are gathered), with the
+same shaders: each of its pixels tests itself against the scene's depth at the middle of the four pixels it
+stands for. A pass then lays the target over the scene, each pixel from the four half-size ones round it,
+weighted most to those that tested against a depth like its own, so smoke behind a post neither bleeds over it
+nor leaves a rim. One composite means the frame's flat particles are drawn in three goes rather than one: the
+systems further off than every half-size one first, at full size, so the smoke covers them; the half-size ones;
+then the rest over them. A spark deep in near smoke therefore shows through it, which is the price. Chose a
+rule over a setting: soft particles that size show no difference, and a hard-edged one (Softness 0) is never
+halved. `ParticleHalfSize(false)` as a resource of the world turns it off, for comparing.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
@@ -2988,8 +3000,8 @@ renderer with the pictures (`ParticleMeshes`).
 - **More in an effect.** Sub-emitters and events, and values an effect shows on the Particle System that plays
   it.
 - **Drawing.** Flipbooks blended by motion vectors; lighting worked out once a particle rather than once a
-  corner; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
-  soft particles at half size, and anti-aliasing told about fast flat particles; a picture along a ribbon; a
+  corner; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, and
+  anti-aliasing told about fast flat particles; a picture along a ribbon; a
   coarser LOD for far mesh particles, and their shadows.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
   rather than names, hit and finished events, curves and gradients.

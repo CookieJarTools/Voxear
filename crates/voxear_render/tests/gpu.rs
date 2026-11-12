@@ -5379,6 +5379,91 @@ fn particles_drawn_as_meshes_are_solid_lit_and_hide_what_is_behind_them() {
     assert!(flying > 500 && resting * 8 < flying, "tumbling in the air, still on the floor: {flying} pixels change, then {resting}");
 }
 
+/// A fat column of smoke, `smoke` puffs a second, with a post standing in front of it, its soft particles drawn at
+/// half size or not; or with none, the post alone. With the picture, the least of sixty frames' time drawing
+/// particles, in milliseconds, and which of the half-size passes ran.
+fn half_size_render(smoke: f32, half: bool) -> Option<(Vec<u8>, f32, bool)> {
+    use voxear_render::{BuiltinTexture, ParticleHalfSize, ParticlePlayback, ParticleSystem, ParticleTexture, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    // The post, two metres nearer the camera than the smoke, a little to one side so its edges fall between pixels.
+    let red = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.1, 0.1, 1.0], ..MaterialDesc::default() }).unwrap();
+    let post = Transform::new(Vec3::new(0.33, 1.5, -2.0), Quat::IDENTITY, Vec3::new(0.25, 3.0, 0.25));
+    world.spawn((MeshRenderer::new(cube, red), post));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if smoke > 0.0 {
+        let column = ParticleSystem {
+            texture: ParticleTexture::Builtin(BuiltinTexture::Puff),
+            rate: smoke,
+            lifetime: [3.0, 3.0],
+            speed: [0.5, 0.8],
+            size: [1.2, 1.6],
+            size_end: 1.8,
+            color: [0.8, 0.8, 0.8, 0.8],
+            color_end: [0.8, 0.8, 0.8, 0.0],
+            angle: 8.0,
+            radius: 0.3,
+            softness: 0.4,
+            ..ParticleSystem::default()
+        };
+        world.spawn((column, ParticlePlayback { started: time - 3.0, stopped: None }, Transform::from_position(Vec3::new(0.0, 0.2, 0.0))));
+    }
+    world.insert_resource(ParticleHalfSize(half));
+    world.insert_resource(steady_post());
+    // The same moment each way, so the same particles in the same places.
+    run(&mut renderer, &world, &mut time, 4);
+    let pixels = renderer.read_pixels().unwrap().2;
+    let (mut least, mut halved) = (f32::INFINITY, false);
+    for _ in 0..60 {
+        renderer.render(&world, time).expect("frame renders");
+        let timings = renderer.timings();
+        let drawing = |(name, _): &&(String, f32)| name.starts_with("Particles");
+        least = least.min(timings.iter().filter(drawing).map(|(_, ms)| *ms).sum());
+        halved |= timings.iter().any(|(name, _)| name == "Particles (half size)");
+    }
+    Some((pixels, least, halved))
+}
+
+#[test]
+fn smoke_drawn_at_half_size_looks_as_it_does_at_full_and_keeps_off_what_stands_before_it() {
+    let Some((bare, _, _)) = half_size_render(0.0, true) else { return };
+    let (full, _, at_full) = half_size_render(40.0, false).unwrap();
+    let (half, _, at_half) = half_size_render(40.0, true).unwrap();
+    keep_image("particles full size.png", &full);
+    keep_image("particles half size.png", &half);
+    assert!(at_half && !at_full, "large soft particles go through the half-size passes, unless told not to");
+    // The smoke covers a good part of the picture, and is the same smoke either way.
+    let smoky = differing_pixels(&full, &bare);
+    assert!(smoky > 12_000, "the column shows: {smoky} pixels");
+    let apart: i64 = full.iter().zip(&half).map(|(a, b)| i64::from(a.abs_diff(*b))).sum();
+    let mean = apart as f32 / (smoky as f32 * 3.0);
+    assert!(mean < 3.0, "half size and full differ by {mean} levels a pixel of smoke, on average");
+    let far_off = full.chunks_exact(4).zip(half.chunks_exact(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 24)).count();
+    assert!(far_off * 50 < smoky, "few pixels differ much: {far_off} of {smoky}");
+    // The post in front of it stays the post: no smoke drawn over it, nor a rim left round it.
+    let post: Vec<(u32, u32)> = (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y))).filter(|&at| rgb_at(&bare, at)[0] > rgb_at(&bare, at)[1] + 60).collect();
+    assert!(post.len() > 2_000, "the red post: {} pixels", post.len());
+    let smeared = |pixels: &[u8]| post.iter().filter(|&&at| rgb_at(pixels, at).iter().zip(rgb_at(&bare, at)).any(|(a, b)| (a - b).abs() > 16)).count();
+    let (on_full, on_half) = (smeared(&full), smeared(&half));
+    assert!(on_half * 20 < post.len(), "smoke over the post at half size: {on_half} of {} pixels ({on_full} at full)", post.len());
+    // And the drawing costs less where it counts: thick smoke, the same pixels covered thousands of times over.
+    let (_, full_ms, _) = half_size_render(2000.0, false).unwrap();
+    let (_, half_ms, _) = half_size_render(2000.0, true).unwrap();
+    println!("6,000 puffs drawn in {full_ms:.3} ms at full size, {half_ms:.3} ms at half");
+    assert!(half_ms < full_ms * 0.5, "half size is cheaper: {half_ms} ms against {full_ms} ms");
+}
+
 #[test]
 fn a_system_with_no_room_in_the_budget_is_left_out_and_counted() {
     use voxear_render::{ParticleSpace, ParticleSystem};

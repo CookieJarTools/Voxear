@@ -140,7 +140,7 @@ pub use particle_meshes::{BuiltinMesh, ParticleMesh, ParticleMeshes};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
 pub use particles::{
     MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
-    ParticleTrails,
+    ParticleHalfSize, ParticleTrails,
 };
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};

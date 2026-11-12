@@ -327,7 +327,8 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
 
 // A particle's pixel: its texture's picture, or without one a soft round
 // dot; faded before what it meets, and hidden behind it (the scene's depth,
-// push.textures.x).
+// push.textures.x). Drawn at half size, push.textures.z is 2: how many of the
+// depth's pixels each of its own spans.
 [shader("fragment")]
 float4 particleFragment(ParticleOut input) : SV_Target0
 {
@@ -364,7 +365,8 @@ float4 particleFragment(ParticleOut input) : SV_Target0
     {
         discard;
     }
-    float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(input.position.xy), 0)).r;
+    int2 under = int2(input.position.xy * float(max(push.textures.z, 1u)));
+    float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(under, 0)).r;
     float gap = (behind > 0.0 ? frame->near / behind : 1e4) - input.depth;
     if (gap <= 0.0)
     {

@@ -147,6 +147,8 @@ pub struct Pipelines {
     pub particle_ribbon: vk::Pipeline,
     /// Particles drawn as meshes, into the depth as well.
     pub particle_meshes: vk::Pipeline,
+    /// Lays the particles drawn at half size over the scene.
+    pub particle_composite: vk::Pipeline,
     pub sea_spray: vk::Pipeline,
     /// The spray over Streams' rapids.
     pub stream_spray: vk::Pipeline,
@@ -736,6 +738,12 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
             })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
+            particle_composite: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Particles over the scene", particles, c"particleScreenVertex", c"particleCompositeFragment")
+            })?,
             sea_spray: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 cull: vk::CullModeFlags::NONE,
@@ -916,6 +924,7 @@ impl Pipelines {
             self.particle_trails,
             self.particle_ribbon,
             self.particle_meshes,
+            self.particle_composite,
             self.sea_spray,
             self.stream_spray,
             self.smoke_march,

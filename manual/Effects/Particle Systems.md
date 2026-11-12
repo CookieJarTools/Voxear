@@ -144,7 +144,7 @@ Simulated systems are still cheap. A million particles are stepped in about a fi
 
 Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. Particles with tails take six times as much. **Project Settings ▸ Quality ▸ Budget** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
 
-The stats overlay (**F1** in a game) and the Profiler show **Particles**: how many are alive, of the budget. The Profiler's GPU list has **Particle simulation** and **Particles**, the time spent stepping and drawing them.
+The stats overlay (**F1** in a game) and the Profiler show **Particles**: how many are alive, of the budget. The Profiler's GPU list has **Particle simulation** and **Particles**, the time spent stepping and drawing them, with **Particle meshes** and **Particles (half size)** beside them when a level has those.
 
 ## How particles look
 
@@ -160,6 +160,7 @@ The stats overlay (**F1** in a game) and the Profiler show **Particles**: how ma
 - **Stretch**: draws each particle longer along the way it's going, in metres for each metre a second: sparks and rain become streaks. A stretched particle doesn't spin.
 - **Mesh**: draws each particle as a mesh in place of a flat picture. See [Mesh particles](#mesh-particles).
 - Particles sit in the scene's fog and haze as far off as they are: near ones show clearly, far ones fade into the mist.
+- Soft particles that are large on screen, such as smoke you stand next to, are drawn at half size and laid over the picture. They look the same and cost about a third as much, which is what keeps thick smoke cheap. There's nothing to set: a system with a **Softness** above 0 goes that way once its particles are wide enough for how far off it is.
 - **Seed**: two systems that are alike but for their Seed send out different particles.
 
 ## Mesh particles

@@ -113,7 +113,7 @@ pub fn record(
         crate::smoke::record(fg, (gpu, bindless), (pipelines, push), target, input.fog_volume)?;
     }
     if let Some(particles) = input.particles.clone() {
-        crate::particles::record(fg, (pipelines, push), particles, input.fog_volume);
+        crate::particles::record(fg, (gpu, bindless), (pipelines, push), particles, input.fog_volume)?;
     }
     if let Some(under) = input.under_water.clone() {
         crate::water::record_under(fg, (pipelines, push), under);

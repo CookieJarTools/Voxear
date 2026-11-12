@@ -1574,11 +1574,17 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   Chunks. `samples/Effects` has a ribbon, rubble and shell cases. C# `Trails`, `TrailTime`, `TrailWidth`. Tests:
   the meshes, a tail's room and its values without a GPU; on one, tails, a ribbon, and meshes lit, glowing,
   hiding sparks and lying still once landed.
+- **Half-size particles ✅.** A system of soft flat particles wider than 0.06 of its distance from the camera is
+  drawn into a half-size target, each pixel tested against the scene's depth, and laid over the scene from the
+  four half-size pixels round each pixel, weighted to those tested against a depth like its own, so nothing
+  bleeds over what stands in front. Systems further off than any of those are drawn before, the rest after.
+  6,000 overlapping puffs draw in 0.70 ms against 2.26 ms at full size (640×360, RTX 3070). Tests: on a GPU, a
+  column of smoke the same either way, a post in front of it kept clean, and the cost.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
-  - sorting, half-size drawing, particles in the fog volume, flipbooks blended by motion vectors, and
-    anti-aliasing told about fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
+  - sorting, particles in the fog volume, flipbooks blended by motion vectors, and anti-aliasing told about
+    fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown

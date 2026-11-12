@@ -20,6 +20,7 @@ use super::{
 mod around;
 mod blend;
 mod cells;
+mod chasms;
 mod clamp;
 mod climate;
 mod climate_mask;
@@ -33,6 +34,7 @@ mod landmass;
 mod math;
 mod noise;
 mod output;
+mod peaks;
 mod plateaus;
 mod slope_mask;
 mod smooth;
@@ -45,15 +47,19 @@ mod arches;
 mod cave_network;
 mod chambers;
 mod combine;
+mod fins;
 mod noise3d;
 mod overhangs;
 mod raised_land;
+mod roof;
 mod solid;
+mod spires;
 mod tunnels;
 
 pub use blend::Blend;
 // The Cells node's values: `Cells` by itself is a row of places in space.
 pub use cells::Cellular;
+pub use chasms::{ChasmKind, Chasms};
 pub use clamp::Clamp;
 pub use climate_mask::ClimateMask;
 pub use constant::Constant;
@@ -66,6 +72,7 @@ pub use landmass::Land;
 pub use math::{Math, Operation};
 pub use noise::Noise;
 pub use output::Output;
+pub use peaks::Peaks;
 pub use plateaus::Plateaus;
 pub use slope_mask::SlopeMask;
 pub use smooth::Smooth;
@@ -76,10 +83,13 @@ pub use arches::Arches;
 pub use cave_network::{CaveNetwork, Laid};
 pub use chambers::Chambers;
 pub use combine::{Combine, Combining};
+pub use fins::Fins;
 pub use noise3d::Noise3d;
 pub use overhangs::Overhangs;
 pub use raised_land::{Joined, RaisedLand};
+pub use roof::Roof;
 pub use solid::Solid;
+pub use spires::Spires;
 pub use tunnels::Tunnels;
 
 /// What a wire carries.
@@ -323,6 +333,7 @@ pub enum NodeKind {
     Falloff(Falloff),
     Terrace(Terrace),
     Plateaus(Plateaus),
+    Chasms(Chasms),
     Clamp(Clamp),
     Blend(Blend),
     Warp(Bend),
@@ -346,6 +357,10 @@ pub enum NodeKind {
     RaisedLand(RaisedLand),
     #[serde(rename = "cave_network")]
     CaveNetwork(CaveNetwork),
+    Spires(Spires),
+    Fins(Fins),
+    Roof(Roof),
+    Peaks(Peaks),
 }
 
 /// `$do` for the values of whichever kind `$node` is, as `$kind`.
@@ -363,6 +378,7 @@ macro_rules! each_kind {
             NodeKind::Falloff($kind) => $do,
             NodeKind::Terrace($kind) => $do,
             NodeKind::Plateaus($kind) => $do,
+            NodeKind::Chasms($kind) => $do,
             NodeKind::Clamp($kind) => $do,
             NodeKind::Blend($kind) => $do,
             NodeKind::Warp($kind) => $do,
@@ -381,6 +397,10 @@ macro_rules! each_kind {
             NodeKind::Arches($kind) => $do,
             NodeKind::RaisedLand($kind) => $do,
             NodeKind::CaveNetwork($kind) => $do,
+            NodeKind::Spires($kind) => $do,
+            NodeKind::Fins($kind) => $do,
+            NodeKind::Roof($kind) => $do,
+            NodeKind::Peaks($kind) => $do,
         }
     };
 }
@@ -395,6 +415,7 @@ impl NodeKind {
     pub fn all() -> Vec<NodeKind> {
         vec![
             NodeKind::Landmass(Land::default()),
+            NodeKind::Peaks(Peaks::default()),
             NodeKind::Noise(Noise::default()),
             NodeKind::Cells(Cellular::default()),
             NodeKind::Falloff(Falloff::default()),
@@ -402,6 +423,7 @@ impl NodeKind {
             NodeKind::Curve(Remap::default()),
             NodeKind::Terrace(Terrace::default()),
             NodeKind::Plateaus(Plateaus::default()),
+            NodeKind::Chasms(Chasms::default()),
             NodeKind::Clamp(Clamp::default()),
             NodeKind::Math(Math::default()),
             NodeKind::Blend(Blend::default()),
@@ -421,6 +443,9 @@ impl NodeKind {
             NodeKind::Combine(Combine::default()),
             NodeKind::Arches(Arches::default()),
             NodeKind::RaisedLand(RaisedLand::default()),
+            NodeKind::Spires(Spires::default()),
+            NodeKind::Fins(Fins::default()),
+            NodeKind::Roof(Roof::default()),
             NodeKind::CaveNetwork(CaveNetwork::default()),
             NodeKind::Output(Output::default()),
         ]

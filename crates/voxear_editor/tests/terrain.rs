@@ -2344,3 +2344,134 @@ fn plants_and_what_is_dropped_find_the_ground_of_a_block_world() {
     assert!((at.y - (corner.y + 8.0)).abs() < 1e-3, "on top of its blocks: {at}");
     assert!(facing_up.y > 0.99, "flat ground faces up: {facing_up}");
 }
+
+#[test]
+fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_to_undo() {
+    use voxear_engine::{grown_plants, scene_file::FoliageSource};
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
+    // Its Add plant row, the last of its settings, offers the starter plants, new to the project, before the
+    // project's models.
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    let offered = picker_rows(&editor.ui);
+    let has = |name: &str| offered.iter().any(|row| row == name);
+    assert!(has("New Grass Tuft") && has("New Tree"), "{offered:?}");
+    let tuft = picker_row(&editor.ui, "New Grass Tuft").expect("a tuft of grass to start from");
+    click(&mut editor.ui, tuft);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // The plant is a model in the project's Plants folder, and a Foliage under the world that grows it.
+    assert!(dir.path().join("Plants/Grass Tuft.boxmodel").is_file());
+    let grass = obj(&editor, "Grass Tuft");
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<voxear_scene::Parent>(grass).map(|parent| parent.0), Some(field));
+    let grow = world.get::<FoliageSource>(grass).and_then(|source| source.0.grow.clone()).expect("where it grows");
+    assert_eq!((grow.spacing, grow.on.len()), (1.0, 1), "thick, on the world's top block");
+    assert!(world.get::<voxear_render::Foliage>(grass).is_some(), "drawn with the model's mesh");
+    assert_eq!(editor.selected(), Some(grass));
+    // Its plants grow only as near as they are drawn: none while the Scene view looks from far off.
+    let standing = |editor: &voxear_editor::Editor| grown_plants::standing(&editor.game.engine.world, grass).len();
+    for _ in 0..10 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), 0, "the world is 300 m from the Scene view");
+    // The Scene view over the world's ground: they grow over the next ticks, a hidden Obj a chunk column.
+    let blocks = editor.game.engine.world.get::<voxear_terrain::blocks::BlockWorld>(field).unwrap().clone();
+    let top = (0..500).rev().find(|&y| blocks.blocks.get([20, y, 20]) != 0).expect("ground at 20, 20") as f32;
+    let corner = editor.game.engine.world.get::<voxear_scene::Transform>(field).unwrap().position;
+    let camera = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(Entity, &voxear_render::Camera, &voxear_scene::EditorOnly)>()
+        .into_iter()
+        .next()
+        .expect("the Scene view's camera")
+        .0;
+    let look = voxear_core::math::Quat::from_euler(voxear_core::math::EulerRot::YXZ, 0.8, 0.45, 0.0);
+    let over = corner + voxear_core::math::Vec3::new(20.0, top + 8.0, 20.0);
+    *editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap() =
+        voxear_scene::Transform::new(over, look, voxear_core::math::Vec3::ONE);
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+    }
+    let grown = standing(&editor);
+    assert!(grown > 300, "{grown} tufts on 64 by 64 blocks");
+    assert!(grown_plants::settled(&editor.game.engine.world));
+    assert!(obj_named(&editor, "Grass Tuft") == 1, "the columns' Objs have no names to show in the Hierarchy");
+    shot(&mut renderer, "block-world-grown-tufts.png");
+    // A click on a grown plant picks its Foliage, never the Obj that holds its column; between plants, the world.
+    let view = editor.scene_camera().expect("the Scene view's camera");
+    let [left, top_edge, wide, tall] = view.rect;
+    let points = (1..12).flat_map(|row| (1..20).map(move |column| (column as f32 / 20.0, row as f32 / 12.0)));
+    let picked: Vec<Entity> = points
+        .filter_map(|(across, down)| {
+            let point = [left + wide * across, top_edge + tall * down];
+            let markers = voxear_editor::scene_tools::Markers::NONE;
+            voxear_editor::scene_tools::pick(&editor.game.engine.world, &renderer, &view, point, markers)
+        })
+        .collect();
+    assert!(picked.iter().filter(|&&obj| obj == grass).count() > 10, "clicks on tufts pick the Foliage");
+    assert!(picked.iter().any(|&obj| obj == field), "and between them, the world");
+    assert!(picked.iter().all(|obj| editor.game.engine.world.has::<Name>(*obj)), "never a column's own Obj");
+    // Its Inspector opens on Grow, where it grows: no chance, none; undone, as many as before.
+    assert_eq!(prop_rows(&editor.ui, "Chance").len(), 1, "the Grow tool's rows");
+    type_number(&mut editor, &mut renderer, "Chance", "0");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), 0);
+    editor.undo(&mut renderer);
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), grown, "the same plants again");
+    // Picked again, the tuft is one of the project's models now, and grows a second Foliage; undone, gone with
+    // its plants.
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    assert!(!picker_rows(&editor.ui).iter().any(|row| row == "New Grass Tuft"));
+    let model = picker_row(&editor.ui, "Grass Tuft.boxmodel").expect("the model it made");
+    click(&mut editor.ui, model);
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let holders = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.query_ref::<&grown_plants::GrownColumn>().into_iter().count()
+    };
+    let (both, with_both) = (obj_named(&editor, "Grass Tuft") + obj_named(&editor, "Grass Tuft (1)"), holders(&editor));
+    assert_eq!(both, 2, "a second Foliage");
+    editor.undo(&mut renderer);
+    for _ in 0..5 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(holders(&editor) < with_both && holders(&editor) > 0, "the second's plants went with it");
+}
+
+/// Scrolls the Inspector until its row labelled `label` shows, as the wheel would.
+fn reveal(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str) {
+    let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
+    let mut at = editor.ui.parent(row);
+    while let Some(node) = at {
+        let most = editor.ui.scroll_max(node)[1];
+        if most > 0.0 {
+            let ([_, top, _, tall], [_, row_top, _, row_tall]) = (editor.ui.rect(node), editor.ui.rect(row));
+            let below = (row_top + row_tall) - (top + tall) + 8.0;
+            let now = editor.ui.scroll_offset(node);
+            editor.ui.set_scroll(node, [now[0], (now[1] + below.max(0.0)).min(most)]);
+            frame(editor, renderer);
+            frame(editor, renderer);
+        }
+        at = editor.ui.parent(node);
+    }
+}
+
+/// How many Objs are named `name`.
+fn obj_named(editor: &voxear_editor::Editor, name: &str) -> usize {
+    let world = &editor.game.engine.world;
+    let objs = world.query_ref::<(Entity, &Name)>().without::<voxear_scene::Destroying>();
+    objs.into_iter().filter(|(_, n)| n.0 == name).count()
+}

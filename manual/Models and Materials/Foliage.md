@@ -20,7 +20,7 @@ Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small 
 
 ## Where plants grow
 
-Plants grow in the Obj's space, so moving, turning or scaling the Obj moves all of them. They grow in three ways: **painted** onto the ground in the Scene view with the Foliage's **Paint** tool, each dropped onto the terrain or mesh below it and leaning with it (see [[Painting and Cutting Plants]]); scattered; and placed one by one.
+Plants grow in the Obj's space, so moving, turning or scaling the Obj moves all of them. They grow in four ways: **painted** onto the ground in the Scene view with the Foliage's **Paint** tool, each dropped onto the terrain or mesh below it and leaning with it (see [[Painting and Cutting Plants]]); scattered; placed one by one; and grown by a Block World by itself (see [[Foliage#Growing on a Block World]]).
 
 **Scattered** over an area round the Obj, evenly but not in rows, each turned its own way and sized at random within a range:
 
@@ -43,6 +43,55 @@ plants = [[1.0, 0.0, 2.0, 45.0, 1.1], [3.5, 0.0, -1.0, 200.0, 0.9, 0.2, 0.0]]
 ```
 
 Scattered plants stand on the Obj's level, so scatter over flat ground, or paint plants instead, which find the ground themselves. Painting turns a Foliage's scattered plants into placed ones, to paint among them.
+
+## Growing on a Block World
+
+A Foliage under a [[Block Worlds|Block World]] can grow by itself. The world works out where its plants stand from its own ground, one column of chunks at a time. So a world without end grows its plants as its ground is made round the camera, and the same world grows the same plants every time it is opened, on every machine.
+
+Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Grow** tool and tick **Grow on Block World**. A Block World's **Add plant** row does all of this for you (see [[Block Worlds#Plants a world grows]]).
+
+| Setting | What it does |
+| --- | --- |
+| On block | The block the plants stand on. None for any ground |
+| Biome | Sets Temperature and Humidity to a climate at once: Forest, Desert, Snow and the rest. **Any** grows everywhere |
+| Temperature, Humidity | Tick one to grow only between two temperatures, in °C, or between two humidities, from 0 for dry to 1 for wet, as the world's generator gives them. A world with no generator has no climate, so these change nothing there |
+| Height | Tick to grow only between two heights over the sea, in metres |
+| Steepest ground | Plants stay off ground steeper than this |
+| Spacing | How far apart plants are tried, in metres: one try to a square that size. 1 gives a plant to every block of a world of metre blocks |
+| Least apart | The nearest two plants may stand to each other, in metres |
+| Chance | How many of the tries grow, from none to all |
+| Patch size | Plants grow in patches about this many metres across, with as much bare ground between them. 0 grows them everywhere |
+| Sizes | The smallest and the largest |
+| Align to blocks | Stands each plant on the middle of its block, turned by quarter turns, so it sits square with the blocks. Off, a plant stands anywhere on its block, turned any way |
+| Seed | Another seed grows the plants in other places. Give each Foliage of a world its own, or two kinds of plant try the same places |
+
+A plant stands on the highest block of its place, under the open sky, and only on ground the world made: nothing grows on what was built afterwards. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
+
+Plants are grown only as far as they are drawn. A Foliage's grown plants reach its **Draw distance** from the camera and no further than the world's own blocks, its **View distance**. Past that the far view shows the ground bare for now. In the editor they grow round where the Scene view looks from.
+
+Trunks and the Cut prefab work for grown plants as they do for painted ones. A Foliage that grows can still have plants painted or placed on it; they are drawn beside the grown ones.
+
+```toml
+[obj.foliage]
+mesh = "Plants/Tree.boxmodel#mesh0.0"
+material = "Plants/Tree.boxmodel#material0"
+draw_distance = 250.0
+[obj.foliage.grow]
+on = ["Blocks/Grass.block"]   # the blocks it stands on; left out for any ground
+humidity = [0.45, 1.0]        # only where it is wet enough
+spacing = 7.0                 # metres between tries
+separation = 4.0              # the least between two plants
+chance = 0.6                  # how many tries grow
+slope = 25.0                  # the steepest ground, in degrees
+scale = [0.8, 1.3]
+seed = 4
+```
+
+`temperature` and `height` are ranges like `humidity`; `patches` is the patch size; `aligned = false` lets plants stand anywhere on their block.
+
+Clicking a grown plant in the Scene view selects its Foliage, as clicking a painted one does.
+
+Not done yet: a plant cut down from a script comes back when its ground is made again, as the camera leaves and returns.
 
 ## How many
 

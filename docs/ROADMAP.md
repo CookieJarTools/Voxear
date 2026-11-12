@@ -1954,7 +1954,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (`ClimateSource`), or from height alone without one; Cover's Rules renamed from Height and Slope. Grass on
   surfaces follows. Tests: climate fields and cooling, snow where cold and desert where hot and dry, the editor (a
   Snow surface nowhere in a mild world, everywhere once its temperatures widen). Manual: Surfaces, Generating
-  Terrain. Not done: trees scattered by rules (a Foliage's plants by surface or biome).
+  Terrain. Not done: trees scattered by rules on a heightmap terrain (a Foliage's plants by surface or biome); a
+  Block World grows its own (see Block worlds, Plants a world grows).
 - ~~**Endless worlds:**~~ done: a terrain's Endless setting (`[endless]` in its file: view distance and spacing,
   0.25 to 4 m) keeps a window of tiles round the camera (`voxear_terrain::endless`), up to 33 a side, its heights
   starting at `Terrain::origin`. Each tile is made alone on the terrain's background threads from the layers that
@@ -1970,7 +1971,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   saving, the editor's Endless setting, the GPU drawing the same ground after a move. Manual: Endless Worlds. Not
   done: coarser far tiles, rivers along valleys without end.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
-  - trees and other plants scattered by surface and biome
+  - trees and other plants scattered by surface and biome (done for Block Worlds, which grow their own; heightmap
+    terrains to come, with the same rule)
   - stream-power erosion for ranges
   - far tiles of endless worlds made and kept coarser
 - **Block worlds**, in parts: blocks you can see and stand on; generation from world generators, with caves;
@@ -2248,6 +2250,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   levels in place of skirts; overhangs and caves far off (the manual says so); ground taken out showing far off.
   A far column of cubes takes water wherever its ground lies under the sea, its top block at least an eighth full or
   the ground's own top block the sea's, as 64 m blocks and more rounded a shallow sea away to its floor.
+- ~~**Plants a world grows:**~~ done: a Foliage under a Block World grows by itself on the world's ground
+  (`[obj.foliage.grow]`, `scene_file::GrowData`): the blocks it stands on, temperature, humidity and height ranges
+  (a Biome sets the climate at once), steepest ground, spacing, least apart, chance, patch size, sizes, aligned to
+  blocks or free, and a seed. `voxear_terrain::blocks::grow` works a chunk column's plants out from that column's
+  generated blocks alone, on the placement grid structures share, so a column made alone agrees with its neighbours
+  and the same world grows the same plants on every machine. The engine (`grown_plants`) keeps each column's plants
+  on a hidden Obj of its own under the world, drawn and collided as the Foliage's, made as the column's blocks are
+  and dropped as it goes, within the Foliage's draw distance, four columns a tick. A plant is gone while its block is
+  dug, changed or built over, and back when the ground is: worked out from the blocks, so nothing is saved or sent.
+  Six starter plants made of small cubes (`voxear_render::StarterPlant`: Grass Tuft, Flower, Bush, Rock, Tree,
+  Pine), each a box model written into the project's Plants folder when picked. Editor: a Foliage's **Grow** tool,
+  and **Add plant** on a Block World's Settings, which takes any model or a starter and makes the Foliage, one step
+  to undo; a click on a grown plant picks its Foliage. Tests: the rule (same every time, a column alone, by block, climate, height and slope, separation,
+  patches, gone and back), the engine on a world without end (two rules, the camera moved and back, digging and
+  building, a second run the same), a GPU picture of all six starters, the editor (a starter picked, grown,
+  changed, undone). Manual: Foliage, Block Worlds, Box Models. Not done: plants on the coarse rings and in the far
+  view (they end at the world's View distance); a plant cut down from a script kept when its column is made again;
+  the same rule on heightmap terrains.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

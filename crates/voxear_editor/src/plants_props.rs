@@ -1,15 +1,18 @@
 //! A Foliage's plants in the Inspector (the Vegetation module).
 //!
-//! Its section has two tools along its top (`plants_panel`): **Settings**,
-//! how its plants are drawn, their trunks and what one cut down becomes;
-//! and **Paint**, the brush the Scene view paints its plants with
-//! (`plants_tools`) and how they grow where it paints. Which tool shows is
-//! the editor's, kept in the world as [`FoliageUi`], not saved; the brush's
-//! size and strength are the terrain brush's, shared.
+//! Its section has three tools along its top (`plants_panel`):
+//! **Settings**, how its plants are drawn, their trunks and what one cut
+//! down becomes; **Paint**, the brush the Scene view paints its plants with
+//! (`plants_tools`) and how they grow where it paints; and **Grow**, where
+//! it grows by itself on the Block World it is under (see
+//! `voxear_engine::grown_plants`). Which tool shows is the editor's, kept
+//! in the world as [`FoliageUi`], not saved; the brush's size and strength
+//! are the terrain brush's, shared.
 //!
-//! The trunk, the Cut prefab and how plants are painted are the scene's,
-//! written with the Foliage (`FoliageSource`), and the trunk and the Cut
-//! prefab are the Obj's `Plants` too, for physics and scripts.
+//! The trunk, the Cut prefab, how plants are painted and where they grow
+//! are the scene's, written with the Foliage (`FoliageSource`), and the
+//! trunk and the Cut prefab are the Obj's `Plants` too, for physics and
+//! scripts.
 
 use anyhow::Result;
 use voxear_assets::AssetKind;
@@ -19,6 +22,7 @@ use voxear_engine::{
     scene_file::{FoliageSource, PaintData},
 };
 use voxear_scene::{Plants, Trunk};
+use voxear_terrain::surfaces::Biome;
 
 use crate::{
     fields::{self, Pick},
@@ -31,15 +35,17 @@ pub enum FoliageTool {
     #[default]
     Settings,
     Paint,
+    Grow,
 }
 
 impl FoliageTool {
-    pub const ALL: [FoliageTool; 2] = [FoliageTool::Settings, FoliageTool::Paint];
+    pub const ALL: [FoliageTool; 3] = [FoliageTool::Settings, FoliageTool::Paint, FoliageTool::Grow];
 
     pub fn name(self) -> &'static str {
         match self {
             FoliageTool::Settings => "Settings",
             FoliageTool::Paint => "Paint",
+            FoliageTool::Grow => "Grow",
         }
     }
 }
@@ -63,7 +69,8 @@ pub fn show_tool(world: &mut World, tool: FoliageTool) {
 }
 
 /// A value a Foliage's plants show: their trunks, what one cut down
-/// becomes, the brush, and how painted plants grow.
+/// becomes, the brush, how painted plants grow, and where the Foliage grows
+/// by itself on a Block World.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlantsField {
     Trunk,
@@ -77,17 +84,48 @@ pub enum PlantsField {
     Lean,
     Steepest,
     Spacing,
+    Grows,
+    GrowOn,
+    GrowBiome,
+    GrowTemperatureMask,
+    GrowTemperatures,
+    GrowHumidityMask,
+    GrowHumidities,
+    GrowHeightMask,
+    GrowHeights,
+    GrowSteepest,
+    GrowSpacing,
+    GrowSeparation,
+    GrowChance,
+    GrowPatches,
+    GrowScale,
+    GrowAligned,
+    GrowSeed,
 }
 
 use PlantsField as F;
 
 /// The values a Foliage shows: under Settings, `settings` (how it is
 /// drawn), then its trunks and Cut prefab; under Paint, the brush and how
-/// painted plants grow.
+/// painted plants grow; under Grow, whether it grows by itself and where.
 pub fn props(world: &World, entity: Entity, settings: Vec<Prop>) -> Vec<Prop> {
     if ui(world).tool == FoliageTool::Paint {
         let paint = [F::BrushSize, F::Strength, F::Density, F::Scale, F::Lean, F::Steepest, F::Spacing];
         return paint.into_iter().map(Prop::Plants).collect();
+    }
+    if ui(world).tool == FoliageTool::Grow {
+        let mut fields = vec![F::Grows];
+        if let Some(grow) = source(world, entity).and_then(|data| data.grow.as_ref()) {
+            fields.extend([F::GrowOn, F::GrowBiome, F::GrowTemperatureMask]);
+            fields.extend(grow.temperature.map(|_| F::GrowTemperatures));
+            fields.push(F::GrowHumidityMask);
+            fields.extend(grow.humidity.map(|_| F::GrowHumidities));
+            fields.push(F::GrowHeightMask);
+            fields.extend(grow.height.map(|_| F::GrowHeights));
+            fields.extend([F::GrowSteepest, F::GrowSpacing, F::GrowSeparation, F::GrowChance, F::GrowPatches]);
+            fields.extend([F::GrowScale, F::GrowAligned, F::GrowSeed]);
+        }
+        return fields.into_iter().map(Prop::Plants).collect();
     }
     let mut props = settings;
     props.push(Prop::Plants(F::Trunk));
@@ -115,6 +153,23 @@ pub fn label(field: PlantsField) -> &'static str {
         F::Lean => "Lean with ground",
         F::Steepest => "Steepest ground",
         F::Spacing => "Spacing",
+        F::Grows => "Grow on Block World",
+        F::GrowOn => "On block",
+        F::GrowBiome => "Biome",
+        F::GrowTemperatureMask => "Temperature",
+        F::GrowTemperatures => "Temperatures",
+        F::GrowHumidityMask => "Humidity",
+        F::GrowHumidities => "Humidities",
+        F::GrowHeightMask => "Height",
+        F::GrowHeights => "Heights",
+        F::GrowSteepest => "Steepest ground",
+        F::GrowSpacing => "Spacing",
+        F::GrowSeparation => "Least apart",
+        F::GrowChance => "Chance",
+        F::GrowPatches => "Patch size",
+        F::GrowScale => "Sizes",
+        F::GrowAligned => "Align to blocks",
+        F::GrowSeed => "Seed",
     }
 }
 
@@ -126,13 +181,16 @@ pub fn key(field: PlantsField) -> &'static str {
         F::Density | F::Scale | F::Lean | F::Steepest | F::Spacing => "paint",
         // The brush is the editor's.
         F::BrushSize | F::Strength => "",
+        _ => "grow",
     }
 }
 
 pub fn unit(field: PlantsField) -> Option<&'static str> {
     match field {
         F::TrunkRadius | F::TrunkHeight | F::BrushSize | F::Spacing => Some("m"),
-        F::Steepest => Some("°"),
+        F::GrowSpacing | F::GrowSeparation | F::GrowHeights | F::GrowPatches => Some("m"),
+        F::Steepest | F::GrowSteepest => Some("°"),
+        F::GrowTemperatures => Some("°C"),
         F::Density => Some("per 100 m²"),
         _ => None,
     }
@@ -141,8 +199,8 @@ pub fn unit(field: PlantsField) -> Option<&'static str> {
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(field: PlantsField) -> Option<[f32; 2]> {
     match field {
-        F::Strength | F::Lean => Some([0.0, 1.0]),
-        F::Steepest => Some([0.0, 90.0]),
+        F::Strength | F::Lean | F::GrowChance => Some([0.0, 1.0]),
+        F::Steepest | F::GrowSteepest => Some([0.0, 90.0]),
         _ => None,
     }
 }
@@ -152,7 +210,40 @@ pub fn get(game: &Game, entity: Entity, field: PlantsField) -> Option<Value> {
     let data = source(world, entity)?;
     let paint = data.paint;
     let brush = crate::terrain_props::ui(world).brush;
+    let grow = || data.grow.as_ref();
     Some(match field {
+        F::Grows => Value::Toggle(data.grow.is_some()),
+        F::GrowOn => Value::Asset(path_of(game, grow()?.on.first().map(String::as_str))),
+        F::GrowBiome => {
+            // Any, each biome, and its own ranges where they are none's.
+            let grow = grow()?;
+            let mut names = vec!["Any".to_string()];
+            names.extend(Biome::ALL.map(|biome| biome.name().to_string()));
+            let ranges = (grow.temperature, grow.humidity);
+            let at = match Biome::ALL.iter().position(|biome| biome.ranges() == ranges) {
+                _ if ranges == (None, None) => 0,
+                Some(at) => at + 1,
+                None => {
+                    names.push("Custom".to_string());
+                    names.len() - 1
+                }
+            };
+            Value::Choice(at, names)
+        }
+        F::GrowTemperatureMask => Value::Toggle(grow()?.temperature.is_some()),
+        F::GrowTemperatures => Value::Vector(grow()?.temperature?.to_vec()),
+        F::GrowHumidityMask => Value::Toggle(grow()?.humidity.is_some()),
+        F::GrowHumidities => Value::Vector(grow()?.humidity?.to_vec()),
+        F::GrowHeightMask => Value::Toggle(grow()?.height.is_some()),
+        F::GrowHeights => Value::Vector(grow()?.height?.to_vec()),
+        F::GrowSteepest => Value::Number(grow()?.slope),
+        F::GrowSpacing => Value::Number(grow()?.spacing),
+        F::GrowSeparation => Value::Number(grow()?.separation),
+        F::GrowChance => Value::Number(grow()?.chance),
+        F::GrowPatches => Value::Number(grow()?.patches),
+        F::GrowScale => Value::Vector(grow()?.scale.to_vec()),
+        F::GrowAligned => Value::Toggle(grow()?.aligned),
+        F::GrowSeed => Value::Whole(i64::from(grow()?.seed)),
         F::Trunk => Value::Toggle(data.trunk.is_some()),
         F::TrunkRadius => Value::Number(data.trunk?.radius),
         F::TrunkHeight => Value::Number(data.trunk?.height),
@@ -194,6 +285,9 @@ pub fn set(game: &mut Game, entity: Entity, field: PlantsField, value: Value) ->
         }
         return *brush != before;
     }
+    if key(field) == "grow" {
+        return change(world, entity, |data| set_grow(data, field, &value));
+    }
     change(world, entity, |data| {
         let paint = &mut data.paint;
         match (field, &value) {
@@ -219,6 +313,49 @@ pub fn set(game: &mut Game, entity: Entity, field: PlantsField, value: Value) ->
     })
 }
 
+fn pair(value: &Value) -> Option<[f32; 2]> {
+    match value {
+        Value::Vector(v) if v.len() >= 2 => Some([v[0].min(v[1]), v[0].max(v[1])]),
+        _ => None,
+    }
+}
+
+/// Sets one of the values of where a Foliage grows by itself.
+fn set_grow(data: &mut voxear_engine::scene_file::FoliageData, field: PlantsField, value: &Value) {
+    if let (F::Grows, Value::Toggle(on)) = (field, value) {
+        data.grow = on.then(|| data.grow.take().unwrap_or_default());
+        return;
+    }
+    let Some(grow) = data.grow.as_mut() else { return };
+    match (field, value) {
+        (F::GrowBiome, Value::Choice(at, _)) => match at.checked_sub(1).and_then(|at| Biome::ALL.get(at)) {
+            Some(biome) => (grow.temperature, grow.humidity) = biome.ranges(),
+            None if *at == 0 => (grow.temperature, grow.humidity) = (None, None),
+            None => {}
+        },
+        (F::GrowTemperatureMask, Value::Toggle(on)) => {
+            grow.temperature = on.then_some(grow.temperature.unwrap_or([5.0, 25.0]))
+        }
+        (F::GrowTemperatures, v) => grow.temperature = pair(v).or(grow.temperature),
+        (F::GrowHumidityMask, Value::Toggle(on)) => grow.humidity = on.then_some(grow.humidity.unwrap_or([0.5, 1.0])),
+        (F::GrowHumidities, v) => grow.humidity = pair(v).map(|r| r.map(|h| h.clamp(0.0, 1.0))).or(grow.humidity),
+        (F::GrowHeightMask, Value::Toggle(on)) => grow.height = on.then_some(grow.height.unwrap_or([0.0, 100.0])),
+        (F::GrowHeights, v) => grow.height = pair(v).or(grow.height),
+        (F::GrowSteepest, v) => grow.slope = number(v).unwrap_or(grow.slope).clamp(0.0, 90.0),
+        (F::GrowSpacing, v) => {
+            grow.spacing = number(v).unwrap_or(grow.spacing).clamp(1.0, 10_000.0);
+            grow.separation = grow.separation.min(grow.spacing);
+        }
+        (F::GrowSeparation, v) => grow.separation = number(v).unwrap_or(grow.separation).clamp(0.0, grow.spacing),
+        (F::GrowChance, v) => grow.chance = number(v).unwrap_or(grow.chance).clamp(0.0, 1.0),
+        (F::GrowPatches, v) => grow.patches = number(v).unwrap_or(grow.patches).clamp(0.0, 10_000.0),
+        (F::GrowScale, v) => grow.scale = pair(v).map(|r| r.map(|size| size.max(0.01))).unwrap_or(grow.scale),
+        (F::GrowAligned, Value::Toggle(on)) => grow.aligned = *on,
+        (F::GrowSeed, v) => grow.seed = number(v).map_or(grow.seed, |seed| seed.max(0.0) as u32),
+        _ => {}
+    }
+}
+
 /// Changes the Foliage as written, and gives its plants its trunk and Cut
 /// prefab; whether anything changed.
 fn change(world: &mut World, entity: Entity, how: impl FnOnce(&mut voxear_engine::scene_file::FoliageData)) -> bool {
@@ -236,21 +373,39 @@ fn change(world: &mut World, entity: Entity, how: impl FnOnce(&mut voxear_engine
 }
 
 /// What a picker shows: the project's prefabs, for what a plant cut down
-/// becomes.
+/// becomes, or its blocks, for the block a Foliage grows on.
 pub fn choices(game: &Game, field: PlantsField) -> Vec<(String, Pick)> {
+    match takes(field) {
+        Some(kind) => fields::assets_of(game, Some(kind)),
+        None => Vec::new(),
+    }
+}
+
+/// The kind of asset a value is picked from, for those that are.
+pub fn takes(field: PlantsField) -> Option<AssetKind> {
     match field {
-        F::Cut => fields::assets_of(game, Some(AssetKind::Prefab)),
-        _ => Vec::new(),
+        F::Cut => Some(AssetKind::Prefab),
+        F::GrowOn => Some(AssetKind::Block),
+        _ => None,
+    }
+}
+
+/// What a picker calls the kind of asset a value takes.
+pub fn takes_name(field: PlantsField) -> &'static str {
+    match field {
+        F::GrowOn => "Block",
+        _ => "Prefab",
     }
 }
 
 pub fn is_picked(field: PlantsField) -> bool {
-    field == F::Cut
+    takes(field).is_some()
 }
 
-/// Takes the prefab picked for what a plant cut down becomes.
+/// Takes the prefab picked for what a plant cut down becomes, or the block
+/// picked for a Foliage to grow on: none for any ground.
 pub fn pick(game: &mut Game, entity: Entity, field: PlantsField, choice: &Pick) -> bool {
-    let (F::Cut, Pick::Asset(path)) = (field, choice) else { return false };
+    let (true, Pick::Asset(path)) = (is_picked(field), choice) else { return false };
     let reference = match path {
         Some(path) => match game.content.parse(path) {
             Ok(reference) => Some(reference.to_string()),
@@ -258,7 +413,11 @@ pub fn pick(game: &mut Game, entity: Entity, field: PlantsField, choice: &Pick) 
         },
         None => None,
     };
-    change(&mut game.engine.world, entity, |data| data.cut = reference)
+    change(&mut game.engine.world, entity, |data| match (field, data.grow.as_mut()) {
+        (F::GrowOn, Some(grow)) => grow.on = reference.into_iter().collect(),
+        (F::Cut, _) => data.cut = reference,
+        _ => {}
+    })
 }
 
 /// How painted plants grow, as the Foliage says.

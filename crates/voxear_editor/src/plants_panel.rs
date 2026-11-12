@@ -1,5 +1,5 @@
-//! The top of a Foliage's Inspector section: its tools, **Settings** and
-//! **Paint** (see `plants_props`). Picking a tool is not a step to undo.
+//! The top of a Foliage's Inspector section: its tools, **Settings**,
+//! **Paint** and **Grow** (see `plants_props`). Picking a tool is not a step to undo.
 
 use voxear_ecs::World;
 use voxear_engine::Game;

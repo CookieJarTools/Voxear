@@ -55,11 +55,13 @@ mod clips;
 mod edit;
 mod layer;
 mod paint;
+mod plants;
 mod rig;
 mod voxels;
 
 pub use clips::{BoxClip, BoxKey, BoxTrack, Ease, KEY_STEP, LONGEST_CLIP, on_step};
 pub use edit::BoxHit;
+pub use plants::StarterPlant;
 pub use voxels::{LARGEST_GRID, MOST_COLORS, Voxels};
 
 /// A box model's file extension.

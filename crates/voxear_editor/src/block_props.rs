@@ -443,6 +443,9 @@ pub enum BlockField {
     HeightMask,
     Heights,
     CoverDepth,
+    /// A model picked here becomes a Foliage under the world that grows by
+    /// itself on its ground (see `objs::create_grown_plant`).
+    AddPlant,
 }
 
 use BlockField as F;
@@ -497,7 +500,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             if file.generate.is_some() {
                 fields.push(F::SeaBlock);
             }
-            fields.push(F::Shadows);
+            fields.extend([F::Shadows, F::AddPlant]);
             fields
         }
         (BlockTool::Settings, None) => vec![F::Data, F::Shadows],
@@ -508,6 +511,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
 pub fn label(field: BlockField) -> &'static str {
     match field {
         F::Data => "Data",
+        F::AddPlant => "Add plant",
         F::BlockSize => "Block size",
         F::Smooth => "Smooth",
         F::GroundSize => "Ground size",
@@ -585,6 +589,7 @@ fn takes(field: BlockField) -> Option<AssetKind> {
         F::Data => Some(AssetKind::BlockWorld),
         F::Generator => Some(AssetKind::WorldGen),
         F::Model => Some(AssetKind::VoxModel),
+        F::AddPlant => Some(AssetKind::Model),
         F::Block | F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => Some(AssetKind::Block),
         _ => None,
     }
@@ -595,7 +600,7 @@ pub fn takes_name(field: BlockField) -> &'static str {
     match takes(field) {
         Some(AssetKind::Block) => "Block",
         Some(AssetKind::WorldGen) => "Generator",
-        Some(AssetKind::VoxModel) => "Model",
+        Some(AssetKind::VoxModel | AssetKind::Model) => "Model",
         _ => "Block World",
     }
 }
@@ -708,6 +713,8 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::BaseBlock => block_value(game, entity, file()?.ground.bottom),
         F::SeaBlock => block_value(game, entity, file()?.generate.as_ref()?.sea),
         F::Cover => Value::Toggle(cover().is_some()),
+        // Nothing is kept here: a model picked is made a plant at once.
+        F::AddPlant => Value::Asset("None".into()),
         F::CoverBiome => {
             // Any, each biome, and its own ranges where they are none's.
             let cover = cover()?;
@@ -1054,6 +1061,17 @@ pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
     let mut found = fields::assets_of(game, Some(kind));
     if field == F::Block {
         found.retain(|(_, pick)| *pick != Pick::Asset(None));
+    }
+    // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked.
+    if field == F::AddPlant {
+        let has = |path: &str| found.iter().any(|(_, pick)| *pick == Pick::Asset(Some(path.to_string())));
+        let new: Vec<(String, Pick)> = voxear_render::StarterPlant::ALL
+            .into_iter()
+            .map(|plant| (plant, crate::objs::starter_plant_path(plant)))
+            .filter(|(_, path)| !has(path))
+            .map(|(plant, path)| (format!("New {}", plant.name()), Pick::Asset(Some(path))))
+            .collect();
+        found.splice(1..1, new);
     }
     found
 }

@@ -28,6 +28,7 @@ pub mod edits;
 pub mod file;
 pub mod flow;
 pub mod generate;
+pub mod grow;
 pub mod mesh;
 pub mod path;
 pub mod sight;

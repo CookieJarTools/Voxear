@@ -3376,6 +3376,23 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
+the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
+(blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared
+placement grid (`generate::structures::Placement`, one try a cell, whole-number hashes) for the tries in one chunk
+column, and keeps those whose highest block under the open sky is ground the rule likes. A column is read alone,
+its slope from its own blocks, so it grows what it grows among its neighbours, and the plants are the same on every
+machine. They are grown from the ground as made (`BlockWorldAsset::base`), never from what was built. The engine
+(`grown_plants`) keeps each column's plants on an Obj of its own under the world, unnamed and in no scene
+(`GrownColumn`), carrying the Foliage's mesh, distances, trunks and layer: the renderer and physics build a Foliage's
+plants whole whenever its list changes, so a list a column keeps them from building anything again as columns come
+and go. Only columns within the Foliage's draw distance of the viewer have plants, four made a tick a Foliage,
+nearest first. Each plant remembers its block; when the faces of that block's chunk are made again, the column's
+plants are checked against the blocks and those whose ground changed are marked gone, a bit each, and unmarked when
+it is put back. So nothing of them is saved or sent: whoever has the blocks has the plants. The starter plants
+(`voxear_render::StarterPlant`) are box models of cubes made by code, written into a project as it picks them.
+Not done: plants on the coarse rings and in the far view, and a plant cut from a script kept by column and number.
+
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
 square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on

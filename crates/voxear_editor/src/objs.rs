@@ -20,7 +20,7 @@ use voxear_engine::{
     prefab::{PREFAB_FORMAT, PrefabFile},
     scene_file::{self, ModelSource, PartData, SceneFile},
 };
-use voxear_render::{LodGroup, Renderer};
+use voxear_render::{LodGroup, Renderer, StarterPlant};
 use voxear_scene::{Destroying, Name, Parent, Transform};
 
 use crate::project_view::AssetPart;
@@ -380,6 +380,60 @@ pub fn create(
     if let Some(parent) = parent {
         game.engine.world.insert(made, Parent(parent));
     }
+    Ok(made)
+}
+
+/// The folder a project keeps its starter plants in.
+pub const PLANTS_FOLDER: &str = "Plants";
+
+/// Where a starter plant's model is kept in a project.
+pub fn starter_plant_path(plant: StarterPlant) -> String {
+    format!("{PLANTS_FOLDER}/{}.boxmodel", plant.name())
+}
+
+/// The starter plant kept at `path`, where it is one's place.
+pub fn starter_plant_at(path: &str) -> Option<StarterPlant> {
+    StarterPlant::ALL.into_iter().find(|plant| starter_plant_path(*plant) == path)
+}
+
+/// Writes starter plant `plant`'s model into the project, where it has
+/// none, and has the project take it up.
+pub fn make_starter_plant(game: &mut Game, plant: StarterPlant) -> Result<String> {
+    let path = starter_plant_path(plant);
+    let file = game.project.root.join(&path);
+    if !file.is_file() {
+        std::fs::create_dir_all(game.project.root.join(PLANTS_FOLDER)).context("making the Plants folder")?;
+        std::fs::write(&file, plant.model().to_text()).with_context(|| format!("making {path}"))?;
+        game.content.rescan()?;
+    }
+    Ok(path)
+}
+
+/// Makes a Foliage under the Block World on `world` that grows the model at
+/// `path` by itself on the world's ground (see
+/// `voxear_engine::grown_plants`): named after the model, drawing its first
+/// mesh with that mesh's material, on the world's top block where that is a
+/// block of the project's. A starter plant's model is drawn and grown as
+/// suits it: grass thick and near, trees far apart where it is wet enough,
+/// rocks on any ground. Returns it.
+pub fn create_grown_plant(game: &mut Game, renderer: &mut Renderer, world: Entity, path: &str) -> Result<Entity> {
+    use voxear_engine::{blocks::BlockWorldAsset, grown_plants};
+    let parts = model_parts(game, renderer, path);
+    let part = |icon: &str| parts.iter().find(|part| part.icon == icon).and_then(|part| part.reference.clone());
+    let mesh = part("box").with_context(|| format!("{path} has no mesh to grow"))?;
+    let kept = |game: &Game, reference: &str| game.content.parse(reference).map(|parsed| parsed.to_string());
+    let mesh = kept(game, &mesh)?;
+    let material = part("material").map(|material| kept(game, &material)).transpose()?;
+    let asset = game.engine.world.get::<BlockWorldAsset>(world).context("the Block World has no asset")?;
+    let top = asset.drawn.guid(asset.file.ground.top).map(|top| top.to_string());
+    let name = stem(path);
+    let foliage = grown_plants::foliage_text(&mesh, material.as_deref(), starter_plant_at(path), top.as_deref());
+    let text = format!("format = 1\n\n[[obj]]\nid = 1\nname = {}\n{foliage}", toml::Value::String(name.to_string()));
+    let file = scene_file::parse(&text, name)?;
+    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;
+    game.levels.track_new(game.levels.scene_of(world), &spawned);
+    let made = spawned.first().map(|(_, entity)| *entity).context("the new Foliage was made")?;
+    settle(&mut game.engine.world, made, Some(world), Vec3::ZERO);
     Ok(made)
 }
 

@@ -7490,6 +7490,41 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
 }
 
 #[test]
+fn project_settings_quality_tab_sets_the_particle_budget_in_the_project_file() {
+    use voxear_render::{DEFAULT_PARTICLE_BUDGET, ParticleBudget};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let budget = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<ParticleBudget>().map(|b| b.0);
+    assert_eq!(budget(&editor), Some(DEFAULT_PARTICLE_BUDGET), "a million until the project says otherwise");
+    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    frame(&mut editor, &mut renderer);
+    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
+    let quality = label_starting(&editor.ui, tabs, "Quality").expect("a Quality tab");
+    click(&mut editor.ui, quality);
+    frame(&mut editor, &mut renderer);
+    let label = label_starting(&editor.ui, editor.ui.root(), "Budget").expect("the budget's row");
+    let row = editor.ui.parent(label).unwrap();
+    assert!(editor.ui.is_visible(editor.ui.parent(row).unwrap()), "the Quality tab shows it");
+    let mut fields = Vec::new();
+    with_class(&editor.ui, row, "number-input", &mut fields);
+    assert_eq!(editor.ui.text(fields[0]), "1000000");
+    type_into(&mut editor.ui, fields[0], "250,000");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(Project::open(dir.path()).unwrap().file.quality.particles, 250_000, "voxear.toml has it");
+    assert_eq!(budget(&editor), Some(250_000), "and the renderer keeps to it from now on");
+    // Back to the default, the file says nothing of it.
+    editor.set_quality(&voxear_engine::QualitySettings::default());
+    let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(!text.contains("[quality]"), "{text}");
+}
+
+#[test]
 fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_file() {
     use voxear_engine::origin::{OriginMode, OriginSettings};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

@@ -22,6 +22,8 @@
             <!-- Worlds of blocks' triangles drawn, in view (their water too) and in the sun's shadows. -->
             <Panel class="row"><Label>Block triangles</Label><Label name="block-triangles" class="value">–</Label></Panel>
             <Panel class="row"><Label>Block shadows</Label><Label name="block-shadows" class="value">–</Label></Panel>
+            <!-- Simulated particles alive, of the most the project lets its Particle Systems have room for. -->
+            <Panel class="row"><Label>Particles</Label><Label name="particles" class="value">–</Label></Panel>
             <Panel class="divider" />
             <Panel class="row"><Label>Lights per cluster</Label><Label name="lights" class="value">–</Label></Panel>
             <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>

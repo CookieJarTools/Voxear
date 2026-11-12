@@ -66,6 +66,9 @@ pub struct PlayerSettings {
     /// The project's `[floating_origin]` settings.
     #[serde(default)]
     pub floating_origin: crate::origin::OriginSettings,
+    /// The project's `[quality]` budget for simulated particles.
+    #[serde(default = "default_particles")]
+    pub particles: u32,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -101,6 +104,10 @@ pub struct PlayerSettings {
 
 fn is_parametric(mode: &voxear_audio::ReverbMode) -> bool {
     *mode == voxear_audio::ReverbMode::Parametric
+}
+
+fn default_particles() -> u32 {
+    voxear_render::DEFAULT_PARTICLE_BUDGET
 }
 
 impl PlayerSettings {
@@ -232,6 +239,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             },
             network: settings.network.clone(),
             floating_origin: settings.floating_origin.clone(),
+            quality: crate::project::QualitySettings { particles: settings.particles },
             modules: Some(settings.modules),
         },
     };

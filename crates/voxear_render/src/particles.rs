@@ -2,17 +2,22 @@
 //! colour, sparks, smoke, spray or dust, drawn after glass by
 //! `shaders/particles.slang`.
 //!
-//! This is the stateless path: every particle is worked out where it is
-//! drawn from its system's settings, its own number and how long the system
-//! has been going, with nothing kept between frames. A particle's slot comes
-//! round again once its last particle has died, so a system costs the same
-//! however long it runs, and every machine draws the same particles. They
-//! move with their Obj, as particles simulated in its own space do.
+//! A system runs one of two ways, whichever its settings need, and is
+//! drawn the same either way. While where a particle is depends on nothing
+//! but its age, every particle is worked out where it is drawn from its
+//! system's settings, its own number and how long the system has been
+//! going, with nothing kept between frames. A particle's slot comes round
+//! again once its last particle has died, so a system costs the same however
+//! long it runs, every machine draws the same particles, and they move with
+//! their Obj. Once a setting needs more (the wind, turbulence, particles
+//! that stay behind in the world as their Obj moves on), the system is
+//! simulated: its particles are kept on the GPU and stepped each frame (see
+//! `particle_sim`). [`ParticleSystem::simulated_for`] says which, and why.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::curve::{Curve, Gradient};
 use voxear_core::math::{Mat4, Vec3};
-use voxear_ecs::{Component, World};
+use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use voxear_rhi::vk;
@@ -26,8 +31,11 @@ use crate::{
 
 /// The most particle systems a frame draws, the nearest the camera.
 pub const MAX_PARTICLE_SYSTEMS: usize = 256;
-/// The most particles one system has alive at once.
+/// The most particles one system has alive at once, while it is not
+/// simulated.
 pub const MAX_PARTICLES: u32 = 16384;
+/// The most particles one simulated system has alive at once.
+pub const MAX_SIMULATED_PARTICLES: u32 = 1 << 20;
 
 /// Where a Particle System's particles start from, and which way they go.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +62,35 @@ impl EmitShape {
             Self::Sphere => "Sphere",
             Self::Cone => "Cone",
             Self::Box => "Box",
+        }
+    }
+}
+
+/// What a Particle System's particles move in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleSpace {
+    /// Its Obj's own space: they move and turn with it, as a torch's flame
+    /// stays on the torch.
+    #[default]
+    Local,
+    /// The world: once out they stay where they are as the Obj moves on, as
+    /// the smoke a torch leaves behind it.
+    World,
+}
+
+impl ParticleSpace {
+    pub const ALL: [Self; 2] = [Self::Local, Self::World];
+
+    fn is_local(&self) -> bool {
+        *self == Self::Local
+    }
+
+    /// As the editor shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Local => "Local",
+            Self::World => "World",
         }
     }
 }
@@ -148,6 +185,27 @@ pub struct ParticleSystem {
     /// fading from its colour to its end colour.
     #[serde(skip_serializing_if = "Gradient::is_empty")]
     pub color_gradient: Gradient,
+    /// What they move in: with their Obj, or left behind in the world.
+    #[serde(skip_serializing_if = "ParticleSpace::is_local")]
+    pub space: ParticleSpace,
+    /// How much of the wind they pick up: 0 none of it, 1 carried along at
+    /// its speed, as smoke is.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wind: f32,
+    /// How fast swirls in the air stir them about, in metres a second.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub turbulence: f32,
+    /// How wide those swirls are, in metres.
+    #[serde(skip_serializing_if = "is_one")]
+    pub turbulence_size: f32,
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
+fn is_one(value: &f32) -> bool {
+    *value == 1.0
 }
 
 impl Component for ParticleSystem {}
@@ -181,6 +239,10 @@ impl Default for ParticleSystem {
             opacity_curve: Curve::default(),
             speed_curve: Curve::default(),
             color_gradient: Gradient::default(),
+            space: ParticleSpace::Local,
+            wind: 0.0,
+            turbulence: 0.0,
+            turbulence_size: 1.0,
         }
     }
 }
@@ -192,7 +254,46 @@ impl ParticleSystem {
         let stream = (self.rate.max(0.0) * self.lifetime[0].max(self.lifetime[1]).max(0.0)).ceil() as u32;
         (self.burst + stream).min(MAX_PARTICLES)
     }
+
+    /// What makes it a simulated system, its particles kept on the GPU and
+    /// stepped each frame, rather than worked out from their age alone:
+    /// each setting that needs it, by the name the editor shows; none for a
+    /// system that is not.
+    pub fn simulated_for(&self) -> Vec<&'static str> {
+        [(self.space == ParticleSpace::World, "Space"), (self.wind > 0.0, "Wind"), (self.turbulence > 0.0, "Turbulence")]
+            .into_iter()
+            .filter(|(needs, _)| *needs)
+            .map(|(_, name)| name)
+            .collect()
+    }
+
+    pub fn is_simulated(&self) -> bool {
+        self.space == ParticleSpace::World || self.wind > 0.0 || self.turbulence > 0.0
+    }
+
+    /// How many particles a simulated system has room for: its stream as
+    /// long as the longest lived lives, and each burst still out, one for
+    /// every round that starts in that time.
+    pub fn capacity(&self) -> u32 {
+        let longest = self.lifetime[0].max(self.lifetime[1]).max(0.01);
+        let stream = (self.rate.max(0.0) * longest).ceil() as u64;
+        let rounds = if self.looping { (longest / self.duration.max(0.01)).ceil().max(1.0) as u64 } else { 1 };
+        (u64::from(self.burst) * rounds + stream).min(u64::from(MAX_SIMULATED_PARTICLES)) as u32
+    }
 }
+
+/// Where a simulated system's particles are in the pool this frame (see
+/// `particle_sim`): its first, how many it has room for, and the place of
+/// its oldest, which is drawn first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Placed {
+    pub first: u32,
+    pub capacity: u32,
+    pub oldest: u32,
+}
+
+/// This frame's simulated systems that have particles out, by their Objs.
+pub(crate) type PlacedSystems = std::collections::HashMap<Entity, Placed>;
 
 /// When a Particle System started, and stopped, in the renderer's time: set
 /// by the engine as it plays and stops it. Without one, it has been going
@@ -214,7 +315,9 @@ pub type RapidsSpray = (u32, u32, u32, u32);
 const SPRAYING_STREAMS: usize = 4;
 
 /// This frame's Particle Systems, the farthest from `camera` first, so the
-/// nearer draw over them, and how many particles each draws; then, listed
+/// nearer draw over them, and how many particles each draws, a simulated
+/// one from where `placed` has its particles, or not at all with none out;
+/// then, listed
 /// after them, the sea's spray and how many drops it has, when the first
 /// Ocean has any; then the spray over the rapids of the Streams of water
 /// nearest the camera among `bodies`.
@@ -223,16 +326,23 @@ pub(crate) fn gather(
     camera: Vec3,
     time: f32,
     bodies: &crate::water::WaterBodies,
+    placed: &PlacedSystems,
 ) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>, Vec<RapidsSpray>) {
-    let query = world.query_ref::<(&ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
+    let query =
+        world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let mut systems: Vec<(f32, GpuParticleSystem, u32)> = query
         .without::<Destroying>()
         .into_iter()
-        .filter(|(system, ..)| system.slots() > 0)
-        .map(|(system, transform, at, playback)| {
+        .filter_map(|(entity, system, transform, at, playback)| {
             let model = at.map_or_else(|| transform.matrix(), |w| w.0);
             let distance = model.w_axis.truncate().distance_squared(camera);
-            (distance, gpu(system, model, time, playback.copied()), system.slots())
+            let drawn = gpu(system, model, time, playback.copied());
+            if !system.is_simulated() {
+                return (system.slots() > 0).then(|| (distance, drawn, system.slots()));
+            }
+            let at = placed.get(&entity)?;
+            let drawn = GpuParticleSystem { pool_first: at.first, capacity: at.capacity, head: at.oldest, ..drawn };
+            Some((distance, drawn, at.capacity))
         })
         .collect();
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -331,6 +441,8 @@ pub struct Targets {
     /// the atmosphere's tables.
     pub sampled: Vec<ImageId>,
     pub clusters: BufferId,
+    /// The pool of simulated particles, when any are drawn.
+    pub pool: Option<BufferId>,
     pub extent: vk::Extent2D,
 }
 
@@ -346,13 +458,14 @@ pub(crate) fn record(
     fog_volume: Option<ImageId>,
 ) {
     let Draw { counts, spray, rapids, targets } = draw;
-    let Targets { hdr, depth, sampled, clusters, extent } = targets;
+    let Targets { hdr, depth, sampled, clusters, pool, extent } = targets;
     let depth_texture = fg.texture(depth);
     let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
     images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
     let volume = fog_volume.map_or(crate::gpu::NO_TEXTURE, |volume| fg.texture(volume).0);
     let push = Push { textures: [depth_texture.0, volume, 0, 0], ..push };
-    fg.add_pass("Particles", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
+    let buffers: Vec<_> = [Some(clusters), pool].into_iter().flatten().map(|b| (b, BufferAccess::ShaderRead)).collect();
+    fg.add_pass("Particles", &images, &buffers, move |ctx| {
         let color = [vk::RenderingAttachmentInfo::default()
             .image_view(ctx.view(hdr))
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -385,11 +498,28 @@ pub(crate) fn record(
 const LOOPING: u32 = 1;
 const ADDITIVE: u32 = 2;
 const LIT: u32 = 4;
+const SIMULATED: u32 = 8;
+const WORLD: u32 = 16;
+/// Its room in the pool holds none of its own particles yet: only for the
+/// pass that steps them.
+pub(crate) const FRESH: u32 = 32;
 
-fn gpu(system: &ParticleSystem, model: Mat4, time: f32, playback: Option<ParticlePlayback>) -> GpuParticleSystem {
+pub(crate) fn gpu(
+    system: &ParticleSystem,
+    model: Mat4,
+    time: f32,
+    playback: Option<ParticlePlayback>,
+) -> GpuParticleSystem {
     let playback = playback.unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
     let range = |r: [f32; 2]| [r[0].min(r[1]), r[0].max(r[1])];
-    let flags = [(system.looping, LOOPING), (system.blend == ParticleBlend::Additive, ADDITIVE), (system.lit, LIT)]
+    let flags = [
+        (system.looping, LOOPING),
+        (system.blend == ParticleBlend::Additive, ADDITIVE),
+        (system.lit, LIT),
+        (system.is_simulated(), SIMULATED),
+        (system.space == ParticleSpace::World, WORLD),
+    ];
+    let flags = flags
         .into_iter()
         .filter(|(on, _)| *on)
         .fold(0, |all, (_, flag)| all | flag);
@@ -419,7 +549,8 @@ fn gpu(system: &ParticleSystem, model: Mat4, time: f32, playback: Option<Particl
         flags,
         stopped: playback.stopped.map_or(f32::INFINITY, |stopped| stopped - playback.started),
         intensity: system.intensity.max(0.0),
-        _pad: [0.0; 2],
+        wind: system.wind.max(0.0),
+        turbulence: system.turbulence.max(0.0),
         size_curve: curve_keys(&system.size_curve),
         opacity_curve: curve_keys(&system.opacity_curve),
         speed_curve: curve_keys(&system.speed_curve),
@@ -430,6 +561,9 @@ fn gpu(system: &ParticleSystem, model: Mat4, time: f32, playback: Option<Particl
             system.speed_curve.keys().len() as u32,
             system.color_gradient.keys().len() as u32,
         ],
+        to_local: crate::gpu::cols(model.inverse()),
+        turbulence_size: system.turbulence_size.max(0.01),
+        ..GpuParticleSystem::default()
     }
 }
 
@@ -470,7 +604,7 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default());
+        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), &PlacedSystems::new());
         assert_eq!(spray, None, "no sea, no spray");
         assert!(rapids.is_empty(), "no Streams, none over rapids");
         assert_eq!(slots.len(), 2);
@@ -494,10 +628,10 @@ mod tests {
             crate::water::WaterBodies { bodies: vec![body], pools: 0, streams: vec![points.len() as u32], points, dry_meshes: Vec::new() }
         };
         let world = World::new();
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level));
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), &PlacedSystems::new());
         assert!(systems.is_empty() && rapids.is_empty(), "a level stream throws up none");
         let steep = bodies(&steep);
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep);
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, &PlacedSystems::new());
         assert_eq!((systems.len(), rapids.len()), (1, 1));
         let (system, body, points, drops) = rapids[0];
         assert_eq!((system, body, points), (0, 0, steep.streams[0]), "its own system, for the Stream's body and points");

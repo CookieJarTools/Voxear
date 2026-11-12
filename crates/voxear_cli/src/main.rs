@@ -901,6 +901,18 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         "lights: up to {} per cluster · {} light-cluster links",
         stats.cluster_max_lights, stats.cluster_light_links
     );
+    let particles = stats.particles;
+    if particles.systems + particles.left_out > 0 {
+        println!(
+            "particles: {} alive in {} systems, {} stepped · room for {} of {} · {} systems left out",
+            particles.alive,
+            particles.systems,
+            particles.awake,
+            particles.reserved,
+            particles.budget,
+            particles.left_out
+        );
+    }
     let blocks = stats.blocks;
     if blocks.draws + blocks.shadow_draws > 0 {
         println!(

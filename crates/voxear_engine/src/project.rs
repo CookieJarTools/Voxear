@@ -27,9 +27,39 @@ pub struct ProjectFile {
     pub network: crate::net::NetworkSettings,
     #[serde(default)]
     pub floating_origin: crate::origin::OriginSettings,
+    #[serde(default)]
+    pub quality: QualitySettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     pub modules: Option<crate::modules::Modules>,
+}
+
+/// How much the project lets the renderer spend. `particles` is the most
+/// simulated particles every Particle System may have room for between
+/// them (see `voxear_render::ParticleBudget`): those there is no room for
+/// are not drawn.
+///
+/// ```toml
+/// [quality]
+/// particles = 250000
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct QualitySettings {
+    pub particles: u32,
+}
+
+impl Default for QualitySettings {
+    fn default() -> Self {
+        Self { particles: voxear_render::DEFAULT_PARTICLE_BUDGET }
+    }
+}
+
+impl QualitySettings {
+    /// Puts the project's budgets where the renderer reads them.
+    pub fn put(&self, world: &mut voxear_ecs::World) {
+        world.insert_resource(voxear_render::ParticleBudget(self.particles));
+    }
 }
 
 /// Sound for the whole project: whether 3D sounds start out heard as
@@ -258,6 +288,21 @@ impl Project {
         set_key(&mut document, "floating_origin", "step", step);
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.floating_origin = settings.clone();
+        Ok(())
+    }
+
+    /// Writes the project's quality settings into `voxear.toml`: only what
+    /// differs from the defaults. The rest of the file is kept as it is.
+    pub fn set_quality(&mut self, settings: &QualitySettings) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let particles = settings.particles.min(voxear_render::MAX_PARTICLE_BUDGET);
+        let written = (particles != QualitySettings::default().particles).then(|| toml_edit::value(i64::from(particles)));
+        set_key(&mut document, "quality", "particles", written);
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.quality = QualitySettings { particles };
         Ok(())
     }
 

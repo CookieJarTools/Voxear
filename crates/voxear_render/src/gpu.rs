@@ -885,6 +885,14 @@ pub struct GpuBuffers {
     pub tracks: u64,
     /// This view's worlds of blocks (see `blocks`).
     pub block_worlds: u64,
+    /// Simulated particles (see `particle_sim`): the pool of them, and for
+    /// the pass that steps them, the chunks it steps, each its system and
+    /// its first particle among the system's; what it reads of the frame;
+    /// and its counters.
+    pub particles: u64,
+    pub particle_chunks: u64,
+    pub particle_sim: u64,
+    pub particle_counters: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -977,7 +985,10 @@ pub struct GpuParticleSystem {
     pub flags: u32,
     pub stopped: f32,
     pub intensity: f32,
-    pub _pad: [f32; 2],
+    /// How much of the wind it picks up, and how fast its turbulence stirs
+    /// it, in metres a second.
+    pub wind: f32,
+    pub turbulence: f32,
     /// Size, opacity and speed over life, two keys to a row; colour over
     /// life, a key to a row; and how many keys each has, none for no curve.
     pub size_curve: [[f32; 4]; 4],
@@ -985,6 +996,61 @@ pub struct GpuParticleSystem {
     pub speed_curve: [[f32; 4]; 4],
     pub gradient: [[f32; 4]; 8],
     pub curve_counts: [u32; 4],
+    /// From here on, only a simulated system's (see `particle_sim`). The
+    /// world to its Obj's own space, for one simulated there.
+    pub to_local: Mat4Cols,
+    /// How wide its turbulence's swirls are, in metres.
+    pub turbulence_size: f32,
+    /// Its first particle in the pool, and how many it has room for.
+    pub pool_first: u32,
+    pub capacity: u32,
+    /// Where in its room the next particle goes: the oldest's place.
+    pub head: u32,
+    /// This frame's new particles: how many, the first of them a burst as
+    /// old as `burst_age` seconds, the rest a stream as old as from
+    /// `stream_ages[0]`, the first, to `stream_ages[1]`, the last.
+    pub emit_count: u32,
+    pub emit_burst: u32,
+    pub burst_age: f32,
+    /// How many it has sent out in all, which numbers its particles.
+    pub emitted: u32,
+    pub stream_ages: [f32; 2],
+    pub _pad: [f32; 2],
+    /// How far its Obj has moved since last frame, so a stream's particles
+    /// set out along its way; and how far the world's origin moved.
+    pub moved: [f32; 3],
+    pub _pad_moved: f32,
+    pub shift: [f32; 3],
+    pub _pad_shift: f32,
+}
+
+/// A simulated particle, as `shaders/particle_sim.slang` keeps it from
+/// frame to frame: where it is and how fast it goes, in the world or in its
+/// Obj's own space, how old it is and how long it lives, in seconds, none
+/// when it has no life; and the number its random numbers come from.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuParticle {
+    pub position: [f32; 3],
+    pub age: f32,
+    pub velocity: [f32; 3],
+    pub life: f32,
+    pub seed: u32,
+}
+
+/// What a frame's simulation of particles reads besides its systems
+/// (`ParticleSim` in `shaders/common.slang`): the time and how long since
+/// last frame, how many chunks of the pool it steps, the wind, and where
+/// the world's middle is, as `GpuFrame::origin`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuParticleSim {
+    pub time: f32,
+    pub delta_time: f32,
+    pub chunks: u32,
+    pub _pad: u32,
+    pub wind: GpuWind,
+    pub origin: [f32; 4],
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -1168,13 +1234,15 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 59 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 63 * 8);
         // Its corner and block size, three addresses, then four words.
         assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 5);
+        assert_eq!(size_of::<GpuParticle>(), 36);
+        assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);

@@ -42,7 +42,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
-    EmitShape, ParticleBlend, ParticleSystem,
+    EmitShape, ParticleBlend, ParticleSpace, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
 use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
@@ -410,6 +410,13 @@ pub enum Prop {
     ParticleOpacityCurve,
     ParticleSpeedCurve,
     ParticleColorGradient,
+    /// What its particles move in, how the wind and swirls in the air take
+    /// them, and which settings make it a simulated system, if any.
+    ParticleSpace,
+    ParticleWind,
+    ParticleTurbulence,
+    ParticleTurbulenceSize,
+    ParticleSimulated,
     /// A Smoke's size and cells, how thick it is and its colour, how long it
     /// spreads, lasts and fades, and which swirls.
     SmokeSize,
@@ -823,7 +830,12 @@ impl Prop {
             | Prop::ParticleSizeCurve
             | Prop::ParticleOpacityCurve
             | Prop::ParticleSpeedCurve
-            | Prop::ParticleColorGradient => Part::ParticleSystem,
+            | Prop::ParticleColorGradient
+            | Prop::ParticleSpace
+            | Prop::ParticleWind
+            | Prop::ParticleTurbulence
+            | Prop::ParticleTurbulenceSize
+            | Prop::ParticleSimulated => Part::ParticleSystem,
             Prop::SmokeSize
             | Prop::SmokeCell
             | Prop::SmokeDensity
@@ -1124,6 +1136,11 @@ impl Prop {
             Prop::ParticleOpacityCurve => "opacity_curve",
             Prop::ParticleSpeedCurve => "speed_curve",
             Prop::ParticleColorGradient => "color_gradient",
+            Prop::ParticleSpace => "space",
+            Prop::ParticleWind => "wind",
+            Prop::ParticleTurbulence => "turbulence",
+            Prop::ParticleTurbulenceSize => "turbulence_size",
+            Prop::ParticleSimulated => "simulated",
             Prop::SmokeSize => "size",
             Prop::SmokeCell => "cell",
             Prop::SmokeDensity => "density",
@@ -1723,7 +1740,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::PartThenPull,
         ],
         Part::ParticleSystem => {
-            let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
+            let system = world.get::<ParticleSystem>(entity).copied().unwrap_or_default();
+            let shape = system.shape;
             let mut props = vec![
                 Prop::ParticleDuration,
                 Prop::ParticleLooping,
@@ -1754,7 +1772,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 EmitShape::Cone => vec![Prop::ParticleRadius, Prop::ParticleAngle],
                 EmitShape::Box => vec![Prop::ParticleBoxSize],
             });
-            props.extend([Prop::ParticleGravity, Prop::ParticleDrag, Prop::ParticleSpin, Prop::ParticleSeed]);
+            props.extend([Prop::ParticleGravity, Prop::ParticleDrag, Prop::ParticleSpin, Prop::ParticleSpace]);
+            props.extend([Prop::ParticleWind, Prop::ParticleTurbulence]);
+            // How wide its swirls are only while there are any.
+            if system.turbulence > 0.0 {
+                props.push(Prop::ParticleTurbulenceSize);
+            }
+            props.extend([Prop::ParticleSeed, Prop::ParticleSimulated]);
             props
         }
         // The swell and wind only for Custom weather: the others set their own.
@@ -2031,6 +2055,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleOpacityCurve => "Opacity Over Life",
         Prop::ParticleSpeedCurve => "Speed Over Life",
         Prop::ParticleColorGradient => "Colour Over Life",
+        Prop::ParticleSpace => "Space",
+        Prop::ParticleWind => "Wind",
+        Prop::ParticleTurbulence => "Turbulence",
+        Prop::ParticleTurbulenceSize => "Turbulence Size",
+        Prop::ParticleSimulated => "Simulated",
         Prop::SmokeSize => "Size",
         Prop::SmokeCell => "Cell Size",
         Prop::SmokeDensity => "Density",
@@ -2829,7 +2858,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleSizeCurve
         | Prop::ParticleOpacityCurve
         | Prop::ParticleSpeedCurve
-        | Prop::ParticleColorGradient => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleColorGradient
+        | Prop::ParticleSpace
+        | Prop::ParticleWind
+        | Prop::ParticleTurbulence
+        | Prop::ParticleTurbulenceSize
+        | Prop::ParticleSimulated => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
         Prop::SmokeSize
         | Prop::SmokeCell
         | Prop::SmokeDensity
@@ -4488,6 +4522,18 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleOpacityCurve => Value::Curve(system.opacity_curve),
         Prop::ParticleSpeedCurve => Value::Curve(system.speed_curve),
         Prop::ParticleColorGradient => Value::Gradient(system.color_gradient),
+        Prop::ParticleSpace => {
+            let index = ParticleSpace::ALL.iter().position(|s| *s == system.space).unwrap_or(0);
+            choice(index, ParticleSpace::ALL.iter().map(|s| s.name()).collect())
+        }
+        Prop::ParticleWind => Value::Number(system.wind),
+        Prop::ParticleTurbulence => Value::Number(system.turbulence),
+        Prop::ParticleTurbulenceSize => Value::Number(system.turbulence_size),
+        // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
+        Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
+            needs if needs.is_empty() => "No".into(),
+            needs => needs.join(", "),
+        }),
         _ => return None,
     })
 }
@@ -4536,6 +4582,12 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleOpacityCurve, Value::Curve(curve)) => system.opacity_curve = curve,
         (Prop::ParticleSpeedCurve, Value::Curve(curve)) => system.speed_curve = curve,
         (Prop::ParticleColorGradient, Value::Gradient(gradient)) => system.color_gradient = gradient,
+        (Prop::ParticleSpace, Value::Choice(index, _)) => {
+            system.space = ParticleSpace::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::ParticleWind, Value::Number(n)) => system.wind = n.max(0.0),
+        (Prop::ParticleTurbulence, Value::Number(n)) => system.turbulence = n.max(0.0),
+        (Prop::ParticleTurbulenceSize, Value::Number(n)) => system.turbulence_size = n.max(0.01),
         _ => {}
     }
 }
@@ -4917,6 +4969,24 @@ mod tests {
         assert!(set_component(&mut world, entity, &Prop::ParticleBurst, Value::Whole(12)));
         assert_eq!(get_particle(&world, entity, Prop::ParticleBurst), Some(Value::Whole(12)));
         assert_eq!(Prop::ParticleOpacityEnd.lock_key(), "color_end");
+    }
+
+    #[test]
+    fn a_particle_system_says_which_settings_have_it_simulated() {
+        let mut world = World::new();
+        let entity = world.spawn((ParticleSystem::default(),));
+        let types = ScriptTypes::default();
+        let shown = |world: &World| props(world, entity, &Part::ParticleSystem, &types);
+        assert_eq!(get_particle(&world, entity, Prop::ParticleSimulated), Some(Value::Fixed("No".into())));
+        assert!(!shown(&world).contains(&Prop::ParticleTurbulenceSize), "no swirls, so no size for them");
+        assert!(set_component(&mut world, entity, &Prop::ParticleTurbulence, Value::Number(1.5)));
+        assert!(set_component(&mut world, entity, &Prop::ParticleSpace, Value::Choice(1, Vec::new())));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().space, voxear_render::ParticleSpace::World);
+        assert!(shown(&world).contains(&Prop::ParticleTurbulenceSize));
+        let simulated = get_particle(&world, entity, Prop::ParticleSimulated);
+        assert_eq!(simulated, Some(Value::Fixed("Space, Turbulence".into())));
+        assert!(set_component(&mut world, entity, &Prop::ParticleWind, Value::Number(-2.0)));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().wind, 0.0, "never less than none");
     }
 
     fn get_particle(world: &World, entity: Entity, prop: Prop) -> Option<Value> {

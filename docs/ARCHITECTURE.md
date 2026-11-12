@@ -1184,6 +1184,30 @@ variants inherit from a parent and override only what differs.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
+**The graph compiler** *(planned)*. One graph tool serves materials and particle effects, on the canvas generator
+graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
+in five places, and each has its answer here:
+
+- **Everything worked out once a pixel.** The graph compiles to a typed intermediate form first, where every value
+  is given the lowest rate that is still right: once when a material changes, on the CPU, into the material's
+  properties; once a particle or a vertex; or once a pixel. Work is moved to the vertex stage only where it varies
+  in a straight line across a triangle.
+- **Text pasted together a node at a time.** Constants are folded, two nodes doing the same work become one, as
+  the generator's compiler already does, and what a pass does not read is left out of it, so a depth or shadow
+  pass keeps only opacity and where a vertex goes. Only then is Slang written, as the same `surface`, `vertex`
+  and `light` functions a hand-written shader has.
+- **Branches that run both sides.** A branch with a picture read or heavy work behind it is a real branch; the
+  rest are selects.
+- **A shader for every combination of switches.** A graph is one case of the switch project shaders are already
+  compiled into, and its own switches are folded when it is compiled, so there are none.
+- **Costs nobody sees.** Each node shows what it costs after all of that, each stage how many pictures it reads,
+  a particle effect how many bytes a particle takes, and the preview its GPU time. An edit that moves an effect
+  off the stateless path says so.
+
+Values being dragged are kept as properties, so dragging never compiles; they are folded in when the graph is
+saved. A custom node is Slang read into the same form, so it does not stand in the way of any of this. The test:
+the built-in shaders made again as graphs draw the same picture in the same GPU time as the hand-written ones.
+
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
@@ -2768,52 +2792,73 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
-## Particles
+## Particles *(the stateless and simulated paths implemented; the rest planned)*
 
-Research covered Shuriken, VFX Graph, Niagara (including its lightweight emitters), Godot, PopcornFX, EmberGen,
-Effekseer and Houdini. The pattern is clear:
-- **Stacks with presets are beginner-friendly.**
-- **Raw graphs with simulation contexts are hostile to beginners.**
-- The best idea to copy is Niagara's *lightweight emitters*: simple by construction, and upgradeable.
+A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
+which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
+next.
 
-**One intermediate representation, three skins:**
+1. **Stateless** *(implemented)*. While where a particle is depends on nothing but its age, every particle is
+   worked out where it is drawn (`shaders/particles.slang`) from its system's settings, its slot and the system's
+   time. Nothing is kept between frames and every machine draws the same particles.
+2. **Simulated** *(implemented)*. Once a setting needs more (the wind, turbulence, particles left behind in the
+   world; later collision, forces and trails), the system's particles are kept on the GPU and stepped each frame
+   by one compute pass for every system and every view (`voxear_render::particle_sim`,
+   `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
+3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
+   the shared graph compiler (see Materials and Shader Graph).
 
-1. **Core.** A particle asset is an ordered list of typed modules in fixed stages: Spawn, Init, Update, Render, and
-   optional custom simulation stages. It compiles to one GPU program. The GPU side is:
-   - a spawn counter
-   - alive and free lists
-   - indirect dispatch and indirect draw
-   - sorting only for alpha-blended systems
-   - **A stateless fast path:** if every module is a closed-form function of age, seed and parameters, there are
-     no state buffers and evaluation happens in the vertex shader. Adding collision or a ribbon promotes the system
-     automatically. Users never choose between the two.
-2. **Easy.**
-   - A **preset gallery** with live thumbnails: fire, smoke, sparks, explosion, magic, impact, dust, rain, snow,
-     leaves.
-   - Each preset shows about 8 *look* sliders (size, energy, colour, lifetime, wind, softness, lit, quality) and
-     scrubbable curves and gradients.
-   - Soft, lit particles are on by default, and "collide with world" is one checkbox.
-   - Presets are real stacks, so nothing is hidden.
-3. **Stack.** "Show modules" reveals and edits the module stack, Shuriken style.
-4. **Graph.** Any module opens as a node graph or as Slang code, scratch-pad style. Data interfaces cover SDF,
-   mesh surface, skeleton and audio spectrum.
+**The simulated path.** Every simulated system shares one pool of particles, 36 bytes each (position, velocity,
+age, life and a seed; size, colour and spin are worked out from the seed and age where it is drawn, as on the
+stateless path). A system has a run of the pool to itself, as many particles as it can have out at once, and fills
+it in a ring: each new particle takes the place of its oldest, which has died by then. Chose this over lists of
+alive and dead particles: nothing is counted, appended or sorted on the GPU, no count comes back to the CPU for
+drawing, and a system's particles are drawn in the order they were sent out, the same every frame, so blended
+particles do not flicker. Lists come with what needs them (particles sent out on the GPU by other particles, and
+sorting).
 
-**GPU features.**
-- Events and sub-emitters through append buffers, with no CPU readback.
-- Ribbons and trails.
-- Mesh particles.
-- Collision against the depth buffer first, then the global SDF from voxel GI.
-- Attractors and vector fields.
+- The pool is handed out in chunks of 256 particles (`particle_sim::Spans`, first fit, runs joined when given
+  back). The pass steps a list of chunks, each naming its system, so only systems with particles out cost
+  anything: one whose last particle has died is neither stepped nor drawn until it plays again.
+- The CPU's part each frame is small and per system: how many particles it sends out and how old they already
+  are (`particle_sim::sent`). A new particle starts where its age alone has it, by the stateless path's own
+  formula, and is stepped from there. So a stream is spread evenly through the frame it was sent out in, along
+  the way its Obj moved, and a system first seen with its stream already running starts full rather than empty.
+- The pool starts at 16,384 particles and doubles as systems need room, up to the project's budget
+  (`ParticleBudget`, `[quality] particles` in `voxear.toml`, a million by default). A system there is no room
+  for is left out and counted.
+- Forces in the step: gravity and drag; the wind, toward whose speed a particle is pulled, read from the same
+  gusts plants lean by (`windPush` in `shaders/wind.slang`); and turbulence, the curl of three smooth noises
+  read from one hash of each lattice cell, which stirs particles without gathering or thinning them.
+- A system simulates in its Obj's space or in the world. The world's particles are moved with the floating
+  origin at their system's next step.
+- Alive particles are counted on the GPU, a subgroup at a time, into the GPU's own memory and copied out for
+  the stats: adding to host-visible memory cost nine times the whole step.
+- On an RTX 3070, 1,048,576 particles blown and stirred are stepped in 0.19 ms and drawn as 2 cm sparks in
+  0.8 ms.
 
-**Content workflow.**
-- One-click **bake to flipbook**.
-- Import of EmberGen and Houdini flipbooks, including 6-way lit smoke.
+**Planned, in the order it is built.**
 
-**Scalability and debugging.**
-- A budget class per system, with distance and screen-size LOD and a global particle budget.
-- A debugger showing alive count against budget and per-emitter GPU time.
-- Click-to-inspect particles, pause, step and seed lock.
-- A "why can't I see it?" checker covering bounds, culling, alpha and depth.
+- **Physics.** Collision as one checkbox with three levels: last frame's depth; the terrain's heights and the
+  nearest colliders, which work off screen; and the scene's rays, hardware or software, capped per frame, for
+  what must land behind things. A Force Field component for attractors, vortices and blasts; particles pushed
+  by characters through the grid that bends plants. Particles stay visual
+  only: gameplay gets hit events a frame or two late for sounds and marks, effects start on every machine by
+  RPC with a seed, and a server simulates none.
+- **Effects as assets.** A `.particles` asset of several emitters, each a stack of modules in fixed stages
+  (spawn, start, update, events, draw), with sub-emitters and exposed values; a gallery of starters built from
+  generated textures; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.
+- **Drawing.** Stretched quads, meshes, trails as short chains per particle; flipbooks blended by motion
+  vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
+  effects; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
+  soft particles at half size, and anti-aliasing told about fast particles.
+- **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
+  rather than names, hit and finished events, curves and gradients.
+- **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least
+  significant thinned first when over budget; per-effect counts and GPU time in a debugger.
+- **Later.** Decals on hit (with a decal renderer), heat distortion, shadows cast by particles, blending in any
+  order through the fog volume, and a grid of air speed round the camera that gameplay pushes and particles,
+  smoke and fog read.
 
 ## Water
 
@@ -3117,7 +3162,9 @@ sources, down and then out over ground, a level lower each block, its level and 
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
 machine flows alike, five steps a second in the game's tick. In a world drawn smooth, water has a smooth surface of its
 own, by surface nets over how deep into water or ground each block's middle is, a generated sea's top blocks keeping
-where its surface lies in their fill; the water round the camera is one more body among the Pools for the view under it.
+where its surface lies in their fill; the water round the camera is one more body among the Pools for the view under it,
+found only where a view starts (`waterSurface`'s `seen`) and flat as its faces are drawn: it is no water to light or wet
+the ground under it, which would change where that body ends.
 A world's blocks can change size with the world staying as it is in metres: its ground is counted again and what was
 built read again in the new blocks (`blocks::edits::resized`). Far out, the world's middle follows the camera (see the
 floating origin, under the Obj model), and chunk keys count from the world's Obj, so none is made again.

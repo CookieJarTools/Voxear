@@ -40,6 +40,7 @@ mod meshlets;
 mod model_lods;
 mod model_renderer;
 mod impostors;
+mod particle_sim;
 mod particles;
 mod passes;
 mod dice;
@@ -123,7 +124,8 @@ pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
-pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
+pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
+pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSpace, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
@@ -202,6 +204,9 @@ pub struct RenderStats {
     /// What the main view drew of its worlds of blocks this frame: its
     /// draws and triangles, and those of the sun's cascades.
     pub blocks: BlockCounts,
+    /// The simulated particles: how many are alive, and what their systems
+    /// hold of the project's budget.
+    pub particles: ParticleCounts,
 }
 
 impl RenderStats {
@@ -230,6 +235,7 @@ impl RenderStats {
             exposure_ev: exposure[0],
             average_luminance: exposure[2],
             blocks: BlockCounts::default(),
+            particles: ParticleCounts::default(),
         }
     }
 }
@@ -426,6 +432,8 @@ pub struct Renderer {
     impostor_bakes: impostors::Bakes,
     /// This frame's skinned parts, posed once for every view.
     skinning: skinning::Skinning,
+    /// Every simulated Particle System's particles, stepped once a frame.
+    particle_sim: particle_sim::ParticleSim,
     /// Every terrain's heights on the GPU (see `terrain`).
     terrains: terrain::Terrains,
     blocks: blocks::BlockWorlds,
@@ -505,6 +513,7 @@ impl Renderer {
             previews: previews::Previews::default(),
             impostor_bakes: impostors::Bakes::default(),
             skinning: skinning::Skinning::default(),
+            particle_sim: particle_sim::ParticleSim::new(FRAMES_IN_FLIGHT),
             terrains: terrain::Terrains::default(),
             blocks: blocks::BlockWorlds::default(),
             gpu_decompression: true,
@@ -679,7 +688,9 @@ impl Renderer {
         for view in &mut self.views {
             view.shift_origin(by);
         }
+        self.particle_sim.shift_origin(by);
     }
+
 
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
@@ -1123,6 +1134,10 @@ impl Renderer {
         let assets = self.assets.as_mut().expect("assets live until drop");
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
+        // Every simulated particle's step, for all the views.
+        let stepping = ((time, delta_time), (frame_index, frame.slot));
+        self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
+        self.stats.particles = self.particle_sim.counts();
 
         let recording = profile_marker!("Record Passes").scope();
         let Self {
@@ -1138,6 +1153,7 @@ impl Renderer {
             previews,
             impostor_bakes,
             skinning,
+            particle_sim,
             terrains,
             blocks,
             frames,
@@ -1153,6 +1169,8 @@ impl Renderer {
         let mut fg = graph.begin(gpu, frame.slot);
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
+        let particle_pool = particle_sim.import(&mut fg);
+        particle_sim.record(&mut fg, *pipelines, frame.slot, particle_pool);
         let terrain_draws = terrains.record(&mut fg, frames);
         let block_draws = blocks.record(&mut fg, frames);
         let ui = &ui_buffers[frame.slot];
@@ -1210,6 +1228,7 @@ impl Renderer {
                 mesh_shaders,
                 software_rays,
                 posed: skinning.posed.clone(),
+                simulated: (particle_sim.placed.clone(), particle_sim.pool_address(), particle_pool),
                 panels: panel_textures.clone(),
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
@@ -1449,6 +1468,7 @@ impl Drop for Renderer {
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
         self.skinning.destroy(gpu);
+        self.particle_sim.destroy(gpu);
         self.terrains.destroy(gpu);
         self.blocks.destroy(gpu);
         for view in std::mem::take(&mut self.views) {
@@ -1559,6 +1579,9 @@ struct ViewSetup {
     software_rays: bool,
     /// This frame's posed parts, whose instances draw their posed vertices.
     posed: std::sync::Arc<HashMap<scene::Owner, skinning::Posed>>,
+    /// This frame's simulated Particle Systems with particles out, the pool
+    /// their particles are in, and the pool as the graph knows it.
+    simulated: (std::sync::Arc<particles::PlacedSystems>, u64, Option<graph::BufferId>),
     /// This frame's UI panels' textures, which each view draws its panels with.
     panels: Vec<ui_panels::PanelTexture>,
     /// This frame's terrains, as every view draws them.
@@ -2319,13 +2342,17 @@ impl View {
                 grass_blades: buffers.grass_blades.address,
                 grass_draws: grass::addresses(&buffers.grass)[1],
                 block_worlds: buffers.blocks.address,
+                particles: setup.simulated.1,
+                particle_chunks: 0,
+                particle_sim: 0,
+                particle_counters: 0,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
         let (particle_systems, particles, spray, rapids) =
-            particles::gather(world, camera, setup.time, &extracted.water_bodies);
+            particles::gather(world, camera, setup.time, &extracted.water_bodies, &setup.simulated.0);
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);
@@ -2402,6 +2429,7 @@ impl View {
             water,
             glass,
             particles,
+            particle_pool: setup.simulated.2,
             spray,
             rapids,
             smokes: smokes.len() as u32,

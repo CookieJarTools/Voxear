@@ -629,7 +629,11 @@ bool overPool(WaterBody pool, float3 world)
 // is and how fast its water takes each colour, a metre; the sea at its
 // level, or a Pool over its footprint above its bottom, not in a Dry Area
 // unless it is that Dry Area's bilge. False where there is none.
-bool waterSurface(Frame* frame, float3 world, out float surface, out float3 absorb)
+// A world of blocks' water round the camera (WATER_BLOCKS) is found only for
+// `seen`, where a view starts: it is the stretch of that water the camera is
+// in, so the ground it lit or wetted would change where that stretch ends
+// and as the camera came near.
+bool waterSurface(Frame* frame, float3 world, out float surface, out float3 absorb, bool seen = false)
 {
     surface = -1e9;
     absorb = frame->ocean.absorb;
@@ -668,7 +672,8 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
     {
         WaterBody pool = buffers()->waterBodies[i];
         // Lava is no water to be under.
-        if (pool.liquid == LIQUID_WATER && pool.shape == 0 && overPool(pool, world))
+        bool counted = seen || pool.kind != WATER_BLOCKS;
+        if (counted && pool.liquid == LIQUID_WATER && pool.shape == 0 && overPool(pool, world))
         {
             surface = pool.toWorld.c3.y;
             absorb = pool.absorb;

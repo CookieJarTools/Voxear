@@ -3,7 +3,9 @@
 // from its system's settings, its slot and how long the system has been
 // going. A slot's particle sets out again once its last has died, as many
 // slots as the system ever has alive. Soft round dots, faded before what
-// they meet, lit as smoke is or glowing as sparks do.
+// they meet, lit as smoke is or glowing as sparks do. A simulated system's
+// particles are read from the pool instead (src/particle_sim.rs), and drawn
+// the same.
 
 #include "particle_shared.slang"
 
@@ -15,6 +17,19 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
     uint slot = vertexId / 6;
     float2 corner = PARTICLE_CORNERS[vertexId % 6];
     ParticleOut output = particleNone(system, corner);
+    if ((system.flags & PARTICLES_SIMULATED) != 0)
+    {
+        // Kept in the pool and stepped each frame (particle_sim.slang): drawn oldest first, so the newest are over
+        // them, in the order they were sent out.
+        Particle particle = buffers()->particles[system.poolFirst + (system.head + slot) % system.capacity];
+        if (particle.life <= 0.0 || particle.age >= particle.life)
+        {
+            return output;
+        }
+        float3 at = (system.flags & PARTICLES_WORLD) != 0 ? particle.position : transform(system.model, float4(particle.position, 1.0)).xyz;
+        uint own = particleHash(particle.seed);
+        return particlePlace(frame, system, at, particle.age, particle.age / particle.life, corner, own, 1.0);
+    }
     float spawn;
     uint round;
     if (!particleSpawn(system, slot, spawn, round))
@@ -31,30 +46,9 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
     float aged = age / life;
 
     // Where it set out from, and which way, in its Obj's own space.
-    float3 from = 0.0;
-    float3 way = float3(0.0, 1.0, 0.0);
-    if (system.shape == EMIT_POINT)
-    {
-        way = anyWay(h);
-    }
-    else if (system.shape == EMIT_SPHERE)
-    {
-        way = anyWay(h);
-        from = way * system.radius * pow(particleRandom(h), 1.0 / 3.0);
-    }
-    else if (system.shape == EMIT_CONE)
-    {
-        float tilt = acos(lerp(1.0, cos(system.angle), particleRandom(h)));
-        float turn = particleRandom(h) * 2.0 * PI;
-        way = float3(sin(tilt) * cos(turn), cos(tilt), sin(tilt) * sin(turn));
-        float reach = system.radius * sqrt(particleRandom(h));
-        float around = particleRandom(h) * 2.0 * PI;
-        from = float3(cos(around), 0.0, sin(around)) * reach;
-    }
-    else
-    {
-        from = (float3(particleRandom(h), particleRandom(h), particleRandom(h)) - 0.5) * system.boxSize;
-    }
+    float3 from;
+    float3 way;
+    particleSetOut(system.shape, system.radius, system.angle, system.boxSize, h, from, way);
     float speed = lerp(system.speed.x, system.speed.y, particleRandom(h));
     float3 start = transform(system.model, float4(from, 1.0)).xyz;
     float3 velocity = transform(system.model, float4(way * speed, 0.0)).xyz;

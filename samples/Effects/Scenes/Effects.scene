@@ -1,0 +1,232 @@
+# Voxear scene: Particle Systems, simulated and not, in a wind
+format = 1
+
+[post]
+preset = "voxear"
+
+[[obj]]
+id = 1
+name = "Main Camera"
+position = [0.0, 1.8, -8.0]
+rotation = [2.0, 0.0, 0.0]
+camera = { fov = 60.0 }
+
+[[obj]]
+id = 2
+name = "Sun"
+rotation = [32.0, -50.0, 0.0]
+light = { type = "directional", color = [1.0, 0.93, 0.84], intensity = 3.0 }
+
+[[obj]]
+id = 3
+name = "Ground"
+scale = [200.0, 1.0, 200.0]
+[obj.renderer]
+mesh = "builtin:plane"
+material = { color = [0.42, 0.38, 0.32], roughness = 0.9 }
+
+[[obj]]
+id = 4
+name = "Wind"
+rotation = [0.0, 90.0, 0.0]
+[obj.wind_zone]
+strength = 0.5
+gusts = 0.6
+
+[[obj]]
+id = 5
+name = "Campfire Flames"
+position = [-3.5, 0.1, 0.0]
+[obj.particles]
+rate = 60.0
+lifetime = [0.5, 0.9]
+speed = [1.2, 2.0]
+size = [0.35, 0.5]
+size_end = 0.2
+color = [1.0, 0.45, 0.08, 0.9]
+color_end = [0.8, 0.08, 0.02, 0.0]
+intensity = 3.0
+radius = 0.2
+angle = 12.0
+gravity = -0.2
+blend = "additive"
+lit = false
+softness = 0.2
+wind = 0.15
+turbulence = 0.4
+turbulence_size = 0.5
+
+[[obj]]
+id = 6
+name = "Campfire Smoke"
+position = [-3.5, 0.8, 0.0]
+[obj.particles]
+rate = 14.0
+lifetime = [4.0, 6.0]
+speed = [0.8, 1.2]
+size = [0.5, 0.7]
+size_end = 5.0
+color = [0.35, 0.35, 0.36, 0.5]
+color_end = [0.5, 0.5, 0.5, 0.0]
+radius = 0.15
+angle = 10.0
+gravity = -0.08
+drag = 0.3
+softness = 0.6
+space = "world"
+wind = 1.0
+turbulence = 0.5
+turbulence_size = 2.0
+
+[[obj]]
+id = 7
+name = "Campfire Embers"
+position = [-3.5, 0.3, 0.0]
+[obj.particles]
+rate = 25.0
+lifetime = [1.5, 3.0]
+speed = [1.0, 2.5]
+size = [0.03, 0.05]
+color = [1.0, 0.5, 0.1, 1.0]
+color_end = [1.0, 0.15, 0.02, 0.0]
+intensity = 6.0
+radius = 0.2
+angle = 20.0
+gravity = -0.1
+drag = 0.4
+blend = "additive"
+lit = false
+softness = 0.05
+space = "world"
+wind = 0.6
+turbulence = 1.2
+turbulence_size = 0.8
+
+[[obj]]
+id = 8
+name = "Sparks"
+position = [0.0, 0.1, 0.0]
+[obj.particles]
+rate = 200.0
+lifetime = [1.0, 1.5]
+speed = [3.0, 4.0]
+size = [0.04, 0.07]
+color = [1.0, 0.6, 0.2, 1.0]
+color_end = [1.0, 0.3, 0.1, 1.0]
+intensity = 4.0
+angle = 25.0
+gravity = 1.0
+blend = "additive"
+lit = false
+
+[[obj]]
+id = 9
+name = "Dust"
+position = [5.0, 0.3, 2.0]
+[obj.particles]
+rate = 20.0
+lifetime = [5.0, 8.0]
+speed = [0.0, 0.2]
+size = [0.6, 1.2]
+size_end = 2.0
+color = [0.45, 0.38, 0.28, 0.15]
+color_end = [0.45, 0.38, 0.28, 0.0]
+shape = "box"
+box_size = [5.0, 0.3, 5.0]
+softness = 0.8
+space = "world"
+wind = 1.0
+turbulence = 0.3
+turbulence_size = 3.0
+
+[[obj]]
+id = 10
+name = "Million Sparks 1"
+position = [-15.0, 0.1, 40.0]
+[obj.particles]
+rate = 60000.0
+lifetime = [4.0, 4.0]
+speed = [6.0, 12.0]
+size = [0.02, 0.03]
+color = [1.0, 0.6, 0.2, 1.0]
+color_end = [1.0, 0.3, 0.1, 1.0]
+intensity = 4.0
+angle = 30.0
+gravity = 0.6
+drag = 0.3
+blend = "additive"
+lit = false
+seed = 0
+space = "world"
+wind = 0.5
+turbulence = 1.0
+turbulence_size = 3.0
+
+[[obj]]
+id = 11
+name = "Million Sparks 2"
+position = [-5.0, 0.1, 40.0]
+[obj.particles]
+rate = 60000.0
+lifetime = [4.0, 4.0]
+speed = [6.0, 12.0]
+size = [0.02, 0.03]
+color = [1.0, 0.6, 0.2, 1.0]
+color_end = [1.0, 0.3, 0.1, 1.0]
+intensity = 4.0
+angle = 30.0
+gravity = 0.6
+drag = 0.3
+blend = "additive"
+lit = false
+seed = 1
+space = "world"
+wind = 0.5
+turbulence = 1.0
+turbulence_size = 3.0
+
+[[obj]]
+id = 12
+name = "Million Sparks 3"
+position = [5.0, 0.1, 40.0]
+[obj.particles]
+rate = 60000.0
+lifetime = [4.0, 4.0]
+speed = [6.0, 12.0]
+size = [0.02, 0.03]
+color = [1.0, 0.6, 0.2, 1.0]
+color_end = [1.0, 0.3, 0.1, 1.0]
+intensity = 4.0
+angle = 30.0
+gravity = 0.6
+drag = 0.3
+blend = "additive"
+lit = false
+seed = 2
+space = "world"
+wind = 0.5
+turbulence = 1.0
+turbulence_size = 3.0
+
+[[obj]]
+id = 13
+name = "Million Sparks 4"
+position = [15.0, 0.1, 40.0]
+[obj.particles]
+rate = 60000.0
+lifetime = [4.0, 4.0]
+speed = [6.0, 12.0]
+size = [0.02, 0.03]
+color = [1.0, 0.6, 0.2, 1.0]
+color_end = [1.0, 0.3, 0.1, 1.0]
+intensity = 4.0
+angle = 30.0
+gravity = 0.6
+drag = 0.3
+blend = "additive"
+lit = false
+seed = 3
+space = "world"
+wind = 0.5
+turbulence = 1.0
+turbulence_size = 3.0

@@ -17,4 +17,16 @@ internal static class ParticleTests
 		Check.Near(0f, sparks.Rate);
 		Check.True(Obj.None.AddParticles() == ParticleSystem.None, "nothing to add it to");
 	}
+
+	[Test]
+	private static void AnObjWithoutParticlesIsNotSimulatedAndKeepsNoWind()
+	{
+		var smoke = Obj.None.Particles;
+		smoke.Space = ParticleSpace.World;
+		smoke.Wind = 1f;
+		smoke.Turbulence = 0.5f;
+		smoke.TurbulenceSize = 2f;
+		Check.True(!smoke.IsSimulated && smoke.Space == ParticleSpace.Local, "nothing to simulate");
+		Check.Near(0f, smoke.Wind + smoke.Turbulence + smoke.TurbulenceSize);
+	}
 }

@@ -435,6 +435,8 @@ impl Profiler {
             ("Block triangles", (stats.blocks.triangles + stats.blocks.water_triangles).to_string()),
             ("Block shadows", stats.blocks.shadow_triangles.to_string()),
             ("Block draws", (stats.blocks.draws + stats.blocks.shadow_draws).to_string()),
+            ("Particles", format!("{} of {}", stats.particles.alive, stats.particles.budget)),
+            ("Particle systems", format!("{} of {}", stats.particles.awake, stats.particles.systems)),
             ("By LOD", if lods.is_empty() { "-".into() } else { lods.join(" / ") }),
             ("LOD fades", stats.fade_draws.to_string()),
             ("Lights per cluster", stats.cluster_max_lights.to_string()),

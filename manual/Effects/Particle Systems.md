@@ -17,7 +17,7 @@ Each particle sets out from the system's **Shape**:
 | Cone | A disc of its **Radius**, up the Obj's green arrow (Y), spreading out to its **Angle** |
 | Box | Inside a box of its **Box Size**, up the Obj's Y |
 
-Turn the Obj to aim a Cone or a Box. Particles move with their Obj, so a torch's flame stays on the torch as it's carried.
+Turn the Obj to aim a Cone or a Box. Particles move with their Obj, so a torch's flame stays on the torch as it's carried. Set **Space** to World to leave them behind instead (see below).
 
 ## How each particle lives
 
@@ -45,6 +45,28 @@ Each is empty to start with, and does nothing until you give it keys. Then it ta
 - **Curve:** press on the graph to add a key there. Drag a key to move it, and drag it off the graph and let go to take it out.
 - **Gradient:** press on the strip to add a colour, drag its marker to move it, and type its red, green and blue under the strip.
 
+## Wind, turbulence and space
+
+Three settings let the air and the world take hold of particles once they're out:
+
+- **Space**: **Local** particles move and turn with their Obj. **World** particles stay where they are once sent out, so a moving Obj leaves a trail of them: the smoke behind a torch, the dust behind a wheel.
+- **Wind**: how much of the level's wind they pick up. At 0 they ignore it, and at 1 they're carried along at its speed, as smoke is. Sparks and debris want a little, smoke and dust a lot. The wind is the level's Wind Zone (see [[Wind]]): the same gusts that bend the grass take the smoke over it.
+- **Turbulence**: how fast swirls in the air stir them about, in metres a second. A little makes smoke curl and embers wander. **Turbulence Size** is how wide those swirls are, in metres: small for a candle, large for a bonfire.
+
+### Simulated systems
+
+A system using none of these three works out where each particle is from its age alone. Nothing is kept from frame to frame, and it costs almost nothing.
+
+Once a system uses any of them, its particles are **simulated**: kept on the graphics card and moved a step each frame. The **Simulated** row at the bottom of the component says which settings have made it so, or No. You don't choose between the two, and a simulated system looks the same as one that isn't until the wind or turbulence moves it.
+
+Simulated systems are still cheap. A million particles are stepped in about a fifth of a millisecond on a mid-range graphics card. A system whose last particle has died costs nothing until it plays again.
+
+### The particle budget
+
+Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. **Project Settings ▸ Quality ▸ Budget** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
+
+The stats overlay (**F1** in a game) and the Profiler show **Particles**: how many are alive, of the budget. The Profiler's GPU list has **Particle simulation** and **Particles**, the time spent stepping and drawing them.
+
 ## How particles look
 
 - **Blend**: **Alpha** particles cover what's behind them, as smoke and dust do. **Additive** particles add their light to it, as sparks, fire and magic do, and never darken anything.
@@ -56,7 +78,7 @@ Each is empty to start with, and does nothing until you give it keys. Then it ta
 
 ## From scripts
 
-`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on.
+`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated.
 
 ```csharp
 // A burst of sparks where the hammer lands.
@@ -70,10 +92,17 @@ sparks.Blend = ParticleBlend.Additive;
 sparks.Lit = false;
 sparks.Intensity = 3f;
 sparks.Play();
+
+// Smoke that drifts off downwind, curling, and stays behind as its Obj moves.
+var smoke = chimney.AddParticles();
+smoke.Space = ParticleSpace.World;
+smoke.Wind = 1f;
+smoke.Turbulence = 0.6f;
+smoke.TurbulenceSize = 2f;
 ```
 
 A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to reach another Obj's system.
 
 ## What's coming
 
-Particles today are worked out on the graphics card from their age alone, so a system costs the same however long it runs. Still to come: particles that bounce off the world, trails, flipbook textures, a gallery of ready-made effects, and editing an effect as a stack of modules or a graph.
+Still to come: particles that bounce off the world and are pushed by blasts, trails, textures and flipbooks, smoke lit from every side, a gallery of ready-made effects, and editing an effect as a stack of modules or a graph.

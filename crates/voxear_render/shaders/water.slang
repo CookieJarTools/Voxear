@@ -1817,6 +1817,7 @@ bool keptDry(Frame* frame, float3 world, uint body)
 // stands over `world` with its waves: the sea's, or a Pool's share of them,
 // as its surface is drawn (seaDrawnHeight, poolDrawnHeight), so a
 // waterline rises and falls as each wave does and meets the water as drawn.
+// A world of blocks' water stands where it rests: its faces are drawn flat.
 float wavySurface(Frame* frame, float3 world, float surface)
 {
     bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
@@ -1825,7 +1826,7 @@ float wavySurface(Frame* frame, float3 world, float surface)
         WaterBody body = buffers()->waterBodies[i];
         if (body.liquid == LIQUID_WATER && body.shape == 0 && body.toWorld.c3.y == surface && overPool(body, world))
         {
-            return poolDrawnHeight(frame, body, world, 3);
+            return body.kind == WATER_BLOCKS ? surface : poolDrawnHeight(frame, body, world, 3);
         }
     }
     return sea ? seaDrawnHeight(frame, world, 3) : surface;
@@ -1838,7 +1839,7 @@ bool cameraUnderwater(Frame* frame)
     float3 camera = frame->cameraPosition;
     float surface;
     float3 absorb;
-    if (!waterSurface(frame, camera, surface, absorb))
+    if (!waterSurface(frame, camera, surface, absorb, true))
     {
         return false;
     }
@@ -3662,7 +3663,7 @@ float waterlineExact(Frame* frame, float2 pixel, out float3 near, out float surf
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
     near = nearH.xyz / nearH.w;
-    if (!waterSurface(frame, near, surface, absorb))
+    if (!waterSurface(frame, near, surface, absorb, true))
     {
         return 1e3;
     }
@@ -3684,7 +3685,7 @@ float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
     near = nearH.xyz / nearH.w;
-    if (!waterSurface(frame, near, surface, absorb))
+    if (!waterSurface(frame, near, surface, absorb, true))
     {
         return 1e3;
     }
@@ -4132,7 +4133,7 @@ float waterlineDown(Frame* frame, float x, out float waves)
     float at = top < 0.0 || bottom >= 0.0 ? 0.5 : down;
     waterlineExact(frame, float2(x * size.x, at * size.y), near, surface, absorb);
     float resting;
-    waves = waterSurface(frame, near, resting, absorb) ? surface - resting : 0.0;
+    waves = waterSurface(frame, near, resting, absorb, true) ? surface - resting : 0.0;
     return down;
 }
 

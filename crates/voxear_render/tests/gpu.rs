@@ -4761,6 +4761,203 @@ fn particles_are_fogged_as_far_off_as_they_are() {
     assert!(shown_far * 4 < shown_near, "those thirty-five off fade into it: {shown_far} against {shown_near}");
 }
 
+/// The scene `particles_render` draws, with `system` at the origin started
+/// two seconds ago, after `frames` frames; `stir` adds what moves the air,
+/// and `each` runs before every frame with the system's Obj.
+fn simulated_render(
+    system: voxear_render::ParticleSystem,
+    frames: u32,
+    stir: impl FnOnce(&mut World),
+    mut each: impl FnMut(&mut World, voxear_ecs::Entity),
+) -> Option<(Vec<u8>, RenderStats)> {
+    use voxear_render::{ParticlePlayback, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    let playback = ParticlePlayback { started: time - 2.0, stopped: None };
+    let obj = world.spawn((system, playback, Transform::from_position(Vec3::ZERO)));
+    world.insert_resource(steady_post());
+    stir(&mut world);
+    let mut stats = RenderStats::default();
+    for _ in 0..frames {
+        each(&mut world, obj);
+        stats = run(&mut renderer, &world, &mut time, 0);
+    }
+    Some((renderer.read_pixels().unwrap().2, stats))
+}
+
+/// Where the pixels of `pixels` much brighter in red than in `before` are:
+/// how many, their middle across the picture, and how far they reach from
+/// their leftmost to their rightmost.
+fn bright_spread(pixels: &[u8], before: &[u8]) -> (usize, f32, u32) {
+    let all = (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y)));
+    let bright: Vec<u32> = all.filter(|&at| rgb_at(pixels, at)[0] > rgb_at(before, at)[0] + 40).map(|(x, _)| x).collect();
+    let middle = bright.iter().sum::<u32>() as f32 / bright.len().max(1) as f32;
+    let reach = bright.iter().max().unwrap_or(&0) - bright.iter().min().unwrap_or(&0);
+    (bright.len(), middle, reach)
+}
+
+#[test]
+fn a_simulated_system_draws_as_one_worked_out_from_age_while_nothing_stirs_it() {
+    use voxear_render::{ParticleSpace, ParticleSystem};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    let from_age = particles_render(Some(sparks()), Vec3::ZERO, 2.0).unwrap();
+    // In the world rather than with its Obj, so its particles are kept and stepped; nothing else differs.
+    let kept = ParticleSystem { space: ParticleSpace::World, ..sparks() };
+    assert!(kept.is_simulated() && !sparks().is_simulated());
+    // Its first frame: every spark it would have out by now, each where its age has it.
+    let (first, _) = simulated_render(kept, 1, |_| {}, |_, _| {}).unwrap();
+    keep_image("particles simulated first.png", &first);
+    // And a second of frames on, having been stepped all the while.
+    let (later, stats) = simulated_render(kept, 60, |_| {}, |_, _| {}).unwrap();
+    keep_image("particles simulated later.png", &later);
+    let (by_age, _, reach_by_age) = bright_spread(&from_age, &empty);
+    for (name, pixels) in [("at first", &first), ("a second on", &later)] {
+        let (shown, _, reach) = bright_spread(pixels, &empty);
+        assert!(shown * 10 > by_age * 7 && shown * 7 < by_age * 10, "{name}: {shown} pixels against {by_age}");
+        assert!(reach.abs_diff(reach_by_age) < 40, "{name}: {reach} pixels across against {reach_by_age}");
+    }
+    // 200 a second living a second to a second and a half: 250 alive, give or take, in room for 300.
+    let counts = stats.particles;
+    assert!((200..=300).contains(&counts.alive), "alive: {}", counts.alive);
+    assert_eq!((counts.awake, counts.systems, counts.reserved, counts.left_out), (1, 1, 512, 0));
+}
+
+#[test]
+fn the_wind_carries_simulated_particles_downwind_and_turbulence_spreads_them() {
+    use voxear_render::{ParticleSystem, WindZone};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    // Embers drifting straight up in a thin column, light enough for the air to take.
+    let embers = ParticleSystem { gravity: 0.0, speed: [1.0, 1.2], angle: 0.0, radius: 0.02, lifetime: [2.0, 2.0], ..sparks() };
+    let blown = |wind: f32, along: f32| {
+        let stir = |world: &mut World| {
+            let zone = WindZone { strength: 1.0, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+            // A Wind Zone blows along its Obj's +Z: turned to blow along the world's X, one way or the other.
+            let turned = Quat::from_rotation_y(along * std::f32::consts::FRAC_PI_2);
+            world.spawn((zone, Transform::new(Vec3::ZERO, turned, Vec3::ONE)));
+        };
+        simulated_render(ParticleSystem { wind, ..embers }, 120, stir, |_, _| {}).unwrap().0
+    };
+    let one_way = blown(1.0, 1.0);
+    let other_way = blown(1.0, -1.0);
+    keep_image("particles wind.png", &one_way);
+    let ((_, one, _), (_, other, _)) = (bright_spread(&one_way, &empty), bright_spread(&other_way, &empty));
+    assert!((one - other).abs() > 60.0, "blown apart by winds from either side: {one} and {other} across");
+    assert!((one - 320.0) * (other - 320.0) < 0.0, "one to each side of where they rise from: {one} and {other}");
+    // Turbulence alone: the column no longer rises straight, and spreads.
+    let straight = simulated_render(ParticleSystem { turbulence: 0.0001, ..embers }, 120, |_| {}, |_, _| {}).unwrap().0;
+    let stirred = ParticleSystem { turbulence: 1.5, turbulence_size: 0.8, ..embers };
+    let stirred = simulated_render(stirred, 120, |_| {}, |_, _| {}).unwrap().0;
+    keep_image("particles turbulence.png", &stirred);
+    let ((_, _, narrow), (shown, _, wide)) = (bright_spread(&straight, &empty), bright_spread(&stirred, &empty));
+    assert!(shown > 100 && wide > narrow + 30, "stirred, they spread: {wide} pixels across against {narrow}");
+}
+
+#[test]
+fn particles_in_the_world_stay_behind_as_their_obj_moves_on() {
+    use voxear_render::{ParticleSpace, ParticleSystem};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    // Hanging where they are sent out, their Obj moving three metres across in a second.
+    let hanging = ParticleSystem { gravity: 0.0, speed: [0.0, 0.0], lifetime: [3.0, 3.0], wind: 0.0001, ..sparks() };
+    let moving = |world: &mut World, obj| world.get_mut::<Transform>(obj).unwrap().position.x += 0.05;
+    let with_obj = simulated_render(hanging, 60, |_| {}, moving).unwrap().0;
+    let left = simulated_render(ParticleSystem { space: ParticleSpace::World, ..hanging }, 60, |_| {}, moving).unwrap().0;
+    keep_image("particles left behind.png", &left);
+    let ((_, _, together), (_, _, trail)) = (bright_spread(&with_obj, &empty), bright_spread(&left, &empty));
+    assert!(together < 60, "those in their Obj's space move with it, in one clump: {together} pixels across");
+    assert!(trail > 150, "those in the world are left along its way: {trail} pixels across");
+}
+
+#[test]
+fn a_system_with_no_room_in_the_budget_is_left_out_and_counted() {
+    use voxear_render::{ParticleSpace, ParticleSystem};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.insert_resource(voxear_render::ParticleBudget(256));
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(steady_post());
+    // Room for 300 is more than the 256 the budget allows; room for 200 fits.
+    let big = ParticleSystem { space: ParticleSpace::World, ..sparks() };
+    let obj = world.spawn((big, Transform::from_position(Vec3::ZERO)));
+    let counts = run(&mut renderer, &world, &mut 10.0, 4).particles;
+    assert_eq!((counts.left_out, counts.systems, counts.alive, counts.budget), (1, 0, 0, 256));
+    world.get_mut::<ParticleSystem>(obj).unwrap().lifetime = [1.0, 1.0];
+    let counts = run(&mut renderer, &world, &mut 10.2, 4).particles;
+    assert_eq!((counts.left_out, counts.systems, counts.reserved), (0, 1, 256));
+    assert!(counts.alive > 100, "alive: {}", counts.alive);
+}
+
+#[test]
+fn a_million_simulated_particles_are_stepped_and_drawn_in_a_millisecond_or_two() {
+    use voxear_render::{ParticleSpace, ParticleSystem, WindZone};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.insert_resource(voxear_render::ParticleBudget(1_048_576));
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 4.0, -30.0))));
+    world.insert_resource(steady_post());
+    world.spawn((WindZone::default(), Transform::default()));
+    // Four fountains of fine sparks, a quarter of a million each, stirred and blown.
+    for i in 0..4 {
+        let fountain = ParticleSystem {
+            rate: 65536.0,
+            lifetime: [4.0, 4.0],
+            speed: [6.0, 12.0],
+            size: [0.02, 0.03],
+            angle: 30.0,
+            gravity: 0.6,
+            drag: 0.3,
+            wind: 0.5,
+            turbulence: 1.0,
+            turbulence_size: 3.0,
+            space: ParticleSpace::World,
+            seed: i,
+            ..sparks()
+        };
+        world.spawn((fountain, Transform::from_position(Vec3::new(-15.0 + 10.0 * i as f32, 0.0, 0.0))));
+    }
+    let mut time = 10.0;
+    let stats = run(&mut renderer, &world, &mut time, 30);
+    keep_image("particles million.png", &renderer.read_pixels().unwrap().2);
+    let counts = stats.particles;
+    assert_eq!((counts.awake, counts.reserved, counts.left_out), (4, 1_048_576, 0));
+    assert!(counts.alive > 1_000_000, "alive: {}", counts.alive);
+    // The least of sixty frames each, as other programs' work on the GPU lands in some.
+    let mut timed = |renderer: &mut Renderer, world: &World| {
+        let mut least = (f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        for _ in 0..60 {
+            run(renderer, world, &mut time, 0);
+            let timings = renderer.timings();
+            let ms = |pass: &str| timings.iter().find(|(name, _)| name == pass).map_or(f32::NAN, |(_, ms)| *ms);
+            let frame = least.2.min(renderer.gpu_frame_ms());
+            least = (least.0.min(ms("Particle simulation")), least.1.min(ms("Particles")), frame);
+        }
+        least
+    };
+    let (step, draw, frame) = timed(&mut renderer, &world);
+    let alive = counts.alive;
+    eprintln!("{alive} particles, blown and stirred: stepped in {step:.2} ms, drawn in {draw:.2} ms, {frame:.2} ms a frame");
+    assert!(step < 4.0, "stepping a million particles took {step} ms");
+    // And what each costs: with the wind alone, then with neither, only falling.
+    let fountains: Vec<_> = world.query_ref::<(voxear_ecs::Entity, &ParticleSystem)>().into_iter().map(|(e, _)| e).collect();
+    for (name, turbulence, wind) in [("blown", 0.0, 0.5), ("only falling", 0.0, 0.0)] {
+        for &fountain in &fountains {
+            let system = world.get_mut::<ParticleSystem>(fountain).unwrap();
+            (system.turbulence, system.wind) = (turbulence, wind);
+        }
+        let (step, draw, frame) = timed(&mut renderer, &world);
+        eprintln!("{name}: stepped in {step:.2} ms, drawn in {draw:.2} ms, {frame:.2} ms a frame");
+    }
+}
+
 #[test]
 fn smoke_rises_spreading_and_greys_what_is_behind_it() {
     use voxear_render::ParticleSystem;

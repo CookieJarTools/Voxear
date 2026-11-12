@@ -220,7 +220,8 @@ fn shown(
         }
     });
     // Its floor: down from the first place over its origin that is well inside it, to where its hollow ends.
-    let inside = |v: V3| net.room_inside(&room.plan, v, None);
+    // As it lies, roughness and all: a floor short of level rises where the walls' lumps are.
+    let inside = |v: V3| net.room_inside(&room.plan, v, Some(net.noise(add(room.at, out(v)))));
     let reach = net.room_reach(&room.plan);
     let over =
         (1..).map(|step| step as f32 * 0.5).take_while(|&up| up <= reach).find(|&up| inside([0.0, up, 0.0]) > 0.4);

@@ -309,7 +309,10 @@ pub(crate) struct Made {
     rough: f32,
     fine: f32,
     margin: f32,
-    uneven: f32,
+    /// How far an uneven floor rolls over its lowest, and how high each of its two steps is: nothing for a
+    /// level floor or a bowl.
+    roll: f32,
+    step: f32,
     pub exits: Vec<RoomExit>,
     /// Its lowest and highest places before roughness.
     pub low: f32,
@@ -408,8 +411,16 @@ impl Made {
         let (rocks, exits, rough) = (Vec::new(), Vec::new(), rules.roughness);
         let fine = lesser(FINE, rough * 0.5);
         // A floor short of level rolls and steps up where the walls' lumps are; a bowl has none to.
-        let uneven = if floor.is_some() { lesser(1.0 - rules.floor, 0.5) } else { 0.0 };
-        let mut made = Made { blobs, necks, rocks, blend, floor, rough, fine, margin, uneven, exits, low, high };
+        // Never by more than a quarter of the room's height.
+        let (roll, step) = match floor {
+            Some(_) => {
+                let (roll, step) = rolled(lesser(1.0 - rules.floor, 0.5));
+                let held = lesser(1.0, rules.height * 0.25 / greater(roll + step * 2.0, 1.0e-3));
+                (roll * held, step * held)
+            }
+            None => (0.0, 0.0),
+        };
+        let mut made = Made { blobs, necks, rocks, blend, floor, rough, fine, margin, roll, step, exits, low, high };
         made.exits = made.exits_of(&rules, seed, stood);
         made.rocks = made.rocks_of(&rules, seed, stood);
         made
@@ -548,11 +559,10 @@ impl Made {
             // Short of level, the floor rolls with the lumps and steps up twice where they are greatest, with
             // the detail over it: never under its lowest, which is what a room's exits are set over.
             let raised = match noise {
-                Some([lumps, detail]) if self.uneven > 0.0 => {
-                    let (roll, step) = rolled(self.uneven);
-                    let rolls = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5 * roll;
+                Some([lumps, detail]) if self.rise() > 0.0 => {
+                    let rolls = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5 * self.roll;
                     let steps = if lumps > 0.5 { 2.0 } else if lumps > 0.05 { 1.0 } else { 0.0 };
-                    lesser(rolls + steps * step + greater(detail, 0.0) * self.fine * 0.4, self.rise())
+                    lesser(rolls + steps * self.step + greater(detail, 0.0) * self.fine * 0.4, self.rise())
                 }
                 _ => 0.0,
             };
@@ -583,8 +593,7 @@ impl Made {
 
     /// The furthest its floor rises over its lowest.
     fn rise(&self) -> f32 {
-        let (roll, step) = rolled(self.uneven);
-        if self.uneven > 0.0 { roll + step * 2.0 } else { 0.0 }
+        self.roll + self.step * 2.0
     }
 
     /// The height of its floor at its middle.
@@ -626,7 +635,8 @@ mod tests {
                 }
             }
         }
-        let start = [0, ((made.stood() + 1.0) * 2.0) as i32, 0];
+        // Over its floor at its highest.
+        let start = [0, ((made.stood() + made.rise() + 1.0) * 2.0).ceil() as i32, 0];
         assert!(opens[index(start)], "its middle is open");
         let mut seen = vec![false; opens.len()];
         seen[index(start)] = true;

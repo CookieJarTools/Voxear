@@ -640,10 +640,11 @@ mod tests {
                 floors += 1;
                 stood += usize::from(!open(&made, off(spot.at, [0.0, -1.0, 0.0], 0.7)) && spot.normal[1] > 0.5);
             }
-            // A roof place may be on the side of a rock that hangs, with air past it.
+            // A roof place is often on rock that hangs, with air past it: it faces down, and that is all.
             for spot in &room.ceilings {
+                assert!(open(&made, off(spot.at, [0.0, -1.0, 0.0], 0.3)), "open under a roof place");
                 roofs += 1;
-                under += usize::from(!open(&made, off(spot.at, [0.0, 1.0, 0.0], 0.7)) && spot.normal[1] < 0.0);
+                under += usize::from(spot.normal[1] < 0.0);
             }
             for spot in &room.walls {
                 walls += 1;
@@ -659,7 +660,7 @@ mod tests {
         assert!(walls >= rooms.len() * 6, "{walls} wall places in {} rooms", rooms.len());
         assert!(backed * 10 >= walls * 9, "{backed} of {walls} wall places have rock behind them");
         assert!(stood * 10 >= floors * 8, "{stood} of {floors} floor places face up over rock");
-        assert!(under * 10 >= roofs * 6, "{under} of {roofs} roof places face down under rock");
+        assert!(under * 10 >= roofs * 9, "{under} of {roofs} roof places face down");
     }
 
     #[test]

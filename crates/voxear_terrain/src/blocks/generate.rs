@@ -788,6 +788,53 @@ mod tests {
     }
 
     #[test]
+    fn a_generated_river_runs_in_blocks_of_the_seas_water_between_banks_flowing_its_way() {
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap().world(7, 1.0);
+        // A river's water, a few metres wide, somewhere.
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..300 * 300).map(|at| ((at % 300) as f32 * 6.0, (at / 300) as f32 * 6.0)).unzip();
+        let (water, _) = world.water(&xs, &zs).expect("rivers wired in");
+        let flowing = |at: usize| world.current(xs[at], zs[at]).is_some_and(|[x, z]| x * x + z * z > 0.1);
+        let river = |at: &usize| water[*at] > world.sea_level() + 2.0 && flowing(*at);
+        let at = (0..xs.len()).find(river).expect("a river somewhere");
+        let mut file = BlockFile {
+            ground: Ground { size: [48, 48], ..Ground::default() },
+            generate: Some(BlockGenerate {
+                position: [xs[at] - 24.0, zs[at] - 24.0],
+                bottom: -20,
+                ..BlockGenerate::default()
+            }),
+            ..BlockFile::default()
+        };
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let sea = file.blocks.len() as BlockId;
+        file.generate.as_mut().unwrap().sea = sea;
+        let map = file.make_ground(Some(&world));
+        // Water in the river's column, its top where the river's is, over the sea.
+        let top = (-20..300).rev().find(|&y| map.get([24, y, 24]) != AIR).expect("the column");
+        assert_eq!(map.get([24, top, 24]), sea, "the river's water");
+        assert!(((top + 1) as f32 - water[at]).abs() <= 1.0, "its top at {} for a river at {}", top + 1, water[at]);
+        // Its blocks keep which way it flows.
+        let (mut wet, mut flowing, mut walls) = (0, 0, 0);
+        for y in -20..300 {
+            for z in 1..47 {
+                for x in 1..47 {
+                    if map.get([x, y, z]) != sea {
+                        continue;
+                    }
+                    wet += 1;
+                    flowing += usize::from(crate::blocks::flow::current_of(map.fill([x, y, z])).is_some());
+                    // No water stands beside air: a wall of it.
+                    let beside = [[x - 1, y, z], [x + 1, y, z], [x, y, z - 1], [x, y, z + 1]];
+                    walls += beside.iter().filter(|&&at| map.get(at) == AIR).count();
+                }
+            }
+        }
+        assert!(wet > 50 && flowing * 2 > wet, "{flowing} of {wet} blocks of the river flow");
+        assert!(walls * 100 <= wet, "{walls} sides of water against air, of {wet} blocks");
+    }
+
+    #[test]
     fn generated_ground_below_its_sea_lies_under_water_up_to_the_sea() {
         let (mut file, _) = generated(0.0, 0.0);
         let world = Preset::Archipelago.world();

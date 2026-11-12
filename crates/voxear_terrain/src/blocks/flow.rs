@@ -48,6 +48,65 @@ const FLOWING: Fill = 128;
 const SURFACE: Fill = 176;
 const SURFACE_STEPS: f32 = 77.0;
 
+/// Where the fills of a source with a current start, in a world of cubes: a
+/// generated river's water, still to flowing as any source is, that moves
+/// things along its current. Then four a way it flows, a speed each, of
+/// [`WAYS`]. They are the fills a world drawn smooth keeps its sea's
+/// surface in, which a world of cubes has no use for.
+pub(super) const CURRENT: Fill = SURFACE;
+
+/// The ways a current flows, along x and z, from +x round towards +z.
+pub const WAYS: [[f32; 2]; 16] = [
+    [1.0, 0.0],
+    [0.923_879_5, 0.382_683_43],
+    [0.707_106_77, 0.707_106_77],
+    [0.382_683_43, 0.923_879_5],
+    [0.0, 1.0],
+    [-0.382_683_43, 0.923_879_5],
+    [-0.707_106_77, 0.707_106_77],
+    [-0.923_879_5, 0.382_683_43],
+    [-1.0, 0.0],
+    [-0.923_879_5, -0.382_683_43],
+    [-0.707_106_77, -0.707_106_77],
+    [-0.382_683_43, -0.923_879_5],
+    [0.0, -1.0],
+    [0.382_683_43, -0.923_879_5],
+    [0.707_106_77, -0.707_106_77],
+    [0.923_879_5, -0.382_683_43],
+];
+
+/// How fast a current flows at each of its speeds, in metres a second.
+pub const SPEEDS: [f32; 4] = [0.5, 1.0, 2.0, 3.5];
+
+/// The fill of a source whose water flows at `flow`, metres a second along
+/// x and z: the nearest of [`WAYS`] at the nearest of [`SPEEDS`]. A plain
+/// source's where it hardly flows.
+pub fn current_fill(flow: [f32; 2]) -> Fill {
+    let speed = (flow[0] * flow[0] + flow[1] * flow[1]).sqrt();
+    if speed < SPEEDS[0] * 0.5 {
+        return SOURCE;
+    }
+    let way = (0..WAYS.len())
+        .max_by(|&a, &b| {
+            let along = |at: usize| WAYS[at][0] * flow[0] + WAYS[at][1] * flow[1];
+            along(a).total_cmp(&along(b))
+        })
+        .unwrap_or(0);
+    let step = (0..SPEEDS.len())
+        .min_by(|&a, &b| (SPEEDS[a] - speed).abs().total_cmp(&(SPEEDS[b] - speed).abs()))
+        .unwrap_or(0);
+    CURRENT + (way * SPEEDS.len() + step) as Fill
+}
+
+/// How a source of fill `fill` flows, in metres a second along x and z,
+/// where it has a current (see [`current_fill`]): in a world of cubes alone.
+pub fn current_of(fill: Fill) -> Option<[f32; 2]> {
+    let at = usize::from(fill.checked_sub(CURRENT)?);
+    let (way, step) = (at / SPEEDS.len(), at % SPEEDS.len());
+    let way = WAYS.get(way)?;
+    Some([way[0] * SPEEDS[step], way[1] * SPEEDS[step]])
+}
+
 /// The fill of a source whose surface, in a world drawn smooth, stands
 /// `above` blocks over its middle, from nothing to a whole block (the
 /// middle of the block over it): as a generated sea's top blocks are, so it

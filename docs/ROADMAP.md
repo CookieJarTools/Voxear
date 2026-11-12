@@ -1953,6 +1953,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     cut, kept to a mask; a roof at the land's height with holes open to the floor and pillars to it; peaks with
     level land between and narrower tops the sharper; a chasm's floor taking the sunk biome under a roof taking
     the land's; each preset pinned; GPU renders of all four.
+  - ~~**Rivers, lakes, waterfalls and currents in endless worlds:**~~ done: a **Rivers** node finds drainage over a
+    jittered grid of points 64 m apart, each draining the steepest way down and a hollow spilling over the lowest
+    point within two of it whose way does not lead back; catchment counted from the points within half a kilometre
+    up each way, the same whichever tile works it out, so rivers run unbroken through an endless world. Rivers
+    widen and deepen with their catchment, wind, cut their beds and valleys, raise banks where the ground is lower
+    than their water, pour over waterfalls into pools where a stretch drops past Falls, and run into and out of
+    lakes in hollows. The Output's **Water** and **Falls** fill a world of blocks' columns with its Sea block,
+    waterfalls as falling water; a river's blocks keep its current in their fill (`flow::current_fill`), its
+    ripples drift that way, and water pushes: Buoyancy drifts, sunk bodies are dragged along the bed, and a
+    Character Controller is carried as its **Water Push** says (C# `WaterPush`, `AddPush`, `Pushed`). Every land
+    preset runs rivers. Tests: banks hold their water in; water runs downhill; waterfalls over pools; river blocks
+    flowing their way with no water against air; a crate, a boulder and characters in a river.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

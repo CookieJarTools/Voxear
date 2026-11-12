@@ -234,6 +234,13 @@ pub struct BlockWorld {
 
 impl Component for BlockWorld {}
 
+/// How fast water running out sideways from what feeds it flows, in metres
+/// a second, where it has just left it.
+pub const RUNNING_SPEED: f32 = 1.2;
+
+/// How fast falling water falls, in metres a second.
+pub const FALLING_SPEED: f32 = 5.0;
+
 impl PartialEq for BlockWorld {
     fn eq(&self, other: &Self) -> bool {
         (Arc::ptr_eq(&self.blocks, &other.blocks) || self.blocks == other.blocks)
@@ -331,6 +338,40 @@ impl BlockWorld {
         };
         let top = (block[1] as f32 + height) * self.block_size;
         Some(top - at[1])
+    }
+
+    /// How the water at `at` flows of itself, in metres a second, a point in
+    /// metres from the world's corner in its water or over it within `reach`
+    /// metres of air, as [`BlockWorld::water_depth`] finds it: water running
+    /// out sideways flows away from what feeds it, faster the further it has
+    /// run; falling water falls; a generated river's flows along its
+    /// current. `None` where there is no water there, and nothing for still
+    /// water.
+    pub fn water_flow(&self, at: [f32; 3], reach: f32) -> Option<[f32; 3]> {
+        self.water_depth(at, reach)?;
+        let (mut block, _) = self.block_at(at);
+        let water = |block: [i32; 3]| is_water(&self.faces, self.blocks.get(block));
+        // The block of water at the point, or the top of the water under it.
+        while !water(block) {
+            block[1] -= 1;
+        }
+        let fill = self.blocks.fill(block);
+        Some(match flow::Water::of(fill) {
+            // A generated river's water flows along its current.
+            flow::Water::Source if !self.smooth => flow::current_of(fill).map_or([0.0; 3], |[x, z]| [x, 0.0, z]),
+            flow::Water::Source => [0.0; 3],
+            flow::Water::Falling => [0.0, -FALLING_SPEED, 0.0],
+            flow::Water::Flowing { level, up } => {
+                // Away from the side it is fed from, along the ground.
+                let speed = RUNNING_SPEED * (1.0 + f32::from(flow::REACH.saturating_sub(level)) * 0.15);
+                let mut way = [0.0; 3];
+                let axis = usize::from(up) / 2;
+                if axis != 1 {
+                    way[axis] = if up % 2 == 0 { -speed } else { speed };
+                }
+                way
+            }
+        })
     }
 
     /// How high the water over `at` stands, in metres from the world's

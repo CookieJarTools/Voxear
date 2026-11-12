@@ -3253,6 +3253,17 @@ floor is the generator's height, with its own layers. Chasms are a height node: 
 what grows there follows from the Output's Sunk, which `WorldGen::sunk` lessens by however much higher the height
 asked about stands (a roof's top over a floor is sunk not at all).
 
+Rivers (`generate/nodes/rivers.rs`) need the ground somewhere other than where they are asked, so the node compiles
+its input as a program of its own (`Compiler::input_program`) and reads it over a grid of points, in blocks of points
+kept and shared by every thread. A tile of points works out drainage from a margin of points round it wide enough
+that every tile decides each point alike: the steepest way down, a hollow's spill (the lowest point within two whose
+own way down does not lead back into it), and catchment counted only from points within a fixed reach up each way.
+Tiles are kept and shared too. A place far from any river or lake point leaves its ground as it was without looking
+further. The Output's Water and Falls are compiled together, and `WorldGen::current` is the flow down the water's
+slope. A world of cubes keeps a river's current in its source blocks' fills, in the range a smooth world uses for
+its sea's surface, so the flow step treats them as any source, while the mesher, the water shader and
+`BlockWorld::water_flow` read the current back.
+
 Caves of rooms (`generate::caves`) are the one part of a generator made somewhere other than in its graph: a room
 is a prefab of Cave Shape and Cave Exit Objs, and `voxear_terrain` reads no prefabs. So the Cave Network node keeps
 each room as numbers beside its prefab's reference, and the editor reads them from the prefab

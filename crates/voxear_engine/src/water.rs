@@ -20,7 +20,7 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_physics::{
     Push,
-    scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
+    scene::{CharacterController, Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
 use voxear_render::{DryArea, DryShape, Liquid, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
@@ -212,14 +212,17 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     if let Some((height, liquid)) = pool {
         return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid });
     }
-    // In a world of blocks' water, or over it: the top of its column, still.
+    // In a world of blocks' water, or over it: the top of its column, flowing as its blocks do.
     let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
     let block_water = blocks.into_iter().find_map(|(blocks, local, placed)| {
         let corner = voxear_terrain::corner(local, placed);
-        Some(corner.y + blocks.water_over((at - corner).to_array(), OVER_BLOCK_WATER)?)
+        let inside = (at - corner).to_array();
+        let height = corner.y + blocks.water_over(inside, OVER_BLOCK_WATER)?;
+        let flow = Vec3::from(blocks.water_flow(inside, OVER_BLOCK_WATER).unwrap_or([0.0; 3]));
+        Some((height, flow))
     });
-    if let Some(height) = block_water {
-        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
+    if let Some((height, flow)) = block_water {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow, liquid: Liquid::Water });
     }
     let query = world.resource::<WaterQuery>()?;
     let stream =
@@ -289,6 +292,8 @@ pub struct Floating {
 /// water, and how each other body that moves lies in it too, which the
 /// water does not push.
 pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
+    carry_characters(world, physics);
+    drag_sunk(world, physics);
     let mut found = sinking(world, physics);
     let floating: Vec<(Entity, Buoyancy, Collider, f32)> = world
         .query_ref::<(Entity, &Buoyancy, &Collider, &Rigidbody)>()
@@ -347,6 +352,72 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
         found.push(Floating { entity, under: under_all, surface, falling: -moving.dot(up), across: ploughing, width, liquid });
     }
     found
+}
+
+/// How much of a character stands in water before the water carries it at
+/// all, and how much before it carries it as fast as it flows.
+const CARRIED_FROM: f32 = 0.2;
+const CARRIED_FULLY: f32 = 0.5;
+
+/// Has flowing water carry each Character Controller along as much as it
+/// stands in it, as its Water Push says: a river drags a character wading
+/// it downstream, and a waterfall pushes one under it down.
+fn carry_characters(world: &World, physics: &mut PhysicsScene) {
+    let walkers: Vec<(Entity, CharacterController)> = world
+        .query_ref::<(Entity, &CharacterController)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, controller)| (entity, *controller))
+        .collect();
+    for (entity, controller) in walkers {
+        let mut carried = Vec3::ZERO;
+        let tall = controller.height.max(0.1);
+        if controller.water_push > 0.0 {
+            let feet = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+            let pull = physics.gravity_at(world, feet);
+            let up = if pull.length_squared() > 1e-12 { -pull.normalize() } else { Vec3::Y };
+            if let Some((depth, flow, _)) = depth_at(world, Some(&*physics), feet + up * tall * 0.5) {
+                // How much of it is under the water, from its feet up.
+                let under = (depth + tall * 0.5) / tall;
+                let share = ((under - CARRIED_FROM) / (CARRIED_FULLY - CARRIED_FROM)).clamp(0.0, 1.0);
+                carried = flow * share * controller.water_push;
+            }
+        }
+        physics.carry_character(entity, carried);
+    }
+}
+
+/// How hard flowing water drags a body that does not float along, in
+/// newtons for each square metre of it across the flow and each metre a
+/// second it lags the water: so a crate rolls along a river's bed, and a
+/// boulder as heavy as many crates hardly stirs.
+const SUNK_DRAG: f32 = 200.0;
+
+/// Drags each body under flowing water that does not float the way the
+/// water flows, as hard as it lags it and as large as it is.
+fn drag_sunk(world: &World, physics: &mut PhysicsScene) {
+    let bodies: Vec<(Entity, Collider)> = world
+        .query_ref::<(Entity, &Collider, &Rigidbody)>()
+        .without::<Destroying>()
+        .without::<Buoyancy>()
+        .into_iter()
+        .filter(|(.., body)| !body.kinematic)
+        .map(|(entity, collider, _)| (entity, *collider))
+        .collect();
+    for (entity, collider) in bodies {
+        let Some(body) = physics.body(entity) else { continue };
+        let to_world: Mat4 = voxear_scene::world_matrix(world, entity);
+        let (middle, reach) = collider_box(world, entity, &collider);
+        let centre = to_world.transform_point3(middle);
+        let Some((depth, flow, _)) = depth_at(world, Some(&*physics), centre) else { continue };
+        if depth <= 0.0 || flow == Vec3::ZERO {
+            continue;
+        }
+        let size = to_world.transform_vector3(reach * 2.0).abs();
+        let across = (size.x.max(size.z) * size.y).max(0.01);
+        let (moving, _) = physics.world().velocity(body);
+        physics.world_mut().push(body, Push::Force((flow - moving) * SUNK_DRAG * across, Some(centre)));
+    }
 }
 
 /// How fast a body that does not float moves before the water under it is
@@ -707,6 +778,58 @@ mod tests {
         let height = |entity: Entity| world.get::<Transform>(entity).unwrap().position.y;
         assert!(height(floating).abs() < 0.2, "half under, at the water's top: {}", height(floating));
         assert!((height(sinking) + 3.5).abs() < 0.1, "through the water onto the floor: {}", height(sinking));
+    }
+
+    #[test]
+    fn a_river_of_blocks_carries_what_floats_drags_a_crate_along_its_bed_and_a_character_wading_it() {
+        use voxear_terrain::blocks::{
+            BlockMap, BlockWorld,
+            file::{BlockFile, BlockKind},
+            flow::current_fill,
+        };
+        let mut world = World::new();
+        let mut file = BlockFile::default();
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let (_, faces) = file.faces();
+        // A river 32 blocks long and 4 deep over a stone bed, flowing along +x at 2 m a second; its top at 0.
+        let mut map = BlockMap::default();
+        for z in 0..16 {
+            for x in 0..32 {
+                map.set([x, 0, z], 3);
+                for y in 1..5 {
+                    map.set_cell([x, y, z], 4, current_fill([2.0, 0.0]));
+                }
+            }
+        }
+        world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(Vec3::new(-16.0, -5.0, -8.0))));
+        let floating = crate_over(&mut world, Vec3::new(-10.0, 1.0, -4.0));
+        let sunk = |mass: f32, z: f32| {
+            let at = Transform::from_position(Vec3::new(-10.0, -3.4, z));
+            (Collider::default(), Rigidbody { mass, ..Rigidbody::default() }, at)
+        };
+        let crate_ = world.spawn(sunk(20.0, 0.0));
+        let boulder = world.spawn(sunk(4000.0, 4.0));
+        let wading =
+            world.spawn((CharacterController::default(), Transform::from_position(Vec3::new(-10.0, -4.0, 2.0))));
+        let still = CharacterController { water_push: 0.0, ..CharacterController::default() };
+        let standing = world.spawn((still, Transform::from_position(Vec3::new(-10.0, -4.0, 6.0))));
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        for step in 0..120 {
+            update(&mut world, f64::from(step as f32 * dt));
+            voxear_scene::propagate_transforms(&mut world);
+            float(&world, &mut physics);
+            physics.step(&mut world, dt);
+            for walker in [wading, standing] {
+                physics.move_character(&mut world, walker, Vec3::new(0.0, -5.0, 0.0), dt);
+            }
+        }
+        let along = |entity: Entity| world.get::<Transform>(entity).unwrap().position.x + 10.0;
+        assert!(along(floating) > 1.5, "the floating crate carried {} m", along(floating));
+        assert!(along(crate_) > 0.5, "the sunk crate dragged {} m", along(crate_));
+        assert!(along(boulder) < along(crate_) * 0.2, "the boulder moved {} m", along(boulder));
+        assert!(along(wading) > 2.0, "the character wading carried {} m", along(wading));
+        assert!(along(standing).abs() < 0.05, "one with no water push stood its ground: {} m", along(standing));
     }
 
     #[test]

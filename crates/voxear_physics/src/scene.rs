@@ -257,6 +257,9 @@ impl Component for Rigidbody {}
 /// Walks its Obj: a capsule standing on the Obj's origin that the game
 /// moves by velocity, sliding along walls, climbing steps up to
 /// `step_offset` and standing on slopes up to `slope_limit` degrees.
+/// Flowing water it stands in carries it along as much as `water_push`
+/// says, from 0 for not at all to 1 for as fast as the water flows where
+/// it is in over its middle.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CharacterController {
@@ -268,13 +271,20 @@ pub struct CharacterController {
     pub slope_limit: f32,
     #[serde(default = "step", skip_serializing_if = "is_step")]
     pub step_offset: f32,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub water_push: f32,
 }
 
 impl Default for CharacterController {
     fn default() -> Self {
-        Self { height: body_height(), radius: body_radius(), slope_limit: slope(), step_offset: step() }
+        let (height, radius, slope_limit, step_offset) = (body_height(), body_radius(), slope(), step());
+        Self { height, radius, slope_limit, step_offset, water_push: 1.0 }
     }
 }
+
+/// How quickly a shove given a character dies away: this share of it a
+/// second.
+const SHOVE_FADES: f32 = 2.5;
 
 impl Component for CharacterController {}
 
@@ -541,6 +551,11 @@ struct Walker {
     state: Option<CharacterState>,
     up: Vec3,
     turn: Quat,
+    /// How fast what it stands in carries it along, as the game said last:
+    /// flowing water.
+    carried: Vec3,
+    /// How fast it was shoved, dying away.
+    shoved: Vec3,
 }
 
 /// Where an Obj is and where its body was put last are the same place:
@@ -1606,6 +1621,8 @@ impl PhysicsScene {
             state: None,
             up: Vec3::Y,
             turn: Quat::IDENTITY,
+            carried: Vec3::ZERO,
+            shoved: Vec3::ZERO,
         };
         self.characters.insert(entity, walker);
         self.stand(entity, gravity);
@@ -1625,6 +1642,37 @@ impl PhysicsScene {
         self.world.set_character_up(walker.id, up, walker.turn);
     }
 
+    /// Makes an Obj's Character Controller's character now, where physics
+    /// has not yet, or brings it to where its Obj is: so what is said of it
+    /// before it first moves is kept.
+    pub fn make_character(&mut self, world: &World, entity: Entity, controller: CharacterController) {
+        self.sync_character(world, entity, controller);
+    }
+
+    /// Says how fast what an Obj's Character Controller stands in carries it
+    /// along now, as flowing water does: added to every move until said
+    /// again. Nothing for an Obj without one, or one physics has not made.
+    pub fn carry_character(&mut self, entity: Entity, velocity: Vec3) {
+        if let Some(walker) = self.characters.get_mut(&entity) {
+            walker.carried = velocity;
+        }
+    }
+
+    /// Shoves an Obj's Character Controller: `velocity` added to its moves,
+    /// dying away over the next second or so, as a blast, a gust or a blow
+    /// knocks it. Shoves add up.
+    pub fn shove_character(&mut self, entity: Entity, velocity: Vec3) {
+        if let Some(walker) = self.characters.get_mut(&entity) {
+            walker.shoved += velocity;
+        }
+    }
+
+    /// How fast an Obj's Character Controller is carried along and shoved
+    /// now, together: none for an Obj without one.
+    pub fn character_pushed(&self, entity: Entity) -> Option<Vec3> {
+        self.characters.get(&entity).map(|walker| walker.carried + walker.shoved)
+    }
+
     /// Moves an Obj's Character Controller at `velocity` for `dt` seconds,
     /// at once, as Unity's CharacterController.Move does, and its Obj with
     /// it, standing against what pulls it where it is. Gravity is the
@@ -1641,6 +1689,9 @@ impl PhysicsScene {
         self.sync_character(world, entity, controller);
         let walker = self.characters.get_mut(&entity)?;
         let gravity = gravity_at(world, self.gravity, walker.placed);
+        // Carried along by what it stands in, and shoved, beside the way it is moved.
+        let velocity = velocity + walker.carried + walker.shoved;
+        walker.shoved *= (1.0 - SHOVE_FADES * dt.max(0.0)).max(0.0);
         let state = self.world.move_character(walker.id, velocity, dt, walker.controller.step_offset, gravity);
         walker.placed = state.position;
         walker.state = Some(state);

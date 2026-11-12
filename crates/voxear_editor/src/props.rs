@@ -789,11 +789,13 @@ pub enum Prop {
     Drag,
     AngularDrag,
     Continuous,
-    /// A Character Controller's size, steepest slope and highest step.
+    /// A Character Controller's size, steepest slope and highest step, and
+    /// how much flowing water carries it along.
     CharacterHeight,
     CharacterRadius,
     SlopeLimit,
     StepOffset,
+    WaterPush,
     /// A Joint's type, the Obj it holds to, its anchor and axis, and whether
     /// it has limits, with the least and the greatest.
     JointKind,
@@ -1155,7 +1157,9 @@ impl Prop {
             Prop::Mass | Prop::Kinematic | Prop::UseGravity | Prop::Drag | Prop::AngularDrag | Prop::Continuous => {
                 Part::Rigidbody
             }
-            Prop::CharacterHeight | Prop::CharacterRadius | Prop::SlopeLimit | Prop::StepOffset => Part::Character,
+            Prop::CharacterHeight | Prop::CharacterRadius | Prop::SlopeLimit | Prop::StepOffset | Prop::WaterPush => {
+                Part::Character
+            }
             Prop::JointKind
             | Prop::JointConnected
             | Prop::JointAnchor
@@ -1534,6 +1538,7 @@ impl Prop {
             Prop::Continuous => "continuous",
             Prop::SlopeLimit => "slope_limit",
             Prop::StepOffset => "step_offset",
+            Prop::WaterPush => "water_push",
             Prop::JointKind => "type",
             Prop::JointConnected => "connected",
             Prop::JointAnchor => "anchor",
@@ -2168,7 +2173,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Rigidbody => {
             vec![Prop::Mass, Prop::Kinematic, Prop::UseGravity, Prop::Drag, Prop::AngularDrag, Prop::Continuous]
         }
-        Part::Character => vec![Prop::CharacterHeight, Prop::CharacterRadius, Prop::SlopeLimit, Prop::StepOffset],
+        Part::Character => {
+            vec![Prop::CharacterHeight, Prop::CharacterRadius, Prop::SlopeLimit, Prop::StepOffset, Prop::WaterPush]
+        }
         // A joint shows the axis a hinge turns about, and limits for what has them.
         Part::Joint => {
             let joint = world.get::<Joint>(entity).copied().unwrap_or_default();
@@ -2598,6 +2605,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::Continuous => "Continuous",
         Prop::SlopeLimit => "Slope limit",
         Prop::StepOffset => "Step offset",
+        Prop::WaterPush => "Water push",
         Prop::JointKind => "Type",
         Prop::JointConnected => "Connected",
         Prop::JointAnchor => "Anchor",
@@ -3102,6 +3110,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::CharacterRadius => Value::Number(character()?.radius),
         Prop::SlopeLimit => Value::Number(character()?.slope_limit),
         Prop::StepOffset => Value::Number(character()?.step_offset),
+        Prop::WaterPush => Value::Number(character()?.water_push),
         Prop::JointKind => {
             let kind = world.get::<Joint>(entity)?.kind;
             let index = JointType::ALL.iter().position(|k| *k == kind).unwrap_or_default();
@@ -4424,6 +4433,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::SlopeLimit, Value::Number(n)) => {
             with(world, entity, |c: &mut CharacterController| c.slope_limit = n.clamp(0.0, 90.0))
+        }
+        (Prop::WaterPush, Value::Number(n)) => {
+            with(world, entity, |c: &mut CharacterController| c.water_push = n.max(0.0))
         }
         (Prop::StepOffset, Value::Number(n)) => {
             with(world, entity, |c: &mut CharacterController| c.step_offset = n.max(0.0))

@@ -1772,3 +1772,64 @@ fn fantasy_presets_stand_towers_blades_and_great_peaks_and_cut_rifts_down_to_flo
         .count();
     assert!(teal > 500, "{teal} pixels of fern on the rift's floor");
 }
+
+#[test]
+fn a_generated_river_runs_between_its_banks_and_pours_over_a_waterfall_into_a_pool() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let preset = |name: &str| starters().into_iter().find(|starter| starter.name == name).unwrap().world(7, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    // Water's own colour, darker than the sky: lake green, blue over the ground under it.
+    let water = |pixels: &[u8]| {
+        (0..WIDTH * HEIGHT)
+            .filter(|at| {
+                let [r, g, b] = rgb_at(pixels, at % WIDTH, at / WIDTH);
+                g > r + 15 && b > r + 15 && b < 150
+            })
+            .count()
+    };
+    // A river through rolling hills, from over its bank 30 m off, looking down at it.
+    let hills = preset("Rolling Hills");
+    let (xs, zs): (Vec<f32>, Vec<f32>) = (0..200 * 200).map(|at| ((at % 200) as f32 * 8.0, (at / 200) as f32 * 8.0)).unzip();
+    let (level, _) = hills.water(&xs, &zs).unwrap();
+    let flowing = |at: usize| hills.current(xs[at], zs[at]).is_some_and(|[x, z]| x * x + z * z > 0.1);
+    let river = (0..xs.len()).find(|&at| level[at] > 2.0 && flowing(at)).expect("a river");
+    let corner = [xs[river] - 128.0, zs[river] - 128.0];
+    let eye = Vec3::new(107.0, level[river] + 14.0, 107.0);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, 0.785, 0.42),
+        "blocks river.png",
+    );
+    assert!(water(&pixels) > 2000, "{} pixels of the river", water(&pixels));
+    // A waterfall down a mountainside, from 30 m off at its pool's height and a little over.
+    let alpine = preset("Alpine");
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..400 * 400).map(|at| ((at % 400) as f32 * 6.0 - 1200.0, (at / 400) as f32 * 6.0 - 1200.0)).unzip();
+    let (level, _) = alpine.water(&xs, &zs).unwrap();
+    let wet = |at: usize| level[at] > -1000.0;
+    let fall = (0..xs.len())
+        .filter(|&at| wet(at) && at % 400 + 1 < 400 && wet(at + 1))
+        .find_map(|at| {
+            let line: (Vec<f32>, Vec<f32>) = (0..=12).map(|k| (xs[at] + k as f32 * 0.5, zs[at])).unzip();
+            let (top, falls) = alpine.water(&line.0, &line.1).unwrap();
+            (0..line.0.len()).find(|&k| falls[k] > 4.0).map(|k| (line.0[k], line.1[k], top[k], falls[k]))
+        })
+        .expect("a waterfall");
+    let (fx, fz, top, height) = fall;
+    let corner = [fx - 128.0, fz - 128.0];
+    let eye = Vec3::new(100.0, top - height + 6.0, 128.0);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &alpine,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, std::f32::consts::FRAC_PI_2, 0.0),
+        "blocks waterfall.png",
+    );
+    assert!(water(&pixels) > 500, "{} pixels of the waterfall and its pool", water(&pixels));
+}

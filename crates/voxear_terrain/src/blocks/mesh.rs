@@ -237,7 +237,19 @@ pub(super) fn held<'a>(key: [i32; 3], made: &'a dyn Fn([i32; 2]) -> bool) -> imp
 /// sixteenths of a block, and the way up (a facing), where any is moved.
 pub fn water_shape(quad: [u32; 2]) -> (u8, u8, Option<usize>) {
     let up = (quad[0] >> 28) & 7;
-    (((quad[1] >> 12) & 15) as u8, ((quad[1] >> 8) & 15) as u8, (up < 6).then_some(up as usize))
+    match up < 6 {
+        true => (((quad[1] >> 12) & 15) as u8, ((quad[1] >> 8) & 15) as u8, Some(up as usize)),
+        false => (0, 0, None),
+    }
+}
+
+/// How the water of a quad of a river's top flows, in metres a second along
+/// x and z, where it flows along a current (see `flow::current_fill`): kept
+/// in place of its shape, which such a quad has none of.
+pub fn water_current(quad: [u32; 2]) -> Option<[f32; 2]> {
+    let up = (quad[0] >> 28) & 7;
+    let kept = (quad[1] >> 8) & 0xFF;
+    (up >= 6 && kept > 0).then(|| super::flow::current_of(kept as u8 - 1 + super::flow::CURRENT)).flatten()
 }
 
 /// A chunk's water's faces as quads, merged by surface and shape: one
@@ -285,7 +297,14 @@ pub(super) fn water_quads(
                         Some(up) if up / 2 != axis => (p[up / 2] + 1) as u32,
                         _ => 0,
                     };
-                    let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
+                    // A river's top, unshaped, keeps which way it flows in place of a shape.
+                    let current = match (up, facing) {
+                        (None, 2) => super::flow::current_of(fill(p))
+                            .map_or(0, |_| u32::from(fill(p) - super::flow::CURRENT) + 1),
+                        _ => 0,
+                    };
+                    let shaped =
+                        u32::from(rise) << 12 | u32::from(drop) << 8 | current << 8 | (up.unwrap_or(7) as u32) << 16;
                     mask[j * side + i] = (look | shaped | across << 19) + 1;
                 }
             }

@@ -3406,7 +3406,38 @@ struct BlockWaterOut
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
     nointerpolation uint2 water : WATER;
+    // How it flows along x and z, in metres a second, its ripples carried with it.
+    nointerpolation float2 flow : FLOW;
 };
+
+// How fast water running out sideways from what feeds it flows, and a river's current at each of its speeds, in
+// metres a second (voxear_terrain::blocks::RUNNING_SPEED, flow::SPEEDS).
+static const float BLOCK_RUNNING = 1.2;
+static const float BLOCK_CURRENTS[4] = { 0.5, 1.0, 2.0, 3.5 };
+
+// How long its ripples drift before they start over, in seconds: so they are never read far from where they began.
+static const float BLOCK_DRIFT_PERIOD = 900.0;
+
+// How the water of a quad flows (voxear_terrain::blocks::mesh::water_current): away from what feeds water running
+// out sideways; along its current, of a river's top, which keeps it in place of a shape, one of sixteen ways round
+// from +x towards +z at one of four speeds.
+float2 blockWaterFlow(uint2 quad, uint up)
+{
+    if (up < 6)
+    {
+        uint axis = up / 2;
+        float away = (up & 1) == 0 ? -BLOCK_RUNNING : BLOCK_RUNNING;
+        return axis == 0 ? float2(away, 0.0) : (axis == 2 ? float2(0.0, away) : float2(0.0, 0.0));
+    }
+    uint kept = (quad.y >> 8) & 0xFF;
+    if (kept == 0)
+    {
+        return float2(0.0, 0.0);
+    }
+    uint at = kept - 1;
+    float turn = float(at / 4) * (3.14159265 / 8.0);
+    return float2(cos(turn), sin(turn)) * BLOCK_CURRENTS[at % 4];
+}
 
 // A corner of a face of the water of the world push.level names (its number and one): six to a quad, its quads one
 // after another in the world's pool from push.output on. Flowing water stands lower than its block: a quad of it keeps
@@ -3446,6 +3477,7 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, at);
     o.water = uint2(push.level - 1, b.surface & 0xFF);
+    o.flow = smooth ? float2(0.0, 0.0) : blockWaterFlow(quad, up);
     return o;
 }
 
@@ -3503,14 +3535,16 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float3 v = normalize(frame->cameraPosition - input.world);
     float3 face = normalize(input.normal);
     bool level = abs(face.y) > 0.5;
-    // Ripples on its top and its underside, as a Pool's with none of the sea's swell; its sides stand still.
+    // Ripples on its top and its underside, as a Pool's with none of the sea's swell, carried along as it flows;
+    // its sides stand still.
     float2 slope = 0.0;
     float variance = 0.0;
     float folded = 1.0;
     float3 moved = 0.0;
     if (level)
     {
-        addWaves(frame, input.world.xz, 0.0, 1.0, slope, variance, folded, moved);
+        float2 drifted = input.world.xz - input.flow * fmod(frame->time, BLOCK_DRIFT_PERIOD);
+        addWaves(frame, drifted, 0.0, 1.0, slope, variance, folded, moved);
     }
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) * face.y + face);
     float slopes = sqrt(0.02 * 0.02 + 2.0 * variance);

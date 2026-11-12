@@ -17,6 +17,12 @@
 //! Its Sunk is how far under the land round about the ground lies, in
 //! metres: a Chasms node's Sunk, say. A world's biomes can keep to ground
 //! sunk so far, so a chasm's floor or a cavern's grows its own.
+//!
+//! Its Water is how high water stands over the ground, in metres, where a
+//! river or a lake is: a Rivers node's Water. A world of blocks fills the
+//! air under it with its sea's block. Its Falls is how many metres of that
+//! water pour down as a waterfall's curtain, falling, over the pool at its
+//! foot: a Rivers node's Falls.
 
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +44,8 @@ impl Output {
     pub const VOLUME: usize = 3;
     pub const ROCK: usize = 4;
     pub const SUNK: usize = 5;
+    pub const WATER: usize = 6;
+    pub const FALLS: usize = 7;
 }
 
 const INPUTS: &[Port] = &[
@@ -47,6 +55,8 @@ const INPUTS: &[Port] = &[
     Port::volume("volume", "Volume"),
     Port::field("rock", "Rock"),
     Port::field("sunk", "Sunk"),
+    Port::field("water", "Water"),
+    Port::field("falls", "Falls"),
 ];
 
 impl Kind for Output {

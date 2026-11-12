@@ -22,7 +22,7 @@ use super::{
     nodes::{
         Arches, Bend, Blend, CaveNetwork, Cellular, ChasmKind, Chasms, Clamp, Combine, Combining, Constant, Fins,
         Gullies, HeightMask, Joined, Laid, Math, NodeKind, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
-        RaisedLand, Remap, Roof, STEEPEST, SlopeMask, Solid, Spires, Terrace,
+        RaisedLand, Remap, Rivers, Roof, STEEPEST, SlopeMask, Solid, Spires, Terrace,
     },
     world::WorldGen,
 };
@@ -211,13 +211,37 @@ impl Layout {
         debug_assert!(shown, "a starter's row {label}");
     }
 
+    /// Ends the graph as `finish` does, with rivers run down `height` first:
+    /// the ground with their beds and valleys cut into it, and their water
+    /// and waterfalls, into its Output.
+    fn finish_with_rivers(mut self, height: NodeId, climate: Climate) -> Graph {
+        let rivers = self.rivers(height);
+        self.finish_from(rivers, Some(rivers), climate)
+    }
+
+    /// A Rivers node run down `ground`, in a column of its own.
+    fn rivers(&mut self, ground: NodeId) -> NodeId {
+        self.next();
+        self.after(ground, NodeKind::Rivers(Rivers::default()))
+    }
+
     /// Ends the graph: `height` into its Output, with a climate beside it
     /// whose temperature and humidity are rows after those shown so far.
-    fn finish(mut self, height: NodeId, climate: Climate) -> Graph {
+    fn finish(self, height: NodeId, climate: Climate) -> Graph {
+        self.finish_from(height, None, climate)
+    }
+
+    /// Ends the graph as `finish` does, with the water and waterfalls of
+    /// `rivers`, a Rivers node, into its Output where there is one.
+    fn finish_from(mut self, height: NodeId, rivers: Option<NodeId>, climate: Climate) -> Graph {
         self.next();
         let output = self.add(NodeKind::Output(Output::default()));
         let weather = self.add(NodeKind::Climate(climate));
         self.wire(height, 0, output, Output::HEIGHT);
+        if let Some(rivers) = rivers {
+            self.wire(rivers, Rivers::WATER, output, Output::WATER);
+            self.wire(rivers, Rivers::FALLS, output, Output::FALLS);
+        }
         self.wire(weather, Climate::TEMPERATURE_OUT, output, Output::TEMPERATURE);
         self.wire(weather, Climate::HUMIDITY_OUT, output, Output::HUMIDITY);
         self.expose(weather, "temperature", "Temperature");
@@ -280,7 +304,7 @@ fn battlefield_plains() -> Starter {
     g.next();
     let ground = g.math(Add, ground, holes);
     let climate = Climate { humidity: 0.55, ..Climate::default() };
-    Starter { name: "Battlefield Plains", sea_level: 0.0, graph: g.finish(ground, climate) }
+    Starter { name: "Battlefield Plains", sea_level: 0.0, graph: g.finish_with_rivers(ground, climate) }
 }
 
 /// Hills and dales, with no sea.
@@ -308,7 +332,7 @@ fn rolling_hills() -> Starter {
     g.next();
     let ground = g.math(Add, cut, bumps);
     let climate = Climate { humidity: 0.6, ..Climate::default() };
-    Starter { name: "Rolling Hills", sea_level: 0.0, graph: g.finish(ground, climate) }
+    Starter { name: "Rolling Hills", sea_level: 0.0, graph: g.finish_with_rivers(ground, climate) }
 }
 
 /// Ranges of high, sharp mountains with deep valleys, and coasts at their
@@ -342,7 +366,7 @@ fn alpine() -> Starter {
     g.next();
     let ground = g.math(Add, cut, bumps);
     let climate = Climate { temperature: 8.0, humidity: 0.6, size: 8000.0, ..Climate::default() };
-    Starter { name: "Alpine", sea_level: 0.0, graph: g.finish(ground, climate) }
+    Starter { name: "Alpine", sea_level: 0.0, graph: g.finish_with_rivers(ground, climate) }
 }
 
 /// Islands scattered over a sea.
@@ -380,7 +404,7 @@ fn archipelago() -> Starter {
     g.next();
     let ground = g.math(Add, cut, bumps);
     let climate = Climate { temperature: 24.0, temperature_range: 4.0, humidity: 0.75, ..Climate::default() };
-    Starter { name: "Archipelago", sea_level: 0.0, graph: g.finish(ground, climate) }
+    Starter { name: "Archipelago", sea_level: 0.0, graph: g.finish_with_rivers(ground, climate) }
 }
 
 /// High ground in broad steps, cut by steep-sided canyons, their walls in
@@ -417,7 +441,7 @@ fn canyons() -> Starter {
     g.next();
     let ground = g.math(Add, high, bumps);
     let climate = Climate { temperature: 22.0, humidity: 0.15, humidity_range: 0.15, ..Climate::default() };
-    Starter { name: "Canyons", sea_level: 0.0, graph: g.finish(ground, climate) }
+    Starter { name: "Canyons", sea_level: 0.0, graph: g.finish_with_rivers(ground, climate) }
 }
 
 /// Rocky hills over caves without end, every room made by rules: halls
@@ -431,8 +455,9 @@ fn caves() -> Starter {
     let hills = Noise { size: 420.0, octaves: 4, low: 48.0, high: 110.0, ..Noise::default() };
     let hills = g.add(NodeKind::Noise(hills));
     g.expose(hills, "high", "Height");
+    let rivers = g.rivers(hills);
     g.next();
-    let solid = g.after(hills, NodeKind::Solid(Solid::default()));
+    let solid = g.after(rivers, NodeKind::Solid(Solid::default()));
     // Halls tens of metres across and many high, of several shapes stacked up and out, with a floor that
     // rolls and steps; chambers half their size between; near enough that rooms meet now and then.
     let hall = RoomRules {
@@ -474,7 +499,7 @@ fn caves() -> Starter {
     let cut = g.add(NodeKind::Combine(Combine { operation: Combining::Subtract, ..Combine::default() }));
     g.wire(solid, 0, cut, Combine::A);
     g.wire(caves, 0, cut, Combine::B);
-    let mut graph = g.finish(hills, Climate::default());
+    let mut graph = g.finish_from(rivers, Some(rivers), Climate::default());
     let output = graph.output().map(|node| node.id);
     let wired = output.is_some_and(|output| graph.connect(cut, 0, output, Output::VOLUME));
     debug_assert!(wired, "the caves' Volume");
@@ -516,7 +541,7 @@ fn mesas() -> Starter {
     g.next();
     let rough = g.after(arches, NodeKind::Overhangs(Overhangs { amount: 5.0, size: 22.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 20.0, humidity: 0.5, ..Climate::default() };
-    let mut graph = with_volume(g.finish(ground, climate), rough);
+    let mut graph = with_volume(g.finish_with_rivers(ground, climate), rough);
     // The walls and their rubble are bare rock.
     let output = graph.output().map(|node| node.id);
     let wired = output.is_some_and(|output| graph.connect(land, Plateaus::WALLS, output, Output::ROCK));
@@ -554,7 +579,7 @@ fn sky_islands() -> Starter {
     g.next();
     let rough = g.after(islands, NodeKind::Overhangs(Overhangs { amount: 4.0, size: 18.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 16.0, humidity: 0.6, ..Climate::default() };
-    Starter { name: "Sky Islands", sea_level: 0.0, graph: with_volume(g.finish(hills, climate), rough) }
+    Starter { name: "Sky Islands", sea_level: 0.0, graph: with_volume(g.finish_with_rivers(hills, climate), rough) }
 }
 
 /// Tall, rugged highlands: ridges hundreds of metres high cut into ledges,
@@ -620,7 +645,7 @@ fn highlands() -> Starter {
     let climate = Climate { temperature: 9.0, humidity: 0.55, ..Climate::default() };
     // Ground steeper than about 50 degrees is bare rock.
     let steep = g.after(ground, NodeKind::SlopeMask(SlopeMask { min: 1.2, max: STEEPEST, ..SlopeMask::default() }));
-    let mut graph = with_volume(g.finish(ground, climate), cut);
+    let mut graph = with_volume(g.finish_with_rivers(ground, climate), cut);
     let output = graph.output().map(|node| node.id);
     let wired = output.is_some_and(|output| graph.connect(steep, 0, output, Output::ROCK));
     debug_assert!(wired, "the highlands' rock");
@@ -662,7 +687,7 @@ fn karst() -> Starter {
     g.next();
     let rough = g.after(spires, NodeKind::Overhangs(Overhangs { amount: 3.0, size: 16.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 22.0, humidity: 0.8, ..Climate::default() };
-    Starter { name: "Karst", sea_level: -2.0, graph: with_volume(g.finish(ground, climate), rough) }
+    Starter { name: "Karst", sea_level: -2.0, graph: with_volume(g.finish_with_rivers(ground, climate), rough) }
 }
 
 /// Green valleys broken by fields of tilted blades of rock, row on row,
@@ -693,7 +718,7 @@ fn shattered() -> Starter {
     let rough = g.after(fins, NodeKind::Overhangs(Overhangs { amount: 2.5, size: 14.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 10.0, humidity: 0.75, ..Climate::default() };
     // The blades are bare rock.
-    let mut graph = with_volume(g.finish(land, climate), rough);
+    let mut graph = with_volume(g.finish_with_rivers(land, climate), rough);
     let output = graph.output().map(|node| node.id);
     let wired = output.is_some_and(|output| graph.connect(fins, 1, output, Output::ROCK));
     debug_assert!(wired, "the blades' rock");
@@ -743,7 +768,7 @@ fn great_peaks() -> Starter {
     // Ground steeper than about 45 degrees is bare rock.
     let steep = g.after(peaks, NodeKind::SlopeMask(SlopeMask { min: 1.0, max: STEEPEST, ..SlopeMask::default() }));
     let climate = Climate { temperature: 11.0, humidity: 0.55, ..Climate::default() };
-    let mut graph = with_volume(g.finish(peaks, climate), rough);
+    let mut graph = with_volume(g.finish_with_rivers(peaks, climate), rough);
     let output = graph.output().map(|node| node.id);
     let wired = output.is_some_and(|output| graph.connect(steep, 0, output, Output::ROCK));
     debug_assert!(wired, "the peaks' rock");
@@ -872,9 +897,9 @@ mod tests {
     #[test]
     fn mesas_sky_islands_and_highlands_stand_hundreds_of_metres_tall_with_a_volume_each() {
         let pins: [(&str, u64, f32); 3] = [
-            ("Mesas", 0x5696_96e7_ca84_2c3f, 200.0),
-            ("Sky Islands", 0x3f7d_04bc_1fc6_a925, 40.0),
-            ("Highlands", 0x2d6a_a25a_149d_c1b0, 350.0),
+            ("Mesas", 0x63a0_eb0e_453a_a00d, 200.0),
+            ("Sky Islands", 0xdc93_4956_40ea_eef8, 40.0),
+            ("Highlands", 0x63f4_b826_9646_1e7e, 350.0),
         ];
         let mut changed = Vec::new();
         for (name, hash, tall) in pins {
@@ -898,9 +923,9 @@ mod tests {
     #[test]
     fn karst_shattered_great_peaks_and_rifts_stand_tall_or_cut_deep_with_a_volume_each() {
         let pins: [(&str, u64, f32); 4] = [
-            ("Karst", 0xc1a8_95e4_9036_d3c2, 20.0),
-            ("Shattered", 0x55f5_e5a4_b7c2_3bbc, 30.0),
-            ("Great Peaks", 0x394f_2714_3749_116b, 1000.0),
+            ("Karst", 0xd79c_08d6_1d39_f33c, 20.0),
+            ("Shattered", 0xff60_591d_97fc_cf5c, 30.0),
+            ("Great Peaks", 0x511a_ec36_64c2_5904, 1000.0),
             ("Rifts", 0x8bb1_f777_df4d_e4a3, 150.0),
         ];
         let mut changed = Vec::new();
@@ -983,11 +1008,11 @@ mod tests {
     #[test]
     fn each_starter_makes_the_same_ground_to_the_bit_on_every_machine() {
         let hashes: [(&str, u64); 5] = [
-            ("Battlefield Plains", 0xa2b9_e986_fb60_f2e3),
-            ("Rolling Hills", 0x5678_e709_8974_f830),
-            ("Alpine", 0x55de_f55e_af01_7b20),
-            ("Archipelago", 0xb060_b6af_bb14_4e66),
-            ("Canyons", 0x299d_7c2d_8373_cc20),
+            ("Battlefield Plains", 0x0465_38c9_6f8e_f71d),
+            ("Rolling Hills", 0x6ffb_dd4d_466a_6ad4),
+            ("Alpine", 0xf8ef_648c_73a1_a658),
+            ("Archipelago", 0xf830_5087_7dfa_9c48),
+            ("Canyons", 0x33ce_062c_f4a0_6e9d),
         ];
         let starters = grounds();
         assert_eq!(starters.len(), hashes.len());
@@ -1046,13 +1071,25 @@ mod tests {
         // A landmass is no starter, and no starter a landmass.
         assert_eq!(Preset::Alpine.world().starter(), None);
         assert_eq!(starters[2].world(1, 1.0).as_landmass(), None);
-        // The plains have no craters until their row says so, and then only holes: nowhere higher than a lip.
-        let plains = starters[0].world(1, 1.0);
+        // The plains have no craters until their row says so, and then only holes: nowhere higher than a lip. Read
+        // from the ground before its rivers, which run where the craters let them.
+        let plains = without_rivers(&starters[0].world(1, 1.0));
         let row = plains.graph().exposed.iter().position(|exposed| exposed.label == "Craters").expect("its row");
         let cratered = plains.with_exposed(row, Value::Number(1.5)).unwrap();
         let (was, now) = (testing::flat(&plains, 4000), testing::flat(&cratered, 4000));
         let deepest = (0..4000).map(|i| was[i] - now[i]).fold(0.0, f32::max);
         assert!((0..4000).all(|i| now[i] <= was[i] + 0.8) && deepest > 1.0, "holes {deepest} m deep at the most");
+    }
+
+    /// `world` with its Output's height wired from what its Rivers node runs down, and no water.
+    fn without_rivers(world: &WorldGen) -> WorldGen {
+        let mut graph = world.graph().clone();
+        let output = graph.output().expect("an output").id;
+        let rivers = graph.link_into(output, Output::HEIGHT).expect("its ground").from;
+        let ground = *graph.link_into(rivers, Rivers::GROUND).expect("rivers run down the ground");
+        assert!(graph.connect(ground.from, ground.output, output, Output::HEIGHT));
+        assert!(graph.disconnect(output, Output::WATER) && graph.disconnect(output, Output::FALLS));
+        WorldGen::new(world.seed(), world.scale(), world.sea_level(), graph)
     }
 
     /// The time it takes to make a tile of 289 by 289 heights, a terrain's tile with its edges: the lesser of two

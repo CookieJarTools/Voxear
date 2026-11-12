@@ -188,6 +188,22 @@ Water flows five blocks a second, the same on every machine, both in play and in
 
 For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it.
 
+### Rivers and currents
+
+A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
+
+A river's blocks are sources, so it never runs dry, and each keeps which way and how fast its river flows. Its ripples drift that way. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
+
+Flowing water pushes:
+
+| What | How it goes |
+| --- | --- |
+| A Rigidbody with **Buoyancy** | Floats and drifts with the current |
+| A Rigidbody without | Is dragged along the bed as hard as it lags the water: a crate rolls downstream, a boulder hardly stirs |
+| A Character Controller | Is carried along as much as it is in the water, fully once in up to its middle, as its **Water push** says. Under a waterfall it is pushed down |
+
+Scripts read the flow at a point with `Water.FlowAt`.
+
 In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level; it lies over the ground wherever the ground is under it, however shallow, and its surface runs on a block into the shore, so the waterline is where the ground rises through it, with no gaps. It flows as it does among cubes.
 
 With the camera in the water, the view is the same as under a Pool: the water's own colour thickening with distance, light fading with depth, the surface from below, a waterline across the lens as you come up. The water round the camera is found from the top of its column, as far as that top runs along X and Z, so the ground beside a pond stays dry to look at. The waterline lies level, as the water's top is flat, and the ground under the water is lit as it is from far off, whether the camera is near the water or not.

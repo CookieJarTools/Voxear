@@ -144,6 +144,70 @@ pub(super) fn sea_of(
     (sea, top)
 }
 
+/// Each column's own water at level `level`, where the generator has
+/// rivers and lakes and they stand over the sea: its top in the level's
+/// blocks, as `sea_of` puts the sea's, and the block from which it falls
+/// as a waterfall's curtain (none falling at `f32::MAX`). None where the
+/// world has no sea's block to fill them with, or the generator no water.
+pub(super) fn waters_of(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &crate::generate::WorldGen,
+    level: u32,
+    (xs, zs): (&[f32], &[f32]),
+) -> Option<Vec<(f32, f32)>> {
+    waters_and_currents(file, generate, world, level, (xs, zs), false).map(|(waters, _)| waters)
+}
+
+/// Each column's own water as [`waters_of`] gives it, and, with `currents`,
+/// the fill of its whole blocks where it flows along a river's current
+/// (see `flow::current_fill`): of cubes, at the finest level.
+pub(super) fn waters_and_currents(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &crate::generate::WorldGen,
+    level: u32,
+    (xs, zs): (&[f32], &[f32]),
+    currents: bool,
+) -> Option<(Vec<(f32, f32)>, Vec<Option<u8>>)> {
+    let (sea, sea_top) = sea_of(file, generate, world, level);
+    if sea == AIR {
+        return None;
+    }
+    let (water, falls) = world.water(xs, zs)?;
+    let scale = (1u32 << level.min(16)) as f32;
+    let (finest, size) = (file.block_size.max(0.01), file.block_size.max(0.01) * scale);
+    // In blocks of the level, kept where the finest level's blocks put it, as the sea is.
+    let blocks = |metres: f32| match file.smooth {
+        true => metres / size,
+        false => (metres / finest - 0.5).ceil() / scale,
+    };
+    let none = (f32::MIN, f32::MAX);
+    let made = (0..water.len())
+        .map(|at| match water[at] > crate::generate::nodes::NO_WATER * 0.5 {
+            true if blocks(water[at]) > sea_top => {
+                let from = if falls[at] > 0.0 { blocks(water[at] - falls[at]) } else { f32::MAX };
+                (blocks(water[at]), from)
+            }
+            _ => none,
+        })
+        .collect::<Vec<_>>();
+    if made.iter().all(|&water| water == none) {
+        return None;
+    }
+    let flows = |at: usize| {
+        let wet = made[at] != none && made[at].1 == f32::MAX;
+        let current = world.current(xs[at], zs[at]).filter(|_| wet)?;
+        let fill = crate::blocks::flow::current_fill(current);
+        (fill != crate::blocks::chunk::FULL).then_some(fill)
+    };
+    let currents = match currents && !file.smooth && level == 0 {
+        true => (0..made.len()).map(flows).collect(),
+        false => vec![None; made.len()],
+    };
+    Some((made, currents))
+}
+
 /// How many blocks further into or out of the ground than a block's middle
 /// its fill is no longer measured against the blocks round it: a whole
 /// block or none, on any slope a block can show.
@@ -245,8 +309,18 @@ pub fn column_chunks(
     // How far over a column's surface its ground may reach, in blocks.
     let over_reach = volume.reach() / size;
     let (sea, sea_top) = sea_of(file, generate, world, level);
-    let sea_at = |y: i32| Sea::at(sea, sea_top, y, file.smooth);
-    let surfaces = places.iter().zip(&columns).filter(|(place, _)| own(**place)).map(|(_, column)| column.surface);
+    // Rivers and lakes over the sea, each column's own, and which way each river's water flows.
+    let (waters, currents) = waters_and_currents(file, generate, world, level, (&xs, &zs), true).unzip();
+    let sea_at = |at: usize, y: i32| match &waters {
+        Some(waters) if waters[at].0 > sea_top => {
+            let (top, falls_from) = waters[at];
+            let current = currents.as_ref().and_then(|currents| currents[at]);
+            Sea { falling: y as f32 >= falls_from, current, ..Sea::at(sea, top, y, file.smooth) }
+        }
+        _ => Sea::at(sea, sea_top, y, file.smooth),
+    };
+    let water_top = |at: usize| waters.as_ref().map_or(sea_top, |waters| waters[at].0.max(sea_top));
+    let surfaces = (0..places.len()).filter(|&at| own(places[at])).map(|at| columns[at].surface.max(water_top(at)));
     let mut highest = surfaces.fold(f32::MIN, f32::max).max(sea_top) + over_reach + 1.0;
     if asked && volume.spanned() {
         let own_columns = (0..places.len()).filter(|&at| own(places[at]));
@@ -411,7 +485,7 @@ pub fn column_chunks(
                 above = DEEP;
             }
             if k >= read[at] {
-                made.extend(cell(column, -2.0, -2.0, 0.0, -2.0, sea_at(y), file.smooth).map(|cell| (y, cell)));
+                made.extend(cell(column, -2.0, -2.0, 0.0, -2.0, sea_at(at, y), file.smooth).map(|cell| (y, cell)));
                 continue;
             }
             let (within, ground) = (inside[from + k], under[from + k]);
@@ -432,7 +506,7 @@ pub fn column_chunks(
             } else {
                 within
             };
-            made.extend(cell(column, within, ground, depth, filled, sea_at(y), file.smooth).map(|cell| (y, cell)));
+            made.extend(cell(column, within, ground, depth, filled, sea_at(at, y), file.smooth).map(|cell| (y, cell)));
         }
         // Kept from the lowest up, as chunks' blocks are.
         for &(y, (block, fill)) in made.iter().rev() {

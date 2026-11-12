@@ -402,8 +402,9 @@ fn canyons() -> Starter {
 }
 
 /// Rocky hills over caves without end, every room made by rules: halls
-/// with pillars and ledges and smaller chambers between, joined by winding
-/// tunnels of many widths, with ways round and dead ends, and here and
+/// with pillars and ledges and smaller chambers between, in three layers
+/// one under another, joined by winding tunnels of many widths and by
+/// ramps from layer to layer, with ways round and dead ends, and here and
 /// there a way up to the surface. For a world of blocks; a Terrain shows
 /// the hills alone.
 fn caves() -> Starter {
@@ -439,11 +440,15 @@ fn caves() -> Starter {
         loops: 0.4,
         roughness: 1.4,
         entrances: 0.2,
+        // Three layers of rooms, for a world with a great deal of rock under it.
+        layers: 3,
+        layer_depth: 56.0,
         rooms: vec![Room { weight: 2.0, ..Room::made(hall) }, Room { weight: 3.0, ..Room::made(chamber) }],
         ..CaveNetwork::default()
     };
     let caves = g.add(NodeKind::CaveNetwork(network));
     g.expose(caves, "depth", "Depth");
+    g.expose(caves, "layers", "Layers");
     g.expose(caves, "loops", "Loops");
     g.expose(caves, "entrances", "Entrances");
     g.next();
@@ -509,7 +514,7 @@ mod tests {
         assert_eq!(world.starter(), Some("Caves"));
         assert_eq!(WorldGen::parse(&world.to_text()).unwrap(), world);
         let labels: Vec<&str> = world.graph().exposed.iter().map(|exposed| exposed.label.as_str()).collect();
-        assert_eq!(labels, ["Height", "Depth", "Loops", "Entrances", "Temperature", "Humidity"]);
+        assert_eq!(labels, ["Height", "Depth", "Layers", "Loops", "Entrances", "Temperature", "Humidity"]);
         let caves = world.caves().expect("its caves");
         assert_eq!(caves.layout(), crate::generate::CaveLayout::Endless);
         let rooms = caves.rooms_near([0.0, 40.0, 0.0], 600.0);
@@ -517,9 +522,11 @@ mod tests {
         // Halls and chambers both, each under the hills, with places on its rock.
         let wide = |room: &crate::generate::PlacedRoom| room.bounds[1][0] - room.bounds[0][0];
         assert!(rooms.iter().any(|room| wide(room) > 70.0) && rooms.iter().any(|room| wide(room) < 60.0));
+        // In three layers, each 56 m under the one over it.
+        assert!((0..3).all(|layer| rooms.iter().any(|room| room.region[1] == layer)));
         for room in &rooms {
-            let under = world.height_at(room.at[0], room.at[2]) - room.at[1];
-            assert!((30.0..=58.0).contains(&under), "a room {under} m under the hills");
+            let under = world.height_at(room.at[0], room.at[2]) - room.at[1] - room.region[1] as f32 * 56.0;
+            assert!((30.0..=58.0).contains(&under), "a room {under} m under where its layer starts");
             assert!(!room.floors.is_empty() && !room.ceilings.is_empty());
         }
         assert_ne!(starter.world(2, 1.0).caves().unwrap().rooms_near([0.0, 40.0, 0.0], 600.0), rooms);

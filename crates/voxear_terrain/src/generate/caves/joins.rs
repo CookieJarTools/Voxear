@@ -164,6 +164,45 @@ impl Joins {
     }
 }
 
+/// The way back from each of the four ways.
+pub(crate) const BACK: [usize; 4] = [1, 0, 3, 2];
+
+impl Joins {
+    /// Whether a ramp leads down from the room of region `(x, z)` in the
+    /// layer these joins are of to the room beside it, each of the four
+    /// ways, in the layer under it, whose joins are `under`. In every
+    /// district one such pair of rooms is picked from those there are, by
+    /// a number of the district, so the two layers are one cave; and some
+    /// of the others, where there are loops.
+    pub fn ramps(&self, under: &Joins, cell: [i32; 2]) -> [bool; 4] {
+        let (district, own) = district_of(cell);
+        let (upper, lower) = (self.kept(district), under.kept(district));
+        let mut ramps = [false; 4];
+        if !upper[own] {
+            return ramps;
+        }
+        // Every room with a room one layer down and one region along, in the same district.
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for at in (0..COUNT).filter(|&at| upper[at]) {
+            for way in 0..4 {
+                if within(at, way).is_some_and(|to| lower[to]) {
+                    pairs.push((at, way));
+                }
+            }
+        }
+        if pairs.is_empty() {
+            return ramps;
+        }
+        let picked = pairs[mix(self.seed, &[district[0], district[1], 5]) as usize % pairs.len()];
+        for way in 0..4 {
+            let Some(to) = within(own, way).filter(|&to| lower[to]) else { continue };
+            let more = share(self.pair(cell, cell_of(district, to), 6)) < self.loops * 0.3;
+            ramps[way] = picked == (own, way) || more;
+        }
+        ramps
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +243,20 @@ mod tests {
             // Sixteen districts: all one cave.
             let (rooms, seen, _) = reached(&joins, [-8, -8], SIDE * 4);
             assert_eq!(rooms, seen, "seed {seed}: districts apart");
+        }
+        // Two layers: in every district a ramp or more leads down, to a room there is.
+        for seed in 0..40 {
+            let (upper, lower) = (Joins { seed, loops: 0.0 }, Joins { seed: seed + 1000, loops: 0.0 });
+            let mut down = 0;
+            for at in 0..SIDE * SIDE {
+                let cell = [4 + at % SIDE, -8 + at / SIDE];
+                for way in (0..4).filter(|&way| upper.ramps(&lower, cell)[way]) {
+                    down += 1;
+                    assert!(upper.links(cell).is_some(), "a ramp from a room");
+                    assert!(lower.links([cell[0] + WAYS[way][0], cell[1] + WAYS[way][1]]).is_some(), "to a room");
+                }
+            }
+            assert_eq!(down, 1, "seed {seed}: one ramp a district with no loops");
         }
         // Loops add tunnels and take no room away.
         let (tree, looped) = (Joins { seed: 3, loops: 0.0 }, Joins { seed: 3, loops: 0.6 });

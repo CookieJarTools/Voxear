@@ -18,7 +18,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use super::{
     grid::{Grid, Region, Stand, V3, add, cross, dot, sub, times, unit},
-    joins::Joins,
+    joins::{BACK, Joins},
     level::Level,
     made::{DETAIL, Made},
     rooms::{NOTHING, Room, RoomExit, greater, lesser},
@@ -37,6 +37,10 @@ pub enum CaveLayout {
     /// A bounded cave: a main path of rooms with side rooms off it.
     Level,
 }
+
+/// How many rooms a room may be joined to: the four beside it in its own
+/// layer, then the four beside it one layer down, then one layer up.
+pub(crate) const SLOTS: usize = 12;
 
 /// How many pieces a tunnel's line is made of.
 const PIECES: usize = 16;
@@ -68,6 +72,9 @@ pub(crate) struct Settings {
     pub entrances: f32,
     pub main: u32,
     pub side: u32,
+    /// How many layers of rooms an endless network has, one under another, and how far apart they lie.
+    pub layers: u32,
+    pub layer_depth: f32,
     pub seed: u32,
 }
 
@@ -126,13 +133,14 @@ pub(crate) struct Plan {
     pub stand: Stand,
     pub turns: u8,
     pub mirrored: bool,
-    pub beside: [Region; 4],
-    /// Whether a tunnel joins it to each of the regions beside it.
-    pub links: [bool; 4],
+    /// The regions it may be joined to: the four beside it, then those one layer down, then one layer up.
+    pub beside: [Region; SLOTS],
+    /// Whether a tunnel joins it to each of those.
+    pub links: [bool; SLOTS],
     /// The exit each of those tunnels leaves by.
-    pub toward: [Option<usize>; 4],
-    /// The way to each region beside it, along its own floor.
-    pub ways: [V3; 4],
+    pub toward: [Option<usize>; SLOTS],
+    /// The way to each of them, along its own floor.
+    pub ways: [V3; SLOTS],
     /// Which of its shapes it has, a bit each.
     pub present: u64,
     /// The room itself, where it is made by rules.
@@ -163,6 +171,9 @@ pub(crate) struct Tunnel {
     pub radii: [f32; PIECES + 1],
     /// How far under its line its floor lies: the same all along, however wide it is.
     pub floor: f32,
+    /// Each piece's middle, and the square of how far from it anything of the piece reaches, roughness and
+    /// all: a place further off than that is left out of the piece's sums.
+    pub near: [(V3, f32); PIECES],
     pub roofed: bool,
     pub bounds: Bounds,
 }
@@ -195,12 +206,16 @@ pub(crate) struct Network {
 thread_local! {
     /// What was last gathered on this thread, by network and region.
     static GATHERED: RefCell<Vec<(u64, Region, Rc<Gathered>)>> = const { RefCell::new(Vec::new()) };
+    /// The rooms last made by rules on this thread, by network and region: a room is asked for by every
+    /// region round its own, and is the same room each time.
+    static MADE: RefCell<Vec<(u64, Region, Arc<Made>)>> = const { RefCell::new(Vec::new()) };
     /// The heights levels were last found to lie at, by network.
     static LEVELS: RefCell<Vec<(u64, f32)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// How many gatherings a thread keeps.
+/// How many gatherings a thread keeps, and how many rooms made by rules.
 const KEPT: usize = 24;
+const ROOMS_KEPT: usize = 256;
 
 impl Settings {
     /// The room with the furthest reach's, in metres.
@@ -329,12 +344,38 @@ impl Network {
     /// where the region has none.
     pub fn plan(&self, grid: &Grid, region: Region) -> Option<Plan> {
         let set = &self.set;
-        let links = Joins { seed: set.seed, loops: set.loops }.links([region[0], region[2]])?;
+        let (cell, layer) = ([region[0], region[2]], region[1]);
+        if layer < 0 || layer >= set.layers as i32 {
+            return None;
+        }
+        let own = self.joins(layer);
+        let beside = own.links(cell)?;
+        let mut links = [false; SLOTS];
+        links[..4].copy_from_slice(&beside);
+        // Ramps down to the layer under it, and up from it to rooms that have a ramp down to it.
+        if layer + 1 < set.layers as i32 {
+            links[4..8].copy_from_slice(&own.ramps(&self.joins(layer + 1), cell));
+        }
+        if layer > 0 {
+            let over = self.joins(layer - 1);
+            let flat = grid.beside(region);
+            for way in 0..4 {
+                links[8 + way] = over.ramps(&own, [flat[way][0], flat[way][2]])[BACK[way]];
+            }
+        }
         let at = |part: i32| share(mix(set.seed, &[region[0], region[1], region[2], part]));
         let loose = set.loose();
         let jitter = [(at(3) * 2.0 - 1.0) * loose, (at(4) * 2.0 - 1.0) * loose];
-        let entrance = at(8) < set.entrances;
+        // Only the topmost layer has ways up to the surface.
+        let entrance = layer == 0 && at(8) < set.entrances;
         Some(self.planned(grid, region, set.room(at(5)), jitter, links, at(6), entrance))
+    }
+
+    /// What decides the joins of layer `layer`: the topmost by the network's own seed, as a network of one
+    /// layer is.
+    fn joins(&self, layer: i32) -> Joins {
+        let seed = if layer == 0 { self.set.seed } else { mix(self.set.seed, &[layer, 71]) };
+        Joins { seed, loops: self.set.loops }
     }
 
     /// A room of `region` joined as `links` say, turned so its exits face
@@ -346,20 +387,35 @@ impl Network {
         region: Region,
         room: usize,
         jitter: [f32; 2],
-        links: [bool; 4],
+        links: [bool; SLOTS],
         deep: f32,
         entrance: bool,
     ) -> Plan {
         let set = &self.set;
         let stand = grid.stand(region, jitter);
-        let beside = grid.beside(region);
+        let flat = grid.beside(region);
+        let beside: [Region; SLOTS] = std::array::from_fn(|slot| {
+            let [i, layer, j] = flat[slot % 4];
+            [i, layer + [0, 1, -1][slot / 4], j]
+        });
         let middle = grid.stand(region, [0.0, 0.0]).foot;
         let ways = beside.map(|next| {
             let away = sub(grid.stand(next, [0.0, 0.0]).foot, middle);
             unit([dot(away, stand.x), 0.0, dot(away, stand.z)], [1.0, 0.0, 0.0])
         });
         let made = set.rooms[room].rules.map(|rules| {
-            Arc::new(Made::of(&rules, mix(set.seed, &[region[0], region[1], region[2], 40])))
+            let known = |kept: &(u64, Region, Arc<Made>)| kept.0 == self.id && kept.1 == region;
+            let kept = MADE.with_borrow(|kept| kept.iter().find(|kept| known(kept)).map(|kept| kept.2.clone()));
+            kept.unwrap_or_else(|| {
+                let made = Arc::new(Made::of(&rules, mix(set.seed, &[region[0], region[1], region[2], 40])));
+                MADE.with_borrow_mut(|kept| {
+                    if kept.len() >= ROOMS_KEPT {
+                        kept.remove(0);
+                    }
+                    kept.push((self.id, region, made.clone()));
+                });
+                made
+            })
         });
         let exits: &[RoomExit] = match &made {
             Some(made) => &made.exits,
@@ -367,13 +423,13 @@ impl Network {
         };
         // Each way of turning it, from one the region picks: the first whose exits face its tunnels best.
         let first = mix(set.seed, &[region[0], region[1], region[2], 7]) % 8;
-        let mut best: Option<(f32, u8, bool, [Option<usize>; 4])> = None;
+        let mut best: Option<(f32, u8, bool, [Option<usize>; SLOTS])> = None;
         for step in 0..8 {
             let way = (first + step) % 8;
             let (turns, mirrored) = ((way % 4) as u8, way >= 4);
             let mut used = vec![false; exits.len()];
-            let (mut score, mut toward) = (0.0, [None; 4]);
-            for slot in (0..4).filter(|&slot| links[slot]) {
+            let (mut score, mut toward) = (0.0, [None; SLOTS]);
+            for slot in (0..SLOTS).filter(|&slot| links[slot]) {
                 let facing = |exit: usize| dot(turned(exits[exit].way, turns, mirrored), ways[slot]);
                 let mut pick: Option<(f32, usize)> = None;
                 // An exit no other tunnel has, while there is one.
@@ -398,7 +454,7 @@ impl Network {
                 best = Some((score, turns, mirrored, toward));
             }
         }
-        let (_, turns, mirrored, toward) = best.unwrap_or((0.0, 0, false, [None; 4]));
+        let (_, turns, mirrored, toward) = best.unwrap_or((0.0, 0, false, [None; SLOTS]));
         let shapes = &set.rooms[room].shapes;
         let mut present = 0u64;
         for (at, shape) in shapes.iter().enumerate().take(64) {
@@ -438,29 +494,38 @@ impl Network {
 
     /// How far under the ground at its middle an endless network's room
     /// lies: its floor, in metres.
-    fn sunk(&self, plan: &Plan) -> f32 {
-        -self.set.depth * (0.75 + 0.5 * plan.deep)
+    pub fn sunk(&self, plan: &Plan) -> f32 {
+        -self.set.depth * (0.75 + 0.5 * plan.deep) - plan.region[1] as f32 * self.set.layer_depth
     }
 
     /// Everything of an endless network that can reach into `region`.
     fn gather(&self, grid: &Grid, region: Region) -> Gathered {
-        // The region, the four beside it, and those beside them: each once, in this order.
-        let mut regions = vec![region];
-        regions.extend(grid.beside(region));
+        // The region, the four beside it, and those beside them: each once, in this order. Then the same of
+        // every layer under the first, a layer after another.
+        let region = [region[0], 0, region[2]];
+        let mut cells = vec![region];
+        cells.extend(grid.beside(region));
         for at in 1..5 {
-            for next in grid.beside(regions[at]) {
-                if !regions.contains(&next) {
-                    regions.push(next);
+            for next in grid.beside(cells[at]) {
+                if !cells.contains(&next) {
+                    cells.push(next);
                 }
             }
         }
+        let layers = self.set.layers.max(1) as i32;
+        let regions: Vec<Region> =
+            (0..layers).flat_map(|layer| cells.iter().map(move |&[i, _, j]| [i, layer, j])).collect();
+        // The rooms that can reach into the region itself: its own and the four beside it, of each layer.
+        let within = |at: usize| at % cells.len() < 5;
         let plans: Vec<Option<Plan>> = regions.iter().map(|&region| self.plan(grid, region)).collect();
-        let inner = regions.len().min(5);
         // The ground over every room, and over where each inner room's entrance comes out, asked at once.
         let mut feet: Vec<V3> = plans.iter().flatten().map(|plan| plan.stand.foot).collect();
-        let mouths: Vec<Option<V3>> = plans[..inner]
+        let mouths: Vec<Option<V3>> = plans
             .iter()
-            .map(|plan| plan.as_ref().filter(|plan| plan.entrance).map(|plan| self.mouth(grid, plan)))
+            .enumerate()
+            .map(|(at, plan)| {
+                plan.as_ref().filter(|plan| within(at) && plan.entrance).map(|plan| self.mouth(grid, plan))
+            })
             .collect();
         feet.extend(mouths.iter().flatten());
         let heights = self.grounds(&feet);
@@ -477,8 +542,9 @@ impl Network {
             |region: Region| regions.iter().position(|&known| known == region).and_then(|at| placed[at].as_ref());
         let mut gathered = Gathered::default();
         let mut pairs: Vec<(Region, Region)> = Vec::new();
-        for room in placed[..inner].iter().flatten() {
-            for slot in (0..4).filter(|&slot| room.plan.links[slot]) {
+        let inner = || placed.iter().enumerate().filter(|(at, _)| within(*at)).filter_map(|(_, room)| room.as_ref());
+        for room in inner() {
+            for slot in (0..SLOTS).filter(|&slot| room.plan.links[slot]) {
                 let next = room.plan.beside[slot];
                 let pair = if room.plan.region <= next { (room.plan.region, next) } else { (next, room.plan.region) };
                 if pairs.contains(&pair) {
@@ -490,13 +556,13 @@ impl Network {
                 }
             }
         }
-        for (room, mouth) in placed[..inner].iter().zip(&mouths) {
+        for (room, mouth) in placed.iter().zip(&mouths) {
             if let (Some(room), Some(mouth)) = (room, mouth) {
                 let ground = heights.next().unwrap_or(0.0);
                 gathered.tunnels.push(self.entrance(grid, room, *mouth, ground));
             }
         }
-        gathered.rooms = placed.into_iter().take(inner).flatten().collect();
+        gathered.rooms = inner().cloned().collect();
         gathered.bound();
         gathered
     }
@@ -725,7 +791,13 @@ impl Network {
         for point in &line {
             bounds = bounds.with(Bounds::round(*point, fattest + self.set.rough + 0.5));
         }
-        Tunnel { line, up, radius: fattest, radii, floor: radius * FLOOR, roofed, bounds }
+        let near = std::array::from_fn(|at| {
+            let (a, b) = (line[at], line[at + 1]);
+            let along = sub(b, a);
+            let reach = dot(along, along).sqrt() * 0.5 + greater(radii[at], radii[at + 1]) + self.set.rough + 1.0;
+            (add(a, times(along, 0.5)), reach * reach)
+        });
+        Tunnel { line, up, radius: fattest, radii, floor: radius * FLOOR, near, roofed, bounds }
     }
 }
 
@@ -734,6 +806,10 @@ impl Tunnel {
     fn inside(&self, p: V3) -> f32 {
         let mut hollow = NOTHING;
         for (at, piece) in self.line.windows(2).enumerate() {
+            let from = sub(p, self.near[at].0);
+            if dot(from, from) > self.near[at].1 {
+                continue;
+            }
             let (a, along) = (piece[0], sub(piece[1], piece[0]));
             let length = dot(along, along);
             let t = if length > 0.0 { dot(sub(p, a), along) / length } else { 0.0 };

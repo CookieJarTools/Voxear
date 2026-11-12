@@ -61,11 +61,26 @@ pub struct CaveNetwork {
     /// How many rooms a level's main path has, and how many lie off it.
     pub main_rooms: u32,
     pub side_rooms: u32,
+    /// How many layers of rooms an endless network has, one under
+    /// another, and how far under each the next lies, in metres.
+    #[serde(default = "one")]
+    pub layers: u32,
+    #[serde(default = "apart")]
+    pub layer_depth: f32,
     pub roof: f32,
     pub seed: u32,
     /// Its rooms: kept last, as a file wants tables after values.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rooms: Vec<Room>,
+}
+
+/// What a file written before networks had layers reads: one, and how far apart they would lie.
+fn one() -> u32 {
+    1
+}
+
+fn apart() -> f32 {
+    48.0
 }
 
 /// What a file written before tunnels had a limit reads: none.
@@ -111,6 +126,8 @@ impl Default for CaveNetwork {
             entrances: 0.25,
             main_rooms: 8,
             side_rooms: 4,
+            layers: 1,
+            layer_depth: 48.0,
             roof: 3.0,
             seed: 0,
             rooms: Vec::new(),
@@ -146,6 +163,8 @@ impl CaveNetwork {
             entrances: self.entrances.clamp(0.0, 1.0),
             main: self.main_rooms.clamp(1, 64),
             side: self.side_rooms.min(64),
+            layers: self.layers.clamp(1, 16),
+            layer_depth: self.layer_depth.clamp(4.0, 10_000.0),
             seed,
         };
         // Regions wide enough that a room and its tunnels' ends stay in their own; with rooms made by rules,
@@ -171,6 +190,8 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("entrances", "Entrances", 0.0, 1.0, ""),
     ValueSpec::whole("main_rooms", "Main Rooms", 1, 64),
     ValueSpec::whole("side_rooms", "Side Rooms", 0, 64),
+    ValueSpec::whole("layers", "Layers", 1, 16),
+    ValueSpec::number("layer_depth", "Layer Depth", 4.0, 10000.0, "m"),
     ValueSpec::number("roof", "Roof", 0.0, 10000.0, "m").advanced(),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
 ];
@@ -210,8 +231,10 @@ impl Kind for CaveNetwork {
             10 => Value::Number(self.entrances),
             11 => Value::Whole(self.main_rooms),
             12 => Value::Whole(self.side_rooms),
-            13 => Value::Number(self.roof),
-            14 => Value::Whole(self.seed),
+            13 => Value::Whole(self.layers),
+            14 => Value::Number(self.layer_depth),
+            15 => Value::Number(self.roof),
+            16 => Value::Whole(self.seed),
             _ => return None,
         })
     }
@@ -231,8 +254,10 @@ impl Kind for CaveNetwork {
             (10, Value::Number(number)) => self.entrances = number,
             (11, Value::Whole(whole)) => self.main_rooms = whole,
             (12, Value::Whole(whole)) => self.side_rooms = whole,
-            (13, Value::Number(number)) => self.roof = number,
-            (14, Value::Whole(whole)) => self.seed = whole,
+            (13, Value::Whole(whole)) => self.layers = whole,
+            (14, Value::Number(number)) => self.layer_depth = number,
+            (15, Value::Number(number)) => self.roof = number,
+            (16, Value::Whole(whole)) => self.seed = whole,
             _ => {}
         }
     }
@@ -249,6 +274,7 @@ impl Kind for CaveNetwork {
         let mut key = Key::default();
         key.name("cave network 2");
         key.number(set.radius_to).number(set.slope).number(set.branches).number(set.loops);
+        key.whole(set.layers).number(set.layer_depth);
         key.whole(heights.hash as u32).whole((heights.hash >> 32) as u32);
         key.whole(set.layout as u32).number(set.spacing).number(set.depth).number(set.radius);
         key.number(set.winding).number(set.rough).number(set.roof).number(set.entrances);
@@ -593,6 +619,58 @@ mod tests {
         for room in &rooms {
             assert!(reached(over(room)), "the level's room {:?} is cut off", room.index);
         }
+    }
+
+    #[test]
+    fn a_network_of_layers_has_rooms_at_each_depth_joined_by_ramps_and_is_one_cave() {
+        let set = CaveNetwork { depth: 16.0, layers: 2, layer_depth: 30.0, ..ruled(Laid::Endless) };
+        for seed in [3, 4] {
+            let made = world(set.clone(), Some(120.0), seed);
+            let caves = made.caves().expect("its caves");
+            let rooms: Vec<PlacedRoom> = caves
+                .rooms_near([96.0, 80.0, 96.0], 400.0)
+                .into_iter()
+                .filter(|room| (0..4).contains(&room.region[0]) && (0..4).contains(&room.region[2]))
+                .collect();
+            let (top, under): (Vec<&PlacedRoom>, Vec<&PlacedRoom>) = rooms.iter().partition(|room| room.region[1] == 0);
+            assert!(top.len() >= 8 && under.len() >= 8, "seed {seed}: {} over {}", top.len(), under.len());
+            assert!(rooms.iter().all(|room| room.region[1] < 2));
+            // A layer lies its depth under the one over it, give or take what each room's own depth varies by.
+            let mean = |rooms: &[&PlacedRoom]| rooms.iter().map(|room| room.at[1]).sum::<f32>() / rooms.len() as f32;
+            let between = mean(&top) - mean(&under);
+            assert!((24.0..=36.0).contains(&between), "seed {seed}: layers {between} m apart");
+            // A ramp joins rooms of the two layers, a region apart, and both ends know of it.
+            let ramps: Vec<(&PlacedRoom, [i32; 3])> = top
+                .iter()
+                .flat_map(|room| room.joined.iter().filter(|to| to.0[1] == 1).map(move |to| (*room, to.0)))
+                .collect();
+            assert!(!ramps.is_empty(), "seed {seed}: no way down");
+            for (room, to) in &ramps {
+                let apart = (room.region[0] - to[0]).abs() + (room.region[2] - to[2]).abs();
+                assert_eq!(apart, 1, "a ramp to the room beside, a layer down");
+                let back = caves.room(*to).is_some_and(|other| other.joined.iter().any(|j| j.0 == room.region));
+                assert!(back, "{:?} has a ramp to {to:?}, which has none back", room.region);
+            }
+            // All one cave: every room of both layers is reached from the first through the blocks.
+            let reached = flooded(&made, over(&rooms[0]), [-14.0, 30.0, -14.0], [206.0, 116.0, 206.0]);
+            for room in &rooms {
+                assert!(reached(over(room)), "seed {seed}: room {:?} is cut off", room.region);
+            }
+        }
+        // A cell alone is the cell in a batch, through both layers.
+        let made = world(set.clone(), None, 9);
+        let cells = grid([-70.0, 0.0, -70.0], [15, 40, 15], 9.0);
+        let batch = asked(&made, &cells);
+        for (at, cell) in cells.iter().enumerate().rev().step_by(11) {
+            assert_eq!(asked(&made, &[*cell])[0].to_bits(), batch[at].to_bits(), "at {cell:?}");
+        }
+        // One layer is the network it was before layers: the same bits whatever Layer Depth says.
+        let one = |layer_depth: f32| {
+            let set = CaveNetwork { layers: 1, layer_depth, ..ruled(Laid::Endless) };
+            bits(&asked(&world(set, None, 9), &cells))
+        };
+        assert_eq!(one(30.0), one(90.0));
+        assert_ne!(one(30.0), bits(&batch));
     }
 
     #[test]

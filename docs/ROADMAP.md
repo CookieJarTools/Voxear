@@ -1752,6 +1752,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     same bytes from the file; a chunk alone against one among its neighbours; every room of sixteen regions
     reached from any other through the blocks, and the next sixteen through their side; a level of made rooms;
     places on rock. Manual: Caves.
+  - ~~**Caves at several depths:**~~ done: an endless Cave Network has **Layers** of rooms, **Layer Depth**
+    apart, for tall worlds. A region's middle number is its layer; each layer is joined as one network by its own
+    numbers, and ramps join a room to the room beside it one layer down (`Joins::ramps`: one a district of sixteen
+    regions, more with Loops), wound longer under the Slope Limit as any tunnel is. What reaches a region is
+    gathered for every layer at once. Tests: a ramp in every district, both ends agreeing; rooms at each depth;
+    two layers one cave through the blocks; a cell alone against a batch; one layer the bits it was.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

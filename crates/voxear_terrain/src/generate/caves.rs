@@ -33,7 +33,7 @@ pub(crate) use network::{Network, Settings};
 pub(crate) use rooms::NOTHING;
 
 use grid::{Region, V3, add, dot, sub, times, unit};
-use network::Placed;
+use network::{Placed, SLOTS};
 
 /// A room as it lies in the ground.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +41,8 @@ pub struct PlacedRoom {
     /// Its place among a level's rooms, the main path's first: none in an
     /// endless network.
     pub index: Option<usize>,
-    /// The region of the network's grid it is in.
+    /// The region of the network's grid it is in: how many regions along x, which layer down, and how many
+    /// regions along z.
     pub region: [i32; 3],
     /// Which of the network's rooms it is, and that room's prefab: none
     /// for a room made by rules, which `made` says it is.
@@ -160,7 +161,10 @@ impl Caves {
                     }
                     looked += 1;
                 }
-                regions.into_iter().filter_map(|region| self.room(region)).collect()
+                // Of every layer.
+                let layers = 0..net.set.layers.max(1) as i32;
+                let all = regions.into_iter().flat_map(|[i, _, j]| layers.clone().map(move |layer| [i, layer, j]));
+                all.filter_map(|region| self.room(region)).collect()
             }
         };
         rooms.retain(|room| apart(room) <= reach * reach);
@@ -177,7 +181,7 @@ impl Caves {
         let grid = net.grid();
         let plan = net.plan(&grid, region)?;
         let ground = net.grounds(&[plan.stand.foot])[0];
-        let rise = -net.set.depth * (0.75 + 0.5 * plan.deep);
+        let rise = net.sunk(&plan);
         let room = net.placed(&grid, plan, ground, rise);
         Some(shown(net, &room, [0.0; 3], None, false, &|_| None))
     }
@@ -211,7 +215,7 @@ fn shown(
     let at = add(room.at, lift);
     let out = |v: V3| add(add(times(room.axes[0], v[0]), times(room.axes[1], v[1])), times(room.axes[2], v[2]));
     let exits = net.exits(&room.plan).iter().enumerate().map(|(exit, placed)| {
-        let slot = (0..4).find(|&slot| room.plan.links[slot] && room.plan.toward[slot] == Some(exit));
+        let slot = (0..SLOTS).find(|&slot| room.plan.links[slot] && room.plan.toward[slot] == Some(exit));
         let leads_to = slot.map(|slot| room.plan.beside[slot]);
         PlacedExit {
             at: add(at, out(placed.at)),
@@ -254,7 +258,7 @@ fn shown(
         bounds: [add(room.bounds.low, lift), add(room.bounds.high, lift)],
         floor: add(at, out(floor)),
         exits: exits.collect(),
-        joined: (0..4)
+        joined: (0..SLOTS)
             .filter(|&slot| room.plan.links[slot])
             .map(|slot| (room.plan.beside[slot], index_of(room.plan.beside[slot])))
             .collect(),
@@ -281,7 +285,7 @@ fn spots(net: &Network, room: &Placed, floor: V3) -> [Vec<(V3, V3)>; 3] {
     // Clear of the mouths of its tunnels: the exits a tunnel leaves by.
     let clear = if net.set.radius > net.set.radius_to { net.set.radius } else { net.set.radius_to } + 0.5;
     let at_exit = |p: V3| {
-        let used = (0..4).filter(|&slot| room.plan.links[slot]).filter_map(|slot| room.plan.toward[slot]);
+        let used = (0..SLOTS).filter(|&slot| room.plan.links[slot]).filter_map(|slot| room.plan.toward[slot]);
         used.filter_map(|exit| net.exits(&room.plan).get(exit)).any(|exit| {
             let away = sub(p, exit.at);
             dot(away, away) < clear * clear

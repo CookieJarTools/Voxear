@@ -75,6 +75,7 @@ Open the generator's graph (see [[Generator Graphs]]) and add **Cave Network**, 
 | Roughness | How far tunnel walls, and the walls of prefab rooms, are pushed in and out, in metres |
 | Entrances | Endless only: how many rooms have a way up to the surface, from 0 to 1 |
 | Main Rooms, Side Rooms | Level only: how many rooms its main path has, and how many lie off it |
+| Layers, Layer Depth | Endless only: how many layers of rooms there are, one under another, and how far under each the next lies, in metres. For worlds with a great deal of rock under the ground |
 
 Under **Advanced**, **Roof** is how far under the ground everything but an entrance stays, and **Seed** gives the network a seed of its own.
 
@@ -90,6 +91,8 @@ A room is turned by quarter turns and mirrored as it is placed, so a few prefabs
 
 Rooms in every direction, one to a region of the grid `Spacing` across, each set a little differently in its region and `Depth` under the ground at its own middle, give or take a quarter. **Entrances** gives that share of rooms a tunnel up to the open air; the rest are reached from below.
 
+With more than one of **Layers**, each layer is such a network of its own, **Layer Depth** under the one over it, and ramps join them: from a room down to the room beside it one layer down, at least one in every sixteen regions and more with Loops. A ramp is a tunnel like any other, wound longer where it would be steeper than the Slope Limit. Only the topmost layer has entrances. Set a Layer Depth greater than the rooms are high, or layers run into each other; and give the world a lowest block deep enough to hold them all.
+
 Every room can be walked to. Regions are taken sixteen at a time, four by four. Within those sixteen, tunnels join the rooms so that each is reached from every other, with **Loops** adding ways round. Each sixteen is joined to the sixteen beside it through a pair of rooms that face each other across their shared side. A region here and there has no room.
 
 Any part of the world is made by itself and meets what is made beside it, as far as the world goes.
@@ -98,7 +101,7 @@ Any part of the world is made by itself and meets what is made beside it, as far
 
 One bounded cave, laid out once from the seed: a main path of **Main Rooms** that never crosses itself, and **Side Rooms** off it, each a dead end or the start of one. Every room is joined by a tunnel to the room it was reached from, so all of it can be walked from the first room; **Loops** joins some rooms that lie side by side as well. The first room lies `Depth` under the ground over it, and the others within half of `Depth` above or below.
 
-The **Caves** preset is caves without end made wholly by rules: rocky hills over halls 40 to 60 m across and over 20 m high, smaller chambers between them, near enough that rooms meet now and then, winding tunnels of many widths, ways round and dead ends, with **Height**, **Depth**, **Loops** and **Entrances** as rows.
+The **Caves** preset is caves without end made wholly by rules: rocky hills over halls 40 to 60 m across and over 20 m high, smaller chambers between them, near enough that rooms meet now and then, winding tunnels of many widths, ways round and dead ends, in three layers 56 m apart, with **Height**, **Depth**, **Layers**, **Loops** and **Entrances** as rows.
 
 A level wants rock to be carved from. The **Cave Level** preset is that: level rock with one cave in it, its **Height**, **Rooms**, **Side Rooms** and **Depth** as rows. Make a generator, pick Cave Level as its Preset, and give it to a Block World whose ground reaches round the level and down past it.
 
@@ -161,7 +164,7 @@ var torch = room.Point(new Vector3(3f, 2f, 0f));
 | --- | --- |
 | `network.Layout` | `CaveLayout.Endless` or `CaveLayout.Level` |
 | `network.Rooms` | As `Caves.Rooms` |
-| `network.RoomsNear(position, radius)` | The rooms within `radius` metres, nearest first. This is how to find rooms in a network without end, which has no list of them |
+| `network.RoomsNear(position, radius)` | The rooms within `radius` metres, of every layer, nearest first. This is how to find rooms in a network without end, which has no list of them |
 | `network.RoomAt(position)` | The room a place is inside; null in a tunnel or in rock |
 
 Rooms are where the generator put them, whatever has been dug or built since.

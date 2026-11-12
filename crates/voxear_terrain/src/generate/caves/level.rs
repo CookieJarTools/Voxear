@@ -118,9 +118,10 @@ impl Level {
         let loose = (1.0 - 2.0 * (set.reach() + set.stray()) / set.spacing).clamp(0.0, 0.6);
         let mut all = Gathered::default();
         for (at, &cell) in cells.iter().enumerate() {
-            let links = [0, 1, 2, 3].map(|way| {
-                let next = step(cell, way);
-                cells.iter().position(|&other| other == next).is_some_and(|other| joined(at, other))
+            // A level is one layer: only the four beside a room.
+            let links = std::array::from_fn(|slot| {
+                let next = step(cell, slot % 4);
+                slot < 4 && cells.iter().position(|&other| other == next).is_some_and(|other| joined(at, other))
             });
             let part = |part: i32| share(roll(at as i32, 10 + part));
             let jitter = [(part(0) * 2.0 - 1.0) * loose, (part(1) * 2.0 - 1.0) * loose];

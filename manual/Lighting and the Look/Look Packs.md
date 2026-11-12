@@ -4,7 +4,7 @@ order: 7
 
 A **look pack** is how a game looks, chosen by whoever plays it: a warmer sun, tinted shade, clouds built of cubes, more glow, block faces cut into little cubes. It is a small file of lighting settings laid over whatever lighting a level has. The level keeps its time of day, its [[Weather]] and everything the pack leaves out, so one pack suits every level of a game, and a player's choice goes with them from level to level and is there again the next time they play.
 
-[[Lighting Settings]] are a level's lighting, made by you. A look pack goes on top of them, picked by the player.
+[[Lighting Settings]] are a level's lighting, made by you. A look pack goes on top of them, picked by the player. The pictures blocks and materials are drawn with are a [[Texture Packs|texture pack]]'s to change, and a player can wear one of each.
 
 ## The packs Voxear comes with
 
@@ -114,5 +114,5 @@ Any `.lookpack` file there is listed with the game's, marked **Yours** on the re
 ## What a pack cannot do yet
 
 - Change water: the sea, pools and water blocks keep the look their level gives them.
-- Bring pictures of its own, such as a lookup table for colour or new pictures for blocks.
+- Bring a lookup table for colour. New pictures for blocks and materials are a [[Texture Packs|texture pack]]'s.
 - Run a shader of its own over the picture.

@@ -19,6 +19,8 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Normal Map | A picture of the surface's bumps and dents |
 | Emission Map | A picture of where it glows, tinted by **Emission** |
 | Height Map | A picture of how high each point of the surface stands, which **Displacement** raises it by. See [[Displacement]] |
+| Sharp pixels | Draws the colour map's pixels sharp however near, each a square of one colour, as pixel art is |
+| Connected tiles | Its maps are five tiles side by side, and a block's faces drawn with it join those of its kind beside them. See [Pictures for blocks](#pictures-for-blocks) |
 | Ground blend | How many metres up from where a model meets a terrain it takes on the ground's own look, so rocks and walls sit in the ground. 0 for not at all. See [[Blending Models into Terrain]] |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
@@ -71,6 +73,15 @@ Every project has a clear glass material built in: pick **Glass** in a Mesh Rend
 > [!NOTE]
 > Glass in front of other glass does not show the glass behind it. Make each mesh's glass face outwards: you see glass only from the side its faces point to.
 
+## Pictures for blocks
+
+A [[Blocks|block]]'s faces are drawn with materials, its picture once on each face. Two settings are for them:
+
+- **Sharp pixels** keeps a small picture crisp: a block sixteen pixels a side is sixteen squares a side from any distance, where a smoothed picture would blur up close. Far off, its pixels are still averaged, so the ground does not shimmer. It works on models too.
+- **Connected tiles** reads the material's maps as five tiles side by side, and the block's faces join those of its kind beside them, as panes of glass do. See [[Blocks#Faces that join]]. Only a Block World reads the tiles so: on a model, the picture is drawn whole.
+
+Whoever plays the game can swap a material's pictures with a [[Texture Packs|texture pack]]. The material's other settings stay.
+
 ## Custom shaders
 
 Click the arrow on a material's **Shader** field to draw it with another shader in place of **Standard**: one built in, such as Water, Lava or Toon, or a short file of your own that changes its colour, how light falls on it, or moves its vertices. Its properties show as fields under the material's settings. See [[Custom Shaders]].
@@ -92,6 +103,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `emissive` can go above 1 for a brighter glow.
 - `foliage = true` lights it as leaves are, as above.
 - `cutout = 0.5` cuts the surface out where its colour map's alpha is under 0.5, as leaves and grass cards are cut from their pictures. Leave it out for solid surfaces, which draw faster.
+- `pixels = true` draws its colour map's pixels sharp, and `connected = true` reads its maps as the five tiles of a block's face that joins.
 - `ground_blend = 0.4` blends a model into the terrain it stands on, 0.4 m up from the ground.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.

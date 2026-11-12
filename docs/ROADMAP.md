@@ -1079,6 +1079,51 @@ Done so far:
     GPU picture of a Block World under each built-in pack with the level's own lighting unchanged.
   - Later: water in a pack, pictures of a pack's own (a colour lookup table, block pictures), a pack's own
     shader over the picture, a rows-and-tabs Inspector for a pack as lighting settings have.
+- **Texture packs:** `.texturepack` files (`AssetKind::TexturePack`, `voxear_engine::texture_packs`): a
+  `description`, whether its pictures are drawn sharp (`pixels`), and which picture stands in where, named by the
+  asset it replaces: a `[[block]]`'s `all`, `sides`, `top` and `bottom` (a colour picture, or a table of a
+  material's maps), a `[[material]]`'s maps, and a `[grain]` that makes a speckled picture of each colour-only
+  block's colour. A block of a colour alone gets the picture as it is; one with a material keeps its material's
+  other settings. The pack worn is kept by `Content`, so it outlives levels: `wear` reads it and bumps the blocks'
+  version, `blocks::resolved` gives each block it names a face of the pack's in place of its material
+  (`Pack::dress`), `blocks::look` makes that face's material (`face_material`), and `sync`, each tick before
+  `blocks::refresh`, frees the last pack's pictures and faces and uploads again the loaded materials either pack
+  names. A world whose looks a pack would take past `MAX_LOOKS` keeps its blocks' own.
+  - **Where packs come from:** two built in (`builtin:pixel_grain`, `soft_grain`, grain alone), the project's
+    assets, which ship with the pictures they name, and a player's own, a folder each in `Textures` beside the
+    saves, whose pictures are files inside that folder and nowhere else (`file:` and the pack file's path).
+    `write_starter` makes a player a pack listing every block, with a picture of each colour-only block.
+  - **The choice is kept** beside the saves (`textures.txt`) and worn as a game starts, in a build and when the
+    editor plays; the editor's preview comes back when play stops.
+  - **Sharp pixels on block faces:** the terrain's colour sampling reads a material with `MATERIAL_PIXELS` at
+    its pixels' middles, as meshes do. `MaterialData::pixels` sets it for any material.
+  - **Scripts:** `TexturePacks.All`, `Current`, `Use(pack, remember)`, `UseNone`, `Folder`, `Changed`,
+    `WriteStarter`; `TexturePack`, the built-in ones by name and as an Inspector field; `TexturePackScreen.Open()`
+    with New Pack. Three native calls appended; the script API is version 82.
+  - **Editor:** New Texture Pack; an Inspector part (description, pixels, how many named blocks and materials
+    were found, grain) over its text; **Texture pack** on the Lighting page; a pack saved from a text editor is
+    worn again at once.
+  - Tests: the file read and written, built-in packs, the grain, a game's pack finding what it names, dressing
+    faces, a player's folder and what a pack may read, a starter pack; a world taking a pack up and letting it go;
+    GPU pictures of a Block World under the grain, a game's pack and a player's, looked at enlarged, with a check
+    that squares of two colours stay sharp; a C# system and the ready-made screen clicked through.
+  - Later: a `.zip` of a player's pack, sharp normal and other maps, a rows-and-pickers Inspector for a pack, a
+    model's own pictures, a picture's average as a block's far colour.
+- **Connected textures:** a material's pictures can be the five tiles of a face that joins
+  (`MaterialData::connected`, `MATERIAL_CONNECTED`): alone, filled, joined left and right, joined up and down, and
+  joined all round with its inner corners showing. `blocks::resolved` reads which of a block's faces join from its
+  materials (`BlockKind::connected`, a bit for its sides, top and bottom), or from the texture pack worn
+  (`connected = true` on a `[[block]]` or a `[[material]]`). The mesher keeps such a face a quad of its own,
+  with which of the eight faces round it it joins where its size would be (`mesh::joins`, in the picture's own
+  directions), and makes no face between two of the block, see-through or not. `blockJoined` in `blocks.slang`
+  picks each quarter of a face from its tile, in the shaded, depth and shadow passes. `connected_tiles` makes
+  the five tiles from a border and an inside, and **New Glass Block** a glass that joins: its picture, a cut-out
+  material and the block. `BlockWorld::restyled` now makes a world's meshes again when a block starts or stops
+  joining, being seen through or swaying.
+  - Tests: the mesher (a wall of panes, a covered pane, another block in the wall, sides that join under a
+    merged top), the five tiles, the glass block's files, a world's faces and quads with glass and with a pack
+    that makes stone join, and a GPU picture of both looked at enlarged.
+  - Later: joining across different blocks, tiles for a face's four turns, a world drawn smooth.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

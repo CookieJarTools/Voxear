@@ -1105,6 +1105,22 @@ Weather goes over the worn look as it goes over the level's own. Packs are the e
 assets, or files in the player's `Looks` folder beside the saves; the reference of the one chosen is kept in
 `look.txt` there, and `Game::wear_remembered_look` wears it as a game starts.
 
+**Texture packs** (`voxear_engine::texture_packs`) are the player's choice of pictures, as look packs are of
+light. A `.texturepack` names blocks and materials by their assets and gives each pictures. The pack worn is kept by
+the game's `Content` (`Worn`), not by a world, so it outlives levels and the editor's swap of worlds. Nothing of a
+level changes: `blocks::resolved`, which already gives each of a world's entries its block's look, then has the pack
+put a face reference (`texturepack:` and the block's GUID and face) where the block's material was, and
+`blocks::look` asks `face_material` for that face's material: the block's own material, or a matt white one, with the
+pack's pictures laid over it. A material the pack names is uploaded with the pack's pictures wherever it is loaded
+(`Content::material_look`), so whatever draws with it changes in place. Wearing a pack bumps the blocks' version, so
+every world resolves and looks again through the path a saved block already takes; `sync` frees what the last pack
+left on the GPU first. A game's pack names pictures that are assets; a player's reads files from its own folder only.
+
+**Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
+five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps
+each such face apart with the faces round it that it joins, and the block shader picks each quarter of the face from
+the tile those make it.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 

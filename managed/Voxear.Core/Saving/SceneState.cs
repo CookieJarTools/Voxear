@@ -54,6 +54,7 @@ public sealed class SceneState
 			root["plants"] = SaveNode.NewList(RemovedPlants().Select(PlantsNode));
 			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
 			root["blocks"] = SaveNode.Bytes(Blocks.CaptureEdits());
+			root["storms"] = SaveNode.Bytes(Storms.CaptureState());
 		}
 		return new SceneState(root);
 	}
@@ -104,6 +105,12 @@ public sealed class SceneState
 		if (!Root["blocks"].IsNull)
 		{
 			Blocks.ApplyEdits(Root["blocks"].AsBytes());
+		}
+
+		// The storms' clock, and the storms and whirlpools scripts made.
+		if (!Root["storms"].IsNull)
+		{
+			Storms.ApplyState(Root["storms"].AsBytes());
 		}
 
 		var made = MakeCopies();

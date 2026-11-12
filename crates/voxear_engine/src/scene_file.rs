@@ -375,6 +375,9 @@ pub struct ObjData {
     /// A Climate: the level's clock, and its climate where no generator gives one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub climate: Option<crate::heat::Climate>,
+    /// Storms: whether the level's storms come by themselves, and how its sea is drawn in rough weather.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storms: Option<crate::storms::StormRules>,
     /// A Heat Source, warming or cooling what is near it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heat_source: Option<crate::heat::HeatSource>,
@@ -481,6 +484,7 @@ impl ObjData {
             buoyancy: None,
             seasons: None,
             climate: None,
+            storms: None,
             heat_source: None,
             heat_zone: None,
             heat_body: None,
@@ -1789,6 +1793,9 @@ fn capture_instance(
     if root.climate.is_some() && root.climate != prefab_root.climate {
         instance.climate = root.climate;
     }
+    if root.storms.is_some() && root.storms != prefab_root.storms {
+        instance.storms = root.storms;
+    }
     if root.heat_source.is_some() && root.heat_source != prefab_root.heat_source {
         instance.heat_source = root.heat_source;
     }
@@ -2019,6 +2026,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(climate) = actual.climate.filter(|c| Some(*c) != expected.climate) {
         put("climate", whole(&climate, &crate::heat::Climate::default())?);
+    }
+    if let Some(storms) = actual.storms.filter(|c| Some(*c) != expected.storms) {
+        put("storms", whole(&storms, &crate::storms::StormRules::default())?);
     }
     if let Some(source) = actual.heat_source.filter(|h| Some(*h) != expected.heat_source) {
         put("heat_source", whole(&source, &crate::heat::HeatSource::default())?);
@@ -2316,6 +2326,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.climate = world.get::<crate::heat::Climate>(entity).copied();
+    obj.storms = world.get::<crate::storms::StormRules>(entity).copied();
     obj.heat_source = world.get::<crate::heat::HeatSource>(entity).copied();
     obj.heat_zone = world.get::<crate::heat::HeatZone>(entity).copied();
     obj.heat_body = world.get::<crate::heat::HeatBody>(entity).cloned();

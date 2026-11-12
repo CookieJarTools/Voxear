@@ -550,6 +550,8 @@ pub(crate) struct NativeApi {
     /// `Storms`, `Storm` and `Sea`: what `what` asks of the storm, whirlpool or setting numbered `id`, with sixteen
     /// numbers given and written (see `voxear_engine::storms::scripts`).
     pub storm_call: unsafe extern "C" fn(what: i32, id: u32, values: *mut [f32; 16]) -> i32,
+    /// `Storms.CaptureState` and `Storms.ApplyState`: the storms' clock and those scripts made, as bytes, and back.
+    pub storm_state: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2143,6 +2145,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         heat_add: crate::heat::heat_add,
         clock_value: crate::heat::clock_value,
         storm_call: crate::storms::storm_call,
+        storm_state: crate::storms::storm_state,
     }
 }
 

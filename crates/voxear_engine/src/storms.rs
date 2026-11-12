@@ -426,6 +426,8 @@ pub struct Storms {
     /// Those blowing on the viewer.
     over: Vec<u32>,
     events: Vec<StormEvent>,
+    /// What floats in a whirlpool's middle, each told of once.
+    swallowed: Vec<Entity>,
     /// The seed natural storms are worked out from, and the generator that
     /// knows how deep the sea is and where, with where the level's middle
     /// is in it.
@@ -445,6 +447,103 @@ pub struct StormsSaved {
     pub made: Vec<Storm>,
     pub whirlpools: Vec<MadeWhirlpool>,
     pub next: u32,
+}
+
+/// What begins the storms' bytes: their kind and how they are laid out.
+const SAVED_MARK: [u8; 4] = *b"STM1";
+
+impl StormsSaved {
+    /// As bytes, small: sixteen for the clock and the counts, fifty-six a
+    /// storm and sixteen for each place on its path, twenty-eight a
+    /// whirlpool.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(20 + self.made.len() * 56 + self.whirlpools.len() * 28);
+        bytes.extend(SAVED_MARK);
+        bytes.extend(self.clock.to_le_bytes());
+        bytes.extend(self.next.to_le_bytes());
+        bytes.extend((self.made.len().min(usize::from(u16::MAX)) as u16).to_le_bytes());
+        bytes.extend((self.whirlpools.len().min(usize::from(u16::MAX)) as u16).to_le_bytes());
+        for storm in self.made.iter().take(usize::from(u16::MAX)) {
+            let path = storm.path.len().min(255);
+            bytes.extend(storm.id.to_le_bytes());
+            let unit = |amount: f32| (amount.clamp(0.0, 1.0) * 255.0).round() as u8;
+            bytes.extend([storm.kind.index() as u8, unit(storm.eye), unit(storm.strength), path as u8]);
+            bytes.extend(storm.middle.iter().flat_map(|v| v.to_le_bytes()));
+            bytes.extend(storm.radius.to_le_bytes());
+            bytes.extend(storm.velocity.iter().flat_map(|v| v.to_le_bytes()));
+            bytes.extend(storm.born.to_le_bytes());
+            bytes.extend([storm.grows, storm.fades, storm.lasts].iter().flat_map(|v| v.to_le_bytes()));
+            bytes.extend(storm.path.iter().take(path).flatten().flat_map(|v| v.to_le_bytes()));
+        }
+        for pool in self.whirlpools.iter().take(usize::from(u16::MAX)) {
+            bytes.extend(pool.id.to_le_bytes());
+            bytes.extend(pool.middle.iter().flat_map(|v| v.to_le_bytes()));
+            bytes.extend([pool.radius, pool.depth].iter().flat_map(|v| v.to_le_bytes()));
+        }
+        bytes
+    }
+
+    /// The storms `bytes` hold; none where they are not storms' bytes, or
+    /// are cut short.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        struct Reader<'a>(&'a [u8]);
+        impl Reader<'_> {
+            fn take<const N: usize>(&mut self) -> Option<[u8; N]> {
+                let (head, rest) = self.0.split_at_checked(N)?;
+                self.0 = rest;
+                head.try_into().ok()
+            }
+            fn f32(&mut self) -> Option<f32> {
+                self.take().map(f32::from_le_bytes).filter(|v| !v.is_nan())
+            }
+            fn f64(&mut self) -> Option<f64> {
+                self.take().map(f64::from_le_bytes).filter(|v| v.is_finite())
+            }
+            fn u32(&mut self) -> Option<u32> {
+                self.take().map(u32::from_le_bytes)
+            }
+            fn u16(&mut self) -> Option<u16> {
+                self.take().map(u16::from_le_bytes)
+            }
+        }
+        let mut from = Reader(bytes);
+        if from.take::<4>()? != SAVED_MARK {
+            return None;
+        }
+        let (clock, next) = (from.f64()?, from.u32()?);
+        let (storms, pools) = (from.u16()?, from.u16()?);
+        let mut made = Vec::new();
+        for _ in 0..storms {
+            let id = from.u32()?;
+            let [kind, eye, strength, path] = from.take::<4>()?;
+            let middle = [from.f64()?, from.f64()?];
+            let radius = from.f32()?;
+            let velocity = [from.f32()?, from.f32()?];
+            let born = from.f64()?;
+            let (grows, fades, lasts) = (from.f32()?, from.f32()?, from.f32()?);
+            let path = (0..path).map(|_| Some([from.f64()?, from.f64()?])).collect::<Option<Vec<_>>>()?;
+            made.push(Storm {
+                id,
+                kind: StormKind::ALL.get(usize::from(kind)).copied().unwrap_or_default(),
+                middle,
+                radius,
+                strength: f32::from(strength) / 255.0,
+                velocity,
+                eye: f32::from(eye) / 255.0,
+                born,
+                grows,
+                fades,
+                lasts,
+                path,
+            });
+        }
+        let mut whirlpools = Vec::new();
+        for _ in 0..pools {
+            let (id, middle) = (from.u32()?, [from.f64()?, from.f64()?]);
+            whirlpools.push(MadeWhirlpool { id, middle, radius: from.f32()?, depth: from.f32()? });
+        }
+        Some(Self { clock, made, whirlpools, next })
+    }
 }
 
 impl Storms {
@@ -521,6 +620,15 @@ impl Storms {
     /// What has happened since they were last taken.
     pub fn take_events(&mut self) -> Vec<StormEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Notes what floats in a whirlpool's middle this step: scripts hear of
+    /// each as it gets there, once, until it has been out again.
+    pub fn swallow(&mut self, in_middle: Vec<Entity>) {
+        for &entity in in_middle.iter().filter(|entity| !self.swallowed.contains(entity)) {
+            self.events.push(StormEvent::Swallowed(entity));
+        }
+        self.swallowed = in_middle;
     }
 
     /// The oldest thing that has happened and not been taken.
@@ -795,6 +903,20 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
     world.insert_resource(storms);
 }
 
+/// How far into a whirlpool something must float to be drawn down it.
+const SWALLOWED_FROM: f32 = 0.88;
+
+/// Tells scripts of what floats at each of `floating`, places in the world,
+/// that has reached a whirlpool's middle.
+pub fn swallow(world: &mut World, floating: impl Iterator<Item = (Entity, Vec3)>) {
+    let Some(sea) = world.resource::<SeaNow>() else { return };
+    let in_middle: Vec<Entity> =
+        floating.filter(|(_, at)| sea.0.at(at.x, at.z).whirlpool >= SWALLOWED_FROM).map(|(entity, _)| entity).collect();
+    if let Some(storms) = world.resource_mut::<Storms>() {
+        storms.swallow(in_middle);
+    }
+}
+
 /// Starts a storm over `at`, in the world, reaching `radius` metres and
 /// blowing `strength` hard: its number. The easy way in; change what
 /// [`Storms::made_mut`] gives for the rest.
@@ -970,13 +1092,16 @@ mod tests {
         storms.clock = 1234.5;
         let id = storms.start(Storm { middle: [10.0, -20.0], velocity: [1.0, 2.0], eye: 0.3, ..Storm::default() });
         let pool = storms.add_whirlpool([5.0, 6.0], 20.0, 6.0);
+        storms.made_mut(id).unwrap().path = vec![[100.0, 0.0], [100.0, 300.0]];
         let saved = storms.saved();
-        let text = serde_json::to_string(&saved).unwrap();
-        assert!(text.len() < 600, "small: {} bytes", text.len());
+        let bytes = saved.to_bytes();
+        assert_eq!(bytes.len(), 20 + 56 + 2 * 16 + 28, "small enough to send to whoever joins");
         let mut restored = Storms::default();
-        restored.restore(serde_json::from_str(&text).unwrap());
-        assert_eq!(restored.saved(), saved);
-        assert_eq!((restored.get(id).unwrap().eye, restored.whirlpools[0].id), (0.3, pool));
+        restored.restore(StormsSaved::from_bytes(&bytes).expect("the storms"));
+        assert_eq!(restored.saved(), StormsSaved { made: vec![Storm { eye: 77.0 / 255.0, ..saved.made[0].clone() }], ..saved });
+        // Bytes cut short, or not storms' at all, are no storms.
+        assert!(StormsSaved::from_bytes(&bytes[..bytes.len() - 3]).is_none() && StormsSaved::from_bytes(b"nope").is_none());
+        assert!((restored.get(id).unwrap().eye - 0.3).abs() < 0.003 && restored.whirlpools[0].id == pool);
         // The next made takes a number neither has.
         assert!(restored.start(Storm::default()) > pool);
         assert!(restored.remove_whirlpool(pool) && !restored.remove_whirlpool(pool));
@@ -992,5 +1117,14 @@ mod tests {
         assert_eq!(sea.whirlpools, vec![DrawnWhirlpool { middle: Vec2::new(40.0, 10.0), radius: 20.0, depth: 6.0 }]);
         let now = &world.resource::<SeaNow>().expect("a sea that is not calm").0;
         assert!((now.at(40.0, 10.0).sunk - 6.0).abs() < 0.01);
+        // What floats to its middle is drawn down: scripts hear of it once, and again only after it has been out.
+        let (boat, buoy) = (world.spawn(()), world.spawn(()));
+        let floating = [(boat, Vec3::new(40.5, 0.0, 10.0)), (buoy, Vec3::new(52.0, 0.0, 10.0))];
+        swallow(&mut world, floating.into_iter());
+        swallow(&mut world, floating.into_iter());
+        assert_eq!(world.resource_mut::<Storms>().unwrap().take_events(), vec![StormEvent::Swallowed(boat)]);
+        swallow(&mut world, std::iter::empty());
+        swallow(&mut world, floating.into_iter());
+        assert_eq!(world.resource_mut::<Storms>().unwrap().take_events(), vec![StormEvent::Swallowed(boat)]);
     }
 }

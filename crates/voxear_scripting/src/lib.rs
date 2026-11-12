@@ -46,7 +46,7 @@ pub use interop::{
     WeatherRequest, WeatherState,
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
-pub use storms::{STORM_NUMBERS, StormCall, set_storm_call};
+pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};

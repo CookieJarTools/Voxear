@@ -114,6 +114,8 @@ pub enum Part {
     /// The level's clock and climate, a Heat Source, a Heat Zone and a Heat
     /// Body (see `heat_props`).
     Climate,
+    /// The level's storms and its sea in rough weather (see `storm_props`).
+    Storms,
     HeatSource,
     HeatZone,
     HeatBody,
@@ -185,6 +187,7 @@ impl Part {
             Part::Map => "map".into(),
             Part::MapMarker => "map_marker".into(),
             Part::Climate => "climate".into(),
+            Part::Storms => "storms".into(),
             Part::HeatSource => "heat_source".into(),
             Part::HeatZone => "heat_zone".into(),
             Part::HeatBody => "heat_body".into(),
@@ -259,6 +262,7 @@ impl Part {
             Part::Map => "Map",
             Part::MapMarker => "Map Marker",
             Part::Climate => "Climate",
+            Part::Storms => "Storms",
             Part::HeatSource => "Heat Source",
             Part::HeatZone => "Heat Zone",
             Part::HeatBody => "Heat Body",
@@ -345,6 +349,7 @@ impl Part {
             Part::Map => "globe",
             Part::MapMarker => "map-pin",
             Part::Climate => "globe",
+            Part::Storms => "cloud-lightning",
             Part::HeatSource | Part::HeatBody => "sun",
             Part::HeatZone => "box",
             Part::NetObject => "globe",
@@ -754,6 +759,8 @@ pub enum Prop {
     Plants(crate::plants_props::PlantsField),
     /// A value of heat's components (see `heat_props`).
     Heat(crate::heat_props::HeatField),
+    /// A value of the level's Storms (see `storm_props`).
+    Storm(crate::storm_props::StormField),
     FieldOfView,
     Near,
     Exposure,
@@ -879,6 +886,7 @@ impl Prop {
             Prop::BlockWorld(_) => Part::BlockWorld,
             Prop::Plants(_) => Part::Foliage,
             Prop::Heat(field) => crate::heat_props::part(*field),
+            Prop::Storm(_) => Part::Storms,
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -1230,6 +1238,7 @@ impl Prop {
             Prop::BlockWorld(field) => crate::block_props::key(*field),
             Prop::Plants(field) => crate::plants_props::key(*field),
             Prop::Heat(field) => crate::heat_props::key(*field),
+            Prop::Storm(field) => crate::storm_props::key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1678,6 +1687,7 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
         parts.push(Part::MapMarker);
     }
     crate::heat_props::parts(world, entity, &mut parts);
+    crate::storm_props::parts(world, entity, &mut parts);
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -1913,6 +1923,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
             crate::heat_props::props(world, entity, part)
         }
+        Part::Storms => crate::storm_props::props(world, entity),
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
@@ -2288,6 +2299,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
 pub fn label(prop: &Prop) -> String {
     let label = match prop {
         Prop::Heat(field) => return crate::heat_props::label(*field),
+        Prop::Storm(field) => return crate::storm_props::label(*field),
         Prop::Terrain(field) => crate::terrain_props::label(*field),
         Prop::BlockWorld(field) => crate::block_props::label(*field),
         Prop::Plants(field) => crate::plants_props::label(*field),
@@ -2692,6 +2704,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::BlockWorld(field), _) => crate::block_props::unit(*field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
         (Prop::Heat(field), _) => crate::heat_props::unit(*field),
+        (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -2833,6 +2846,7 @@ pub fn add(
         Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
             crate::heat_props::add(world, entity, part);
         }
+        Part::Storms => crate::storm_props::add(world, entity),
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -2961,6 +2975,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
             crate::heat_props::remove(world, entity, part);
         }
+        Part::Storms => crate::storm_props::remove(world, entity),
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
         }
@@ -3065,6 +3080,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::BlockWorld(field) => return crate::block_props::get(game, entity, *field),
         Prop::Plants(field) => return crate::plants_props::get(game, entity, *field),
         Prop::Heat(field) => return crate::heat_props::get(game, entity, *field),
+        Prop::Storm(field) => return crate::storm_props::get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -3744,6 +3760,7 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::heat_props::pick(game, entity, *field, &choice))
         }
         (Prop::Heat(field), value) => crate::heat_props::set(game, entity, *field, value),
+        (Prop::Storm(field), value) => crate::storm_props::set(game, entity, *field, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {

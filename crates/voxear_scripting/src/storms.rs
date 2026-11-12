@@ -34,3 +34,36 @@ pub(crate) unsafe extern "C" fn storm_call(what: i32, id: u32, values: *mut [f32
     }
     answer
 }
+
+/// What keeps and puts back the storms for scripts: with no bytes, the
+/// storms as bytes; with bytes, those storms put back, or none where they
+/// are no storms' bytes.
+pub type StormState = fn(&mut World, Option<&[u8]>) -> Option<Vec<u8>>;
+
+static STATE: OnceLock<StormState> = OnceLock::new();
+
+/// Sets what answers `Storms.CaptureState` and `Storms.ApplyState` in
+/// scripts; the first set is kept.
+pub fn set_storm_state(state: StormState) {
+    let _ = STATE.set(state);
+}
+
+/// `Storms.CaptureState` (`what` 0): the storms as bytes into `out` when
+/// they fit, their length. `Storms.ApplyState` (`what` 1): the storms in
+/// `data` put back, 0, or -1 where they are no storms' bytes. -1 while
+/// scripts are not running.
+pub(crate) unsafe extern "C" fn storm_state(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32 {
+    let Some(state) = STATE.get() else { return -1 };
+    if what == 1 {
+        if data.is_null() || len < 0 {
+            return -1;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(data, len as usize) };
+        return with_world(|world| state(world, Some(bytes))).map_or(-1, |_| 0);
+    }
+    let Some(bytes) = with_world(|world| state(world, None)) else { return -1 };
+    if !out.is_null() && capacity >= bytes.len() as i32 {
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
+    }
+    bytes.len() as i32
+}

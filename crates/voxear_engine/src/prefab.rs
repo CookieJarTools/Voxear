@@ -439,6 +439,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.seasons = instance.seasons.or(root.seasons);
     root.climate = instance.climate.or(root.climate);
+    root.storms = instance.storms.or(root.storms);
     root.heat_source = instance.heat_source.or(root.heat_source);
     root.heat_zone = instance.heat_zone.or(root.heat_zone);
     if instance.heat_body.is_some() {
@@ -520,6 +521,7 @@ pub struct TemplateObj {
     pub buoyancy: Option<crate::water::Buoyancy>,
     pub seasons: Option<Seasons>,
     pub climate: Option<crate::heat::Climate>,
+    pub storms: Option<crate::storms::StormRules>,
     pub heat_source: Option<crate::heat::HeatSource>,
     pub heat_zone: Option<crate::heat::HeatZone>,
     pub heat_body: Option<crate::heat::HeatBody>,
@@ -748,6 +750,9 @@ impl Template {
             }
             if let Some(climate) = obj.climate {
                 world.insert(entity, climate);
+            }
+            if let Some(storms) = obj.storms {
+                world.insert(entity, storms);
             }
             if let Some(source) = obj.heat_source {
                 world.insert(entity, source);
@@ -1321,6 +1326,7 @@ pub(crate) fn resolve_obj(
         buoyancy: data.buoyancy,
         seasons: data.seasons,
         climate: data.climate,
+        storms: data.storms,
         heat_source: data.heat_source,
         heat_zone: data.heat_zone,
         heat_body: data.heat_body.clone(),

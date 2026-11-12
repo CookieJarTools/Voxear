@@ -143,6 +143,51 @@ public static class Storms
 		}
 	}
 
+	/// <summary>
+	/// The storms as bytes: their clock, and the storms and whirlpools scripts made. Natural storms need none, as
+	/// every machine works them out from the clock. A save of the scene keeps these by itself; a host sends them to
+	/// a player who joins, who gives them to <see cref="ApplyState"/>, and again whenever it starts or changes a
+	/// storm.
+	/// </summary>
+	public static unsafe byte[] CaptureState()
+	{
+		if (!Interop.Native.IsConnected)
+		{
+			return [];
+		}
+
+		var length = Interop.Native.Api->StormState(0, null, 0, null, 0);
+		while (true)
+		{
+			var buffer = new byte[Math.Max(length, 0)];
+			fixed (byte* into = buffer)
+			{
+				length = Interop.Native.Api->StormState(0, null, 0, into, buffer.Length);
+			}
+			if (length <= buffer.Length)
+			{
+				return length == buffer.Length ? buffer : buffer[..Math.Max(length, 0)];
+			}
+		}
+	}
+
+	/// <summary>
+	/// Puts back the storms <paramref name="state"/> holds (from <see cref="CaptureState"/>), in place of the clock
+	/// and the made storms there are. False where they are not storms' bytes.
+	/// </summary>
+	public static unsafe bool ApplyState(byte[] state)
+	{
+		if (!Interop.Native.IsConnected || state.Length == 0)
+		{
+			return false;
+		}
+
+		fixed (byte* from = state)
+		{
+			return Interop.Native.Api->StormState(1, from, state.Length, null, 0) >= 0;
+		}
+	}
+
 	/// <summary>Raises Arrived, Left and Sea.Swallowed for what has happened since last frame.</summary>
 	internal static void Dispatch()
 	{

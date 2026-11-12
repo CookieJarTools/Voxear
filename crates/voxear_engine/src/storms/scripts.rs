@@ -13,6 +13,20 @@ use super::{SeaNow, Storm, StormEvent, StormKind, StormRules, Storms};
 /// Sets what answers `Storms`, `Storm` and `Sea` in scripts.
 pub(crate) fn register() {
     voxear_scripting::set_storm_call(call);
+    voxear_scripting::set_storm_state(state);
+}
+
+/// The storms as a save keeps them, as bytes; or, given bytes, the storms
+/// they hold put back: none where they are no storms' bytes.
+fn state(world: &mut World, given: Option<&[u8]>) -> Option<Vec<u8>> {
+    let Some(bytes) = given else {
+        return Some(world.resource::<Storms>().map(Storms::saved).unwrap_or_default().to_bytes());
+    };
+    let saved = super::StormsSaved::from_bytes(bytes)?;
+    let mut storms = world.remove_resource::<Storms>().unwrap_or_default();
+    storms.restore(saved);
+    world.insert_resource(storms);
+    Some(Vec::new())
 }
 
 // What a call asks, as `Storms` in Voxear.Core numbers them.

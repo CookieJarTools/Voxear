@@ -441,6 +441,8 @@ impl Component for Splash {}
 /// while it ploughs through the water half in it; and takes away the
 /// splashes whose drops have fallen. `now` is the engine's time.
 pub fn splash(world: &mut World, floating: Vec<Floating>, now: f64) {
+    // What floats in a whirlpool's middle is drawn down it, which scripts hear of.
+    crate::storms::swallow(world, floating.iter().map(|body| (body.entity, body.surface)));
     for body in floating {
         let Wetted(was, next) = world.get::<Wetted>(body.entity).copied().unwrap_or(Wetted(1.0, 0.0));
         let entering = was < IN_WATER && body.under >= IN_WATER && body.falling >= SPLASH_SPEED;

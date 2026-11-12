@@ -1004,6 +1004,11 @@ pub struct GrowData {
     /// How high over the sea, in metres, from and to; left out for any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<[f32; 2]>,
+    /// Whether they grow on the bed under water, as seaweed and coral do:
+    /// their height is then how far under the water's top, less than
+    /// nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub under_water: bool,
     /// The steepest ground they stand on, in degrees.
     pub slope: f32,
     /// How far apart its tries are, in metres: one a square that size.
@@ -1039,6 +1044,7 @@ impl Default for GrowData {
             temperature: None,
             humidity: None,
             height: None,
+            under_water: false,
             slope: rule.slope,
             spacing: rule.spacing,
             separation: rule.separation,
@@ -1062,6 +1068,7 @@ impl GrowData {
             temperature: self.temperature,
             humidity: self.humidity,
             height: self.height,
+            under_water: self.under_water,
             slope: self.slope,
             spacing: self.spacing,
             separation: self.separation,

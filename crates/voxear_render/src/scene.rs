@@ -751,6 +751,12 @@ pub fn extract(
             frame.lighting.clouds.cover = 1e-4;
         }
     }
+    // The first world of blocks' sea level, in the world, which what grows under it sways by.
+    let seas = world.query_ref::<(Entity, &crate::sea::SeaLevel, &Transform, Option<&WorldTransform>)>();
+    let level = seas.into_iter().min_by_key(|(entity, ..)| entity.to_bits()).map(|(_, level, local, placed)| {
+        placed.map_or(local.position.y, |placed| placed.0.w_axis.y) + level.0
+    });
+    frame.sea.level = level.unwrap_or(crate::sea::ANY_WATER);
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();

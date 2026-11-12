@@ -222,3 +222,59 @@ fn a_storm_far_off_is_a_dark_cloud_over_its_place_with_a_curtain_under_it_in_a_c
     keep_image("storm overhead.png", &under);
     assert!(over(&under, away) < over(&clear, away) - 20, "{} and {}", over(&under, away), over(&clear, away));
 }
+
+#[test]
+fn the_starter_plants_of_the_seas_bed_are_each_their_own_shape_and_colour() {
+    use voxear_render::{MeshRenderer, Primitive, StarterPlant};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = renderer.add_material(&MaterialDesc { base_color: [0.6, 0.5, 0.26, 1.0], roughness: 1.0, ..MaterialDesc::default() });
+    world.spawn((MeshRenderer::new(plane, sand.unwrap()), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(200.0))));
+    // In a row, the kelp behind them.
+    let places = [
+        (StarterPlant::Seagrass, Vec3::new(-5.2, 0.0, 0.0)),
+        (StarterPlant::BranchCoral, Vec3::new(-3.5, 0.0, 0.0)),
+        (StarterPlant::BrainCoral, Vec3::new(-1.7, 0.0, 0.0)),
+        (StarterPlant::TableCoral, Vec3::new(0.3, 0.0, 0.0)),
+        (StarterPlant::FanCoral, Vec3::new(2.4, 0.0, 0.0)),
+        (StarterPlant::TubeSponge, Vec3::new(4.2, 0.0, 0.0)),
+        (StarterPlant::Clam, Vec3::new(5.8, 0.0, 0.0)),
+        (StarterPlant::Kelp, Vec3::new(8.0, 0.0, 2.0)),
+    ];
+    for (plant, at) in places {
+        assert!(plant.under_water());
+        let text = plant.model().to_text();
+        let model = voxear_render::prepare_model("Plant.boxmodel", &mut |file| match file {
+            "Plant.boxmodel" => Ok(text.clone().into_bytes()),
+            other => anyhow::bail!("no {other}"),
+        })
+        .unwrap();
+        let imported = renderer.upload_model(&model).unwrap();
+        world.spawn((MeshRenderer::new(imported.nodes[0].mesh, imported.nodes[0].material), Transform::from_position(at)));
+    }
+    let towards_sun = Vec3::new(-0.4, 0.8, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.5, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let row = seen(&mut renderer, &mut world, (Vec3::new(0.3, 1.5, -7.2), Vec3::new(0.3, 0.6, 0.0)), 1.0);
+    keep_image("sea plants in a row.png", &row);
+    let kelp = seen(&mut renderer, &mut world, (Vec3::new(8.0, 4.2, -9.5), Vec3::new(8.0, 4.0, 2.0)), 1.0);
+    keep_image("sea plants kelp.png", &kelp);
+    // Each stands out from the sand in a colour of its own: pink, blue and purple among them.
+    let hues = |pixels: &[u8]| {
+        let (mut pink, mut blue, mut green) = (0, 0, 0);
+        for pixel in pixels.chunks_exact(4) {
+            let [r, g, b] = [pixel[0], pixel[1], pixel[2]].map(i32::from);
+            pink += usize::from(r > g + 50 && r > b + 30);
+            blue += usize::from(b > r + 40 && b > g + 15);
+            green += usize::from(g > r + 25 && g > b + 15);
+        }
+        (pink, blue, green)
+    };
+    let (pink, blue, green) = hues(&row);
+    assert!(pink > 800 && blue > 800 && green > 300, "{pink} pink, {blue} blue, {green} green");
+    assert!(hues(&kelp).2 + hues(&kelp).0 > 0 || kelp.chunks_exact(4).any(|p| p[1] > p[2] + 20), "kelp in view");
+}

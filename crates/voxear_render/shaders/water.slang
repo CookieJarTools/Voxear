@@ -3795,6 +3795,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
         color = lerp(color, body, 0.7);
     }
     // White water: a crest's top breaks where the sea is rough, a column at a time where it is columns.
+    float broken = 0.0;
     if (swollen && level)
     {
         float column = max(frame->sea.column, 0.25) * world.blockSize;
@@ -3817,9 +3818,18 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
         // Its troughs darker than its crests, so the swell reads from its tops alone.
         color *= lerp(1.0, lerp(1.15, 0.6, saturate(sunk / max(frame->sea.height * r, 0.01))), saturate(r * 2.0));
         float white = frame->sea.column > 0.0 ? step(breaks, c) : smoothstep(breaks - 0.03, breaks + 0.03, c);
+        broken = white;
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
         float3 foamLit = 0.85 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, white * (0.82 + 0.18 * seaGrain(cell + 77)));
+    }
+    // A warm sea glows at night where its water breaks, and in specks that come and go all over it.
+    if (frame->sea.glow > 0.0 && sea && level)
+    {
+        int2 speck = int2(floor(levelXZ(frame, at.xz, 4096.0) * 4.0));
+        int beat = int(floor(frame->sea.drift.x * 9.0));
+        float lit = step(0.992, seaGrain(speck + beat * int2(17, 31))) * 0.7 + broken * 1.6;
+        color += float3(0.06, 0.5, 0.8) * frame->sea.glow * lit;
     }
     // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));

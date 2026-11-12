@@ -234,3 +234,119 @@ fn a_generated_sea_has_storms_of_its_own_the_same_every_time_and_great_whirlpool
     assert!(DVec2::new(in_level.x, in_level.z).distance(DVec2::from(nearest.middle)) < 0.01 && pool.depth >= 7.0, "{pool:?}");
     assert!(world.resource::<SeaNow>().unwrap().0.at(pool.middle.x, pool.middle.y).sunk > 6.9);
 }
+
+/// A project whose world is a sea `deep` metres over a bed of sand with low bumps, `celsius` warm, growing every
+/// starter plant of the sea's bed, seen from just over the bed.
+fn sea_bed(celsius: f32, deep: f32) -> tempfile::TempDir {
+    use voxear_engine::grown_plants;
+    use voxear_render::StarterPlant;
+    use voxear_terrain::{blocks::block::BlockDef, generate::Climate};
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = BlockFile::default();
+    file.blocks[0] = BlockKind::of("Blocks/Sand.block");
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.02, 0.36, 0.44]) });
+    let water = file.blocks.len() as BlockId;
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Sea.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        sea: water,
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        ..BlockGenerate::default()
+    });
+    let flat = voxear_core::curve::Curve::flat;
+    let climate = Climate { temperature: celsius, temperature_range: 0.0, cooling: 0.0, ..Climate::default() };
+    let land = Landmass {
+        coast: flat(-deep / 60.0),
+        relief: flat(0.0),
+        bumps: 2.0,
+        height: 60.0,
+        sea_level: SEA,
+        climate,
+        ..Preset::RollingHills.landmass()
+    };
+    let mut scene = format!(
+        "format = 1\nlighting = \"builtin:highland_summer\"\n\n[[obj]]\nid = 1\nname = \"Blocks\"\n\
+         [obj.block_world]\ndata = \"Blocks/Sea.blockworld\"\n\n\
+         [[obj]]\nid = 2\nname = \"Eye\"\nposition = [40.0, {}, 40.0]\nrotation = [14.0, 35.0, 0.0]\n\
+         [obj.camera]\nfov = 60.0\n\n\
+         [[obj]]\nid = 3\nname = \"Sun\"\nrotation = [55.0, -60.0, 0.0]\n[obj.light]\ntype = \"directional\"\n",
+        SEA - deep + 3.5
+    );
+    std::fs::create_dir_all(dir.path().join("Plants")).unwrap();
+    for (at, plant) in StarterPlant::ALL.into_iter().enumerate().filter(|(_, plant)| plant.under_water()) {
+        let path = format!("Plants/{}.boxmodel", plant.name());
+        std::fs::write(dir.path().join(&path), plant.model().to_text()).unwrap();
+        let (mesh, material) = (format!("{path}#mesh0.0"), format!("{path}#material0"));
+        let foliage = grown_plants::foliage_text(&mesh, Some(&material), Some(plant), (None, None));
+        scene += &format!("\n[[obj]]\nid = {}\nname = \"{}\"\nparent = 1\n{foliage}", at + 10, plant.name());
+    }
+    let files = [
+        ("voxear.toml", "[project]\nname = \"Sea\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Sea.scene\"\n".into()),
+        ("Scenes/Sea.scene", scene),
+        ("Blocks/Sea.blockworld", file.to_text()),
+        ("Blocks/Sand.block", BlockDef::colored([0.82, 0.74, 0.52]).to_text()),
+        ("Worlds/Sea.worldgen", WorldGen::from(land).to_text()),
+    ];
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// How many plants of each kind stand on the bed of [`sea_bed`]'s sea once its ground and plants are made; drawn,
+/// and the picture kept as `name`, where there is a GPU.
+fn grown_on_the_bed(celsius: f32, deep: f32, name: &str) -> Vec<(String, usize)> {
+    use voxear_engine::{grown_plants, scene_file};
+    use voxear_render::{Renderer, RendererSettings};
+    let mut renderer = Renderer::new_offscreen(1280, 720, &RendererSettings::default()).ok();
+    let dir = sea_bed(celsius, deep);
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(renderer.as_mut()).unwrap();
+    for tick in 0..4000 {
+        game.tick(1.0 / 60.0, renderer.as_mut());
+        let made = voxear_engine::blocks::streamed(&game.engine.world) && grown_plants::settled(&game.engine.world);
+        if made && tick >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    if let Some(renderer) = renderer.as_mut() {
+        for frame in 0..40 {
+            game.tick(1.0 / 60.0, Some(renderer));
+            renderer.render(&game.engine.world, 1.0 + frame as f32 / 60.0).unwrap();
+        }
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+    }
+    let world = &game.engine.world;
+    let sources = world.query_ref::<(Entity, &Name, &scene_file::FoliageSource)>().into_iter();
+    sources.map(|(entity, name, _)| (name.0.clone(), grown_plants::standing(world, entity).len())).collect()
+}
+
+#[test]
+fn a_warm_shallow_sea_grows_a_reef_on_its_bed_and_a_cool_deep_one_a_forest_of_kelp() {
+    let count = |counts: &[(String, usize)], name: &str| counts.iter().find(|(kind, _)| kind == name).map_or(0, |(_, n)| *n);
+    // Warm and eight metres deep: coral of every kind, seagrass, sponges and clams, and no kelp.
+    let reef = grown_on_the_bed(26.0, 8.0, "sea bed reef.png");
+    for coral in ["Branch Coral", "Brain Coral", "Table Coral", "Fan Coral"] {
+        assert!(count(&reef, coral) > 10, "{coral}: {reef:?}");
+    }
+    assert!(count(&reef, "Seagrass") > 200 && count(&reef, "Tube Sponge") > 3 && count(&reef, "Clam") > 3, "{reef:?}");
+    assert_eq!(count(&reef, "Kelp"), 0, "too warm and too shallow for kelp: {reef:?}");
+    // Cool and sixteen metres deep: kelp, and no coral or seagrass.
+    let forest = grown_on_the_bed(9.0, 16.0, "sea bed kelp.png");
+    assert!(count(&forest, "Kelp") > 100, "{forest:?}");
+    for none in ["Branch Coral", "Brain Coral", "Table Coral", "Fan Coral", "Seagrass"] {
+        assert_eq!(count(&forest, none), 0, "{none}: {forest:?}");
+    }
+    assert!(count(&forest, "Clam") > 0 && count(&forest, "Tube Sponge") > 0, "{forest:?}");
+}

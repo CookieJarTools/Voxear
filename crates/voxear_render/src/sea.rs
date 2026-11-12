@@ -72,7 +72,7 @@ pub struct SeaLevel(pub f32);
 impl voxear_ecs::Component for SeaLevel {}
 
 /// What a world with no [`SeaLevel`] gives the shaders for one.
-pub(crate) const ANY_WATER: f32 = -1.0e9;
+pub const ANY_WATER: f32 = -1.0e9;
 
 /// The most places of weather and whirlpools a frame's sea reads.
 pub const MAX_STORMS: usize = 8;
@@ -146,7 +146,9 @@ pub struct GpuSea {
     /// far the patches of white water have drifted, in patches.
     pub spin: f32,
     pub drift: [f32; 2],
-    pub pad: f32,
+    /// How high the sea's top is, in the world; far below with no sea
+    /// level. What grows under it sways with its water.
+    pub level: f32,
     /// Each wave: how many radians a metre along x and z, how far on it is
     /// now, in radians, and its share of the swell.
     pub waves: [[f32; 4]; WAVES],
@@ -230,7 +232,7 @@ impl RoughSea {
             glow: self.glow.max(0.0),
             spin: (self.time * SPIN).rem_euclid(tau) as f32,
             drift: DRIFT.map(|speed| (self.time * speed).rem_euclid(4096.0) as f32),
-            pad: 0.0,
+            level: ANY_WATER,
             waves: waves(self.heading).map(|wave| {
                 [wave.k[0] as f32, wave.k[1] as f32, (self.time * wave.speed).rem_euclid(tau) as f32, wave.share]
             }),

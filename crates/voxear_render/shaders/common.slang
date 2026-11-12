@@ -650,7 +650,8 @@ struct Sea
     // How far round a whirlpool's arms have turned, in radians, and how far white water's patches have drifted.
     float spin;
     float2 drift;
-    float pad;
+    // How high the sea's top is, in the world; far below with no sea level.
+    float level;
     // Each wave: radians a metre along x and z, how far on it is now, in radians, and its share of the swell.
     float4 waves[SEA_WAVES];
     // Each place of weather: its middle's x and z, its reach and its eye, a share of its reach.

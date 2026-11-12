@@ -5,6 +5,10 @@
 //! its Block Worlds, and every one of them opens in the Model window to be
 //! reshaped like any model.
 //!
+//! And plants of the sea's bed, which grow under water: seagrass and kelp,
+//! four corals (branching, brain, table and fan), a tube sponge and a clam.
+//! The weeds sway with the water; coral, sponge and clam are stone-still.
+//!
 //! The small ones are eight cubes to a block and the trees four, so a tree
 //! is no heavier to draw than a bush.
 
@@ -21,6 +25,14 @@ pub enum StarterPlant {
     Rock,
     Tree,
     Pine,
+    Seagrass,
+    Kelp,
+    BranchCoral,
+    BrainCoral,
+    TableCoral,
+    FanCoral,
+    TubeSponge,
+    Clam,
 }
 
 /// One cube's colour, red, green and blue.
@@ -34,6 +46,14 @@ const STONE: [Color; 3] = [[112, 112, 116], [134, 134, 138], [154, 152, 150]];
 const PETAL: [Color; 2] = [[206, 44, 40], [226, 66, 52]];
 const POLLEN: Color = [240, 200, 60];
 const BERRY: Color = [176, 40, 60];
+const SEAGRASS: [Color; 3] = [[38, 110, 78], [50, 132, 86], [78, 156, 96]];
+const KELP: [Color; 3] = [[70, 84, 30], [92, 104, 36], [124, 132, 48]];
+const BRANCH_CORAL: [Color; 3] = [[204, 70, 96], [226, 96, 118], [244, 150, 160]];
+const BRAIN_CORAL: [Color; 3] = [[176, 134, 60], [204, 164, 80], [128, 96, 48]];
+const TABLE_CORAL: [Color; 3] = [[58, 102, 170], [80, 128, 196], [136, 176, 224]];
+const FAN_CORAL: [Color; 3] = [[150, 64, 160], [182, 86, 184], [226, 130, 70]];
+const SPONGE: [Color; 3] = [[214, 150, 40], [236, 178, 56], [120, 70, 24]];
+const SHELL: [Color; 3] = [[226, 216, 200], [198, 186, 172], [236, 160, 170]];
 
 /// A number from a cube's place and `salt`, well mixed: whole numbers
 /// alone, so a plant is the same wherever it is made.
@@ -68,14 +88,35 @@ fn inside(cell: [i32; 3], middle: [f32; 3], radii: [f32; 3], rough: f32, salt: u
 }
 
 impl StarterPlant {
-    pub const ALL: [StarterPlant; 6] = [
+    pub const ALL: [StarterPlant; 14] = [
         StarterPlant::Tuft,
         StarterPlant::Flower,
         StarterPlant::Bush,
         StarterPlant::Rock,
         StarterPlant::Tree,
         StarterPlant::Pine,
+        StarterPlant::Seagrass,
+        StarterPlant::Kelp,
+        StarterPlant::BranchCoral,
+        StarterPlant::BrainCoral,
+        StarterPlant::TableCoral,
+        StarterPlant::FanCoral,
+        StarterPlant::TubeSponge,
+        StarterPlant::Clam,
     ];
+
+    /// Whether it grows on the bed under water, not on dry ground.
+    pub fn under_water(self) -> bool {
+        !matches!(
+            self,
+            StarterPlant::Tuft
+                | StarterPlant::Flower
+                | StarterPlant::Bush
+                | StarterPlant::Rock
+                | StarterPlant::Tree
+                | StarterPlant::Pine
+        )
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -85,6 +126,14 @@ impl StarterPlant {
             StarterPlant::Rock => "Rock",
             StarterPlant::Tree => "Tree",
             StarterPlant::Pine => "Pine",
+            StarterPlant::Seagrass => "Seagrass",
+            StarterPlant::Kelp => "Kelp",
+            StarterPlant::BranchCoral => "Branch Coral",
+            StarterPlant::BrainCoral => "Brain Coral",
+            StarterPlant::TableCoral => "Table Coral",
+            StarterPlant::FanCoral => "Fan Coral",
+            StarterPlant::TubeSponge => "Tube Sponge",
+            StarterPlant::Clam => "Clam",
         }
     }
 
@@ -109,6 +158,14 @@ impl StarterPlant {
             StarterPlant::Rock => (8.0, [13, 6, 10]),
             StarterPlant::Tree => (4.0, [18, 26, 18]),
             StarterPlant::Pine => (4.0, [14, 32, 14]),
+            StarterPlant::Seagrass => (8.0, [8, 9, 8]),
+            StarterPlant::Kelp => (4.0, [7, 32, 7]),
+            StarterPlant::BranchCoral => (8.0, [11, 11, 11]),
+            StarterPlant::BrainCoral => (8.0, [10, 6, 10]),
+            StarterPlant::TableCoral => (8.0, [14, 7, 14]),
+            StarterPlant::FanCoral => (8.0, [13, 12, 3]),
+            StarterPlant::TubeSponge => (8.0, [9, 10, 9]),
+            StarterPlant::Clam => (8.0, [7, 4, 6]),
         }
     }
 
@@ -180,6 +237,110 @@ impl StarterPlant {
                 let edge = radius + (unit(mixed(cell, 15)) - 0.5) * 1.2;
                 (dx * dx + dz * dz < edge * edge).then(|| shade(NEEDLES, cell, 16))
             }
+            StarterPlant::Seagrass => {
+                // Long thin blades, taller than a tuft's, each leaning a cube as it rises.
+                const BLADES: [(i32, i32, i32, i32); 9] = [
+                    (1, 1, 6, 1),
+                    (3, 5, 9, 0),
+                    (6, 2, 5, -1),
+                    (2, 6, 7, 1),
+                    (5, 4, 8, 0),
+                    (4, 0, 4, -1),
+                    (6, 6, 6, 0),
+                    (0, 3, 5, 1),
+                    (3, 2, 7, -1),
+                ];
+                let blade = BLADES.iter().find(|(bx, bz, tall, lean)| {
+                    let leaned = (bx + lean * (y / 4)).clamp(0, 7);
+                    leaned == x && *bz == z && y < *tall
+                })?;
+                Some(if y + 1 == blade.2 { SEAGRASS[2] } else { shade([SEAGRASS[0], SEAGRASS[1]], [blade.0, 0, z], 17) })
+            }
+            StarterPlant::Kelp => {
+                // A stalk that winds a cube either way as it climbs, with a blade out to one side and then the other.
+                let wind = [0, 1, 1, 0, 0, -1, -1, 0][(y as usize / 2) % 8];
+                let (sx, sz) = (3 + wind, 3);
+                if x == sx && z == sz {
+                    return Some(shade([KELP[0], KELP[1]], [0, y, 0], 18));
+                }
+                let frond = y % 5;
+                if y < 3 || frond > 2 {
+                    return None;
+                }
+                let side = if (y / 5) % 2 == 0 { 1 } else { -1 };
+                let across = (y / 5) % 4 >= 2;
+                let (out, off) = if across { (z - sz, x - sx) } else { (x - sx, z - sz) };
+                let reach = 3 - frond;
+                (off == 0 && out * side >= 1 && out * side <= reach).then(|| if out * side == reach { KELP[2] } else { KELP[1] })
+            }
+            StarterPlant::BranchCoral => {
+                // A stem, and arms that go out from it and then up, each to its own height.
+                const ARMS: [(i32, i32, i32, i32); 5] = [(1, 0, 2, 9), (-1, 0, 4, 10), (0, 1, 3, 8), (0, -1, 5, 11), (1, 1, 6, 9)];
+                let (dx, dz) = (x - 5, z - 5);
+                if dx == 0 && dz == 0 && y < 8 {
+                    return Some(shade(BRANCH_CORAL, cell, 19));
+                }
+                let arm = ARMS.iter().find(|(ax, az, from, tall)| {
+                    let out = (y - from).clamp(0, 3);
+                    y >= *from && y < *tall && dx == ax * out && dz == az * out
+                        || y == *from && (1..=3).any(|step| dx == ax * step && dz == az * step)
+                })?;
+                Some(if y + 1 == arm.3 { BRANCH_CORAL[2] } else { shade([BRANCH_CORAL[0], BRANCH_CORAL[1]], cell, 20) })
+            }
+            StarterPlant::BrainCoral => {
+                let deep = inside(cell, [5.0, 0.6, 5.0], [5.0, 5.2, 5.0], 0.04, 21);
+                if deep <= 0.0 {
+                    return None;
+                }
+                // Grooves that wind over it.
+                let groove = deep < 0.3 && (x + (z / 2) % 2 * 2 + y) % 4 == 0;
+                Some(if groove { BRAIN_CORAL[2] } else { shade([BRAIN_CORAL[0], BRAIN_CORAL[1]], cell, 22) })
+            }
+            StarterPlant::TableCoral => {
+                let (dx, dz) = (x as f32 + 0.5 - 7.0, z as f32 + 0.5 - 7.0);
+                let out = (dx * dx + dz * dz).sqrt();
+                // A stalk, a wide flat plate on it, a cube thicker at its middle.
+                let stalk = y < 5 && out < 1.6;
+                let plate = y == 5 && out < 6.8 + (unit(mixed([x, 0, z], 23)) - 0.5) || y == 6 && out < 6.0 && mixed([x, 0, z], 24) % 3 != 0 || y == 4 && out < 3.0;
+                (stalk || plate).then(|| if y == 6 { TABLE_CORAL[2] } else { shade([TABLE_CORAL[0], TABLE_CORAL[1]], cell, 25) })
+            }
+            StarterPlant::FanCoral => {
+                // A flat fan one cube thick: ribs spreading from its foot, joined by cross pieces.
+                if z != 1 {
+                    return None;
+                }
+                let (dx, up) = (x as f32 + 0.5 - 6.5, y as f32 + 0.5);
+                let far = (dx * dx + up * up).sqrt();
+                if y < 2 {
+                    return (x == 6).then_some(FAN_CORAL[0]);
+                }
+                if far > 11.6 || dx.abs() > up * 1.1 {
+                    return None;
+                }
+                let rib = ((dx / up.max(0.5) * 5.0 + 20.0).round() as i32) % 2 == 0;
+                let cross = (far.round() as i32) % 3 == 0;
+                (rib || cross).then(|| if far > 10.4 { FAN_CORAL[2] } else { shade([FAN_CORAL[0], FAN_CORAL[1]], cell, 26) })
+            }
+            StarterPlant::TubeSponge => {
+                // Hollow tubes of different heights standing together.
+                const TUBES: [(i32, i32, i32); 4] = [(2, 2, 10), (6, 3, 7), (3, 6, 6), (6, 6, 4)];
+                TUBES.iter().find_map(|&(tx, tz, tall)| {
+                    let (dx, dz) = ((x - tx).abs(), (z - tz).abs());
+                    let wall = dx.max(dz) == 1 || y == 0 && dx.max(dz) == 0;
+                    (y < tall && dx <= 1 && dz <= 1 && wall).then(|| {
+                        if y + 1 == tall { SPONGE[2] } else { shade([SPONGE[0], SPONGE[1]], cell, 27) }
+                    })
+                })
+            }
+            StarterPlant::Clam => {
+                // Two ribbed shells, the upper a little open, pink between them.
+                let lower = inside(cell, [3.5, 0.4, 3.0], [3.5, 1.9, 3.0], 0.0, 28) > 0.0 && y < 2;
+                let upper = inside(cell, [3.5, 1.6, 2.6], [3.4, 2.4, 2.8], 0.0, 29) > 0.0 && y >= 2 && z < 5;
+                if lower && y == 1 && (1..=5).contains(&x) && (1..=4).contains(&z) {
+                    return Some(SHELL[2]);
+                }
+                (lower || upper).then(|| SHELL[usize::from(x % 2 == 0)])
+            }
         }
     }
 
@@ -196,6 +357,14 @@ impl StarterPlant {
             StarterPlant::Rock => 0.0,
             StarterPlant::Tree => 0.35,
             StarterPlant::Pine => 0.25,
+            StarterPlant::Seagrass => 2.0,
+            StarterPlant::Kelp => 0.9,
+            StarterPlant::FanCoral => 0.25,
+            StarterPlant::BranchCoral
+            | StarterPlant::BrainCoral
+            | StarterPlant::TableCoral
+            | StarterPlant::TubeSponge
+            | StarterPlant::Clam => 0.0,
         }
     }
 
@@ -264,6 +433,11 @@ mod tests {
             let tall = size[1] as f32 / model.pixels_per_block;
             assert!((0.5..=8.5).contains(&tall), "{} is {tall} m tall", plant.name());
         }
+        // Six grow on dry ground and eight on the sea's bed, the kelp the tallest of those.
+        let sea: Vec<StarterPlant> = StarterPlant::ALL.into_iter().filter(|plant| plant.under_water()).collect();
+        assert_eq!((sea.len(), sea[0]), (8, StarterPlant::Seagrass));
+        assert!(sea.iter().all(|plant| plant.size()[1] <= StarterPlant::Kelp.size()[1]));
+        assert_eq!(StarterPlant::Kelp.size()[1], 8.0);
         // A tuft is thin blades, a tree taller than a bush, a rock wider than it is tall.
         let cubes = |plant: StarterPlant| plant.model().bones[0].boxes[0].voxels.as_ref().unwrap().solid();
         assert!(cubes(StarterPlant::Tuft) < 40 && cubes(StarterPlant::Tree) > 1000);
@@ -276,9 +450,11 @@ mod tests {
         for plant in StarterPlant::ALL {
             let prepared = plant.model().prepared("Plants/Test.boxmodel");
             let (material, vertices) = (&prepared.materials[0].desc, &prepared.meshes[0].0.vertices);
-            assert_eq!(material.wind_bend > 0.0, plant != StarterPlant::Rock, "{}", plant.name());
+            let still = [StarterPlant::Rock, StarterPlant::BranchCoral, StarterPlant::BrainCoral, StarterPlant::TableCoral];
+            let still = still.contains(&plant) || matches!(plant, StarterPlant::TubeSponge | StarterPlant::Clam);
+            assert_eq!(material.wind_bend > 0.0, !still, "{}", plant.name());
             assert_eq!(material.wind_flutter, 0.0, "cubes do not flutter apart");
-            if plant == StarterPlant::Rock {
+            if still {
                 continue;
             }
             // Nothing flutters; faces that meet at a place sway alike there; and what is further out sways more.

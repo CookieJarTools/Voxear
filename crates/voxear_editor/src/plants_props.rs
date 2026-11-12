@@ -101,6 +101,7 @@ pub enum PlantsField {
     GrowPatches,
     GrowScale,
     GrowAligned,
+    GrowUnderWater,
     GrowSeed,
     GrowFarBlock,
 }
@@ -118,7 +119,7 @@ pub fn props(world: &World, entity: Entity, settings: Vec<Prop>) -> Vec<Prop> {
     if ui(world).tool == FoliageTool::Grow {
         let mut fields = vec![F::Grows];
         if let Some(grow) = source(world, entity).and_then(|data| data.grow.as_ref()) {
-            fields.extend([F::GrowOn, F::GrowBiome, F::GrowTemperatureMask]);
+            fields.extend([F::GrowOn, F::GrowUnderWater, F::GrowBiome, F::GrowTemperatureMask]);
             fields.extend(grow.temperature.map(|_| F::GrowTemperatures));
             fields.push(F::GrowHumidityMask);
             fields.extend(grow.humidity.map(|_| F::GrowHumidities));
@@ -186,6 +187,7 @@ pub fn label(field: PlantsField) -> &'static str {
         F::GrowPatches => "Patch size",
         F::GrowScale => "Sizes",
         F::GrowAligned => "Align to blocks",
+        F::GrowUnderWater => "Under water",
         F::GrowSeed => "Seed",
         F::GrowFarBlock => "Far block",
     }
@@ -261,6 +263,7 @@ pub fn get(game: &Game, entity: Entity, field: PlantsField) -> Option<Value> {
         F::GrowPatches => Value::Number(grow()?.patches),
         F::GrowScale => Value::Vector(grow()?.scale.to_vec()),
         F::GrowAligned => Value::Toggle(grow()?.aligned),
+        F::GrowUnderWater => Value::Toggle(grow()?.under_water),
         F::GrowSeed => Value::Whole(i64::from(grow()?.seed)),
         F::GrowFarBlock => Value::Asset(path_of(game, grow()?.far_block.as_deref())),
         F::Trunk => {
@@ -391,6 +394,7 @@ fn set_grow(data: &mut voxear_engine::scene_file::FoliageData, field: PlantsFiel
         (F::GrowPatches, v) => grow.patches = number(v).unwrap_or(grow.patches).clamp(0.0, 10_000.0),
         (F::GrowScale, v) => grow.scale = pair(v).map(|r| r.map(|size| size.max(0.01))).unwrap_or(grow.scale),
         (F::GrowAligned, Value::Toggle(on)) => grow.aligned = *on,
+        (F::GrowUnderWater, Value::Toggle(on)) => grow.under_water = *on,
         (F::GrowSeed, v) => grow.seed = number(v).map_or(grow.seed, |seed| seed.max(0.0) as u32),
         _ => {}
     }

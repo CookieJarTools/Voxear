@@ -651,8 +651,51 @@ fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>,
              scale = [0.8, 1.4]\n",
             true,
         ),
+        // Plants of the sea's bed, on any ground under water: how deep, and how warm a sea.
+        StarterPlant::Seagrass => (
+            SMALL,
+            None,
+            "under_water = true\nheight = [-12.0, -1.0]\ntemperature = [1.0, 45.0]\nspacing = 1.0\nseparation = 0.0\n\
+             chance = 0.5\npatches = 18.0\nslope = 40.0\nseed = 6\n",
+            false,
+        ),
+        // Kelp stands eight metres tall, in water deeper than that, where the sea is cool.
+        StarterPlant::Kelp => (
+            "draw_distance = 160.0\nfade_distance = 30.0\nshadow_distance = 0.0\nimpostors = \"off\"\n",
+            None,
+            "under_water = true\nheight = [-60.0, -9.0]\ntemperature = [-2.0, 18.0]\nspacing = 3.0\nseparation = 1.5\n\
+             chance = 0.7\npatches = 40.0\nslope = 50.0\nseed = 7\nscale = [0.7, 1.1]\n",
+            false,
+        ),
+        // Coral in warm shallows, every kind in the same reefs.
+        StarterPlant::BranchCoral => (REEF, None, "spacing = 4.0\nseparation = 2.0\nchance = 0.5\nscale = [0.7, 1.3]\n", false),
+        StarterPlant::BrainCoral => (REEF, None, "spacing = 5.0\nseparation = 2.0\nchance = 0.4\nscale = [0.6, 1.6]\n", false),
+        StarterPlant::TableCoral => (REEF, None, "spacing = 6.0\nseparation = 3.0\nchance = 0.35\nscale = [0.8, 1.5]\n", false),
+        StarterPlant::FanCoral => (REEF, None, "spacing = 5.0\nseparation = 2.0\nchance = 0.4\nscale = [0.7, 1.4]\n", false),
+        StarterPlant::TubeSponge => (
+            SEA_BED,
+            None,
+            "under_water = true\nheight = [-30.0, -3.0]\ntemperature = [8.0, 45.0]\nspacing = 6.0\nseparation = 2.0\n\
+             chance = 0.3\npatches = 25.0\nslope = 60.0\nseed = 9\nscale = [0.6, 1.3]\n",
+            false,
+        ),
+        StarterPlant::Clam => (
+            SEA_BED,
+            None,
+            "under_water = true\nheight = [-20.0, -2.0]\ntemperature = [4.0, 45.0]\nspacing = 8.0\nseparation = 3.0\n\
+             chance = 0.3\nseed = 10\nscale = [0.6, 1.2]\n",
+            false,
+        ),
     }
 }
+
+/// How a small thing of the sea's bed is drawn.
+const SEA_BED: &str = "draw_distance = 90.0\nfade_distance = 20.0\nshadow_distance = 0.0\nimpostors = \"off\"\n";
+/// How coral is drawn; its growing rules begin with [`REEF_RULE`].
+const REEF: &str = SEA_BED;
+/// Where every kind of coral grows: in patches of warm, shallow sea, the same patches for each.
+const REEF_RULE: &str =
+    "under_water = true\nheight = [-14.0, -2.0]\ntemperature = [20.0, 45.0]\npatches = 30.0\nslope = 60.0\nseed = 8\n";
 
 /// A Foliage that grows by itself, as a scene writes it under an Obj: its
 /// `[obj.foliage]` section, drawing `mesh` with `material`, growing on
@@ -675,7 +718,11 @@ pub fn foliage_text(
     if let Some(trunk) = trunk {
         text += &format!("[obj.foliage.trunk]\n{trunk}");
     }
-    text += &format!("[obj.foliage.grow]\n{grown}");
+    let reef = matches!(
+        starter,
+        Some(StarterPlant::BranchCoral | StarterPlant::BrainCoral | StarterPlant::TableCoral | StarterPlant::FanCoral)
+    );
+    text += &format!("[obj.foliage.grow]\n{}{grown}", if reef { REEF_RULE } else { "" });
     if let Some(top) = top.filter(|_| on_top) {
         text += &format!("on = [{}]\n", string(top));
     }

@@ -35,7 +35,7 @@ F1 shows a panel with the frame rate, how long each frame takes on the processor
 
 ## Flying the camera
 
-Hold the right mouse button to fly the game's camera, as in the editor's Scene view: W, A, S and D to move, Q and E to go down and up, Shift to go faster, and the mouse wheel to change speed.
+Hold the right mouse button to fly the game's camera, as in the editor's Scene view: W, A, S and D to move, Q and E to go down and up, Shift to go faster, and the mouse wheel to change speed. The camera flies faster the longer you keep flying, and starts from its own speed again once you let go.
 
 In a game with scripts, the right mouse button is the game's at first, so a gun still aims with it. Press F8 to free the camera and fly it, and F8 again to give the mouse back. A project with no scripts starts with the camera free. While you fly, the game hears none of your keys or buttons, and lets go of any it had held.
 

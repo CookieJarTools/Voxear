@@ -1849,7 +1849,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   command finds none; while playing, a command runs against the game. Rust code built on the editor adds commands
   with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
 - **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
-  local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
+  local), fly speed and whether flying speeds up, and whether the stats chip and axis gizmo show; whether Play
+  starts paused, saves first, clears
   the Console, pauses on an error, and reloads changed scripts while playing; the Scene view's shading and gizmos;
   and the Console's Collapse and trace toggles, and which code editor opens files. They are kept per project in
   `.voxear/Editor.toml` with the palette's recent items and the layouts, the saved ones, each one's arrangement

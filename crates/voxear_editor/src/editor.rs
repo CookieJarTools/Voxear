@@ -1474,6 +1474,7 @@ impl Editor {
             fly.set_speed(self.memory.settings.fly_speed);
         }
         self.fly_speed = self.scene.fly.speed();
+        self.scene.fly.set_speeds_up(self.memory.settings.fly_speeds_up);
         if changed {
             self.memory.save();
         }

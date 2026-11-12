@@ -1055,11 +1055,15 @@ fn an_endless_terrain_is_made_round_the_scene_view_wherever_it_looks_from() {
     let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
     assert!(voxear_terrain::file::TerrainFile::parse(&text).unwrap().endless.is_some());
     assert!(!dir.path().join(voxear_terrain::file::heights_file(&path)).exists());
-    // Undone, a terrain of a set size again, made whole from its Obj.
-    editor.undo(&mut renderer);
-    editor.undo(&mut renderer);
-    editor.undo(&mut renderer);
-    frame(&mut editor, &mut renderer);
+    // Undone, a terrain of a set size again, made whole from its Obj: three steps, or fewer where the changes came
+    // within the history's merge time of each other, as on a fast machine.
+    for _ in 0..3 {
+        if file(&editor).endless.is_none() {
+            break;
+        }
+        editor.undo(&mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
     assert!(file(&editor).endless.is_none());
     let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
     assert_eq!(terrain.origin, None);

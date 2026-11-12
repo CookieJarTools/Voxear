@@ -1862,12 +1862,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     keeps dirt from showing through a thin top layer on slopes. Under water in blocks: the water round the camera is a
     body among the Pools (`water_bodies::block_water`, `WATER_BLOCKS`), level with the top of the camera's column and as
     far as that top runs along x and z, in the kind's colour (`BlockFaces::color`), so the under-water view, the
-    waterline and the wet lens are a Pool's; it draws no surface or walls and leaves the sea alone. Block size keeps the
-    world's size: `BlockFile::set_block_size` counts its ground again in blocks of the new size, and what was built is
-    read again in them (`edits::changed`, `edits::resized`: nearest for kinds, between the old blocks' middles for how
-    full smooth ground is; a world without end's kept changes block by block). Tests: a sea's surface whole over a
-    gentle shore, smooth sea generation, a pond's body of water, pillars and holes resized and back, a mound's surface
-    kept, the editor halving Block size.
+    waterline and the wet lens are a Pool's; it draws no surface or walls and leaves the sea alone. It is found only
+    where a view starts (`waterSurface`'s `seen`), so the ground under it is lit and wetted as it is from far off, and
+    its waterline lies flat (`wavySurface`), as its faces are drawn: before, the bed took a Pool's dappled light near
+    the camera alone, and the waterline followed ripples the blocks' water does not have. Block size keeps the world's
+    size: `BlockFile::set_block_size` counts its ground again in blocks of the new size, and what was built is read
+    again in them (`edits::changed`, `edits::resized`: nearest for kinds, between the old blocks' middles for how full
+    smooth ground is; a world without end's kept changes block by block). Tests: a sea's surface whole over a gentle
+    shore, smooth sea generation, a pond's body of water, pillars and holes resized and back, a mound's surface kept,
+    the editor halving Block size, the bed under a pond lit alike from near and far, a level waterline from just under a
+    pond's top.
     In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
     `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
     water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made

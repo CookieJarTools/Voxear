@@ -483,6 +483,151 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
     assert!(apart(far_low, sky) > 30, "the far water low down: {far_low:?} against the sky's {sky:?}");
 }
 
+/// Grass 4 blocks up, 64 a side, with a pit 24 blocks a side and 3 deep in its middle, its floor sand, full of
+/// water to the grass's top, but for a pillar of stone as high as the water in each of the columns `pillars`; and the
+/// look it is drawn with, the sun high in the west.
+fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
+    use voxear_terrain::blocks::{chunk::BlockId, file::BlockKind};
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind::colored("Sand", [0.86, 0.78, 0.55]));
+    let sand = file.blocks.len() as BlockId;
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+    let water = file.blocks.len() as BlockId;
+    let mut blocks = file.make_ground(None);
+    for z in 20..44 {
+        for x in 20..44 {
+            blocks.set([x, 0, z], sand);
+            for y in 1..4 {
+                blocks.set([x, y, z], if pillars.contains(&[x, z]) { 3 } else { water });
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            // Linear, as the engine makes a colour's material.
+            let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            let [r, g, b] = look.color.map(linear);
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    let towards_sun = Vec3::new(-60f32.to_radians().cos(), 60f32.to_radians().sin(), 0.2).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    world
+}
+
+#[test]
+fn the_bed_under_water_blocks_is_lit_the_same_with_the_camera_near_the_water_as_far_from_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond(&mut renderer, &[]);
+    // Straight down onto the pond's middle: from 2.6 m over the water, then from 1.5 m, where the camera is near
+    // enough for the water round it to be a body for the view under it.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let camera = world.spawn((Camera::default(), Transform::default()));
+    let mut seen = |world: &mut World, over: f32, name: &str| {
+        world.insert(camera, Transform::new(Vec3::new(32.0, 4.0 + over, 32.0), down, Vec3::ONE));
+        let pixels = render(&mut renderer, world, 8);
+        keep_image(name, &pixels);
+        // The bed under the middle of the picture, and a little to each side of it.
+        [(0, 0), (-40, 10), (50, -30)]
+            .map(|(dx, dy)| rgb_at(&pixels, (WIDTH as i32 / 2 + dx) as u32, (HEIGHT as i32 / 2 + dy) as u32))
+    };
+    let far = seen(&mut world, 2.6, "blocks pond from far.png");
+    let near = seen(&mut world, 1.5, "blocks pond from near.png");
+    let apart = |a: [i32; 3], b: [i32; 3]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<i32>();
+    for (far, near) in far.into_iter().zip(near) {
+        assert!(apart(far, near) < 24, "the bed from far {far:?} and from near {near:?}");
+    }
+}
+
+#[test]
+fn water_blocks_look_the_same_inside_the_stretch_of_them_round_the_camera_as_outside_it() {
+    let Some(mut renderer) = renderer() else { return };
+    // Down across the pond from 1.6 m over it. A pillar to the water's top six blocks on ends the stretch of water
+    // round the camera there, so the water past the pillar lies outside it; and with a pillar under the camera too,
+    // out of sight, there is no such stretch at all.
+    let across = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(30f32.to_radians());
+    let mut seen = |pillars: &[[i32; 2]], name: &str| {
+        let mut world = pond(&mut renderer, pillars);
+        world.spawn((Camera::default(), Transform::new(Vec3::new(26.5, 5.6, 32.5), across, Vec3::ONE)));
+        let pixels = render(&mut renderer, &world, 12);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let with = seen(&[[32, 32]], "blocks stretch round the camera.png");
+    let without = seen(&[[32, 32], [26, 32]], "blocks no stretch round the camera.png");
+    // The two pictures alike all over, but for a pixel here and there of the sun's glints.
+    let apart = |a: [i32; 3], b: [i32; 3]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<i32>();
+    let (mut total, mut off, mut count) = (0, 0, 0);
+    for y in (8..HEIGHT - 8).step_by(4) {
+        for x in (8..WIDTH - 8).step_by(4) {
+            let d = apart(rgb_at(&with, x, y), rgb_at(&without, x, y));
+            total += d;
+            off += usize::from(d > 40);
+            count += 1;
+        }
+    }
+    let mean = total as f32 / count as f32;
+    assert!(mean < 6.0 && off * 200 < count, "apart by {mean:.1} a pixel, {off} of {count} by more than 40");
+}
+
+#[test]
+fn a_camera_just_under_water_blocks_sees_air_over_one_level_waterline_and_water_under_it() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond(&mut renderer, &[]);
+    // In the pond, 3 cm under its top, looking level along it: the near plane's top is out of the water.
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 3.97, 23.0), Quat::IDENTITY, Vec3::ONE)));
+    // Where the near plane, 0.1 m off and 60 degrees tall, crosses the water's top: this far down the picture.
+    let half = 0.1 * 30f32.to_radians().tan();
+    let line = ((1.0 - 0.03 / half) * 0.5 * HEIGHT as f32) as i32;
+    // Water is its own green, far from the sky's grey and blue.
+    let watery = |[r, g, b]: [i32; 3]| g - r > 30 && g > b;
+    let mut time = 0.0;
+    for (frames, name) in
+        [(20, "blocks half under a.png"), (37, "blocks half under b.png"), (53, "blocks half under c.png")]
+    {
+        for _ in 0..frames {
+            time += 1.0 / 60.0;
+            renderer.render(&world, time).expect("frame renders");
+        }
+        let pixels = renderer.read_pixels().expect("pixels").2;
+        keep_image(name, &pixels);
+        for x in [60, 200, 320, 470, 600] {
+            // Air down to the waterline, a few rows off it, and water from there to the picture's foot.
+            for y in (4..line - 8).step_by(6) {
+                let above = rgb_at(&pixels, x, y as u32);
+                assert!(!watery(above), "air over the waterline at ({x}, {y}) after {time:.2} s: {above:?}");
+            }
+            for y in (line + 8..HEIGHT as i32 - 4).step_by(6) {
+                let under = rgb_at(&pixels, x, y as u32);
+                assert!(watery(under), "water under the waterline at ({x}, {y}) after {time:.2} s: {under:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_meet() {
     use voxear_terrain::{

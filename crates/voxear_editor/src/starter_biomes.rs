@@ -169,6 +169,7 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
             temperature: temperature.unwrap_or([-60.0, 60.0]),
             humidity: humidity.unwrap_or([0.0, 1.0]),
             height: None,
+            sunk: None,
             ground: BiomeGround {
                 top: Some(block(starter.top)),
                 under: Some(block(starter.under.0)),
@@ -278,7 +279,7 @@ mod tests {
                     continue;
                 }
                 let (temperature, humidity) = world.climate(x, z, height);
-                let biome = placed.at(x, z, Place { temperature, humidity, above_sea }).unwrap();
+                let biome = placed.at(x, z, Place { temperature, humidity, above_sea, sunk: 0.0 }).unwrap();
                 let entry = bands.entry((above_sea / band).floor() as i32).or_default();
                 entry.0 += 1;
                 entry.1[biome] += 1;

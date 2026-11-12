@@ -553,7 +553,7 @@ mod tests {
         let (_, faces) = file.faces();
         let generate = file.generate.clone().unwrap();
         let world = Arc::new(Preset::RollingHills.world());
-        BlockMaking { file, generate, world, faces: faces.into(), far_folder: None }
+        BlockMaking { file, generate, world, faces: faces.into(), far_folder: None, far_built: Vec::new() }
     }
 
     #[test]

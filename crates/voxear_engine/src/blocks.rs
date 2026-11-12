@@ -603,7 +603,10 @@ pub fn biome_at(world: &World, content: &mut Content, position: voxear_core::mat
         let height = generator.height_at(x, z);
         let (temperature, humidity) = generator.climate(x, z, height);
         let above_sea = height - generator.sea_level();
-        let place = voxear_terrain::generate::biomes::Place { temperature, humidity, above_sea };
+        // How far the ground there is sunk under the land round about, where a biome keeps to sunk ground.
+        let sunk = if placed.any_sunk() { generator.sunk(&[x], &[z], &[height]) } else { None };
+        let sunk = sunk.map_or(0.0, |sunk| sunk[0]);
+        let place = voxear_terrain::generate::biomes::Place { temperature, humidity, above_sea, sunk };
         let Some(biome) = placed.biomes.at(x, z, place) else { continue };
         return listed_biomes(content, &asset.file).get(biome).copied();
     }

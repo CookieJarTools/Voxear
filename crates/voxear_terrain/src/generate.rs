@@ -39,6 +39,7 @@ mod graph;
 mod landmass;
 pub mod nodes;
 mod starters;
+pub mod structures;
 mod voxels;
 mod world;
 

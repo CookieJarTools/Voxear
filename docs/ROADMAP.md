@@ -1385,8 +1385,19 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     bounds, winding and pixels, shared tops and walls, a flat layer, the far level, the file; room for a layer
     and its pixels over the box's; the editor adding a layer, painting it raised, changing its height and
     undoing. Manual: Box Models.
-  - [ ] **In a block world:** a component that walks one over blocks and through water, paths on the blocks, and
-    the C# API
+  - ~~**In a block world:**~~ done: `block_mob::BlockMob` (`[obj.block_mob]`, Add Component ▸ Terrain ▸ Block Mob,
+    which adds the Character Controller it walks with) walks its Obj through a world of blocks: to a point, after
+    an Obj, or wandering near where it began (`MobGoal`). Ways are found on the blocks
+    (`voxear_terrain::blocks::path::find_path`: a block at a time, up one, down three, as many clear over the
+    ground as it is tall, water waded a block deep and gone round deeper, a search that gives up after so many
+    places), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
+    step a block high; it turns to face its way, falls, and swims up in deep water. It runs before animation, so
+    a Mob Motion on the same Obj walks the model. C#: `Obj.BlockMob`/`AddBlockMob` (`MoveTo`, `Follow`, `Wander`,
+    `Stop`, `Arrived`, `Goal`, `Speed`, `TurnSpeed`, `Swims`) and `Obj.MobMotion`/`AddMobMotion` (`LookAt`,
+    `LookAhead`, `Attack`, `Hurt`, `MoveAs`, its amounts); native API 77. Tests: ways over a floor, round a wall,
+    up a step, down a ledge, through a ford; a mob standing on a level's blocks, walking to a point with its legs
+    swinging, climbing a block, going round a wall, wandering within its reach; a script adding and telling
+    both. Manual: Block Mobs, Mob Motion.
   - [ ] **Clips keyed on a timeline**
 
 ## Gameplay kits: game-ready systems

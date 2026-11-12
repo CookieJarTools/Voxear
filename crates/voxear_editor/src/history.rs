@@ -64,6 +64,7 @@ pub struct ObjState {
     pub net: Option<voxear_engine::net::NetObject>,
     pub animator: Option<Box<voxear_engine::animation::Animator>>,
     pub mob_motion: Option<Box<voxear_engine::animation::MobMotion>>,
+    pub block_mob: Option<Box<voxear_engine::block_mob::BlockMob>>,
     pub motion_matcher: Option<Box<voxear_engine::animation::MotionMatcher>>,
     pub bone_attachment: Option<Box<voxear_engine::animation::BoneAttachment>>,
     pub first_person: Option<Box<voxear_engine::first_person::FirstPersonView>>,
@@ -171,6 +172,7 @@ impl ObjState {
             net: world.get::<voxear_engine::net::NetObject>(entity).copied(),
             animator: world.get::<voxear_engine::animation::Animator>(entity).cloned().map(Box::new),
             mob_motion: world.get::<voxear_engine::animation::MobMotion>(entity).cloned().map(Box::new),
+            block_mob: world.get::<voxear_engine::block_mob::BlockMob>(entity).cloned().map(Box::new),
             motion_matcher: world.get::<voxear_engine::animation::MotionMatcher>(entity).cloned().map(Box::new),
             bone_attachment: world.get::<voxear_engine::animation::BoneAttachment>(entity).cloned().map(Box::new),
             first_person: world.get::<voxear_engine::first_person::FirstPersonView>(entity).cloned().map(Box::new),
@@ -257,6 +259,7 @@ impl ObjState {
         put(world, entity, self.net);
         put(world, entity, self.animator.as_deref().cloned());
         put(world, entity, self.mob_motion.as_deref().cloned());
+        put(world, entity, self.block_mob.as_deref().cloned());
         put(world, entity, self.motion_matcher.as_deref().cloned());
         put(world, entity, self.bone_attachment.as_deref().cloned());
         put(world, entity, self.first_person.as_deref().cloned());

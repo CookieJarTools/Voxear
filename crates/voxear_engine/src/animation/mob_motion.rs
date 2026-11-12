@@ -473,6 +473,101 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
     }
 }
 
+/// What a script asks of a Mob Motion, by number, as `NativeMobMotion` in
+/// Voxear.Core has them.
+const HAS: i32 = 0;
+const ADD: i32 = 1;
+const REMOVE: i32 = 2;
+const LOOK_AT: i32 = 3;
+const ATTACK: i32 = 4;
+const HURT: i32 = 5;
+const VELOCITY: i32 = 6;
+const LEG_SWING: i32 = 7;
+const ARM_SWING: i32 = 8;
+const STRIDE: i32 = 9;
+const BOUNCE: i32 = 10;
+const IDLE: i32 = 11;
+const LOOK_SPEED: i32 = 12;
+const LOOK_LIMIT: i32 = 13;
+const LAG: i32 = 14;
+
+/// Sets what answers `MobMotion` in scripts.
+pub fn register() {
+    voxear_scripting::set_mob_motion_values(values);
+}
+
+/// Reads, or with `written` writes, value `what` of an Obj's Mob Motion.
+/// A point and a velocity are their three numbers and a fourth of 1, or
+/// all 0 for none.
+fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    if !world.is_alive(entity) {
+        return None;
+    }
+    let number = |n: f32| [n, 0.0, 0.0, 0.0];
+    match (what, written) {
+        (HAS, None) => return Some(number(f32::from(u8::from(world.has::<MobMotion>(entity))))),
+        (ADD, Some(_)) => {
+            if !world.has::<MobMotion>(entity) {
+                world.insert(entity, MobMotion::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => {
+            world.remove::<MobMotionState>(entity);
+            world.remove::<MobBones>(entity);
+            world.remove::<Pose>(entity);
+            return world.remove::<MobMotion>(entity).map(|_| [0.0; 4]);
+        }
+        _ => {}
+    }
+    let motion = world.get_mut::<MobMotion>(entity)?;
+    let point = |v: Option<Vec3>| v.map_or([0.0; 4], |v| [v.x, v.y, v.z, 1.0]);
+    let given = |[x, y, z, has]: [f32; 4]| (has != 0.0).then_some(Vec3::new(x, y, z));
+    let amount = match what {
+        LEG_SWING => &mut motion.leg_swing,
+        ARM_SWING => &mut motion.arm_swing,
+        STRIDE => &mut motion.stride,
+        BOUNCE => &mut motion.bounce,
+        IDLE => &mut motion.idle,
+        LOOK_SPEED => &mut motion.look_speed,
+        LOOK_LIMIT => &mut motion.look_limit,
+        LAG => &mut motion.lag,
+        LOOK_AT => {
+            if let Some(value) = written {
+                motion.look_at = given(value);
+            }
+            return Some(point(motion.look_at));
+        }
+        VELOCITY => {
+            if let Some(value) = written {
+                motion.velocity = given(value);
+            }
+            return Some(point(motion.velocity));
+        }
+        ATTACK => {
+            return written.map(|_| {
+                number(f32::from(u8::from({
+                    motion.attack();
+                    true
+                })))
+            });
+        }
+        HURT => {
+            return written.map(|_| {
+                number(f32::from(u8::from({
+                    motion.hurt();
+                    true
+                })))
+            });
+        }
+        _ => return None,
+    };
+    if let Some([value, ..]) = written {
+        *amount = value.max(0.0);
+    }
+    Some(number(*amount))
+}
+
 #[cfg(test)]
 mod tests {
     use voxear_render::Bone;

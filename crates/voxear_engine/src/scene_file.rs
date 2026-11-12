@@ -318,6 +318,9 @@ pub struct ObjData {
     /// Animates the Obj's model from how the Obj moves, by what its bones say they are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mob_motion: Option<crate::animation::MobMotion>,
+    /// Walks the Obj through a world of blocks by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_mob: Option<crate::block_mob::BlockMob>,
     /// Animates the Obj's model by motion matching over its clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
@@ -436,6 +439,7 @@ impl ObjData {
             net: None,
             animator: None,
             mob_motion: None,
+            block_mob: None,
             motion_matcher: None,
             bone_attachment: None,
             first_person: None,
@@ -1586,6 +1590,9 @@ fn capture_instance(
     if root.mob_motion.is_some() && root.mob_motion != prefab_root.mob_motion {
         instance.mob_motion = root.mob_motion.clone();
     }
+    if root.block_mob.is_some() && root.block_mob != prefab_root.block_mob {
+        instance.block_mob = root.block_mob.clone();
+    }
     if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
         instance.motion_matcher = root.motion_matcher.clone();
     }
@@ -1795,6 +1802,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(motion) = actual.mob_motion.as_ref().filter(|m| Some(*m) != expected.mob_motion.as_ref()) {
         put("mob_motion", whole(motion, &crate::animation::MobMotion::default())?);
+    }
+    if let Some(mob) = actual.block_mob.as_ref().filter(|m| Some(*m) != expected.block_mob.as_ref()) {
+        put("block_mob", whole(mob, &crate::block_mob::BlockMob::default())?);
     }
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
@@ -2095,6 +2105,12 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.net = world.get::<crate::net::NetObject>(entity).copied();
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
+    // As saved: where a game sent it is not part of the scene.
+    obj.block_mob = world.get::<crate::block_mob::BlockMob>(entity).map(|mob| crate::block_mob::BlockMob {
+        goal: crate::block_mob::MobGoal::Stand,
+        arrived: true,
+        ..mob.clone()
+    });
     // As saved: what a game told it this frame is not part of the scene.
     obj.mob_motion = world.get::<crate::animation::MobMotion>(entity).map(|motion| crate::animation::MobMotion {
         look_at: None,

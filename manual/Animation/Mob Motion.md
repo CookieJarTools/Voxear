@@ -35,12 +35,33 @@ The model's bones need **roles**: Body, Head, Leg, Arm, Tail or Wing. **Make Bon
 | Look Limit | How far the head turns from straight ahead, in degrees |
 | Lag | How much the tail and wings trail behind what the body does |
 
+## From scripts
+
+A script tells a Mob Motion what it cannot see for itself:
+
+```csharp
+var motion = Obj.MobMotion;
+motion.LookAt(player.Position + Vector3.UnitY * 1.6f);
+motion.Attack();
+```
+
+| Call | What it does |
+| --- | --- |
+| `Obj.AddMobMotion()` | Gives the Obj a Mob Motion |
+| `LookAt(point)` | Turns the head to a point in the world, until told otherwise |
+| `LookAhead()` | Looks ahead again |
+| `Attack()` | Swings at what is before it |
+| `Hurt()` | Flinches |
+| `MoveAs(velocity)` | Walks as if it moved at this velocity, for an Obj that is moved in jumps, such as one a network places. `FollowObj()` goes back to watching the Obj |
+| `LegSwing`, `ArmSwing`, `Stride`, `Bounce`, `Idle`, `LookSpeed`, `LookLimit`, `Lag` | Its settings |
+
+To have a creature walk about by itself in a Block World, add a [[Block Mobs|Block Mob]] as well.
+
 ## Watching it in the Model window
 
 You can see a model move before it is in a level. Open it in the Model window and click **Motion** in the bar. Pick **Stand**, **Walk** or **Run**, and click **Attack** or **Hurt** to see those. Nothing about the model changes while you watch, and going back to **Shape** puts it at rest.
 
 ## Not done yet
 
-- Telling a Mob Motion where to look, and to attack or flinch, from C# scripts. The engine does this today; the script side comes with the component that walks a creature through a Block World.
 - Feet placed on uneven ground.
 - Mob Motion over a clip, for creatures that mix made animation with this.

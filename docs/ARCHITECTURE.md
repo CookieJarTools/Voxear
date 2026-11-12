@@ -2834,7 +2834,12 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   blocks over the faces, built with the mesh, bound to the box's bone like everything else, so they bend where
   the limb is cut for a joint. The cost is vertices, so tops are shared along rows, walls exist only at edges,
   and the mesh has a flat version of every layer as a coarser LOD for the engine to pick by distance.
-- **Planned on top:** clips keyed on a timeline, and a component that walks one through a block world.
+- **Block Mob** (`voxear_engine::block_mob`) is how one gets about a block world: a component that finds a way
+  on the blocks themselves (`voxear_terrain::blocks::path`, a search over places to stand, not a baked mesh, so
+  blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
+  what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
+  is left to games and packages.
+- **Planned on top:** clips keyed on a timeline.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
 

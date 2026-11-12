@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 76;
+pub(crate) const API_VERSION: u32 = 77;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -513,6 +513,12 @@ pub(crate) struct NativeApi {
     pub world_budget: unsafe extern "C" fn(which: i32) -> f32,
     /// Sets one of them, taken up at once.
     pub set_world_budget: unsafe extern "C" fn(which: i32, value: f32),
+    /// Reads, or with `set` writes, value `what` of an Obj's Mob Motion,
+    /// as `light_value` does an Obj's Light.
+    pub mob_motion_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// Reads, or with `set` writes, value `what` of an Obj's Block Mob, as
+    /// `light_value` does an Obj's Light.
+    pub block_mob_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -966,6 +972,27 @@ unsafe fn component_value(values: Option<&ComponentValues>, entity: u64, what: i
         }
         None => 0,
     }
+}
+
+static MOB_MOTIONS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static BLOCK_MOBS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+
+/// Sets what answers `MobMotion` in scripts; the first set is kept.
+pub fn set_mob_motion_values(values: ComponentValues) {
+    let _ = MOB_MOTIONS.set(values);
+}
+
+/// Sets what answers `BlockMob` in scripts; the first set is kept.
+pub fn set_block_mob_values(values: ComponentValues) {
+    let _ = BLOCK_MOBS.set(values);
+}
+
+unsafe extern "C" fn mob_motion_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(MOB_MOTIONS.get(), entity, what, set, value) }
+}
+
+unsafe extern "C" fn block_mob_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(BLOCK_MOBS.get(), entity, what, set, value) }
 }
 
 unsafe extern "C" fn particle_blast(at: *const [f32; 3], radius: f32, speed: f32) -> i32 {
@@ -1993,6 +2020,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         blocks_all: crate::blocks::blocks_all,
         world_budget: crate::blocks::world_budget,
         set_world_budget: crate::blocks::set_world_budget,
+        mob_motion_value,
+        block_mob_value,
     }
 }
 

@@ -269,11 +269,10 @@ Writing the right edge before the left, or the bottom before the top, draws the 
 
 A box model's bones are a skeleton like any animated model's, and every box moves whole with its bone. So what works on a model's bones works here: [[Bone Attachments]] for things held or worn, and scripts that read and turn bones (see [[Bones in Scripts]]). A box model has no clips of its own yet.
 
-To make one walk, add a [[Mob Motion]] to the Obj that draws it. It animates the model from how the Obj moves, using the roles of its bones. The Model window's **Motion** mode shows the same motion on the model while you build it.
+To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block Mobs|Block Mob]] to have it find its own way through a Block World. It animates the model from how the Obj moves, using the roles of its bones. The Model window's **Motion** mode shows the same motion on the model while you build it.
 
 ## Not done yet
 
 - A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
 - Animation clips made on a timeline.
-- A component that walks a box model through a Block World.
 - A cut-out face casts the shadow of the whole face, holes included.

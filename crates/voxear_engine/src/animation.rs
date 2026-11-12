@@ -36,7 +36,10 @@ pub use actions::{ActionCommand, MotionMarks, take_marks};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub(crate) use bone_attachment::{hide, hide_only, show_all};
 pub use clips::{CLIP_PART, ClipSource, Clips, clips_found_for_scripts, give_clips};
-pub use mob_motion::{MobBones, MobMotion, MobMotionState, MobPoser, MotionInput, animate_mobs, give_mob_bones};
+pub use mob_motion::{
+    MobBones, MobMotion, MobMotionState, MobPoser, MotionInput, animate_mobs, give_mob_bones,
+    register as register_mob_motion,
+};
 pub use motion_database::{ClipRun, MotionDatabase};
 pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};
 pub use states::StatePlay;

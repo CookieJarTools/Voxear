@@ -44,6 +44,7 @@ pub(super) enum Copied {
     NetObject(voxear_engine::net::NetObject),
     Animator(voxear_engine::animation::Animator),
     MobMotion(voxear_engine::animation::MobMotion),
+    BlockMob(voxear_engine::block_mob::BlockMob),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
     BoneAttachment(Box<voxear_engine::animation::BoneAttachment>),
     FirstPersonView(Box<voxear_engine::first_person::FirstPersonView>),
@@ -97,6 +98,7 @@ impl Copied {
             Part::NetObject => Self::NetObject(*world.get::<voxear_engine::net::NetObject>(entity)?),
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
             Part::MobMotion => Self::MobMotion(world.get::<voxear_engine::animation::MobMotion>(entity)?.clone()),
+            Part::BlockMob => Self::BlockMob(world.get::<voxear_engine::block_mob::BlockMob>(entity)?.clone()),
             Part::Gun => Self::Gun(Box::new(world.get::<voxear_engine::guns::Gun>(entity)?.clone())),
             Part::GunHolder => Self::GunHolder(Box::new(world.get::<voxear_engine::guns::GunHolder>(entity)?.clone())),
             Part::GunPart => {
@@ -146,6 +148,7 @@ impl Copied {
             Self::NetObject(net) => drop(world.insert(entity, *net)),
             Self::Animator(animator) => drop(world.insert(entity, animator.clone())),
             Self::MobMotion(motion) => drop(world.insert(entity, motion.clone())),
+            Self::BlockMob(mob) => drop(world.insert(entity, mob.clone())),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),
             Self::BoneAttachment(attachment) => drop(world.insert(entity, (**attachment).clone())),
             Self::FirstPersonView(view) => drop(world.insert(entity, (**view).clone())),

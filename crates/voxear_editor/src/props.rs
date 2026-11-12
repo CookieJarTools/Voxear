@@ -110,6 +110,7 @@ pub enum Part {
     NetObject,
     Animator,
     MobMotion,
+    BlockMob,
     MotionMatcher,
     BoneAttachment,
     FirstPersonView,
@@ -174,6 +175,7 @@ impl Part {
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MobMotion => "mob_motion".into(),
+            Part::BlockMob => "block_mob".into(),
             Part::MotionMatcher => "motion_matcher".into(),
             Part::BoneAttachment => "bone_attachment".into(),
             Part::FirstPersonView => "first_person".into(),
@@ -241,6 +243,7 @@ impl Part {
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MobMotion => "Mob Motion",
+            Part::BlockMob => "Block Mob",
             Part::MotionMatcher => "Motion Matcher",
             Part::BoneAttachment => "Bone Attachment",
             Part::FirstPersonView => "First-Person View",
@@ -320,6 +323,7 @@ impl Part {
             Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MobMotion => "play",
+            Part::BlockMob => "blocks",
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
             Part::FirstPersonView => "camera",
@@ -497,6 +501,11 @@ pub enum Prop {
     MobLookSpeed,
     MobLookLimit,
     MobLag,
+    /// A Block Mob's walking speed, how fast it turns, whether it swims, and how far it wanders by itself.
+    BlockMobSpeed,
+    BlockMobTurnSpeed,
+    BlockMobSwims,
+    BlockMobWander,
     /// A Motion Matcher's settings: the clip it stands with and below what
     /// speed, how often it searches, how its clips fade and pace, and how
     /// its body turns.
@@ -924,6 +933,7 @@ impl Prop {
             | Prop::MobLookSpeed
             | Prop::MobLookLimit
             | Prop::MobLag => Part::MobMotion,
+            Prop::BlockMobSpeed | Prop::BlockMobTurnSpeed | Prop::BlockMobSwims | Prop::BlockMobWander => Part::BlockMob,
             Prop::MatcherMotionSet
             | Prop::MatcherIdleSpeed
             | Prop::MatcherSearchEvery
@@ -1253,6 +1263,10 @@ impl Prop {
             Prop::MobLookSpeed => "look_speed",
             Prop::MobLookLimit => "look_limit",
             Prop::MobLag => "lag",
+            Prop::BlockMobSpeed => "speed",
+            Prop::BlockMobTurnSpeed => "turn_speed",
+            Prop::BlockMobSwims => "swims",
+            Prop::BlockMobWander => "wander",
             Prop::MatcherMotionSet => "motion_set",
             Prop::MatcherIdleSpeed => "idle_speed",
             Prop::MatcherSearchEvery => "search_every",
@@ -1554,6 +1568,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::animation::MobMotion>(entity) {
         parts.push(Part::MobMotion);
     }
+    if world.has::<voxear_engine::block_mob::BlockMob>(entity) {
+        parts.push(Part::BlockMob);
+    }
     if world.has::<voxear_engine::animation::MotionMatcher>(entity) {
         parts.push(Part::MotionMatcher);
     }
@@ -1774,6 +1791,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MobLookLimit,
             Prop::MobLag,
         ],
+        Part::BlockMob => vec![Prop::BlockMobSpeed, Prop::BlockMobTurnSpeed, Prop::BlockMobSwims, Prop::BlockMobWander],
         Part::MotionMatcher => vec![
             Prop::MatcherMotionSet,
             Prop::MatcherIdleSpeed,
@@ -2230,6 +2248,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::MobLookSpeed => "Look Speed",
         Prop::MobLookLimit => "Look Limit",
         Prop::MobLag => "Lag",
+        Prop::BlockMobSpeed => "Speed",
+        Prop::BlockMobTurnSpeed => "Turn Speed",
+        Prop::BlockMobSwims => "Swims",
+        Prop::BlockMobWander => "Wander",
         Prop::MatcherMotionSet => "Motion Set",
         Prop::MatcherRootMotion => "Root Motion",
         Prop::MatcherIdleSpeed => "Idle Speed",
@@ -2618,6 +2640,13 @@ pub fn add(
         Part::MobMotion => {
             world.insert(entity, voxear_engine::animation::MobMotion::default());
         }
+        Part::BlockMob => {
+            // It walks with a Character Controller, so it is given one where it has none.
+            if !world.has::<voxear_engine::physics::CharacterController>(entity) {
+                world.insert(entity, voxear_engine::physics::CharacterController::default());
+            }
+            world.insert(entity, voxear_engine::block_mob::BlockMob::default());
+        }
         Part::MotionMatcher => {
             world.insert(entity, voxear_engine::animation::MotionMatcher::default());
         }
@@ -2728,6 +2757,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_engine::animation::Animator>(entity);
             world.remove::<voxear_engine::animation::AnimatorState>(entity);
             world.remove::<voxear_render::Pose>(entity);
+        }
+        Part::BlockMob => {
+            world.remove::<voxear_engine::block_mob::BlockMob>(entity);
+            world.remove::<voxear_engine::block_mob::BlockMobState>(entity);
         }
         Part::MobMotion => {
             world.remove::<voxear_engine::animation::MobMotion>(entity);
@@ -3088,6 +3121,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::MobLookSpeed => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.look_speed),
         Prop::MobLookLimit => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.look_limit),
         Prop::MobLag => Value::Number(world.get::<voxear_engine::animation::MobMotion>(entity)?.lag),
+        Prop::BlockMobSpeed => Value::Number(world.get::<voxear_engine::block_mob::BlockMob>(entity)?.speed),
+        Prop::BlockMobTurnSpeed => Value::Number(world.get::<voxear_engine::block_mob::BlockMob>(entity)?.turn_speed),
+        Prop::BlockMobSwims => Value::Toggle(world.get::<voxear_engine::block_mob::BlockMob>(entity)?.swims),
+        Prop::BlockMobWander => Value::Number(world.get::<voxear_engine::block_mob::BlockMob>(entity)?.wander),
         Prop::AttachBone => {
             // The parent's model's bones, none first.
             let attachment = world.get::<voxear_engine::animation::BoneAttachment>(entity)?;
@@ -4275,6 +4312,10 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::MobLookSpeed, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.look_speed = n.clamp(0.0, 60.0)),
         (Prop::MobLookLimit, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.look_limit = n.clamp(0.0, 180.0)),
         (Prop::MobLag, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::animation::MobMotion| m.lag = n.clamp(0.0, 5.0)),
+        (Prop::BlockMobSpeed, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::block_mob::BlockMob| m.speed = n.clamp(0.0, 50.0)),
+        (Prop::BlockMobTurnSpeed, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::block_mob::BlockMob| m.turn_speed = n.clamp(0.0, 3600.0)),
+        (Prop::BlockMobSwims, Value::Toggle(on)) => with(world, entity, |m: &mut voxear_engine::block_mob::BlockMob| m.swims = on),
+        (Prop::BlockMobWander, Value::Number(n)) => with(world, entity, |m: &mut voxear_engine::block_mob::BlockMob| m.wander = n.clamp(0.0, 1000.0)),
         (Prop::AttachBone, Value::Choice(index, _)) => {
             let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
             let model = parent

@@ -708,8 +708,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
             streamer.making_now.load(Ordering::Acquire)
         };
+        // Until a few columns are made, however busy the threads are with other work.
         let mut most = 0;
-        for _ in 0..60 {
+        let start = std::time::Instant::now();
+        while streamer.near.len() < 4 {
+            assert!(start.elapsed().as_secs() < 60, "nothing made");
             let now = step(&mut streamer, &mut world, &mut base, &mut pending);
             assert!(now <= 2, "{now} columns at once on Low");
             most = most.max(now);

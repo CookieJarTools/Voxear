@@ -178,16 +178,21 @@ mod tests {
         let pool = Pool::new(6, "test");
         pool.gate.set_limit(2);
         assert_eq!(pool.working_at_most(), 2);
-        // Each job counts itself in while it works, and notes the most at once.
+        // Each job counts itself in while it works, and notes the most at once. It works until `meet` are at work
+        // together, or two seconds pass, so they meet however busy the machine is with other work.
         let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let run = |pool: &Pool, jobs: usize| {
+        let run = |pool: &Pool, jobs: usize, meet: usize| {
             let (send, receive) = mpsc::channel();
             for _ in 0..jobs {
                 let (now, most, send) = (now.clone(), most.clone(), send.clone());
                 pool.spawn(Box::new(move || {
                     let at = now.fetch_add(1, Ordering::AcqRel) + 1;
                     most.fetch_max(at, Ordering::AcqRel);
-                    std::thread::sleep(Duration::from_millis(5));
+                    let start = std::time::Instant::now();
+                    while now.load(Ordering::Acquire) < meet && start.elapsed() < Duration::from_secs(2) {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    most.fetch_max(now.load(Ordering::Acquire), Ordering::AcqRel);
                     now.fetch_sub(1, Ordering::AcqRel);
                     send.send(()).expect("the test waits");
                 }));
@@ -196,13 +201,13 @@ mod tests {
                 receive.recv_timeout(Duration::from_secs(30)).expect("every job done");
             }
         };
-        run(&pool, 24);
+        run(&pool, 24, 2);
         assert_eq!(most.load(Ordering::Acquire), 2, "two at once at most, and two did work together");
         // Raised as it runs: more at once, never more than were started.
         most.store(0, Ordering::Release);
         pool.gate.set_limit(64);
         assert_eq!(pool.working_at_most(), 6);
-        run(&pool, 48);
+        run(&pool, 48, 3);
         let most = most.load(Ordering::Acquire);
         assert!(most > 2 && most <= 6, "{most} at once");
     }

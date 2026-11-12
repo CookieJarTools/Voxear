@@ -7,8 +7,11 @@
 //! them: a file made from a landmass preset is a Landmass node still, and
 //! makes the ground it made.
 //!
-//! After the five comes one that is no kind of ground: a Cave Level, solid
-//! rock with one bounded cave of rooms in it, for worlds of blocks.
+//! After the five come kinds of ground for worlds of blocks, standing and
+//! hollowed in three dimensions: caves, mesas, sky islands, highlands,
+//! towers of karst, fields of tilted blades, great peaks and rifts. Last is
+//! one that is no kind of ground: a Cave Level, solid rock with one
+//! bounded cave of rooms in it.
 
 use voxear_core::curve::Curve;
 
@@ -17,9 +20,9 @@ use super::{
     graph::{Graph, NodeId},
     landmass::Climate,
     nodes::{
-        Arches, Bend, Blend, CaveNetwork, Cellular, Clamp, Combine, Combining, Constant, Gullies, HeightMask, Laid,
-        Math, NodeKind, Noise, Operation, Output, Overhangs, Plateaus, RaisedLand, Remap, STEEPEST, SlopeMask, Solid,
-        Terrace,
+        Arches, Bend, Blend, CaveNetwork, Cellular, ChasmKind, Chasms, Clamp, Combine, Combining, Constant, Fins,
+        Gullies, HeightMask, Joined, Laid, Math, NodeKind, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
+        RaisedLand, Remap, Roof, STEEPEST, SlopeMask, Solid, Spires, Terrace,
     },
     world::WorldGen,
 };
@@ -91,6 +94,10 @@ pub fn starters() -> Vec<Starter> {
         mesas(),
         sky_islands(),
         highlands(),
+        karst(),
+        shattered(),
+        great_peaks(),
+        rifts(),
         cave_level(),
     ]
 }
@@ -620,6 +627,173 @@ fn highlands() -> Starter {
     Starter { name: "Highlands", sea_level: 0.0, graph }
 }
 
+/// Towers of rock standing sheer out of low green land, grown over on top,
+/// gathered in clusters with open country and a winding river between.
+fn karst() -> Starter {
+    let mut g = Layout::new();
+    let land = g.noise(Fractal, 900.0, 4, 0.0, 28.0);
+    g.expose(land, "high", "Height");
+    let bed = g.noise(Fractal, 1500.0, 2, 0.0, 1.0);
+    g.next();
+    // A river along where the broad noise is middling, cut a few metres under the sea.
+    let river = g.curve(bed, 0.0, 1.0, &[[0.0, 1.0], [0.46, 1.0], [0.5, 0.0], [0.54, 1.0], [1.0, 1.0]]);
+    g.next();
+    let deep = g.math(Multiply, river, 14.0);
+    let river = g.math(Add, deep, -14.0);
+    g.next();
+    let ground = g.math(Add, land, river);
+    g.next();
+    let spires = Spires {
+        size_from: 26.0,
+        size_to: 90.0,
+        height_from: 70.0,
+        height_to: 240.0,
+        spacing: 130.0,
+        often: 0.55,
+        taper: 0.15,
+        lean: 0.06,
+        bands: 14.0,
+        clusters: 0.75,
+        seed: 0,
+    };
+    let spires = g.add(NodeKind::Spires(spires));
+    g.expose(spires, "often", "Spires");
+    g.expose(spires, "height_to", "Spire Height");
+    g.next();
+    let rough = g.after(spires, NodeKind::Overhangs(Overhangs { amount: 3.0, size: 16.0, ..Overhangs::default() }));
+    let climate = Climate { temperature: 22.0, humidity: 0.8, ..Climate::default() };
+    Starter { name: "Karst", sea_level: -2.0, graph: with_volume(g.finish(ground, climate), rough) }
+}
+
+/// Green valleys broken by fields of tilted blades of rock, row on row,
+/// leaning one way and turning slowly across the land.
+fn shattered() -> Starter {
+    let mut g = Layout::new();
+    let land = g.noise(Fractal, 700.0, 4, 0.0, 70.0);
+    g.expose(land, "high", "Height");
+    g.next();
+    let fins = Fins {
+        length_from: 40.0,
+        length_to: 170.0,
+        height_from: 30.0,
+        height_to: 120.0,
+        thickness: 12.0,
+        // About 55 degrees.
+        dip: 1.43,
+        rows: 4,
+        spacing: 170.0,
+        often: 0.6,
+        jagged: 0.6,
+        seed: 0,
+    };
+    let fins = g.add(NodeKind::Fins(fins));
+    g.expose(fins, "often", "Fins");
+    g.expose(fins, "height_to", "Fin Height");
+    g.next();
+    let rough = g.after(fins, NodeKind::Overhangs(Overhangs { amount: 2.5, size: 14.0, ..Overhangs::default() }));
+    let climate = Climate { temperature: 10.0, humidity: 0.75, ..Climate::default() };
+    Starter { name: "Shattered", sea_level: 0.0, graph: with_volume(g.finish(land, climate), rough) }
+}
+
+/// Great mountains: ranges of sharp ridges with horns standing far over
+/// them, level land between, towers of rock on the valley floors, and
+/// slabs of rock hanging in the sky.
+fn great_peaks() -> Starter {
+    let mut g = Layout::new();
+    let peaks = Peaks { size: 3200.0, height: 1800.0, base: 20.0, ranges: 0.55, sharpness: 0.7, ridges: 0.5, seed: 0 };
+    let peaks = g.add(NodeKind::Peaks(peaks));
+    g.expose(peaks, "height", "Height");
+    g.expose(peaks, "ranges", "Ranges");
+    g.next();
+    let spires = Spires {
+        size_from: 20.0,
+        size_to: 60.0,
+        height_from: 40.0,
+        height_to: 150.0,
+        spacing: 260.0,
+        often: 0.3,
+        taper: 0.3,
+        lean: 0.08,
+        bands: 10.0,
+        clusters: 0.6,
+        seed: 0,
+    };
+    let spires = g.add(NodeKind::Spires(spires));
+    g.expose(spires, "often", "Spires");
+    g.next();
+    let islands = RaisedLand {
+        size_from: 30.0,
+        size_to: 120.0,
+        height_from: 120.0,
+        height_to: 380.0,
+        often: 0.25,
+        thickness: 90.0,
+        joined: Joined::Floating,
+        seed: 0,
+    };
+    let islands = g.after(spires, NodeKind::RaisedLand(islands));
+    g.expose(islands, "often", "Islands");
+    g.next();
+    let rough = g.after(islands, NodeKind::Overhangs(Overhangs { amount: 4.0, size: 20.0, ..Overhangs::default() }));
+    // Ground steeper than about 45 degrees is bare rock.
+    let steep = g.after(peaks, NodeKind::SlopeMask(SlopeMask { min: 1.0, max: STEEPEST, ..SlopeMask::default() }));
+    let climate = Climate { temperature: 11.0, humidity: 0.55, ..Climate::default() };
+    let mut graph = with_volume(g.finish(peaks, climate), rough);
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(steep, 0, output, Output::ROCK));
+    debug_assert!(wired, "the peaks' rock");
+    Starter { name: "Great Peaks", sea_level: 0.0, graph }
+}
+
+/// Rolling country with caves under it, cut by rifts and sinkholes
+/// hundreds of metres deep: some open to the sky, some roofed over at the
+/// land's height into caverns, with holes where light falls to their
+/// floors, and what grows down there kept apart by how far down it is.
+fn rifts() -> Starter {
+    let mut g = Layout::new();
+    let land = g.noise(Fractal, 800.0, 4, 10.0, 70.0);
+    g.expose(land, "high", "Height");
+    g.next();
+    let chasms = Chasms {
+        shape: ChasmKind::Both,
+        size: 1100.0,
+        width_from: 30.0,
+        width_to: 150.0,
+        depth_from: 90.0,
+        depth_to: 240.0,
+        often: 0.35,
+        wall: 28.0,
+        ledges: 0.0,
+        floor: 8.0,
+        seed: 0,
+    };
+    let chasms = g.add(NodeKind::Chasms(chasms));
+    g.wire(land, 0, chasms, Chasms::GROUND);
+    g.expose(chasms, "often", "Chasms");
+    g.expose(chasms, "depth_to", "Chasm Depth");
+    g.next();
+    let roof = Roof { thickness: 22.0, cover: 0.45, openings: 0.22, opening_size: 45.0, pillars: 0.35, seed: 0 };
+    let roof = g.add(NodeKind::Roof(roof));
+    g.wire(chasms, Chasms::RIM, roof, Roof::TOP);
+    g.expose(roof, "cover", "Roofed");
+    let network = CaveNetwork { spacing: 90.0, depth: 30.0, layers: 2, layer_depth: 60.0, ..CaveNetwork::default() };
+    let caves = g.add(NodeKind::CaveNetwork(network));
+    g.next();
+    let cut = g.add(NodeKind::Combine(Combine { operation: Combining::Subtract, ..Combine::default() }));
+    g.wire(roof, 0, cut, Combine::A);
+    g.wire(caves, 0, cut, Combine::B);
+    g.next();
+    let rough = g.after(cut, NodeKind::Overhangs(Overhangs { amount: 3.0, size: 18.0, ..Overhangs::default() }));
+    let climate = Climate { temperature: 14.0, humidity: 0.6, ..Climate::default() };
+    let mut graph = with_volume(g.finish(chasms, climate), rough);
+    // The walls are bare rock, and how far down each floor lies is there for biomes to keep to.
+    let output = graph.output().map(|node| node.id);
+    let rock = output.is_some_and(|output| graph.connect(chasms, Chasms::WALLS, output, Output::ROCK));
+    let sunk = output.is_some_and(|output| graph.connect(chasms, Chasms::SUNK, output, Output::SUNK));
+    debug_assert!(rock && sunk, "the rifts' rock and sunk ground");
+    Starter { name: "Rifts", sea_level: -300.0, graph }
+}
+
 /// Solid rock with one bounded cave in it: a main path of rooms with side
 /// rooms off it, its first room Depth under the rock's top. For a world of
 /// blocks; a Terrain shows the rock's level top alone.
@@ -713,6 +887,59 @@ mod tests {
                 changed.push(format!("{name}: {:#018x}", ground_hash(&world)));
             }
         }
+        assert!(changed.is_empty(), "the ground of these changed: was it meant to? {changed:#?}");
+    }
+
+    #[test]
+    fn karst_shattered_great_peaks_and_rifts_stand_tall_or_cut_deep_with_a_volume_each() {
+        let pins: [(&str, u64, f32); 4] = [
+            ("Karst", 0xc1a8_95e4_9036_d3c2, 20.0),
+            ("Shattered", 0x55f5_e5a4_b7c2_3bbc, 30.0),
+            ("Great Peaks", 0x394f_2714_3749_116b, 1000.0),
+            ("Rifts", 0x8bb1_f777_df4d_e4a3, 150.0),
+        ];
+        let mut changed = Vec::new();
+        for (name, hash, tall) in pins {
+            let starter = starters().into_iter().find(|starter| starter.name == name).expect(name);
+            let world = starter.world(1, 1.0);
+            let (low, high) = testing::checked(&world);
+            let side = 120;
+            let (xs, zs): (Vec<f32>, Vec<f32>) = (0..side * side)
+                .map(|at| ((at % side) as f32 * 40.0 - 2400.0, (at / side) as f32 * 40.0 - 2400.0))
+                .unzip();
+            let mut heights = vec![0.0; xs.len()];
+            world.heights(&xs, &zs, &mut heights);
+            let (least, most) = testing::range(&heights);
+            assert!(most - least > tall, "{name}: {least} to {most} m ({low} to {high} over flat places)");
+            let volume = world.volume().expect("a Volume");
+            assert!(volume.spanned(), "{name}: what stands says where it stands");
+            assert_eq!(world.graph().exposed[0].label, "Height", "{name}");
+            assert_eq!(world.starter(), Some(name));
+            if ground_hash(&world) != hash {
+                changed.push(format!("{name}: {:#018x}", ground_hash(&world)));
+            }
+        }
+        // Spires, fins and islands stand over a fair share of their ground.
+        for name in ["Karst", "Shattered", "Great Peaks"] {
+            let world = starters().into_iter().find(|starter| starter.name == name).unwrap().world(1, 1.0);
+            let volume = world.volume().unwrap();
+            let side = 200;
+            let (xs, zs): (Vec<f32>, Vec<f32>) =
+                (0..side * side).map(|at| ((at % side) as f32 * 8.0 - 800.0, (at / side) as f32 * 8.0 - 800.0)).unzip();
+            let mut heights = vec![0.0; xs.len()];
+            world.heights(&xs, &zs, &mut heights);
+            let standing = volume.standing(&xs, &zs, &heights);
+            let share = standing.iter().filter(|spans| !spans.is_empty()).count() as f32 / xs.len() as f32;
+            assert!(share > 0.005 && share < 0.5, "{name}: something stands over {share} of the ground");
+        }
+        // The rifts' floors are sunk as deep as they are cut.
+        let rifts = starters().into_iter().find(|starter| starter.name == "Rifts").unwrap().world(1, 1.0);
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..4000).map(|at| ((at % 63) as f32 * 37.0, (at / 63) as f32 * 41.0)).unzip();
+        let mut heights = vec![0.0; xs.len()];
+        rifts.heights(&xs, &zs, &mut heights);
+        let sunk = rifts.sunk(&xs, &zs, &heights).expect("the rifts' Sunk");
+        assert!(sunk.iter().any(|&sunk| sunk > 80.0) && sunk.iter().filter(|&&sunk| sunk == 0.0).count() > 2000);
         assert!(changed.is_empty(), "the ground of these changed: was it meant to? {changed:#?}");
     }
 

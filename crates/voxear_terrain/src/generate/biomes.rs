@@ -188,8 +188,8 @@ impl Biomes {
     /// and whose humidity `humidity_range` either side of its average, made
     /// from `seed`.
     pub fn new(list: Vec<BiomeDef>, temperature_range: f32, humidity_range: f32, seed: u32) -> Self {
-        let spreads =
-            Spreads { temperature: temperature_range.max(1.0), humidity: humidity_range.max(0.05), height: 200.0, sunk: 40.0 };
+        let (temperature, humidity) = (temperature_range.max(1.0), humidity_range.max(0.05));
+        let spreads = Spreads { temperature, humidity, height: 200.0, sunk: 40.0 };
         Self { list, spreads, wander: 0.12, wander_size: 48.0, seed: seed ^ 0xB10E_5EED }
     }
 

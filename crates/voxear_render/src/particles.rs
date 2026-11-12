@@ -10,7 +10,8 @@
 //! again once its last particle has died, so a system costs the same however
 //! long it runs, every machine draws the same particles, and they move with
 //! their Obj. Once a setting needs more (the wind, turbulence, particles
-//! that stay behind in the world as their Obj moves on), the system is
+//! that stay behind in the world as their Obj moves on, that meet what
+//! stands in their way or are thrown about by forces), the system is
 //! simulated: its particles are kept on the GPU and stepped each frame (see
 //! `particle_sim`). [`ParticleSystem::simulated_for`] says which, and why.
 
@@ -91,6 +92,35 @@ impl ParticleSpace {
         match self {
             Self::Local => "Local",
             Self::World => "World",
+        }
+    }
+}
+
+/// What a Particle System's particles meet on their way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleCollision {
+    /// Nothing: they pass through everything.
+    #[default]
+    Off,
+    /// What the main view sees, by its depth: the cheapest, and right for
+    /// sparks, rain and debris in front of the player. What is out of view
+    /// or hidden behind something stops nothing.
+    Depth,
+}
+
+impl ParticleCollision {
+    pub const ALL: [Self; 2] = [Self::Off, Self::Depth];
+
+    fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+
+    /// As the editor shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Depth => "Depth",
         }
     }
 }
@@ -198,6 +228,37 @@ pub struct ParticleSystem {
     /// How wide those swirls are, in metres.
     #[serde(skip_serializing_if = "is_one")]
     pub turbulence_size: f32,
+    /// What they meet on their way, and bounce off or stop at.
+    #[serde(skip_serializing_if = "ParticleCollision::is_off")]
+    pub collision: ParticleCollision,
+    /// How much of its speed into what it meets a particle keeps, away
+    /// from it: 0 stops dead, 1 bounces as fast as it came.
+    #[serde(skip_serializing_if = "is_bounce")]
+    pub bounce: f32,
+    /// How much of its speed along what it meets it loses each time: 0
+    /// slides on, 1 stops.
+    #[serde(skip_serializing_if = "is_friction")]
+    pub friction: f32,
+    /// How much of the life it has left it loses each time it strikes
+    /// something: 1 and it dies there.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub life_lost: f32,
+    /// How much Force Fields, blasts and what passes by move them: 0 not
+    /// at all.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub forces: f32,
+}
+
+/// The bounce and friction a system starts with.
+const BOUNCE: f32 = 0.4;
+const FRICTION: f32 = 0.2;
+
+fn is_bounce(value: &f32) -> bool {
+    *value == BOUNCE
+}
+
+fn is_friction(value: &f32) -> bool {
+    *value == FRICTION
 }
 
 fn is_zero(value: &f32) -> bool {
@@ -243,6 +304,11 @@ impl Default for ParticleSystem {
             wind: 0.0,
             turbulence: 0.0,
             turbulence_size: 1.0,
+            collision: ParticleCollision::Off,
+            bounce: BOUNCE,
+            friction: FRICTION,
+            life_lost: 0.0,
+            forces: 0.0,
         }
     }
 }
@@ -260,7 +326,14 @@ impl ParticleSystem {
     /// each setting that needs it, by the name the editor shows; none for a
     /// system that is not.
     pub fn simulated_for(&self) -> Vec<&'static str> {
-        [(self.space == ParticleSpace::World, "Space"), (self.wind > 0.0, "Wind"), (self.turbulence > 0.0, "Turbulence")]
+        let needs = [
+            (self.space == ParticleSpace::World, "Space"),
+            (self.wind > 0.0, "Wind"),
+            (self.turbulence > 0.0, "Turbulence"),
+            (self.collision != ParticleCollision::Off, "Collision"),
+            (self.forces > 0.0, "Forces"),
+        ];
+        needs
             .into_iter()
             .filter(|(needs, _)| *needs)
             .map(|(_, name)| name)
@@ -268,7 +341,7 @@ impl ParticleSystem {
     }
 
     pub fn is_simulated(&self) -> bool {
-        self.space == ParticleSpace::World || self.wind > 0.0 || self.turbulence > 0.0
+        !self.simulated_for().is_empty()
     }
 
     /// How many particles a simulated system has room for: its stream as
@@ -424,10 +497,29 @@ fn sea_spray(amount: f32) -> ParticleSystem {
 /// spray over Streams' rapids, and what they draw into and read.
 #[derive(Clone)]
 pub struct Draw {
+    /// The simulated particles' step, recorded before they are drawn: only
+    /// in the main view.
+    pub step: Option<Step>,
     pub counts: Vec<u32>,
     pub spray: Option<u32>,
     pub rapids: Vec<RapidsSpray>,
     pub targets: Targets,
+}
+
+/// A frame's step of the simulated particles, as the main view records it
+/// (see `particle_sim`): how many workgroups step them, the counters they
+/// add to and where those are copied out, and where the pass finds its
+/// systems, the chunks it steps, what it reads of the frame and its counters.
+#[derive(Clone, Copy)]
+pub struct Step {
+    pub groups: u32,
+    pub counters: vk::Buffer,
+    pub counted: vk::Buffer,
+    pub counted_id: BufferId,
+    pub systems: u64,
+    pub chunks: u64,
+    pub frame: u64,
+    pub counters_address: u64,
 }
 
 /// What the particles' pass draws into and reads.
@@ -457,9 +549,13 @@ pub(crate) fn record(
     draw: Draw,
     fog_volume: Option<ImageId>,
 ) {
-    let Draw { counts, spray, rapids, targets } = draw;
+    let Draw { step, counts, spray, rapids, targets } = draw;
     let Targets { hdr, depth, sampled, clusters, pool, extent } = targets;
     let depth_texture = fg.texture(depth);
+    if let (Some(step), Some(pool)) = (step, pool) {
+        let stepping = (pipelines.particle_sim, Push { textures: [depth_texture.0, 0, 0, 0], ..push });
+        record_step(fg, stepping, step, (pool, depth));
+    }
     let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
     images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
     let volume = fog_volume.map_or(crate::gpu::NO_TEXTURE, |volume| fg.texture(volume).0);
@@ -493,6 +589,42 @@ pub(crate) fn record(
     });
 }
 
+/// Records the simulated particles' step: every chunk of the pool with
+/// particles out, stepped by `shaders/particle_sim.slang` against the view's
+/// `depth`, and how many are alive counted and copied out for the CPU.
+fn record_step(
+    fg: &mut FrameGraph<'_>,
+    (pipeline, push): (vk::Pipeline, Push),
+    step: Step,
+    (pool, depth): (BufferId, ImageId),
+) {
+    let written = [(pool, BufferAccess::ComputeWrite), (step.counted_id, BufferAccess::TransferWrite)];
+    fg.add_pass("Particle simulation", &[(depth, ImageAccess::Sampled)], &written, move |ctx| {
+        use vk::{AccessFlags2 as A, PipelineStageFlags2 as S};
+        // The counters start from nothing, are added to as the particles are stepped, and are copied out: each
+        // after the one before.
+        let after = |from: (S, A), to: (S, A)| {
+            let barrier = [vk::MemoryBarrier2::default()
+                .src_stage_mask(from.0)
+                .src_access_mask(from.1)
+                .dst_stage_mask(to.0)
+                .dst_access_mask(to.1)];
+            let dependency = vk::DependencyInfo::default().memory_barriers(&barrier);
+            unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &dependency) };
+        };
+        let stepping = (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE);
+        let size = crate::particle_sim::COUNTERS;
+        unsafe { ctx.gpu.device.cmd_fill_buffer(ctx.cmd, step.counters, 0, size, 0) };
+        after((S::ALL_TRANSFER, A::TRANSFER_WRITE), stepping);
+        bind(ctx, pipeline, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, step.groups, 1, 1) };
+        after(stepping, (S::ALL_TRANSFER, A::TRANSFER_READ));
+        let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size };
+        unsafe { ctx.gpu.device.cmd_copy_buffer(ctx.cmd, step.counters, step.counted, &[region]) };
+    });
+    fg.sync_buffer(step.counted_id, BufferAccess::HostRead);
+}
+
 /// The flags a system's GPU form carries, as `PARTICLES_*` in
 /// `shaders/particles.slang`.
 const LOOPING: u32 = 1;
@@ -500,6 +632,7 @@ const ADDITIVE: u32 = 2;
 const LIT: u32 = 4;
 const SIMULATED: u32 = 8;
 const WORLD: u32 = 16;
+const COLLIDE: u32 = 64;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -518,6 +651,7 @@ pub(crate) fn gpu(
         (system.lit, LIT),
         (system.is_simulated(), SIMULATED),
         (system.space == ParticleSpace::World, WORLD),
+        (system.collision == ParticleCollision::Depth, COLLIDE),
     ];
     let flags = flags
         .into_iter()
@@ -563,6 +697,10 @@ pub(crate) fn gpu(
         ],
         to_local: crate::gpu::cols(model.inverse()),
         turbulence_size: system.turbulence_size.max(0.01),
+        bounce: system.bounce.clamp(0.0, 1.0),
+        friction: system.friction.clamp(0.0, 1.0),
+        life_lost: system.life_lost.clamp(0.0, 1.0),
+        forces: system.forces.max(0.0),
         ..GpuParticleSystem::default()
     }
 }

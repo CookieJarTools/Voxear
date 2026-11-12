@@ -888,11 +888,13 @@ pub struct GpuBuffers {
     /// Simulated particles (see `particle_sim`): the pool of them, and for
     /// the pass that steps them, the chunks it steps, each its system and
     /// its first particle among the system's; what it reads of the frame;
-    /// and its counters.
+    /// its counters; and the systems as it steps them, which are not in
+    /// the order a view draws them in.
     pub particles: u64,
     pub particle_chunks: u64,
     pub particle_sim: u64,
     pub particle_counters: u64,
+    pub particle_steps: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1015,13 +1017,20 @@ pub struct GpuParticleSystem {
     /// How many it has sent out in all, which numbers its particles.
     pub emitted: u32,
     pub stream_ages: [f32; 2],
-    pub _pad: [f32; 2],
+    /// Meeting what stands in its way: how much of its speed into it a
+    /// particle keeps, away from it, and how much of its speed along it
+    /// it loses, both from 0 to 1.
+    pub bounce: f32,
+    pub friction: f32,
     /// How far its Obj has moved since last frame, so a stream's particles
     /// set out along its way; and how far the world's origin moved.
     pub moved: [f32; 3],
-    pub _pad_moved: f32,
+    /// How much of the life it has left a particle loses each time it
+    /// meets something: all of it at 1.
+    pub life_lost: f32,
     pub shift: [f32; 3],
-    pub _pad_shift: f32,
+    /// How much Force Fields, blasts and what passes by move its particles.
+    pub forces: f32,
 }
 
 /// A simulated particle, as `shaders/particle_sim.slang` keeps it from
@@ -1040,17 +1049,19 @@ pub struct GpuParticle {
 
 /// What a frame's simulation of particles reads besides its systems
 /// (`ParticleSim` in `shaders/common.slang`): the time and how long since
-/// last frame, how many chunks of the pool it steps, the wind, and where
-/// the world's middle is, as `GpuFrame::origin`.
+/// last frame, how many chunks of the pool it steps, the wind, where the
+/// world's middle is, as `GpuFrame::origin`, and the forces on particles.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuParticleSim {
     pub time: f32,
     pub delta_time: f32,
     pub chunks: u32,
-    pub _pad: u32,
+    /// How many of `forces` there are: the frame's blasts and Force Fields.
+    pub force_count: u32,
     pub wind: GpuWind,
     pub origin: [f32; 4],
+    pub forces: [crate::forces::GpuForce; crate::forces::MAX_FORCES],
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -1234,7 +1245,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 63 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 64 * 8);
         // Its corner and block size, three addresses, then four words.
         assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
@@ -1242,7 +1253,7 @@ mod tests {
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 5);
         assert_eq!(size_of::<GpuParticle>(), 36);
-        assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16);
+        assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16 + 48 * crate::forces::MAX_FORCES);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);

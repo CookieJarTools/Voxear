@@ -132,6 +132,8 @@ pub struct Frame {
     /// listed, drawn after glass; and the pool the simulated ones' are in.
     pub particles: Vec<u32>,
     pub particle_pool: Option<BufferId>,
+    /// The simulated particles' step, in the view that records it.
+    pub particle_step: Option<crate::particles::Step>,
     /// How many drops the sea's spray has, listed after the Particle Systems.
     pub spray: Option<u32>,
     /// The spray over Streams' rapids (`particles::gather`).
@@ -643,7 +645,8 @@ pub fn record(
         crate::smoke::Draw { count, mists, noise, depth, sampled, clusters: draws.clusters }
     });
     let mut particles = None;
-    if !frame.particles.is_empty() || frame.spray.is_some() || !frame.rapids.is_empty() {
+    if !frame.particles.is_empty() || frame.spray.is_some() || !frame.rapids.is_empty() || frame.particle_step.is_some()
+    {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
@@ -654,7 +657,8 @@ pub fn record(
         let pool = frame.particle_pool;
         let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, pool, extent: frame.extent };
         let (counts, rapids) = (frame.particles.clone(), frame.rapids.clone());
-        particles = Some(crate::particles::Draw { counts, spray, rapids, targets: particle_targets });
+        let step = frame.particle_step;
+        particles = Some(crate::particles::Draw { step, counts, spray, rapids, targets: particle_targets });
     }
 
     if frame.edges {

@@ -63,7 +63,7 @@ use voxear_terrain::generate::{CaveExit, CaveShape};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    DryArea, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
+    DryArea, ForceField, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, OffComponents, Parent, SceneComponents, ScenePersistence, Switch,
@@ -300,6 +300,9 @@ pub struct ObjData {
     /// A Particle System, sending out particles from the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub particles: Option<ParticleSystem>,
+    /// A Force Field, moving the particles round the Obj.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_field: Option<ForceField>,
     /// Smoke filling the space round the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smoke: Option<voxear_render::Smoke>,
@@ -424,6 +427,7 @@ impl ObjData {
             collider: None,
             wind_zone: None,
             particles: None,
+            force_field: None,
             smoke: None,
             mist: None,
             net: None,
@@ -1560,6 +1564,9 @@ fn capture_instance(
     if root.particles.is_some() && root.particles != prefab_root.particles {
         instance.particles = root.particles;
     }
+    if root.force_field.is_some() && root.force_field != prefab_root.force_field {
+        instance.force_field = root.force_field;
+    }
     if root.smoke.is_some() && root.smoke != prefab_root.smoke {
         instance.smoke = root.smoke;
     }
@@ -1763,6 +1770,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(particles) = actual.particles.filter(|p| Some(*p) != expected.particles) {
         put("particles", whole(&particles, &ParticleSystem::default())?);
+    }
+    if let Some(field) = actual.force_field.filter(|f| Some(*f) != expected.force_field) {
+        put("force_field", whole(&field, &ForceField::default())?);
     }
     if let Some(smoke) = actual.smoke.filter(|s| Some(*s) != expected.smoke) {
         put("smoke", whole(&smoke, &voxear_render::Smoke::default())?);
@@ -2070,6 +2080,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.particles = world.get::<ParticleSystem>(entity).copied();
+    obj.force_field = world.get::<ForceField>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.net = world.get::<crate::net::NetObject>(entity).copied();
@@ -2532,6 +2543,25 @@ mod tests {
         assert_eq!((system.rate, system.blend, system.shape), (40.0, ParticleBlend::Additive, EmitShape::Sphere));
         assert_eq!(system.lifetime, ParticleSystem::default().lifetime, "the rest as a new one has");
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().particles, Some(system));
+    }
+
+    #[test]
+    fn a_force_field_and_a_colliding_particle_system_read_and_write_back() {
+        use voxear_render::{ForceField, ForceKind, ParticleCollision};
+        let text = "id = 1\nname = \"Whirl\"\n[force_field]\nkind = \"vortex\"\nradius = 3.5";
+        let obj: ObjData = toml::from_str(text).unwrap();
+        let field = obj.force_field.expect("the field is read");
+        assert_eq!(field, ForceField { kind: ForceKind::Vortex, radius: 3.5, ..ForceField::default() });
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().force_field, Some(field));
+        let sparks: ObjData = toml::from_str("id = 2\n[particles]\ncollision = \"depth\"\nforces = 0.5").unwrap();
+        let system = sparks.particles.expect("the system is read");
+        assert_eq!((system.collision, system.forces, system.bounce), (ParticleCollision::Depth, 0.5, 0.4));
+        let written = toml::to_string(&sparks).unwrap();
+        assert!(written.contains("collision") && !written.contains("bounce"), "only what is not as new: {written}");
+        // One written before there were any of these reads as it did, and writes none of them.
+        let plain: ObjData = toml::from_str("id = 3\n[particles]\nrate = 5.0").unwrap();
+        let written = toml::to_string(&plain).unwrap();
+        assert!(!written.contains("collision") && !written.contains("forces") && !written.contains("wind"), "{written}");
     }
 
     #[test]

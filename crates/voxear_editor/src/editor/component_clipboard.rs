@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, DryArea, FoliageInteraction, Light, MeshRenderer, Ocean, ParticleSystem, Pool, PostVolume, Seasons, Stream, WindZone};
+use voxear_render::{Camera, DryArea, FoliageInteraction, ForceField, Light, MeshRenderer, Ocean, ParticleSystem, Pool, PostVolume, Seasons, Stream, WindZone};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -36,6 +36,7 @@ pub(super) enum Copied {
     PostVolume(Box<PostVolume>),
     WindZone(WindZone),
     ParticleSystem(Box<ParticleSystem>),
+    ForceField(ForceField),
     Smoke(voxear_render::Smoke),
     Mist(voxear_render::Mist),
     UiPanel(voxear_render::UiPanel),
@@ -87,6 +88,7 @@ impl Copied {
             Part::PostVolume => Self::PostVolume(Box::new(world.get::<PostVolume>(entity)?.clone())),
             Part::WindZone => Self::WindZone(*world.get::<WindZone>(entity)?),
             Part::ParticleSystem => Self::ParticleSystem(Box::new(*world.get::<ParticleSystem>(entity)?)),
+            Part::ForceField => Self::ForceField(*world.get::<ForceField>(entity)?),
             Part::Smoke => Self::Smoke(*world.get::<voxear_render::Smoke>(entity)?),
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
             Part::UiPanel => Self::UiPanel(*world.get::<voxear_render::UiPanel>(entity)?),
@@ -134,6 +136,7 @@ impl Copied {
             Self::PostVolume(volume) => drop(world.insert(entity, (**volume).clone())),
             Self::WindZone(wind) => drop(world.insert(entity, *wind)),
             Self::ParticleSystem(system) => drop(world.insert(entity, **system)),
+            Self::ForceField(field) => drop(world.insert(entity, *field)),
             Self::Smoke(smoke) => drop(world.insert(entity, *smoke)),
             Self::Mist(mist) => drop(world.insert(entity, *mist)),
             Self::UiPanel(panel) => drop(world.insert(entity, *panel)),

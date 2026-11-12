@@ -975,12 +975,16 @@ struct ParticleSystem
     float burstAge;
     uint emitted;
     float2 streamAges;
-    float2 pad;
+    // Meeting what stands in its way: how much of its speed into it a particle keeps, away from it; how much of its
+    // speed along it it loses; and, after `moved`, how much of the life it has left it loses.
+    float bounce;
+    float friction;
     // How far its Obj has moved since last frame, and how far the world's origin moved.
     float3 moved;
-    float padMoved;
+    float lifeLost;
     float3 shift;
-    float padShift;
+    // How much Force Fields, blasts and what passes by move its particles.
+    float forces;
 };
 
 // A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in
@@ -998,17 +1002,37 @@ struct Particle
 // How many particles a chunk of the pool holds: the simulation steps whole chunks (particle_sim::CHUNK).
 static const uint PARTICLE_CHUNK = 256;
 
+// A force on simulated particles (GpuForce in src/forces.rs): a Force Field or a blast, where it is and how far it
+// reaches, the axis it swirls round or blows along, how hard, in metres a second each second at its middle, and
+// which kind.
+static const uint FORCE_ATTRACT = 0;
+static const uint FORCE_REPEL = 1;
+static const uint FORCE_VORTEX = 2;
+static const uint FORCE_BLOW = 3;
+static const uint MAX_FORCES = 16;
+
+struct Force
+{
+    float3 position;
+    float radius;
+    float3 axis;
+    float strength;
+    uint kind;
+    uint3 pad;
+};
+
 // What a frame's simulation of particles reads besides its systems (GpuParticleSim in src/gpu.rs): the time and how
-// long since last frame, how many chunks of the pool it steps, the wind, and where the world's middle is from the
-// level's, as Frame::origin.
+// long since last frame, how many chunks of the pool it steps, how many forces there are, the wind, where the
+// world's middle is from the level's, as Frame::origin, and the forces.
 struct ParticleSim
 {
     float time;
     float deltaTime;
     uint chunks;
-    uint pad;
+    uint forceCount;
     Wind wind;
     float4 origin;
+    Force forces[MAX_FORCES];
 };
 
 // A terrain as its patches are drawn (src/terrain.rs, shaders/terrain.slang).
@@ -1254,6 +1278,8 @@ struct Buffers
     uint2* particleChunks;
     ParticleSim* particleSim;
     uint* particleCounters;
+    // The systems as the pass that steps them reads them, in its own order.
+    ParticleSystem* particleSteps;
 };
 
 struct Push

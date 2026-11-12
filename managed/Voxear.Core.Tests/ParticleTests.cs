@@ -28,5 +28,23 @@ internal static class ParticleTests
 		smoke.TurbulenceSize = 2f;
 		Check.True(!smoke.IsSimulated && smoke.Space == ParticleSpace.Local, "nothing to simulate");
 		Check.Near(0f, smoke.Wind + smoke.Turbulence + smoke.TurbulenceSize);
+		smoke.Collision = ParticleCollision.Depth;
+		smoke.Forces = 1f;
+		Check.True(smoke.Collision == ParticleCollision.Off, "nothing to collide");
+		Check.Near(0f, smoke.Bounce + smoke.Friction + smoke.LifeLost + smoke.Forces);
+	}
+
+	[Test]
+	private static void AnObjWithoutAForceFieldReadsAsNoneAndABlastWithoutTheEngineDoesNothing()
+	{
+		var field = Obj.None.ForceField;
+		Check.True(!field.IsValid && field == ForceField.None, "no Force Field on None");
+		field.Kind = ForceKind.Vortex;
+		field.Strength = 5f;
+		field.Radius = 3f;
+		Check.True(field.Kind == ForceKind.Attract, "nothing to change");
+		Check.Near(0f, field.Strength + field.Radius);
+		Check.True(Obj.None.AddForceField() == ForceField.None, "nothing to add it to");
+		Particles.Push(Vector3.Zero, 4f, 10f);
 	}
 }

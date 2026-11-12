@@ -8,7 +8,7 @@
 //! change is saved as it is made, and every world of blocks listing the
 //! block takes it up at once (see `editor::blocks`).
 
-use voxear_terrain::blocks::block::{BlockDef, BlockDrop, Liquid};
+use voxear_terrain::blocks::block::{BlockDef, BlockDrop, BlockHeat, Liquid, MAX_HEAT_REACH};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -119,6 +119,10 @@ pub struct BlockFields {
     hardness: NodeId,
     unbreakable: NodeId,
     tier: NodeId,
+    /// Whether it is hot or cold, and how much and how far when it is.
+    heat: NodeId,
+    celsius: Option<NodeId>,
+    reach: Option<NodeId>,
     drops: Collection,
     drop_rows: Vec<DropRow>,
     make_item: Option<NodeId>,
@@ -168,6 +172,12 @@ impl BlockFields {
         field(ui, rows, BlockRef::Tool, "Tool");
         let tier = number_field(ui, rows, "Tier", block.tier as f32);
 
+        let rows = part(ui, root, "Heat", "sun");
+        let row = prop(ui, rows, "Hot or Cold");
+        let heat = ui.toggle(row, "", block.heat.is_some());
+        let celsius = block.heat.map(|heat| number_field(ui, rows, "Temperature", heat.celsius));
+        let reach = block.heat.map(|heat| number_field(ui, rows, "Reach", heat.reach));
+
         let rows = part(ui, root, "Drops", "box");
         let drops = collection::collection(ui, rows, block.drops.len(), true, Some("Add Drop"));
         ui.set_reorderable(drops.items, false);
@@ -200,7 +210,7 @@ impl BlockFields {
         field(ui, rows, BlockRef::Data, "Data");
 
         let fields =
-            Self { block, color, swatch, liquid, hardness, unbreakable, tier, drops, drop_rows, make_item, slots };
+            Self { block, color, swatch, liquid, hardness, unbreakable, tier, heat, celsius, reach, drops, drop_rows, make_item, slots };
         fields.show_swatch(ui);
         fields
     }
@@ -236,8 +246,20 @@ impl BlockFields {
                 return Some(BlockChange::Shape);
             }
         }
+        if ui.changed(self.heat) {
+            self.block.heat = ui.is_checked(self.heat).then(BlockHeat::default);
+            return Some(BlockChange::Shape);
+        }
         let mut typed = false;
         let block = &mut self.block;
+        if let Some(heat) = block.heat.as_mut() {
+            if let Some(celsius) = self.celsius.and_then(|field| changed_number(ui, field)) {
+                (heat.celsius, typed) = (celsius.clamp(-273.0, 5000.0), true);
+            }
+            if let Some(reach) = self.reach.and_then(|field| changed_number(ui, field)) {
+                (heat.reach, typed) = (reach.clamp(0.0, MAX_HEAT_REACH), true);
+            }
+        }
         if self.color.iter().any(|&field| ui.changed(field)) {
             for (at, field) in self.color.iter().enumerate() {
                 block.color[at] = ui.text(*field).trim().parse::<f32>().unwrap_or(block.color[at]).clamp(0.0, 1.0);

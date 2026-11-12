@@ -403,6 +403,36 @@ public readonly struct Obj : IEquatable<Obj>
 		return new MapMarker(this);
 	}
 
+	/// <summary>The Obj's Heat Body, which takes the temperature of where it is. Not valid when it has none.</summary>
+	public HeatBody HeatBody => new HeatBody(this);
+
+	/// <summary>Gives the Obj a Heat Body, unless it has one, and returns it.</summary>
+	public HeatBody AddHeatBody()
+	{
+		NativeComponent.Set(NativeComponent.HeatBody, this, NativeComponent.Add, Vector4.Zero);
+		return new HeatBody(this);
+	}
+
+	/// <summary>The Obj's Heat Source, which warms or cools what is near it. Not valid when it has none.</summary>
+	public HeatSource HeatSource => new HeatSource(this);
+
+	/// <summary>Gives the Obj a Heat Source, unless it has one, and returns it.</summary>
+	public HeatSource AddHeatSource()
+	{
+		NativeComponent.Set(NativeComponent.HeatSource, this, NativeComponent.Add, Vector4.Zero);
+		return new HeatSource(this);
+	}
+
+	/// <summary>The Obj's Heat Zone, an area hotter or colder than round it. Not valid when it has none.</summary>
+	public HeatZone HeatZone => new HeatZone(this);
+
+	/// <summary>Gives the Obj a Heat Zone, unless it has one, and returns it.</summary>
+	public HeatZone AddHeatZone()
+	{
+		NativeComponent.Set(NativeComponent.HeatZone, this, NativeComponent.Add, Vector4.Zero);
+		return new HeatZone(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

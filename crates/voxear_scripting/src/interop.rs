@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 80;
+pub(crate) const API_VERSION: u32 = 81;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -531,6 +531,16 @@ pub(crate) struct NativeApi {
     /// over `seconds` to a kind, or with `amounts`, the first seven of those, to them.
     pub weather_state: unsafe extern "C" fn(state: *mut [f32; 10], turning: *mut i32) -> i32,
     pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 7], seconds: f32),
+    /// `Heat.Sample` and `Heat.At`: the temperature at a point, in °C, and
+    /// what makes it so into `out`: the climate's, what the time of day
+    /// adds, how sheltered it is, what shelter adds, what zones add, what
+    /// hot and cold things near add, and how wet it is (see `heat`).
+    pub heat_sample: unsafe extern "C" fn(at: *const [f32; 3], out: *mut [f32; 8]) -> f32,
+    /// `Heat.AddSource`: heat at a point, so hot and so wide, for so long.
+    pub heat_add: unsafe extern "C" fn(at: *const [f32; 3], celsius: f32, radius: f32, seconds: f32) -> i32,
+    /// `Clock`: the level's time of day (0), day length in minutes (1) and
+    /// whether it turns the sun (2), set first when `set` is not 0.
+    pub clock_value: unsafe extern "C" fn(what: i32, set: i32, value: f32) -> f32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -562,6 +572,12 @@ pub enum ComponentKind {
     Map = 20,
     /// An Obj's mark on every map.
     MapMarker = 21,
+    /// What takes the temperature of where it is, and changes with it.
+    HeatBody = 22,
+    /// Something hot or cold, warming or cooling what is near it.
+    HeatSource = 23,
+    /// An area hotter or colder than round it.
+    HeatZone = 24,
 }
 
 /// The most kinds `kind_value` answers.
@@ -1146,6 +1162,11 @@ pub(crate) struct ManagedApi {
     /// Tells scripts of particles' strikes (`OnParticleHit` on the
     /// behaviours of each system's Obj, and `Particles.Hit`).
     pub particle_hits: Option<unsafe extern "C" fn(hits: *const crate::physics::ParticleHitData, count: i32)>,
+    /// Tells scripts of Heat Bodies' changes and characters' feelings
+    /// (`HeatBody.Changed` and `HeatBody.FeelsChanged`), with each change's
+    /// name one to a line.
+    pub heat_events:
+        Option<unsafe extern "C" fn(events: *const crate::heat::HeatEventData, count: i32, text: *const u8, len: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -2097,6 +2118,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         biome_at: crate::services::biome_at,
         weather_state,
         weather_set,
+        heat_sample: crate::heat::heat_sample,
+        heat_add: crate::heat::heat_add,
+        clock_value: crate::heat::clock_value,
     }
 }
 

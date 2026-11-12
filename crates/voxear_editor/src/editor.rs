@@ -20,6 +20,7 @@ mod world_gens;
 mod generators;
 mod models;
 mod grown_plants;
+mod heat_view;
 mod river_water;
 mod hierarchies;
 mod importing;
@@ -313,6 +314,8 @@ pub struct Editor {
     hovered_obj: Option<Entity>,
     /// Behaviours' gizmo lines, each with its Obj, for a click to select.
     gizmo_lines: scene_gizmos::GizmoLines,
+    /// What the Heat shading has looked at.
+    heat_view: heat_view::HeatView,
     hovered_handle: Option<Handle>,
     pressed_handle: Option<[f32; 2]>,
     released_handle: bool,
@@ -656,6 +659,7 @@ impl Editor {
             script_handles: ScriptHandles::default(),
             hovered_obj: None,
             gizmo_lines: Default::default(),
+            heat_view: Default::default(),
             hovered_handle: None,
             pressed_handle: None,
             released_handle: false,
@@ -1079,6 +1083,7 @@ impl Editor {
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
         self.draw_scene_gizmos();
+        self.draw_heat_view();
 
         if let Some((viewport, camera)) = view {
             // Set each frame, a copy: the Gizmos button changes it as much as the camera does.

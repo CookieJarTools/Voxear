@@ -86,7 +86,7 @@ pub const SETTINGS: [SettingInfo; 23] = [
         key: "scene_shading",
         title: "Shading",
         group: "Scene view",
-        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe", "Lit Wireframe"]),
+        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe", "Lit Wireframe", "Heat"]),
     },
     SettingInfo { key: "start_paused", title: "Start paused", group: "Play mode", kind: SettingKind::Toggle },
     SettingInfo { key: "save_before_play", title: "Save before play", group: "Play mode", kind: SettingKind::Toggle },
@@ -376,7 +376,7 @@ impl Settings {
             ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
             ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
             ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
-            ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(3),
+            ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(4),
             ("prefab_parts", SettingValue::Toggle(on)) => self.prefab_parts = on,
             ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
@@ -467,7 +467,7 @@ pub struct KeptSceneView {
     pub position: [f32; 3],
     /// As a quaternion's x, y, z and w.
     pub rotation: [f32; 4],
-    /// Lit, Unlit, Wireframe or Lit Wireframe, by index.
+    /// Lit, Unlit, Wireframe, Lit Wireframe or Heat, by index.
     pub shading: usize,
     pub show_gizmos: bool,
 }

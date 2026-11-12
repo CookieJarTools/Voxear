@@ -107,6 +107,7 @@ mod block_panel;
 mod block_props;
 mod block_tools;
 mod plants_panel;
+mod heat_props;
 mod plants_props;
 mod plants_tools;
 mod terrain_panel;

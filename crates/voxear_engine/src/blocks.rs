@@ -34,7 +34,7 @@ use voxear_scene::Destroying;
 use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
-        block::{Liquid, MISSING},
+        block::{BlockHeat, Liquid, MISSING},
         chunk::BlockId,
         edits::{BlockEdits, blocks_file},
         file::{BlockFile, BlockKind, MAX_BLOCKS, MAX_LOOKS},
@@ -100,6 +100,9 @@ pub struct Resolved {
     /// The `.block` each entry is, by its place in the list; none for a kind
     /// of the world's own, a place left empty, or a block that is not there.
     guids: Vec<Option<AssetGuid>>,
+    /// How hot or cold each entry's block is, by its place in the list,
+    /// where it says (see `crate::heat`).
+    heats: Vec<Option<BlockHeat>>,
 }
 
 impl std::ops::Deref for Resolved {
@@ -116,6 +119,21 @@ impl Resolved {
         usize::from(block).checked_sub(1).and_then(|at| self.guids.get(at).copied()).flatten()
     }
 
+    /// How hot or cold the block numbered `block` is, where it says.
+    pub fn heat(&self, block: BlockId) -> Option<BlockHeat> {
+        usize::from(block).checked_sub(1).and_then(|at| self.heats.get(at).copied()).flatten()
+    }
+
+    /// Whether any block it numbers is hot or cold.
+    pub fn has_heat(&self) -> bool {
+        self.heats.iter().any(Option::is_some)
+    }
+
+    /// How far the farthest reaching of its hot and cold blocks reaches.
+    pub fn heat_reach(&self) -> f32 {
+        self.heats.iter().flatten().map(|heat| heat.reach).fold(0.0, f32::max)
+    }
+
     /// The number of the `.block` at `guid`, where it is listed.
     pub fn number_of(&self, guid: AssetGuid) -> Option<BlockId> {
         let at = self.guids.iter().position(|listed| *listed == Some(guid))?;
@@ -129,7 +147,8 @@ impl Resolved {
 pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
     let mut file = file.clone();
     let mut guids = Vec::with_capacity(file.blocks.len());
-    for kind in &mut file.blocks {
+    let mut heats = vec![None; file.blocks.len()];
+    for (at, kind) in file.blocks.iter_mut().enumerate() {
         let Some(reference) = kind.block.clone().filter(|_| kind.is_live()) else {
             guids.push(None);
             continue;
@@ -139,6 +158,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
                 block.fill(kind);
                 kind.name = content.block_name(guid).unwrap_or_default();
                 guids.push(Some(guid));
+                heats[at] = block.heat;
             }
             None => {
                 (kind.material, kind.top, kind.bottom, kind.water) = (None, None, None, false);
@@ -156,7 +176,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
         };
         kind.cutout = cut_out(&kind.material) || cut_out(&kind.top) || cut_out(&kind.bottom);
     }
-    Resolved { file, guids }
+    Resolved { file, guids, heats }
 }
 
 /// `file` with the block at `guid` numbered after those it has, and that

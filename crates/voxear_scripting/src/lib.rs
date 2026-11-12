@@ -11,6 +11,7 @@ mod display;
 mod drawers;
 mod ecs;
 mod gizmos;
+mod heat;
 mod hostfxr;
 mod input;
 mod inspector;
@@ -43,6 +44,7 @@ pub use interop::{
     PoseOps, set_pose_ops,
     WeatherRequest, WeatherState,
 };
+pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
 pub use physics::{ParticleHitData, PhysicsEventData};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};

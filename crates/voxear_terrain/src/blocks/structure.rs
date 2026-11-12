@@ -1521,15 +1521,88 @@ pub fn build(
     structures: &WorldStructures,
     world: &WorldGen,
     biomes: Option<&Biomes>,
-    (size, position, bottom): (f32, [f32; 2], i32),
+    at: (f32, [f32; 2], i32),
     [cx, cz]: [i32; 2],
     under: BlockId,
 ) {
+    let mut set = |block_at: [i32; 3], block: BlockId| put_block(chunks, [cx, cz], at.2, block_at, block);
+    build_over(&mut set, structures, world, biomes, at, ([cx, cz], [cx + 1, cz + 1]), under);
+    chunks.retain(|(_, chunk)| !chunk.is_air());
+    chunks.sort_by_key(|(key, _)| key[1]);
+}
+
+/// As [`build`], over every chunk column from `first` up to `end` at once,
+/// each block built handed to `set` with its place in the world's blocks,
+/// in the order it is built: air where the ground is cleared, a block set
+/// twice as it was set last. What a map of the ground is made from, which
+/// has no chunks to build into.
+#[allow(clippy::too_many_arguments)]
+pub fn build_over(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&Biomes>,
+    at: (f32, [f32; 2], i32),
+    area: ([i32; 2], [i32; 2]),
+    under: BlockId,
+) {
+    build_looking(set, structures, world, biomes, at, area, under, &looks(structures, at.0));
+}
+
+/// How far past the columns being built each structure's sites are looked
+/// for, in metres, for what is built there to be what any other columns
+/// would build: as far as it reaches itself, and as far as any site of a
+/// structure listed after it is looked for and then as near as a site of
+/// that one may stand to one of its own before it is kept from standing.
+/// So a wood's trees, which nothing listed after them keeps clear of, are
+/// looked for a crown's width off, and not as far as a town reaches.
+fn looks(structures: &WorldStructures, size: f32) -> Vec<f32> {
+    let list = &structures.list;
+    let apart = |structure: &PlacedStructure| structure.placement.apart.max(0.0) / size;
+    // How near a site of `later` may stand to a kept site of `earlier` and be left out for it (see
+    // `Taken::meets`): by their footprints, by all the later one reaches from an earlier town's buildings and
+    // streets, which lie within the town's own reach, and by the distance either keeps.
+    let between = |earlier: &PlacedStructure, later: &PlacedStructure| {
+        let round = earlier.footprint() + later.footprint();
+        let town = match &earlier.blocks {
+            StructureBlocks::Town(_) => (earlier.reach() + later.reach().max(later.footprint()) + 2.0) * 1.5,
+            _ => 0.0,
+        };
+        round.max(town).max(apart(earlier)).max(apart(later)) + 2.0
+    };
+    let mut far = vec![0.0f32; list.len()];
+    for at in (0..list.len()).rev() {
+        let own = list[at].reach() + 2.0;
+        let for_later = (at + 1..list.len()).map(|next| far[next] + between(&list[at], &list[next]));
+        far[at] = for_later.fold(own, f32::max);
+    }
+    far.into_iter().map(|blocks| blocks * size).collect()
+}
+
+/// [`build_over`], each structure's sites looked for `looks` metres past
+/// the columns, by its place in the list.
+#[allow(clippy::too_many_arguments)]
+fn build_looking(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&Biomes>,
+    (size, position, bottom): (f32, [f32; 2], i32),
+    (first, end): ([i32; 2], [i32; 2]),
+    under: BlockId,
+    looks: &[f32],
+) {
     let side = CHUNK as i32;
     let ground = Ground { world, size, position, biomes };
-    // The column's own blocks, in metres in the generator's world.
-    let low = [position[0] + (cx * side) as f32 * size, position[1] + (cz * side) as f32 * size];
-    let high = [low[0] + side as f32 * size, low[1] + side as f32 * size];
+    // Nothing is built below the world's lowest block.
+    let mut set = |at: [i32; 3], block: BlockId| {
+        if at[1] >= bottom {
+            set(at, block);
+        }
+    };
+    // The columns' own blocks, in metres in the generator's world.
+    let low = [position[0] + (first[0] * side) as f32 * size, position[1] + (first[1] * side) as f32 * size];
+    let high = [position[0] + (end[0] * side) as f32 * size, position[1] + (end[1] * side) as f32 * size];
     // Every site kept, with its place in blocks and the blocks it takes up along the ground, to leave out a later
     // structure's where an earlier one's stands.
     let mut kept: Vec<Taken> = Vec::new();
@@ -1547,10 +1620,10 @@ pub fn build(
         });
         structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b))
     };
-    let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
-    let farthest = structures.list.iter().map(PlacedStructure::reach).fold(0.0f32, f32::max);
-    let most_apart = structures.list.iter().map(|structure| structure.placement.apart).fold(0.0f32, f32::max);
-    let look = (farthest * 2.0 + 64.0) * size + most_apart.max(0.0);
+    let within = |x: i32, z: i32| {
+        let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));
+        cx >= first[0] && cx < end[0] && cz >= first[1] && cz < end[1]
+    };
     for (which, structure) in structures.list.iter().enumerate() {
         let (reach, footprint) = (structure.reach(), structure.footprint());
         let apart = structure.placement.apart.max(0.0) / size;
@@ -1568,7 +1641,7 @@ pub fn build(
             }
             let sea_top = (world.sea_level() / size - 0.5).ceil() as i32 - 1;
             for &[x, z] in cells.iter().filter(|&&[x, z]| within(x, z)) {
-                let mut put = |y: i32, block: BlockId| put_block(chunks, [cx, cz], bottom, [x, y, z], block);
+                let mut put = |y: i32, block: BlockId| set([x, y, z], block);
                 let top = ground.top(x, z);
                 if ground.under_sea(x, z) && town.bridge != AIR {
                     // A deck a block over the water, posts down to the bed every few blocks.
@@ -1591,10 +1664,10 @@ pub fn build(
             }
             kept.push(Taken { which, site: None, round: None, buildings: Vec::new(), streets: cells });
         }
-        // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
-        // Sites are looked for as far out for every structure, so a later one finds every earlier site that may
+        // Sites are looked for as far out as any that is built here, or that may stand in the way of one of a
+        // later structure's that is, can lie (see `looks`): so a later one finds every earlier site that may
         // stand in its way or within its distance, from any chunk alike.
-        for site in structure.placement.tries_near(world.seed(), low, high, look) {
+        for site in structure.placement.tries_near(world.seed(), low, high, looks[which]) {
             let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
             if !fits(structure, &site) {
                 continue;
@@ -1631,18 +1704,18 @@ pub fn build(
                 buildings,
                 streets,
             });
-            // Only its blocks within this column are built here.
-            let (lowest, highest) = (cx * side - reach.ceil() as i32 - 1, (cx + 1) * side + reach.ceil() as i32 + 1);
-            if block[0] < lowest
-                || block[0] > highest
-                || block[1] < cz * side - reach.ceil() as i32 - 1
-                || block[1] > (cz + 1) * side + reach.ceil() as i32 + 1
+            // Only its blocks within these columns are built here.
+            let past = reach.ceil() as i32 + 1;
+            if block[0] < first[0] * side - past
+                || block[0] > end[0] * side + past
+                || block[1] < first[1] * side - past
+                || block[1] > end[1] * side + past
             {
                 continue;
             }
             let mut put = |x: i32, y: i32, z: i32, block: BlockId| {
                 if within(x, z) {
-                    put_block(chunks, [cx, cz], bottom, [x, y, z], block);
+                    set([x, y, z], block);
                 }
             };
             if let StructureBlocks::Dungeon(dungeon) = &structure.blocks {
@@ -1679,8 +1752,6 @@ pub fn build(
             }
         }
     }
-    chunks.retain(|(_, chunk)| !chunk.is_air());
-    chunks.sort_by_key(|(key, _)| key[1]);
 }
 
 /// Puts `block` at block `at` of chunk column `[cx, cz]`'s chunks, a chunk
@@ -2336,6 +2407,75 @@ mod tests {
                 assert!(apart >= 69.0, "{first:?} and {second:?} only {apart} apart");
             }
         }
+    }
+
+    #[test]
+    fn looking_for_each_structures_sites_only_as_far_as_they_matter_builds_what_looking_everywhere_does() {
+        let world = Preset::RollingHills.world();
+        let place = |salt: u32, spacing: f32, apart: f32| Placement {
+            spacing,
+            separation: spacing * 0.4,
+            chance: 0.8,
+            slope: 80.0,
+            salt,
+            apart,
+            ..Placement::default()
+        };
+        let placed = |placement: Placement, blocks: StructureBlocks| PlacedStructure {
+            placement,
+            ground: GroundFit::Foundation,
+            sink: 0,
+            blocks,
+            biomes: Vec::new(),
+        };
+        // A town, a dungeon reaching far under the ground, and what stands thick about them: the hut and the
+        // trees, the trees last, kept clear of everything before them.
+        let mut list = vec![
+            placed(place(1, 300.0, 0.0), StructureBlocks::Town(village())),
+            placed(place(2, 240.0, 60.0), StructureBlocks::Dungeon(crypt())),
+        ];
+        let mut thick = hut_and_trees().list;
+        thick[0].placement = place(3, 70.0, 20.0);
+        thick[1].placement = place(4, 11.0, 0.0);
+        list.extend(thick);
+        let structures = WorldStructures { list };
+        let at = (1.0, [300.0, -200.0], -64);
+        let near = looks(&structures, at.0);
+        // Each as far as it reaches at the least, the first furthest, the trees no further than their crowns
+        // and a little: nothing after them asks for more.
+        let reaches: Vec<f32> = structures.list.iter().map(PlacedStructure::reach).collect();
+        assert!(near.iter().zip(&reaches).all(|(look, reach)| look > reach), "{near:?} {reaches:?}");
+        assert!(near.windows(2).all(|pair| pair[0] >= pair[1]), "{near:?}");
+        assert!(near[3] < 16.0, "the trees are looked for {} m off", near[3]);
+        let everywhere = {
+            let farthest = reaches.iter().copied().fold(0.0f32, f32::max);
+            vec![farthest * 2.0 + 64.0 + 60.0; structures.list.len()]
+        };
+        assert!(near[0] <= everywhere[0] * 1.5 && near[3] * 20.0 < everywhere[3]);
+        let built = |area: ([i32; 2], [i32; 2]), looks: &[f32]| {
+            let mut sets: Vec<([i32; 3], BlockId)> = Vec::new();
+            build_looking(&mut |at, block| sets.push((at, block)), &structures, &world, None, at, area, 2, looks);
+            sets
+        };
+        let mut blocks = 0;
+        for column in [[0, 0], [3, -2], [-7, 5], [10, 10], [-12, -3], [6, 14]] {
+            let area = (column, [column[0] + 1, column[1] + 1]);
+            let sets = built(area, &near);
+            assert_eq!(sets, built(area, &everywhere), "chunk column {column:?}");
+            blocks += sets.len();
+        }
+        // An area of columns at once builds what its columns build one by one.
+        let area = ([-8, -4], [-4, 0]);
+        use std::collections::HashMap;
+        let whole: HashMap<[i32; 3], BlockId> = built(area, &near).into_iter().collect();
+        let mut by_column: HashMap<[i32; 3], BlockId> = HashMap::new();
+        for cz in area.0[1]..area.1[1] {
+            for cx in area.0[0]..area.1[0] {
+                by_column.extend(built(([cx, cz], [cx + 1, cz + 1]), &near));
+            }
+        }
+        assert!(whole == by_column, "{} blocks at once, {} column by column", whole.len(), by_column.len());
+        assert!(blocks > 500 && whole.len() > 500, "{blocks} blocks in six columns, {} in the area", whole.len());
     }
 
     /// A dungeon of walls 30 and floors 31, with a throne room of block 33 for its boss and treasuries of block 32,

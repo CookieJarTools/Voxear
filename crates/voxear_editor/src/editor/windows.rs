@@ -218,6 +218,8 @@ impl Editor {
             "build" | "input" | "audio" | "localization" | "packages" | "generator" => {
                 self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene")
             }
+            // The project's blocks open by its files.
+            "blocks" => self.ui.open_dock_panel_beside(self.nodes.dock, id, "project"),
             _ => self.ui.open_dock_panel(self.nodes.dock, id),
         }
     }

@@ -237,6 +237,12 @@ pub trait ScriptServices {
         0
     }
 
+    /// Every block of the project, by its GUID, in the order of their
+    /// paths, for `Blocks.All` in Voxear.Core.
+    fn block_guids(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// The cave rooms of the world of blocks on `obj` (the first with any,
     /// for 0), for `Caves` in Voxear.Core, as JSON: the world's Obj, its
     /// network's layout, and rooms as they lie in the level. `what` picks
@@ -255,16 +261,16 @@ pub trait ScriptServices {
     }
 
     /// The number of the block `reference` names in the world of blocks on
-    /// `entity`: one it lists, or, with `grow`, a number given it now where
-    /// it lists none, its faces given to the world. None where there is no
-    /// such block, or no room for it.
+    /// `entity`: the one it has, or, with `grow`, a number given it now
+    /// where the world has not held it yet, its faces given to the world.
+    /// None where there is no such block, or no room for it.
     fn block_number(&mut self, _world: &mut World, _entity: Entity, _reference: &str, _grow: bool) -> Option<u16> {
         None
     }
 
-    /// The blocks the world of blocks on `entity` numbered while the game
-    /// ran, which its level does not list: each number, and its block's
-    /// GUID.
+    /// The blocks the world of blocks on `entity` numbered since its file
+    /// was read, whose numbers are this machine's own: each number, and its
+    /// block's GUID.
     fn blocks_grown(&mut self, _world: &World, _entity: Entity) -> Vec<(u16, String)> {
         Vec::new()
     }

@@ -3714,7 +3714,9 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
-        Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => "Block World".into(),
+        Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => {
+            crate::block_props::takes_name(*field).into()
+        }
         Prop::Plants(field) if crate::plants_props::is_picked(*field) => "Prefab".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),

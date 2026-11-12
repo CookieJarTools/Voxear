@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Voxear.Interop;
@@ -13,6 +14,7 @@ internal static class BlockInfos
 	private static readonly Dictionary<string, BlockInfo?> known = [];
 	private static readonly Dictionary<string, string?> keys = [];
 	private static readonly Dictionary<(ulong Obj, ushort Number), Block> numbered = [];
+	private static Block[]? all;
 	private static ulong version;
 
 	/// <summary>What the block <paramref name="key"/> names says; null where the project has no such block.</summary>
@@ -31,6 +33,22 @@ internal static class BlockInfos
 		}
 		known[key] = found;
 		return found;
+	}
+
+	/// <summary>Every block of the project, in the order of their paths.</summary>
+	public static IReadOnlyList<Block> All()
+	{
+		Fresh();
+		if (all == null)
+		{
+			var keys = NativeBlocks.All();
+			all = new Block[keys.Length];
+			for (var at = 0; at < keys.Length; at++)
+			{
+				all[at] = Block.FromKey(keys[at]);
+			}
+		}
+		return all;
 	}
 
 	/// <summary>The GUID of the block at a project path, as saves and comparisons keep it; away from the engine, the path as given.</summary>
@@ -64,11 +82,16 @@ internal static class BlockInfos
 		return block;
 	}
 
-	/// <summary>Gives a block made in code its values, as a test does away from the engine.</summary>
+	/// <summary>Gives a block made in code its values, as a test does away from the engine: one of the project's blocks from then on.</summary>
 	public static Block Make(string key, BlockInfo info)
 	{
 		known[key] = info;
-		return Block.FromKey(key);
+		var block = Block.FromKey(key);
+		if (!Native.IsConnected && Array.IndexOf(all ?? [], block) < 0)
+		{
+			all = [.. all ?? [], block];
+		}
+		return block;
 	}
 
 	/// <summary>
@@ -82,6 +105,7 @@ internal static class BlockInfos
 
 	public static void Clear()
 	{
+		all = null;
 		known.Clear();
 		keys.Clear();
 		numbered.Clear();
@@ -93,6 +117,7 @@ internal static class BlockInfos
 		if (now != version)
 		{
 			version = now;
+			all = null;
 			known.Clear();
 			numbered.Clear();
 		}

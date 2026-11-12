@@ -1,11 +1,16 @@
 //! A `.blockworld` file: what a world of blocks is, as text. How large a
-//! block is, the blocks it is made of, and the ground its blocks start as.
+//! block is, which blocks it has numbered, and the ground its blocks start
+//! as.
 //!
-//! Each entry of its list is a block (see `block`), named by its asset, or
-//! a kind of its own: a colour, as a model of small blocks brings its
+//! A world can hold any block of the project. It numbers a block the first
+//! time it holds one, and `[[blocks]]` is that numbering: its palette, kept
+//! by the engine and the editor, out of sight, and never one to edit by
+//! hand. Each entry is a block (see `block`), named by its asset, or a kind
+//! of the world's own: a colour, as a model of small blocks brings its
 //! colours, or as worlds kept all their kinds once, materials and water
-//! too. A block's number is its entry's place in the list, from 1, and
-//! never changes: an entry taken out leaves its place empty.
+//! too. A block's number is its entry's place, from 1, and never changes:
+//! entries are only ever added at the end, and an entry once taken out
+//! leaves its place empty.
 //!
 //! ```toml
 //! block_size = 1.0
@@ -23,7 +28,7 @@
 //! [ground]
 //! size = [64, 64]   # blocks along x and z
 //! height = 8        # blocks up
-//! top = 1           # blocks by their place in the list, from 1
+//! top = 1           # blocks by their number
 //! under = 3
 //! under_depth = 3
 //! bottom = 3
@@ -37,8 +42,8 @@ use super::{
     chunk::{AIR, BlockId},
 };
 
-/// The most entries a world's list of blocks can have, those taken out
-/// counted: as many as a block's number can say.
+/// The most blocks a world can number, those taken out counted: as many as
+/// a block's number can say.
 pub const MAX_BLOCKS: usize = BlockId::MAX as usize;
 
 /// The most ways of drawing a face a world can have: as many as its quads
@@ -58,8 +63,8 @@ pub const LARGEST_BLOCK: f32 = 10.0;
 pub struct BlockFile {
     /// How many metres a block is a side.
     pub block_size: f32,
-    /// Its blocks, numbered from 1 in this order, the entries taken out
-    /// counted.
+    /// The blocks it has numbered, from 1 in this order, the entries taken
+    /// out counted: its palette.
     pub blocks: Vec<BlockKind>,
     /// The ground its blocks start as.
     pub ground: Ground,
@@ -284,7 +289,7 @@ impl BlockFile {
         };
         ensure!(file.block_size > 0.0 && file.block_size.is_finite(), "a block is some size");
         file.block_size = file.block_size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK);
-        ensure!(file.blocks.len() <= MAX_BLOCKS, "a world lists at most {MAX_BLOCKS} blocks");
+        ensure!(file.blocks.len() <= MAX_BLOCKS, "a world numbers at most {MAX_BLOCKS} blocks");
         // An entry is one thing: a place left empty, a block (its look its asset's) or a kind of its own.
         for kind in &mut file.blocks {
             if kind.removed {
@@ -327,6 +332,20 @@ impl BlockFile {
 
     pub fn to_text(&self) -> String {
         toml::to_string(self).expect("a block world's file writes as TOML")
+    }
+
+    /// The file with its palette cut after the last entry its ground can be
+    /// made of: one its ground or its sea names, or one that covers. A
+    /// block numbered after those changes nothing of what its ground is, so
+    /// a world's ground is made from this, and is not made again as the
+    /// world comes to hold more blocks (see `stream::BlockMaking`).
+    pub fn for_ground(&self) -> BlockFile {
+        let sea = self.generate.as_ref().map_or(AIR, |generate| generate.sea);
+        let named = [self.ground.top, self.ground.under, self.ground.bottom, sea].map(usize::from);
+        let covering = self.blocks.iter().rposition(|kind| kind.cover.is_some()).map_or(0, |at| at + 1);
+        let mut file = self.clone();
+        file.blocks.truncate(named.into_iter().fold(covering, usize::max));
+        file
     }
 
     /// Makes its blocks `size` metres a side with its ground as large in
@@ -527,6 +546,32 @@ bottom = 2
         // An entry is one thing: a look written beside a block it names is the block's, not the file's.
         let both = "[[blocks]]\nblock = \"Blocks/Grass.block\"\nname = \"Mine\"\ncolor = [1.0, 0.0, 0.0]\n";
         assert_eq!(BlockFile::parse(both).unwrap().blocks[0], BlockKind::of("Blocks/Grass.block"));
+    }
+
+    #[test]
+    fn a_block_numbered_after_those_its_ground_is_made_of_leaves_the_file_its_ground_is_made_from_as_it_was() {
+        let mut file = BlockFile::default();
+        file.blocks[1].cover = Some(BlockCover::default());
+        file.ground = Ground { top: 1, under: 1, bottom: 2, ..Ground::default() };
+        // Stone, the third, is no ground and covers nothing: the ground is made from grass and dirt alone.
+        let made_from = file.for_ground();
+        assert_eq!(made_from.blocks.len(), 2);
+        assert_eq!(made_from.make_ground(None), file.make_ground(None));
+        // The world comes to hold more blocks: its ground is made from the same file still.
+        file.blocks.push(BlockKind::of("Blocks/Gold.block"));
+        file.blocks.push(BlockKind::colored("Color 5", [1.0, 0.0, 0.0]));
+        assert_eq!(file.for_ground(), made_from);
+        // A block its ground names, its sea names or that covers is one its ground is made of.
+        file.ground.bottom = 4;
+        assert_eq!(file.for_ground().blocks.len(), 4);
+        file.blocks[4].cover = Some(BlockCover::default());
+        assert_eq!(file.for_ground(), file);
+        let mut sea = BlockFile { generate: Some(Default::default()), ..BlockFile::default() };
+        sea.ground = Ground { top: 1, under: 1, bottom: 1, ..Ground::default() };
+        sea.generate.as_mut().unwrap().sea = 3;
+        assert_eq!(sea.for_ground().blocks.len(), 3);
+        sea.generate.as_mut().unwrap().sea = AIR;
+        assert_eq!(sea.for_ground().blocks.len(), 1);
     }
 
     #[test]

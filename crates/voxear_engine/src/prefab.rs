@@ -981,8 +981,8 @@ pub fn block_world(
                 file: loaded.file.clone(),
                 base: loaded.base.clone(),
                 pending: loaded.pending.clone(),
-                grown: Vec::new(),
-                drawn: Arc::new(crate::blocks::resolved(content, &loaded.file, &[])),
+                from_file: loaded.file.blocks.len(),
+                drawn: Arc::new(crate::blocks::resolved(content, &loaded.file)),
                 derived: loaded.derived,
             };
             (loaded.world.clone(), Some(asset))

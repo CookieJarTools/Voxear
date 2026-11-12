@@ -103,10 +103,21 @@ impl Editor {
     pub(super) fn update_previews(&mut self, renderer: &mut Renderer) {
         let mut budget = NEW_PER_FRAME;
         let size = |logical: f32, scale: f32| (logical * scale).ceil() as u32;
+        // A block saved since is drawn as it now is.
+        for path in std::mem::take(&mut self.blocks_saved) {
+            self.asset_changed(renderer, &path);
+        }
 
         for (index, (tile, wanted)) in self.project_previews_wanted().into_iter().enumerate() {
             let shown = self.asset_images(renderer, wanted, size(tile, self.scale), &mut budget);
             self.set_project_previews(index, shown);
+        }
+
+        if self.shown(self.nodes.blocks_panel) {
+            let wanted = self.block_database.previewable(&self.ui);
+            let tile = size(self.block_database.preview_size(), self.scale);
+            let shown = self.asset_images(renderer, wanted, tile, &mut budget);
+            self.block_database.set_previews(&mut self.ui, shown);
         }
 
         if self.picker.is_open() {
@@ -184,6 +195,14 @@ impl Editor {
             (Prop::Material, Some(drawn)) => {
                 let sphere = renderer.primitive(Primitive::Sphere).ok()?;
                 PreviewPart { mesh: sphere, material: drawn.material, transform: Mat4::IDENTITY }
+            }
+            // A Block World's block: the block itself.
+            (Prop::BlockWorld(field), _) if crate::block_props::is_block(*field) => {
+                let Some(Value::Asset(path)) = props::get(&self.game, self.inspector.types(), entity, prop) else {
+                    return None;
+                };
+                self.game.content.db().guid_of(&path)?;
+                return self.asset_image(renderer, &path, size, budget);
             }
             (Prop::Field { .. }, _) => {
                 let Some(Value::Asset(path)) = props::get(&self.game, self.inspector.types(), entity, prop) else {

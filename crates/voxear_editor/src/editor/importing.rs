@@ -259,7 +259,8 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".worldgen")).map(|path| path.to_string()).collect();
         let prefabs: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".prefab")).map(|path| path.to_string()).collect();
-        let blocks = changed.iter().any(|path| path.ends_with(".block"));
+        let blocks: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".block")).map(|path| path.to_string()).collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -299,8 +300,9 @@ impl Editor {
                 self.cave_rooms_changed(Some(path));
             }
             // Blocks edited outside the editor are read again, and the worlds of blocks listing them drawn as they say.
-            if blocks {
+            if !blocks.is_empty() {
                 self.game.content.forget_blocks();
+                self.blocks_saved.extend(blocks);
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

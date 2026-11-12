@@ -5,13 +5,13 @@
 //! changed is kept for a save of the scene or a player joining a game, as
 //! only what differs from the world as its level built it.
 //!
-//! A block is named by its number in a world's list, or by its `.block`
-//! asset, which each world it reaches numbers as it has it: a world that
-//! does not list the block numbers it then, for as long as the game runs
-//! (`ScriptServices::block_number`). Such a number is this machine's own,
-//! so the changes kept say which block each one is, after the changes
-//! themselves, and are matched to the numbers of the game they are put
-//! back in.
+//! A block is named by its `.block` asset, which is the same block in
+//! every world, or by its number in one world. A world numbers a block the
+//! first time it holds one (`ScriptServices::block_number`). In a game,
+//! nothing writes that down in the world's file, so such a number is this
+//! machine's own: the changes kept say which block each one is, after the
+//! changes themselves, and are matched to the numbers of the game they are
+//! put back in.
 
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
@@ -304,6 +304,16 @@ pub(crate) unsafe extern "C" fn block_of(obj: u64, block: i32, buffer: *mut u8, 
         unsafe { std::ptr::copy_nonoverlapping(guid.as_ptr(), buffer, guid.len()) };
     }
     guid.len() as i32
+}
+
+/// Every block of the project, by GUID, a line each, written into `buffer`
+/// when it fits: the text's length.
+pub(crate) unsafe extern "C" fn blocks_all(buffer: *mut u8, capacity: i32) -> i32 {
+    let every = with_services(|services| services.block_guids()).unwrap_or_default().join("\n");
+    if !buffer.is_null() && every.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(every.as_ptr(), buffer, every.len()) };
+    }
+    every.len() as i32
 }
 
 /// Goes up whenever a block is saved (see `ScriptServices::blocks_version`).

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Voxear.Tests;
 
@@ -114,6 +115,11 @@ internal static class ItemTests
 		Check.Near(0.5f, dirt.BreakTime(iron));
 		Check.True(float.IsPositiveInfinity(bedrock.BreakTime(iron)), "nothing breaks it");
 		Check.True(Block.None.BreakTime() == 0f && !Block.None.IsValid, "no block at all");
+		// Every block made is one of the project's, each once, in the order they came.
+		var all = Blocks.All;
+		Check.True(all.Contains(stone) && all.Contains(dirt) && all.Contains(bedrock), "the three made are among them");
+		Check.True(all.Count == all.Distinct().Count() && !all.Contains(Block.None), "each once, and no none");
+		Check.True(BlockInfos.Make("test:stone", new BlockInfo("Stone")) == stone && Blocks.All.Count == all.Count, "made again, the same block");
 		// Its drops go only to its kind of tool of its tier or higher; a block with no tier drops to a hand.
 		Check.True(!stone.DropsFor() && !stone.DropsFor(wooden) && !stone.DropsFor(hatchet), "too weak, or the wrong kind");
 		Check.True(stone.DropsFor(iron) && dirt.DropsFor() && dirt.DropsFor(hatchet), "the right tool, or none needed");

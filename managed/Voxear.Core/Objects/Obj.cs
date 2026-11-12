@@ -383,6 +383,26 @@ public readonly struct Obj : IEquatable<Obj>
 		return new ScreenUi(this);
 	}
 
+	/// <summary>The Obj's Map, which shows the Block World as a minimap and a map. Not valid when it has none.</summary>
+	public Map Map => new Map(this);
+
+	/// <summary>Gives the Obj a Map, unless it has one, and returns it.</summary>
+	public Map AddMap()
+	{
+		NativeComponent.Set(NativeComponent.Map, this, NativeComponent.Add, Vector4.Zero);
+		return new Map(this);
+	}
+
+	/// <summary>The Obj's Map Marker, which marks it on every map. Not valid when it has none.</summary>
+	public MapMarker MapMarker => new MapMarker(this);
+
+	/// <summary>Gives the Obj a Map Marker, unless it has one, and returns it.</summary>
+	public MapMarker AddMapMarker()
+	{
+		NativeComponent.Set(NativeComponent.MapMarker, this, NativeComponent.Add, Vector4.Zero);
+		return new MapMarker(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

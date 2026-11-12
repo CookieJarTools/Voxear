@@ -545,6 +545,11 @@ pub enum ComponentKind {
     Particles = 10,
     Gun = 16,
     GunHolder = 17,
+    /// A minimap and a map of the world on the screen, and what every map
+    /// follows, is titled and has placed on it.
+    Map = 20,
+    /// An Obj's mark on every map.
+    MapMarker = 21,
 }
 
 /// The most kinds `kind_value` answers.

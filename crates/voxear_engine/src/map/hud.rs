@@ -11,7 +11,7 @@ use voxear_terrain::{blocks::map::MapGround, surfaces::Biome};
 use voxear_ui::{Color, ElementKind, MapViewKind, MapViewSettings, NodeId, Shape, Ui};
 
 use super::{
-    MapViewer, Maps, ShownMap,
+    MapScript, MapViewer, Maps, ShownMap,
     parts::{Map, MapCorner, MapMarker, MarkerShows},
 };
 use crate::{game::Display, game_ui::GameUi};
@@ -177,7 +177,8 @@ impl Maps {
         self.label(ui, node, parts.overlay, labels);
         if let (Some(title), Some(readout), Some(compass)) = (parts.title, parts.readout, parts.compass) {
             let (place, readout_text) = self.readout(world, &shown);
-            let title_text = self.title.clone().unwrap_or(place);
+            let named = world.resource::<MapScript>().and_then(|script| script.title.clone());
+            let title_text = named.unwrap_or(place);
             self.write(ui, title, title_text);
             self.write(ui, readout, readout_text);
             draw_compass(ui, compass, &shown);
@@ -191,7 +192,8 @@ impl Maps {
             world.query_ref::<(Entity, &MapMarker, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
         let objs = objs.into_iter().filter(|(entity, ..)| voxear_scene::is_active(world, *entity));
         let objs = objs.map(|(_, marker, local, placed)| (voxear_terrain::corner(local, placed), marker.clone()));
-        objs.chain(self.placed.values().map(|placed| (placed.at, placed.marker.clone()))).collect()
+        let placed = world.resource::<MapScript>().into_iter().flat_map(|script| script.placed.values());
+        objs.chain(placed.map(|placed| (placed.at, placed.marker.clone()))).collect()
     }
 
     /// Keeps a view's labels as `labels` says: each where it is, with its

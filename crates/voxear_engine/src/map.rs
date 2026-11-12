@@ -32,9 +32,12 @@ use crate::{Content, blocks::BlockWorldAsset};
 
 mod hud;
 mod parts;
+mod scripts;
 
 pub use hud::PlacedMarker;
 pub use parts::{Map, MapCorner, MapData, MapIcon, MapMarker, MarkerShows, map_data, map_of};
+pub use scripts::MapScript;
+pub(crate) use scripts::register;
 
 /// The cells a minimap's window has along a side, and a map's.
 const MINIMAP_SIDE: u32 = 128;
@@ -213,13 +216,6 @@ pub struct Maps {
     views: HashMap<NodeId, View>,
     shown: HashMap<NodeId, ShownMap>,
     frame: u64,
-    /// What every map follows, set by scripts, in place of the camera.
-    pub follow: Option<Entity>,
-    /// What a map's title says, set by scripts, in place of the country it
-    /// looks at.
-    pub title: Option<String>,
-    /// The markers scripts placed, each by the number it was given.
-    pub placed: HashMap<u32, PlacedMarker>,
     /// Each Map's minimap and map on the screen.
     huds: HashMap<Entity, hud::Hud>,
     /// Each view's labels, with what each says, and what was last written
@@ -239,9 +235,6 @@ impl Default for Maps {
             views: HashMap::new(),
             shown: HashMap::new(),
             frame: 0,
-            follow: None,
-            title: None,
-            placed: HashMap::new(),
             huds: HashMap::new(),
             labels: HashMap::new(),
             written: HashMap::new(),
@@ -282,10 +275,11 @@ fn viewer_of(local: &Transform, placed: Option<&WorldTransform>) -> MapViewer {
 }
 
 impl Maps {
-    /// Where maps are seen from: the Obj scripts gave them to follow, or
-    /// else the game's camera.
+    /// Where maps are seen from: the Obj scripts gave them to follow (see
+    /// [`MapScript`]), or else the game's camera.
     pub fn viewer(&self, world: &World) -> Option<MapViewer> {
-        let followed = self.follow.filter(|entity| world.is_alive(*entity)).and_then(|entity| {
+        let follow = world.resource::<MapScript>().and_then(|script| script.follow);
+        let followed = follow.filter(|entity| world.is_alive(*entity)).and_then(|entity| {
             let local = world.get::<Transform>(entity)?;
             Some(viewer_of(local, world.get::<WorldTransform>(entity)))
         });

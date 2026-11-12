@@ -82,6 +82,7 @@ impl Engine {
         crate::cameras::register();
         crate::ui_panels::register();
         crate::screen_ui::register();
+        crate::map::register();
         crate::first_person::register();
         crate::animation::bones::register();
         crate::animation::pose_ops::register();

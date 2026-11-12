@@ -30,14 +30,14 @@ Every size here is for a screen 1080 pixels high. On another, the minimap and th
 
 ## What the minimap and the map show
 
-The **minimap** is a panel with a window on the ground. In the window's corners are a small compass and its zoom. Under the window, a strip names the country, with the time beside it, and under that says where the player is and how warm and wet it is there.
+The **minimap** is a panel with a window on the ground. The ground fills the window to every corner, at any zoom and however the map is turned. In the window's corners are a small compass and its zoom. Under the window, a strip names the country, with the time beside it, and under that says where the player is and how warm and wet it is there.
 
 The **map** covers the screen, and keeps its middle and its bottom left clear:
 
 - Top left, the country's name over where the map looks, along x and z.
 - Top right, the time, the temperature and the humidity.
 - Bottom right, a compass lying on the ground as the map does, its needle pointing north, over buttons that zoom in and out a step.
-- Over the player, an arrow lying on the ground, pointing the way they face, and their name on a tag over it.
+- Over the player, an arrow lying on the ground, pointing the way they face, and their name on a tag over it. The arrow lies on the ground under the player, though they fly over it or walk under it.
 
 The country's name is how warm and wet the world's generator makes that place, as Forest or Tundra. The time is whatever your game says it is, with `Map.Time`, and shows only once it says. The player's name is `Map.PlayerName`, or the label of their Map Marker.
 

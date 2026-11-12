@@ -42,8 +42,13 @@ pub(crate) use scripts::register;
 pub use scripts::{MapScript, MapViewSeen, MapViewWish};
 
 /// The cells a minimap's window has along a side, and a map's.
-const MINIMAP_SIDE: u32 = 128;
+const MINIMAP_SIDE: u32 = 256;
 const MAP_SIDE: u32 = 256;
+
+/// How far from its middle a minimap shows ground, in cells: what its fill
+/// is measured by. Its window holds more, so that ground lower than what it
+/// looks at, seen further off, is there to be drawn.
+const MINIMAP_SHOWS: f32 = 46.0;
 
 /// Tiles being made at once, at most: the rest wait, nearest first.
 const MOST_MAKING: usize = 12;
@@ -193,6 +198,9 @@ pub struct ShownMap {
     pub round: bool,
     /// How many blocks a cell is drawn as: its zoom, any number.
     pub blocks: f32,
+    /// How high the ground, or the water over it, stands under what the
+    /// map follows, in the scene: none until that ground is made.
+    pub ground: Option<f32>,
 }
 
 impl ShownMap {
@@ -624,8 +632,12 @@ impl Maps {
         // so as its cells change size at the next level, the same ground is shown as large as before, in
         // cells half or twice the size.
         let most = (side as f32 * 0.5 - tile as f32 * 0.5 - 2.0).max(8.0);
-        let rest = if large { most / std::f32::consts::SQRT_2 } else { most };
-        let reach = (rest / within.max(0.05)).min(most);
+        let rest = if large { most / std::f32::consts::SQRT_2 } else { MINIMAP_SHOWS.min(most) };
+        let shows = (rest / within.max(0.05)).min(most);
+        // A view its ground is to cover has all its window's ground to draw, past what it shows: so the
+        // ground is there wherever a corner of the view looks, however much lower it lies.
+        let covering = settings.cover && !settings.round;
+        let reach = if covering { most } else { shows };
         view.reach = reach;
 
         // The renderer's window, made with the view and given the blocks' colours as they are now.
@@ -704,22 +716,35 @@ impl Maps {
         }
         wanted_tiles.into_iter().for_each(|key| self.ask(key));
 
+        // The ground under what it follows, or the water over it: what the map looks at, so one who flies over
+        // the ground or walks under it is over the same ground on the map.
+        let ground = self.column(entity, level, viewer.position).filter(|column| column.is_some());
+        let ground = ground.map(|column| column.top.max(column.water) as f32);
         let view = self.views.get_mut(&node).expect("kept by update");
         let Some([low, high]) = heights else {
             ui.set_image(parts.picture, None);
             return None;
         };
-        // Its camera: looking at what it follows, as high as that stands, far enough to see the slab whole.
-        let looked = Vec3::new(middle.x - corner[0] as f32, followed.y - low as f32, middle.y - corner[1] as f32);
+        // Its camera: looking at what it follows, as high as the ground there, far enough to see the slab
+        // whole.
+        let stands = ground.unwrap_or(followed.y);
+        let looked = Vec3::new(middle.x - corner[0] as f32, stands - low as f32, middle.y - corner[1] as f32);
         let looked = Vec3::new(looked.x, looked.y.clamp(0.0, (high - low) as f32), looked.z);
         let tilt = view.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2);
-        // As wide on the screen as its settings say: its fill is its width over the view's height. Nearer
-        // where it is to cover its view and that takes it.
-        let fits = reach / settings.fill.max(0.05) / (FOV * 0.5).tan();
+        // As wide on the screen as its settings say: its fill is the width of what it shows over the view's
+        // height. Nearer where it is to cover its view and that takes it: first for what it shows to run past
+        // the view on ground about as high as what it looks at, which is how large its ground is drawn; then,
+        // where the ground lies so much lower that even its window's would not reach, for that to.
+        let fits = shows / settings.fill.max(0.05) / (FOV * 0.5).tan();
         let camera = MapCamera { middle: looked, turn: view.turn, tilt, distance: fits, fov: FOV };
-        let covering = settings.cover && !settings.round;
-        let any_turn = settings.turns;
-        let distance = if covering { covers(camera, rect[2] / rect[3], reach, any_turn) } else { fits };
+        let (aspect, any_turn) = (rect[2] / rect[3], settings.turns);
+        let distance = match covering {
+            true => {
+                let near = covers(camera, aspect, (shows, shows * 0.1), any_turn);
+                covers(MapCamera { distance: near, ..camera }, aspect, (reach, looked.y), any_turn)
+            }
+            false => fits,
+        };
         let camera = MapCamera { distance, ..camera };
         view.fill = reach / distance.max(1e-3) / (FOV * 0.5).tan();
         let mut draw = MapDraw {
@@ -752,6 +777,7 @@ impl Maps {
             reach,
             round: settings.round,
             blocks,
+            ground: ground.map(|stands| origin.y + stands * cell),
         };
         self.shown.insert(node, shown);
         let seen = MapViewSeen {
@@ -776,12 +802,12 @@ impl Maps {
 /// as high: every corner of the view looks at ground within the slab,
 /// however the view is turned when `any_turn`. Ground may lie lower than
 /// what the camera looks at, further off along the view than it is, so the
-/// corners are held to ground a tenth of the reach lower.
-fn covers(camera: MapCamera, aspect: f32, reach: f32, any_turn: bool) -> f32 {
+/// corners are held to ground `lower` cells under it.
+fn covers(camera: MapCamera, aspect: f32, (reach, lower): (f32, f32), any_turn: bool) -> f32 {
     let half = (camera.fov * 0.5).tan();
     let (down, along) = camera.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2).sin_cos();
     let (sin, cos) = camera.turn.sin_cos();
-    let (lower, within) = (reach * 0.1, reach * 0.98);
+    let (lower, within) = (lower.max(0.0), reach * 0.98);
     // Where a corner of the view meets that ground, from the middle: to the view's right and ahead of it.
     let meets = |distance: f32, [across, up]: [f32; 2]| {
         let falls = down - up * along;
@@ -846,13 +872,14 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId))
 mod tests {
     use super::*;
 
-    /// How far from the middle, in the slab's own reach, the ground a corner of the view looks at is: east or
-    /// north, whichever is more, or straight off when the slab is to cover however it is turned.
-    fn furthest(camera: MapCamera, size: Vec2, reach: f32, any_turn: bool) -> f32 {
+    /// How far from the middle, in the slab's own reach, the ground a corner of the view looks at is, where
+    /// the ground lies `lower` than what the camera looks at: east or north, whichever is more, or straight
+    /// off when the slab is to cover however it is turned.
+    fn furthest(camera: MapCamera, size: Vec2, (reach, lower): (f32, f32), any_turn: bool) -> f32 {
         let corners = [Vec2::ZERO, Vec2::new(size.x, 0.0), Vec2::new(0.0, size.y), size];
         let far = corners.map(|pixel| {
             let (from, way) = camera.ray(pixel, size);
-            let at = from + way * ((camera.middle.y - from.y) / way.y) - camera.middle;
+            let at = from + way * ((camera.middle.y - lower - from.y) / way.y) - camera.middle;
             if any_turn { Vec2::new(at.x, at.z).length() } else { at.x.abs().max(at.z.abs()) }
         });
         far.into_iter().fold(0.0, f32::max) / reach
@@ -861,25 +888,35 @@ mod tests {
     #[test]
     fn a_covering_view_comes_no_nearer_than_it_takes_for_its_corners_to_look_at_the_slab() {
         let (size, reach) = (Vec2::new(368.0, 254.0), 100.0);
+        let (aspect, slab) = (size.x / size.y, (reach, reach * 0.1));
         let fits = reach / 1.7 / (FOV * 0.5).tan();
         let camera =
-            |turn: f32| MapCamera { middle: Vec3::new(0.0, 20.0, 0.0), turn, tilt: 1.0, distance: fits, fov: FOV };
+            |turn: f32| MapCamera { middle: Vec3::new(0.0, 80.0, 0.0), turn, tilt: 1.0, distance: fits, fov: FOV };
 
         // Turned an eighth round, a square slab's corners are in the window: nearer, they are not, and no
         // nearer than that takes.
         let turned = camera(0.8);
-        assert!(furthest(turned, size, reach, false) > 1.0);
-        let near = covers(turned, size.x / size.y, reach, false);
-        let seen = furthest(MapCamera { distance: near, ..turned }, size, reach, false);
+        assert!(furthest(turned, size, (reach, 0.0), false) > 1.0);
+        let near = covers(turned, aspect, slab, false);
+        let seen = furthest(MapCamera { distance: near, ..turned }, size, (reach, 0.0), false);
         assert!(near < fits && seen < 1.0 && seen > 0.85, "{near} of {fits}: {seen}");
 
         // One that turns with the view covers it however it is turned, so it is as near at every turn.
-        let any = covers(turned, size.x / size.y, reach, true);
-        assert!(any <= near && (covers(camera(2.1), size.x / size.y, reach, true) - any).abs() < 1e-3);
-        assert!(furthest(MapCamera { distance: any, ..camera(2.1) }, size, reach, true) < 1.0);
+        let any = covers(turned, aspect, slab, true);
+        assert!(any <= near && (covers(camera(2.1), aspect, slab, true) - any).abs() < 1e-3);
+        assert!(furthest(MapCamera { distance: any, ..camera(2.1) }, size, (reach, 0.0), true) < 1.0);
 
         // A view its slab covers already stays where it is.
         let far = MapCamera { distance: fits * 0.3, ..camera(0.0) };
-        assert_eq!(covers(far, size.x / size.y, reach, false), far.distance);
+        assert_eq!(covers(far, aspect, slab, false), far.distance);
+
+        // Over ground that lies far lower than what it looks at, a slab twice as far reaching still covers
+        // the view from where it is; one that does not reach comes nearer until it does.
+        let wide = MapCamera { distance: any, ..camera(2.1) };
+        let over = |distance: f32, reach: f32| furthest(MapCamera { distance, ..wide }, size, (reach, 60.0), true);
+        assert!(over(any, reach) > 1.0, "the far corners look past it: {}", over(any, reach));
+        assert_eq!(covers(wide, aspect, (reach * 2.2, 60.0), true), any);
+        let nearer = covers(wide, aspect, (reach, 60.0), true);
+        assert!(nearer < any && over(nearer, reach) < 1.0, "{nearer} of {any}: {}", over(nearer, reach));
     }
 }

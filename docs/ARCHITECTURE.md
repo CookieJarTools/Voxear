@@ -3573,7 +3573,12 @@ as a minimap on the HUD or a map opened over the game.
   (`voxear_ui::map_view`, the `Minimap` and `Map` elements), it keeps what the world's tiles are made from, marks
   the tiles a change lies in to be made again, asks for the tiles the view's window needs on the terrain's threads,
   nearest first, writes those that came, and asks the renderer to draw. A map opened large hears the pointer: a
-  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two.
+  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two. A view
+  looks at the ground under what it follows (`ShownMap::ground`), not at how high that is, so the ground is where
+  the arrow is though the camera flies. A view its ground covers (`cover`, a minimap) draws all its window's
+  ground, 110 cells to each side, and shows the middle 46 of it at its fill: the rest is there for the corners of
+  the view, which look further off the lower the ground lies. Where even that does not reach, `covers()` brings
+  the camera nearer.
 - **Components** (`map::parts`): `Map` puts a minimap and a map on the screen in a document of its own and opens
   the map by an input action, freeing the mouse and leaving on only that action's input map; `MapMarker` marks its
   Obj. Both are saved in scenes and prefabs as `[obj.map]` and `[obj.map_marker]`, and shown in the Inspector.

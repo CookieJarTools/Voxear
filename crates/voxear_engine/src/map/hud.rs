@@ -225,12 +225,14 @@ impl Maps {
         // What the map follows: an arrow lying on the ground, pointing the way it faces, in a ring; at the
         // slab's edge, towards where it is, once the map was moved off it. A map names it over the arrow, on a
         // stem.
-        let followed = shown.point(viewer.position).filter(|_| settings.arrow);
+        // It lies on the ground under what the map follows, though that flies over it or walks under it.
+        let stood = Vec3::new(viewer.position.x, shown.ground.unwrap_or(viewer.position.y), viewer.position.z);
+        let followed = shown.point(stood).filter(|_| settings.arrow);
         let long = if large { 15.0 } else { 11.0 } * scale;
         let ring = long * 1.35;
         let mark = followed.and_then(|(at, inside)| match inside && in_view(at) {
             true => Some((at, true)),
-            false => Some((at_edge(viewer.position, ring).filter(|_| settings.arrow_at_edge)?, false)),
+            false => Some((at_edge(stood, ring).filter(|_| settings.arrow_at_edge)?, false)),
         });
         let name = script.player.clone().or_else(|| {
             let marker = world.get::<MapMarker>(script.follow?)?;

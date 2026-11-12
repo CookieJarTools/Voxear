@@ -152,6 +152,7 @@ mod tests {
             water: 10,
             water_block: 0,
             pieces: [MapPiece::NONE; 2],
+            layered: false,
         };
         MapTile { level: 0, at: [0, 0], columns: vec![column; MAP_TILE * MAP_TILE] }
     }

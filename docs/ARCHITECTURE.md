@@ -3562,7 +3562,10 @@ as a minimap on the HUD or a map opened over the game.
   its blocks. `MapColumn::of_runs` is the one place runs become a column. Before the changes go in, a `Made`
   tile takes what stands on its ground: the generator's structures, built over the tile's chunk columns at once
   into a list of blocks (`structure::build_over`, the builder the chunks use, so a map and the world agree), out to
-  level 3; and the plants the world grows (`MapGround::growing`, a `Woods` a kind), each stood where `grow_far`
+  level 3. Past level 0 they are stood as they look from above (`stand_built`): a cell is built up where three
+  eighths of its columns of blocks are built on, to their mean height, their top block as deep as it lies on
+  them and their walls' block under it, and such a column is `layered`, which the shader reads from bit 16 of
+  its depths to draw its sides as its layers are rather than in its top block's colour. And the plants the world grows (`MapGround::growing`, a `Woods` a kind), each stood where `grow_far`
   puts it while it is a cell across, as the far view's woods past that.
 - **Structures' sites** (`structure::looks`): building a chunk column, or a map tile, looks for each structure's
   sites only as far as they can matter there: its own reach, and for each structure listed after it, as far as

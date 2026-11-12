@@ -91,6 +91,11 @@ pub struct MapColumn {
     pub water_block: BlockId,
     /// What stands free over the ground, lowest first.
     pub pieces: [MapPiece; 2],
+    /// Whether its sides are drawn as its layers are, each as thick as it
+    /// is: something built, as a house's walls under its roof. Ground is
+    /// drawn with its top block's colour a little way down its steps, so a
+    /// grassy slope is not striped with the earth under it.
+    pub layered: bool,
 }
 
 impl MapColumn {
@@ -102,6 +107,7 @@ impl MapColumn {
         water: i32::MIN,
         water_block: AIR,
         pieces: [MapPiece::NONE; 2],
+        layered: false,
     };
 
     /// Whether anything is in it.
@@ -394,7 +400,7 @@ fn count(cells: &mut Cells, level: u32, at: [i32; 3], block: BlockId) {
 /// Puts `cells` into a far tile's `columns`. At level 0 each block is as
 /// it was left. Coarser, a cell is built where an eighth of it was, of the
 /// block built last, and dug where over half of it was taken out.
-fn put_cells(columns: &mut [Vec<Run>], cells: Cells, far: &FarTile, faces: &[BlockFaces]) {
+fn put_cells((columns, layered): (&mut [Vec<Run>], &mut [bool]), cells: Cells, far: &FarTile, faces: &[BlockFaces]) {
     let (level, side) = (far.level, CHUNK as i32);
     let whole = 1u64 << (3 * level);
     for ([x, y, z], (built, dug, block)) in cells {
@@ -403,9 +409,9 @@ fn put_cells(columns: &mut [Vec<Run>], cells: Cells, far: &FarTile, faces: &[Blo
             continue;
         }
         let column = &mut columns[z as usize * MAP_TILE + x as usize];
-        if level == 0 {
-            put(column, y, y + 1, block);
-        } else if built * BUILT_SHOWS >= whole && !holds(column, y, faces) {
+        let builds = if level == 0 { block != AIR } else { built * BUILT_SHOWS >= whole && !holds(column, y, faces) };
+        layered[z as usize * MAP_TILE + x as usize] |= builds;
+        if level == 0 || builds {
             put(column, y, y + 1, block);
         } else if dug * 2 > whole {
             put(column, y, y + 1, AIR);
@@ -441,6 +447,99 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
     let at = (file.block_size.max(0.01), generate.position, generate.bottom);
     super::structure::build_over(&mut set, built, &making.world, biomes, at, (first, end), under);
     sets
+}
+
+/// What a structure stands as on one column of the world's own blocks, seen
+/// from above: from its lowest block, `bottom`, up to `top`; its top block
+/// and how many blocks deep that lies, as a roof or a crown does; and the
+/// block most of what is under that is, its walls' or its trunk's, where
+/// there is any.
+#[derive(Clone, Copy)]
+struct Stood {
+    bottom: i32,
+    top: i32,
+    roof: BlockId,
+    cap: i32,
+    wall: Option<BlockId>,
+}
+
+/// The block most of `blocks` are, the lowest number among equals: none of
+/// none.
+fn most_of(blocks: impl Iterator<Item = BlockId>) -> Option<BlockId> {
+    let mut counts: HashMap<BlockId, u32> = HashMap::new();
+    blocks.for_each(|block| *counts.entry(block).or_default() += 1);
+    counts.into_iter().max_by_key(|&(block, count)| (count, std::cmp::Reverse(block))).map(|(block, _)| block)
+}
+
+/// What `built` stands as on each column of blocks it builds on.
+fn stood(built: &HashMap<[i32; 3], BlockId>) -> HashMap<[i32; 2], Stood> {
+    let mut columns: HashMap<[i32; 2], Vec<(i32, BlockId)>> = HashMap::new();
+    for (&[x, y, z], &block) in built.iter().filter(|(_, block)| **block != AIR) {
+        columns.entry([x, z]).or_default().push((y, block));
+    }
+    let seen = |(at, mut blocks): ([i32; 2], Vec<(i32, BlockId)>)| {
+        blocks.sort_unstable_by_key(|(y, _)| std::cmp::Reverse(*y));
+        let (top, roof) = blocks[0];
+        // Its top block as far down as it lies on itself.
+        let capped = |(down, (y, block)): &(usize, &(i32, BlockId))| *y == top - *down as i32 && *block == roof;
+        let cap = blocks.iter().enumerate().take_while(capped).count();
+        let wall = most_of(blocks[cap..].iter().map(|(_, block)| *block));
+        (at, Stood { bottom: blocks[blocks.len() - 1].0, top: top + 1, roof, cap: cap as i32, wall })
+    };
+    columns.into_iter().map(seen).collect()
+}
+
+/// Stands what `built` builds on the cells of a far tile coarser than the
+/// world's own blocks, as it looks from above. A cell is built up where
+/// enough of its columns of blocks are built on: to the height those
+/// stand on average, so a roof keeps its slope; their top block on top, as
+/// deep as it lies on them, and under it the block of their walls. Where
+/// most of them stand clear of the ground, as a crown does, the cell does
+/// too. Where what is built lies in the ground's own top, as a road does,
+/// the cell's top is its block. So a house is its footprint, its walls
+/// and its roof, whole, and not the cells its blocks happen to fill.
+fn stand_built(
+    (columns, layered): (&mut [Vec<Run>], &mut [bool]),
+    built: &HashMap<[i32; 3], BlockId>,
+    far: &FarTile,
+    faces: &[BlockFaces],
+) {
+    let (level, side) = (far.level, CHUNK as i32);
+    let mut cells: HashMap<[i32; 2], Vec<Stood>> = HashMap::new();
+    for ([x, z], on) in stood(built) {
+        cells.entry([(x >> level) - far.at[0] * side, (z >> level) - far.at[1] * side]).or_default().push(on);
+    }
+    // How many of a cell's columns of blocks, of all it has, it takes to build it up: fewer where a house is
+    // no larger than a cell, so it is not lost between four.
+    let all = 1usize << (2 * level);
+    let raised = if level < STRUCTURES_TO { all * 3 / 8 } else { all * 3 / 16 };
+    let scale = (1u32 << level) as f32;
+    for ([x, z], on) in cells {
+        if x < 0 || z < 0 || x >= side || z >= side {
+            continue;
+        }
+        let runs = &mut columns[z as usize * MAP_TILE + x as usize];
+        let Some(ground) = ground_top(runs, faces) else { continue };
+        let mean = |of: fn(&Stood) -> i32| on.iter().map(|on| of(on) as f32).sum::<f32>() / on.len() as f32;
+        let cells_of = |blocks: f32| (blocks / scale).round() as i32;
+        let top = cells_of(mean(|on| on.top));
+        let roof = most_of(on.iter().map(|on| on.roof)).unwrap_or(AIR);
+        if top > ground && on.len() >= raised.max(1) {
+            // Clear of the ground where most of it is, by a cell at the least: all of it its top block then.
+            let hangs = |on: &&Stood| on.bottom as f32 / scale >= ground as f32 + 1.0;
+            if top - ground >= 2 && on.iter().filter(hangs).count() * 2 > on.len() {
+                put(runs, cells_of(mean(|on| on.bottom)).clamp(ground + 1, top - 1), top, roof);
+                continue;
+            }
+            let wall = most_of(on.iter().filter_map(|on| on.wall)).unwrap_or(roof);
+            let cap = cells_of(mean(|on| on.cap)).clamp(1, top - ground);
+            put(runs, ground, top - cap, wall);
+            put(runs, top - cap, top, roof);
+            layered[z as usize * MAP_TILE + x as usize] = true;
+        } else if top <= ground && on.len() * 4 >= all {
+            put(runs, ground - 1, ground, roof);
+        }
+    }
 }
 
 /// Where the ground of `column` ends: its highest block that is not water.
@@ -517,11 +616,18 @@ fn made_tile(far: &FarTile, making: &BlockMaking, (changes, plants): (&BlockEdit
     let (level, side) = (far.level, CHUNK as i32);
     let faces = &making.faces[..];
     let mut columns = runs_of(far);
-    // What the generator builds on the ground, as the world's own blocks have it.
+    // The columns something was built on: their sides show their layers.
+    let mut layered = vec![false; columns.len()];
+    // What the generator builds on the ground, as the world's own blocks have it: block for block up close. In larger cells, what they clear is dug by its share of a cell, and what they
+    // build stands as it looks from above.
     let built = structures_over(making, far);
     let mut cells = Cells::new();
-    built.iter().for_each(|(at, block)| count(&mut cells, level, *at, *block));
-    put_cells(&mut columns, cells, far, faces);
+    let counted = built.iter().filter(|(_, block)| level == 0 || **block == AIR);
+    counted.for_each(|(at, block)| count(&mut cells, level, *at, *block));
+    put_cells((&mut columns, &mut layered), cells, far, faces);
+    if level > 0 {
+        stand_built((&mut columns, &mut layered), &built, far, faces);
+    }
     // The chunks of the world's own blocks this tile's cells lie over, as they were changed.
     let (first, end) = (far.at.map(|tile| tile << level), far.at.map(|tile| (tile + 1) << level));
     let within = changes.chunks.range([first[0], i32::MIN, i32::MIN]..[end[0], i32::MIN, i32::MIN]);
@@ -532,9 +638,10 @@ fn made_tile(far: &FarTile, making: &BlockMaking, (changes, plants): (&BlockEdit
             count(&mut cells, level, [0, 1, 2].map(|axis| key[axis] * side + local[axis]), block);
         });
     }
-    put_cells(&mut columns, cells, far, faces);
+    put_cells((&mut columns, &mut layered), cells, far, faces);
     stand_plants(&mut columns, (making, far), (plants, &built, changes));
-    let columns = columns.iter().map(|runs| MapColumn::of_runs(runs, faces)).collect();
+    let column = |(runs, layered): (&Vec<Run>, bool)| MapColumn { layered, ..MapColumn::of_runs(runs, faces) };
+    let columns = columns.iter().zip(layered).map(column).collect();
     MapTile { level, at: far.at, columns }
 }
 
@@ -741,8 +848,8 @@ mod tests {
     }
 
     /// [`making`] with wood and leaves among its blocks, and a generator that builds huts of wood, five blocks
-    /// a side and four high, solid, one to a square of forty metres.
-    fn making_huts() -> BlockMaking {
+    /// a side and four high, solid, their top blocks `roof`, one to a square of forty metres.
+    fn making_huts(roof: BlockId) -> BlockMaking {
         use crate::{
             blocks::structure::{GroundFit, PlacedStructure, StructureBlocks, WorldStructures},
             generate::structures::Placement,
@@ -755,7 +862,7 @@ mod tests {
             placement: Placement { spacing: 40.0, separation: 12.0, chance: 1.0, slope: 80.0, ..Placement::default() },
             ground: GroundFit::Foundation,
             sink: 0,
-            blocks: StructureBlocks::Model { size: [5, 4, 5], blocks: vec![WOOD; 100] },
+            blocks: StructureBlocks::Model { size: [5, 4, 5], blocks: [vec![WOOD; 75], vec![roof; 25]].concat() },
             biomes: Vec::new(),
         };
         making.generate.built = Some(Arc::new(WorldStructures { list: vec![hut] }));
@@ -764,7 +871,7 @@ mod tests {
 
     #[test]
     fn what_a_worlds_generator_builds_on_its_ground_stands_on_its_map() {
-        let making = making_huts();
+        let making = making_huts(WOOD);
         let bare = BlockMaking { generate: BlockGenerate { built: None, ..making.generate.clone() }, ..making.clone() };
         let plain = map_tile(&MapGround::made(bare, Arc::default()), 0, [0, 0]);
         let tile = map_tile(&MapGround::made(making.clone(), Arc::default()), 0, [0, 0]);
@@ -789,14 +896,48 @@ mod tests {
             let tile = map_tile(&MapGround::made(making.clone(), Arc::default()), level, [0, 0]);
             tile.columns.iter().filter(|column| column.blocks[0] == WOOD).count()
         };
-        assert!((4..=64).contains(&wood(2)), "{} cells of huts at four blocks a cell", wood(2));
+        assert!((1..=64).contains(&wood(2)), "{} cells of huts at four blocks a cell", wood(2));
         assert_eq!(wood(STRUCTURES_TO + 1), 0);
+    }
+
+    #[test]
+    fn from_further_off_a_house_is_its_footprint_with_its_roof_over_its_walls() {
+        // Huts of wood roofed with leaves, a block deep.
+        let making = making_huts(LEAF);
+        let ground = MapGround::made(making, Arc::default());
+        let roofed = |level: u32| -> Vec<MapColumn> {
+            let tile = map_tile(&ground, level, [0, 0]);
+            tile.columns.iter().copied().filter(|column| column.blocks[0] == LEAF).collect()
+        };
+        // Block for block up close: the roof a block deep over three of wall.
+        let near = roofed(0);
+        assert!(!near.is_empty() && near.len() % 5 == 0, "{} columns of huts", near.len());
+        assert!(near.iter().all(|hut| hut.blocks[1] == WOOD && hut.depths[0] == 1 && hut.layered), "{:?}", near[0]);
+        // In cells of two blocks and of four, a hut is whole cells: its roof a cell deep over its walls, none
+        // of it standing free, its sides drawn as those layers are. Not the cells its blocks happen to fill,
+        // of whichever block was counted last.
+        for level in [1, 2] {
+            let huts = roofed(level);
+            assert!(!huts.is_empty(), "no hut in cells of {} blocks", 1 << level);
+            for hut in &huts {
+                assert!(hut.layered && hut.depths[0] == 1 && !hut.pieces[0].is_some(), "level {level}: {hut:?}");
+                assert!(hut.blocks[1] == WOOD || level == 2, "level {level}: walls under the roof: {hut:?}");
+            }
+        }
+        // What a structure stands as on a column of blocks, seen from above: a roof two deep over a hollow
+        // room has the floor's block for its walls, and stands from the floor up; a crown beside a trunk hangs.
+        let room = [([0, 10, 0], WOOD), ([0, 14, 0], LEAF), ([0, 15, 0], LEAF), ([3, 14, 0], LEAF)];
+        let seen = stood(&room.into_iter().collect());
+        let house = seen[&[0, 0]];
+        assert_eq!((house.bottom, house.top, house.roof, house.cap, house.wall), (10, 16, LEAF, 2, Some(WOOD)));
+        let crown = seen[&[3, 0]];
+        assert_eq!((crown.bottom, crown.top, crown.cap, crown.wall), (14, 15, 1, None));
     }
 
     #[test]
     fn the_plants_a_world_grows_stand_on_its_map_each_where_it_grows_and_as_woods_from_further_off() {
         use crate::blocks::grow::GrowRule;
-        let making = making_huts();
+        let making = making_huts(WOOD);
         let making = BlockMaking { generate: BlockGenerate { built: None, ..making.generate.clone() }, ..making };
         let rule = GrowRule {
             spacing: 10.0,

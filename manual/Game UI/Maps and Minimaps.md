@@ -41,7 +41,7 @@ The **map** covers the screen, and keeps its middle and its bottom left clear:
 
 What stands on the ground stands on the map, as small as the map's zoom makes it:
 
-- **Structures** the world's generator builds (see [[Structures]]): houses, a town's streets and roads, a dungeon's way in, and woods of block plants. They are their own blocks at 1:1 and show out to 1:8. In larger cells a house is too small a part of a cell to show.
+- **Structures** the world's generator builds (see [[Structures]]): houses, a town's streets and roads, a dungeon's way in, and woods of block plants. They are their own blocks at 1:1. Zoomed out, a house is its footprint with its roof over its walls, and a road is the ground's own top, out to 1:8. In larger cells a house is too small a part of a cell to show.
 - **Plants the world grows** (see [[Block Worlds#Plants a world grows]]) that have a **Far block**: each stands where it grows, drawn in that block, while it is at least a cell across. Zoomed further out they show as woods, as they do in the far view.
 - **What was built and dug**, block for block at 1:1.
 

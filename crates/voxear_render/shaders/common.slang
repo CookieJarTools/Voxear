@@ -1186,6 +1186,10 @@ struct BlockWorld
     uint anchor;
     // BLOCKS_SMOOTH where it is drawn smooth.
     uint flags;
+    // How many small cubes its faces are cut into along a block's side, 0 for none, and how many deep they sink at
+    // most (blockCubes in blocks.slang).
+    float voxels;
+    float relief;
 };
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).

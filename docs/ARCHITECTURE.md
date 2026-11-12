@@ -3374,7 +3374,14 @@ blocks in it and indices in as few bits as it needs; faces where a block meets a
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
-and each sun cascade only their faces turned towards the sun;
+and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
+(`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a
+grid of small cubes over the whole world from where it meets the face, each small cube standing a whole number of
+them below the face by how dark its part of the picture is, or by a hash of its place on a face with no picture,
+until the ray meets a top or a side; the face's pictures are then read at that small cube's middle, one small cube
+wide, and its normal is the small cube's own face. Nothing is cut out and no depth is written, so the mesh, the
+shadows, the depth pass and collision are the plain world's, and the pixel takes less of it as the small cubes
+shrink on screen. Further,
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its

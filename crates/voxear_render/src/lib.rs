@@ -150,7 +150,7 @@ pub use particles::{
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
-pub use blocks::{BlockCounts, BlockLook};
+pub use blocks::{BlockCounts, BlockLook, BlockVoxels};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};

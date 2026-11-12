@@ -1340,8 +1340,8 @@ mod tests {
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 66 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
-        // Its corner and block size, three addresses, then four words.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
+        // Its corner and block size, three addresses, four words, then its small cubes' count and depth.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

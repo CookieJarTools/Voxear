@@ -76,6 +76,27 @@ pub struct BlockFile {
     /// middles as full as each is (see `smooth`): a Voxel Terrain.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub smooth: bool,
+    /// How many small cubes its cubes' faces are drawn as made of along a
+    /// block's side: none at 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub voxels: u32,
+    /// How many small cubes deep the deepest of them are sunk into a face.
+    #[serde(skip_serializing_if = "is_usual_relief")]
+    pub relief: f32,
+}
+
+/// The most small cubes a face is cut into along a block's side, and how
+/// deep they sink at most and unless a world says.
+pub const MOST_VOXELS: u32 = 64;
+pub const DEEPEST_RELIEF: f32 = 4.0;
+pub const USUAL_RELIEF: f32 = 2.0;
+
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
+fn is_usual_relief(relief: &f32) -> bool {
+    *relief == USUAL_RELIEF
 }
 
 /// An entry of a world's palette. One naming a `block` is drawn as
@@ -266,6 +287,8 @@ impl Default for BlockFile {
             ground: Ground::default(),
             generate: None,
             smooth: false,
+            voxels: 0,
+            relief: USUAL_RELIEF,
         }
     }
 }
@@ -486,6 +509,18 @@ mod tests {
         let read = BlockFile::parse(&file.to_text()).unwrap();
         assert!(read.blocks[3].water && !read.blocks[0].water);
         assert!(read.faces().1[4].water);
+    }
+
+    #[test]
+    fn small_cubes_are_written_only_where_a_world_has_them() {
+        let plain = toml::to_string(&BlockFile::default()).unwrap();
+        assert!(!plain.contains("voxels") && !plain.contains("relief"), "{plain}");
+        let file = BlockFile { voxels: 8, ..BlockFile::default() };
+        let written = toml::to_string(&file).unwrap();
+        assert!(written.contains("voxels = 8") && !written.contains("relief"), "sunk as deep as usual: {written}");
+        assert_eq!(toml::from_str::<BlockFile>(&written).unwrap(), file);
+        let deep = BlockFile { voxels: 16, relief: 3.5, ..BlockFile::default() };
+        assert_eq!(toml::from_str::<BlockFile>(&toml::to_string(&deep).unwrap()).unwrap(), deep);
     }
 
     #[test]

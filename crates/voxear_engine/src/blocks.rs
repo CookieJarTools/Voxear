@@ -658,7 +658,8 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             glitter: false,
         });
     }
-    Ok(BlockLook { material: fallback, surfaces: surfaces.into() })
+    let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
+    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels })
 }
 
 /// Keeps every world of blocks' file and blocks in `content` as its

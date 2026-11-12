@@ -223,6 +223,8 @@ pub struct Pipelines {
     /// preview atlas.
     pub preview: vk::Pipeline,
     pub preview_resolve: vk::Pipeline,
+    /// A map of a world of blocks, drawn as a small model of it (see `map`).
+    pub map: vk::Pipeline,
     /// A plant drawn into each picture of its impostor's atlas: its colour
     /// and its normals (see `impostors`).
     pub impostor_bake: vk::Pipeline,
@@ -270,6 +272,7 @@ impl Pipelines {
             module("erosion")?,
             module("blocks")?,
             module("particle_sim")?,
+            module("map")?,
         ];
         let [
             cull,
@@ -299,6 +302,7 @@ impl Pipelines {
             erosion,
             blocks,
             particle_sim,
+            map,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -828,6 +832,11 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Preview resolve", preview, c"resolveVertex", c"resolveFragment")
             })?,
+            map: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Map", map, c"mapVertex", c"mapFragment")
+            })?,
             mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
             ddgi_software: [
                 create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
@@ -972,6 +981,7 @@ impl Pipelines {
             self.debug_solid,
             self.preview,
             self.preview_resolve,
+            self.map,
             self.impostor_bake,
         ];
         let mesh =

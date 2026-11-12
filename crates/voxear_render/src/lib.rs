@@ -30,6 +30,7 @@ mod hot_reload;
 mod ies;
 mod lod;
 mod looks;
+mod map;
 pub mod ocean;
 mod lod_group;
 mod ltc;
@@ -124,6 +125,7 @@ pub use previews::{
     PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
+pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
 pub use looks::{Look, LookName, SunLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
@@ -445,6 +447,8 @@ pub struct Renderer {
     /// UI panels in the world: their UIs, textures, and how large each showed.
     ui_panels: ui_panels::UiPanels,
     previews: previews::Previews,
+    /// Maps of worlds of blocks, each drawn into an image of its own.
+    maps: map::Maps,
     /// Plants' impostors waiting to be baked, and what bakes drew from.
     impostor_bakes: impostors::Bakes,
     /// This frame's skinned parts, posed once for every view.
@@ -528,6 +532,7 @@ impl Renderer {
             ui_buffers,
             ui_panels: ui_panels::UiPanels::default(),
             previews: previews::Previews::default(),
+            maps: map::Maps::default(),
             impostor_bakes: impostors::Bakes::default(),
             skinning: skinning::Skinning::default(),
             particle_sim: particle_sim::ParticleSim::new(FRAMES_IN_FLIGHT),
@@ -964,6 +969,47 @@ impl Renderer {
         self.previews.remove(id);
     }
 
+    /// A map of a world of blocks, `side` cells a side (rounded up to a
+    /// power of two), with nothing in it: its tiles are written with
+    /// [`write_map_tile`](Self::write_map_tile), and it is drawn the frames
+    /// [`draw_map`](Self::draw_map) asks.
+    pub fn add_map(&mut self, side: u32) -> Result<MapId> {
+        self.maps.add(&self.gpu, side)
+    }
+
+    /// The cells a map's window has along a side.
+    pub fn map_side(&self, id: MapId) -> Option<u32> {
+        self.maps.side(id)
+    }
+
+    /// Each block's colour on a map, by the block's number: sRGB.
+    pub fn set_map_palette(&mut self, id: MapId, colors: &[[u8; 3]]) -> Result<()> {
+        self.maps.set_palette(&self.gpu, id, colors)
+    }
+
+    /// Writes one tile of a map, the tile whose lowest cell is `at` along x
+    /// and z: 32 by 32 columns, a row along x after another.
+    pub fn write_map_tile(&mut self, id: MapId, at: [i32; 2], columns: &[GpuMapColumn]) {
+        self.maps.write_tile(id, at, columns);
+    }
+
+    /// Asks for a map to be drawn with the next frame, as `draw` says. Asked
+    /// every frame the map shows; it is drawn again only when what it shows
+    /// or how it is seen changed.
+    pub fn draw_map(&mut self, id: MapId, draw: MapDraw) {
+        self.maps.draw(id, draw);
+    }
+
+    /// Where a map was drawn, to show it in the UI, once it has been.
+    pub fn map_image(&self, id: MapId) -> Option<MapImage> {
+        self.maps.image(id)
+    }
+
+    /// Lets a map go.
+    pub fn free_map(&mut self, id: MapId) {
+        self.maps.remove(id);
+    }
+
     /// Asks for a preview's pixels, to save or use elsewhere: they are
     /// copied back once it is drawn, and [`preview_pixels`](Self::preview_pixels)
     /// hands them over a few frames later.
@@ -1168,6 +1214,7 @@ impl Renderer {
             ui_buffers,
             ui_panels,
             previews,
+            maps,
             impostor_bakes,
             skinning,
             particle_sim,
@@ -1275,7 +1322,11 @@ impl Renderer {
         }
         let preview_atlas = previews.record(&mut fg, (gpu, bindless), (pipelines, assets), frame.slot)?;
         let debugger_view = frame_debugger.view_image(&mut fg, gpu, bindless)?;
-        let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).collect();
+        let map_images = maps.record(&mut fg, (gpu, bindless), pipelines, frame.slot)?;
+        for buffer in maps.take_retired() {
+            frames.retire(Retired::Buffer(buffer));
+        }
+        let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).chain(map_images).collect();
         let main = images[0];
         if let Some((output, desc)) = main {
             captures.record(&mut fg, gpu, (output, desc), true, frame.slot)?;
@@ -1492,7 +1543,7 @@ impl Drop for Renderer {
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
-        let baked = self.impostor_bakes.take_buffers();
+        let baked = self.impostor_bakes.take_buffers().into_iter().chain(self.maps.take_buffers());
         for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()).chain(baked) {
             self.frames.retire(Retired::Buffer(buffer));
         }

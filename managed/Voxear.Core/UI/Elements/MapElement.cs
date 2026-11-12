@@ -31,6 +31,8 @@ public abstract class MapElement : UiElement
 	private bool showTitle = true;
 	private bool showReadout = true;
 	private bool showCompass = true;
+	private bool showZoom = true;
+	private float referenceHeight = 1080f;
 	private MapCamera? camera;
 
 	private protected MapElement(UiKind kind, bool large) : base(kind, string.Empty)
@@ -243,13 +245,38 @@ public abstract class MapElement : UiElement
 		}
 	}
 
+	/// <summary>Whether its zoom shows: a map's buttons, a minimap's tag.</summary>
+	public bool ShowZoom
+	{
+		get { return showZoom; }
+		set
+		{
+			showZoom = value;
+			Send("zoom-control", value ? "true" : "false");
+		}
+	}
+
+	/// <summary>
+	/// How high the screen its parts' sizes are for is, in pixels: they are scaled by the screen's height over
+	/// this, so the map takes up as much of a small window as of a large screen. 0 leaves them as they are.
+	/// </summary>
+	public float ReferenceHeight
+	{
+		get { return referenceHeight; }
+		set
+		{
+			referenceHeight = value;
+			Send("reference", value.ToString(CultureInfo.InvariantCulture));
+		}
+	}
+
 	private protected override void OnShown()
 	{
 		if (!made)
 		{
 			return;
 		}
-		var settings = string.Create(CultureInfo.InvariantCulture, $"zoom={zoom} turns={turnsWithView} round={round} tilt={tilt} fill={fill} controls={pointerControl} min-zoom={minZoom} max-zoom={maxZoom} shadows={shadows} edges={edgeLines} thick={thickness} arrow={showArrow} arrow-at-edge={arrowStaysAtEdge} labels={showLabels} title={showTitle} readout={showReadout} compass={showCompass}");
+		var settings = string.Create(CultureInfo.InvariantCulture, $"zoom={zoom} turns={turnsWithView} round={round} tilt={tilt} fill={fill} controls={pointerControl} min-zoom={minZoom} max-zoom={maxZoom} shadows={shadows} edges={edgeLines} thick={thickness} arrow={showArrow} arrow-at-edge={arrowStaysAtEdge} labels={showLabels} title={showTitle} readout={showReadout} compass={showCompass} zoom-control={showZoom} reference={referenceHeight}");
 		SendString(StringMapView, settings.ToLowerInvariant());
 	}
 
@@ -258,7 +285,7 @@ public abstract class MapElement : UiElement
 		zoom = large ? 4 : 2;
 		turnsWithView = !large;
 		tilt = large ? 42f : 58f;
-		fill = large ? 1.15f : 0.98f;
+		fill = large ? 1.15f : 1.7f;
 		pointerControl = large;
 		thickness = large ? 4f : 2f;
 		showLabels = large;
@@ -292,6 +319,8 @@ public abstract class MapElement : UiElement
 			case "title": showTitle = on; break;
 			case "readout": showReadout = on; break;
 			case "compass": showCompass = on; break;
+			case "zoom-control": showZoom = on; break;
+			case "reference": referenceHeight = number; break;
 		}
 	}
 }

@@ -1161,11 +1161,11 @@ DockSpace .split-column > .split-divider {
 }
 
 /* A map of the game's world (see `map_view`): a minimap on the HUD, and a map opened over the game. The ground is
-   drawn into its picture; markers and their labels lie over it. */
+   drawn into its picture; markers and their labels lie over it. Each part's sizes are its own style, scaled with
+   the screen; its colours and its type are here. */
 .minimap {
     position: relative;
-    width: 220px;
-    height: 220px;
+    flex-direction: column;
     flex-shrink: 0;
 }
 
@@ -1190,34 +1190,135 @@ DockSpace .split-column > .split-divider {
     pointer-events: none;
 }
 
-.map-header {
-    position: absolute;
-    right: 28px;
-    top: 18px;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 2px;
-    pointer-events: none;
+/* What every panel of a map is drawn as. */
+.map-panel {
+    background-color: rgba(13, 16, 22, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
-.map-readout {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.85);
+.map-region {
+    position: absolute;
+    flex-direction: column;
+    pointer-events: none;
 }
 
 .map-title {
-    font-size: 30px;
-    font-weight: bold;
+    font-weight: semibold;
     color: #ffffff;
 }
 
-.map-compass {
+.map-divider {
+    height: 1px;
+    align-self: stretch;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.map-group {
+    flex-direction: row;
+    align-items: baseline;
+}
+
+.map-axis, .map-unit {
+    font-family: mono;
+    font-weight: medium;
+    color: rgba(255, 255, 255, 0.74);
+}
+
+.map-number {
+    font-family: mono;
+    font-weight: medium;
+    color: #ffffff;
+}
+
+.map-caption {
+    font-weight: medium;
+    color: rgba(255, 255, 255, 0.74);
+}
+
+.map-environment {
     position: absolute;
-    right: 28px;
-    top: 92px;
-    width: 76px;
-    height: 76px;
+    flex-direction: row;
     pointer-events: none;
+}
+
+.map-cell {
+    flex-direction: column;
+}
+
+.map-cell.first {
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.map-cell.last {
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.map-nav {
+    position: absolute;
+    flex-direction: column;
+    align-items: center;
+}
+
+.map-compass, .minimap-compass {
+    position: relative;
+    pointer-events: none;
+}
+
+.minimap-compass {
+    position: absolute;
+}
+
+.map-compass-north {
+    position: absolute;
+    font-weight: semibold;
+    color: #ffd23f;
+}
+
+.map-compass-letter {
+    position: absolute;
+    font-weight: medium;
+    color: rgba(255, 255, 255, 0.74);
+}
+
+.map-zoom {
+    flex-direction: column;
+}
+
+.map-zoom-button {
+    align-items: center;
+    justify-content: center;
+    border-width: 0px;
+    border-radius: 0px;
+    background-color: transparent;
+    color: #ffffff;
+}
+
+.map-zoom-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.map-zoom-value {
+    flex-direction: column;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* The name of what the maps follow, over where it is. */
+.map-tag {
+    position: absolute;
+    flex-direction: row;
+    align-items: center;
+    pointer-events: none;
+}
+
+.map-avatar {
+    background-color: #ffd23f;
+}
+
+.map-tag-name {
+    font-weight: semibold;
+    color: #ffffff;
 }
 
 /* What a marker on a map is called, beside it. */
@@ -1227,12 +1328,29 @@ DockSpace .split-column > .split-divider {
     border-radius: 4px;
     font-size: 13px;
     color: #ffffff;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(13, 16, 22, 0.82);
 }
 
-.map-compass-north {
+.minimap-window {
+    position: relative;
+    overflow: hidden;
+}
+
+.minimap-zoom {
     position: absolute;
-    font-size: 13px;
-    font-weight: bold;
-    color: #ffffff;
+    flex-direction: row;
+    align-items: baseline;
+    pointer-events: none;
+}
+
+.minimap-info {
+    flex-direction: column;
+}
+
+/* A row too long for a narrow minimap goes on to the next line. */
+.minimap-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
 }

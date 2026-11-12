@@ -12,7 +12,7 @@ Add one with the Hierarchy's **+ â–¸ Map**, or to any Obj with **Add Component â
 | --- | --- |
 | **Minimap** | Whether the minimap shows |
 | **Corner** | The corner of the screen the minimap sits in |
-| **Size** | How large the minimap is, in the UI's pixels |
+| **Size** | How wide the minimap is, in pixels on a screen 1080 high |
 | **Zoom** | How many blocks one cell of the minimap is, from 1:1 to 1:64 |
 | **Turn With View** | On, the minimap turns so what is ahead is at its top. Off, north stays at its top |
 | **Round** | Cuts the minimap's ground round rather than square |
@@ -24,7 +24,22 @@ Add one with the Hierarchy's **+ â–¸ Map**, or to any Obj with **Add Component â
 | **Pointer Control** | Whether the pointer turns, moves and zooms the map. Off, only scripts do |
 | **Shows** | What the maps show of the world: **Everything**, what was **Explored**, or what the **Game Decides** (see [What a map knows](#what-a-map-knows)) |
 
-Each step of zoom doubles the ground a map covers and halves its detail, so a map costs the same at any zoom. A minimap covers about 90 cells across: 180 m at 1:2 with metre blocks. An opened map covers 110 to 220 cells, more as it is zoomed out.
+Each step of zoom doubles the ground a map covers and halves its detail, so a map costs the same at any zoom. An opened map covers 110 to 220 cells, more as it is zoomed out: 440 to 880 m at 1:4 with metre blocks.
+
+Every size here is for a screen 1080 pixels high. On another, the minimap and the map are scaled with the screen's height, so they take up as much of a small window as of a large screen.
+
+## What the minimap and the map show
+
+The **minimap** is a panel with a window on the ground. In the window's corners are a small compass and its zoom. Under the window, a strip names the country, with the time beside it, and under that says where the player is and how warm and wet it is there.
+
+The **map** covers the screen, and keeps its middle and its bottom left clear:
+
+- Top left, the country's name over where the map looks, along x and z.
+- Top right, the time, the temperature and the humidity.
+- Bottom right, a compass lying on the ground as the map does, its needle pointing north, over buttons that zoom in and out a step.
+- Over the player, a dot, and their name on a tag over it.
+
+The country's name is how warm and wet the world's generator makes that place, as Forest or Tundra. The time is whatever your game says it is, with `Map.Time`, and shows only once it says. The player's name is `Map.PlayerName`, or the label of their Map Marker.
 
 ## The opened map
 
@@ -36,9 +51,7 @@ Pick **Open Map** from the project's input actions (see [[Reading Input]]). Pres
 | Move over the ground | Drag with the middle button |
 | Zoom | Turn the wheel |
 
-Zooming keeps the map the size it is on the screen and shows more or less ground. What the maps follow is marked with an arrow, which stays at the ground's edge, towards where it is, once the map is moved off it. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).
-
-The map's title names the country it looks at, by how warm and wet the generator makes it there. The line over the title reads where that is, how warm and how wet, and the zoom. The compass lies on the ground as the map does, its red arm pointing north.
+Zooming keeps the map the size it is on the screen and shows more or less ground. The player's dot stays at the ground's edge, towards where they are, once the map is moved off them. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).
 
 ## Markers
 
@@ -54,7 +67,7 @@ A **Map Marker** marks its Obj on every map, where it is. Add one with **Add Com
 
 Put a Map Marker on your player's prefab and every player shows on the others' maps, as long as that player's Obj reaches them. In a small co-op game, give the player's Net Object a range of 0 so it reaches everyone (see [[Sharing Objs]]).
 
-What the maps follow is marked with an arrow, pointing the way it faces.
+What the maps follow has a mark of its own, the accent dot, so its Map Marker is not drawn as well.
 
 ## Maps from scripts
 
@@ -82,7 +95,14 @@ public sealed class Guide : Behaviour
 }
 ```
 
-`Map.AddMarker` with an Obj gives it a Map Marker. With a place it gives back a `MapPin`, which you move, restyle or `Remove()`. `Map.Title` sets the opened map's title in place of the country's name.
+`Map.AddMarker` with an Obj gives it a Map Marker. With a place it gives back a `MapPin`, which you move, restyle or `Remove()`.
+
+| On every map | What it sets |
+| --- | --- |
+| `Map.Follow` | The Obj the maps follow, in place of the camera |
+| `Map.Title` | The country's name, in place of the generator's |
+| `Map.Time` | The time shown, as you write it: `Map.Time = $"{hour:00}:{minute:00}";` |
+| `Map.PlayerName` | The name over the player's dot on the opened map |
 
 `Obj.Map` is an Obj's Map, with the settings above and `Open()`, `Close()` and `IsOpen`. `Obj.AddMap()` gives an Obj one. Hold it in a variable to change its settings:
 
@@ -128,25 +148,33 @@ Both have every setting below, by the same names in markup as attributes. Each c
 | `Shadows` | `shadows` | How dark its shadows are, 0 to 1 |
 | `EdgeLines` | `edges` | How dark the lines along its blocks' edges are, 0 to 1 |
 | `Thickness` | `thick` | How thick the ground is under its lowest place, in cells |
-| `ShowArrow` | `arrow` | Whether what the maps follow is marked with an arrow |
-| `ArrowStaysAtEdge` | `arrow-at-edge` | Whether that arrow stays at the ground's edge once the map is moved off it |
+| `ShowArrow` | `arrow` | Whether what the maps follow is marked |
+| `ArrowStaysAtEdge` | `arrow-at-edge` | Whether that mark stays at the ground's edge once the map is moved off it |
 | `ShowLabels` | `labels` | Whether markers' labels show |
-| `ShowTitle`, `ShowReadout`, `ShowCompass` | `title`, `readout`, `compass` | Whether each of a map's parts shows |
+| `ShowTitle` | `title` | Whether the country's name shows, with a map's panel round it |
+| `ShowReadout` | `readout` | Whether the time, temperature and humidity show: a map's strip, and all of a minimap's |
+| `ShowCompass`, `ShowZoom` | `compass`, `zoom-control` | Whether the compass shows, and the zoom: a map's buttons, a minimap's tag |
+| `ReferenceHeight` | `reference` | The screen height its sizes are for, 1080 to begin with. 0 leaves them unscaled |
 
 A Map component's own minimap and map are the same two elements: `Obj.Map.MinimapView` and `Obj.Map.MapView` give them, once they are on the screen, so every setting here is theirs too. The component's own settings win where both say.
 
-A `Minimap` takes its size from its style, 220 pixels square unless a sheet says otherwise. A `MapView` covers what it is in. Showing and hiding a `MapView`, and what the game does with its input meanwhile, are yours to decide.
+A `Minimap` is 380 pixels wide on a screen 1080 high, unless its style gives it another `width`. A `MapView` covers what it is in. Showing and hiding a `MapView`, and what the game does with its input meanwhile, are yours to decide.
 
-Style sheets reach every part by its class (see [[UI Style Sheets]]):
+Style sheets reach every part by its class (see [[UI Style Sheets]]). A part's sizes are its own style, so that they scale with the screen: a sheet changes its colours and its type.
 
 | Class | What it is |
 | --- | --- |
 | `minimap`, `map` | The whole of a minimap, or of a map |
-| `map-picture` | The ground |
-| `map-overlay` | What lies over the ground: markers and labels |
+| `map-panel` | Every panel: the fill and the border |
+| `map-picture`, `map-overlay` | The ground, and what lies over it |
 | `map-label` | A marker's label |
-| `map-header`, `map-readout`, `map-title` | The opened map's readout and title |
-| `map-compass`, `map-compass-north` | The compass, and its N |
+| `map-region`, `map-title` | A map's panel for where it looks, and the country's name |
+| `map-environment`, `map-cell` | A map's strip for the time and the air, and each of its three cells |
+| `map-caption`, `map-number`, `map-unit`, `map-axis` | The small names, the numbers, their units, and the X and Z |
+| `map-compass`, `minimap-compass`, `map-compass-north`, `map-compass-letter` | The compasses, the N, and the other letters |
+| `map-zoom`, `map-zoom-button`, `map-zoom-value`, `minimap-zoom` | A map's zoom panel and its parts, and a minimap's zoom tag |
+| `map-tag`, `map-avatar`, `map-tag-name` | The player's name tag, its tile and the name |
+| `minimap-window`, `minimap-info`, `minimap-row` | A minimap's window, its strip and each row of it |
 
 ## Steering a map
 
@@ -245,6 +273,8 @@ MapKnowledge.Shown.Merge(news);
 
 - They show Block Worlds only, not heightmap Terrain.
 - A world's trees and buildings show once its far view carries them: a map is made from the same ground the far view is.
-- The title names the place at the map's middle. `Camera.PlaceAt` gives the place under the pointer, for a title of your own.
+- The country's name is of the place at the map's middle. `Camera.PlaceAt` gives the place under the pointer, for a name of your own.
+- The words on the panels (TIME, TEMP, HUMIDITY, ZOOM) are not translated yet.
+- Names and numbers are drawn in the UI's own two typefaces, and labels cannot be letter-spaced.
 - A gamepad opens and closes the map through its action. Turning and moving it with one is a few lines on its `Camera`.
 - Ground known is drawn as it is now. Only news is kept as it was heard.

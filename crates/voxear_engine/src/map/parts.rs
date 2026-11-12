@@ -35,8 +35,8 @@ impl MapCorner {
 /// a minimap in a corner of the screen and a map opened over the game.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Map {
-    /// Whether the minimap shows, the corner it sits in, and how large it
-    /// is, in the UI's pixels.
+    /// Whether the minimap shows, the corner it sits in, and how wide it
+    /// is, in pixels on a screen 1080 high: it is scaled with the screen.
     pub minimap: bool,
     pub corner: MapCorner,
     pub size: f32,
@@ -72,7 +72,7 @@ impl Default for Map {
         Map {
             minimap: true,
             corner: MapCorner::TopRight,
-            size: 220.0,
+            size: 380.0,
             zoom: 2,
             turns: true,
             round: false,
@@ -141,7 +141,7 @@ pub fn map_of(data: &MapData) -> Map {
     Map {
         minimap: data.minimap,
         corner: data.corner,
-        size: data.size.clamp(48.0, 1024.0),
+        size: data.size.clamp(120.0, 1024.0),
         zoom: voxear_ui::MapViewSettings::zoom_of(data.zoom as f32),
         turns: data.turns,
         round: data.round,

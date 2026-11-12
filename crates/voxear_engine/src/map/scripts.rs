@@ -26,6 +26,12 @@ use voxear_terrain::blocks::map_known::MapKnowledge;
 pub struct MapScript {
     pub follow: Option<Entity>,
     pub title: Option<String>,
+    /// The time, as the game tells it: maps show it as written, and
+    /// nothing with none.
+    pub time: Option<String>,
+    /// The name over what the maps follow, in place of its Map Marker's
+    /// label.
+    pub player: Option<String>,
     pub placed: HashMap<u32, PlacedMarker>,
     /// What scripts asked of a map view since it was last shown, by the
     /// number they hold its element by: done the next time it is.
@@ -141,6 +147,8 @@ const TEXT_GET: i32 = 1;
 const TEXT_SET: i32 = 2;
 const TITLE: i32 = 100;
 const PLACE_LABEL: i32 = 101;
+const TIME: i32 = 102;
+const PLAYER: i32 = 103;
 
 const DONE: Option<[f32; 4]> = Some([0.0; 4]);
 
@@ -250,7 +258,7 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
             match what {
                 MINIMAP => map.minimap = value != 0.0,
                 CORNER => map.corner = pick(&MapCorner::ALL, value),
-                SIZE => map.size = value.clamp(48.0, 1024.0),
+                SIZE => map.size = value.clamp(120.0, 1024.0),
                 ZOOM => map.zoom = voxear_ui::MapViewSettings::zoom_of(value),
                 TURNS => map.turns = value != 0.0,
                 ROUND => map.round = value != 0.0,
@@ -281,6 +289,14 @@ fn map_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option
     match what {
         TITLE => {
             script(world).title = (!text.is_empty()).then(|| text.to_string());
+            Some(String::new())
+        }
+        TIME => {
+            script(world).time = (!text.is_empty()).then(|| text.to_string());
+            Some(String::new())
+        }
+        PLAYER => {
+            script(world).player = (!text.is_empty()).then(|| text.to_string());
             Some(String::new())
         }
         PLACE_LABEL => {

@@ -188,6 +188,8 @@ pub struct ShownMap {
     /// and whether it is cut round.
     pub reach: f32,
     pub round: bool,
+    /// How many blocks a cell is drawn as: its zoom, any number.
+    pub blocks: f32,
 }
 
 impl ShownMap {
@@ -535,7 +537,13 @@ impl Maps {
         let ground = self.grounds.get(&entity)?;
         let (faces, origin, block_size) = (ground.faces.clone(), ground.corner, ground.block_size.max(0.01));
         let parts = ui.map_view_parts(node)?;
-        let rect = ui.rect(node);
+        // Its parts as large as its design has them on a screen of the height it is for.
+        let screen = ui.rect(ui.root())[3];
+        if screen >= 1.0 {
+            ui.size_map_view(node, if settings.reference > 0.0 { screen / settings.reference } else { 1.0 });
+        }
+        // The ground is drawn where its picture is: all of a map, a minimap's window.
+        let rect = ui.rect(parts.picture);
         let size = [(rect[2] * scale).round().max(1.0) as u32, (rect[3] * scale).round().max(1.0) as u32];
         if rect[2] < 2.0 || rect[3] < 2.0 {
             return None;
@@ -565,8 +573,16 @@ impl Maps {
         if let Some(place) = wish.look_at {
             view.moved = Vec2::new(place.x - viewer.position.x, place.z - viewer.position.z);
         }
+        // A map's buttons zoom to the next power of two, nearer or further.
+        let now = settings.zoom as f32 / view.zoom.max(1e-3);
+        if parts.zoom_in.is_some_and(|button| ui.clicked(button)) {
+            view.zoom = settings.zoom as f32 / 2f32.powf((now.log2() - 0.01).ceil() - 1.0);
+        }
+        if parts.zoom_out.is_some_and(|button| ui.clicked(button)) {
+            view.zoom = settings.zoom as f32 / 2f32.powf((now.log2() + 0.01).floor() + 1.0);
+        }
         if settings.controls {
-            hear_pointer(view, ui, node, settings.fill);
+            hear_pointer(view, ui, (node, parts.picture), settings.fill);
         }
         if settings.turns {
             view.turn = viewer.heading;
@@ -726,6 +742,7 @@ impl Maps {
             origin,
             reach,
             round: settings.round,
+            blocks,
         };
         self.shown.insert(node, shown);
         let seen = MapViewSeen {
@@ -747,7 +764,7 @@ impl Maps {
 
 /// Hears the pointer on a map: a drag turns and tilts it, a drag with the
 /// middle button moves it over the ground, and the wheel zooms it.
-fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId, fill: f32) {
+fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId), fill: f32) {
     ui.take_wheel(node, true);
     // The wheel turned away brings the ground nearer, as it does in the editor's views.
     let wheel = ui.wheeled(node)[1];
@@ -767,7 +784,7 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, node: NodeId, fill: f32) {
         return;
     }
     // Moved with the ground under the pointer: a pixel is as many metres as the slab is wide over the view.
-    let rect = ui.rect(node);
+    let rect = ui.rect(picture);
     let metres = view.reach * 2.0 / fill.max(0.05) / rect[3].max(1.0) * view.cell;
     let (sin, cos) = view.turn.sin_cos();
     let (right, ahead) = (Vec2::new(cos, -sin), Vec2::new(sin, cos));

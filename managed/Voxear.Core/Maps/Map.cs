@@ -43,6 +43,8 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	private const int ActionRead = 1;
 	private const int ActionWrite = 2;
 	private const int TitleText = 100;
+	private const int TimeText = 102;
+	private const int PlayerText = 103;
 
 	public static readonly Map None = default;
 
@@ -71,7 +73,7 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 		set { Write(CornerValue, (int)value); }
 	}
 
-	/// <summary>How large its minimap is, in the UI's pixels.</summary>
+	/// <summary>How wide its minimap is, in pixels on a screen 1080 high: it is scaled with the screen.</summary>
 	public float Size
 	{
 		get { return Number(SizeValue); }
@@ -191,6 +193,24 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	public static string? Title
 	{
 		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, TitleText, value ?? string.Empty); }
+	}
+
+	/// <summary>
+	/// The time the maps show, written as the game has it: <c>Map.Time = $"{hour:00}:{minute:00}";</c>. Null, as
+	/// it starts, shows none.
+	/// </summary>
+	public static string? Time
+	{
+		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, TimeText, value ?? string.Empty); }
+	}
+
+	/// <summary>
+	/// The name an opened map shows over what the maps follow. Null, as it starts, shows the label of that Obj's
+	/// Map Marker, or no name where it has none.
+	/// </summary>
+	public static string? PlayerName
+	{
+		set { NativeComponent.Tell(NativeComponent.Map, Obj.None, PlayerText, value ?? string.Empty); }
 	}
 
 	/// <summary>Marks an Obj on every map, where it is: gives it a Map Marker, or sets the one it has.</summary>

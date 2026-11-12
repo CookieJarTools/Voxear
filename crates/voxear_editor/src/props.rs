@@ -4985,7 +4985,7 @@ fn set_map(map: &mut voxear_engine::map::Map, prop: &Prop, value: Value) {
     match (prop, value) {
         (Prop::MapMinimap, Value::Toggle(on)) => map.minimap = on,
         (Prop::MapCorner, Value::Choice(index, _)) => map.corner = MapCorner::ALL.get(index).copied().unwrap_or_default(),
-        (Prop::MapSize, Value::Number(n)) => map.size = n.clamp(48.0, 1024.0),
+        (Prop::MapSize, Value::Number(n)) => map.size = n.clamp(120.0, 1024.0),
         (Prop::MapZoom, Value::Choice(index, _)) => map.zoom = 1 << index.min(6),
         (Prop::MapTurns, Value::Toggle(on)) => map.turns = on,
         (Prop::MapRound, Value::Toggle(on)) => map.round = on,

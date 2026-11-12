@@ -34,6 +34,8 @@ public sealed class MapScript : Behaviour
 		map.Round = true;
 		Map.Follow = Obj;
 		Map.Title = "Oakrest Vale";
+		Map.Time = "14:12";
+		Map.PlayerName = "Pixie";
 		Map.AddMarker(Obj, MapIcon.Player, "Me", Color.Green);
 		camp = Map.AddMarker(new Vector3(12f, 3f, -4f), MapIcon.Camp, "Old camp");
 		camp.StaysAtEdge = true;
@@ -154,6 +156,7 @@ fn a_script_sets_up_a_map_marks_an_obj_and_a_place_and_makes_a_minimap_of_its_ow
     // Every map follows the Obj and takes its title; the pin kept is at its place, the one removed is gone.
     let script = game.engine.world.resource::<MapScript>().unwrap().clone();
     assert_eq!((script.follow, script.title.as_deref()), (Some(obj), Some("Oakrest Vale")));
+    assert_eq!((script.time.as_deref(), script.player.as_deref()), (Some("14:12"), Some("Pixie")));
     assert_eq!(script.placed.len(), 1);
     let camp = script.placed.values().next().unwrap();
     assert_eq!(

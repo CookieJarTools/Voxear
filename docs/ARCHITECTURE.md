@@ -3442,6 +3442,11 @@ as a minimap on the HUD or a map opened over the game.
   show, and each layer's colours; as a tile is written to a view, ground not known becomes paper, which the shader
   stands at the slab's lowest ground, and news tints its column. Bytes are runs, compressed; `merge` keeps the
   newer news; `changes_since` writes only the regions changed since a stamp.
+- **Steering** (`map::scripts`, `MapViewWish`, `MapViewSeen`): scripts hold a map view by its element's number, a
+  Map's own two among them (`Map.views`). What a script asks of one (turn, tilt, zoom, where it looks, settings by
+  name) waits in the world's `MapScript` and is done the next time the view is shown; how it was seen, with the
+  tiles its window held, is left there for scripts to read, so `MapViewSeen::place` finds the ground under a point
+  of the view by walking the same columns the shader does.
 - **Scripts**: no native entries of their own. `Map` and `MapMarker` answer through `kind_value` and `kind_text`
   (`ComponentKind::Map` = 20, `MapMarker` = 21), every map's settings, placed markers and knowledge among them
   (`map::scripts`, `MapScript`); a map view's settings go through `ui_set_string`.

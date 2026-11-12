@@ -353,9 +353,9 @@ pub enum UiAsk<'a> {
     /// The picture an image shows, by project path or GUID; empty for none.
     /// Whatever has the pictures finds it and asks `SetImage`.
     SetPicture(&'a str),
-    /// How a map view shows the ground: the blocks to a cell, whether it
-    /// turns with the view, whether it is round, and its tilt in degrees,
-    /// as "4 1 0 58".
+    /// How a map view shows the ground: settings by their names, as
+    /// `voxear_ui::MapViewSettings::set_all` reads them, as
+    /// "zoom=4 turns=true fill=1.2".
     SetMapView(&'a str),
     /// What an image shows: the renderer's index for a texture and the part
     /// of it, as fractions (left, top, right, bottom); none for nothing.

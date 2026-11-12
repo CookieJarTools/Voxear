@@ -514,6 +514,9 @@ pub enum Prop {
     MapOpenZoom,
     MapOpenAction,
     MapShows,
+    MapOpenSize,
+    MapOpenTilt,
+    MapPointer,
     MarkerIcon,
     MarkerLabel,
     MarkerColor,
@@ -974,7 +977,10 @@ impl Prop {
             | Prop::MapTilt
             | Prop::MapOpenZoom
             | Prop::MapOpenAction
-            | Prop::MapShows => Part::Map,
+            | Prop::MapShows
+            | Prop::MapOpenSize
+            | Prop::MapOpenTilt
+            | Prop::MapPointer => Part::Map,
             Prop::MarkerIcon | Prop::MarkerLabel | Prop::MarkerColor | Prop::MarkerShows | Prop::MarkerEdge => {
                 Part::MapMarker
             }
@@ -1327,6 +1333,9 @@ impl Prop {
             Prop::MapOpenZoom => "map_zoom",
             Prop::MapOpenAction => "open_action",
             Prop::MapShows => "shows",
+            Prop::MapOpenSize => "map_size",
+            Prop::MapOpenTilt => "map_tilt",
+            Prop::MapPointer => "pointer_control",
             Prop::MarkerIcon => "icon",
             Prop::MarkerLabel => "label",
             Prop::MarkerColor => "color",
@@ -1871,6 +1880,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MapTilt,
             Prop::MapOpenAction,
             Prop::MapOpenZoom,
+            Prop::MapOpenSize,
+            Prop::MapOpenTilt,
+            Prop::MapPointer,
             Prop::MapShows,
         ],
         Part::MapMarker => {
@@ -2378,6 +2390,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::MapOpenZoom => "Map Zoom",
         Prop::MapOpenAction => "Open Map",
         Prop::MapShows => "Shows",
+        Prop::MapOpenSize => "Map Size",
+        Prop::MapOpenTilt => "Map Tilt",
+        Prop::MapPointer => "Pointer Control",
         Prop::MarkerIcon => "Icon",
         Prop::MarkerLabel => "Label",
         Prop::MarkerColor => "Colour",
@@ -2644,6 +2659,9 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
         (Prop::TrackWidth | Prop::TrackDepth, _) => Some("m"),
+        (Prop::MapOpenSize, _) => Some("%"),
+        (Prop::MapTilt | Prop::MapOpenTilt, _) => Some("°"),
+        (Prop::MapSize, _) => Some("px"),
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
         (Prop::BlockWorld(field), _) => crate::block_props::unit(*field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
@@ -3293,6 +3311,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let names = world.resource::<voxear_engine::ActionNames>();
             Value::Asset(action.map_or("None".to_string(), |id| names.map_or(id.clone(), |names| names.label(&id))))
         }
+        Prop::MapOpenSize => Value::Number(round3(world.get::<voxear_engine::map::Map>(entity)?.map_size * 100.0)),
+        Prop::MapOpenTilt => Value::Number(world.get::<voxear_engine::map::Map>(entity)?.map_tilt),
+        Prop::MapPointer => Value::Toggle(world.get::<voxear_engine::map::Map>(entity)?.pointer_control),
         Prop::MapShows => {
             use voxear_engine::map::MapShows;
             let shows = world.get::<voxear_engine::map::Map>(entity)?.shows;
@@ -4970,6 +4991,10 @@ fn set_map(map: &mut voxear_engine::map::Map, prop: &Prop, value: Value) {
         (Prop::MapRound, Value::Toggle(on)) => map.round = on,
         (Prop::MapTilt, Value::Number(n)) => map.tilt = n.clamp(20.0, 90.0),
         (Prop::MapOpenZoom, Value::Choice(index, _)) => map.map_zoom = 1 << index.min(6),
+        // Its size is shown as a percentage of the screen's height.
+        (Prop::MapOpenSize, Value::Number(n)) => map.map_size = (n / 100.0).clamp(0.1, 3.0),
+        (Prop::MapOpenTilt, Value::Number(n)) => map.map_tilt = n.clamp(20.0, 90.0),
+        (Prop::MapPointer, Value::Toggle(on)) => map.pointer_control = on,
         (Prop::MapShows, Value::Choice(index, _)) => {
             map.shows = voxear_engine::map::MapShows::ALL.get(index).copied().unwrap_or_default();
         }
@@ -5666,7 +5691,13 @@ mod tests {
         assert!(found.contains(&Part::Map) && found.contains(&Part::MapMarker));
         let shown = props(&world, entity, &Part::Map, &types);
         assert_eq!(shown[..3], [Prop::MapMinimap, Prop::MapCorner, Prop::MapSize]);
-        assert_eq!(shown[shown.len() - 3..], [Prop::MapOpenAction, Prop::MapOpenZoom, Prop::MapShows]);
+        assert_eq!(shown[shown.len() - 6..shown.len() - 4], [Prop::MapOpenAction, Prop::MapOpenZoom]);
+        assert_eq!(shown[shown.len() - 4..], [Prop::MapOpenSize, Prop::MapOpenTilt, Prop::MapPointer, Prop::MapShows]);
+        // The opened map's size is a percentage of the screen's height.
+        assert!(set_component(&mut world, entity, &Prop::MapOpenSize, Value::Number(140.0)));
+        assert!(set_component(&mut world, entity, &Prop::MapPointer, Value::Toggle(false)));
+        let map = world.get::<Map>(entity).unwrap().clone();
+        assert_eq!((map.map_size, map.pointer_control), (1.4, false));
         assert!(set_component(&mut world, entity, &Prop::MapShows, Value::Choice(1, Vec::new())));
         assert_eq!(world.get::<Map>(entity).unwrap().shows, voxear_engine::map::MapShows::Explored);
         // A zoom is picked from the zooms a map has, 1:1 to 1:64.

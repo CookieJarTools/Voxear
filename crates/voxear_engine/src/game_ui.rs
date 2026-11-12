@@ -235,10 +235,11 @@ impl UiNumbers {
                 ui.set_image(node, image.map(|(texture, uv)| voxear_ui::ImageRef { texture, uv }));
             }
             UiAsk::SetMapView(text) => {
-                let numbers: Vec<f32> = text.split_whitespace().filter_map(|number| number.parse().ok()).collect();
-                if let (Some(mut settings), [zoom, turns, round, tilt]) = (ui.map_view_settings(node), &numbers[..]) {
-                    settings.zoom = voxear_ui::MapViewSettings::zoom_of(*zoom);
-                    (settings.turns, settings.round, settings.tilt) = (*turns != 0.0, *round != 0.0, tilt.clamp(20.0, 90.0));
+                if let Some(mut settings) = ui.map_view_settings(node) {
+                    let unknown = settings.set_all(text);
+                    if !unknown.is_empty() {
+                        tracing::warn!(target: "script", "a map view has no setting {}", unknown.join(", "));
+                    }
                     ui.set_map_view_settings(node, settings);
                 }
             }

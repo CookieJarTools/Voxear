@@ -67,6 +67,18 @@ public sealed class MapScript : Behaviour
 			camp!.Position = new Vector3(50f, 3f, -4f);
 			camp.Label = "New camp";
 			Obj.Map.Open();
+			// Its own map as an element: every setting a MapView has, and the camera it is seen through.
+			var view = Obj.Map.MapView!;
+			view.Fill = 1.4f;
+			view.ShowCompass = false;
+			view.MaxZoom = 16;
+			view.Camera.Turn = 90f;
+			view.Camera.Zoom = 6f;
+			view.Camera.LookAt(new Vector3(200f, 0f, 50f));
+			var map = Obj.Map;
+			map.PointerControl = false;
+			map.MapSize = 1.3f;
+			Log.Info($"view {view.Fill} {view.ShowCompass} {Obj.Map.MinimapView != null} {view.Camera.PlaceAt(new Vector2(10f, 10f)) == null}");
 		}
 	}
 }
@@ -167,7 +179,21 @@ fn a_script_sets_up_a_map_marks_an_obj_and_a_place_and_makes_a_minimap_of_its_ow
     let camp = script.placed.values().next().unwrap();
     assert_eq!((camp.at.x, camp.marker.label.as_str()), (50.0, "New camp"));
     assert!(game.engine.world.get::<Map>(obj).unwrap().open);
+    // Its map's settings, set as an element's are, and how it is to be seen, waiting for it to be shown: Hello
+    // has no world of blocks to show.
+    let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
+    assert!(lines.iter().any(|line| line == "view 1.4 False True True"), "{lines:?}");
+    let map = game.engine.world.get::<Map>(obj).unwrap().clone();
+    assert_eq!((map.pointer_control, map.map_size), (false, 1.3));
+    let number = map.views.expect("its views are on the screen")[1];
+    let wish = script.wishes.get(&number).expect("what the script asked of its map").clone();
+    assert!((wish.turn.unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    assert_eq!((wish.zoom, wish.look_at), (Some(6.0), Some(Vec3::new(200.0, 0.0, 50.0))));
     let ui = game.ui.ui();
     let large = ui.map_views().into_iter().find(|view| ui.map_view_settings(*view).unwrap().kind == MapViewKind::Map);
     assert!(ui.is_visible(large.unwrap()), "the map shows once opened");
+    // The element's settings took at once; the Map's own, the frame after, over the element's where both say.
+    let settings = ui.map_view_settings(large.unwrap()).unwrap();
+    assert_eq!((settings.fill, settings.compass, settings.zoom_range), (1.3, false, [1, 16]));
+    assert!(!settings.controls, "the Map's Pointer Control is its map's");
 }

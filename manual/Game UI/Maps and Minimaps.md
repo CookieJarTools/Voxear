@@ -17,21 +17,26 @@ Add one with the Hierarchy's **+ â–¸ Map**, or to any Obj with **Add Component â
 | **Turn With View** | On, the minimap turns so what is ahead is at its top. Off, north stays at its top |
 | **Round** | Cuts the minimap's ground round rather than square |
 | **Tilt** | How far over the ground the minimap is seen from, in degrees. 90 looks straight down |
-| **Open Map** | The input action that opens and closes the map |
+| **Open Map** | The input action that opens and closes the map. With none, only a script opens it |
 | **Map Zoom** | How many blocks one cell of the map is when it opens |
+| **Map Size** | How wide the map's ground is drawn, as a percentage of the screen's height |
+| **Map Tilt** | How far over the ground the map is seen from when it opens, in degrees |
+| **Pointer Control** | Whether the pointer turns, moves and zooms the map. Off, only scripts do |
 | **Shows** | What the maps show of the world: **Everything**, what was **Explored**, or what the **Game Decides** (see [What a map knows](#what-a-map-knows)) |
 
-Each step of zoom doubles the ground a map covers and halves its detail, so a map costs the same at any zoom. A minimap covers about 110 cells across: 220 m at 1:2 with metre blocks. An opened map covers twice that.
+Each step of zoom doubles the ground a map covers and halves its detail, so a map costs the same at any zoom. A minimap covers about 90 cells across: 180 m at 1:2 with metre blocks. An opened map covers 110 to 220 cells, more as it is zoomed out.
 
 ## The opened map
 
-Pick **Open Map** from the project's input actions (see [[Reading Input]]). Pressing it opens the map over the game, and pressing it again closes it. While the map is open the mouse is free, and only the input map that action is in stays on, so the game hears nothing meant for the map. Put the action in an input map of its own, or in the one your menus use.
+Pick **Open Map** from the project's input actions (see [[Reading Input]]). Pressing it opens the map over the game, and pressing it again closes it. While the map is open the mouse is free, and only the input map that action is in stays on, so the game hears nothing meant for the map. Put the action in an input map of its own, or in the one your menus use. A script opens and closes it too, with `Open()` and `Close()`, whether or not it has an action.
 
 | To | Do |
 | --- | --- |
 | Turn and tilt the map | Drag |
 | Move over the ground | Drag with the middle button |
 | Zoom | Turn the wheel |
+
+Zooming keeps the map the size it is on the screen and shows more or less ground. What the maps follow is marked with an arrow, which stays at the ground's edge, towards where it is, once the map is moved off it. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).
 
 The map's title names the country it looks at, by how warm and wet the generator makes it there. The line over the title reads where that is, how warm and how wet, and the zoom. The compass lies on the ground as the map does, its red arm pointing north.
 
@@ -79,7 +84,14 @@ public sealed class Guide : Behaviour
 
 `Map.AddMarker` with an Obj gives it a Map Marker. With a place it gives back a `MapPin`, which you move, restyle or `Remove()`. `Map.Title` sets the opened map's title in place of the country's name.
 
-`Obj.Map` is an Obj's Map, with the settings above and `Open()`, `Close()` and `IsOpen`. `Obj.AddMap()` gives an Obj one.
+`Obj.Map` is an Obj's Map, with the settings above and `Open()`, `Close()` and `IsOpen`. `Obj.AddMap()` gives an Obj one. Hold it in a variable to change its settings:
+
+```csharp
+var map = Obj.Map;
+map.MapSize = 1.3f;
+map.PointerControl = false;
+map.Open();
+```
 
 ## A minimap or a map in your own UI
 
@@ -94,13 +106,34 @@ Leave the Map component out, and put the maps in your own HUD instead. In markup
 </vui>
 ```
 
-From code they are `Minimap` and `MapView`, with `Zoom`, `TurnsWithView`, `Round` and `Tilt`:
+From code they are `Minimap` and `MapView`:
 
 ```csharp
 var minimap = hud.Root.Add(new Minimap { Zoom = 4, Round = true });
-var map = hud.Root.Add(new MapView { Zoom = 8 });
+var map = hud.Root.Add(new MapView { Zoom = 8, Fill = 1.3f });
 map.Visible = false;
 ```
+
+Both have every setting below, by the same names in markup as attributes. Each can be changed while the map shows.
+
+| Setting | In markup | What it does |
+| --- | --- | --- |
+| `Zoom` | `zoom` | How many blocks a cell is to begin with, 1 to 64 |
+| `TurnsWithView` | `turns` | Turns with what the maps follow, or keeps north at its top |
+| `Round` | `round` | Cuts the ground round rather than square |
+| `Tilt` | `tilt` | How far over the ground it is seen from to begin with, in degrees |
+| `Fill` | `fill` | How wide the ground is drawn, as a share of the view's height |
+| `PointerControl` | `controls` | Whether the pointer turns, moves and zooms it |
+| `MinZoom`, `MaxZoom` | `min-zoom`, `max-zoom` | The fewest and the most blocks a cell may be as it zooms |
+| `Shadows` | `shadows` | How dark its shadows are, 0 to 1 |
+| `EdgeLines` | `edges` | How dark the lines along its blocks' edges are, 0 to 1 |
+| `Thickness` | `thick` | How thick the ground is under its lowest place, in cells |
+| `ShowArrow` | `arrow` | Whether what the maps follow is marked with an arrow |
+| `ArrowStaysAtEdge` | `arrow-at-edge` | Whether that arrow stays at the ground's edge once the map is moved off it |
+| `ShowLabels` | `labels` | Whether markers' labels show |
+| `ShowTitle`, `ShowReadout`, `ShowCompass` | `title`, `readout`, `compass` | Whether each of a map's parts shows |
+
+A Map component's own minimap and map are the same two elements: `Obj.Map.MinimapView` and `Obj.Map.MapView` give them, once they are on the screen, so every setting here is theirs too. The component's own settings win where both say.
 
 A `Minimap` takes its size from its style, 220 pixels square unless a sheet says otherwise. A `MapView` covers what it is in. Showing and hiding a `MapView`, and what the game does with its input meanwhile, are yours to decide.
 
@@ -114,6 +147,40 @@ Style sheets reach every part by its class (see [[UI Style Sheets]]):
 | `map-label` | A marker's label |
 | `map-header`, `map-readout`, `map-title` | The opened map's readout and title |
 | `map-compass`, `map-compass-north` | The compass, and its N |
+
+## Steering a map
+
+Each `Minimap` and `MapView` has a `Camera`: how the map is seen, to read or to change.
+
+```csharp
+var camera = Obj.Map.MapView!.Camera;
+camera.LookAt(town.WorldPosition);
+camera.Zoom = 8f;
+camera.Turn = 45f;
+```
+
+| Member | What it is |
+| --- | --- |
+| `Turn` | Degrees from north: at 0 north is at its top, at 90 east is |
+| `Tilt` | Degrees over the ground, 20 to 90 |
+| `Zoom` | Blocks to a cell: any number within `MinZoom` and `MaxZoom` |
+| `Offset` | How far its middle is from what the maps follow, in metres east and north |
+| `LookAt(place)` | Moves its middle to a place in the scene |
+| `Reset()` | North up, over what the maps follow, at its settings' zoom and tilt |
+| `PointOf(place)` | Where a place in the scene shows in the view, in the UI's pixels |
+| `Shows(place)` | Whether a place is on the ground the map shows now |
+| `PlaceAt(point)` | The place in the scene under a point of the view |
+
+`PlaceAt` is how a player marks the map: give it where they clicked, and put a pin there.
+
+```csharp
+if (camera.PlaceAt(Mouse.Position) is { } place)
+{
+	Map.AddMarker(place, MapIcon.Pin, "Go here");
+}
+```
+
+What is set is done the next time the map is drawn, and what is read is the map as it was last drawn. The camera answers once its map is on the screen with ground to show.
 
 ## What a map knows
 
@@ -178,6 +245,6 @@ MapKnowledge.Shown.Merge(news);
 
 - They show Block Worlds only, not heightmap Terrain.
 - A world's trees and buildings show once its far view carries them: a map is made from the same ground the far view is.
-- The title names the place at the map's middle, not the place under the pointer.
-- A gamepad opens and closes the map through its action, but does not turn or move it.
+- The title names the place at the map's middle. `Camera.PlaceAt` gives the place under the pointer, for a title of your own.
+- A gamepad opens and closes the map through its action. Turning and moving it with one is a few lines on its `Camera`.
 - Ground known is drawn as it is now. Only news is kept as it was heard.

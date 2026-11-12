@@ -698,8 +698,7 @@ const BLOCK_WATER_REACH: f32 = 96.0;
 /// column, as far along x and z as that top reaches from the column (so the
 /// ground beside a pond is not taken to be under it) and as deep as the
 /// water goes along those ways, in the colours its faces are drawn in
-/// (`blockWaterLook` in `shaders/water.slang`). None on a planet's sides,
-/// where up is not the world's.
+/// (`blockWaterLook` in `shaders/water.slang`).
 pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3) -> Option<GpuWaterBody> {
     use voxear_scene::{Destroying, Transform, WorldTransform};
     use voxear_terrain::blocks::BlockWorld;
@@ -707,10 +706,7 @@ pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3) -> Option<Gpu
     worlds.into_iter().find_map(|(blocks, local, placed)| {
         let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
         let at = camera - corner;
-        let (depth, up) = blocks.water_depth(at.to_array(), NEAR_BLOCK_WATER)?;
-        if up != 2 {
-            return None;
-        }
+        let depth = blocks.water_depth(at.to_array(), NEAR_BLOCK_WATER)?;
         // The kind of the water at its top, just under its surface.
         let size = blocks.block_size;
         let top = at + Vec3::Y * (depth - size * 0.01);

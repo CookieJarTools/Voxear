@@ -25,10 +25,10 @@
 //! All of this is measured in a level of its own, which way up the body
 //! stands: the up its Character Controller stands with, or else against
 //! the pull where it is (see `PhysicsScene::gravity_at`), carried there by
-//! the least turn each frame. On a planet the body stands away from its
-//! middle, whatever its Obj's own turn, and turns, walks and is pressed to
-//! the ground about that up. Away from planets the level is the world's
-//! own, and nothing is turned.
+//! the least turn each frame. Where gravity does not pull straight down the
+//! body stands against it, whatever its Obj's own turn, and turns, walks
+//! and is pressed to the ground about that up. Where it does the level is
+//! the world's own, and nothing is turned.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1194,8 +1194,8 @@ fn draw(state: &MotionMatcherState, matcher: &MotionMatcher, play: &StatePlay, p
 
 /// The turn, in its Obj's space, that stands the body up its level's up,
 /// facing the way the Obj does along the ground, `obj_yaw`: none for an Obj
-/// standing that way already, and none away from planets, where the body
-/// stands as its Obj does.
+/// standing that way already, and none while the level is the world's own,
+/// where the body stands as its Obj does.
 fn upright(placed: Mat4, level: Quat, obj_yaw: f32) -> Option<Quat> {
     let (_, turn, _) = placed.to_scale_rotation_translation();
     if level == Quat::IDENTITY || (turn * Vec3::Y).dot(level * Vec3::Y) > 1.0 - 1e-6 {
@@ -1205,8 +1205,8 @@ fn upright(placed: Mat4, level: Quat, obj_yaw: f32) -> Option<Quat> {
 }
 
 /// `v`, in the world, as seen in `level`: along its ground in x and z, up
-/// its up in y. Away from planets the level is the world's own, and `v` is
-/// left exactly as it was.
+/// its up in y. While the level is the world's own, `v` is left exactly as
+/// it was.
 fn seen_in(level: Quat, v: Vec3) -> Vec3 {
     if level == Quat::IDENTITY { v } else { level.inverse() * v }
 }
@@ -1577,63 +1577,6 @@ mod tests {
         steady.match_speed = false;
         drive(&mut state, &steady, &play, 0.1, Vec3::Z * 1.6);
         assert_eq!(state.rate(), 1.0);
-    }
-
-    #[test]
-    fn on_a_planets_side_it_stands_away_from_its_middle_and_walks_round_it() {
-        use crate::physics::{CharacterController, PhysicsScene};
-        use voxear_terrain::blocks::{
-            BlockWorld,
-            file::BlockFile,
-            generate::{BlockGenerate, BlockPlanet},
-        };
-        // A smooth planet, level all round 30 m from its middle at the world's; the walker on its +x side, where the
-        // world's own down runs along the ground. Its Obj is left unturned, as a script that never tilts it leaves it.
-        let planet = BlockPlanet { radius: 30.0 };
-        let generate = BlockGenerate { caves: 0.0, planet: Some(planet), ..BlockGenerate::default() };
-        let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
-        let (_, faces) = file.faces();
-        let mut blocks = BlockWorld::made(file.make_ground(None), &faces, 1.0, true);
-        blocks.planet = Some(planet.radius);
-        let mut world = World::new();
-        voxear_scene::register_obj_components(&mut world);
-        world.spawn((blocks, Transform::default()));
-        let model = ModelRenderer { animation: Some(Arc::new(moves())), ..ModelRenderer::new(Vec::new()) };
-        let matcher = MotionMatcher { root_motion: true, ..MotionMatcher::default() };
-        let walker = world.spawn((Transform::from_position(Vec3::X * 30.8), CharacterController::default(), model));
-        world.insert(walker, matcher);
-        let mut physics = PhysicsScene::new();
-        physics.step(&mut world, DT);
-        world.insert_resource(physics);
-
-        // Stands a moment, then walks round it in the x-y plane, the way wanted along the ground where it is.
-        let mut walked = Vec::new();
-        for f in 0..420 {
-            let up = world.resource::<PhysicsScene>().unwrap().character_up(walker).unwrap();
-            let ahead = Vec3::Z.cross(up).normalize();
-            let wanted = if f < 30 { Vec3::ZERO } else { ahead * 1.4 };
-            world.get_mut::<MotionMatcher>(walker).unwrap().wanted_velocity = Some(wanted);
-            match_motion(&mut world, DT);
-            let placed = voxear_scene::world_matrix(&world, walker);
-            let hips = placed * world.get::<Pose>(walker).unwrap().bones[1];
-            let (_, turn, place) = hips.to_scale_rotation_translation();
-            walked.push((place - placed.w_axis.truncate(), turn, up, ahead));
-        }
-        let state = world.get::<MotionMatcherState>(walker).unwrap();
-        let at = world.get::<Transform>(walker).unwrap().position;
-        let round = at.y.atan2(at.x);
-        assert!(round > 0.2, "walked round it: {} degrees", round.to_degrees());
-        assert!(at.z.abs() < 0.5, "kept to its way round: {at}");
-        assert!((at.length() - planet.radius).abs() < 0.6, "still on its ground, {} from its middle", at.length());
-        assert!(state.level().mul_vec3(Vec3::Y).dot(at.normalize()) > 0.999, "its level upright to the planet");
-        assert_eq!(state.playing()[0].0, "Walk", "walking forward");
-        // Once it has turned to the way wanted, every frame: upright to the planet where it is, the hips above the
-        // feet away from its middle, and facing the way it goes.
-        for (f, (hips, turn, up, ahead)) in walked.iter().enumerate().skip(120) {
-            assert!((turn * Vec3::Y).dot(*up) > 0.999, "upright on frame {f}: {} for {up}", turn * Vec3::Y);
-            assert!(hips.dot(*up) > 0.75, "the hips above the feet on frame {f}: {hips} for {up}");
-            assert!((turn * Vec3::Z).dot(*ahead) > 0.99, "facing {ahead} on frame {f}: {}", turn * Vec3::Z);
-        }
     }
 
     /// Drives the model at `VOXEAR_TEST_MODEL`, when set, through a walk, a

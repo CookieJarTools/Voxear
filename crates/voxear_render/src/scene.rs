@@ -383,7 +383,7 @@ pub enum SkyMode {
     /// A gradient of the sky's own colours, from the horizon up and down.
     #[default]
     Gradient,
-    /// The air of a planet like Earth, lit by the sun: blue by day, red and
+    /// The Earth's air, lit by the sun: blue by day, red and
     /// orange as the sun sets, with haze over distant things (see
     /// `atmosphere`).
     Atmosphere,

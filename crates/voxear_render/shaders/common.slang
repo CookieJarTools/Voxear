@@ -548,7 +548,7 @@ struct Post
 static const uint SKY_GRADIENT = 0;
 static const uint SKY_ATMOSPHERE = 1;
 
-// A planet's atmosphere in kilometres; mirrors GpuAtmosphere in src/gpu.rs.
+// The Earth's atmosphere in kilometres; mirrors GpuAtmosphere in src/gpu.rs.
 struct Atmosphere
 {
     float3 rayleighScattering;

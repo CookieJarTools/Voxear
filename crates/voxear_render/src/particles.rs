@@ -14,6 +14,13 @@
 //! stands in their way or are thrown about by forces), the system is
 //! simulated: its particles are kept on the GPU and stepped each frame (see
 //! `particle_sim`). [`ParticleSystem::simulated_for`] says which, and why.
+//!
+//! Particles may leave trails, a tail each along the way it has come or one
+//! ribbon through them all ([`ParticleTrails`]), drawn as strips with the
+//! particles' own pixels; and a system may draw each particle as a mesh
+//! (`particle_meshes`), in a pass of its own before the flat ones that draws
+//! into the depth as well, so meshes hide one another and what is behind
+//! them.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::curve::{Curve, Gradient};
@@ -27,7 +34,8 @@ use crate::{
     effects::{EffectRef, ParticleEffects, ParticleTexture},
     gpu::{GpuParticleSystem, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
-    passes::{begin_rendering, bind},
+    particle_meshes::{MeshDraw, ParticleMesh},
+    passes::{attachment, begin_rendering, bind},
     pipelines::Pipelines,
 };
 
@@ -125,6 +133,44 @@ impl ParticleCollision {
         }
     }
 }
+
+/// What a Particle System's particles leave behind them as they go.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleTrails {
+    #[default]
+    Off,
+    /// Each particle draws a tail along the way it has come, narrowing and
+    /// fading to its end: sparks, embers, shooting stars.
+    Particles,
+    /// The particles are joined into one ribbon in the order they were sent
+    /// out, and not drawn themselves: the streak behind a spell, a blade or
+    /// a rocket, from a system in the World space on an Obj that moves.
+    Ribbon,
+}
+
+impl ParticleTrails {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Particles, Self::Ribbon];
+
+    fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+
+    /// As the editor shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Particles => "Particles",
+            Self::Ribbon => "Ribbon",
+        }
+    }
+}
+
+/// How many points of its way a particle with a trail keeps
+/// (`PARTICLE_TRAIL_POINTS` in the shaders), and how many particles' room
+/// in the pool they take, three points to a particle's.
+pub const TRAIL_POINTS: u32 = 15;
+pub const TRAIL_ROOM: u32 = 5;
 
 /// How a Particle System's particles show over what is behind them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,11 +326,38 @@ pub struct ParticleSystem {
     /// How far that light reaches, in metres.
     #[serde(skip_serializing_if = "is_light_range")]
     pub light_range: f32,
+    /// What its particles leave behind them: a tail each, or one ribbon
+    /// through them all.
+    #[serde(skip_serializing_if = "ParticleTrails::is_off")]
+    pub trails: ParticleTrails,
+    /// How long a particle's tail is, in seconds of the way it has come.
+    #[serde(skip_serializing_if = "is_trail_time")]
+    pub trail_time: f32,
+    /// How wide a tail or the ribbon is, against the particles.
+    #[serde(skip_serializing_if = "is_trail_width")]
+    pub trail_width: f32,
+    /// A mesh each particle is drawn as, tumbling as it spins, as wide as
+    /// its size across, in place of a flat picture: debris, shell cases,
+    /// stones. A built-in one, or one of the project's models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<ParticleMesh>,
     /// An effect played in place of all of the above: a starter, or one of
     /// the project's `.particles` assets, each of its emitters a system of
     /// its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<EffectRef>,
+}
+
+/// How long a tail is and how wide a trail is, to begin with.
+const TRAIL_TIME: f32 = 0.5;
+const TRAIL_WIDTH: f32 = 0.5;
+
+fn is_trail_time(value: &f32) -> bool {
+    *value == TRAIL_TIME
+}
+
+fn is_trail_width(value: &f32) -> bool {
+    *value == TRAIL_WIDTH
 }
 
 /// How far a system's light reaches, to begin with.
@@ -370,6 +443,10 @@ impl Default for ParticleSystem {
             light_map: ParticleTexture::default(),
             light: 0.0,
             light_range: LIGHT_RANGE,
+            trails: ParticleTrails::Off,
+            trail_time: TRAIL_TIME,
+            trail_width: TRAIL_WIDTH,
+            mesh: None,
             effect: None,
         }
     }
@@ -394,6 +471,7 @@ impl ParticleSystem {
             (self.turbulence > 0.0, "Turbulence"),
             (self.collision != ParticleCollision::Off, "Collision"),
             (self.forces > 0.0, "Forces"),
+            (self.trails != ParticleTrails::Off, "Trails"),
         ];
         needs
             .into_iter()
@@ -415,6 +493,18 @@ impl ParticleSystem {
         let rounds = if self.looping { (longest / self.duration.max(0.01)).ceil().max(1.0) as u64 } else { 1 };
         (u64::from(self.burst) * rounds + stream).min(u64::from(MAX_SIMULATED_PARTICLES)) as u32
     }
+
+    /// How many particles' room in the pool a simulated system takes: its
+    /// particles', and their tails' points after them.
+    pub fn room(&self) -> u32 {
+        let tails = if self.trails == ParticleTrails::Particles { TRAIL_ROOM } else { 0 };
+        self.capacity().saturating_mul(1 + tails)
+    }
+
+    /// How long between the points a tail keeps, in seconds.
+    pub(crate) fn trail_interval(&self) -> f32 {
+        self.trail_time.max(0.01) / (TRAIL_POINTS - 1) as f32
+    }
 }
 
 /// Where a simulated system's particles are in the pool this frame (see
@@ -435,12 +525,24 @@ pub(crate) type PlacedSystems = std::collections::HashMap<(Entity, u32), Placed>
 /// Dot, or for a picture not loaded yet, which draws as the Dot.
 pub(crate) type FindTexture<'a> = &'a dyn Fn(ParticleTexture) -> Option<u32>;
 
-/// What finds a system's textures: any of them, and the built-in Puff's two
-/// maps for being lit from six sides.
+/// What finds what a system is drawn with: any texture, the built-in Puff's
+/// two maps for being lit from six sides, and a mesh, none for a model not
+/// loaded yet.
 #[derive(Clone, Copy)]
-pub(crate) struct Textures<'a> {
+pub(crate) struct Looks<'a> {
     pub find: FindTexture<'a>,
     pub puff_lit: Option<[u32; 2]>,
+    pub mesh: &'a dyn Fn(ParticleMesh) -> Option<MeshDraw>,
+}
+
+/// How one of a frame's systems is drawn: how many particles it has room
+/// for, the trails they leave, and for one whose particles are meshes, the
+/// mesh's first index and how many it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Drawn {
+    pub count: u32,
+    pub trails: ParticleTrails,
+    pub mesh: Option<(u32, u32)>,
 }
 
 /// When a Particle System started, and stopped, in the renderer's time: set
@@ -487,36 +589,43 @@ pub(crate) fn gather(
     camera: Vec3,
     time: f32,
     bodies: &crate::water::WaterBodies,
-    (placed, textures): (&PlacedSystems, Textures<'_>),
-) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>, Vec<RapidsSpray>) {
+    (placed, textures): (&PlacedSystems, Looks<'_>),
+) -> (Vec<GpuParticleSystem>, Vec<Drawn>, Option<u32>, Vec<RapidsSpray>) {
     let query =
         world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let effects = world.resource::<ParticleEffects>();
-    let mut systems: Vec<(f32, GpuParticleSystem, u32)> = Vec::new();
+    let mut systems: Vec<(f32, GpuParticleSystem, Drawn)> = Vec::new();
     for (entity, system, transform, at, playback) in query.without::<Destroying>() {
         let model = at.map_or_else(|| transform.matrix(), |w| w.0);
         let distance = model.w_axis.truncate().distance_squared(camera);
         // Its effect's emitters, each a system of its own in the order the effect lists them, or itself.
         for (emitter, system) in (0..).zip(crate::effects::emitters(effects, system)) {
             let drawn = textured(gpu(system, model, time, playback.copied()), system, textures);
-            let drawn = GpuParticleSystem { seed: emitter_seed(drawn.seed, emitter), ..drawn };
+            let mut drawn = GpuParticleSystem { seed: emitter_seed(drawn.seed, emitter), ..drawn };
+            // Drawn as meshes: nothing until its model is loaded.
+            let mesh = system.mesh.map(|mesh| (textures.mesh)(mesh));
+            if let Some(mesh) = mesh {
+                let Some(mesh) = mesh else { continue };
+                (drawn.mesh, drawn.mesh_material, drawn.flags) = (mesh.mesh, mesh.material, drawn.flags | MESH);
+            }
+            let mesh = mesh.flatten().map(|mesh| (mesh.first_index, mesh.index_count));
             if !system.is_simulated() {
                 if system.slots() > 0 {
-                    systems.push((distance, drawn, system.slots()));
+                    systems.push((distance, drawn, Drawn { count: system.slots(), trails: ParticleTrails::Off, mesh }));
                 }
                 continue;
             }
             let Some(at) = placed.get(&(entity, emitter)) else { continue };
             let drawn = GpuParticleSystem { pool_first: at.first, capacity: at.capacity, head: at.oldest, ..drawn };
-            systems.push((distance, drawn, at.capacity));
+            systems.push((distance, drawn, Drawn { count: at.capacity, trails: system.trails, mesh }));
         }
     }
     // The farthest first; one Obj's emitters stay in their effect's order.
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
     let over = systems.len().saturating_sub(MAX_PARTICLE_SYSTEMS - 1 - SPRAYING_STREAMS);
     systems.drain(..over);
-    let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<u32>) =
-        systems.into_iter().map(|(_, gpu, slots)| (gpu, slots)).unzip();
+    let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<Drawn>) =
+        systems.into_iter().map(|(_, gpu, drawn)| (gpu, drawn)).unzip();
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>();
     let sea = seas.without::<Destroying>().into_iter().next().map(|(ocean, transform, at)| {
         (ocean.spray, at.map_or(transform.position.y, |w| w.0.w_axis.y))
@@ -595,7 +704,7 @@ pub struct Draw {
     /// The simulated particles' step, recorded before they are drawn: only
     /// in the main view.
     pub step: Option<Step>,
-    pub counts: Vec<u32>,
+    pub counts: Vec<Drawn>,
     pub spray: Option<u32>,
     pub rapids: Vec<RapidsSpray>,
     pub targets: Targets,
@@ -630,13 +739,18 @@ pub struct Targets {
     pub clusters: BufferId,
     /// The pool of simulated particles, when any are drawn.
     pub pool: Option<BufferId>,
+    /// Every mesh's indices, for the systems whose particles are meshes.
+    pub index_buffer: vk::Buffer,
     pub extent: vk::Extent2D,
 }
 
 /// Records the Particle Systems, each drawn as `counts` says of its
-/// particles, a quad each, in the order they are listed; then the sea's
-/// spray, listed after them, with as many drops as `spray` says. Each is
-/// fogged as far off as it is, through the volumetric fog's integrated
+/// particles, in the order they are listed: first those whose particles are
+/// meshes, in a pass of their own that draws them into the depth as well, so
+/// they hide one another and what is drawn after fades before them; then the
+/// rest, a quad a particle with its tail or their ribbon under it; then the
+/// sea's spray, listed after them, with as many drops as `spray` says. Each
+/// is fogged as far off as it is, through the volumetric fog's integrated
 /// volume when there is one.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
@@ -645,28 +759,62 @@ pub(crate) fn record(
     fog_volume: Option<ImageId>,
 ) {
     let Draw { step, counts, spray, rapids, targets } = draw;
-    let Targets { hdr, depth, sampled, clusters, pool, extent } = targets;
+    let Targets { hdr, depth, sampled, clusters, pool, index_buffer, extent } = targets;
     let depth_texture = fg.texture(depth);
     if let (Some(step), Some(pool)) = (step, pool) {
         let stepping = (pipelines.particle_sim, Push { textures: [depth_texture.0, 0, 0, 0], ..push });
         record_step(fg, stepping, step, (pool, depth));
     }
-    let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
-    images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
     let volume = fog_volume.map_or(crate::gpu::NO_TEXTURE, |volume| fg.texture(volume).0);
-    let push = Push { textures: [depth_texture.0, volume, 0, 0], ..push };
+    let read: Vec<_> = sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)).collect();
     let buffers: Vec<_> = [Some(clusters), pool].into_iter().flatten().map(|b| (b, BufferAccess::ShaderRead)).collect();
+    let meshes: Vec<(u32, Drawn)> = (0..).zip(counts.iter().copied()).filter(|(_, drawn)| drawn.mesh.is_some()).collect();
+    if !meshes.is_empty() {
+        let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthAttachment)];
+        images.extend(&read);
+        let push = Push { textures: [crate::gpu::NO_TEXTURE, volume, 0, 0], ..push };
+        fg.add_pass("Particle meshes", &images, &buffers, move |ctx| {
+            let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+            let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+            begin_rendering(ctx, extent, &color, Some(&target));
+            bind(ctx, pipelines.particle_meshes, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
+            for &(system, drawn) in &meshes {
+                let Some((first_index, index_count)) = drawn.mesh else { continue };
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system, ..push });
+                unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, index_count, drawn.count, first_index, 0, 0) };
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
+    images.extend(&read);
+    let push = Push { textures: [depth_texture.0, volume, 0, 0], ..push };
     fg.add_pass("Particles", &images, &buffers, move |ctx| {
-        let color = [vk::RenderingAttachmentInfo::default()
-            .image_view(ctx.view(hdr))
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::LOAD)
-            .store_op(vk::AttachmentStoreOp::STORE)];
+        let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
         begin_rendering(ctx, extent, &color, None);
-        bind(ctx, pipelines.particles, vk::PipelineBindPoint::GRAPHICS, &push);
-        for (system, &count) in counts.iter().enumerate() {
-            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system as u32, ..push });
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+        // Each system with the pipeline for what it draws, bound again only when it changes.
+        let mut bound = vk::Pipeline::null();
+        let mut draw = |pipeline: vk::Pipeline, system: u32, vertices: u32| {
+            if std::mem::replace(&mut bound, pipeline) != pipeline {
+                bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            }
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+        };
+        for (system, drawn) in (0..).zip(&counts) {
+            match drawn.trails {
+                ParticleTrails::Off => {}
+                ParticleTrails::Particles => draw(pipelines.particle_trails, system, drawn.count * TRAIL_POINTS * 6),
+                // The ribbon in place of the particles it joins.
+                ParticleTrails::Ribbon => {
+                    draw(pipelines.particle_ribbon, system, drawn.count * 6);
+                    continue;
+                }
+            }
+            if drawn.mesh.is_none() {
+                draw(pipelines.particles, system, drawn.count * 6);
+            }
         }
         if let Some(drops) = spray {
             bind(ctx, pipelines.sea_spray, vk::PipelineBindPoint::GRAPHICS, &push);
@@ -732,6 +880,13 @@ const COLLIDE: u32 = 64;
 const ANIMATE: u32 = 128;
 /// Lit from six sides by its texture and its light map.
 const SIX_WAY: u32 = 256;
+/// Each particle draws a tail along its way; or they are joined in one
+/// ribbon, which reaches to its Obj while it is still sending them out.
+const TRAILS: u32 = 512;
+const RIBBON: u32 = 1024;
+const RIBBON_FED: u32 = 2048;
+/// Each particle is drawn as a mesh.
+const MESH: u32 = 4096;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -754,12 +909,16 @@ pub(crate) fn gpu(
         (system.space == ParticleSpace::World, WORLD),
         (system.collision == ParticleCollision::Depth, COLLIDE),
         (system.animate, ANIMATE),
+        (system.trails == ParticleTrails::Particles, TRAILS),
+        (system.trails == ParticleTrails::Ribbon, RIBBON),
+        (system.trails == ParticleTrails::Ribbon && sending(system, time - started, playback.stopped.map(|s| s - started)), RIBBON_FED),
     ];
     let flags = flags
         .into_iter()
         .filter(|(on, _)| *on)
         .fold(0, |all, (_, flag)| all | flag);
     let lifetime = range(system.lifetime).map(|l| l.max(0.01));
+    let interval = system.trail_interval();
     GpuParticleSystem {
         model: crate::gpu::cols(model),
         color: system.color,
@@ -807,8 +966,19 @@ pub(crate) fn gpu(
         light_map: crate::gpu::NO_TEXTURE,
         tiles: [1, 1],
         stretch: system.stretch.max(0.0),
+        trail_tick: (time.max(0.0) / interval) as u32,
+        trail_part: (time.max(0.0) / interval).fract(),
+        trail_width: system.trail_width.max(0.0),
+        trail_interval: interval,
         ..GpuParticleSystem::default()
     }
+}
+
+/// Whether `system` is still sending particles out `since` seconds after it
+/// started, having `stopped` then if ever.
+fn sending(system: &ParticleSystem, since: f32, stopped: Option<f32>) -> bool {
+    let until = stopped.unwrap_or(f32::INFINITY).min(if system.looping { f32::INFINITY } else { system.duration });
+    system.rate > 0.0 && since >= 0.0 && since < until
 }
 
 /// The seed emitter `emitter` of an effect draws its particles from, given
@@ -818,7 +988,7 @@ pub(crate) fn emitter_seed(seed: u32, emitter: u32) -> u32 {
 }
 
 /// `drawn` with the texture `system` draws with, as `textures` finds it.
-pub(crate) fn textured(drawn: GpuParticleSystem, system: &ParticleSystem, textures: Textures<'_>) -> GpuParticleSystem {
+pub(crate) fn textured(drawn: GpuParticleSystem, system: &ParticleSystem, textures: Looks<'_>) -> GpuParticleSystem {
     // A built-in texture knows how many pictures it holds; a project's picture is told.
     let tiles = match system.texture {
         ParticleTexture::Builtin(texture) => texture.tiles(),
@@ -938,7 +1108,7 @@ pub(crate) fn lights(world: &World, camera: Vec3, time: f32) -> Vec<crate::gpu::
 
 /// Textures for tests that draw none.
 #[cfg(test)]
-const NO_TEXTURES: Textures<'static> = Textures { find: &|_| None, puff_lit: None };
+const NO_TEXTURES: Looks<'static> = Looks { find: &|_| None, puff_lit: None, mesh: &|_| None };
 
 #[cfg(test)]
 mod tests {

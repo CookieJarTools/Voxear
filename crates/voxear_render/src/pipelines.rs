@@ -141,6 +141,12 @@ pub struct Pipelines {
     pub sea_floor_under: vk::Pipeline,
     pub sea_floor_walls: vk::Pipeline,
     pub particles: vk::Pipeline,
+    /// The tails particles draw behind them, and the ribbon through a
+    /// system's particles.
+    pub particle_trails: vk::Pipeline,
+    pub particle_ribbon: vk::Pipeline,
+    /// Particles drawn as meshes, into the depth as well.
+    pub particle_meshes: vk::Pipeline,
     pub sea_spray: vk::Pipeline,
     /// The spray over Streams' rapids.
     pub stream_spray: vk::Pipeline,
@@ -561,6 +567,26 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Particles", particles, c"particleVertex", c"particleFragment")
             })?,
+            particle_trails: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Particle trails", particles, c"trailVertex", c"particleFragment")
+            })?,
+            particle_ribbon: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Particle ribbons", particles, c"ribbonVertex", c"particleFragment")
+            })?,
+            // Meshes hide one another and what is behind them, so they test against the depth and draw into it.
+            particle_meshes: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Particle meshes", particles, c"particleMeshVertex", c"particleMeshFragment")
+            })?,
             // Smoke marched at half size, its light and how much it lets through, then laid over the scene.
             smoke_march: graphics(&GraphicsPipelineDesc {
                 color_formats: &[vk::Format::R16G16B16A16_SFLOAT, vk::Format::R32_SFLOAT],
@@ -886,6 +912,9 @@ impl Pipelines {
             self.sea_floor_under,
             self.sea_floor_walls,
             self.particles,
+            self.particle_trails,
+            self.particle_ribbon,
+            self.particle_meshes,
             self.sea_spray,
             self.stream_spray,
             self.smoke_march,

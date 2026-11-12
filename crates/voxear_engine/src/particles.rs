@@ -6,7 +6,7 @@
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Blast, EmitShape, ForceField, ForceKind, ParticleBlasts, ParticleBlend, ParticleCollision, ParticlePlayback,
-    ParticleSpace, ParticleSystem,
+    ParticleSpace, ParticleSystem, ParticleTrails,
 };
 
 use crate::content::{linear, srgb};
@@ -54,6 +54,9 @@ const STRETCH: i32 = 38;
 const DELAY: i32 = 39;
 const LIGHT: i32 = 40;
 const LIGHT_RANGE: i32 = 41;
+const TRAILS: i32 = 42;
+const TRAIL_TIME: i32 = 43;
+const TRAIL_WIDTH: i32 = 44;
 
 /// The time Particle Systems are played and stopped by, and blasts go off
 /// in: the engine's, but for how the editor's preview holds it back; and
@@ -117,30 +120,37 @@ pub(crate) fn register() {
 
 /// Reads what the world's Particle Systems name, for the renderer to find
 /// (see `voxear_render::effects`): the effects they play, from the
-/// project's `.particles` assets, and the pictures they and those effects'
-/// emitters draw with, which need `renderer` to load. Each is read once and
+/// project's `.particles` assets, and the pictures and the models' meshes
+/// they and those effects' emitters draw with, which need `renderer` to
+/// load. Each is read once and
 /// kept by `content`, so this is a few lookups a system each frame, and an
 /// effect whose file changed is taken up as soon as `content` forgets it.
 pub fn resolve(world: &mut World, content: &mut crate::content::Content, renderer: Option<&mut voxear_render::Renderer>) {
-    use voxear_render::{EffectRef, ParticleEffects, ParticlePictures, ParticleTexture};
+    use voxear_render::{EffectRef, ParticleEffects, ParticleMesh, ParticleMeshes, ParticlePictures, ParticleTexture};
     let mut effects = ParticleEffects::default();
     let mut wanted = std::collections::HashSet::new();
+    let mut models = std::collections::HashSet::new();
     for (system,) in world.query_ref::<(&ParticleSystem,)>() {
-        let emitters: Vec<ParticleTexture> = match system.effect {
-            None => vec![system.texture, system.light_map],
-            Some(EffectRef::Builtin(_)) => Vec::new(),
+        let (emitters, meshes): (Vec<ParticleTexture>, Vec<Option<ParticleMesh>>) = match system.effect {
+            None => (vec![system.texture, system.light_map], vec![system.mesh]),
+            Some(EffectRef::Builtin(_)) => continue,
             Some(EffectRef::Asset(guid)) => {
                 let found = effects.0.get(&guid).cloned().or_else(|| content.particle_effect(guid));
                 let Some(effect) = found else { continue };
                 let both = |emitter: &voxear_render::Emitter| [emitter.system.texture, emitter.system.light_map];
                 let textures = effect.emitters.iter().flat_map(both).collect();
+                let meshes = effect.emitters.iter().map(|emitter| emitter.system.mesh).collect();
                 effects.0.insert(guid, effect);
-                textures
+                (textures, meshes)
             }
         };
         wanted.extend(emitters.into_iter().filter_map(|texture| match texture {
             ParticleTexture::Asset(guid) => Some(guid),
             ParticleTexture::Builtin(_) => None,
+        }));
+        models.extend(meshes.into_iter().filter_map(|mesh| match mesh? {
+            ParticleMesh::Asset(guid) => Some(guid),
+            ParticleMesh::Builtin(_) => None,
         }));
     }
     if world.resource::<ParticleEffects>() != Some(&effects) {
@@ -156,6 +166,17 @@ pub fn resolve(world: &mut World, content: &mut crate::content::Content, rendere
     }
     if world.resource::<ParticlePictures>() != Some(&pictures) {
         world.insert_resource(pictures);
+    }
+    let mut meshes = ParticleMeshes::default();
+    for guid in models {
+        match content.model(renderer, guid).map(|nodes| nodes.first().map(|node| (node.mesh, node.material))) {
+            Ok(Some(mesh)) => drop(meshes.0.insert(guid, mesh)),
+            Ok(None) => tracing::debug!("a Particle System's model {guid} has no mesh"),
+            Err(error) => tracing::debug!("a Particle System's model {guid} could not be read: {error:#}"),
+        }
+    }
+    if world.resource::<ParticleMeshes>() != Some(&meshes) {
+        world.insert_resource(meshes);
     }
 }
 
@@ -330,6 +351,9 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         DELAY => number(system.delay),
         LIGHT => number(system.light),
         LIGHT_RANGE => number(system.light_range),
+        TRAILS => number(ParticleTrails::ALL.iter().position(|t| *t == system.trails).unwrap_or_default() as f32),
+        TRAIL_TIME => number(system.trail_time),
+        TRAIL_WIDTH => number(system.trail_width),
         _ => return None,
     })
 }
@@ -377,6 +401,9 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         DELAY => system.delay = x.max(0.0),
         LIGHT => system.light = x.max(0.0),
         LIGHT_RANGE => system.light_range = x.max(0.0),
+        TRAILS => system.trails = ParticleTrails::ALL[pick(ParticleTrails::ALL.len())],
+        TRAIL_TIME => system.trail_time = x.max(0.01),
+        TRAIL_WIDTH => system.trail_width = x.max(0.0),
         _ => {}
     }
 }
@@ -442,6 +469,13 @@ mod tests {
         values(&mut world, obj, LIFE_LOST, Some([0.25, 0.0, 0.0, 0.0]));
         let system = *world.get::<ParticleSystem>(obj).unwrap();
         assert_eq!((system.collision, system.bounce, system.life_lost), (ParticleCollision::Depth, 1.0, 0.25));
+        // Trails by their place among the kinds, a tail never of no length.
+        values(&mut world, obj, TRAILS, Some([1.0, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, TRAIL_TIME, Some([0.0; 4]));
+        values(&mut world, obj, TRAIL_WIDTH, Some([0.75, 0.0, 0.0, 0.0]));
+        let system = *world.get::<ParticleSystem>(obj).unwrap();
+        assert_eq!((system.trails, system.trail_time, system.trail_width), (ParticleTrails::Particles, 0.01, 0.75));
+        assert_eq!(values(&mut world, obj, TRAILS, None), Some([1.0, 0.0, 0.0, 0.0]));
     }
 
     #[test]

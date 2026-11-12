@@ -995,7 +995,17 @@ struct ParticleSystem
     // Lit from six sides (PARTICLES_SIX_WAY), the second of its two maps: how bright each pixel is lit from the
     // left, from below and from in front, as its texture says for the right, the top and behind.
     uint lightMap;
-    uint3 padLight;
+    // Its trails (PARTICLES_TRAILS): the tick their points are kept by, one every trailInterval seconds; how many
+    // ticks have gone by since the last step; and how far into the tick it is, from 0 to 1.
+    uint trailTick;
+    uint trailNew;
+    float trailPart;
+    // How wide a trail is, against its particle.
+    float trailWidth;
+    float trailInterval;
+    // The mesh each particle is drawn as (PARTICLES_MESH), by its place among the meshes, and its material.
+    uint mesh;
+    uint meshMaterial;
 };
 
 // A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in
@@ -1012,6 +1022,10 @@ struct Particle
 
 // How many particles a chunk of the pool holds: the simulation steps whole chunks (particle_sim::CHUNK).
 static const uint PARTICLE_CHUNK = 256;
+// How many points of its way a particle with a trail keeps, and how many particles' room in the pool they take, three
+// points to a particle's (particles::TRAIL_POINTS, TRAIL_ROOM).
+static const uint PARTICLE_TRAIL_POINTS = 15;
+static const uint PARTICLE_TRAIL_ROOM = 5;
 
 // A force on simulated particles (GpuForce in src/forces.rs): a Force Field or a blast, where it is and how far it
 // reaches, the axis it swirls round or blows along, how hard, in metres a second each second at its middle, and
@@ -1291,6 +1305,8 @@ struct Buffers
     uint* particleCounters;
     // The systems as the pass that steps them reads them, in its own order.
     ParticleSystem* particleSteps;
+    // The pool again, read as the points of particles' trails.
+    float3* particleTrails;
 };
 
 struct Push

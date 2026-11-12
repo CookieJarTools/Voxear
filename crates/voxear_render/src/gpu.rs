@@ -897,6 +897,9 @@ pub struct GpuBuffers {
     pub particle_sim: u64,
     pub particle_counters: u64,
     pub particle_steps: u64,
+    /// The pool again, read as the points of particles' trails, three to a
+    /// particle's room.
+    pub particle_trails: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1043,7 +1046,20 @@ pub struct GpuParticleSystem {
     /// Lit from six sides, the second of its two maps (its texture is the
     /// first), or `NO_TEXTURE`.
     pub light_map: u32,
-    pub _pad_light: [u32; 3],
+    /// Its trails (see `particles::ParticleTrails`): the tick its trails'
+    /// points are kept by, one every `trail_interval` seconds; how many
+    /// ticks have gone by since the last step, each a point to keep; and
+    /// how far into the tick it is, from 0 to 1.
+    pub trail_tick: u32,
+    pub trail_new: u32,
+    pub trail_part: f32,
+    /// How wide a trail is, against its particle.
+    pub trail_width: f32,
+    pub trail_interval: f32,
+    /// The mesh each particle is drawn as, by its place in the mesh table,
+    /// and the material it is drawn with, for a system that draws meshes.
+    pub mesh: u32,
+    pub mesh_material: u32,
 }
 
 /// A simulated particle, as `shaders/particle_sim.slang` keeps it from
@@ -1258,13 +1274,13 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 64 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 65 * 8);
         // Its corner and block size, three addresses, then four words.
         assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 7);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 8);
         assert_eq!(size_of::<GpuParticle>(), 36);
         assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16 + 48 * crate::forces::MAX_FORCES);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

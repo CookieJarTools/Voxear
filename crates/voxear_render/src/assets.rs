@@ -322,6 +322,9 @@ pub struct Assets {
     /// The Puff's two maps for being lit from six sides (see
     /// `effects::BuiltinTexture::light_maps`).
     pub puff_light_maps: [TextureId; 2],
+    /// The built-in meshes particles can be drawn as, in
+    /// `BuiltinMesh::ALL`'s order.
+    pub particle_meshes: [MeshHandle; 4],
     /// Plants' impostors, baked and asked for (see `impostors`).
     pub impostors: crate::impostors::ImpostorTable,
     /// Materials drawn as leaves are, so an impostor of a plant is too.
@@ -402,6 +405,7 @@ impl Assets {
             smoke_noise: TextureId(0),
             particle_textures: [TextureId(0); 5],
             puff_light_maps: [TextureId(0); 2],
+            particle_meshes: [MeshHandle(0); 4],
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
@@ -421,6 +425,9 @@ impl Assets {
             let name = format!("particle {}", texture.name().to_lowercase());
             let source = TextureSource { name: &name, width: side, height: side, rgba: &rgba, srgb: false };
             assets.particle_textures[slot] = assets.add_texture(gpu, bindless, &source)?;
+        }
+        for (slot, mesh) in crate::particle_meshes::BuiltinMesh::ALL.into_iter().enumerate() {
+            assets.particle_meshes[slot] = assets.add_mesh(gpu, &mesh.mesh())?;
         }
         if let Some((side, maps)) = crate::effects::BuiltinTexture::Puff.light_maps() {
             for (slot, (name, rgba)) in ["particle puff lit a", "particle puff lit b"].into_iter().zip(&maps).enumerate() {

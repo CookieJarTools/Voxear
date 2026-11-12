@@ -34,6 +34,8 @@ struct ParticleOut
     nointerpolation float3 lightFront : LIGHTFRONT;
     nointerpolation float3 lightBack : LIGHTBACK;
     nointerpolation float3 haze : HAZE;
+    // How much of its opacity shows here, from 0 to 1: all of it but along a trail, which fades from point to point.
+    float fade : FADE;
 };
 
 // When slot `slot` of `system` last set out a particle, up to the system's
@@ -166,6 +168,7 @@ ParticleOut particleNone(ParticleSystem system, float2 corner)
     output.lightFront = 0.0;
     output.lightBack = 0.0;
     output.haze = 0.0;
+    output.fade = 1.0;
     output.position = float4(0.0, 0.0, -1.0, 1.0);
     return output;
 }
@@ -206,6 +209,14 @@ float4 particleFog(Frame* frame, float3 world, float4 clip)
     return float4(added * (1.0 - amount) + color * amount, through * (1.0 - amount));
 }
 
+// How wide a particle that has lived `aged` of its life is now, in metres, by the first of its random numbers `h`,
+// which it leaves as they were.
+float particleWide(ParticleSystem system, float aged, uint h)
+{
+    float grown = system.curveCounts.x > 0 ? curveAt(system.sizeCurve, system.curveCounts.x, aged) : lerp(1.0, system.sizeEnd, aged);
+    return lerp(system.size.x, system.size.y, particleRandom(h)) * grown;
+}
+
 // Places the quad of a particle at `world`, going at `velocity`, that has
 // lived `aged` of its life, `age` seconds, of `system`, at `corner` of its
 // quad, with its random numbers `h`; and how bright and opaque it shows,
@@ -217,8 +228,8 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     output.corner = corner;
     output.softness = system.softness;
     output.additive = (system.flags & PARTICLES_ADDITIVE) != 0 ? 1 : 0;
-    float grown = system.curveCounts.x > 0 ? curveAt(system.sizeCurve, system.curveCounts.x, aged) : lerp(1.0, system.sizeEnd, aged);
-    float size = lerp(system.size.x, system.size.y, particleRandom(h)) * grown;
+    float size = particleWide(system, aged, h);
+    particleRandom(h);
     float turned = particleRandom(h) * 2.0 * PI + system.spin * age * (particleRandom(h) < 0.5 ? -1.0 : 1.0);
     float2 spun = float2(corner.x * cos(turned) - corner.y * sin(turned), corner.x * sin(turned) + corner.y * cos(turned));
     float3 forward = frame->cameraForward;
@@ -301,6 +312,7 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
         shown = color.rgb * light * system.intensity * air.a + hazed;
     }
     output.color = float4(shown, saturate(color.a * fade));
+    output.fade = 1.0;
     output.depth = clip.w;
     output.position = clip;
     return output;
@@ -359,6 +371,6 @@ float4 particleFragment(ParticleOut input) : SV_Target0
         discard;
     }
     float soft = input.softness > 0.0 ? saturate(gap / input.softness) : 1.0;
-    float alpha = input.color.a * shape * soft;
+    float alpha = input.color.a * input.fade * shape * soft;
     return float4((input.color.rgb * tint + haze) * alpha, input.additive != 0 ? 0.0 : alpha);
 }

@@ -19,7 +19,8 @@ use voxear_assets::AssetGuid;
 use voxear_core::curve::{Curve, Gradient};
 use voxear_rhi::TextureId;
 
-use crate::particles::{EmitShape, ParticleBlend, ParticleCollision, ParticleSpace, ParticleSystem};
+use crate::particle_meshes::{BuiltinMesh, ParticleMesh};
+use crate::particles::{EmitShape, ParticleBlend, ParticleCollision, ParticleSpace, ParticleSystem, ParticleTrails};
 
 /// What a built-in texture's or starter's reference starts with, as a file
 /// writes it: `builtin:puff`, `builtin:explosion`.
@@ -615,7 +616,10 @@ impl Starter {
             lifetime: [0.5, 1.3],
             speed: [3.0, 8.0],
             size: [0.03, 0.05],
-            stretch: 0.035,
+            // Each draws the way it has come behind it, round a bounce as much as along a fall.
+            trails: ParticleTrails::Particles,
+            trail_time: 0.07,
+            trail_width: 0.9,
             color: [1.0, 0.75, 0.35, 1.0],
             color_gradient: Gradient::new(&[[0.0, 1.0, 0.9, 0.6], [0.4, 1.0, 0.5, 0.1], [1.0, 0.6, 0.08, 0.02]]),
             opacity_curve: Curve::new(&[[0.0, 1.0], [0.7, 1.0], [1.0, 0.0]]),
@@ -679,7 +683,7 @@ impl Starter {
                         turbulence: 1.2,
                         turbulence_size: 0.8,
                         collision: ParticleCollision::Off,
-                        stretch: 0.02,
+                        trail_time: 0.25,
                         ..sparks
                     },
                 ),
@@ -946,14 +950,14 @@ impl Starter {
                 named(
                     "Debris",
                     ParticleSystem {
-                        texture: shard,
+                        mesh: Some(ParticleMesh::Builtin(BuiltinMesh::Chunk)),
                         rate: 0.0,
                         burst: 26,
                         looping: false,
                         duration: 3.0,
                         lifetime: [1.8, 3.0],
                         speed: [4.0, 11.0],
-                        size: [0.06, 0.16],
+                        size: [0.08, 0.22],
                         color: [0.16, 0.14, 0.12, 1.0],
                         color_end: [0.16, 0.14, 0.12, 1.0],
                         opacity_curve: Curve::new(&[[0.0, 1.0], [0.85, 1.0], [1.0, 0.0]]),
@@ -1012,6 +1016,10 @@ impl Starter {
                         turbulence: 1.4,
                         turbulence_size: 0.6,
                         forces: 1.0,
+                        // Each mote a thread of light along the way the swirls have taken it.
+                        trails: ParticleTrails::Particles,
+                        trail_time: 0.25,
+                        trail_width: 0.6,
                         ..glow
                     },
                 ),
@@ -1057,14 +1065,14 @@ impl Starter {
                 named(
                     "Clods",
                     ParticleSystem {
-                        texture: shard,
+                        mesh: Some(ParticleMesh::Builtin(BuiltinMesh::Chunk)),
                         rate: 0.0,
                         burst: 34,
                         looping: false,
                         duration: 2.0,
                         lifetime: [1.5, 2.6],
                         speed: [2.5, 7.0],
-                        size: [0.05, 0.14],
+                        size: [0.06, 0.17],
                         color: [0.11, 0.075, 0.045, 1.0],
                         color_end: [0.11, 0.075, 0.045, 1.0],
                         opacity_curve: Curve::new(&[[0.0, 1.0], [0.85, 1.0], [1.0, 0.0]]),

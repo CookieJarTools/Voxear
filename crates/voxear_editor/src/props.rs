@@ -42,7 +42,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
-    BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleTexture, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
+    BuiltinMesh, BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleMesh, ParticleTexture, ParticleTrails, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
 use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
@@ -452,6 +452,12 @@ pub enum Prop {
     ParticleLightMap,
     ParticleLight,
     ParticleLightRange,
+    /// A mesh each particle is drawn as in place of a picture; and the
+    /// trails they leave, how long a tail is and how wide.
+    ParticleMesh,
+    ParticleTrails,
+    ParticleTrailTime,
+    ParticleTrailWidth,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
     ForceKind,
     ForceStrength,
@@ -903,7 +909,11 @@ impl Prop {
             | Prop::ParticleDelay
             | Prop::ParticleLightMap
             | Prop::ParticleLight
-            | Prop::ParticleLightRange => Part::ParticleSystem,
+            | Prop::ParticleLightRange
+            | Prop::ParticleMesh
+            | Prop::ParticleTrails
+            | Prop::ParticleTrailTime
+            | Prop::ParticleTrailWidth => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
@@ -1233,6 +1243,10 @@ impl Prop {
             Prop::ParticleLightMap => "light_map",
             Prop::ParticleLight => "light",
             Prop::ParticleLightRange => "light_range",
+            Prop::ParticleMesh => "mesh",
+            Prop::ParticleTrails => "trails",
+            Prop::ParticleTrailTime => "trail_time",
+            Prop::ParticleTrailWidth => "trail_width",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
             Prop::ForceRadius => "radius",
@@ -1896,21 +1910,34 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::ParticleIntensity,
                 Prop::ParticleBlend,
                 Prop::ParticleLit,
-                Prop::ParticleSoftness,
-                Prop::ParticleTexture,
+                Prop::ParticleMesh,
             ];
-            // How many pictures a project's picture holds; a built-in one knows.
-            if matches!(system.texture, ParticleTexture::Asset(_)) {
-                props.push(Prop::ParticleTiles);
-                // Lit from six sides, when it is lit, by a second picture.
-                if system.lit {
-                    props.push(Prop::ParticleLightMap);
+            // A mesh is drawn with its own material, whole: only a flat particle has a picture, soft edges and a
+            // stretch along its way.
+            if system.mesh.is_none() {
+                props.extend([Prop::ParticleSoftness, Prop::ParticleTexture]);
+                // How many pictures a project's picture holds; a built-in one knows.
+                if matches!(system.texture, ParticleTexture::Asset(_)) {
+                    props.push(Prop::ParticleTiles);
+                    // Lit from six sides, when it is lit, by a second picture.
+                    if system.lit {
+                        props.push(Prop::ParticleLightMap);
+                    }
                 }
+                if !system.texture.is_builtin(BuiltinTexture::Dot) {
+                    props.push(Prop::ParticleAnimate);
+                }
+                props.push(Prop::ParticleStretch);
             }
-            if !system.texture.is_builtin(BuiltinTexture::Dot) {
-                props.push(Prop::ParticleAnimate);
-            }
-            props.extend([Prop::ParticleStretch, Prop::ParticleLight]);
+            props.push(Prop::ParticleTrails);
+            // How wide its trails are only while it leaves any, and how long only a tail, as a ribbon is as long as
+            // its particles live.
+            props.extend(match system.trails {
+                ParticleTrails::Off => vec![],
+                ParticleTrails::Particles => vec![Prop::ParticleTrailTime, Prop::ParticleTrailWidth],
+                ParticleTrails::Ribbon => vec![Prop::ParticleTrailWidth],
+            });
+            props.push(Prop::ParticleLight);
             // How far its light reaches only while it casts one.
             if system.light > 0.0 {
                 props.push(Prop::ParticleLightRange);
@@ -2230,6 +2257,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleLightMap => "Light Map",
         Prop::ParticleLight => "Light",
         Prop::ParticleLightRange => "Light Range",
+        Prop::ParticleMesh => "Mesh",
+        Prop::ParticleTrails => "Trails",
+        Prop::ParticleTrailTime => "Trail Time",
+        Prop::ParticleTrailWidth => "Trail Width",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
         Prop::ForceRadius => "Radius",
@@ -3083,7 +3114,15 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleStretch
         | Prop::ParticleDelay
         | Prop::ParticleLight
-        | Prop::ParticleLightRange => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleLightRange
+        | Prop::ParticleTrails
+        | Prop::ParticleTrailTime
+        | Prop::ParticleTrailWidth => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        Prop::ParticleMesh => Value::Asset(match world.get::<ParticleSystem>(entity)?.mesh {
+            None => "None".into(),
+            Some(ParticleMesh::Builtin(mesh)) => mesh.name().into(),
+            Some(ParticleMesh::Asset(guid)) => guid_label(game, Some(guid)),
+        }),
         Prop::ParticleLightMap => Value::Asset(match world.get::<ParticleSystem>(entity)?.light_map {
             ParticleTexture::Builtin(_) => "None".into(),
             ParticleTexture::Asset(guid) => guid_label(game, Some(guid)),
@@ -3653,6 +3692,20 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.texture = texture)
         }
+        (Prop::ParticleMesh, Pick::Asset(choice)) => {
+            // A built-in mesh by its reference, or one of the project's models by its path.
+            let mesh = match choice {
+                None => None,
+                Some(path) => match BuiltinMesh::from_reference(path) {
+                    Some(mesh) => Some(ParticleMesh::Builtin(mesh)),
+                    None => match game.content.parse(path).ok().and_then(|reference| reference.guid()) {
+                        Some(guid) => Some(ParticleMesh::Asset(guid)),
+                        None => return false,
+                    },
+                },
+            };
+            with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.mesh = mesh)
+        }
         (Prop::ParticleLightMap, Pick::Asset(choice)) => {
             let map = match choice {
                 None => ParticleTexture::default(),
@@ -3951,6 +4004,13 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return found;
         }
         Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
+        Prop::ParticleMesh => {
+            // None, the built-in ones, then the project's models.
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(BuiltinMesh::ALL.map(|mesh| (mesh.name().to_string(), Pick::Asset(Some(mesh.reference())))));
+            found.extend(fields::assets_of(game, Some(AssetKind::Model)).into_iter().skip(1));
+            return found;
+        }
         Prop::ParticleTexture => {
             // The built-in ones, the Dot first, then the project's pictures.
             let builtin = BuiltinTexture::ALL.map(|texture| (texture.name().to_string(), Pick::Asset(Some(texture.reference()))));
@@ -4870,6 +4930,12 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleDelay => Value::Number(system.delay),
         Prop::ParticleLight => Value::Number(system.light),
         Prop::ParticleLightRange => Value::Number(system.light_range),
+        Prop::ParticleTrails => {
+            let index = ParticleTrails::ALL.iter().position(|t| *t == system.trails).unwrap_or(0);
+            choice(index, ParticleTrails::ALL.iter().map(|t| t.name()).collect())
+        }
+        Prop::ParticleTrailTime => Value::Number(system.trail_time),
+        Prop::ParticleTrailWidth => Value::Number(system.trail_width),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -4944,6 +5010,11 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleDelay, Value::Number(n)) => system.delay = n.max(0.0),
         (Prop::ParticleLight, Value::Number(n)) => system.light = n.max(0.0),
         (Prop::ParticleLightRange, Value::Number(n)) => system.light_range = n.max(0.0),
+        (Prop::ParticleTrails, Value::Choice(index, _)) => {
+            system.trails = ParticleTrails::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::ParticleTrailTime, Value::Number(n)) => system.trail_time = n.max(0.01),
+        (Prop::ParticleTrailWidth, Value::Number(n)) => system.trail_width = n.max(0.0),
         _ => {}
     }
 }
@@ -5351,6 +5422,20 @@ mod tests {
         assert!(shown(&world).contains(&Prop::ParticleLightRange));
         world.get_mut::<ParticleSystem>(entity).unwrap().lit = false;
         assert!(!shown(&world).contains(&Prop::ParticleLightMap), "one that is not lit has no use for it");
+        // Trails bring how wide they are, and a tail how long; a mesh has no use for a picture's rows.
+        assert!(!shown(&world).contains(&Prop::ParticleTrailWidth));
+        assert!(set_component(&mut world, entity, &Prop::ParticleTrails, Value::Choice(2, Vec::new())));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().trails, ParticleTrails::Ribbon);
+        assert!(shown(&world).contains(&Prop::ParticleTrailWidth) && !shown(&world).contains(&Prop::ParticleTrailTime));
+        assert!(set_component(&mut world, entity, &Prop::ParticleTrails, Value::Choice(1, Vec::new())));
+        assert!(shown(&world).contains(&Prop::ParticleTrailTime));
+        assert!(set_component(&mut world, entity, &Prop::ParticleTrailTime, Value::Number(-2.0)));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().trail_time, 0.01);
+        assert!(world.get::<ParticleSystem>(entity).unwrap().simulated_for().contains(&"Trails"));
+        world.get_mut::<ParticleSystem>(entity).unwrap().mesh = Some(ParticleMesh::Builtin(BuiltinMesh::Chunk));
+        let rows = shown(&world);
+        assert!(rows.contains(&Prop::ParticleMesh) && rows.contains(&Prop::ParticleTrails));
+        assert!(![Prop::ParticleTexture, Prop::ParticleTiles, Prop::ParticleStretch, Prop::ParticleSoftness].iter().any(|row| rows.contains(row)));
         world.get_mut::<ParticleSystem>(entity).unwrap().effect = Some(EffectRef::Builtin(Starter::Explosion));
         assert_eq!(shown(&world), [Prop::ParticleEffect], "its own settings are not used");
     }

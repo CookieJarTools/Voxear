@@ -32,6 +32,10 @@ internal static class ParticleTests
 		smoke.Forces = 1f;
 		Check.True(smoke.Collision == ParticleCollision.Off, "nothing to collide");
 		Check.Near(0f, smoke.Bounce + smoke.Friction + smoke.LifeLost + smoke.Forces);
+		smoke.Trails = ParticleTrails.Ribbon;
+		smoke.TrailTime = 1f;
+		Check.True(smoke.Trails == ParticleTrails.Off, "nothing to leave a trail");
+		Check.Near(0f, smoke.TrailTime + smoke.TrailWidth);
 	}
 
 	[Test]

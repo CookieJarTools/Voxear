@@ -22,6 +22,12 @@
 // A system that takes forces is moved by the frame's Force Fields and
 // blasts (src/forces.rs), and driven out of the way of what passes through
 // it, the same pushers that part plants.
+//
+// A system whose particles draw tails keeps, for each, the last points of
+// its way, after its particles in its room: one every tick of the system's
+// trail clock, written round and round, so the newest takes the oldest's
+// place. A new particle's are all where it starts, so its tail grows out of
+// that place.
 
 #include "particle_motion.slang"
 #include "wind.slang"
@@ -250,7 +256,12 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
     // How long this step moves it for: since last frame, or for a new one, nothing, as it starts where its age has it.
     float step = sim->deltaTime;
     uint since = (slot + capacity - system->head) % capacity;
-    if (since < system->emitCount)
+    bool born = since < system->emitCount;
+    // The points of its tail, for a system whose particles draw them.
+    bool tailed = (flags & PARTICLES_TRAILS) != 0;
+    float3* tail = &buffers()->particleTrails[(system->poolFirst + capacity) * 3 + slot * PARTICLE_TRAIL_POINTS];
+    float3 before = 0.0;
+    if (born)
     {
         // A new one, taking the place of the system's oldest.
         uint number = system->emitted + since;
@@ -299,7 +310,15 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
         if (inWorld)
         {
             particle.position += system->shift;
+            if (tailed && any(system->shift != 0.0))
+            {
+                for (uint point = 0; point < PARTICLE_TRAIL_POINTS; point++)
+                {
+                    tail[point] += system->shift;
+                }
+            }
         }
+        before = particle.position;
     }
 
     if (step > 0.0 && particle.age < particle.life)
@@ -369,6 +388,25 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
         particle.velocity = velocity;
     }
     *kept = particle;
+    if (tailed && born)
+    {
+        for (uint point = 0; point < PARTICLE_TRAIL_POINTS; point++)
+        {
+            tail[point] = particle.position;
+        }
+    }
+    else if (tailed && step > 0.0)
+    {
+        // A point for each tick gone by in this step, where the particle was when it came: between where the step
+        // found it and where it left it.
+        uint ticks = min(system->trailNew, PARTICLE_TRAIL_POINTS);
+        for (uint n = 0; n < ticks; n++)
+        {
+            uint tick = system->trailTick - (ticks - 1 - n);
+            float ago = (float(ticks - 1 - n) + system->trailPart) * system->trailInterval;
+            tail[tick % PARTICLE_TRAIL_POINTS] = lerp(particle.position, before, saturate(ago / step));
+        }
+    }
 
     bool alive = particle.age < particle.life;
     uint lanes = WaveActiveCountBits(alive);

@@ -277,6 +277,27 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.LightRange, value); }
 	}
 
+	/// <summary>What its particles leave behind them: a tail each, or one ribbon through them all. Either makes it simulated.</summary>
+	public ParticleTrails Trails
+	{
+		get { return (ParticleTrails)(int)Number(NativeParticles.Trails); }
+		set { Set(NativeParticles.Trails, (int)value); }
+	}
+
+	/// <summary>How long a particle's tail is, in seconds of the way it has come.</summary>
+	public float TrailTime
+	{
+		get { return Number(NativeParticles.TrailTime); }
+		set { Set(NativeParticles.TrailTime, value); }
+	}
+
+	/// <summary>How wide a tail or the ribbon is, against the particles.</summary>
+	public float TrailWidth
+	{
+		get { return Number(NativeParticles.TrailWidth); }
+		set { Set(NativeParticles.TrailWidth, value); }
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{

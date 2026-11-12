@@ -14,13 +14,13 @@ Every project has these starters:
 | --- | --- |
 | Fire | Flames, the smoke they leave downwind, and embers |
 | Smoke | A column of smoke that drifts with the wind |
-| Sparks | A stream of sparks that bounce where they land |
+| Sparks | A stream of sparks with tails, that bounce where they land |
 | Dust | Dust hanging over a patch of ground |
 | Rain, Snow | Falling from a box 14 metres across at the Obj, so put it overhead |
 | Blood | A spurt that lands and stays a moment |
 | Muzzle Flash | A flash, sparks and a wisp of smoke, once |
-| Explosion | Flash, fireball, smoke, sparks, debris and a shockwave, once |
-| Magic | Glowing motes round a pulsing light |
+| Explosion | Flash, fireball, smoke, sparks, tumbling debris and a shockwave, once |
+| Magic | Glowing motes that draw threads of light, round a pulsing light |
 | Mud | Clods and spatter thrown up, once |
 
 In a game an effect that plays once plays once each time it starts: `Play()` starts it over.
@@ -114,6 +114,24 @@ Depth collision reads what the main camera sees, which costs next to nothing. Th
 
 **Forces** is how much [[Force Fields]], blasts and whoever passes through move a system's particles: 0 not at all, 1 in full. Dust and smoke want 1, so an explosion throws them and a runner parts them; heavy debris wants less.
 
+## Trails
+
+**Trails** is what a system's particles leave behind them.
+
+| Trails | What is drawn |
+| --- | --- |
+| Off | Only the particles |
+| Particles | Each particle with a tail along the way it has come, narrowing and fading to its end |
+| Ribbon | One ribbon through all the particles, in the order they were sent out, and not the particles themselves |
+
+A tail is for sparks, embers and shooting stars. Unlike **Stretch** it follows the path the particle really took, so it bends round a bounce and curls in turbulence. **Trail Time** is how long it is, in seconds of the particle's way: a spark going 6 metres a second with a Trail Time of 0.1 has a tail 60 centimetres long.
+
+A ribbon is for the streak behind a spell, a blade or a rocket. Put the system on the Obj that moves, set its **Space** to **World** so its particles stay behind, its **Shape** to **Point** so they start in a line, and its **Speed** to 0. The ribbon then runs from the Obj back through every particle still alive, so its **Lifetime** is how long the streak lasts, and its colour and size over life are how it fades and narrows along its length. Raise the **Rate** if a fast turn shows corners: 30 to 60 a second suits most.
+
+**Trail Width** is how wide a tail or the ribbon is, against the particles: 1 as wide as they are.
+
+Trails are coloured and lit as their particles are, and drawn soft-edged without the Texture. A particle with a tail takes the room of six in the [budget](#the-particle-budget). A ribbon takes no more than its particles.
+
 ## Simulated systems
 
 A system using none of these settings works out where each particle is from its age alone. Nothing is kept from frame to frame, and it costs almost nothing.
@@ -124,7 +142,7 @@ Simulated systems are still cheap. A million particles are stepped in about a fi
 
 ## The particle budget
 
-Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. **Project Settings ▸ Quality ▸ Budget** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
+Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. Particles with tails take six times as much. **Project Settings ▸ Quality ▸ Budget** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
 
 The stats overlay (**F1** in a game) and the Profiler show **Particles**: how many are alive, of the budget. The Profiler's GPU list has **Particle simulation** and **Particles**, the time spent stepping and drawing them.
 
@@ -140,12 +158,34 @@ The stats overlay (**F1** in a game) and the Profiler show **Particles**: how ma
 - **Light Map**: for a lit picture of your own, a second picture that lights it from six sides, as smoke baked in a simulation tool comes: the Texture says how bright each pixel is lit from the right (red), from above (green) and from behind (blue), with its shape in alpha, and the Light Map from the left, from below and from in front.
 - **Light**: how bright a light the system casts on what's round it, as a Point Light's Intensity, in the colour its particles start with. A stream's flickers, as a fire does. A burst's flashes and fades as its particles die, as an explosion's does. **Light Range** is how far it reaches, in metres. The 16 nearest the camera shine.
 - **Stretch**: draws each particle longer along the way it's going, in metres for each metre a second: sparks and rain become streaks. A stretched particle doesn't spin.
+- **Mesh**: draws each particle as a mesh in place of a flat picture. See [Mesh particles](#mesh-particles).
 - Particles sit in the scene's fog and haze as far off as they are: near ones show clearly, far ones fade into the mist.
 - **Seed**: two systems that are alike but for their Seed send out different particles.
 
+## Mesh particles
+
+**Mesh** draws each particle as a solid shape that tumbles through the air: rubble from an explosion, clods of earth, shell cases, splinters. Pick a built-in one or one of the project's models.
+
+| Mesh | What it is |
+| --- | --- |
+| Cube | A box |
+| Ball | A ball |
+| Chunk | A lump with flat faces, no two sides alike |
+| Rod | A short rod, three and a half times as long as it is wide |
+
+- **Size** is how wide each one is across its furthest corners, in metres, whatever size the model was made.
+- **Spin** is how fast each tumbles, in degrees a second, round an axis of its own. At 0 each keeps the turn it started with.
+- **Color** tints the mesh's own material. A built-in mesh is plain white, so it takes the colour as it is. A model keeps its own colours, roughness and metal under the tint.
+- **Lit** particles are lit as any surface is, by the sun, the sky and lamps. Unlit ones show their colour as it is, for things that glow.
+- As a mesh particle fades it thins out pixel by pixel rather than turning clear, so fade it only over the last tenth of its life or so.
+
+A model's first mesh is used, at its full detail, so keep models for particles simple: a few dozen triangles each is plenty for debris. Mesh particles hide one another and the flat particles behind them, as solid things do. They don't cast shadows.
+
+Give them **Collision** with a little **Bounce** and plenty of **Friction** and they land and come to rest.
+
 ## From scripts
 
-`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
+`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed but the Effect, Texture and Mesh, which are picked in the Inspector. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
 
 ```csharp
 // A burst of sparks where the hammer lands.
@@ -172,4 +212,4 @@ A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to 
 
 ## What's coming
 
-Still to come: collision with what's out of view, trails, particles drawn as meshes, mist and dust in the fog, and editing an effect as a graph.
+Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.

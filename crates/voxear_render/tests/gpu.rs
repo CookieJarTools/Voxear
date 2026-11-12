@@ -5217,6 +5217,145 @@ fn floor_render(system: Option<voxear_render::ParticleSystem>) -> Option<Vec<u8>
     Some(renderer.read_pixels().unwrap().2)
 }
 
+/// How many of the columns between the leftmost and the rightmost pixel of `pixels` much brighter than in `before`
+/// have one such pixel in them, out of how many columns that is.
+fn bright_columns(pixels: &[u8], before: &[u8]) -> (usize, usize) {
+    let bright = |x: u32| (0..360u32).any(|y| rgb_at(pixels, (x, y))[0] > rgb_at(before, (x, y))[0] + 40);
+    let columns: Vec<u32> = (0..640u32).filter(|&x| bright(x)).collect();
+    let across = columns.last().map_or(0, |last| last - columns[0] + 1);
+    (columns.len(), across as usize)
+}
+
+#[test]
+fn sparks_draw_tails_behind_them_and_a_ribbon_joins_a_moving_systems_particles() {
+    use voxear_render::{ParticleSpace, ParticleSystem, ParticleTrails};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    // A few sparks, far enough apart to tell one from the next.
+    let few = ParticleSystem { rate: 12.0, space: ParticleSpace::World, ..sparks() };
+    let (bare, _) = simulated_render(few, 60, |_| {}, |_, _| {}).unwrap();
+    let tailed = ParticleSystem { trails: ParticleTrails::Particles, trail_time: 0.4, trail_width: 1.0, ..few };
+    assert_eq!((few.simulated_for(), ParticleSystem { space: ParticleSpace::Local, ..tailed }.simulated_for()), (vec!["Space"], vec!["Trails"]));
+    let (tails, _) = simulated_render(tailed, 60, |_| {}, |_, _| {}).unwrap();
+    keep_image("particles bare.png", &bare);
+    keep_image("particles tails.png", &tails);
+    let (dots, drawn) = (brighter_pixels(&bare, &empty), brighter_pixels(&tails, &empty));
+    assert!(drawn > dots * 3, "each spark draws the way it has come behind it: {drawn} pixels against {dots}");
+    // A longer tail covers more; one of no width, nothing more than the sparks.
+    let (longer, _) = simulated_render(ParticleSystem { trail_time: 0.8, ..tailed }, 60, |_| {}, |_, _| {}).unwrap();
+    let (thin, _) = simulated_render(ParticleSystem { trail_width: 0.0, ..tailed }, 60, |_| {}, |_, _| {}).unwrap();
+    let (long, none) = (brighter_pixels(&longer, &empty), brighter_pixels(&thin, &empty));
+    assert!(long * 10 > drawn * 13, "twice as long a tail: {long} pixels against {drawn}");
+    assert!(none.abs_diff(dots) * 10 < dots, "tails of no width draw nothing: {none} pixels against {dots}");
+
+    // A system carried six metres across in a second, leaving a spark behind it every forty centimetres.
+    let hanging = ParticleSystem { rate: 15.0, gravity: 0.0, speed: [0.0, 0.0], lifetime: [3.0, 3.0], ..few };
+    let left = ParticleSystem { shape: voxear_render::EmitShape::Point, ..hanging };
+    let carried = |world: &mut World, obj| {
+        let at = &mut world.get_mut::<Transform>(obj).unwrap().position;
+        *at = Vec3::new(if at.y == 0.0 { -3.0 } else { at.x + 0.1 }, 1.5, 0.0);
+    };
+    let (apart, _) = simulated_render(left, 60, |_| {}, carried).unwrap();
+    let joined = ParticleSystem { trails: ParticleTrails::Ribbon, trail_width: 1.0, ..left };
+    let (ribbon, _) = simulated_render(joined, 60, |_| {}, carried).unwrap();
+    keep_image("particles ribbon.png", &ribbon);
+    let ((dotted, dots_across), (covered, across)) = (bright_columns(&apart, &empty), bright_columns(&ribbon, &empty));
+    assert!(dots_across > 250 && dotted * 2 < dots_across, "sparks with gaps between: {dotted} columns of {dots_across}");
+    assert!(across > 250 && covered * 100 >= across * 98, "one unbroken ribbon: {covered} columns of {across}");
+}
+
+/// The scene `floor_render` draws, with `systems` at the fountain's foot, two seconds of frames after they started.
+fn meshes_render(systems: &[voxear_render::ParticleSystem]) -> Option<Vec<u8>> {
+    use voxear_render::{ParticlePlayback, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    for &system in systems {
+        world.spawn((system, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::ZERO)));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 120);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn particles_drawn_as_meshes_are_solid_lit_and_hide_what_is_behind_them() {
+    use voxear_render::{BuiltinMesh, EmitShape, ParticleMesh, ParticleSystem};
+    let Some(empty) = meshes_render(&[]) else { return };
+    // Rubble thrown up from the floor: pale lumps, tumbling, each a mesh.
+    let rubble = ParticleSystem {
+        mesh: Some(ParticleMesh::Builtin(BuiltinMesh::Chunk)),
+        rate: 0.0,
+        burst: 40,
+        looping: false,
+        lifetime: [6.0, 6.0],
+        speed: [5.0, 7.0],
+        angle: 30.0,
+        size: [0.3, 0.5],
+        gravity: 0.5,
+        spin: 180.0,
+        color: [0.9, 0.85, 0.8, 1.0],
+        color_end: [0.9, 0.85, 0.8, 1.0],
+        ..ParticleSystem::default()
+    };
+    let thrown = meshes_render(&[rubble]).unwrap();
+    keep_image("particles meshes.png", &thrown);
+    let changed = |pixels: &[u8]| {
+        let all = (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y)));
+        all.filter(|&at| rgb_at(pixels, at).iter().zip(rgb_at(&empty, at)).any(|(a, b)| (a - b).abs() > 12)).collect::<Vec<_>>()
+    };
+    let lumps = changed(&thrown);
+    assert!(lumps.len() > 1500, "forty lumps in the air: {} pixels", lumps.len());
+    // How many of the pixels at `places` of `pixels` are about as red as the middle one of them is.
+    let alike = |pixels: &[u8], places: &[(u32, u32)]| {
+        let mut shades: Vec<i32> = places.iter().map(|&at| rgb_at(pixels, at)[0]).collect();
+        shades.sort_unstable();
+        let middle = shades[shades.len() / 2];
+        shades.iter().filter(|&&red| (red - middle).abs() < 15).count()
+    };
+    // Lit as surfaces are: their sunlit faces bright and their others in shade, not one flat colour.
+    let same = alike(&thrown, &lumps);
+    assert!(same * 10 < lumps.len() * 7, "faces in sun and in shade: {same} of {} pixels alike", lumps.len());
+    // And one that glows is the same colour all over.
+    let glowing = meshes_render(&[ParticleSystem { lit: false, ..rubble }]).unwrap();
+    let shown = changed(&glowing);
+    let same = alike(&glowing, &shown);
+    assert!(same * 10 > shown.len() * 9, "unlit, they show their colour as it is: {same} of {} pixels alike", shown.len());
+
+    // One great cube standing still in front of a fountain of sparks hides the sparks behind it.
+    let block = ParticleSystem {
+        mesh: Some(ParticleMesh::Builtin(BuiltinMesh::Cube)),
+        shape: EmitShape::Point,
+        burst: 1,
+        speed: [0.0, 0.0],
+        size: [3.0, 3.0],
+        gravity: 0.0,
+        spin: 0.0,
+        ..rubble
+    };
+    let fountain = ParticleSystem { lifetime: [1.0, 1.0], ..sparks() };
+    let open = meshes_render(&[fountain]).unwrap();
+    let hidden = meshes_render(&[fountain, block]).unwrap();
+    keep_image("particles behind a mesh.png", &hidden);
+    // The middle of the cube, as the camera sees it, where the fountain's foot is.
+    let near_foot = |pixels: &[u8]| {
+        let all = (290..350u32).flat_map(|x| (180..260u32).map(move |y| (x, y)));
+        all.filter(|&at| rgb_at(pixels, at)[0] > rgb_at(&empty, at)[0] + 40 && rgb_at(pixels, at)[2] < 120).count()
+    };
+    let (seen, behind) = (near_foot(&open), near_foot(&hidden));
+    assert!(seen > 100 && behind * 20 < seen, "sparks at its foot: {seen} pixels in the open, {behind} behind the cube");
+}
+
 #[test]
 fn a_system_with_no_room_in_the_budget_is_left_out_and_counted() {
     use voxear_render::{ParticleSpace, ParticleSystem};

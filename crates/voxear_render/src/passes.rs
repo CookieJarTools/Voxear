@@ -128,9 +128,9 @@ pub struct Frame {
     pub water: Option<crate::water::Water>,
     /// The glass in view, drawn after the sky.
     pub glass: Option<glass::Glass>,
-    /// How many particles each Particle System draws, in the order they are
-    /// listed, drawn after glass; and the pool the simulated ones' are in.
-    pub particles: Vec<u32>,
+    /// How each Particle System is drawn, in the order they are listed,
+    /// after glass; and the pool the simulated ones' particles are in.
+    pub particles: Vec<crate::particles::Drawn>,
     pub particle_pool: Option<BufferId>,
     /// The simulated particles' step, in the view that records it.
     pub particle_step: Option<crate::particles::Step>,
@@ -655,7 +655,9 @@ pub fn record(
         sampled.extend(sea_images);
         let clusters = draws.clusters;
         let pool = frame.particle_pool;
-        let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, pool, extent: frame.extent };
+        let index_buffer = draws.index_buffer;
+        let particle_targets =
+            crate::particles::Targets { hdr, depth, sampled, clusters, pool, index_buffer, extent: frame.extent };
         let (counts, rapids) = (frame.particles.clone(), frame.rapids.clone());
         let step = frame.particle_step;
         particles = Some(crate::particles::Draw { step, counts, spray, rapids, targets: particle_targets });

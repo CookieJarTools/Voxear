@@ -23,6 +23,14 @@ static const uint PARTICLES_ANIMATE = 128;
 // Lit from six sides: its texture and its light map say how bright each pixel is lit from the right, the top and
 // behind, and from the left, below and in front.
 static const uint PARTICLES_SIX_WAY = 256;
+// Each particle draws a tail along the way it has come, from the points the simulation keeps of it; or they are
+// joined in one ribbon in the order they were sent out, which reaches on to its Obj while it is sending them
+// (PARTICLES_RIBBON_FED).
+static const uint PARTICLES_TRAILS = 512;
+static const uint PARTICLES_RIBBON = 1024;
+static const uint PARTICLES_RIBBON_FED = 2048;
+// Each particle is drawn as a mesh, tumbling, rather than as a flat picture.
+static const uint PARTICLES_MESH = 4096;
 
 // Its shapes, as particles::EmitShape.
 static const uint EMIT_POINT = 0;

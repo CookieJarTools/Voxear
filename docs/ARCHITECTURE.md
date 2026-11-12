@@ -2841,7 +2841,7 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   is left to games and packages.
 - **Planned on top:** clips keyed on a timeline.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke and lights implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails and meshes implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2946,6 +2946,35 @@ from when it started (`particles::lights`): steady with a flicker while a stream
 and fading with the square of how far through its particles' lives it is. They join the frame's lamps before
 clustering, the 16 nearest the camera, with no shadows.
 
+**Trails** *(implemented)*. Two kinds, because they want different things kept. A **tail** behind each particle
+needs where that particle has been, which nothing else keeps: the step writes it, 15 points a particle, after the
+system's particles in its own run of the pool, three points to a particle's 36 bytes, so the budget, the pool's
+growth and the origin's shifts cover them with no second pool. Chose points kept by time over points kept by
+frame: the CPU gives each system a tick, the particles' time over the tail's time divided among the points, and
+says how many ticks went by since the last step; the step writes a point for each, where the particle was when
+it came, between where the step found it and where it left it. So a tail is as long in seconds as it is set to
+at any frame rate, and paused particles keep theirs. The points are a ring by tick, the newest taking the
+oldest's place; the drawing reads them back from the tick, starts at the particle itself and slides the last
+point toward the one after it as the tick goes by, so neither end jumps. A new particle's points are all where
+it starts. A **ribbon** needs nothing kept: a system's particles are already in the pool in the order they were
+sent out, so it is a strip from each to the next, and on to the Obj while it is sending them. Both are drawn by
+the particles' own pixel shader as strips turned to the camera along their length, each corner coloured and lit
+as its particle is; how much shows is the one thing that varies along a piece, so it alone is interpolated. A
+strip thinner on screen than a couple of pixels is drawn that wide and as much fainter, since a line thinner
+than that breaks into dots as it moves.
+
+**Mesh particles** *(implemented)*. A system with a Mesh draws an instance a particle, the vertex shader reading
+the particle as the flat ones do (`particleNow`, from the pool or from its age), scaling the mesh so its bounding
+sphere is the particle's size across and turning it about an axis of the particle's own. They are drawn in a pass
+of their own before the flat particles, forward, lit a pixel at a time as a surface is with the mesh's own
+material under the system's colour, and into the depth: so they hide one another whatever order they are drawn
+in, flat particles fade before them, and one fading out thins by a dither rather than blending. Chose that over
+putting them among the scene's instances: those are listed on the CPU and culled by the GPU, and a simulated
+particle's place is only on the GPU. What that costs them is what the opaque passes give: they cast no shadows,
+take no ambient occlusion and have no motion of their own for anti-aliasing. A mesh is named as a texture is,
+built in or a model's GUID (`ParticleMesh`), and the engine lists the models' meshes and materials for the
+renderer with the pictures (`ParticleMeshes`).
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
@@ -2954,10 +2983,10 @@ clustering, the 16 nearest the camera, with no shadows.
   marks, effects start on every machine by RPC with a seed, and a server simulates none.
 - **More in an effect.** Sub-emitters and events, and values an effect shows on the Particle System that plays
   it.
-- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; lighting
-  worked out once a particle rather than once a corner; mist, dust and lingering smoke put into the fog volume;
-  sorting only where blending needs it, big soft particles at half size, and anti-aliasing told about fast
-  particles.
+- **Drawing.** Flipbooks blended by motion vectors; lighting worked out once a particle rather than once a
+  corner; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
+  soft particles at half size, and anti-aliasing told about fast particles and mesh particles; a picture along
+  a ribbon; a coarser LOD for far mesh particles, and their shadows.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
   rather than names, hit and finished events, curves and gradients.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least

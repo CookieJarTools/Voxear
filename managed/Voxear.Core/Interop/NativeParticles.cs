@@ -50,6 +50,9 @@ internal static unsafe class NativeParticles
 	public const int Delay = 39;
 	public const int Light = 40;
 	public const int LightRange = 41;
+	public const int Trails = 42;
+	public const int TrailTime = 43;
+	public const int TrailWidth = 44;
 
 	/// <summary>A value of an Obj's Particle System, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

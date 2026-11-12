@@ -43,6 +43,7 @@ mod model_renderer;
 mod impostors;
 mod effects;
 mod forces;
+mod particle_meshes;
 mod particle_sim;
 mod particles;
 mod passes;
@@ -135,9 +136,11 @@ pub use effects::{
     BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
 };
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
+pub use particle_meshes::{BuiltinMesh, ParticleMesh, ParticleMeshes};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
 pub use particles::{
     MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
+    ParticleTrails,
 };
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
@@ -2366,6 +2369,7 @@ impl View {
                 particle_sim: particle_step.map_or(0, |step| step.frame),
                 particle_counters: particle_step.map_or(0, |step| step.counters_address),
                 particle_steps: particle_step.map_or(0, |step| step.systems),
+                particle_trails: setup.simulated.1,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2381,7 +2385,21 @@ impl View {
             ParticleTexture::Asset(guid) => pictures.and_then(|pictures| pictures.0.get(&guid)).map(|id| id.0),
         };
         let puff_lit = Some(assets.puff_light_maps.map(|map| map.0));
-        let drawing = (&*setup.simulated.0, particles::Textures { find: &particle_texture, puff_lit });
+        // The mesh a system's particles are drawn as: a built-in one, or a model's the engine has loaded.
+        let models = world.resource::<ParticleMeshes>();
+        let particle_mesh = |mesh: ParticleMesh| {
+            let (handle, material) = match mesh {
+                ParticleMesh::Builtin(builtin) => {
+                    let slot = BuiltinMesh::ALL.iter().position(|other| *other == builtin)?;
+                    (assets.particle_meshes[slot], assets.default_material)
+                }
+                ParticleMesh::Asset(guid) => *models?.0.get(&guid)?,
+            };
+            let (first_index, index_count) = assets.first_lod(handle)?;
+            Some(particle_meshes::MeshDraw { mesh: handle.0, material: material.0, first_index, index_count })
+        };
+        let drawing =
+            (&*setup.simulated.0, particles::Looks { find: &particle_texture, puff_lit, mesh: &particle_mesh });
         let (particle_systems, particles, spray, rapids) =
             particles::gather(world, camera, particles::time_of(world, setup.time), &extracted.water_bodies, drawing);
         buffers.particle_systems.write(0, &particle_systems);

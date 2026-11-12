@@ -149,6 +149,8 @@ struct Kept {
     shift: Vec3,
     /// Its room holds none of its own particles yet.
     fresh: bool,
+    /// The tick its particles' tails last kept a point at.
+    trail_tick: Option<u32>,
     /// The last frame it was seen.
     seen: u64,
 }
@@ -306,12 +308,12 @@ impl ParticleSim {
                 let started = whole.started + system.delay.max(0.0);
                 let playback = ParticlePlayback { started, stopped: whole.stopped.map(|stopped| stopped.max(started)) };
                 // Room for it, made again when it needs more or less.
-                if self.kept.get(&key).is_some_and(|kept| kept.capacity != capacity) {
+                let needed = system.room().div_ceil(CHUNK);
+                if self.kept.get(&key).is_some_and(|kept| kept.capacity != capacity || kept.chunks != needed) {
                     let old = self.kept.remove(&key).expect("checked above");
                     self.spans.give(old.first, old.chunks);
                 }
                 if !self.kept.contains_key(&key) {
-                    let needed = capacity.div_ceil(CHUNK);
                     let Some(first) = self.spans.take(needed, limit).filter(|_| systems.len() < MAX_SIMULATED_SYSTEMS)
                     else {
                         left_out += 1;
@@ -330,6 +332,7 @@ impl ParticleSim {
                         origin,
                         shift: Vec3::ZERO,
                         fresh: true,
+                        trail_tick: None,
                         seen: frame,
                     };
                     self.kept.insert(key, kept);
@@ -363,6 +366,8 @@ impl ParticleSim {
                 }
                 let fresh = if std::mem::take(&mut kept.fresh) { particles::FRESH } else { 0 };
                 let stepped = particles::gpu(system, model, time, Some(whole));
+                // Each tick gone by since the last step, a point for its particles' tails to keep.
+                let ticks = kept.trail_tick.replace(stepped.trail_tick).map_or(0, |last| stepped.trail_tick.saturating_sub(last));
                 let index = systems.len() as u32;
                 systems.push(GpuParticleSystem {
                     flags: stepped.flags | fresh,
@@ -377,9 +382,11 @@ impl ParticleSim {
                     stream_ages: sent.stream_ages,
                     moved: (origin - kept.origin).to_array(),
                     shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },
+                    trail_new: if delta_time > 0.0 { ticks.min(particles::TRAIL_POINTS) } else { 0 },
                     ..stepped
                 });
-                chunks.extend((0..kept.chunks).map(|chunk| [index, chunk * CHUNK]));
+                // Only its particles are stepped: their tails' points, kept after them, are written along with them.
+                chunks.extend((0..capacity.div_ceil(CHUNK)).map(|chunk| [index, chunk * CHUNK]));
                 kept.head = (kept.head + count) % capacity;
                 kept.emitted = kept.emitted.wrapping_add(count);
                 (kept.origin, kept.shift) = (origin, Vec3::ZERO);
@@ -622,5 +629,10 @@ mod tests {
         assert_eq!(ParticleSystem { looping: false, ..bursts }.capacity(), 50);
         assert!(steady.is_simulated() && !ParticleSystem::default().is_simulated());
         assert_eq!(ParticleSystem { turbulence: 1.0, ..steady }.simulated_for(), ["Wind", "Turbulence"]);
+        // A tail's points take five particles' room after each particle; a ribbon's nothing more.
+        let tailed = ParticleSystem { trails: particles::ParticleTrails::Particles, ..steady };
+        assert_eq!((steady.room(), tailed.room()), (300, 300 * (1 + particles::TRAIL_ROOM)));
+        assert_eq!(ParticleSystem { trails: particles::ParticleTrails::Ribbon, ..steady }.room(), 300);
+        assert_eq!(particles::TRAIL_POINTS * 12, particles::TRAIL_ROOM * size_of::<GpuParticle>() as u32, "three points to a particle's room");
     }
 }

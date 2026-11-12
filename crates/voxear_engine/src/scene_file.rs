@@ -2604,11 +2604,23 @@ mod tests {
         assert_eq!((system.texture, system.tiles), (voxear_render::ParticleTexture::Asset(guid), [4, 4]));
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&streaks).unwrap()).unwrap().particles, Some(system));
         assert!(toml::from_str::<ObjData>("id = 6\n[particles]\neffect = \"builtin:nothing\"").is_err());
+        // Trails and a mesh, the mesh named as a texture is.
+        let text = format!("id = 7\n[particles]\ntrails = \"ribbon\"\ntrail_width = 0.25\nmesh = \"builtin:chunk\"");
+        let rubble: ObjData = toml::from_str(&text).unwrap();
+        let system = rubble.particles.expect("the system is read");
+        use voxear_render::{BuiltinMesh, ParticleMesh, ParticleTrails};
+        assert_eq!((system.trails, system.trail_width, system.trail_time), (ParticleTrails::Ribbon, 0.25, 0.5));
+        assert_eq!(system.mesh, Some(ParticleMesh::Builtin(BuiltinMesh::Chunk)));
+        let written = toml::to_string(&rubble).unwrap();
+        assert!(written.contains("mesh = \"builtin:chunk\"") && !written.contains("trail_time"), "{written}");
+        let model: ObjData = toml::from_str(&format!("id = 8\n[particles]\nmesh = \"{guid}\"")).unwrap();
+        assert_eq!(model.particles.expect("the system is read").mesh, Some(ParticleMesh::Asset(guid)));
         // One written before there were any of these reads as it did, and writes none of them.
         let plain: ObjData = toml::from_str("id = 3\n[particles]\nrate = 5.0").unwrap();
         let written = toml::to_string(&plain).unwrap();
         assert!(!written.contains("collision") && !written.contains("forces") && !written.contains("wind"), "{written}");
         assert!(!written.contains("texture") && !written.contains("effect") && !written.contains("tiles"), "{written}");
+        assert!(!written.contains("trail") && !written.contains("mesh"), "{written}");
     }
 
     #[test]

@@ -160,6 +160,16 @@ pub(super) struct Sea {
     pub eighths: Option<f32>,
 }
 
+impl Sea {
+    /// How the sea of `block`, its top `top` blocks up, stands at block `y`:
+    /// of cubes, how many eighths of the block it fills, a coarser level's
+    /// top block of it only partly.
+    pub fn at(block: BlockId, top: f32, y: i32, smooth: bool) -> Sea {
+        let eighths = (!smooth).then(|| ((top - y as f32).min(1.0) * 8.0).round());
+        Sea { block, over: top - (y as f32 + 0.5), eighths }
+    }
+}
+
 /// What one cell is: its block, and its fill where it keeps one; none for
 /// air that keeps neither.
 ///

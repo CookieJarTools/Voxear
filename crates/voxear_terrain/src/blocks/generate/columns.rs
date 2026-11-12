@@ -46,6 +46,61 @@ impl Column {
     }
 }
 
+/// Each column's surface and layers at level `level`, from the generator's
+/// `heights` and climate at `xs` and `zs`, in metres in its world: its top
+/// layer the last kind of block whose cover takes its climate and height,
+/// as many metres deep at every level, at least a block.
+pub(super) fn columns_at(
+    file: &BlockFile,
+    world: &crate::generate::WorldGen,
+    level: u32,
+    (xs, zs, heights): (&[f32], &[f32], &[f32]),
+) -> Vec<Column> {
+    let scale = (1u32 << level.min(16)) as f32;
+    let size = file.block_size.max(0.01) * scale;
+    let ground = &file.ground;
+    let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
+    let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+    world.climates(xs, zs, heights, &mut warmth, &mut wetness);
+    let column = |height: f32, climate: (f32, f32)| -> Column {
+        let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
+            kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
+        });
+        let top = match cover {
+            Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
+            None => (known(ground.top), 1.0),
+        };
+        Column {
+            surface: height / size,
+            layers: [top, (known(ground.under), ground.under_depth as f32 / scale)],
+            bottom: known(ground.bottom),
+        }
+    };
+    (0..heights.len()).map(|at| column(heights[at], (warmth[at], wetness[at]))).collect()
+}
+
+/// The sea's block, air for none, and its top in level `level`'s blocks, as
+/// high at every level, so none shows a step where its rings meet: drawn
+/// smooth, its sea level, which its top blocks keep; of cubes, where the
+/// finest level's blocks put it.
+pub(super) fn sea_of(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &crate::generate::WorldGen,
+    level: u32,
+) -> (BlockId, f32) {
+    let scale = (1u32 << level.min(16)) as f32;
+    let size = file.block_size.max(0.01) * scale;
+    let sea = if usize::from(generate.sea) <= file.blocks.len() { generate.sea } else { AIR };
+    let finest = (world.sea_level() / file.block_size.max(0.01) - 0.5).ceil();
+    let top = match (sea == AIR, file.smooth) {
+        (true, _) => f32::MIN,
+        (false, true) => world.sea_level() / size,
+        (false, false) => finest / scale,
+    };
+    (sea, top)
+}
+
 /// How many blocks further into or out of the ground than a block's middle
 /// its fill is no longer measured against the blocks round it: a whole
 /// block or none, on any slope a block can show.
@@ -66,8 +121,6 @@ pub fn column_chunks(
 ) -> Vec<([i32; 3], Chunk)> {
     let scale = (1u32 << level.min(16)) as f32;
     let size = file.block_size.max(0.01) * scale;
-    let ground = &file.ground;
-    let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
     let side = CHUNK as i32;
     let reach = |v: i32, limit: Option<u32>| {
         let end = (v + 1) * side;
@@ -94,9 +147,8 @@ pub fn column_chunks(
     // Every column's ground and climate, and what the Volume reads of it, asked of the generator at once.
     let middle = |v: i32, axis: usize| generate.position[axis] + (v as f32 + 0.5) * size;
     let (xs, zs): (Vec<f32>, Vec<f32>) = places.iter().map(|&(x, z)| (middle(x, 0), middle(z, 1))).unzip();
-    let (mut heights, mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()], vec![0.0; xs.len()]);
+    let mut heights = vec![0.0; xs.len()];
     world.heights(&xs, &zs, &mut heights);
-    world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
     // A plain height with no caves in it, or with them left out of a coarse level, needs nothing asked: every
     // block is as deep as its column's height says.
     let asked = !plain || (volume.caved() && level == 0);
@@ -104,42 +156,11 @@ pub fn column_chunks(
         true => volume.carried_grid([first_x, first_z], [wide, deep], |axis, v| middle(v, axis), &heights),
         false => Default::default(),
     };
-    // Each column's surface and layers, worked out once.
-    let column = |height: f32, climate: (f32, f32)| -> Column {
-        let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
-            kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
-        });
-        // Layers as many metres deep at every level, at least a block.
-        let top = match cover {
-            Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
-            None => (known(ground.top), 1.0),
-        };
-        Column {
-            surface: height / size,
-            layers: [top, (known(ground.under), ground.under_depth as f32 / scale)],
-            bottom: known(ground.bottom),
-        }
-    };
-    let columns: Vec<Column> = (0..places.len()).map(|at| column(heights[at], (warmth[at], wetness[at]))).collect();
+    let columns = columns_at(file, world, level, (&xs, &zs, &heights));
     // How far over a column's surface its ground may reach, in blocks.
     let over_reach = volume.reach() / size;
-    // The sea's top, in this level's blocks, where it has a sea, as high at every level, so none shows a step where
-    // its rings meet: drawn smooth, its sea level, which its top blocks keep; of cubes, where the finest level's
-    // blocks put it.
-    let sea = known(generate.sea);
-    let finest = (world.sea_level() / file.block_size.max(0.01) - 0.5).ceil();
-    let sea_top = match (sea == AIR, file.smooth) {
-        (true, _) => f32::MIN,
-        (false, true) => world.sea_level() / size,
-        (false, false) => finest / scale,
-    };
-    // How the sea stands at block `y`: of cubes, how many eighths of the block it fills, a coarser level's top
-    // block of it only partly.
-    let sea_at = |y: i32| Sea {
-        block: sea,
-        over: sea_top - (y as f32 + 0.5),
-        eighths: (!file.smooth).then(|| ((sea_top - y as f32).min(1.0) * 8.0).round()),
-    };
+    let (sea, sea_top) = sea_of(file, generate, world, level);
+    let sea_at = |y: i32| Sea::at(sea, sea_top, y, file.smooth);
     let surfaces = places.iter().zip(&columns).filter(|(place, _)| own(**place)).map(|(_, column)| column.surface);
     let highest = surfaces.fold(f32::MIN, f32::max).max(sea_top) + over_reach + 1.0;
     let low = generate.bottom.div_euclid(scale as i32);

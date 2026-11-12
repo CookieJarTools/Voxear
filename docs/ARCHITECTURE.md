@@ -3080,7 +3080,15 @@ of that region and the two rings round it are worked out from the regions' numbe
 height asked at each room's middle through the generator's own height program, held by the kernel. That gathering
 is kept for a while on each thread, by network and region; it is the same numbers made again or kept, so a
 cell alone still gets the bits it gets in a batch. A level's rooms are laid out when the graph is compiled and
-held by the kernel whole. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
+held by the kernel whole. A room can also be made by rules (`caves::made`): the node keeps the rules, and a
+region's room is worked out from them and the region's own seed each time the region is planned, so it is in no
+file and every machine makes the same one. Its shapes are joined smoothly, which is safe because one room's
+shapes are always asked together; rooms and tunnels are still joined to each other by the greater alone. Which
+rooms a tunnel joins is decided sixteen regions at a time (`caves::joins`), a tree with loops, and across each
+side by a number the two sixteens work out alike from which of their facing regions keep a room: a region asks
+what it is joined to from its own sixteen and the four round it, with nothing made first. Chose a tree over a
+chance for each pair, so every room is reached; the cost is that an endless network made before this has other
+tunnels. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
 points placed with it; rivers along valleys in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU

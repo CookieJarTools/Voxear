@@ -85,6 +85,9 @@ pub(super) fn columns_at(
         None => Vec::new(),
     };
     let sea_level = world.sea_level();
+    // Where the generator says the ground is bare rock, a column is its bottom block to the top.
+    let rock = world.rock(xs, zs, heights);
+    let bare = |at: usize| rock.as_ref().is_some_and(|rock| rock[at]);
     let column = |at: usize| -> Column {
         let (height, climate) = (heights[at], (warmth[at], wetness[at]));
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
@@ -101,11 +104,15 @@ pub(super) fn columns_at(
             Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
             None => (or(biome_top, ground.top), 1.0),
         };
+        let bottom = or(biome.map_or(AIR, |blocks| blocks.deep), ground.bottom);
+        if bare(at) {
+            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom };
+        }
         let under_depth = biome.filter(|blocks| blocks.under != AIR).map_or(ground.under_depth, |b| b.under_depth);
         Column {
             surface: height / size,
             layers: [top, (or(biome_under, ground.under), under_depth as f32 / scale)],
-            bottom: or(biome.map_or(AIR, |blocks| blocks.deep), ground.bottom),
+            bottom,
         }
     };
     (0..heights.len()).map(column).collect()
@@ -137,6 +144,23 @@ pub(super) fn sea_of(
 /// its fill is no longer measured against the blocks round it: a whole
 /// block or none, on any slope a block can show.
 const MEASURED: f32 = 8.0;
+
+#[cfg(test)]
+thread_local! {
+    /// For a test: every cell asked about and every block put one at a time, as before any was left out.
+    pub(super) static ALL_ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether cells the Volume says nothing is in, and whole chunks of rock, are left out.
+fn leaving_out() -> bool {
+    #[cfg(test)]
+    return !ALL_ASKED.get();
+    #[cfg(not(test))]
+    true
+}
+
+/// A depth under the surface past any layer's.
+const DEEP: f32 = 1.0e9;
 
 /// The chunks of chunk column `[cx, cz]` of the ground `generate` makes for
 /// `file` with generator `world`, at level `level` of coarseness: each level
@@ -189,12 +213,34 @@ pub fn column_chunks(
         false => Default::default(),
     };
     let columns = columns_at(file, world, level, (&xs, &zs, &heights));
+    // Ground standing apart from a column's own, an arch or raised land, takes the layers of ground as high
+    // as its top: the cover its own height and climate give it, and not the valley's under it.
+    let stood: Vec<(usize, f32)> = match asked && volume.spanned() {
+        true => (0..places.len()).filter_map(|at| Some((at, volume.stands(&carried, at)?))).collect(),
+        false => Vec::new(),
+    };
+    let mut raised: Vec<Option<Column>> = Vec::new();
+    if !stood.is_empty() {
+        let pick = |from: &[f32]| stood.iter().map(|&(at, _)| from[at]).collect::<Vec<f32>>();
+        let tops: Vec<f32> = stood.iter().map(|&(_, top)| top).collect();
+        let made = columns_at(file, world, level, (&pick(&xs), &pick(&zs), &tops));
+        raised.resize_with(places.len(), || None);
+        for (&(at, _), column) in stood.iter().zip(made) {
+            // Kept apart from the ground's own surface, which its cells are measured from.
+            raised[at] = Some(Column { surface: columns[at].surface, ..column });
+        }
+    }
     // How far over a column's surface its ground may reach, in blocks.
     let over_reach = volume.reach() / size;
     let (sea, sea_top) = sea_of(file, generate, world, level);
     let sea_at = |y: i32| Sea::at(sea, sea_top, y, file.smooth);
     let surfaces = places.iter().zip(&columns).filter(|(place, _)| own(**place)).map(|(_, column)| column.surface);
-    let highest = surfaces.fold(f32::MIN, f32::max).max(sea_top) + over_reach + 1.0;
+    let mut highest = surfaces.fold(f32::MIN, f32::max).max(sea_top) + over_reach + 1.0;
+    if asked && volume.spanned() {
+        let own_columns = (0..places.len()).filter(|&at| own(places[at]));
+        let tops = own_columns.flat_map(|at| volume.spans(&carried, at)).map(|[_, span_top]| span_top / size);
+        highest = tops.fold(highest, f32::max) + over_reach + MEASURED + 3.0;
+    }
     let low = generate.bottom.div_euclid(scale as i32);
     let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
     if high_key < low_key {
@@ -207,8 +253,27 @@ pub fn column_chunks(
     let ys: Vec<f32> = (first_y..=last_y).map(|y| (y as f32 + 0.5) * size).collect();
     // How high each column is read: past where its ground can reach a block. Measured against the blocks round
     // them, as high as any column two away is, so a block near a cliff has those beside it read too.
-    let reaches: Vec<i32> =
-        columns.iter().map(|column| ((column.surface + over_reach + 2.0).floor() as i32).clamp(low, top)).collect();
+    // Ground standing far over a column's own, and hollows far under it, are read between the heights the
+    // Volume gives for them, and the rock and air between those and the ground are not asked about.
+    let room = MEASURED + 2.0;
+    let near = volume.depth() / size + room;
+    let spans: Vec<Vec<[f32; 2]>> = match asked && leaving_out() && (volume.spanned() || near.is_finite()) {
+        true => (0..places.len())
+            .map(|at| {
+                let from_ground = [columns[at].surface - near, columns[at].surface + over_reach + 2.0];
+                let apart = volume.spans(&carried, at).map(|[foot, span_top]| {
+                    [foot / size - room, span_top / size + over_reach + room]
+                });
+                std::iter::once(from_ground).chain(apart).collect()
+            })
+            .collect(),
+        false => Vec::new(),
+    };
+    let highest_of = |at: usize| match spans.get(at) {
+        Some(spans) => spans.iter().map(|span| span[1]).fold(f32::MIN, f32::max),
+        None => columns[at].surface + over_reach + 2.0,
+    };
+    let reaches: Vec<i32> = (0..columns.len()).map(|at| (highest_of(at).floor() as i32).clamp(low, top)).collect();
     let read_to = |at: usize| -> i32 {
         if ring == 0 {
             return reaches[at];
@@ -218,6 +283,26 @@ pub fn column_chunks(
         let about = near(z, deep).flat_map(|z| near(x, wide).map(move |x| z * wide + x));
         about.map(|at| reaches[at]).fold(i32::MIN, i32::max) + 1
     };
+    // Whole chunks of rock under everything asked about and every layer are not made a block at a time: those
+    // from block `rock_to` up to `rock_from`, of the one block every column has under its layers.
+    let rock = columns.first().map_or(AIR, |column| column.bottom);
+    let whole = across.len() == CHUNK as usize && along.len() == CHUNK as usize;
+    let alike = rock != AIR && columns.iter().all(|column| column.bottom == rock);
+    let (mut rock_to, mut rock_from) = (low, low);
+    if whole && alike && leaving_out() {
+        let layered = |column: &Column| column.layers[0].1 + column.layers[1].1 + 2.0;
+        let lowest = |at: usize| match (asked, spans.get(at)) {
+            (false, _) => columns[at].surface - 1.0,
+            (true, None) => f32::MIN,
+            (true, Some(spans)) => spans.iter().map(|span| span[0]).fold(f32::MAX, f32::min),
+        };
+        let under = (0..columns.len()).map(|at| lowest(at) - layered(&columns[at])).fold(f32::MAX, f32::min);
+        let under = (under.floor().max(low as f32) as i32).min(top);
+        let first = low.div_euclid(side) + i32::from(low.rem_euclid(side) != 0);
+        if under.div_euclid(side) > first {
+            (rock_to, rock_from) = (first * side, under.div_euclid(side) * side);
+        }
+    }
     // How far into the ground the Volume puts each cell read, in blocks, a column after another from the lowest
     // block up, and the same with the caves left whole. Kept for every column only where fills are measured.
     let kept = if ring == 0 { 1 } else { places.len() };
@@ -243,9 +328,34 @@ pub fn column_chunks(
             true => (xs[at], zs[at]),
             false => ((x as f32 + 0.5) * size, (z as f32 + 0.5) * size),
         };
-        if asked {
-            let cells = Cells { x: &[px], y: &ys[..count], z: &[pz], carried: &carried.column(at), size };
-            volume.densities(cells, level > 0, &mut row[..count], &mut ground_row[..count]);
+        match (asked, spans.get(at)) {
+            (false, _) => {}
+            (true, None) => {
+                let cells = Cells { x: &[px], y: &ys[..count], z: &[pz], carried: &carried.column(at), size };
+                volume.densities(cells, level > 0, &mut row[..count], &mut ground_row[..count]);
+            }
+            (true, Some(spans)) => {
+                // What is asked about nowhere is as far under its column's ground as it lies, or over it.
+                for k in 0..count {
+                    row[k] = heights[at] - ys[k];
+                    ground_row[k] = row[k];
+                }
+                let carried = carried.column(at);
+                let mut done = 0;
+                let mut spans: Vec<[usize; 2]> = spans
+                    .iter()
+                    .map(|span| span.map(|y| (y.floor() as i64 - i64::from(first_y)).clamp(0, count as i64) as usize))
+                    .collect();
+                spans.sort_unstable();
+                for [from, to] in spans {
+                    let (from, to) = (from.max(done), (to + 1).min(count));
+                    if from < to {
+                        let cells = Cells { x: &[px], y: &ys[from..to], z: &[pz], carried: &carried, size };
+                        volume.densities(cells, level > 0, &mut row[from..to], &mut ground_row[from..to]);
+                        done = to;
+                    }
+                }
+            }
         }
         for k in 0..count {
             let y = first_y + k as i32;
@@ -269,7 +379,10 @@ pub fn column_chunks(
         }
     }
     for at in (0..places.len()).filter(|&at| own(places[at])) {
-        let ((x, z), column) = (places[at], &columns[at]);
+        let ((x, z), ground_column) = (places[at], &columns[at]);
+        let raised_column = raised.get(at).and_then(Option::as_ref);
+        // What stands clear of the column's own ground: from this block up.
+        let clear = (ground_column.surface + over_reach + 3.0).floor() as i32;
         let from = if ring == 0 { 0 } else { at * tall };
         if ring == 0 {
             read[at] = read_column(at, &mut inside[..tall], &mut under[..tall], &mut row, &mut ground_row);
@@ -278,8 +391,13 @@ pub fn column_chunks(
         // the sea is.
         made.clear();
         let mut above = 0.0;
-        for y in (low..=top).rev() {
+        for y in (rock_from..=top).rev().chain((low..rock_to).rev()) {
             let k = (y - first_y) as usize;
+            let column = raised_column.filter(|_| y >= clear).unwrap_or(ground_column);
+            // Under the rock left out every block is deeper than any layer.
+            if y == rock_to - 1 {
+                above = DEEP;
+            }
             if k >= read[at] {
                 made.extend(cell(column, -2.0, -2.0, 0.0, -2.0, sea_at(y), file.smooth).map(|cell| (y, cell)));
                 continue;
@@ -309,6 +427,10 @@ pub fn column_chunks(
             put(x, y, z, block, fill);
         }
     }
+    let whole_rock = (rock_to.div_euclid(side) - low_key) as usize..(rock_from.div_euclid(side) - low_key) as usize;
+    for chunk in &mut chunks[whole_rock] {
+        *chunk = Some(Chunk::filled(rock));
+    }
     let mut chunks: Vec<([i32; 3], Chunk)> =
         (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?))).collect();
     // What its generator builds on its ground, at its own level alone: far off, structures are too small to see.
@@ -321,5 +443,5 @@ pub fn column_chunks(
         let at = (size, generate.position, generate.bottom);
         crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under);
     }
-    chunks
+    chunks.into_iter().map(|(at, chunk)| (at, chunk.tidied())).collect()
 }

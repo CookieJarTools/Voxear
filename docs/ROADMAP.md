@@ -1930,6 +1930,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     regions, more with Loops), wound longer under the Slope Limit as any tunnel is. What reaches a region is
     gathered for every layer at once. Tests: a ramp in every district, both ends agreeing; rooms at each depth;
     two layers one cave through the blocks; a cell alone against a batch; one layer the bits it was.
+  - ~~**Tall worlds, tablelands, arches and raised land:**~~ done: a chunk column leaves out what nothing is in.
+    A Volume says how deep its ground may be anything but solid (`Compiler::set_depth`) and between which
+    heights ground stands or is hollowed apart from a column's own (`Compiler::note_span`, `Volume::spans`); a
+    column asks only the cells between, and whole chunks of rock are one block (`Chunk::tidied`). A column 1024
+    blocks tall takes 4 ms plain and 39 ms over three layers of caves. Nodes: **Plateaus** (tablelands at uneven
+    heights, walls, rubble, ramps of steps, a river and its canyon), **Arches** (bridges found a region at a
+    time across low ground between two high places) and **Raised Land** (islands over the ground, floating or
+    on a stalk). Both show in the far view (`Volume::standing`, `far_tile`). Presets **Mesas**, **Sky Islands**
+    and **Highlands**. Tests: a tall column the blocks it is asked whole; levels and walls; a ramp walked up;
+    an arch's opening and top; a window through a ridge with the ridge whole over it; islands clear of the
+    ground; both in far tiles. Not built: shelves hanging off cliffs.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

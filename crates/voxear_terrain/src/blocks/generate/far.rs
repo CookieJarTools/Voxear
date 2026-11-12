@@ -219,7 +219,14 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
     for column in &columns {
         let high = (column.surface.max(sea_top) + 1.0).ceil() as i32;
         let mut runs: Vec<Run> = Vec::new();
-        for y in low..=high {
+        // Under every layer the column is its bottom block all the way down: one run, not asked a block at a time.
+        let layered = column.layers[0].1 + column.layers[1].1 + 3.0;
+        let rock_to = ((column.surface - layered).floor() as i32).clamp(low, high.max(low));
+        if rock_to > low && column.bottom != AIR {
+            runs.push(Run { from: low, to: rock_to, block: column.bottom });
+        }
+        let asked_from = if column.bottom != AIR { rock_to } else { low };
+        for y in asked_from..=high {
             let plainly = column.surface - (y as f32 + 0.5);
             let sea_at = far_sea(sea, sea_top, y, (file.smooth, column.surface));
             let made = cell(column, plainly, plainly, plainly, plainly, sea_at, file.smooth);
@@ -245,6 +252,28 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         tile.runs.extend(runs);
         tile.starts.push(tile.runs.len() as u32);
     }
+    // Ground the generator's Volume stands apart from the columns' own, arches and raised land: each column's
+    // blocks whose middles lie in it, the column's top block over its bottom one.
+    let standing = match world.volume().filter(|volume| source.own() && volume.spanned()) {
+        Some(volume) => volume.standing(&xs, &zs, &heights),
+        None => Vec::new(),
+    };
+    for (at, spans) in standing.iter().enumerate() {
+        let place = [at as u32 % CHUNK, at as u32 / CHUNK];
+        for [foot, top] in spans {
+            // Its top block is that of ground as high as it stands.
+            let raised = columns_at(file, world, level, (&xs[at..=at], &zs[at..=at], &[*top]));
+            let cover = raised.first().map_or(columns[at].layers[0].0, |column| column.layers[0].0);
+            let (from, to) = ((foot / size - 0.5).ceil() as i32, (top / size - 0.5).floor() as i32 + 1);
+            let from = from.max((columns[at].surface - 0.5).floor() as i32 + 1);
+            // What is thinner than a block of this level is a block still, where it stands clear of the ground.
+            let to = if to <= from && top - foot > 0.0 && (top / size).floor() as i32 >= from { from + 1 } else { to };
+            if to > from {
+                tile.add(place, from, to - 1, columns[at].bottom);
+                tile.add(place, to - 1, to, cover);
+            }
+        }
+    }
     tile
 }
 
@@ -262,12 +291,30 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
             None => chunk.set(x, y, z, block),
         }
     };
+    // Chunks that are one block of rock in every column, from block `rock.0` up to `rock.1`, are not put a block
+    // at a time.
+    let places = || (0..CHUNK).flat_map(|z| (0..CHUNK).map(move |x| [x, z]));
+    let lowest = |at: [u32; 2]| tile.column(at).first().copied();
+    let rock = lowest([0, 0]).filter(|first| first.block != sea || sea == AIR).and_then(|first| {
+        let mut within = (first.from, first.to);
+        for at in places() {
+            let run = lowest(at).filter(|run| run.block == first.block)?;
+            let deep = (tile.surface(at) - 1.5).floor() as i32;
+            within = (within.0.max(run.from), within.1.min(run.to).min(deep));
+        }
+        let from = within.0.div_euclid(side) + i32::from(within.0.rem_euclid(side) != 0);
+        let to = within.1.div_euclid(side);
+        (to > from).then_some((from * side, to * side, first.block))
+    });
     for z in 0..CHUNK {
         for x in 0..CHUNK {
             let surface = tile.surface([x, z]);
             let runs = tile.column([x, z]);
             for run in runs {
                 for y in run.from..run.to {
+                    if rock.is_some_and(|(from, to, _)| (from..to).contains(&y)) {
+                        continue;
+                    }
                     let fill = if sea != AIR && run.block == sea {
                         let over = sea_top - (y as f32 + 0.5);
                         match far_sea(sea, sea_top, y, (smooth, surface)).eighths {
@@ -300,7 +347,12 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
             }
         }
     }
-    chunks.into_iter().map(|(cy, chunk)| ([tile.at[0], cy, tile.at[1]], chunk)).collect()
+    if let Some((from, to, block)) = rock {
+        for cy in from.div_euclid(side)..to.div_euclid(side) {
+            chunks.insert(cy, Chunk::filled(block));
+        }
+    }
+    chunks.into_iter().map(|(cy, chunk)| ([tile.at[0], cy, tile.at[1]], chunk.tidied())).collect()
 }
 
 #[cfg(test)]
@@ -334,6 +386,55 @@ mod tests {
         };
         file.generate = Some(generate.clone());
         (file, generate, Preset::RollingHills.world())
+    }
+
+    #[test]
+    fn raised_land_and_arches_stand_in_the_far_view() {
+        use crate::generate::{
+            Graph, NodeKind,
+            nodes::{Arches, Noise, Output, Plateaus, RaisedLand},
+        };
+        let (file, generate, _) = plain_with(false, false);
+        let generate = BlockGenerate { position: [0.0, 0.0], ..generate };
+        let world_of = |height: NodeKind, volume: NodeKind| {
+            let mut graph = Graph::default();
+            let (height, volume) = (graph.add(height, [0.0; 2]), graph.add(volume, [0.0; 2]));
+            let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
+            assert!(graph.connect(height, 0, output, Output::HEIGHT));
+            assert!(graph.connect(volume, 0, output, Output::VOLUME));
+            WorldGen::new(4, 1.0, -50.0, graph)
+        };
+        let hills = NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() });
+        let land = Plateaus { size: 500.0, low: 0.0, high: 200.0, ramps: 0.0, canyon: 90.0, ..Plateaus::default() };
+        let worlds = [
+            world_of(hills, NodeKind::RaisedLand(RaisedLand { often: 0.7, ..RaisedLand::default() })),
+            world_of(
+                NodeKind::Plateaus(land),
+                NodeKind::Arches(Arches { span_from: 90.0, span_to: 200.0, often: 1.0, ..Arches::default() }),
+            ),
+        ];
+        for (which, world) in worlds.iter().enumerate() {
+            // Blocks 8 m a side, tiles 256 m: over four kilometres, columns with blocks standing clear of the
+            // ground under them, air between, and the same blocks in the tile's chunks.
+            let (mut clear, mut found) = (0, 0);
+            for at in (0..64).map(|at| [at % 8 - 4, at / 8 - 4]) {
+                let tile = far_tile(&file, &generate, world, 3, at);
+                let chunks = far_chunks(&tile, false);
+                for column in (0..CHUNK * CHUNK).map(|at| [at % CHUNK, at / CHUNK]) {
+                    let runs = tile.column(column);
+                    let Some(gap) = runs.windows(2).find(|pair| pair[1].from > pair[0].to) else { continue };
+                    clear += 1;
+                    assert!(gap[1].from as f32 > tile.surface(column), "it stands over the ground");
+                    let y = gap[1].to - 1;
+                    let chunk = chunks.iter().find(|(key, _)| key[1] == y.div_euclid(CHUNK as i32));
+                    let within = y.rem_euclid(CHUNK as i32) as u32;
+                    let block = chunk.map(|(_, chunk)| chunk.get(column[0], within, column[1]));
+                    assert_eq!(block, Some(gap[1].block), "a run is its chunk's blocks");
+                    found += usize::from(gap[1].from - gap[0].to >= 3);
+                }
+            }
+            assert!(clear > 40 && found > 10, "world {which}: {clear} columns stand clear, {found} by 24 m or more");
+        }
     }
 
     #[test]

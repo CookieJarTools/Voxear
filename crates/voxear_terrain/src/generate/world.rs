@@ -146,6 +146,60 @@ impl Volume<'_> {
         self.voxels.reach
     }
 
+    /// How far under a column's ground its cells may be anything but
+    /// solid, in metres, but for the spans it gives ([`Volume::spans`]):
+    /// without end where nothing says, as noise through space is.
+    pub fn depth(&self) -> f32 {
+        self.voxels.depth
+    }
+
+    /// Whether any column may have ground standing, or hollowed, apart
+    /// from its own ground: whether [`Volume::spans`] can give any.
+    pub fn spanned(&self) -> bool {
+        !self.voxels.spans.is_empty()
+    }
+
+    /// Between which heights, in metres up, column `at` of `carried` has
+    /// ground standing or hollowed apart from its own ground: a foot and a
+    /// top for each span there is.
+    pub fn spans<'c>(&self, carried: &'c Carried, at: usize) -> impl Iterator<Item = [f32; 2]> + use<'c, '_> {
+        let read = move |place: usize| carried.rows.get(place).and_then(|row| row.get(at)).copied();
+        let spans = self.voxels.spans.iter();
+        spans.filter_map(move |([foot, top], _)| Some([read(*foot)?, read(*top)?])).filter(|[foot, top]| top > foot)
+    }
+
+    /// The top of the highest ground standing apart from column `at` of
+    /// `carried`'s own, in metres up: an arch's or raised land's, whose
+    /// layers are those of ground that high. None where none stands.
+    pub fn stands(&self, carried: &Carried, at: usize) -> Option<f32> {
+        let read = move |place: usize| carried.rows.get(place).and_then(|row| row.get(at)).copied();
+        let spans = self.voxels.spans.iter().filter(|(_, stands)| *stands);
+        let tops = spans.filter_map(|([foot, top], _)| Some((read(*foot)?, read(*top)?)));
+        tops.filter(|(foot, top)| top > foot).map(|(_, top)| top).reduce(f32::max)
+    }
+
+    /// The ground that stands apart from the columns' own at each
+    /// `(xs[i], zs[i])`, whose ground is `heights[i]` high: for each column
+    /// the spans of it, a foot and a top in metres up. Arches and raised
+    /// land, for a far view, which makes its columns from heights alone;
+    /// hollows are left out.
+    pub fn standing(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Vec<Vec<[f32; 2]>> {
+        let count = xs.len().min(zs.len()).min(heights.len());
+        let mut found = vec![Vec::new(); count];
+        if !self.voxels.spans.iter().any(|(_, stands)| *stands) {
+            return found;
+        }
+        let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
+        let rows = made(&self.voxels.spanned, count, given).rows;
+        for (span, (_, stands)) in self.voxels.spans.iter().enumerate() {
+            let (feet, tops) = (&rows[span * 2], &rows[span * 2 + 1]);
+            for at in (0..count).filter(|&at| *stands && tops[at] > feet[at]) {
+                found[at].push([feet[at], tops[at]]);
+            }
+        }
+        found
+    }
+
     /// What it reads of the columns at each `(xs[i], zs[i])`, in metres in
     /// the generator's world, whose ground is `heights[i]` high: the
     /// generator's own heights there.
@@ -331,6 +385,9 @@ impl WorldGen {
         if let Some(voxels) = &compiled.volume {
             bytes.extend(voxels.hash.to_le_bytes());
         }
+        if let Some(rock) = &compiled.rock {
+            bytes.extend(rock.hash.to_le_bytes());
+        }
         let hash = crate::layers::stable_hash(&bytes);
         Self {
             seed,
@@ -469,6 +526,17 @@ impl WorldGen {
         let count = xs.len().min(zs.len()).min(heights.len()).min(warmth.len()).min(wetness.len());
         let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
         self.made.compiled.climate.run(count, given, &mut [warmth, wetness]);
+    }
+
+    /// Where the ground is bare rock at each `(xs[i], zs[i])` on ground
+    /// `heights[i]` metres high: whether the mask wired into the Output's
+    /// Rock is over a half there. None where nothing is wired in.
+    pub fn rock(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Option<Vec<bool>> {
+        let rock = self.made.compiled.rock.as_ref()?;
+        let count = xs.len().min(zs.len()).min(heights.len());
+        let mut mask = vec![0.0; count];
+        rock.run(count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }, &mut [&mut mask]);
+        Some(mask.into_iter().map(|mask| mask > 0.5).collect())
     }
 
     /// What every output of every node makes at each `(xs[i], zs[i])`, in

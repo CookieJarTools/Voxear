@@ -33,6 +33,7 @@ mod landmass;
 mod math;
 mod noise;
 mod output;
+mod plateaus;
 mod slope_mask;
 mod smooth;
 mod terrace;
@@ -40,11 +41,13 @@ mod terrace;
 pub(crate) mod testing;
 mod warp;
 
+mod arches;
 mod cave_network;
 mod chambers;
 mod combine;
 mod noise3d;
 mod overhangs;
+mod raised_land;
 mod solid;
 mod tunnels;
 
@@ -63,16 +66,19 @@ pub use landmass::Land;
 pub use math::{Math, Operation};
 pub use noise::Noise;
 pub use output::Output;
+pub use plateaus::Plateaus;
 pub use slope_mask::SlopeMask;
 pub use smooth::Smooth;
 pub use terrace::Terrace;
 pub use warp::Bend;
 
+pub use arches::Arches;
 pub use cave_network::{CaveNetwork, Laid};
 pub use chambers::Chambers;
 pub use combine::{Combine, Combining};
 pub use noise3d::Noise3d;
 pub use overhangs::Overhangs;
+pub use raised_land::{Joined, RaisedLand};
 pub use solid::Solid;
 pub use tunnels::Tunnels;
 
@@ -316,6 +322,7 @@ pub enum NodeKind {
     Cells(Cellular),
     Falloff(Falloff),
     Terrace(Terrace),
+    Plateaus(Plateaus),
     Clamp(Clamp),
     Blend(Blend),
     Warp(Bend),
@@ -334,6 +341,9 @@ pub enum NodeKind {
     Tunnels(Tunnels),
     Chambers(Chambers),
     Combine(Combine),
+    Arches(Arches),
+    #[serde(rename = "raised_land")]
+    RaisedLand(RaisedLand),
     #[serde(rename = "cave_network")]
     CaveNetwork(CaveNetwork),
 }
@@ -352,6 +362,7 @@ macro_rules! each_kind {
             NodeKind::Cells($kind) => $do,
             NodeKind::Falloff($kind) => $do,
             NodeKind::Terrace($kind) => $do,
+            NodeKind::Plateaus($kind) => $do,
             NodeKind::Clamp($kind) => $do,
             NodeKind::Blend($kind) => $do,
             NodeKind::Warp($kind) => $do,
@@ -367,6 +378,8 @@ macro_rules! each_kind {
             NodeKind::Tunnels($kind) => $do,
             NodeKind::Chambers($kind) => $do,
             NodeKind::Combine($kind) => $do,
+            NodeKind::Arches($kind) => $do,
+            NodeKind::RaisedLand($kind) => $do,
             NodeKind::CaveNetwork($kind) => $do,
         }
     };
@@ -388,6 +401,7 @@ impl NodeKind {
             NodeKind::Constant(Constant::default()),
             NodeKind::Curve(Remap::default()),
             NodeKind::Terrace(Terrace::default()),
+            NodeKind::Plateaus(Plateaus::default()),
             NodeKind::Clamp(Clamp::default()),
             NodeKind::Math(Math::default()),
             NodeKind::Blend(Blend::default()),
@@ -405,6 +419,8 @@ impl NodeKind {
             NodeKind::Tunnels(Tunnels::default()),
             NodeKind::Chambers(Chambers::default()),
             NodeKind::Combine(Combine::default()),
+            NodeKind::Arches(Arches::default()),
+            NodeKind::RaisedLand(RaisedLand::default()),
             NodeKind::CaveNetwork(CaveNetwork::default()),
             NodeKind::Output(Output::default()),
         ]

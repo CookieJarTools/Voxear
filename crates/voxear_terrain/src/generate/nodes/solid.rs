@@ -40,6 +40,7 @@ impl Solid {
         let row = cx.run(Under, &[height, at.y]);
         if own && at == cx.cells() {
             cx.set_plain(row);
+            cx.set_depth(row, 0.0);
         }
         row
     }

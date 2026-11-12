@@ -816,7 +816,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         (F::Lowest, v) => {
             let Some(generate) = &mut file.generate else { return false };
-            generate.bottom = number(v).unwrap_or(generate.bottom as f32).round().clamp(-1024.0, 1024.0) as i32;
+            generate.bottom = number(v).unwrap_or(generate.bottom as f32).round().clamp(-8192.0, 8192.0) as i32;
         }
         (F::Overhangs, v) => {
             let Some(generate) = &mut file.generate else { return false };

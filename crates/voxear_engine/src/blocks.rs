@@ -264,7 +264,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");
-                let mut piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                let piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
                     let (_, part) = content.structure(named).or_else(|| {
                         tracing::warn!("the dungeon {reference} names {named}, which is not in the project");
                         None
@@ -318,7 +318,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             (None, None) => {
                 let Some(town) = &structure.town else { continue };
                 // Each of its pieces a structure with a model, read and numbered as one would be.
-                let mut piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                let piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
                     let (_, part) = content.structure(named).or_else(|| {
                         tracing::warn!("the town {reference} names {named}, which is not in the project");
                         None

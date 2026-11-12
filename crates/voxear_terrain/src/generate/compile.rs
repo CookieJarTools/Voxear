@@ -45,7 +45,9 @@ pub(crate) type V = u32;
 const DEEPEST: usize = 256;
 
 /// How far over its ground a Volume is read at most, in metres: where what
-/// could be solid at any height (noise through space) is cut off.
+/// could be solid at any height (noise through space) is cut off. Ground
+/// that stands further over the ground than this says where, a column at a
+/// time (see [`Compiler::note_span`]).
 pub(crate) const MOST_OVER: f32 = 64.0;
 
 /// Counted into every program's hash: raised whenever a kernel's numbers
@@ -169,6 +171,17 @@ pub(crate) struct Compiler<'a> {
     /// How far over its column's ground a row may be solid, in metres, for
     /// those that may at all.
     rises: HashMap<V, f32>,
+    /// How far under its column's ground a row may be anything but solid,
+    /// in metres, for those known to be solid under that.
+    depths: HashMap<V, f32>,
+    /// The rows carried up from each column that say between which heights
+    /// ground stands apart from the column's own: its foot, then its top.
+    spans: Vec<(V, V)>,
+    /// Those of the spans where ground stands, which a far view shows.
+    stands: Vec<(V, V)>,
+    /// The rows that are nothing at all but within the spans noted: what
+    /// is hollowed out of the ground there.
+    hollows: Vec<V>,
     steps: Vec<Step>,
     /// Each step's key, in order: what its hash is made from.
     keys: Vec<Vec<u8>>,
@@ -204,6 +217,10 @@ impl<'a> Compiler<'a> {
             making_volumes: Vec::new(),
             plain: Vec::new(),
             rises: HashMap::new(),
+            depths: HashMap::new(),
+            spans: Vec::new(),
+            stands: Vec::new(),
+            hollows: Vec::new(),
             steps: Vec::new(),
             keys: Vec::new(),
             shared: HashMap::new(),
@@ -424,6 +441,63 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// How far under its column's ground `row` may be anything but
+    /// solid, in metres: without end, unless a node has said.
+    pub fn depth(&self, row: V) -> f32 {
+        self.depths.get(&row).copied().unwrap_or(f32::INFINITY)
+    }
+
+    /// Says `row` is solid from `depth` metres under its column's ground
+    /// down, but for the spans noted (see [`Compiler::note_span`]).
+    pub fn set_depth(&mut self, row: V, depth: f32) {
+        if depth.is_finite() {
+            self.depths.insert(row, depth.max(0.0));
+        }
+    }
+
+    /// Whether rows made once a column for the cells `at` are carried up
+    /// to them: so for a Volume's own cells, and not for cells a node has
+    /// moved or a program that makes every node's preview, where such a
+    /// row would be made again for every cell.
+    pub fn carries(&mut self, at: Cells) -> bool {
+        at == self.cells() && self.carry.is_some()
+    }
+
+    /// Whether `row` is a hollow that is nothing but within the spans
+    /// noted, so that taking it out of ground leaves the ground solid as
+    /// deep as it was everywhere else.
+    pub fn hollow(&self, row: V) -> bool {
+        self.hollows.contains(&row)
+    }
+
+    /// Says `row` is such a hollow.
+    pub fn set_hollow(&mut self, row: V) {
+        if !self.hollows.contains(&row) {
+            self.hollows.push(row);
+        }
+    }
+
+    /// Says ground stands, or is hollowed, apart from a column's own
+    /// ground between the heights two rows give, in metres up: `foot` and
+    /// `top`, each made once a column by [`Compiler::column`] for the cells
+    /// `at`. A column with nothing there gives a top under its foot. What
+    /// makes a world of blocks then asks about the cells between, however
+    /// far from the ground they are, and about none of the air or rock
+    /// between those and the ground.
+    ///
+    /// `stands` says ground stands there, as wide as the column and whole
+    /// from foot to top, so that a far view may show it from these two
+    /// numbers alone; a hollow, or ground too thin to say so of, is not.
+    pub fn note_span(&mut self, at: Cells, foot: V, top: V, stands: bool) {
+        if stands && !self.stands.contains(&(foot, top)) {
+            self.stands.push((foot, top));
+        }
+        let carried = |cx: &Self, row: V| matches!(cx.steps.get(row as usize), Some(Step::Given(Given::Carried(_))));
+        if at == self.cells() && carried(self, foot) && carried(self, top) && !self.spans.contains(&(foot, top)) {
+            self.spans.push((foot, top));
+        }
+    }
+
     /// Output `port` of `node` at `at`.
     fn output(&mut self, node: NodeId, port: usize, at: Places) -> V {
         let asked = (node, port, at);
@@ -477,6 +551,8 @@ pub(crate) struct Compiled {
     pub height: Program,
     pub climate: Program,
     pub volume: Option<Voxels>,
+    /// A mask of where the ground is bare rock, where one is wired in.
+    pub rock: Option<Program>,
 }
 
 /// A graph's Volume, compiled.
@@ -505,6 +581,17 @@ pub(crate) struct Voxels {
     pub caved: bool,
     /// How far over a column's ground its cells may be solid, in metres.
     pub reach: f32,
+    /// How far under a column's ground its cells may be anything but
+    /// solid, in metres: without end where nothing says.
+    pub depth: f32,
+    /// The carried rows that say between which heights ground stands, or
+    /// is hollowed, apart from a column's own: each a foot and a top, by
+    /// their place among the carried rows. The second of each says whether
+    /// it is ground that stands there, and not a hollow.
+    pub spans: Vec<([usize; 2], bool)>,
+    /// The columns' program for those rows alone, a foot then a top for
+    /// each.
+    pub spanned: Program,
     pub hash: u64,
     /// The network of cave rooms it hollows, where it has one.
     pub caves: Option<Arc<Network>>,
@@ -523,6 +610,15 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
     cx.carving = false;
     let ground = cx.volume(output, Output::VOLUME, at)?;
     let (plain, reach) = (cx.plain.contains(&ground), cx.rise(ground).min(MOST_OVER));
+    let depth = if cx.depth(whole) > cx.depth(ground) { cx.depth(whole) } else { cx.depth(ground) };
+    let place = |cx: &Compiler, row: V| match cx.steps.get(row as usize) {
+        Some(Step::Given(Given::Carried(place))) => usize::from(*place),
+        _ => 0,
+    };
+    let stands = cx.stands.clone();
+    let spans: Vec<([usize; 2], bool)> = (cx.spans.iter())
+        .map(|&(foot, top)| ([place(&cx, foot), place(&cx, top)], stands.contains(&(foot, top))))
+        .collect();
     let carry = cx.carry.take()?;
     let caves = cx.caves.take();
     let (cells, found) = cx.finish(&[whole, ground]);
@@ -538,11 +634,29 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
         rows.iter().zip(&between).filter(|(_, between)| **between == spread).map(|(row, _)| *row).collect()
     };
     let (exact, spread) = (columns.only(&pick(false)), columns.only(&pick(true)));
+    let spanned: Vec<V> = spans.iter().flat_map(|(span, _)| span.map(|place| rows[place])).collect();
+    let spanned = columns.only(&spanned);
     let mut bytes = columns.hash.to_le_bytes().to_vec();
     bytes.extend(cells.hash.to_le_bytes());
     bytes.extend(between.iter().map(|between| u8::from(*between)));
     let hash = crate::layers::stable_hash(&bytes);
-    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved: whole != ground, reach, hash, caves })
+    let caved = whole != ground;
+    Some(Voxels {
+        columns,
+        between,
+        exact,
+        spread,
+        cells,
+        coarse,
+        plain,
+        caved,
+        reach,
+        depth,
+        spans,
+        spanned,
+        hash,
+        caves,
+    })
 }
 
 /// Compiles `graph` in `world`, adding what is wrong with it to `faults`.
@@ -574,7 +688,21 @@ pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> C
         }
     }
     let volume = voxels(graph, world, faults);
-    Compiled { height, climate, volume }
+    // Where the ground is bare rock, on ground it is given: for a graph with a mask wired in for it.
+    let rock = output.filter(|output| graph.link_into(*output, Output::ROCK).is_some()).and_then(|output| {
+        let mut cx = Compiler::new(graph, world, true);
+        cx.ground_from = graph.link_into(output, Output::HEIGHT).map(|link| (link.from, link.output));
+        let at = cx.places();
+        let mask = cx.input(output, Output::ROCK, at)?;
+        let (rock, found) = cx.finish(&[mask]);
+        for fault in found {
+            if !faults.contains(&fault) {
+                faults.push(fault);
+            }
+        }
+        Some(rock)
+    });
+    Compiled { height, climate, volume, rock }
 }
 
 /// A program making every output of every node of `graph` at its places,

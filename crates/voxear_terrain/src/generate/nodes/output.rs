@@ -8,6 +8,11 @@
 //! out of it where negative. With none wired in, a world of blocks makes
 //! its ground from the height, and its own overhangs and caves. A terrain
 //! of heights reads the height alone.
+//!
+//! Its Rock is a mask of where the ground is bare: where it is over a
+//! half, a world of blocks leaves the column's top and under layers off
+//! and shows its bottom block, so walls and crags are rock and not striped
+//! with soil. Wire a Slope Mask into it, or a Plateaus node's Walls.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +32,7 @@ impl Output {
     pub const TEMPERATURE: usize = 1;
     pub const HUMIDITY: usize = 2;
     pub const VOLUME: usize = 3;
+    pub const ROCK: usize = 4;
 }
 
 const INPUTS: &[Port] = &[
@@ -34,6 +40,7 @@ const INPUTS: &[Port] = &[
     Port::field("temperature", "Temperature"),
     Port::field("humidity", "Humidity"),
     Port::volume("volume", "Volume"),
+    Port::field("rock", "Rock"),
 ];
 
 impl Kind for Output {

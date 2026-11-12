@@ -473,6 +473,7 @@ impl Water {
             caustic_origin,
             waterline: fg.texture(lens_now).0,
             phases: ocean::phases([origin.x as f64, origin.z as f64]),
+            block_water: [0.0; 4],
         };
         Ok(Self {
             displacement,

@@ -27,7 +27,7 @@
 
 use std::{collections::BTreeSet, fmt, str::FromStr};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use voxear_assets::AssetGuid;
 
 /// How a material's file names a built-in shader: `builtin:toon`.
@@ -282,6 +282,10 @@ pub struct ShaderInfo {
     /// A UI shader: its `ui` function draws a UI element's background (see
     /// [`ui_dispatch_code`]). It draws UI or materials, never both.
     pub ui: bool,
+    /// A look shader: its `look` function has the last word on the finished
+    /// picture, where a look pack names it (see [`look_dispatch_code`]). It
+    /// does that alone.
+    pub look: bool,
     /// `[Unlit]`: drawn as its surface's colour and emission alone.
     pub unlit: bool,
     /// `[MaxOffset(metres)]`: how far its `vertex` may move a vertex, which
@@ -300,14 +304,18 @@ pub fn read(source: &str) -> Result<ShaderInfo> {
         vertex: declares(&code, "vertex"),
         light: declares(&code, "light"),
         ui: declares(&code, "ui"),
+        look: declares(&code, "look"),
         unlit: attributes.iter().any(|(attribute, _)| attribute == "Unlit"),
         max_offset: 0.0,
     };
     if let Some((_, arguments)) = attributes.iter().find(|(attribute, _)| attribute == "MaxOffset") {
         info.max_offset = number(arguments).with_context(|| format!("[MaxOffset] on {name} takes metres"))?.max(0.0);
     }
-    if !info.surface && !info.vertex && !info.light && !info.unlit && !info.ui {
-        bail!("{name} has no surface, vertex, light or ui function");
+    if !info.surface && !info.vertex && !info.light && !info.unlit && !info.ui && !info.look {
+        bail!("{name} has no surface, vertex, light, ui or look function");
+    }
+    if info.look && (info.surface || info.vertex || info.light || info.unlit || info.ui) {
+        bail!("{name} draws the finished picture with its look function, and nothing else: it cannot have a surface, vertex, light or ui function, or be [Unlit]");
     }
     if info.ui && (info.surface || info.vertex || info.light || info.unlit) {
         bail!("{name} draws UI with its ui function, so it draws no materials: it cannot have a surface, vertex or light function, or be [Unlit]");
@@ -316,6 +324,12 @@ pub fn read(source: &str) -> Result<ShaderInfo> {
         if let Some(property) = property(field).with_context(|| format!("in {name}: `{field}`"))? {
             info.properties.push(property);
         }
+    }
+    if info.look && info.properties.len() > voxear_render::LOOK_VALUES {
+        bail!("{name} is a look shader, which has at most {} properties", voxear_render::LOOK_VALUES);
+    }
+    if info.look && info.properties.iter().any(|property| property.kind == PropertyKind::Picture) {
+        bail!("{name} is a look shader, whose properties are numbers, vectors, colours and toggles, not pictures");
     }
     if info.ui && info.properties.iter().any(|property| property.kind == PropertyKind::Picture) {
         bail!("{name} draws UI, whose properties are numbers, vectors, colours and toggles, not pictures");
@@ -532,7 +546,7 @@ pub fn dispatch_code(registry: &ShaderRegistry) -> String {
         .iter()
         .filter(|shader| shader.used)
         .filter_map(|shader| Some((shader, shader.info.as_ref().ok()?)))
-        .filter(|(_, info)| !info.ui)
+        .filter(|(_, info)| !info.ui && !info.look)
         .collect();
     let mut code = String::from("// Written by the engine from the project's .shader assets.\n\n#pragma once\n\n");
     for (shader, info) in &shaders {
@@ -631,6 +645,81 @@ pub fn ui_dispatch_code(registry: &ShaderRegistry) -> String {
         code += &format!("    case {n}:\n        return ui_shader_{n}::ui(ui_shader_{n}_properties(first), input);\n");
     }
     code + "    default:\n        return input.background;\n    }\n}\n"
+}
+
+/// The code a project's look shaders compile into the post-processing's
+/// shader as (`project_look_shaders.slang`; see `shaders/look_custom.slang`):
+/// each in a namespace of its own, named for its number, a function reading
+/// its properties from the frame's look values, and `customLook`, which
+/// calls the one the frame names by its number. Empty for a project
+/// without any, which compiles to none.
+pub fn look_dispatch_code(registry: &ShaderRegistry) -> String {
+    let shaders: Vec<(&ProjectShader, &ShaderInfo)> = registry
+        .shaders
+        .iter()
+        .filter_map(|shader| Some((shader, shader.info.as_ref().ok()?)))
+        .filter(|(_, info)| info.look)
+        .collect();
+    if shaders.is_empty() {
+        return String::new();
+    }
+    let mut code = String::from("// Written by the engine from the project's .shader assets that draw the picture.\n\n#pragma once\n\n");
+    for (shader, info) in &shaders {
+        let number = shader.number;
+        code += &format!("namespace look_shader_{number}\n{{\n#line 1 \"{}\"\n{}\n}}\n\n", shader.path, shader.source);
+        let reader = properties_reader(&format!("look_shader_{number}"), info, "", "push.frame->post.lookValues");
+        // The values are the frame's own array, not a pointer into a buffer.
+        code += &reader.replace("float4* values = ", "float4 values[LOOK_VALUES] = ");
+    }
+    code += "float3 customLook(uint shader, LookInput input)\n{\n    switch (shader)\n    {\n";
+    for (shader, _) in &shaders {
+        let n = shader.number;
+        code += &format!("    case {n}:\n        return look_shader_{n}::look(look_shader_{n}_properties(), input);\n");
+    }
+    code + "    default:\n        return input.color;\n    }\n}\n"
+}
+
+/// The look shader `reference` names, a project path or GUID, as a frame is
+/// drawn with it: its number, and its properties' values, each its default
+/// unless `values` gives one by its name, as a number, a list of numbers or
+/// true or false. Colours are written sRGB and made linear.
+pub fn look_shader(
+    registry: &ShaderRegistry,
+    found: &ShaderRef,
+    values: &toml::Table,
+) -> Result<voxear_render::LookShader> {
+    let shader = registry.shaders.iter().find(|shader| shader.reference == *found).context("no such shader")?;
+    let info = shader.info.as_ref().map_err(|error| anyhow::anyhow!("{}: {error}", shader.path))?;
+    ensure!(info.look, "{} has no look function, so it cannot draw a look pack's picture", shader.path);
+    let named = |name: &str| info.properties.iter().any(|property| property.name == name);
+    if let Some(stray) = values.keys().find(|name| !named(name)) {
+        bail!("{} has no property named {stray}", shader.path);
+    }
+    let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let mut slots = [[0.0; 4]; voxear_render::LOOK_VALUES];
+    for (slot, property) in slots.iter_mut().zip(&info.properties) {
+        let mut value = property.default;
+        match values.get(&property.name) {
+            Some(toml::Value::Boolean(on)) => value = [f32::from(u8::from(*on)), 0.0, 0.0, 0.0],
+            Some(toml::Value::Array(parts)) => {
+                let numbers = parts.iter().map(|part| part.as_float().or_else(|| part.as_integer().map(|n| n as f64)));
+                for (place, number) in value.iter_mut().zip(numbers) {
+                    *place = number.with_context(|| format!("{}'s {} takes numbers", shader.path, property.name))? as f32;
+                }
+            }
+            Some(other) => {
+                let number = other.as_float().or_else(|| other.as_integer().map(|n| n as f64));
+                let number = number.with_context(|| format!("{}'s {} takes a number", shader.path, property.name))?;
+                value = [number as f32; 4];
+            }
+            None => {}
+        }
+        if let PropertyKind::Color { alpha } = property.kind {
+            value = [linear(value[0]), linear(value[1]), linear(value[2]), if alpha { value[3] } else { 1.0 }];
+        }
+        *slot = value;
+    }
+    Ok(voxear_render::LookShader { number: shader.number, values: slots })
 }
 
 /// The shaders the UI can draw backgrounds with: the built-in effects, and
@@ -816,6 +905,62 @@ mod tests {
         }
         float4 ui(Scan scan, UiInput input) { return input.background * scan.tint; }
     "#;
+
+    const PRINT: &str = r#"
+        struct Print
+        {
+            [Property, Range(2, 16)] float steps = 6.0;
+            [Property, Color] float3 paper = float3(1.0, 0.5, 0.0);
+            [Property] bool lined = true;
+        }
+        float3 look(Print print, LookInput input) { return floor(input.color * print.steps) / print.steps * print.paper; }
+    "#;
+
+    #[test]
+    fn a_look_shader_draws_the_picture_alone_and_a_pack_gives_its_properties_by_name() {
+        let print = read(PRINT).unwrap();
+        assert!(print.look && !print.ui && !print.surface && !print.unlit);
+        let mixed = "struct Both { [Property] float x = 1.0; }\nfloat4 ui(Both b, UiInput i) { return 0.0; }\nfloat3 look(Both b, LookInput i) { return 0.0; }";
+        assert!(read(mixed).unwrap_err().to_string().contains("nothing else"));
+        let pictured = "struct Pictured { [Property] Picture pattern; }\nfloat3 look(Pictured p, LookInput i) { return 0.0; }";
+        assert!(read(pictured).unwrap_err().to_string().contains("not pictures"));
+        let many: String = (0..9).map(|n| format!("[Property] float p{n} = 0.0; ")).collect();
+        let crowded = format!("struct Crowded {{ {many} }}\nfloat3 look(Crowded c, LookInput i) {{ return 0.0; }}");
+        assert!(read(&crowded).unwrap_err().to_string().contains("at most 8"));
+
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let registry = ShaderRegistry::new(
+            vec![(guid(1), "Shaders/Print.shader".into(), PRINT.into()), (guid(2), "Shaders/Water.shader".into(), WATER.into())],
+            &BTreeSet::new(),
+        );
+        let (number, water) = (FIRST, FIRST + 1);
+        // Neither materials nor the UI are given it; the picture's dispatch calls it by its number.
+        assert!(!dispatch_code(&registry).contains(&format!("shader_{number}")), "materials leave it out");
+        assert!(ui_dispatch_code(&registry).is_empty());
+        let code = look_dispatch_code(&registry);
+        assert!(code.contains(&format!("namespace look_shader_{number}\n{{\n#line 1 \"Shaders/Print.shader\"")), "{code}");
+        assert!(code.contains("float4 values[LOOK_VALUES] = push.frame->post.lookValues;"), "{code}");
+        assert!(code.contains("properties.lined = values[2].x > 0.5;"));
+        let call = format!("case {number}:\n        return look_shader_{number}::look(look_shader_{number}_properties(), input);");
+        assert!(code.contains(&call), "{code}");
+        assert!(!code.contains(&format!("look_shader_{water}")), "the water draws materials");
+        assert!(look_dispatch_code(&ShaderRegistry::new(Vec::new(), &BTreeSet::new())).is_empty());
+
+        // As a frame is drawn with it: its defaults, a colour made linear, and what a pack writes over them.
+        let shader = ShaderRef::Asset(guid(1));
+        let plain = look_shader(&registry, &shader, &toml::Table::new()).unwrap();
+        assert_eq!((plain.number, plain.values[0][0], plain.values[2][0]), (number, 6.0, 1.0));
+        assert!((plain.values[1][1] - 0.214).abs() < 0.002 && plain.values[1][3] == 1.0, "{:?}", plain.values[1]);
+        let written: toml::Table = toml::from_str("steps = 4\npaper = [1.0, 1.0, 1.0]\nlined = false").unwrap();
+        let set = look_shader(&registry, &shader, &written).unwrap();
+        assert_eq!((set.values[0][0], set.values[1], set.values[2][0]), (4.0, [1.0; 4], 0.0));
+        // A property it has not, a shader that draws materials, and one there is not, are refused.
+        let stray: toml::Table = toml::from_str("ink = 1.0").unwrap();
+        assert!(look_shader(&registry, &shader, &stray).unwrap_err().to_string().contains("no property named ink"));
+        let materials = look_shader(&registry, &ShaderRef::Asset(guid(2)), &toml::Table::new());
+        assert!(materials.unwrap_err().to_string().contains("no look function"));
+        assert!(look_shader(&registry, &ShaderRef::Asset(guid(3)), &toml::Table::new()).is_err());
+    }
 
     #[test]
     fn a_ui_shader_draws_ui_alone_and_is_dispatched_by_the_ui() {

@@ -471,6 +471,9 @@ pub struct GpuOcean {
     /// (see `voxear_scene::WorldOrigin`), so the sea is the same when it
     /// moves.
     pub phases: [[f32; 2]; crate::ocean::CASCADES],
+    /// The colour worlds of blocks' water is drawn in, linear, with 1
+    /// after it, where a look pack sets one; all 0 for each block's own.
+    pub block_water: [f32; 4],
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -833,6 +836,11 @@ pub struct GpuPost {
     /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)
     /// to 1 (as the eye sees them).
     pub exposure_night: f32,
+    /// The look shader the finished picture is drawn with, by its number,
+    /// 0 for none, and its properties' values (`looks::LookShader`).
+    pub look_shader: u32,
+    pub _look_pad: [u32; 3],
+    pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -1314,7 +1322,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 20;
+        let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>();
         assert_eq!(size_of::<GpuClouds>(), 80);
@@ -1330,9 +1338,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16
         );
-        assert_eq!(size_of::<GpuOcean>(), 336);
+        assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

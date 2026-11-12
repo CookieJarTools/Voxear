@@ -1987,10 +1987,11 @@ impl Content {
         let mut desc = data.desc(textures);
         // A shader the project does not have, that does not compile, or that draws UI, draws as the standard one.
         let found = data.shader.and_then(|shader| self.shaders.get(shader));
-        if let Some((_, info)) = found.filter(|(_, info)| info.ui) {
-            tracing::warn!("{} draws UI, not materials, so a material picking it draws as the standard shader", info.name);
+        if let Some((_, info)) = found.filter(|(_, info)| info.ui || info.look) {
+            let draws = if info.ui { "UI" } else { "the finished picture" };
+            tracing::warn!("{} draws {draws}, not materials, so a material picking it draws as the standard shader", info.name);
         }
-        let found = found.filter(|(_, info)| !info.ui).map(|(number, info)| (number, info.clone()));
+        let found = found.filter(|(_, info)| !info.ui && !info.look).map(|(number, info)| (number, info.clone()));
         if let Some((number, info)) = found {
             desc.shader = number;
             desc.max_offset = info.max_offset;

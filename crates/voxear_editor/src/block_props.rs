@@ -910,8 +910,16 @@ fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity,
             let pending = Arc::new(changes);
             let kept = BlockWorldAsset { file, base: Arc::default(), pending, drawn: drawn.clone(), derived, ..asset };
             world.insert(entity, kept);
-        } else if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
-            (kept.file, kept.drawn, kept.derived) = (file, drawn.clone(), derived);
+        } else {
+            if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
+                (kept.file, kept.drawn, kept.derived) = (file, drawn.clone(), derived);
+            }
+            // A block numbered at the end joins the world's faces at once, so what is built with it this frame is
+            // drawn as it; its streamer makes nothing again for it.
+            let (_, faces) = drawn.faces();
+            if let Some(now) = world.get_mut::<BlockWorld>(entity).filter(|now| faces.starts_with(&now.faces)) {
+                now.faces = faces.into();
+            }
         }
         restyle(game, renderer, entity, &drawn);
         return true;
@@ -1218,7 +1226,9 @@ pub fn make_kinds_blocks(game: &mut Game, renderer: Option<&mut Renderer>, entit
     if kinds_to_make(&asset.file) == 0 {
         return None;
     }
-    let folder = blocks_beside(&game.content.db().get(asset.guid)?.path);
+    // A package's world is the package's to change.
+    let entry = game.content.db().get(asset.guid).filter(|entry| entry.mount == voxear_assets::Mount::Project)?;
+    let folder = blocks_beside(&entry.path);
     let made = blocks_for_kinds(game, renderer, entity, true, &folder);
     (made > 0).then_some((folder, made))
 }

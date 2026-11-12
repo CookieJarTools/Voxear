@@ -68,6 +68,9 @@
                 <DockPanel id="blocks" title="Blocks" icon="block" class="dock-content">
                     <Panel name="blocks-panel" class="fill blocks-panel" />
                 </DockPanel>
+                <DockPanel id="model" title="Model" icon="box" class="dock-content">
+                    <Panel name="model-panel" class="fill model-panel" />
+                </DockPanel>
                 <DockPanel id="memory" title="Memory" class="dock-content">
                     <Panel name="memory-panel" class="fill frame-debugger-panel" />
                 </DockPanel>

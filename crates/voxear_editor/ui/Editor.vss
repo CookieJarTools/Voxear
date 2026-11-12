@@ -4284,3 +4284,35 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .room-add {
     margin-top: 2px;
 }
+
+/* The Model window: a box model's bones and boxes in a tree, beside the model itself on a floor of blocks. */
+.model-panel {
+    flex-direction: column;
+    font-size: 11px;
+}
+
+.model-tree {
+    flex-shrink: 0;
+    width: 220px;
+    padding: 4px 0px;
+    border-right: 1px solid var(--vx-line);
+    min-height: 0px;
+}
+
+/* The model, which a drag turns: its picture fills it, with what is picked outlined over that. */
+.model-view {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    min-height: 0px;
+    overflow: hidden;
+    background-color: var(--vx-bg);
+}
+
+.model-view-image, .model-view-overlay {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+}

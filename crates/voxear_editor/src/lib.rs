@@ -66,6 +66,9 @@ mod fields;
 mod frame_debugger_panel;
 pub mod generator_panel;
 mod generator_previews;
+pub mod box_part_inspector;
+pub mod model_panel;
+pub mod model_view;
 mod gizmos;
 pub mod graph_canvas;
 mod gun_handling_inspector;
@@ -143,6 +146,8 @@ pub use window::run_editor;
 /// as a double click on it in the Project does. A World Generator's graph
 /// shows once its previews are made; `Generators/Hills.worldgen#Noise`
 /// picks its first node of that name too, which the Inspector then shows.
+/// A box model opens in the Model window, and `Models/Pig.boxmodel#Head`
+/// picks that bone's first box too.
 pub fn screenshot(
     project: Project,
     settings: &RendererSettings,
@@ -164,8 +169,15 @@ pub fn screenshot(
                 // Laid out and drawn before a node of it is picked.
                 editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
                 editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
-                if let Some(node) = node {
-                    anyhow::ensure!(editor.pick_generator_node(node), "the graph of {path} has no {node} node");
+                match node {
+                    // A box model's bone, by its name: its first box where it has one, or the bone.
+                    Some(bone) if voxear_render::is_box_model(path) => {
+                        anyhow::ensure!(editor.pick_model_bone(bone), "{path} has no bone {bone}");
+                    }
+                    Some(node) => {
+                        anyhow::ensure!(editor.pick_generator_node(node), "the graph of {path} has no {node} node");
+                    }
+                    None => {}
                 }
             }
         }

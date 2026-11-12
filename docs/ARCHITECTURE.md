@@ -2810,8 +2810,17 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   colour at the middle of the pixel a UV falls in, with the UV's own slopes picking the mip
   (`baseColorUv`, `sampleBaseColor` in `common.slang`), in the forward, depth and preview passes and for traced
   cut-outs. Cooked models carry the flag (`COOKED_VERSION` 11).
-- **Planned on top:** a Model window to build and paint in, bones made from a model's shape, motion made from how
-  a character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
+- **The Model window** (`voxear_editor::model_panel`, `model_view`, `box_part_inspector`, `editor/models.rs`) edits
+  one as the Generator panel edits a graph: the panel owns the model and a history of whole models, the editor
+  saves it when nothing is held and has the level's Objs follow, and the Inspector shows the bone or box picked.
+  Its view is not a second world: the model's mesh and a floor are drawn as a preview with a camera of its own
+  (`PreviewCamera`, up to `MAX_VIEW_SIZE` pixels, square, shown cut to the view), so what is under the pointer is
+  a ray from that camera against the boxes (`BoxModel::pick`, which also gives the face and the sheet's pixel),
+  and outlines and handles are UI shapes projected with it. What changes a model (`box_model/edit.rs`: removing,
+  hanging, copying and mirroring bones, moving pivots, moving boxes between bones, free room on the sheet) is
+  kept with the model, so scripts and tools change one the same way.
+- **Planned on top:** painting in the Model window, bones made from a model's shape, motion made from how a
+  character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
   one through a block world.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*

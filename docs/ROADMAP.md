@@ -1328,8 +1328,22 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     each pixel one colour to its edge, from source and cooked, and a box following its posed bone; the engine reading
     its bones headless, a scene's Obj getting them, and builds cooking it; the editor making one, showing it and
     following its file to a new bone; a long menu scrolled to its last item. Manual: Box Models.
-  - [ ] **The Model window:** a viewport, the tree of bones and boxes, moving and sizing boxes, pivots, mirroring,
-    undo; then painting on the model and on its sheet
+  - ~~**The Model window:**~~ done: a `model` dock panel (`model_panel::ModelPanel`), opened by a double click on a
+    `.boxmodel`. A tree of bones with their boxes, to pick from and drag onto one another; the model on a floor of
+    blocks (`model_view::ModelView`), drawn as a preview with a camera of its own (`PreviewCamera`,
+    `PreviewOptions::camera`, up to `MAX_VIEW_SIZE` 1024 pixels) and cut to the view's shape, the camera turned by a
+    drag, moved by the middle button and brought nearer by the wheel; a click picks the box under it by a ray
+    (`BoxModel::pick`), and what is picked is outlined with an arrow an axis and, on a box, a knob a face, which
+    move and size it a whole pixel at a time. The bar adds a bone or a box (given free room on the sheet,
+    `free_place`), duplicates, mirrors across the body (`mirror_bone`, `mirrored_box`), deletes, and with Pivot
+    Only moves a bone's pivot alone (`move_pivot`). The part picked shows in the Inspector
+    (`box_part_inspector::BoxPartView`, `Inspector::show_box_part`). Its own undo and redo while it has the keys,
+    one drag one step; saved on let go, and Objs drawing the model follow (`editor/models.rs`). Tests: rays to
+    box, face and pixel; bones removed, hung elsewhere, copied and mirrored with nothing moving; pivots moved;
+    free room on the sheet; a view preview drawn where its camera projects; the view's rays and handles; the
+    editor opening, picking, dragging a handle, typing a size and a name, adding, mirroring, deleting and undoing,
+    with the file saved once let go. Manual: Box Models.
+  - [ ] **Painting:** pixels painted on the model and on its sheet, and the sheet laid out again as boxes change
   - [ ] **Bones from its shape:** legs, arms, head, body and tail found from the boxes, and a limb split for a joint
   - [ ] **Motion from how it moves:** walking by its gait, idling, looking, attacking, and parts that lag behind
   - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away

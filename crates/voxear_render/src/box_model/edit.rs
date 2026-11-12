@@ -6,7 +6,7 @@
 
 use voxear_core::math::{Mat4, Vec3};
 
-use super::{BoxBone, BoxModel, BoxSkin, Face, FaceRect, ModelBox, degrees};
+use super::{BoxBone, BoxModel, BoxSkin, Face, FaceRect, ModelBox, degrees, turned};
 
 /// What a ray met of a model: the box, by its bone and its place among the
 /// bone's boxes, the face it went in by, how far along the ray, in metres,
@@ -148,6 +148,20 @@ impl BoxModel {
             })
             .collect();
         Some(now(bone))
+    }
+
+    /// Moves a bone's pivot to `pivot`, measured as its pivot is, leaving
+    /// its boxes and the bones under it standing where they were: only the
+    /// point it turns about changes.
+    pub fn move_pivot(&mut self, bone: usize, pivot: Vec3) {
+        let Some(moved) = self.bones.get_mut(bone) else { return };
+        // How far it went, in the bone's own space, which its boxes and children are measured in.
+        let by = turned(moved.rotation).inverse() * (pivot - moved.pivot);
+        moved.pivot = pivot;
+        moved.boxes.iter_mut().for_each(|model_box| model_box.from = whole(model_box.from - by));
+        for child in self.bones.iter_mut().filter(|other| other.parent == Some(bone)) {
+            child.pivot = whole(child.pivot - by);
+        }
     }
 
     /// Moves a box to another bone, leaving it standing where it was.
@@ -435,7 +449,10 @@ mod tests {
     #[test]
     fn the_whole_model_is_bounded_in_metres() {
         let (least, most) = figure().bounds().unwrap();
-        assert!(close(least, Vec3::new(-0.25, 0.625, -0.25)) && close(most, Vec3::new(0.5, 2.0, 0.25)), "{least} {most}");
+        assert!(
+            close(least, Vec3::new(-0.25, 0.625, -0.25)) && close(most, Vec3::new(0.5, 2.0, 0.25)),
+            "{least} {most}"
+        );
         assert!(BoxModel::default().bounds().is_none());
     }
 
@@ -478,6 +495,18 @@ mod tests {
         let arm = model.set_parent(arm, model.find_bone("Head")).unwrap();
         assert!(arm > model.find_bone("Head").unwrap() && same_standing(&model, &before));
         assert!(BoxModel::parse(&model.to_text()).is_ok(), "every parent before its children");
+    }
+
+    #[test]
+    fn a_pivot_moved_leaves_what_the_bone_carries_standing() {
+        let mut before = figure();
+        before.bones[2].rotation = Vec3::new(0.0, 0.0, 25.0);
+        let mut model = before.clone();
+        // The arm's pivot from its shoulder down to its elbow.
+        model.move_pivot(2, Vec3::new(6.0, 4.0, 0.0));
+        assert_eq!(model.bones[2].pivot, Vec3::new(6.0, 4.0, 0.0));
+        assert_ne!(model.bones[2].boxes[0].from, before.bones[2].boxes[0].from);
+        assert!(same_standing(&model, &before), "the arm and its hand stay");
     }
 
     #[test]

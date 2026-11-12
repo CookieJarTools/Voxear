@@ -21,7 +21,74 @@ Select it to see it in the Inspector. Drag the preview to turn it. The **Box Mod
 
 Drag the file into the Scene view or the Hierarchy to place it, as you would any model.
 
-The window for building and painting box models in the editor is not there yet (see **Not done yet** at the end of this page). Until it is, a box model is edited as text: open the `.boxmodel` file in a text editor, save, and come back to the editor. Everything drawing the model shows the change.
+## The Model window
+
+Double-click a box model in the Project panel to open it in the **Model** window. You can also show the window from the command palette with **Show Model**.
+
+On the left is a tree of the model's **bones**. Each bone holds its **boxes** and the bones that hang from it. On the right the model stands on a floor marked off in blocks, with each block's pixels showing faintly, so you can see how big a box is.
+
+### Looking around
+
+| Do this | To |
+| --- | --- |
+| Drag in the view | Turn the camera round the model |
+| Drag with the middle button | Move the camera sideways and up |
+| Turn the wheel | Move the camera nearer or further |
+| Press **F**, or click **Frame** | Look at the whole model |
+
+### Picking
+
+Click a box in the view to pick it, or click a bone or a box in the tree. What is picked is outlined, its row is lit in the tree, and the Inspector shows its numbers. Click the floor to pick nothing; the Inspector then shows the model itself.
+
+### Building
+
+The bar along the top changes the model:
+
+| Button | What it does |
+| --- | --- |
+| Add Bone | Adds a bone under the bone that is picked, or at the top when nothing is picked |
+| Add Box | Adds a small box to the bone that is picked, and gives it room of its own on the sheet |
+| Duplicate | Copies what is picked: a box, or a bone with everything under it. **Ctrl+D** does the same |
+| Mirror | Copies what is picked to the other side of the body. A bone called `LeftArm` gives one called `RightArm`, and a copied box uses the same pixels turned over |
+| Delete | Takes out what is picked. A bone goes with everything under it. The **Delete** key does the same |
+| Pivot Only | While this is on, moving a bone moves only the point it turns about, and its boxes stay where they are |
+
+In the tree, drag a bone onto another bone to hang it from that bone, or drag a box onto a bone to give it to that bone. Nothing moves in the view when you do: only what it hangs from changes.
+
+### Moving and sizing
+
+What is picked has three arrows, red for X, green for Y and blue for Z. Drag the end of an arrow to move it along that line. A box also has a small knob on each face. Drag a knob to move that face in or out, which makes the box bigger or smaller.
+
+Everything moves a whole pixel at a time, so boxes always line up with each other's pixels.
+
+### In the Inspector
+
+A picked **bone** shows:
+
+| Row | What it is |
+| --- | --- |
+| Name | What the bone is called. Press Enter to rename it |
+| Pivot | The point it turns about, in pixels from its parent's pivot |
+| Rotation | How it stands when nothing poses it, in degrees |
+
+A picked **box** shows:
+
+| Row | What it is |
+| --- | --- |
+| Position | Its lowest corner, in pixels from its bone's pivot |
+| Size | How many pixels it measures each way |
+| Rotation | How it is turned about its own middle, in degrees |
+| Sheet | Where its unfolded faces start on the sheet |
+| Mirror | Turns its unfolded faces over from left to right |
+| Inflate | How far its faces stand out past its size, in pixels |
+
+### Undo and saving
+
+**Ctrl+Z** and **Ctrl+Y** undo and redo changes to the model while the Model window is the one you last clicked in. One drag is one step.
+
+There is nothing to save by hand. The file is written each time you let go, and every Obj drawing the model in your level shows the change straight away.
+
+You can still edit the file as text if you like. Save it, come back to the editor, and the Model window and everything drawing the model show it as the file now has it.
 
 ## How a box model is measured
 
@@ -133,7 +200,8 @@ A box model's bones are a skeleton like any animated model's, and every box move
 
 ## Not done yet
 
-- The **Model** window for building box models in the editor: adding and moving boxes, painting pixels, and making bones from the model's shape.
+- Painting a box model's pixels in the Model window.
+- Bones made for you from the model's shape.
 - Motion made for you from how a model moves: walking, idling, looking, attacking.
 - A raised second layer, where painted pixels stand out from the surface as small blocks.
 - Animation clips made on a timeline.

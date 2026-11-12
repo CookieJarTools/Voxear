@@ -172,6 +172,11 @@ impl CaveNetwork {
         let (reach, made) = (set.reach() + set.stray(), set.rooms.iter().any(|room| room.rules.is_some()));
         let least = if made && set.layout == CaveLayout::Endless { reach * 0.75 + 4.0 } else { 2.0 * reach + 4.0 };
         set.spacing = set.spacing.max(least).min(100_000.0);
+        // Layers no nearer than the tallest room is high and a quarter, with 6 m of rock between, so the
+        // rooms of one do not run into those of the next.
+        let high = |room: &Room| room.rules.map_or_else(|| room.reach(), |rules| rules.kept().height);
+        let tallest = set.rooms.iter().map(high).fold(0.0, f32::max);
+        set.layer_depth = set.layer_depth.max(tallest * 1.25 + 6.0);
         set
     }
 }
@@ -671,6 +676,82 @@ mod tests {
         };
         assert_eq!(one(30.0), one(90.0));
         assert_ne!(one(30.0), bits(&batch));
+    }
+
+    #[test]
+    fn every_room_of_three_layers_is_walked_to_from_the_surface_and_ramps_keep_to_the_slope_limit() {
+        // Every room of the top layer has a way up, so the walk can start in the open air.
+        let set = CaveNetwork { depth: 16.0, layers: 3, layer_depth: 30.0, entrances: 1.0, ..ruled(Laid::Endless) };
+        let made = world(set.clone(), Some(120.0), 5);
+        let caves = made.caves().expect("its caves");
+        let rooms: Vec<PlacedRoom> = caves
+            .rooms_near([96.0, 60.0, 96.0], 400.0)
+            .into_iter()
+            .filter(|room| (0..4).contains(&room.region[0]) && (0..4).contains(&room.region[2]))
+            .collect();
+        for layer in 0..3 {
+            let count = rooms.iter().filter(|room| room.region[1] == layer).count();
+            assert!(count >= 8, "{count} rooms in layer {layer}");
+        }
+        // From a place open to the sky: the first cell under the ground's top that is hollow.
+        let mouth = (0..192 * 192)
+            .map(|at| [(at % 192) as f32, 119.5, (at / 192) as f32])
+            .find(|at| open(&made, *at))
+            .expect("an entrance comes out within the district");
+        let reached = flooded(&made, mouth, [-14.0, 0.0, -14.0], [206.0, 121.0, 206.0]);
+        for room in &rooms {
+            assert!(reached(over(room)), "room {:?} at {:?} is not walked to from the surface", room.region, room.at);
+        }
+
+        // A ramp's steepest piece, as rise over run: held to the Slope Limit where a region leaves it room to
+        // wind, which with these it does.
+        let steepest = |made: &WorldGen| -> Vec<f32> {
+            let caves = made.caves().expect("its caves");
+            let net = caves.network();
+            let mut found = Vec::new();
+            for region in [[0, 0, 0], [2, 0, 1], [1, 0, 3], [3, 0, 2], [5, 0, 5], [-3, 0, 2]] {
+                let gathered = net.gathered(&net.grid(), region);
+                // A ramp is a tunnel that climbs more than a room's own depth can vary by.
+                for tunnel in gathered.tunnels.iter().filter(|tunnel| tunnel.roofed) {
+                    let (first, last) = (tunnel.line[0], tunnel.line[tunnel.line.len() - 1]);
+                    if (last[1] - first[1]).abs() < 20.0 {
+                        continue;
+                    }
+                    let piece = |piece: &[[f32; 3]]| {
+                        let run = ((piece[1][0] - piece[0][0]).powi(2) + (piece[1][2] - piece[0][2]).powi(2)).sqrt();
+                        (piece[1][1] - piece[0][1]).abs() / run.max(0.01)
+                    };
+                    found.push(tunnel.line.windows(2).map(piece).fold(0.0, f32::max));
+                }
+            }
+            found
+        };
+        let ramps = steepest(&made);
+        assert!(ramps.len() >= 3, "{} ramps round six regions", ramps.len());
+        let limit = set.slope_limit;
+        for steep in &ramps {
+            assert!(*steep <= limit * 1.02, "a ramp's steepest piece climbs {steep} in 1, over the limit of {limit}");
+        }
+        // With no limit they run as steep as the straight way is.
+        let free = steepest(&world(CaveNetwork { slope_limit: NO_LIMIT, ..set.clone() }, Some(120.0), 5));
+        assert!(free.iter().sum::<f32>() / free.len() as f32 > ramps.iter().sum::<f32>() / ramps.len() as f32);
+        eprintln!("ramps' steepest pieces with a limit of {limit}: {ramps:?}; with none: {free:?}");
+    }
+
+    #[test]
+    fn layers_are_kept_as_far_apart_as_their_tallest_room_is_high_whatever_layer_depth_says() {
+        // Rooms 6 m high: a Layer Depth of 4 m would run one layer's rooms into the next's.
+        let near = CaveNetwork { depth: 16.0, layers: 2, layer_depth: 4.0, ..ruled(Laid::Endless) };
+        let made = world(near, Some(120.0), 3);
+        let rooms = made.caves().unwrap().rooms_near([96.0, 90.0, 96.0], 300.0);
+        let mean = |layer: i32| {
+            let of: Vec<f32> = rooms.iter().filter(|room| room.region[1] == layer).map(|room| room.at[1]).collect();
+            assert!(of.len() > 8);
+            of.iter().sum::<f32>() / of.len() as f32
+        };
+        // The chamber among them reaches 9 m and some from its middle, which is what sets how far apart.
+        let apart = mean(0) - mean(1);
+        assert!((15.0..=24.0).contains(&apart), "layers {apart} m apart");
     }
 
     #[test]

@@ -636,7 +636,8 @@ impl Network {
             true => set.radius + (set.radius_to - set.radius) * share(mix(seed, &[12])),
             false => set.radius,
         };
-        let main = self.wound(from, to, up, seed, set.winding, true, radius);
+        let ramp = a.plan.region[1] != b.plan.region[1];
+        let main = self.wound(from, to, up, seed, set.winding, true, radius, ramp);
         if share(mix(seed, &[13])) >= set.branches {
             return vec![main];
         }
@@ -651,7 +652,7 @@ impl Network {
         let end = add(main.line[at], add(times(aside, long), times(along, long * lean)));
         let narrow = greater(radius * 0.8, 0.75);
         let (from, to) = ((main.line[at], aside), (end, times(aside, -1.0)));
-        let spur = self.wound(from, to, up, mix(seed, &[18]), set.winding, true, narrow);
+        let spur = self.wound(from, to, up, mix(seed, &[18]), set.winding, true, narrow, false);
         vec![main, spur]
     }
 
@@ -698,7 +699,7 @@ impl Network {
         let down = unit(sub(times(up, -0.4), away), times(up, -1.0));
         let [x, y, z] = room.plan.region;
         let seed = mix(self.set.seed, &[x, y, z, 10]);
-        self.wound((from, away), (top, down), room.axes[1], seed, self.set.winding * 0.5, false, self.set.radius)
+        self.wound((from, away), (top, down), room.axes[1], seed, self.set.winding * 0.5, false, self.set.radius, false)
     }
 
     /// A tunnel from one end to another, each a place and the way out of
@@ -716,6 +717,7 @@ impl Network {
         winding: f32,
         roofed: bool,
         radius: f32,
+        ramp: bool,
     ) -> Tunnel {
         // Its ends a little inside the rooms, so it opens into them.
         let (a, b) = (sub(from.0, times(from.1, radius * 0.5)), sub(to.0, times(to.1, radius * 0.5)));
@@ -724,10 +726,16 @@ impl Network {
         let side = unit(cross(up, across), [1.0, 0.0, 0.0]);
         let pull = length * 0.5;
         let (leave, arrive) = (times(from.1, pull), times(to.1, -pull));
-        let widest = self.set.spacing * 0.2;
+        // A ramp, from one layer to the next, may wind over nearly half a region: it has far to climb.
+        let widest = self.set.spacing * if ramp { 0.45 } else { 0.2 };
         let mut most = greater(winding, 0.0) * lesser(length * 0.15, widest);
         // How far aside and how far up it is pushed at each of four places along it, and not at all at its ends.
+        // A ramp is pushed to one side and then the other, which is what makes a way longest.
         let knot = |at: usize, part: i32| match at {
+            1..=4 if ramp && part == 0 => {
+                let far = 0.75 + 0.25 * share(mix(seed, &[at as i32, part]));
+                if at % 2 == 0 { far } else { -far }
+            }
             1..=4 => share(mix(seed, &[at as i32, part])) * 2.0 - 1.0,
             _ => 0.0,
         };
@@ -750,29 +758,58 @@ impl Network {
                     add(times(a, weights[0]), times(leave, weights[1])),
                     add(times(b, weights[2]), times(arrive, weights[3])),
                 );
+                if ramp {
+                    // A ramp is laid level first, at the height it starts from, and made to climb after.
+                    let level = add(straight, times(up, dot(a, up) - dot(straight, up)));
+                    *point = add(level, times(side, most * pushed(t, 0)));
+                    continue;
+                }
                 let aside = add(times(side, most * pushed(t, 0)), times(up, most * 0.25 * pushed(t, 1)));
                 *point = add(straight, aside);
             }
         };
+        // A ramp climbs by the ground it covers, the same over every metre of its way but for a level piece at
+        // each end: so no part of it is steeper than the rest, as a way that eased in and out would be in its
+        // middle.
+        let climbed = |line: &mut [V3; PIECES + 1]| {
+            let mut run = [0.0f32; PIECES + 1];
+            for at in 1..=PIECES {
+                let step = sub(line[at], line[at - 1]);
+                run[at] = run[at - 1] + dot(step, step).sqrt();
+            }
+            let (first, last) = (run[1], run[PIECES - 1]);
+            for at in 0..=PIECES {
+                let even = greater(lesser((run[at] - first) / greater(last - first, 1.0e-3), 1.0), 0.0);
+                line[at] = add(line[at], times(up, dot(across, up) * even));
+            }
+        };
         lay(&mut line, most);
+        if ramp {
+            climbed(&mut line);
+        }
         if roofed && self.set.slope < NO_LIMIT {
             // How far it runs along the ground against how far it climbs: wound wider while that is too steep.
             let climb = dot(across, up);
             let climb = if climb < 0.0 { -climb } else { climb };
-            for _ in 0..6 {
-                let run: f32 = line
-                    .windows(2)
-                    .map(|piece| {
-                        let step = sub(piece[1], piece[0]);
-                        let level = sub(step, times(up, dot(step, up)));
-                        dot(level, level).sqrt()
-                    })
-                    .sum();
-                if climb <= self.set.slope * run || most >= widest {
+            for _ in 0..if ramp { 10 } else { 6 } {
+                let runs = line.windows(2).map(|piece| {
+                    let step = sub(piece[1], piece[0]);
+                    let level = sub(step, times(up, dot(step, up)));
+                    (dot(level, level).sqrt(), dot(step, up))
+                });
+                // A ramp is held by its steepest piece; any other tunnel by its climb over its whole run.
+                let gentle = match ramp {
+                    true => runs.clone().all(|(run, rise)| (if rise < 0.0 { -rise } else { rise }) <= self.set.slope * run),
+                    false => climb <= self.set.slope * runs.map(|(run, _)| run).sum::<f32>(),
+                };
+                if gentle || most >= widest {
                     break;
                 }
                 most = lesser(greater(most * 1.6, length * 0.06), widest);
                 lay(&mut line, most);
+                if ramp {
+                    climbed(&mut line);
+                }
             }
         }
         // Where a network's tunnels are of many widths, each also swells and narrows along its way, and

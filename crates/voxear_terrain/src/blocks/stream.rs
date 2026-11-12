@@ -92,7 +92,7 @@ impl BlockMaking {
 
     /// The folder its far view's tiles are kept in, named by what they are
     /// made from, so a world made another way keeps its own.
-    fn far_tiles(&self) -> Option<std::path::PathBuf> {
+    pub fn far_tiles(&self) -> Option<std::path::PathBuf> {
         let made_from = format!("{}\n{:016x}\n{}", self.file.to_text(), self.world.hash(), far::MADE_AS);
         let hash = crate::layers::stable_hash(made_from.as_bytes());
         self.far_folder.as_ref().map(|folder| folder.join(format!("{hash:016x}")))
@@ -102,7 +102,7 @@ impl BlockMaking {
 /// The far view's tile `at` of level `level`, as kept in `folder` where it
 /// was kept, else made and kept there. Not kept where the folder cannot be
 /// written to, as in a game installed where it may not write.
-fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
+pub fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
     let path = folder.map(|folder| folder.join(format!("{level}_{}_{}.far", at[0], at[1])));
     let read = path.as_ref().and_then(|path| std::fs::read(path).ok());
     let kept = read.and_then(|bytes| FarTile::from_bytes(&bytes).ok());

@@ -586,6 +586,10 @@ pub fn extract(
     let view_proj = jittered_projection * view;
 
     let mut gpu_post = post.to_gpu(sky.horizon);
+    // A look pack's own shader, unless a view sets its own settings, as a debug view does.
+    if let Some(shader) = worn.and_then(|worn| worn.shader).filter(|_| options.post_override.is_none()) {
+        (gpu_post.look_shader, gpu_post.look_values) = (shader.number, shader.values);
+    }
     gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
     // The fog's base is measured from the level's ground, wherever the world's middle has moved to.
     let origin = voxear_scene::WorldOrigin::of(world).0;

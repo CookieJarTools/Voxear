@@ -143,6 +143,20 @@ pub struct WornLook {
     pub voxels: Option<crate::blocks::BlockVoxels>,
     /// What the pack sets of how water looks, wherever it is.
     pub water: WaterLook,
+    /// The look shader the finished picture is drawn with; none for none.
+    pub shader: Option<LookShader>,
+}
+
+/// How many properties a look shader's values hold.
+pub const LOOK_VALUES: usize = 8;
+
+/// A look shader a pack names, as the picture is drawn with it: its number
+/// among the project's shaders, and each of its properties' values, in
+/// their order, colours linear.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LookShader {
+    pub number: u32,
+    pub values: [[f32; 4]; LOOK_VALUES],
 }
 
 /// What a look pack sets of how water looks: the sea, every Pool of water

@@ -6727,6 +6727,88 @@ fn ui_backgrounds_draw_with_built_in_effects_in_the_window_and_the_game() {
     assert!((17..=21).contains(&game_swings), "the game's UI striped alike: {game_swings}");
 }
 
+/// A project's look shader, compiled into the post-processing's shader: the
+/// finished picture as the level left it until it compiles and while no
+/// pack names it, and its negative, tinted by its property, once one does.
+#[test]
+fn a_look_packs_shader_has_the_last_word_on_the_picture() {
+    use voxear_render::{CustomCode, CustomShaderState, LOOK_VALUES, LookShader, Sky, WaterLook, WornLook};
+    const LOOK_SHADERS: &str = r#"
+namespace look_shader_7
+{
+struct Negative { float3 tint; };
+float3 look(Negative negative, LookInput input) { return (1.0 - input.color) * negative.tint; }
+}
+look_shader_7::Negative look_shader_7_properties()
+{
+    float4 values[LOOK_VALUES] = push.frame->post.lookValues;
+    look_shader_7::Negative properties;
+    properties.tint = values[0].xyz;
+    return properties;
+}
+float3 customLook(uint shader, LookInput input)
+{
+    switch (shader)
+    {
+    case 7:
+        return look_shader_7::look(look_shader_7_properties(), input);
+    default:
+        return input.color;
+    }
+}
+"#;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -5.0))));
+    let sky = Sky::default();
+    world.insert_resource(sky);
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let own = renderer.read_pixels().unwrap().2;
+    let at = |pixels: &[u8]| rgb_at(pixels, (320, 60));
+    let sky_blue = at(&own);
+    assert!(sky_blue[2] > sky_blue[0] + 10, "a blue sky to begin with: {sky_blue:?}");
+    // A pack names shader 7 before it is compiled: the picture is as it was.
+    let mut values = [[0.0; 4]; LOOK_VALUES];
+    values[0] = [1.0, 1.0, 0.0, 1.0];
+    let worn = WornLook {
+        sky,
+        sun: None,
+        post: steady_post(),
+        voxels: None,
+        water: WaterLook::default(),
+        shader: Some(LookShader { number: 7, values }),
+    };
+    world.insert_resource(worn);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue, "no shader 7 yet");
+    renderer.set_custom_shaders(CustomCode {
+        materials: CUSTOM_SHADERS.to_string(),
+        ui: String::new(),
+        look: LOOK_SHADERS.to_string(),
+    });
+    for _ in 0..600 {
+        run(&mut renderer, &world, &mut 0.0, 1);
+        match renderer.custom_shaders() {
+            CustomShaderState::Ready => break,
+            CustomShaderState::Failed(error) => panic!("the look shader did not compile: {error}"),
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let negative = renderer.read_pixels().unwrap().2;
+    keep_image("look shader negative.png", &negative);
+    let seen = at(&negative);
+    // The sky's negative, with no blue left by the tint: most red where it was least red.
+    assert!(seen[2] <= 2, "its property takes the blue out: {seen:?}");
+    assert!(seen[0] > seen[1] && seen[1] > 100, "the negative of a sky bluer than it is red: {seen:?} of {sky_blue:?}");
+    // Taken off, the picture is the level's own again.
+    world.remove_resource::<WornLook>();
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue);
+}
+
 /// A project's UI shader, compiled into the UI's shader as material shaders
 /// are into the scene's: a background it colours green, drawn as its own red
 /// background until it compiles.
@@ -6780,7 +6862,7 @@ float4 customUi(uint shader, uint first, UiInput input)
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [255, 0, 0], "its own background until the shader compiles");
 
-    renderer.set_custom_shaders(CustomCode { materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
+    renderer.set_custom_shaders(CustomCode { look: String::new(), materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
     for _ in 0..600 {
         run(&mut renderer, &world, &mut 0.0, 1);
         match renderer.custom_shaders() {

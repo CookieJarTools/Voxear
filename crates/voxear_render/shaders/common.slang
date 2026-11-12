@@ -459,6 +459,9 @@ struct LocalShadows
 };
 
 // Post-processing settings; mirrors GpuPost in src/gpu.rs.
+// How many properties a look shader's values hold (src/looks.rs's LOOK_VALUES).
+static const uint LOOK_VALUES = 8;
+
 struct Post
 {
     float bloomIntensity;
@@ -548,6 +551,11 @@ struct Post
     float3 bloomTint;
     // How dark auto exposure leaves dark scenes, 0 as bright as day, 1 as the eye sees them.
     float exposureNight;
+    // The look shader the finished picture is drawn with, by its number, 0 for none, and its properties' values
+    // (src/looks.rs's LookShader; look_custom.slang).
+    uint lookShader;
+    uint3 lookPad;
+    float4 lookValues[LOOK_VALUES];
 };
 
 static const uint SKY_GRADIENT = 0;

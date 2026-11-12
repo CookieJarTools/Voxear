@@ -1419,7 +1419,7 @@ fn shader(ui: &mut Ui, root: NodeId, game: &Game, path: &str) -> Option<(NodeId,
     if info.unlit {
         does.push("Unlit");
     }
-    for (has, name) in [(info.surface, "Surface"), (info.vertex, "Vertex"), (info.light, "Light"), (info.ui, "UI")] {
+    for (has, name) in [(info.surface, "Surface"), (info.vertex, "Vertex"), (info.light, "Light"), (info.ui, "UI"), (info.look, "Look")] {
         if has {
             does.push(name);
         }

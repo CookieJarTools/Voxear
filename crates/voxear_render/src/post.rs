@@ -660,6 +660,9 @@ impl PostProcess {
             camera_motion: 0.0,
             bloom_tint: linear(self.bloom.tint),
             exposure_night: self.exposure.night.clamp(0.0, 1.0),
+            look_shader: 0,
+            _look_pad: [0; 3],
+            look_values: [[0.0; 4]; crate::looks::LOOK_VALUES],
         }
     }
 }

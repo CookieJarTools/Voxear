@@ -836,6 +836,11 @@ pub struct GpuPost {
     /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)
     /// to 1 (as the eye sees them).
     pub exposure_night: f32,
+    /// The look shader the finished picture is drawn with, by its number,
+    /// 0 for none, and its properties' values (`looks::LookShader`).
+    pub look_shader: u32,
+    pub _look_pad: [u32; 3],
+    pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -1317,7 +1322,7 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 20;
+        let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>();
         assert_eq!(size_of::<GpuClouds>(), 80);

@@ -2013,6 +2013,7 @@ fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
         post: *world.resource::<PostProcess>().unwrap(),
         voxels: None,
         water: WaterLook { deep: Some([0.7, 0.05, 0.1]), ..WaterLook::default() },
+        shader: None,
     };
     world.insert_resource(worn);
     let wine = render(&mut renderer, &world, 8);

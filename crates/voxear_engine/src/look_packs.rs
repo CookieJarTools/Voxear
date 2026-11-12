@@ -47,7 +47,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::AssetKind;
 use voxear_ecs::World;
-use voxear_render::{BlockVoxels, Look, LookName, PostProcess, Sky, SunLook, WaterLook, WornLook};
+use voxear_render::{BlockVoxels, Look, LookName, LookShader, PostProcess, Sky, SunLook, WaterLook, WornLook};
 
 use crate::{
     content::Content,
@@ -105,6 +105,26 @@ pub struct LookPackFile {
     pub blocks: Option<BlocksLook>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub water: Option<WaterData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<ShaderData>,
+}
+
+/// A look shader of the game's that has the last word on the picture under
+/// a pack: a `.shader` asset with a `look` function, by reference, and
+/// beside it its properties' values by their names, each the shader's own
+/// where left out.
+///
+/// ```toml
+/// [shader]
+/// shader = "Shaders/Ink.shader"
+/// strength = 0.8
+/// paper = [0.96, 0.93, 0.85]
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShaderData {
+    pub shader: String,
+    #[serde(flatten)]
+    pub values: toml::Table,
 }
 
 fn look_pack_format() -> u32 {
@@ -227,7 +247,7 @@ impl LookPackFile {
             relief: blocks.relief.clamp(0.0, BlockVoxels::DEEPEST),
         });
         let water = self.water.map(|water| water.look()).unwrap_or_default();
-        Ok(WornLook { sky, sun, post, voxels, water })
+        Ok(WornLook { sky, sun, post, voxels, water, shader: None })
     }
 }
 
@@ -240,12 +260,15 @@ type Seen = (SkyData, Option<SunLook>, PostProcess);
 pub struct Wearing {
     pub reference: String,
     pub pack: LookPackFile,
+    /// The pack's look shader as a frame is drawn with it, found among the
+    /// project's shaders when the pack was put on.
+    pub shader: Option<LookShader>,
     seen: Option<Seen>,
 }
 
 impl Wearing {
     pub fn new(reference: &str, pack: LookPackFile) -> Self {
-        Self { reference: reference.to_string(), pack, seen: None }
+        Self { reference: reference.to_string(), pack, shader: None, seen: None }
     }
 }
 
@@ -266,7 +289,8 @@ pub fn update(world: &mut World) {
     if wearing.seen.as_ref() == Some(&now) {
         return;
     }
-    let worn = wearing.pack.worn(sky, sun, post);
+    let shader = wearing.shader;
+    let worn = wearing.pack.worn(sky, sun, post).map(|worn| WornLook { shader, ..worn });
     let reference = wearing.reference.clone();
     if let Some(wearing) = world.resource_mut::<Wearing>() {
         wearing.seen = Some(now);
@@ -307,8 +331,24 @@ pub fn wear(world: &mut World, content: &mut Content, reference: &str) -> Result
         return Ok(());
     }
     let pack = load(content, reference).with_context(|| format!("loading the look pack {reference}"))?;
-    world.insert_resource(Wearing::new(&lasting(content, reference), pack));
+    // Its shader is one of the game's own, compiled with them: found now, by its number among them.
+    let shader = match &pack.shader {
+        Some(named) => Some(look_shader(content, named).with_context(|| format!("the look pack {reference}"))?),
+        None => None,
+    };
+    world.insert_resource(Wearing { shader, ..Wearing::new(&lasting(content, reference), pack) });
     Ok(())
+}
+
+/// The look shader a pack names, among the project's shaders as they were
+/// last read.
+fn look_shader(content: &Content, named: &ShaderData) -> Result<LookShader> {
+    let found: crate::shaders::ShaderRef = match content.parse(&named.shader)?.guid() {
+        Some(guid) => crate::shaders::ShaderRef::Asset(guid),
+        None => named.shader.parse().map_err(|_| anyhow::anyhow!("`{}` is not a shader", named.shader))?,
+    };
+    crate::shaders::look_shader(content.shaders(), &found, &named.values)
+        .with_context(|| format!("its shader {}", named.shader))
 }
 
 /// What names a pack for as long as it is there: an asset by its GUID,
@@ -537,6 +577,20 @@ mod tests {
     }
 
     #[test]
+    fn a_pack_names_a_look_shader_of_the_games_with_its_properties_beside_it() {
+        let text = "[shader]\nshader = \"Shaders/Print.shader\"\nsteps = 4\npaper = [1.0, 0.9, 0.8]\n";
+        let named = pack(text).shader.expect("its shader");
+        assert_eq!(named.shader, "Shaders/Print.shader");
+        assert_eq!(named.values["steps"].as_integer(), Some(4));
+        assert_eq!(named.values["paper"].as_array().map(Vec::len), Some(3));
+        assert!(pack("format = 1").shader.is_none());
+        assert!(LookPackFile::parse("[shader]\nsteps = 4").is_err(), "which shader must be said");
+        // The pack's file is as it was when written back.
+        let again = LookPackFile::parse(&toml::to_string(&pack(text)).unwrap()).unwrap();
+        assert_eq!(again, pack(text));
+    }
+
+    #[test]
     fn a_pack_that_names_a_look_starts_from_it_in_place_of_the_levels_lighting() {
         let night = Look::of(LookName::NightRaid);
         let story = Look::of(LookName::Storybook);
@@ -569,7 +623,8 @@ mod tests {
                 && worn.sun == Some(golden.sun)
                 && sky_data(&worn.sky) == sky_data(&golden.sky)
                 && worn.voxels.is_none()
-                && worn.water == WaterLook::default();
+                && worn.water == WaterLook::default()
+                && file.shader.is_none();
             assert!(!same, "{key} changes how a level looks");
         }
         assert!(LookPackFile::builtin("gloomy").is_err());

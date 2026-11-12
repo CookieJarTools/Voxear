@@ -1033,7 +1033,7 @@ FragmentOut fragmentMain(VertexOut input)
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
 
-    float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+    float4 base = material.baseColor * sampleBaseColor(material, input.uv);
     bool custom = material.shader != STANDARD_SHADER;
     // A custom shader's surface is cut out by its own alpha, below.
     if (!custom && material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)

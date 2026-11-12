@@ -85,6 +85,8 @@ pub const MATERIAL_IMPOSTOR: u32 = 128;
 /// Displaced by its height map: diced finely enough to show it near the
 /// camera (see `dice`).
 pub const MATERIAL_DISPLACED: u32 = 256;
+/// Its base colour's pixels drawn sharp, each a square of one colour.
+pub const MATERIAL_PIXELS: u32 = 512;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]

@@ -12,6 +12,7 @@ mod alloc;
 mod ambient_occlusion;
 mod assets;
 mod atmosphere;
+mod box_model;
 mod bvh;
 mod capture;
 mod cooked;
@@ -87,6 +88,9 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
+pub use box_model::{
+    BoneRole, BoxBone, BoxHit, BoxLayer, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model,
+};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
@@ -114,7 +118,8 @@ pub use post::{
     Grading, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
-    MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
+    MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
+    PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
@@ -758,7 +763,7 @@ impl Renderer {
         self.assets.as_mut().expect("assets live until drop").set_material(&self.gpu, handle, desc)
     }
 
-    /// Loads a `.gltf`, `.glb` or `.fbx` file and returns its drawable pieces.
+    /// Loads a `.gltf`, `.glb`, `.fbx` or `.boxmodel` file and returns its drawable pieces.
     /// `path` is the model's project path, and `read` reads it and every file
     /// it names, from wherever the content lives.
     pub fn import_model(&mut self, path: &str, read: &mut ReadFile) -> Result<ImportedModel> {

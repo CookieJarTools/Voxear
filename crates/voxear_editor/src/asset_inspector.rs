@@ -406,7 +406,9 @@ impl AssetView {
         });
         let rows = part(ui, root, "Asset", "info");
         let guid = game.content.db().guid_of(&item.path).map(|g| g.to_string());
-        let mut info = vec![("Kind", kind_name(item.kind).to_string())];
+        let box_model = item.kind == ItemKind::Asset(AssetKind::Model) && voxear_render::is_box_model(&item.path);
+        let kind = if box_model { "Box Model" } else { kind_name(item.kind) };
+        let mut info = vec![("Kind", kind.to_string())];
         if !item.path.is_empty() {
             info.push(("Path", item.path.clone()));
         }
@@ -488,6 +490,7 @@ impl AssetView {
                 let icons = toml::from_str(&text).unwrap_or_default();
                 view.prompt_icons = Some(PromptIconsFields::new(ui, root, icons, game.content.db()));
             }
+            ItemKind::Asset(AssetKind::Model) if box_model => box_model_rows(ui, root, &file),
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
                 view.import = Some(ImportFields::model(ui, rows, &meta));
@@ -1020,6 +1023,22 @@ fn particle_effect(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     if effect.emitters.is_empty() {
         text_row(ui, rows, "Emitters", "None");
     }
+}
+
+/// A box model's size on its sheet and in the world, and how much it is
+/// made of.
+fn box_model_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
+    let rows = part(ui, root, "Box Model", "box");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let model = match voxear_render::BoxModel::parse(&text) {
+        Ok(model) => model,
+        Err(error) => return text_row(ui, rows, "Not read", &format!("{error:#}")),
+    };
+    let boxes: usize = model.bones.iter().map(|bone| bone.boxes.len()).sum();
+    text_row(ui, rows, "Scale", &format!("{} px per block", model.pixels_per_block));
+    text_row(ui, rows, "Sheet", &format!("{} × {} px", model.sheet.width, model.sheet.height));
+    text_row(ui, rows, "Bones", &model.bones.len().to_string());
+    text_row(ui, rows, "Boxes", &boxes.to_string());
 }
 
 fn text_row(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {

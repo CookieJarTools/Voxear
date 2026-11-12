@@ -1311,6 +1311,94 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - [x] the First-Person View: the camera in a body that is seen, with kick, glance and framing
 - [ ] blend shapes, state machines, blend trees and layers
 - [ ] GPU crowd search
+- **Box models**, for the blocky characters of block worlds, in parts: the asset; a window to build and paint one
+  in; bones made from its shape; motion made from how it moves; a raised second layer; walking in a block world;
+  clips keyed on a timeline.
+  - ~~**The asset:**~~ done: `.boxmodel` files (`voxear_render::box_model`: `BoxModel`, its `Sheet` of pixels kept in
+    the file as a palette, compressed, and `BoxBone`s each with `ModelBox`es whose faces are unfolded on the sheet or
+    placed one by one, mirrored, inflated, turned, or flat). `prepare_model` reads one into a `PreparedModel` (one
+    skinned mesh, each box bound whole to its bone; the bones its skeleton; the sheet its texture), so it is
+    `AssetKind::Model` and is placed, drawn, posed, previewed, imported again when its file changes and cooked as any
+    model. Sharp pixels: `MaterialDesc::pixels`, `MATERIAL_PIXELS`, `sampleBaseColor`; `COOKED_VERSION` 11. Editor: New
+    Box Model (a grey block on one bone), its kind and a Box Model section in the Inspector (Scale, Sheet, Bones,
+    Boxes), previews showing its face. A model imported again gives the Objs drawing it its bones as they now are
+    (`Game::reimport_model`), and a menu with more items than its window has room for keeps to the window and scrolls
+    (`Ui::place_menu`). Tests: files read back, palettes, refused files, the unfolded layout, faces wound and mapped the
+    right way round, boxes placed by their bones, flat and inflated boxes, the prepared model; the GPU drawing one with
+    each pixel one colour to its edge, from source and cooked, and a box following its posed bone; the engine reading
+    its bones headless, a scene's Obj getting them, and builds cooking it; the editor making one, showing it and
+    following its file to a new bone; a long menu scrolled to its last item. Manual: Box Models.
+  - ~~**The Model window:**~~ done: a `model` dock panel (`model_panel::ModelPanel`), opened by a double click on a
+    `.boxmodel`. A tree of bones with their boxes, to pick from and drag onto one another; the model on a floor of
+    blocks (`model_view::ModelView`), drawn as a preview with a camera of its own (`PreviewCamera`,
+    `PreviewOptions::camera`, up to `MAX_VIEW_SIZE` 1024 pixels) and cut to the view's shape, the camera turned by a
+    drag, moved by the middle button and brought nearer by the wheel; a click picks the box under it by a ray
+    (`BoxModel::pick`), and what is picked is outlined with an arrow an axis and, on a box, a knob a face, which
+    move and size it a whole pixel at a time. The bar adds a bone or a box (given free room on the sheet,
+    `free_place`), duplicates, mirrors across the body (`mirror_bone`, `mirrored_box`), deletes, and with Pivot
+    Only moves a bone's pivot alone (`move_pivot`). The part picked shows in the Inspector
+    (`box_part_inspector::BoxPartView`, `Inspector::show_box_part`). Its own undo and redo while it has the keys,
+    one drag one step; saved on let go, and Objs drawing the model follow (`editor/models.rs`). Tests: rays to
+    box, face and pixel; bones removed, hung elsewhere, copied and mirrored with nothing moving; pivots moved;
+    free room on the sheet; a view preview drawn where its camera projects; the view's rays and handles; the
+    editor opening, picking, dragging a handle, typing a size and a name, adding, mirroring, deleting and undoing,
+    with the file saved once let go. Manual: Box Models.
+  - ~~**Painting:**~~ done: the Model window's Paint mode. A press on the model paints the sheet's pixel the ray
+    meets (`BoxHit::pixel`), a drag every pixel passed over, and Symmetry the pixel across the body too; the pixel
+    under the pointer is outlined on its face (`BoxModel::pixel_corners`). The sheet shows flat beside the model
+    (`model_sheet::SheetView`), each pixel a square over a chequered ground, the faces' places outlined, painted
+    the same way. Pencil, Eraser, Fill (`Sheet::flood`, no further than the face) and Pick; the colour from a
+    picker or from the sheet's own colours (`Sheet::colors`); Lay Out (`BoxModel::lay_out`: every unfolded box
+    given room afresh with its pixels, shared pixels kept shared, placed faces left, the sheet doubling while too
+    small). A stroke is one step to undo; pixels alone changed upload the sheet behind the same material. Tests:
+    fills, a sheet's colours, faces' places, laying out; the editor painting on the model and the sheet, a drag
+    filling a row however fast, symmetry, fill, pick, erase, laying out and undoing each. Manual: Box Models.
+  - ~~**Bones from its shape:**~~ done: `BoxModel::make_bones` (`box_model/rig.rs`) takes the box most others
+    touch for the body, what stands on the ground under or beside it for legs, what hangs tall at its sides for
+    arms and flat for wings, the largest on or before it for the head, what trails it for the tail, and gives the
+    rest to the part nearest; each gets a bone pivoted where it meets the body, named by part and side, with a
+    `BoneRole` (kept in the file) for what animates it to go by. `add_joint` cuts a box across its longest side and
+    hangs the far half from a bone at the cut, each half showing the pixels it showed. Editor: Make Bones and Add
+    Joint in the bar, a bone's Role in the Inspector. Tests: a figure on two legs, a beast on four with head and
+    tail, a blob, wings, a knee and an elbow; the editor making bones, showing a role, cutting a leg and undoing.
+    Manual: Box Models.
+  - ~~**Motion from how it moves:**~~ done: `animation::MobMotion` (`mob_motion.rs`, `[obj.mob_motion]`, Add
+    Component ▸ Animation ▸ Mob Motion) poses a model each frame from how its Obj moved, with no clips. `MobPoser`
+    is the motion alone, from a skeleton, its bones' roles and a `MotionInput`: legs by gait (two in turn, four as
+    diagonal pairs, more as two sets) stepping by ground covered, lower halves bending as they come through, arms
+    against the legs, the body bobbing, leaning and rolling, the head turned to a point within its limit and not
+    at once, a tail sprung by turning, wings lifting, breathing at rest, an attack and a flinch over it all.
+    Roles reach it through the model: `PreparedModel`/`CookedModel`/`ImportedModel::roles` (`COOKED_VERSION` 12),
+    `Content::bone_roles`, `give_mob_bones`. The Model window's Motion mode shows it on the model, posed on the
+    CPU (`BoxModel::mesh_posed`), standing, walking or running. Tests: gaits, knees, steps matching ground
+    covered, look limit and lag, tail, attack and flinch; the engine walking a model from its file and from built
+    content; the editor showing it walk and putting it back. Manual: Mob Motion. Still to come with the block
+    world component: its C# side.
+  - ~~**A raised second layer:**~~ done: `ModelBox::layer` (`BoxLayer { skin, height }`, `[bones.boxes.layer]` in
+    the file), a second place on the sheet whose solid pixels are built standing out from the box's faces
+    (`box_model/layer.rs`): on the box grown by the layer's height, so faces' layers meet at its edges; a row of
+    pixels sharing one top; walls only where a solid pixel has nothing solid beside it, and none under. The mesh
+    carries each layer flat as well, as a second LOD whose error is the layer's height, so far off it is drawn as
+    a picture. Laying out, mirroring and cutting a joint take layers with them; `layer_pixel` gives the layer's
+    pixel over a face's. Editor: Layer and Height on a box in the Inspector, Layer in the paint bar sending
+    strokes to the layer of the box under the pointer, layers' places outlined on the sheet. Tests: a block's
+    bounds, winding and pixels, shared tops and walls, a flat layer, the far level, the file; room for a layer
+    and its pixels over the box's; the editor adding a layer, painting it raised, changing its height and
+    undoing. Manual: Box Models.
+  - ~~**In a block world:**~~ done: `block_mob::BlockMob` (`[obj.block_mob]`, Add Component ▸ Terrain ▸ Block Mob,
+    which adds the Character Controller it walks with) walks its Obj through a world of blocks: to a point, after
+    an Obj, or wandering near where it began (`MobGoal`). Ways are found on the blocks
+    (`voxear_terrain::blocks::path::find_path`: a block at a time, up one, down three, as many clear over the
+    ground as it is tall, water waded a block deep and gone round deeper, a search that gives up after so many
+    places), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
+    step a block high; it turns to face its way, falls, and swims up in deep water. It runs before animation, so
+    a Mob Motion on the same Obj walks the model. C#: `Obj.BlockMob`/`AddBlockMob` (`MoveTo`, `Follow`, `Wander`,
+    `Stop`, `Arrived`, `Goal`, `Speed`, `TurnSpeed`, `Swims`) and `Obj.MobMotion`/`AddMobMotion` (`LookAt`,
+    `LookAhead`, `Attack`, `Hurt`, `MoveAs`, its amounts); native API 77. Tests: ways over a floor, round a wall,
+    up a step, down a ledge, through a ford; a mob standing on a level's blocks, walking to a point with its legs
+    swinging, climbing a block, going round a wall, wandering within its reach; a script adding and telling
+    both. Manual: Block Mobs, Mob Motion.
+  - [ ] **Clips keyed on a timeline**
 
 ## Gameplay kits: game-ready systems
 

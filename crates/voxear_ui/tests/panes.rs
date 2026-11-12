@@ -474,6 +474,25 @@ fn menus_open_at_the_pointer_choose_and_stay_on_screen() {
     assert!(x + w <= WIDTH as f32 && y + h <= HEIGHT as f32, "on screen: {x}, {y}, {w} by {h}");
     ui.key_down(Key::Escape);
     assert!(!ui.is_menu_open(owner), "Escape closes it");
+
+    // With more items than the screen has room for, it keeps to the screen and the wheel reaches the last.
+    let many: Vec<MenuItem> = (0..60).map(|index| MenuItem::new(&format!("Item {index}"))).collect();
+    ui.open_menu(owner, (100.0, 300.0), &many);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let layer = *ui.children(ui.root()).last().unwrap();
+    let menu = ui.children(layer)[0];
+    let [_, y, _, h] = ui.rect(menu);
+    assert!(y >= 0.0 && y + h <= HEIGHT as f32, "on screen: {y}, {h} high");
+    let last = *ui.children(menu).last().unwrap();
+    assert!(ui.rect(last)[1] > HEIGHT as f32, "its last item starts out of sight");
+    ui.pointer_move(120.0, 300.0);
+    ui.pointer_scroll(0.0, 100_000.0);
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    let [_, top, _, height] = ui.rect(last);
+    assert!(top + height <= y + h + 0.5, "scrolled to: {top} + {height} in {y} + {h}");
+    assert!(height > 10.0, "its items keep their height: {height}");
+    click(&mut ui, last);
+    assert_eq!(ui.menu_choice(owner), Some(59));
 }
 
 #[test]

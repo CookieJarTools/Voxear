@@ -4177,6 +4177,7 @@ dependencies = [
  "gdeflate",
  "gltf",
  "image",
+ "lz4_flex",
  "meshopt",
  "png",
  "raw-window-handle",

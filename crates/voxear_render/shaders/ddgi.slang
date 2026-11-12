@@ -58,7 +58,7 @@ bool passesThrough(uint id, uint primitive, float2 barycentrics)
     float2 c = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 2]].uv;
     float2 uv = a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x + c * barycentrics.y;
     float alpha = material.baseColor.a
-        * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0).a;
+        * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], baseColorUv(material, uv), 0.0).a;
     return alpha < material.alphaCutoff;
 }
 

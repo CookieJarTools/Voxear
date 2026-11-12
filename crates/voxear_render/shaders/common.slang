@@ -202,6 +202,8 @@ static const uint MATERIAL_GLOW_SHIFT = 5;
 // A plant's impostor, its base colour and normal textures its atlas (impostor.slang).
 static const uint MATERIAL_IMPOSTOR = 128;
 static const uint MATERIAL_DISPLACED = 256;
+// Its base colour's pixels drawn sharp, each a square of one colour (baseColorUv).
+static const uint MATERIAL_PIXELS = 512;
 
 struct Material
 {
@@ -1366,6 +1368,28 @@ float3 normalizeOr(float3 v, float3 otherwise)
 float4 sampleTexture(uint index, float2 uv)
 {
     return textures[NonUniformResourceIndex(index)].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
+}
+
+// Where a material's base colour is read for `uv`: the middle of the pixel `uv` falls in for one drawn with
+// sharp pixels, so each of its pixels is a square of one colour however near; `uv` itself for any other.
+float2 baseColorUv(Material material, float2 uv)
+{
+    if ((material.flags & MATERIAL_PIXELS) == 0)
+    {
+        return uv;
+    }
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    float2 size = float2(width, height);
+    return (floor(uv * size) + 0.5) / size;
+}
+
+// A material's base colour texture at `uv`. Sharp pixels are still averaged where many of them fall in one
+// of the screen's, as `uv` itself slopes, so a far model does not shimmer.
+float4 sampleBaseColor(Material material, float2 uv)
+{
+    return textures[NonUniformResourceIndex(material.baseColorTexture)].SampleGrad(
+        samplers[SAMPLER_LINEAR_REPEAT], baseColorUv(material, uv), ddx(uv), ddy(uv));
 }
 
 // A triangle that covers the screen, from three vertex ids and no buffers.

@@ -95,6 +95,9 @@ pub struct MaterialDesc {
     pub normal_scale: f32,
     pub emissive_texture: Option<TextureId>,
     pub alpha_cutoff: Option<f32>,
+    /// Its base colour's pixels drawn sharp however near, each a square of
+    /// one colour, as a box model's are, rather than smoothed into the next.
+    pub pixels: bool,
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground's own look; 0 for not at all.
     pub ground_blend: f32,
@@ -154,6 +157,7 @@ impl Default for MaterialDesc {
             normal_scale: 1.0,
             emissive_texture: None,
             alpha_cutoff: None,
+            pixels: false,
             ground_blend: 0.0,
             foliage: false,
             glass: false,
@@ -941,6 +945,7 @@ impl Assets {
             flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
+                | if desc.pixels { crate::gpu::MATERIAL_PIXELS } else { 0 }
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }

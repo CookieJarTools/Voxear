@@ -1,6 +1,6 @@
 //! Biomes: kinds of country, each a `.biome` file. A biome says where it
-//! lies, by how warm and wet the world is there and how high over the sea,
-//! and what the ground there is made of: the blocks on top, under them and
+//! lies, by how warm and wet the world is there, how high over the sea and
+//! how far sunk under the land round about, and what the ground there is made of: the blocks on top, under them and
 //! deep down, on steep ground and along the shore. A world's generator
 //! gives the climate; the world's biomes ([`Biomes`]) say which biome each
 //! place is.
@@ -10,6 +10,7 @@
 //! temperature = [22.0, 45.0]     # °C
 //! humidity = [0.0, 0.25]         # 0 dry to 1 wet
 //! height = [0.0, 400.0]          # metres over the sea; left out for any
+//! sunk = [40.0, 1000.0]          # metres under the land round about: chasm floors; left out for any
 //!
 //! [ground]
 //! top = "Blocks/Sand.block"
@@ -27,8 +28,9 @@
 //! the world's climate strays (so a degree is not weighed against a tenth
 //! of wetness as it stands). Among biomes a place is equally within, one
 //! that keeps to a height wins, so peaks stand over whatever grows below
-//! them, and then the narrowest: a small oasis listed with a wide desert
-//! shows inside it. Borders wander: the climate is read a little off, by noise, so no
+//! them, and one that keeps to sunk ground before one that does not, so a
+//! chasm's floor grows its own; and then the narrowest: a small oasis
+//! listed with a wide desert shows inside it. Borders wander: the climate is read a little off, by noise, so no
 //! border is a contour of temperature and none runs straight.
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +53,11 @@ pub struct BiomeDef {
     /// How high over the sea, in metres; none for any height.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<[f32; 2]>,
+    /// How far under the land round about its ground lies, in metres, from
+    /// and to, as the generator's Sunk says: the floors of chasms and
+    /// caverns. None for any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sunk: Option<[f32; 2]>,
     /// What its ground is made of.
     pub ground: BiomeGround,
 }
@@ -62,6 +69,7 @@ impl Default for BiomeDef {
             temperature: [5.0, 22.0],
             humidity: [0.3, 0.7],
             height: None,
+            sunk: None,
             ground: BiomeGround::default(),
         }
     }
@@ -128,7 +136,8 @@ impl BiomeDef {
         let warmth = Self::outside(self.temperature, climate.temperature, spreads.temperature);
         let wetness = Self::outside(self.humidity, climate.humidity, spreads.humidity);
         let height = self.height.map_or(0.0, |range| Self::outside(range, climate.above_sea, spreads.height));
-        warmth * warmth + wetness * wetness + height * height
+        let sunk = self.sunk.map_or(0.0, |range| Self::outside(range, climate.sunk, spreads.sunk));
+        warmth * warmth + wetness * wetness + height * height + sunk * sunk
     }
 
     /// How much of the climate its ranges take in: the narrower, the less.
@@ -136,16 +145,20 @@ impl BiomeDef {
         let span = |range: [f32; 2], spread: f32| ((range[1] - range[0]).abs() / spread.max(1e-6)).min(8.0);
         // One that keeps to a height comes before any that does not: peaks over whatever grows below them.
         let height = self.height.map_or(1000.0, |range| span(range, spreads.height));
-        span(self.temperature, spreads.temperature) * span(self.humidity, spreads.humidity) * height
+        // And one that keeps to sunk ground before any that does not: a chasm's floor grows its own.
+        let sunk = self.sunk.map_or(1000.0, |range| span(range, spreads.sunk));
+        span(self.temperature, spreads.temperature) * span(self.humidity, spreads.humidity) * height * sunk
     }
 }
 
-/// A place's climate: how warm, how wet, and how high over the sea.
+/// A place's climate: how warm, how wet, how high over the sea, and how
+/// far sunk under the land round about.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
     pub temperature: f32,
     pub humidity: f32,
     pub above_sea: f32,
+    pub sunk: f32,
 }
 
 /// What one share of each measure is, for weighing them against each other.
@@ -154,6 +167,7 @@ struct Spreads {
     temperature: f32,
     humidity: f32,
     height: f32,
+    sunk: f32,
 }
 
 /// A world's biomes, in the order it lists them, and how its borders
@@ -175,7 +189,7 @@ impl Biomes {
     /// from `seed`.
     pub fn new(list: Vec<BiomeDef>, temperature_range: f32, humidity_range: f32, seed: u32) -> Self {
         let spreads =
-            Spreads { temperature: temperature_range.max(1.0), humidity: humidity_range.max(0.05), height: 200.0 };
+            Spreads { temperature: temperature_range.max(1.0), humidity: humidity_range.max(0.05), height: 200.0, sunk: 40.0 };
         Self { list, spreads, wander: 0.12, wander_size: 48.0, seed: seed ^ 0xB10E_5EED }
     }
 
@@ -225,6 +239,7 @@ impl Biomes {
             temperature: climate.temperature + off(1) * self.spreads.temperature,
             humidity: climate.humidity + off(2) * self.spreads.humidity,
             above_sea: climate.above_sea,
+            sunk: climate.sunk,
         })
     }
 }
@@ -316,6 +331,12 @@ impl WorldBiomes {
         self.blocks.iter().any(|blocks| blocks.steep != AIR)
     }
 
+    /// Whether any of them keeps to sunk ground, so how far the ground is
+    /// sunk is worth asking.
+    pub fn any_sunk(&self) -> bool {
+        self.biomes.list().iter().any(|biome| biome.sunk.is_some())
+    }
+
     /// The blocks of the biome the place at `(x, z)` is, with `climate`
     /// there; none where the world lists no biomes.
     pub fn at(&self, x: f32, z: f32, climate: Place) -> Option<&BiomeBlocks> {
@@ -358,7 +379,7 @@ mod tests {
     }
 
     fn place(temperature: f32, humidity: f32, above_sea: f32) -> Place {
-        Place { temperature, humidity, above_sea }
+        Place { temperature, humidity, above_sea, sunk: 0.0 }
     }
 
     #[test]
@@ -396,6 +417,23 @@ mod tests {
         assert_eq!(biomes.of(place(15.0, 0.7, 1200.0)), Some(4));
         assert_eq!(biomes.of(place(15.0, 0.7, 850.0)), Some(1));
         assert_eq!(Biomes::new(Vec::new(), 15.0, 0.3, 1).of(place(0.0, 0.5, 0.0)), None);
+    }
+
+    #[test]
+    fn a_biome_kept_to_sunk_ground_is_a_chasms_floor_and_nowhere_else() {
+        let forest = biome([8.0, 22.0], [0.4, 1.0], None);
+        let desert = biome([22.0, 45.0], [0.0, 0.25], None);
+        let hollow = BiomeDef { sunk: Some([40.0, 2000.0]), ..biome([-40.0, 45.0], [0.0, 1.0], None) };
+        let biomes = Biomes::new(vec![forest, desert, hollow], 15.0, 0.3, 1);
+        let sunk = |sunk: f32, temperature: f32| Place { sunk, ..place(temperature, 0.6, 20.0) };
+        // Down a chasm, whatever the climate over it; on the land over it, and part way down, the land's own.
+        assert_eq!(biomes.of(sunk(120.0, 15.0)), Some(2));
+        assert_eq!(biomes.of(sunk(60.0, 35.0)), Some(2));
+        assert_eq!(biomes.of(sunk(0.0, 15.0)), Some(0));
+        assert_eq!(biomes.of(sunk(10.0, 15.0)), Some(0));
+        let text = biomes.list()[2].to_text();
+        assert!(text.contains("sunk"), "{text}");
+        assert_eq!(BiomeDef::parse(&text).unwrap(), biomes.list()[2]);
     }
 
     #[test]

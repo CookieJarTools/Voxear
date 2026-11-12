@@ -251,6 +251,84 @@ mod tests {
     }
 
     #[test]
+    fn a_chasms_floor_takes_the_biome_kept_to_sunk_ground_and_its_roof_the_lands() {
+        use crate::generate::{
+            BiomeBlocks, BiomeDef, Biomes, Graph, NodeKind, WorldBiomes,
+            nodes::{ChasmKind, Chasms, Constant, Output, Roof},
+        };
+        // Flat land 100 m up, sinkholes cut 80 m and more into it, half roofed over at the land's height.
+        let mut graph = Graph::default();
+        let land = graph.add(NodeKind::Constant(Constant { value: 100.0 }), [0.0; 2]);
+        let chasms = Chasms {
+            shape: ChasmKind::Sinkholes,
+            often: 0.9,
+            width_from: 70.0,
+            width_to: 100.0,
+            depth_from: 80.0,
+            depth_to: 90.0,
+            floor: 0.0,
+            ..Chasms::default()
+        };
+        let chasms = graph.add(NodeKind::Chasms(chasms), [200.0, 0.0]);
+        let roof = graph
+            .add(NodeKind::Roof(Roof { cover: 1.0, openings: 0.3, pillars: 0.0, ..Roof::default() }), [400.0, 0.0]);
+        let output = graph.add(NodeKind::Output(Output::default()), [600.0, 0.0]);
+        assert!(graph.connect(land, 0, chasms, Chasms::GROUND));
+        assert!(graph.connect(chasms, Chasms::HEIGHT, output, Output::HEIGHT));
+        assert!(graph.connect(chasms, Chasms::SUNK, output, Output::SUNK));
+        assert!(graph.connect(chasms, Chasms::RIM, roof, Roof::TOP));
+        assert!(graph.connect(roof, 0, output, Output::VOLUME));
+        let world = WorldGen::new(3, 1.0, -50.0, graph);
+        assert!(world.faults().is_empty(), "{:?}", world.faults());
+        let mut file = BlockFile {
+            block_size: 2.0,
+            ground: Ground { size: [128, 128], ..Ground::default() },
+            generate: Some(BlockGenerate { position: [0.0, 0.0], bottom: -20, sea: AIR, ..BlockGenerate::default() }),
+            ..BlockFile::default()
+        };
+        // Blocks 1 to 3 are the world's grass, dirt and stone; 4 is moss and 5 fern.
+        for name in ["Moss", "Fern"] {
+            file.blocks.push(BlockKind::colored(name, [0.5; 3]));
+        }
+        let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let hollow = BiomeDef { sunk: Some([40.0, 2000.0]), ..land.clone() };
+        let blocks =
+            vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }, BiomeBlocks { top: 5, ..BiomeBlocks::default() }];
+        let biomes = Biomes::new(vec![land, hollow], 15.0, 0.3, world.seed()).wandering(0.0, 48.0);
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { biomes, blocks }));
+        let map = file.make_ground(Some(&world));
+        let (mut floors, mut roofs, mut open) = (0, 0, 0);
+        for z in 0..128 {
+            for x in 0..128 {
+                let (px, pz) = ((x as f32 + 0.5) * 2.0, (z as f32 + 0.5) * 2.0);
+                let height = world.height_at(px, pz);
+                // Down the column: the first ground under the sky, and the first under that ground's air.
+                let solid: Vec<i32> = (-20..80).rev().filter(|&y| map.get([x, y, z]) != AIR).collect();
+                let top = solid[0];
+                if height > 99.0 {
+                    assert_eq!(map.get([x, top, z]), 4, "the land at ({x}, {z})");
+                    continue;
+                }
+                if height > 30.0 {
+                    continue;
+                }
+                let floor = (-20..top).rev().find(|&y| map.get([x, y, z]) != AIR && map.get([x, y + 1, z]) == AIR);
+                if top > 40 {
+                    // Roofed: moss on the roof as on the land, fern on the floor under it.
+                    assert_eq!(map.get([x, top, z]), 4, "a roof at ({x}, {z})");
+                    let floor = floor.expect("a floor under the roof");
+                    assert_eq!(map.get([x, floor, z]), 5, "a cavern's floor at ({x}, {z})");
+                    (roofs, floors) = (roofs + 1, floors + 1);
+                } else {
+                    assert_eq!(map.get([x, top, z]), 5, "an open floor at ({x}, {z})");
+                    (open, floors) = (open + 1, floors + 1);
+                }
+            }
+        }
+        assert!(floors > 300 && roofs > 50 && open > 20, "{floors} floors, {roofs} roofed, {open} open");
+    }
+
+    #[test]
     fn generated_ground_follows_its_generator_snowed_up_high_and_hollowed_by_caves() {
         let (file, world) = generated(0.0, 0.0);
         let map = file.make_ground(Some(&world));

@@ -388,6 +388,10 @@ impl WorldGen {
         if let Some(rock) = &compiled.rock {
             bytes.extend(rock.hash.to_le_bytes());
         }
+        if let Some(sunk) = &compiled.sunk {
+            bytes.extend(0x5u8.to_le_bytes());
+            bytes.extend(sunk.hash.to_le_bytes());
+        }
         let hash = crate::layers::stable_hash(&bytes);
         Self {
             seed,
@@ -537,6 +541,22 @@ impl WorldGen {
         let mut mask = vec![0.0; count];
         rock.run(count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }, &mut [&mut mask]);
         Some(mask.into_iter().map(|mask| mask > 0.5).collect())
+    }
+
+    /// How far under the land round about ground `heights[i]` metres high
+    /// at each `(xs[i], zs[i])` lies, in metres, from what is wired into the
+    /// Output's Sunk: as far as the generator's own ground there is sunk,
+    /// less however much higher the height asked about stands, so ground
+    /// standing over a chasm's floor, a roof over it, is sunk the less.
+    /// None where nothing is wired in.
+    pub fn sunk(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Option<Vec<f32>> {
+        let sunk = self.made.compiled.sunk.as_ref()?;
+        let count = xs.len().min(zs.len()).min(heights.len());
+        let mut own = vec![0.0; count];
+        self.heights(&xs[..count], &zs[..count], &mut own);
+        let mut sunk_by = vec![0.0; count];
+        sunk.run(count, Givens { x: xs, z: zs, ground: &own, ..Givens::default() }, &mut [&mut sunk_by]);
+        Some((0..count).map(|at| (sunk_by[at] - (heights[at] - own[at]).max(0.0)).max(0.0)).collect())
     }
 
     /// What every output of every node makes at each `(xs[i], zs[i])`, in

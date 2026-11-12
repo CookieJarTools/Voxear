@@ -88,6 +88,8 @@ pub(super) fn columns_at(
     // Where the generator says the ground is bare rock, a column is its bottom block to the top.
     let rock = world.rock(xs, zs, heights);
     let bare = |at: usize| rock.as_ref().is_some_and(|rock| rock[at]);
+    // How far the ground is sunk under the land round about, where the generator says and a biome asks.
+    let sunk = placed.filter(|placed| placed.any_sunk()).and_then(|_| world.sunk(xs, zs, heights));
     let column = |at: usize| -> Column {
         let (height, climate) = (heights[at], (warmth[at], wetness[at]));
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
@@ -95,7 +97,8 @@ pub(super) fn columns_at(
         });
         // The blocks of the biome the place is, each left to the world's own where the biome names none.
         let above_sea = height - sea_level;
-        let place = crate::generate::biomes::Place { temperature: climate.0, humidity: climate.1, above_sea };
+        let sunk = sunk.as_ref().map_or(0.0, |sunk| sunk[at]);
+        let place = crate::generate::biomes::Place { temperature: climate.0, humidity: climate.1, above_sea, sunk };
         let biome = placed.and_then(|placed| placed.at(xs[at], zs[at], place));
         let (biome_top, biome_under) =
             biome.map_or((AIR, AIR), |blocks| blocks.at(above_sea, slopes.get(at).copied().unwrap_or(0.0)));

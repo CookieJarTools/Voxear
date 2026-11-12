@@ -553,6 +553,8 @@ pub(crate) struct Compiled {
     pub volume: Option<Voxels>,
     /// A mask of where the ground is bare rock, where one is wired in.
     pub rock: Option<Program>,
+    /// How far under the land round about the ground lies, where it is wired in.
+    pub sunk: Option<Program>,
 }
 
 /// A graph's Volume, compiled.
@@ -688,21 +690,24 @@ pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> C
         }
     }
     let volume = voxels(graph, world, faults);
-    // Where the ground is bare rock, on ground it is given: for a graph with a mask wired in for it.
-    let rock = output.filter(|output| graph.link_into(*output, Output::ROCK).is_some()).and_then(|output| {
+    // Where the ground is bare rock, and how far it is sunk, on ground it is given: for a graph with them wired in.
+    let mut wired = |input: usize| {
+        let output = output.filter(|output| graph.link_into(*output, input).is_some())?;
         let mut cx = Compiler::new(graph, world, true);
         cx.ground_from = graph.link_into(output, Output::HEIGHT).map(|link| (link.from, link.output));
         let at = cx.places();
-        let mask = cx.input(output, Output::ROCK, at)?;
-        let (rock, found) = cx.finish(&[mask]);
+        let field = cx.input(output, input, at)?;
+        let (program, found) = cx.finish(&[field]);
         for fault in found {
             if !faults.contains(&fault) {
                 faults.push(fault);
             }
         }
-        Some(rock)
-    });
-    Compiled { height, climate, volume, rock }
+        Some(program)
+    };
+    let rock = wired(Output::ROCK);
+    let sunk = wired(Output::SUNK);
+    Compiled { height, climate, volume, rock, sunk }
 }
 
 /// A program making every output of every node of `graph` at its places,

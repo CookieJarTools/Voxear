@@ -13,6 +13,10 @@
 //! half, a world of blocks leaves the column's top and under layers off
 //! and shows its bottom block, so walls and crags are rock and not striped
 //! with soil. Wire a Slope Mask into it, or a Plateaus node's Walls.
+//!
+//! Its Sunk is how far under the land round about the ground lies, in
+//! metres: a Chasms node's Sunk, say. A world's biomes can keep to ground
+//! sunk so far, so a chasm's floor or a cavern's grows its own.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +37,7 @@ impl Output {
     pub const HUMIDITY: usize = 2;
     pub const VOLUME: usize = 3;
     pub const ROCK: usize = 4;
+    pub const SUNK: usize = 5;
 }
 
 const INPUTS: &[Port] = &[
@@ -41,6 +46,7 @@ const INPUTS: &[Port] = &[
     Port::field("humidity", "Humidity"),
     Port::volume("volume", "Volume"),
     Port::field("rock", "Rock"),
+    Port::field("sunk", "Sunk"),
 ];
 
 impl Kind for Output {

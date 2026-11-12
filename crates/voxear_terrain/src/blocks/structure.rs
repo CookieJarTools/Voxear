@@ -1484,7 +1484,8 @@ impl Ground<'_> {
             (self.position[0] + (x as f32 + 0.5) * self.size, self.position[1] + (z as f32 + 0.5) * self.size);
         let height = self.world.height_at(px, pz);
         let (temperature, humidity) = self.world.climate(px, pz, height);
-        biomes.at(px, pz, Place { temperature, humidity, above_sea: height - self.world.sea_level() })
+        let sunk = sunk_at(self.world, biomes, [px, pz], height);
+        biomes.at(px, pz, Place { temperature, humidity, above_sea: height - self.world.sea_level(), sunk })
     }
 
     /// Whether the ground in column `(x, z)` lies under its generator's sea.
@@ -1495,6 +1496,15 @@ impl Ground<'_> {
         );
         height <= self.world.sea_level()
     }
+}
+
+/// How far ground `height` metres high at `at` is sunk under the land round
+/// about, where any of `biomes` asks.
+fn sunk_at(world: &WorldGen, biomes: &Biomes, at: [f32; 2], height: f32) -> f32 {
+    if !biomes.list().iter().any(|biome| biome.sunk.is_some()) {
+        return 0.0;
+    }
+    world.sunk(&[at[0]], &[at[1]], &[height]).map_or(0.0, |sunk| sunk[0])
 }
 
 /// Builds `structures` into the chunks of chunk column `[cx, cz]` of a world
@@ -1532,7 +1542,8 @@ pub fn build(
         let above_sea = height - world.sea_level();
         let biome = biomes.and_then(|biomes| {
             let (temperature, humidity) = world.climate(site.at[0], site.at[1], height);
-            biomes.at(site.at[0], site.at[1], Place { temperature, humidity, above_sea })
+            let sunk = sunk_at(world, biomes, site.at, height);
+            biomes.at(site.at[0], site.at[1], Place { temperature, humidity, above_sea, sunk })
         });
         structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b))
     };

@@ -13,12 +13,12 @@ A room can be worked out by the generator from a few numbers, so every room of a
 | Rule | What it does |
 | --- | --- |
 | Size, Largest | How wide a room is, from and to, in metres. Each room takes a width between the two |
-| Shapes | How many round shapes a room is joined from: balls, squashed balls and domes that overlap and run together into one hollow. One is a plain chamber; more make alcoves and bays |
-| Height | How high it is, in metres |
-| Roughness | How far its walls are pushed in and out, in metres. Roughness never closes a room or its exits: walls come in only so far, which the room works out from its own size |
-| Floor | How flat its floor is, from 0 to 1. At 1 a level floor through its lowest third; at 0 the bowl its shapes leave |
-| Pillars | How many pillars stand from floor to roof, at most. None is set in the way to an exit |
-| Hanging Rock | How many rocks hang from its roof. They always leave standing room under them |
+| Shapes | How many round shapes a room is joined from: balls, squashed balls and domes that overlap and run together into one hollow, stacked up as well as out. One is a plain chamber; more make alcoves, raised bays and domes over a room's sides, some higher than the room and some lower |
+| Height | How high its middle is from floor to roof, in metres |
+| Roughness | How far its walls are pushed in and out, in metres: in lumps a few metres across, with detail a block or two across over them. Roughness never closes a room or its exits: walls come in only so far, which the room works out from its own size |
+| Floor | How flat its floor is, from 0 to 1. At 1 a level floor through its lowest third. Under 1 the floor rolls and steps up twice, a block a step once it is well under, by no more than a quarter of the room's height. At 0 it is the bowl its shapes leave |
+| Pillars | How many pillars stand from floor to roof, at most: from slim columns to masses of rock with a waist. None is set in the way to an exit, so a small room may have none |
+| Hanging Rock | How many rocks hang from its roof, from spikes to broad bosses. They always leave standing room under them |
 | Ledges | How many ledges lie against its walls: raised, level ground to climb onto |
 | Exits | How many exits it offers tunnels |
 | Exits Apart | How far apart round the room its exits are kept, from 0, wherever they fall, to 1, spread as evenly as they go |
@@ -65,9 +65,9 @@ Open the generator's graph (see [[Generator Graphs]]) and add **Cave Network**, 
 | Row | What it does |
 | --- | --- |
 | Layout | **Endless** or **Level**, below |
-| Spacing | How far apart rooms lie, in metres. Never less than the largest room and a tunnel's bends need |
+| Spacing | How far apart rooms lie, in metres. Never less than the largest prefab room and a tunnel's bends need. Rooms made by rules may reach into the regions beside theirs, so with a Spacing near their size they meet now and then and tunnels are short |
 | Depth | How far under the ground the rooms' floors lie, in metres |
-| Tunnel Width, Widest | How wide tunnels are, from and to, in metres. Each tunnel takes a width between the two. Their floors are level across |
+| Tunnel Width, Widest | How wide tunnels are, from and to, in metres. Each tunnel takes a width between the two, swells and narrows along its way, and opens out where it meets a room. Their floors are level across |
 | Wander | How far tunnels stray from the straight way, from 0 to 1 |
 | Slope Limit | The steepest a tunnel climbs. One that would be steeper winds further, so it is longer and gentler, as far as there is room between its rooms. 90° is no limit |
 | Branches | How many tunnels have a dead end off them, from 0 to 1 |
@@ -98,7 +98,7 @@ Any part of the world is made by itself and meets what is made beside it, as far
 
 One bounded cave, laid out once from the seed: a main path of **Main Rooms** that never crosses itself, and **Side Rooms** off it, each a dead end or the start of one. Every room is joined by a tunnel to the room it was reached from, so all of it can be walked from the first room; **Loops** joins some rooms that lie side by side as well. The first room lies `Depth` under the ground over it, and the others within half of `Depth` above or below.
 
-The **Caves** preset is caves without end made wholly by rules: rocky hills over halls with pillars and ledges and smaller chambers between, winding tunnels of many widths, ways round and dead ends, with **Height**, **Depth**, **Loops** and **Entrances** as rows.
+The **Caves** preset is caves without end made wholly by rules: rocky hills over halls 40 to 60 m across and over 20 m high, smaller chambers between them, near enough that rooms meet now and then, winding tunnels of many widths, ways round and dead ends, with **Height**, **Depth**, **Loops** and **Entrances** as rows.
 
 A level wants rock to be carved from. The **Cave Level** preset is that: level rock with one cave in it, its **Height**, **Rooms**, **Side Rooms** and **Depth** as rows. Make a generator, pick Cave Level as its Preset, and give it to a Block World whose ground reaches round the level and down past it.
 

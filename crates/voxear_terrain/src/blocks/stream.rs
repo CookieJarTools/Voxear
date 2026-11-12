@@ -49,7 +49,8 @@ use super::{
 };
 use crate::generate::WorldGen;
 
-/// How many chunk columns are made at once in the background, at most.
+/// How many chunk columns are made at once in the background, at most,
+/// until the streamer is told otherwise (see `WorldBudget::columns`).
 const MOST_MAKING: usize = 24;
 
 /// The most rings of coarser chunks a world draws.
@@ -173,6 +174,9 @@ pub struct BlockStreamer {
     asked: HashSet<(u32, [i32; 2])>,
     waiting: usize,
     making_now: Arc<AtomicUsize>,
+    /// How many columns it makes at once, at most: their blocks or their
+    /// faces. Changed as it streams, it takes hold from the next update.
+    pub at_once: usize,
     send: mpsc::Sender<Finished>,
     finished: Mutex<mpsc::Receiver<Finished>>,
 }
@@ -196,6 +200,7 @@ impl Default for BlockStreamer {
             asked: HashSet::new(),
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
+            at_once: MOST_MAKING,
             send,
             finished: Mutex::new(finished),
         }
@@ -487,7 +492,7 @@ impl BlockStreamer {
         }
         wanted.sort_by_key(|(_, _, away)| *away);
         joins.sort_by_key(|(_, _, away)| *away);
-        let mut room = MOST_MAKING.saturating_sub(self.making_now.load(Ordering::Acquire));
+        let mut room = self.at_once.max(1).saturating_sub(self.making_now.load(Ordering::Acquire));
         // Faces first: they are what shows, and are quick beside blocks.
         let joined = joins.len().min(room);
         self.waiting = wanted.len().saturating_sub(room - joined) + (joins.len() - joined);
@@ -689,6 +694,50 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         panic!("never settled");
+    }
+
+    #[test]
+    fn a_world_makes_no_more_columns_at_once_than_its_budget_which_takes_hold_as_it_streams() {
+        let making = making();
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        // Low: two at once, and never more, however many columns want making.
+        let mut streamer = BlockStreamer { at_once: 2, ..BlockStreamer::default() };
+        let step = |streamer: &mut BlockStreamer, world: &mut BlockWorld, base: &mut _, pending: &mut _| {
+            streamer.update(world, base, pending, making.clone(), (100.0, 600.0), [10.0, 10.0]);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            streamer.making_now.load(Ordering::Acquire)
+        };
+        let mut most = 0;
+        for _ in 0..60 {
+            let now = step(&mut streamer, &mut world, &mut base, &mut pending);
+            assert!(now <= 2, "{now} columns at once on Low");
+            most = most.max(now);
+        }
+        assert_eq!(most, 2, "two at once");
+        assert!(!streamer.settled() && world.blocks.len() > 0, "some made, more to make");
+        // Raised as it streams: more at once from the next update, and nothing made already made again.
+        let made: Vec<([i32; 3], Arc<Chunk>)> =
+            world.blocks.chunks().map(|(key, chunk)| (*key, chunk.clone())).collect();
+        let coarse: Vec<((u32, [i32; 2]), Vec<Arc<ChunkMesh>>)> =
+            streamer.coarse.iter().map(|(at, meshes)| (*at, meshes.iter().map(|(_, m)| m.clone()).collect())).collect();
+        streamer.at_once = 16;
+        let mut most = 0;
+        let start = std::time::Instant::now();
+        while !streamer.settled() {
+            assert!(start.elapsed().as_secs() < 60, "never settled");
+            let now = step(&mut streamer, &mut world, &mut base, &mut pending);
+            assert!(now <= 16);
+            most = most.max(now);
+        }
+        assert!(most > 2, "more at once once raised: {most}");
+        for (key, chunk) in made {
+            assert!(world.blocks.chunk(key).is_some_and(|now| Arc::ptr_eq(now, &chunk)), "{key:?} kept as made");
+        }
+        for (at, meshes) in coarse {
+            let now = streamer.coarse.get(&at).expect("a coarse column kept");
+            assert!(now.iter().zip(&meshes).all(|((_, now), was)| Arc::ptr_eq(now, was)), "{at:?} kept as made");
+        }
     }
 
     /// A sea over the whole world settled round the camera, made of cubes or smooth, and its kind of block: its

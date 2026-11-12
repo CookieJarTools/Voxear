@@ -573,8 +573,8 @@ impl Editor {
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
         let (modules, origin) = (game.project.modules(), &game.project.file.floating_origin);
-        let quality = &game.project.file.quality;
-        let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, origin, quality);
+        let (quality, budget) = (&game.project.file.quality, &game.project.file.world);
+        let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);

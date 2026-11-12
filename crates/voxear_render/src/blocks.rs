@@ -73,10 +73,6 @@ const FIRST_CAPACITY: u64 = 1 << 16;
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
 
-/// How many bytes of chunks a frame stages into a pool at most, past its
-/// first: a world of many new chunks comes over several frames.
-const STAGED_A_FRAME: u64 = 16 << 20;
-
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
 #[repr(C)]
@@ -341,16 +337,16 @@ impl Pool {
 
     /// Brings the pool up to `world`'s chunks: stages the quads of each
     /// that changed, by pointer, with `stage(bytes, to)`, growing the pool
-    /// once for all of them. A frame stages `STAGED_A_FRAME` bytes of them
-    /// at most, past the first; each of the rest shows as it was until its
-    /// frame comes, and those the world no longer has go once none is left.
-    /// Whether the pool is up to the world.
+    /// once for all of them. It stages no more than the frame's bytes `left`
+    /// (see `WorldBudget::upload`), past its first chunk; each of the rest
+    /// shows as it was until its frame comes, and those the world no longer
+    /// has go once none is left. Whether the pool is up to the world.
     fn update(
         &mut self,
         gpu: &Gpu,
         frames: &mut Frames,
         world: &BlockWorld,
-        frame_index: u64,
+        (frame_index, left): (u64, &mut u64),
         stage: &mut dyn FnMut(&[u8], u64),
     ) -> Result<bool> {
         let free_by = frame_index.saturating_sub(FRAMES_IN_FLIGHT as u64);
@@ -381,17 +377,16 @@ impl Pool {
         if used + wanted > self.capacity {
             self.grow(gpu, frames, wanted, stage)?;
         }
-        // As many as a frame stages, at least one; the rest come over the next frames, each shown as it was till then.
-        let mut left = STAGED_A_FRAME;
+        // As many as the frame stages, at least one; the rest come over the next frames, each shown as it was till then.
         let mut changed = false;
         let mut whole = true;
         for (key, mesh) in coming {
             let count = mesh.quads.len() as u64;
-            if changed && count * 8 > left {
+            if changed && count * 8 > *left {
                 whole = false;
                 break;
             }
-            left = left.saturating_sub(count * 8);
+            *left = left.saturating_sub(count * 8);
             changed = true;
             if let Some(old) = self.held.remove(&key) {
                 self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
@@ -622,6 +617,8 @@ impl BlockWorlds {
             }
         }
         let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
+        // The frame's chunks to bring up, between every world.
+        let mut left = voxear_terrain::WorldBudget::of(world).upload_bytes();
         let any_hidden = world.query_ref::<&voxear_scene::Hidden>().into_iter().next().is_some();
         let found: Vec<(Entity, &BlockWorld, Vec3)> = if features.terrain {
             world
@@ -665,7 +662,7 @@ impl BlockWorlds {
                 staged.extend_from_slice(bytes);
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
-            let whole = pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
+            let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
             if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
                 let before = pool.proxies.len();

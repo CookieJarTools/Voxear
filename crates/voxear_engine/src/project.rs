@@ -29,6 +29,9 @@ pub struct ProjectFile {
     pub floating_origin: crate::origin::OriginSettings,
     #[serde(default)]
     pub quality: QualitySettings,
+    /// What making worlds of blocks may spend (see `voxear_terrain::budget`).
+    #[serde(default)]
+    pub world: voxear_terrain::WorldBudget,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     pub modules: Option<crate::modules::Modules>,
@@ -207,7 +210,9 @@ impl Project {
         let manifest = if path.is_dir() { path.join(PROJECT_FILE) } else { path.to_path_buf() };
         let text = std::fs::read_to_string(&manifest)
             .with_context(|| format!("no Voxear project at {} (expected {PROJECT_FILE})", path.display()))?;
-        let file: ProjectFile = toml::from_str(&text).with_context(|| format!("reading {}", manifest.display()))?;
+        let mut file: ProjectFile = toml::from_str(&text).with_context(|| format!("reading {}", manifest.display()))?;
+        // A preset's numbers are its own, and a Custom budget's within bounds.
+        file.world = file.world.checked();
         let root = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
         if let Some(pinned) = file.project.engine.as_deref().filter(|&pinned| pinned != engine_version()) {
             tracing::warn!(
@@ -303,6 +308,33 @@ impl Project {
         set_key(&mut document, "quality", "particles", written);
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.quality = QualitySettings { particles };
+        Ok(())
+    }
+
+    /// Writes what making worlds of blocks may spend into `voxear.toml`'s
+    /// `[world]`: its quality where it is not High, and every number only
+    /// where it is Custom, as a preset's are its own. The rest of the file is
+    /// kept as it is.
+    pub fn set_world(&mut self, budget: &voxear_terrain::WorldBudget) -> Result<()> {
+        use voxear_terrain::{WorldBudget, WorldQuality};
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let budget = budget.checked();
+        let quality = toml::Value::try_from(budget.quality)?.as_str().unwrap_or_default().to_string();
+        let quality = (budget.quality != WorldBudget::default().quality).then(|| toml_edit::value(quality));
+        set_key(&mut document, "world", "quality", quality);
+        let custom = budget.quality == WorldQuality::Custom;
+        let whole = |n: u32| custom.then(|| toml_edit::value(i64::from(n)));
+        let metres = |m: f32| custom.then(|| toml_edit::value(f64::from(m)));
+        set_key(&mut document, "world", "threads", whole(budget.threads));
+        set_key(&mut document, "world", "columns", whole(budget.columns));
+        set_key(&mut document, "world", "upload", whole(budget.upload));
+        set_key(&mut document, "world", "view_distance", metres(budget.view_distance));
+        set_key(&mut document, "world", "far_distance", metres(budget.far_distance));
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.world = budget;
         Ok(())
     }
 
@@ -452,6 +484,31 @@ mod tests {
         project.set_floating_origin(&OriginSettings::default()).unwrap();
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
         assert!(!written.contains("floating_origin"), "switched off again, the section goes: {written}");
+    }
+
+    #[test]
+    fn the_world_budget_is_written_as_its_preset_or_every_number_where_custom() {
+        use voxear_terrain::{WorldBudget, WorldQuality};
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join(PROJECT_FILE), "# Orbit\n[project]\nname = \"Orbit\"\n").unwrap();
+        let mut project = Project::open(folder.path()).unwrap();
+        assert_eq!(project.file.world, WorldBudget::default(), "High until changed");
+        let low = WorldQuality::Low.budget().unwrap();
+        project.set_world(&low).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.contains("[world]\nquality = \"low\"\n") && !written.contains("threads"), "{written}");
+        assert_eq!(Project::open(folder.path()).unwrap().file.world, low);
+        let custom = WorldBudget { quality: WorldQuality::Custom, threads: 3, ..low };
+        project.set_world(&custom).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.contains("quality = \"custom\"") && written.contains("threads = 3"), "{written}");
+        assert_eq!(Project::open(folder.path()).unwrap().file.world, custom);
+        project.set_world(&WorldBudget::default()).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(
+            written.starts_with("# Orbit\n") && !written.contains("[world]"),
+            "High again, the section goes: {written}"
+        );
     }
 
     #[test]

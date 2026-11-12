@@ -4,7 +4,10 @@
 //! optional systems, switched on or off with its toggle. Quality holds what
 //! the renderer may spend: the most simulated particles. World holds the
 //! floating origin: whether the world's middle moves with the camera, how
-//! far out it goes first, and how far it moves.
+//! far out it goes first, and how far it moves; and what making worlds of
+//! blocks may spend: a Quality preset, and the threads, chunk columns at
+//! once, megabytes uploaded a frame and distances under it, a number
+//! changed by hand making it Custom.
 
 use voxear_engine::{
     modules::{Module, Modules},
@@ -12,6 +15,7 @@ use voxear_engine::{
     origin::{OriginMode, OriginSettings},
 };
 use voxear_render::MAX_PARTICLE_BUDGET;
+use voxear_terrain::{WorldBudget, WorldQuality};
 use voxear_ui::{NodeId, Style, Ui};
 
 struct ModuleRow {
@@ -26,23 +30,36 @@ struct OriginRows {
     step: NodeId,
 }
 
+/// The block worlds' budget's controls on the World tab: its preset, and
+/// each number under it.
+struct BudgetRows {
+    quality: NodeId,
+    threads: NodeId,
+    columns: NodeId,
+    upload: NodeId,
+    view: NodeId,
+    far: NodeId,
+}
+
 pub struct ProjectSettingsPanel {
     /// Each tab and the body it shows.
     tabs: Vec<(NodeId, NodeId)>,
     rows: Vec<ModuleRow>,
     origin: OriginRows,
+    budget: BudgetRows,
     /// The most simulated particles, on the Quality tab.
     particles: NodeId,
 }
 
 impl ProjectSettingsPanel {
     /// Builds the tabs into `tab_bar` and their rows into `view`, showing
-    /// `modules`, the floating origin's `origin` and the project's `quality`.
+    /// `modules`, the floating origin's `origin`, the project's `quality`
+    /// and its block worlds' `budget`.
     pub fn new(
         ui: &mut Ui,
         (tab_bar, view): (NodeId, NodeId),
         modules: &Modules,
-        origin: &OriginSettings,
+        (origin, budget): (&OriginSettings, &WorldBudget),
         quality: &QualitySettings,
     ) -> Self {
         let (modules_tab, body) = section(ui, tab_bar, view, "Modules");
@@ -81,6 +98,21 @@ impl ProjectSettingsPanel {
         let distance = number(ui, body, "Distance", origin.distance, "m");
         let step = number(ui, body, "Step", origin.step as f32, "m");
         let origin = OriginRows { mode, distance, step };
+        let heading = ui.add_label(body, "Block Worlds");
+        ui.add_class(heading, "settings-group");
+        let labels: Vec<&str> = WorldQuality::ALL.iter().map(|quality| quality.label()).collect();
+        let selected = WorldQuality::ALL.iter().position(|quality| *quality == budget.quality).unwrap_or(0);
+        let row = setting(ui, body, "Quality");
+        let quality_choice = ui.dropdown(row, &labels, selected);
+        ui.add_class(quality_choice, "value-choice");
+        let budget = BudgetRows {
+            quality: quality_choice,
+            threads: number(ui, body, "Threads", budget.threads as f32, ""),
+            columns: number(ui, body, "Columns at once", budget.columns as f32, ""),
+            upload: number(ui, body, "Upload a frame", budget.upload as f32, "MB"),
+            view: number(ui, body, "View distance", budget.view_distance, "m"),
+            far: number(ui, body, "Far distance", budget.far_distance, "m"),
+        };
         let world_body = body;
 
         let (quality_tab, body) = section(ui, tab_bar, view, "Quality");
@@ -89,7 +121,7 @@ impl ProjectSettingsPanel {
         ui.add_class(heading, "settings-group");
         let particles = number(ui, body, "Budget", quality.particles as f32, "");
         let tabs = vec![(modules_tab, modules_body), (quality_tab, body), (world_tab, world_body)];
-        Self { tabs, rows, origin, particles }
+        Self { tabs, rows, origin, budget, particles }
     }
 
     /// Shows the tab clicked this frame, its body in place of the others'.
@@ -122,6 +154,55 @@ impl ProjectSettingsPanel {
             return None;
         };
         (changed != *now).then_some(changed)
+    }
+
+    /// The block worlds' budget as changed on the page this frame, from
+    /// `now`: a preset picked sets every number, and a number typed makes it
+    /// Custom.
+    pub fn budget_changed(&self, ui: &Ui, now: &WorldBudget) -> Option<WorldBudget> {
+        let rows = &self.budget;
+        let typed = |field: NodeId| ui.text(field).trim().parse::<f32>().ok().filter(|n| n.is_finite() && *n >= 0.0);
+        let custom = WorldBudget { quality: WorldQuality::Custom, ..*now };
+        let changed = if ui.changed(rows.quality) {
+            let quality = WorldQuality::ALL.get(ui.selected_option(rows.quality)).copied().unwrap_or_default();
+            quality.budget().unwrap_or(custom)
+        } else if ui.changed(rows.threads) {
+            WorldBudget { threads: typed(rows.threads)?.round() as u32, ..custom }
+        } else if ui.changed(rows.columns) {
+            WorldBudget { columns: typed(rows.columns)?.round() as u32, ..custom }
+        } else if ui.changed(rows.upload) {
+            WorldBudget { upload: typed(rows.upload)?.round() as u32, ..custom }
+        } else if ui.changed(rows.view) {
+            WorldBudget { view_distance: typed(rows.view)?, ..custom }
+        } else if ui.changed(rows.far) {
+            WorldBudget { far_distance: typed(rows.far)?, ..custom }
+        } else {
+            return None;
+        };
+        let changed = changed.checked();
+        (changed != *now).then_some(changed)
+    }
+
+    /// Shows the block worlds' budget, but in a field being typed in.
+    pub fn show_budget(&self, ui: &mut Ui, budget: &WorldBudget) {
+        let rows = &self.budget;
+        let selected = WorldQuality::ALL.iter().position(|quality| *quality == budget.quality).unwrap_or(0);
+        if ui.selected_option(rows.quality) != selected {
+            ui.set_selected_option(rows.quality, selected);
+        }
+        let numbers = [
+            (rows.threads, budget.threads as f32),
+            (rows.columns, budget.columns as f32),
+            (rows.upload, budget.upload as f32),
+            (rows.view, budget.view_distance),
+            (rows.far, budget.far_distance),
+        ];
+        for (field, value) in numbers {
+            let text = format_metres(value);
+            if ui.focused() != Some(field) && ui.text(field) != text {
+                ui.set_text(field, &text);
+            }
+        }
     }
 
     /// The quality settings as changed on the page this frame, from `now`:

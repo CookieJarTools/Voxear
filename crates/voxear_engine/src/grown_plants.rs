@@ -9,32 +9,45 @@
 //! distances and collides with its trunks, so everything a Foliage does its
 //! grown plants do, and a column coming or going builds nothing else again.
 //! Only columns within the Foliage's draw distance of where the world is
-//! seen from have their plants, a few made each tick, nearest first.
+//! seen from have their plants, eight columns made a tick, nearest first. Where
+//! that reaches past the world's own blocks, a column under a coarser ring
+//! that is showing has the same plants, worked out from the generator's
+//! heights, and grown again from its blocks once they are made.
 //!
 //! A plant whose block is dug away or built over is marked gone, and is
 //! back once the ground is as it was made: worked out here from the blocks,
 //! on every machine alike, so no save or message says which plants stand.
+//! One a script takes away is kept on the Foliage's Obj by its column and
+//! number (`voxear_scene::CutPlants`), and stays gone however often its
+//! column's plants are made again.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use voxear_core::math::Vec3;
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{Foliage, StarterPlant};
 use voxear_scene::{
-    Destroying, EditorOnly, Layer, Parent, Plant, PlantSet, Plants, Switch, Switched, Transform, Trunk, WorldTransform,
+    CutPlants, Destroying, EditorOnly, Layer, Parent, Plant, PlantSet, Plants, Switch, Switched, Transform, Trunk,
+    WorldTransform,
 };
 use voxear_terrain::blocks::{
     BlockMap, BlockWorld,
     chunk::{CHUNK, Chunk},
-    grow::{Ground, GrowRule, Grown, chunks_under, gone, grow},
+    grow::{FarGround, Ground, GrowRule, Grown, Tops, chunks_under, gone, gone_far, grow_far, grow_on},
     mesh::ChunkMesh,
+    stream::MOST_LEVELS,
 };
 use voxear_terrain::generate::WorldGen;
 
 use crate::{Content, blocks::BlockWorldAsset, scene_file::FoliageSource};
 
-/// How many columns' plants one Foliage has made in a tick, at most.
+/// How many columns' plants one Foliage has made in a tick, at most, and
+/// how many all of them together.
 pub const COLUMNS_A_TICK: usize = 4;
+pub const COLUMNS_A_TICK_IN_ALL: usize = 8;
 
 /// One chunk column's plants of a Foliage that grows on a Block World: the
 /// Foliage's Obj and which column. The Obj it is on is the engine's own,
@@ -56,6 +69,13 @@ struct Kept {
     child: Option<Entity>,
     grown: Arc<Vec<Grown>>,
     watched: Vec<([i32; 3], Option<Arc<ChunkMesh>>)>,
+    /// Where they were grown on ground with no blocks of its own made: the level of the coarsest ring whose
+    /// ground they are kept clear of.
+    far: Option<u32>,
+    /// Those gone by what their ground is now.
+    gone: PlantSet,
+    /// The plants marked gone on their Obj as this last left them: any more are a script's doing.
+    set: Arc<PlantSet>,
 }
 
 /// What a Foliage's grown plants share with it: how they are drawn, their
@@ -68,6 +88,32 @@ struct Look {
     layer: Option<Layer>,
 }
 
+/// A world's coarser rings' faces, as it has them.
+type FarFaces = Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>;
+
+/// What decided which columns a Foliage's plants were wanted on, when that
+/// was last worked out: the world's coarser rings showing, its own columns
+/// made, where it was seen from (to eight blocks), and how far its plants
+/// reach. While none of it changes, and every column wanted has its plants,
+/// nothing is worked out again.
+struct Seen {
+    far: FarFaces,
+    made: Option<Arc<HashSet<[i32; 2]>>>,
+    from: Option<[i32; 2]>,
+    reach: f32,
+}
+
+impl Seen {
+    fn same(&self, other: &Seen) -> bool {
+        let made = match (&self.made, &other.made) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        Arc::ptr_eq(&self.far, &other.far) && made && self.from == other.from && self.reach == other.reach
+    }
+}
+
 /// One Foliage's grown plants: what they were grown from, and each column's.
 struct Growing {
     stamp: u64,
@@ -75,11 +121,23 @@ struct Growing {
     columns: HashMap<[i32; 2], Kept>,
     /// Whether every column wanted has its plants.
     settled: bool,
+    seen: Option<Seen>,
 }
 
-/// Every growing Foliage's plants, by its Obj.
+/// Every growing Foliage's plants, by its Obj; and each world's coarser
+/// rings showing, as last worked out from its faces.
 #[derive(Default)]
-struct Growth(HashMap<Entity, Growing>);
+struct Growth {
+    sources: HashMap<Entity, Growing>,
+    shown: HashMap<Entity, (FarFaces, Arc<HashSet<[i32; 3]>>)>,
+    /// The highest blocks of columns plants were lately grown on, by world and column, each with the chunk
+    /// that tells its ground is still the ground there, and how many ticks since it was last read: one
+    /// Foliage after another grows on the same columns, some ticks apart.
+    tops: HashMap<(Entity, [i32; 2]), (Option<Arc<Chunk>>, u32, Arc<Tops>)>,
+}
+
+/// How many ticks a column's highest blocks are kept unread before they are let go.
+const TOPS_KEPT: u32 = 240;
 
 /// A Foliage that grows, as a tick finds it: its Obj, its rule as written,
 /// how its plants look, and the Block World it is under.
@@ -169,18 +227,41 @@ fn changed(blocks: &BlockWorld, watched: &[([i32; 3], Option<Arc<ChunkMesh>>)]) 
     })
 }
 
+/// The chunk columns of a world's coarser rings that are showing, by level
+/// and place in that level's columns.
+fn shown(blocks: &BlockWorld) -> HashSet<[i32; 3]> {
+    blocks.far.keys().map(|[level, x, _, z]| [*level, *x, *z]).collect()
+}
+
+/// The finest of the coarser rings showing over chunk column `column` of a
+/// world's own, by its level; none where none shows.
+fn finest(shown: &HashSet<[i32; 3]>, [x, z]: [i32; 2]) -> Option<u32> {
+    (1..MOST_LEVELS as i32).find(|level| shown.contains(&[*level, x >> level, z >> level])).map(|level| level as u32)
+}
+
+/// Whether plants kept clear of the ground of rings out to level `rings`
+/// still suit a column whose finest ring showing is `finest`: that ring or
+/// the one inside it. Under a coarser one they may hang over its ground, and
+/// under finer ones they are sunk further than they need be, so either way
+/// they are grown again.
+fn suits(rings: u32, finest: Option<u32>) -> bool {
+    finest.is_some_and(|finest| finest <= rings && finest + 1 >= rings)
+}
+
 /// Grows every growing Foliage's plants on the columns of its Block World
 /// near where the world is seen from (the editor's view, or else the game's
 /// camera; everywhere where there is neither, as on a server), lets go of
-/// those of columns that left, and marks the plants whose ground changed.
-/// After [`crate::blocks::stream`], so ground made this tick has its plants
-/// this tick.
+/// those of columns that left, and marks the plants whose ground changed
+/// and those scripts took away. Past the world's own blocks, out to the
+/// Foliage's draw distance, plants grow wherever a coarser ring shows the
+/// ground, from the generator's heights. After [`crate::blocks::stream`],
+/// so ground made this tick has its plants this tick.
 pub fn update(world: &mut World, content: &mut Content) {
     voxear_core::profile_scope!("Grown Plants");
     let growers = growers(world);
     let mut growth = world.remove_resource::<Growth>().unwrap_or_default();
     // A Foliage that grows no longer, or is gone, has none.
-    growth.0.retain(|source, growing| {
+    growth.sources.retain(|source, growing| {
         let grows = growers.iter().any(|grower| grower.entity == *source);
         if !grows {
             growing.columns.values().for_each(|kept| despawn(world, kept));
@@ -189,8 +270,14 @@ pub fn update(world: &mut World, content: &mut Content) {
     });
     let viewer = crate::terrain::viewer(world);
     let mut all_tops: HashMap<Entity, HashMap<[i32; 2], ([i32; 3], Arc<Chunk>)>> = HashMap::new();
+    growth.shown.retain(|world, _| growers.iter().any(|grower| grower.world == *world));
     // Each world read once a tick, however many of its Foliage grow.
     let mut worlds: HashMap<Entity, Option<(BlockWorldAsset, BlockWorld, Option<Arc<WorldGen>>)>> = HashMap::new();
+    let mut left = COLUMNS_A_TICK_IN_ALL;
+    growth.tops.retain(|_, (_, unread, _)| {
+        *unread += 1;
+        *unread <= TOPS_KEPT
+    });
     for grower in growers {
         let read = worlds.entry(grower.world).or_insert_with(|| {
             let asset = world.get::<BlockWorldAsset>(grower.world).cloned()?;
@@ -204,15 +291,16 @@ pub fn update(world: &mut World, content: &mut Content) {
             asset.drawn.number_of(guid)
         });
         let stamp = stamp_of(&rule, &asset, &blocks, generator.as_deref(), grower.world);
-        let growing = growth.0.entry(grower.entity).or_insert_with(|| Growing {
+        let growing = growth.sources.entry(grower.entity).or_insert_with(|| Growing {
             stamp,
             look: grower.look.clone(),
             columns: HashMap::new(),
             settled: false,
+            seen: None,
         });
         if growing.stamp != stamp {
             growing.columns.drain().for_each(|(_, kept)| despawn(world, &kept));
-            growing.stamp = stamp;
+            (growing.stamp, growing.seen) = (stamp, None);
         }
         // Where the world is seen from, in its blocks; and how far its plants reach.
         let placed = world.get::<WorldTransform>(grower.world).copied();
@@ -224,18 +312,53 @@ pub fn update(world: &mut World, content: &mut Content) {
         let from = viewer.map(|viewer| [(viewer.x - corner.x) / size, (viewer.z - corner.z) / size]);
         let reach = grower.draw_distance.max(0.0) / size;
         let near = |column: [i32; 2], slack: f32| from.is_none_or(|from| away(column, from) <= reach + slack);
-        // Columns that left, went too far, or whose ground was made again, let go of.
+        // Ground past the world's own blocks: only a world without end's, seen from somewhere, with plants drawn
+        // that far.
         let made = blocks.columns.clone();
+        let endless = asset.file.generate.as_ref().and_then(|generate| Some((generate, generate.endless?)));
+        let far = match (endless, generator.as_deref(), from, &made) {
+            (Some((generate, endless)), Some(generator), Some(from), Some(_)) if reach * size > endless.distance => {
+                Some((FarGround { file: &asset.drawn, generate, world: generator }, from))
+            }
+            _ => None,
+        };
+        // While nothing that decides which columns are wanted has changed, and all of them have their plants,
+        // only the plants' ground and what scripts took are looked at.
+        let seen = Seen {
+            far: blocks.far.clone(),
+            made: made.clone(),
+            from: from.map(|from| from.map(|v| (v / 8.0).floor() as i32)),
+            reach,
+        };
+        let unchanged = growing.settled && growing.seen.as_ref().is_some_and(|was| was.same(&seen));
+        let shown = match (&far, growth.shown.get(&grower.world)) {
+            (None, _) => Arc::default(),
+            (Some(_), Some((faces, shown))) if Arc::ptr_eq(faces, &blocks.far) => shown.clone(),
+            (Some(_), _) => {
+                let shown = Arc::new(shown(&blocks));
+                growth.shown.insert(grower.world, (blocks.far.clone(), shown.clone()));
+                shown
+            }
+        };
+        let shown = &*shown;
+        // Columns that left, went too far, or whose ground was made again, let go of: and those whose own blocks
+        // came or went, which are grown again from what is there now.
         let stays = |column: &[i32; 2], kept: &Kept| {
-            let still_made = made.as_ref().is_none_or(|made| made.contains(column));
+            let is_made = made.as_ref().is_none_or(|made| made.contains(column));
             let same_ground = kept
                 .made_from
                 .as_ref()
                 .is_none_or(|(key, chunk)| asset.base.chunk(*key).is_some_and(|now| Arc::ptr_eq(now, chunk)));
-            still_made && same_ground && near(*column, CHUNK as f32 * 0.5)
+            let there = match kept.far {
+                Some(rings) => !is_made && far.is_some() && suits(rings, finest(shown, *column)),
+                None => is_made && same_ground,
+            };
+            there && near(*column, CHUNK as f32 * 0.5)
         };
-        let leaving: Vec<[i32; 2]> =
-            growing.columns.iter().filter(|(column, kept)| !stays(column, kept)).map(|(column, _)| *column).collect();
+        let leaving: Vec<[i32; 2]> = match unchanged {
+            true => Vec::new(),
+            false => growing.columns.iter().filter(|(at, kept)| !stays(at, kept)).map(|(at, _)| *at).collect(),
+        };
         for column in leaving {
             if let Some(kept) = growing.columns.remove(&column) {
                 despawn(world, &kept);
@@ -251,32 +374,72 @@ pub fn update(world: &mut World, content: &mut Content) {
         // Plants whose ground changed: gone, or back.
         for kept in growing.columns.values_mut().filter(|kept| changed(&blocks, &kept.watched)) {
             kept.watched = faces_of(&blocks, chunks_under(&kept.grown));
-            let now = gone(&kept.grown, &blocks.blocks);
+            kept.gone = gone(&kept.grown, &blocks.blocks);
+        }
+        // Plants a script took away since last tick are kept as cut, by column, on the Foliage's Obj; and every
+        // column's plants are gone where their ground changed or they were cut.
+        let mut cut = world.get::<CutPlants>(grower.entity).cloned().unwrap_or_default();
+        let cut_before = cut.clone();
+        for (column, kept) in growing.columns.iter_mut() {
             let Some(plants) = kept.child.and_then(|child| world.get_mut::<Plants>(child)) else { continue };
-            if *plants.removed != now {
+            if !Arc::ptr_eq(&plants.removed, &kept.set) {
+                cut.take(*column, &plants.removed.without(&kept.set));
+            }
+            let now = cut.of(*column).map_or_else(|| kept.gone.clone(), |cut| kept.gone.with(cut));
+            if !now.same(&plants.removed) {
                 plants.removed = Arc::new(now);
             }
+            kept.set = plants.removed.clone();
         }
-        // Columns wanted that have no plants yet, nearest first, a few a tick.
+        if cut != cut_before {
+            world.insert(grower.entity, cut.clone());
+        }
+        if unchanged {
+            continue;
+        }
+        growing.seen = Some(seen);
+        // Columns wanted that have no plants yet, nearest first, a few a tick: those with blocks of their own,
+        // then those a coarser ring shows.
         let tops = all_tops.entry(grower.world).or_insert_with(HashMap::new);
-        let mut wanted: Vec<[i32; 2]> = match &made {
-            Some(made) => made.iter().copied().collect(),
+        let mut wanted: Vec<([i32; 2], Option<u32>)> = match &made {
+            Some(made) => made.iter().map(|column| (*column, None)).collect(),
             None => {
                 if tops.is_empty() {
                     *tops = self::tops(&asset.base);
                 }
-                tops.keys().copied().collect()
+                tops.keys().map(|column| (*column, None)).collect()
             }
         };
-        wanted.retain(|column| !growing.columns.contains_key(column) && near(*column, 0.0));
-        growing.settled = wanted.len() <= COLUMNS_A_TICK;
-        if wanted.is_empty() {
+        if let (Some((_, from)), Some(made)) = (&far, &made) {
+            let side = CHUNK as f32;
+            let span = |axis: usize| {
+                ((from[axis] - reach) / side).floor() as i32..=((from[axis] + reach) / side).floor() as i32
+            };
+            let around = span(1).flat_map(|z| span(0).map(move |x| [x, z]));
+            // Clear of the ground of the finest ring showing there and of the next out, which shows as the
+            // camera goes from it.
+            let rings = |column: &[i32; 2]| finest(shown, *column).map(|finest| (finest + 1).min(MOST_LEVELS - 1));
+            let far_off = around.filter(|column| !made.contains(column));
+            wanted.extend(far_off.filter_map(|column| Some((column, Some(rings(&column)?)))));
+        }
+        wanted.retain(|(column, _)| !growing.columns.contains_key(column) && near(*column, 0.0));
+        let now = COLUMNS_A_TICK.min(left);
+        growing.settled = wanted.len() <= now;
+        if wanted.is_empty() || now == 0 {
             continue;
         }
         let nearness = |column: &[i32; 2]| from.map_or(0.0, |from| away(*column, from));
-        wanted.sort_by(|a, b| nearness(a).total_cmp(&nearness(b)).then(a.cmp(b)));
-        wanted.truncate(COLUMNS_A_TICK);
-        if tops.is_empty() {
+        wanted.sort_by(|(a, _), (b, _)| nearness(a).total_cmp(&nearness(b)).then(a.cmp(b)));
+        // A far column asks the generator for its ground, so it counts as two of those whose blocks are read.
+        let mut room = now * 2;
+        wanted.retain(|(_, far)| {
+            let cost = if far.is_some() { 2 } else { 1 };
+            let fits = room >= cost;
+            room = room.saturating_sub(cost);
+            fits
+        });
+        left = left.saturating_sub((now * 2 - room).div_ceil(2));
+        if tops.is_empty() && wanted.iter().any(|(_, far)| far.is_none()) {
             *tops = self::tops(&asset.base);
         }
         let ground = Ground {
@@ -287,12 +450,44 @@ pub fn update(world: &mut World, content: &mut Content) {
             generated: asset.file.generate.as_ref().zip(generator.as_deref()),
         };
         let parent_matrix = placed.map_or_else(|| voxear_core::math::Mat4::from_translation(corner), |placed| placed.0);
-        for column in wanted {
-            let grown = Arc::new(grow(&rule, &ground, column));
+        for (column, far_off) in wanted {
+            let (grown, gone) = match (far_off, &far) {
+                (Some(rings), Some((far, _))) => {
+                    let grown = grow_far(&rule, far, column, rings);
+                    let gone = gone_far(&grown, &asset.pending);
+                    (grown, gone)
+                }
+                _ => {
+                    // Its highest blocks as read for another Foliage, while its ground is the ground they were
+                    // read from.
+                    let from = tops.get(&column).map(|(_, chunk)| chunk.clone());
+                    let same = |kept: &Option<Arc<Chunk>>| match (kept, &from) {
+                        (Some(kept), Some(from)) => Arc::ptr_eq(kept, from),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    let read = growth.tops.get_mut(&(grower.world, column)).filter(|(kept, ..)| same(kept));
+                    let highest = match read {
+                        Some((_, unread, highest)) => {
+                            *unread = 0;
+                            highest.clone()
+                        }
+                        None => {
+                            let highest = Arc::new(Tops::of(&asset.base, column));
+                            growth.tops.insert((grower.world, column), (from, 0, highest.clone()));
+                            highest
+                        }
+                    };
+                    let grown = grow_on(&rule, &ground, column, &highest);
+                    let gone = gone(&grown, &blocks.blocks);
+                    (grown, gone)
+                }
+            };
+            let grown = Arc::new(grown);
+            let set = Arc::new(cut.of(column).map_or_else(|| gone.clone(), |cut| gone.with(cut)));
             let child = (!grown.is_empty()).then(|| {
                 let plants: Vec<Plant> = grown.iter().map(|grown| grown.plant).collect();
-                let removed: PlantSet = gone(&grown, &blocks.blocks);
-                let plants = Plants { removed: Arc::new(removed), ..Plants::new(plants) };
+                let plants = Plants { removed: set.clone(), ..Plants::new(plants) };
                 let marker = GrownColumn { source: grower.entity, column };
                 let placed = WorldTransform(parent_matrix);
                 let child =
@@ -300,13 +495,14 @@ pub fn update(world: &mut World, content: &mut Content) {
                 dress(world, child, &growing.look);
                 child
             });
-            let watched = faces_of(&blocks, chunks_under(&grown));
-            growing.columns.insert(column, Kept { made_from: tops.get(&column).cloned(), child, grown, watched });
+            let watched = if far_off.is_some() { Vec::new() } else { faces_of(&blocks, chunks_under(&grown)) };
+            let made_from = tops.get(&column).filter(|_| far_off.is_none()).cloned();
+            growing.columns.insert(column, Kept { made_from, child, grown, watched, far: far_off, gone, set });
         }
     }
     // An Obj of a column nothing keeps any more, as after a world was copied: gone.
-    let kept: std::collections::HashSet<Entity> =
-        growth.0.values().flat_map(|growing| growing.columns.values().filter_map(|kept| kept.child)).collect();
+    let kept: HashSet<Entity> =
+        growth.sources.values().flat_map(|growing| growing.columns.values().filter_map(|kept| kept.child)).collect();
     let strays: Vec<Entity> = world
         .query_ref::<(Entity, &GrownColumn)>()
         .into_iter()
@@ -360,7 +556,7 @@ fn stamp_of(
 /// keeps to the world's top block: what a Foliage growing it starts with.
 fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>, &'static str, bool) {
     const SMALL: &str = "shadow_distance = 0.0\nimpostors = \"off\"\n";
-    const TALL: &str = "draw_distance = 250.0\nfade_distance = 30.0\nshadow_distance = 80.0\n";
+    const TALL: &str = "draw_distance = 500.0\nfade_distance = 40.0\nshadow_distance = 80.0\n";
     const TRUNK: &str = "radius = 0.3\nheight = 3.5\n";
     match plant {
         StarterPlant::Tuft => (SMALL, None, "spacing = 1.0\nseparation = 0.0\nchance = 0.6\nslope = 40.0\n", true),
@@ -421,7 +617,7 @@ pub fn foliage_text(mesh: &str, material: Option<&str>, starter: Option<StarterP
 /// nothing left to make until the world is seen from elsewhere or more of
 /// its ground is made.
 pub fn settled(world: &World) -> bool {
-    world.resource::<Growth>().is_none_or(|growth| growth.0.values().all(|growing| growing.settled))
+    world.resource::<Growth>().is_none_or(|growth| growth.sources.values().all(|growing| growing.settled))
 }
 
 /// The columns Foliage `source` has grown plants on, each with the Obj that

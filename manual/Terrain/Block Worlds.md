@@ -215,12 +215,12 @@ The row also offers six **starter plants**, each made of small cubes to sit well
 | Flower | In patches about 14 m across |
 | Bush | Here and there, about 7 m apart |
 | Rock | On any ground, steep slopes too, in many sizes |
-| Tree | Where it is wet enough, on gentle ground. Its trunk collides |
-| Pine | Where it is cool. Its trunk collides |
+| Tree | Where it is wet enough, on gentle ground, drawn out to 500 m. Its trunk collides |
+| Pine | Where it is cool, drawn out to 500 m. Its trunk collides |
 
 A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
 
-A world without end grows its plants as its ground is made round the camera, the same plants every time. A plant goes when the block under it is dug or built over.
+A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn. A plant goes when the block under it is dug or built over.
 
 ## How blocks are drawn
 

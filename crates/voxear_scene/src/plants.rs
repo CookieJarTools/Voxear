@@ -8,7 +8,7 @@
 //! away (cut down, dug up) are only marked gone, so every other plant
 //! keeps its number, and a save names the gone ones by it.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};
@@ -94,6 +94,53 @@ impl PlantSet {
         self.words.iter().enumerate().flat_map(|(at, &word)| {
             (0..64).filter(move |bit| word >> bit & 1 != 0).map(move |bit| at as u32 * 64 + bit)
         })
+    }
+}
+
+impl PlantSet {
+    /// Every number in it or in `other`.
+    pub fn with(&self, other: &PlantSet) -> PlantSet {
+        let longer = self.words.len().max(other.words.len());
+        let word = |set: &PlantSet, at: usize| set.words.get(at).copied().unwrap_or(0);
+        PlantSet { words: (0..longer).map(|at| word(self, at) | word(other, at)).collect() }
+    }
+
+    /// Its numbers that are not in `other`.
+    pub fn without(&self, other: &PlantSet) -> PlantSet {
+        let word = |at: usize| other.words.get(at).copied().unwrap_or(0);
+        PlantSet { words: self.words.iter().enumerate().map(|(at, mine)| mine & !word(at)).collect() }
+    }
+
+    /// Whether it has the same numbers as `other`, however long each is kept.
+    pub fn same(&self, other: &PlantSet) -> bool {
+        self.without(other).is_empty() && other.without(self).is_empty()
+    }
+}
+
+/// The plants taken away, by scripts, of those a Foliage grew by itself on
+/// a Block World: by the chunk column each grew on, and its number among
+/// that column's plants. Kept on the Foliage's Obj, since a column's plants
+/// come and go with the ground round the camera: whenever a column's are
+/// made, these of them are gone already, and a save keeps the list.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CutPlants(pub Arc<BTreeMap<[i32; 2], PlantSet>>);
+
+impl Component for CutPlants {}
+
+impl CutPlants {
+    /// Those taken from `column`.
+    pub fn of(&self, column: [i32; 2]) -> Option<&PlantSet> {
+        self.0.get(&column)
+    }
+
+    /// Marks `numbers` of `column` taken away too.
+    pub fn take(&mut self, column: [i32; 2], numbers: &PlantSet) {
+        if numbers.is_empty() {
+            return;
+        }
+        let columns = Arc::make_mut(&mut self.0);
+        let taken = columns.entry(column).or_default();
+        *taken = taken.with(numbers);
     }
 }
 
@@ -217,6 +264,17 @@ mod tests {
         let set: PlantSet = [3, 64, 130].into_iter().collect();
         assert_eq!(set.iter().collect::<Vec<_>>(), [3, 64, 130]);
         assert_eq!(set.len(), 3);
+        // Sets together and apart; and those taken from a Foliage's grown columns, kept by column.
+        let other: PlantSet = [3, 500].into_iter().collect();
+        assert_eq!(set.with(&other).iter().collect::<Vec<_>>(), [3, 64, 130, 500]);
+        assert_eq!(set.without(&other).iter().collect::<Vec<_>>(), [64, 130]);
+        assert!(set.same(&set.with(&PlantSet::default())) && !set.same(&other));
+        let mut cut = CutPlants::default();
+        cut.take([2, -1], &other);
+        cut.take([2, -1], &set);
+        cut.take([0, 0], &PlantSet::default());
+        assert_eq!(cut.of([2, -1]).map(PlantSet::len), Some(4));
+        assert!(cut.of([0, 0]).is_none(), "nothing taken, nothing kept");
     }
 
     #[test]

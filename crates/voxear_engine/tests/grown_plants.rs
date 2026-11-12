@@ -231,6 +231,119 @@ fn a_plant_goes_when_its_ground_is_dug_or_built_over_and_comes_back_with_it() {
     assert_eq!(back.plants, plants.plants, "the same plants by the same numbers");
 }
 
+#[test]
+fn trees_stand_on_ground_past_the_worlds_own_blocks_and_are_the_same_trees_once_it_is_made() {
+    use std::collections::HashSet;
+    let dir = project(0.0);
+    // Trees drawn to 200 m in a world whose own blocks reach 70 m, its coarser rings 300 m.
+    let scene = dir.path().join("Scenes/Field.scene");
+    let text = std::fs::read_to_string(&scene).unwrap();
+    assert!(text.contains("draw_distance = 70.0"));
+    std::fs::write(&scene, text.replace("draw_distance = 70.0", "draw_distance = 200.0")).unwrap();
+    let mut game = started(&dir);
+    let (field, trees, flowers) = (named(&game, "Blocks"), named(&game, "Trees"), named(&game, "Flowers"));
+    let made = |game: &Game| -> HashSet<[i32; 2]> {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        blocks.columns.as_ref().map(|columns| (**columns).clone()).unwrap_or_default()
+    };
+    let plants_on = |game: &Game, source: Entity, column: [i32; 2]| -> Vec<Plant> {
+        let columns = grown_plants::columns_of(&game.engine.world, source);
+        let held = columns.into_iter().find(|(at, _)| *at == column).map(|(_, child)| child);
+        held.map_or(Vec::new(), |child| game.engine.world.get::<Plants>(child).unwrap().plants.to_vec())
+    };
+    // Trees on columns the world has no blocks of its own for, as far as they are drawn; flowers, drawn to 40 m,
+    // only on its own.
+    let columns: Vec<[i32; 2]> =
+        grown_plants::columns_of(&game.engine.world, trees).into_iter().map(|(column, _)| column).collect();
+    let near = made(&game);
+    let far: Vec<[i32; 2]> = columns.iter().copied().filter(|column| !near.contains(column)).collect();
+    assert!(far.len() > 20 && columns.len() > far.len(), "{} of {} columns are far", far.len(), columns.len());
+    for column in &far {
+        let (dx, dz) = ((column[0] * 32 + 16 - 40).abs(), (column[1] * 32 + 16 - 40).abs());
+        assert!(dx.max(dz) as f32 <= 200.0 + 48.0, "trees as far off as column {column:?}");
+    }
+    let flowered = grown_plants::columns_of(&game.engine.world, flowers);
+    assert!(flowered.iter().all(|(column, _)| near.contains(column)));
+    // The far column with the most trees: the camera goes to it, its blocks are made, and its trees are the
+    // trees it had, each where it stood, no lower than it stood on the coarser ground.
+    let column = *far.iter().max_by_key(|column| plants_on(&game, trees, **column).len()).unwrap();
+    let before = plants_on(&game, trees, column);
+    assert!(before.len() > 3, "{} trees on far column {column:?}", before.len());
+    let eye = named(&game, "Eye");
+    let over = [(column[0] * 32 + 16) as f32, (column[1] * 32 + 16) as f32];
+    let position = &mut game.engine.world.get_mut::<Transform>(eye).unwrap().position;
+    (position.x, position.z) = (over[0], over[1]);
+    settle(&mut game);
+    assert!(made(&game).contains(&column), "its own blocks are made now");
+    let after = plants_on(&game, trees, column);
+    assert_eq!(after.len(), before.len());
+    let blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    for (far_off, made) in before.iter().zip(&after) {
+        let ((far_at, at), same) =
+            ((far_off.position, made.position), (far_off.yaw, far_off.scale) == (made.yaw, made.scale));
+        assert!(same && [far_at[0], far_at[2]] == [at[0], at[2]], "{far_at:?} became {at:?}");
+        assert!(far_at[1] <= at[1] && far_at[1] >= at[1] - 6.0, "{} then {}", far_at[1], at[1]);
+        let under = [at[0].floor() as i32, at[1] as i32 - 1, at[2].floor() as i32];
+        assert!(blocks.blocks.get(under) != 0 && blocks.blocks.get([under[0], under[1] + 1, under[2]]) == 0);
+    }
+}
+
+#[test]
+fn a_plant_a_script_takes_away_stays_gone_when_its_ground_is_made_again() {
+    use voxear_scene::CutPlants;
+    let dir = project(0.0);
+    let mut game = started(&dir);
+    let (field, trees) = (named(&game, "Blocks"), named(&game, "Trees"));
+    let (column, child) = grown_plants::columns_of(&game.engine.world, trees)[0];
+    let plants = game.engine.world.get::<Plants>(child).unwrap().clone();
+    assert!(plants.plants.len() > 2 && plants.removed.is_empty());
+    // Taken away as a script's `Plant.Remove` does: gone, and kept on the Foliage's Obj by column and number.
+    assert!(game.engine.world.get_mut::<Plants>(child).unwrap().remove(1));
+    game.tick(1.0 / 60.0, None);
+    let cut = game.engine.world.get::<CutPlants>(trees).cloned().expect("kept on the Foliage");
+    assert_eq!(cut.of(column).map(|gone| gone.iter().collect::<Vec<u32>>()), Some(vec![1]));
+    // The ground dug from under another: gone too, but by its ground, which is not a cut.
+    let [x, y, z] = plants.plants[0].position;
+    let under = [x.floor() as i32, y as i32 - 1, z.floor() as i32];
+    let set = |game: &mut Game, block: u16| {
+        let mut blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+        blocks.set_blocks([(under, block)]);
+        game.engine.world.insert(field, blocks);
+        game.tick(1.0 / 60.0, None);
+    };
+    let was = game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get(under);
+    set(&mut game, 0);
+    let gone = |game: &Game, child: Entity| {
+        game.engine.world.get::<Plants>(child).unwrap().removed.iter().collect::<Vec<u32>>()
+    };
+    assert_eq!(gone(&game, child), [0, 1]);
+    assert_eq!(game.engine.world.get::<CutPlants>(trees), Some(&cut), "only the cut one is kept");
+    // Its ground put back, the dug one is back and the cut one is not.
+    set(&mut game, was);
+    assert_eq!(gone(&game, child), [1]);
+    // The camera away and back, the column's plants made afresh: still cut.
+    let eye = named(&game, "Eye");
+    game.engine.world.get_mut::<Transform>(eye).unwrap().position.x = 500.0;
+    settle(&mut game);
+    assert!(!grown_plants::columns_of(&game.engine.world, trees).iter().any(|(at, _)| *at == column));
+    game.engine.world.get_mut::<Transform>(eye).unwrap().position.x = 40.0;
+    settle(&mut game);
+    let (_, again) =
+        grown_plants::columns_of(&game.engine.world, trees).into_iter().find(|(at, _)| *at == column).unwrap();
+    assert_ne!(again, child, "an Obj made afresh");
+    assert_eq!(gone(&game, again), [1]);
+    assert_eq!(
+        grown_plants::standing(&game.engine.world, trees).iter().filter(|plant| **plant == plants.plants[1]).count(),
+        0
+    );
+    // Put on a Foliage as a save's are, before its columns are made: gone as they are made.
+    let mut other = CutPlants::default();
+    other.take(column, &[0u32, 2].into_iter().collect());
+    game.engine.world.insert(trees, other);
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(gone(&game, again), [0, 2], "what the Foliage's Obj says, as after a save is put back");
+}
+
 /// A project as [`project`]'s, its world growing every starter plant, each a model in its Plants folder, under a
 /// low sun, seen from a little over the ground at (40, 40); with `plants` off, the same world bare.
 fn starter_project(plants: bool) -> tempfile::TempDir {

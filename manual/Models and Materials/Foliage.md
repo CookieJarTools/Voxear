@@ -67,7 +67,9 @@ Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Gr
 
 A plant stands on the highest block of its place, under the open sky, and only on ground the world made: nothing grows on what was built afterwards. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
 
-Plants are grown only as far as they are drawn. A Foliage's grown plants reach its **Draw distance** from the camera and no further than the world's own blocks, its **View distance**. Past that the far view shows the ground bare for now. In the editor they grow round where the Scene view looks from.
+Plants are grown only as far as they are drawn: a Foliage's grown plants reach its **Draw distance** from the camera. In the editor they grow round where the Scene view looks from.
+
+A draw distance longer than the world's **View distance** carries plants out over the coarser ground beyond the world's own blocks, so trees stand on far hills. Out there a plant is worked out from the generator's heights, and it is the same plant, in the same place, once the camera comes near and its ground is made. Until then it stands on the coarse blocks, sunk a little into them at times and never hanging over them. Where a generator pushes its ground about with overhangs and caves, a few far plants may differ from the ones that grow once the ground is made. Past the draw distance the far view shows the ground bare.
 
 Trunks and the Cut prefab work for grown plants as they do for painted ones. A Foliage that grows can still have plants painted or placed on it; they are drawn beside the grown ones.
 
@@ -75,7 +77,7 @@ Trunks and the Cut prefab work for grown plants as they do for painted ones. A F
 [obj.foliage]
 mesh = "Plants/Tree.boxmodel#mesh0.0"
 material = "Plants/Tree.boxmodel#material0"
-draw_distance = 250.0
+draw_distance = 500.0
 [obj.foliage.grow]
 on = ["Blocks/Grass.block"]   # the blocks it stands on; left out for any ground
 humidity = [0.45, 1.0]        # only where it is wet enough
@@ -91,7 +93,7 @@ seed = 4
 
 Clicking a grown plant in the Scene view selects its Foliage, as clicking a painted one does.
 
-Not done yet: a plant cut down from a script comes back when its ground is made again, as the camera leaves and returns.
+A plant a script cuts down or removes (see [[Painting and Cutting Plants]]) stays gone, however far the camera goes and comes back. A save of the scene keeps which were taken, and a player joining a game gets them with the blocks' changes (`Blocks.CaptureEdits`).
 
 ## How many
 

@@ -2257,17 +2257,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   generated blocks alone, on the placement grid structures share, so a column made alone agrees with its neighbours
   and the same world grows the same plants on every machine. The engine (`grown_plants`) keeps each column's plants
   on a hidden Obj of its own under the world, drawn and collided as the Foliage's, made as the column's blocks are
-  and dropped as it goes, within the Foliage's draw distance, four columns a tick. A plant is gone while its block is
+  and dropped as it goes, within the Foliage's draw distance, eight columns a tick. A plant is gone while its block is
   dug, changed or built over, and back when the ground is: worked out from the blocks, so nothing is saved or sent.
+  Past the world's own blocks, a column under a coarser ring that shows has the same plants from the generator's
+  heights (`grow::grow_far`, tested plant for plant against the blocks), each kept clear of the ring's coarser
+  ground, so trees drawn to 500 m stand on far hills and are the same trees once near. A plant a script takes away
+  is kept on its Foliage by column and number (`voxear_scene::CutPlants`), stays gone as its column comes and goes,
+  and travels with the blocks' changes in saves and to joining players.
   Six starter plants made of small cubes (`voxear_render::StarterPlant`: Grass Tuft, Flower, Bush, Rock, Tree,
   Pine), each a box model written into the project's Plants folder when picked. Editor: a Foliage's **Grow** tool,
   and **Add plant** on a Block World's Settings, which takes any model or a starter and makes the Foliage, one step
   to undo; a click on a grown plant picks its Foliage. Tests: the rule (same every time, a column alone, by block, climate, height and slope, separation,
   patches, gone and back), the engine on a world without end (two rules, the camera moved and back, digging and
   building, a second run the same), a GPU picture of all six starters, the editor (a starter picked, grown,
-  changed, undone). Manual: Foliage, Block Worlds, Box Models. Not done: plants on the coarse rings and in the far
-  view (they end at the world's View distance); a plant cut down from a script kept when its column is made again;
-  the same rule on heightmap terrains.
+  changed, undone). Manual: Foliage, Block Worlds, Box Models. Not done: woods showing past their draw distance, as
+  colour in the far view's tiles; the same rule on heightmap terrains.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

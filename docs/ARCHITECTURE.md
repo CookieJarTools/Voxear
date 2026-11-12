@@ -3386,12 +3386,19 @@ machine. They are grown from the ground as made (`BlockWorldAsset::base`), never
 (`grown_plants`) keeps each column's plants on an Obj of its own under the world, unnamed and in no scene
 (`GrownColumn`), carrying the Foliage's mesh, distances, trunks and layer: the renderer and physics build a Foliage's
 plants whole whenever its list changes, so a list a column keeps them from building anything again as columns come
-and go. Only columns within the Foliage's draw distance of the viewer have plants, four made a tick a Foliage,
-nearest first. Each plant remembers its block; when the faces of that block's chunk are made again, the column's
+and go. Only columns within the Foliage's draw distance of the viewer have plants, eight made a tick, nearest
+first, a column's highest blocks read once for every Foliage that grows on it. Where the draw distance passes the
+world's own blocks, a column under a coarser ring that shows (`BlockWorld::far`) is grown from the generator's
+heights instead (`grow_far`, `generate::surfaces`): the same tries, the same tests on the tops its blocks would
+have, so the same plants wherever the ground is a plain height, each stood no higher than the ground of the ring
+showing and the next out, and grown again from its blocks once they are made. Each plant remembers its block; when the faces of that block's chunk are made again, the column's
 plants are checked against the blocks and those whose ground changed are marked gone, a bit each, and unmarked when
-it is put back. So nothing of them is saved or sent: whoever has the blocks has the plants. The starter plants
+it is put back. So nothing of them is saved or sent: whoever has the blocks has the plants. A plant a script takes
+away shows as a bit the engine did not set; it is kept on the Foliage's Obj by column and number (`CutPlants`), put
+on again whenever that column's plants are made, and written after the blocks' changes (`VXCP`) that saves and
+joining players carry. The starter plants
 (`voxear_render::StarterPlant`) are box models of cubes made by code, written into a project as it picks them.
-Not done: plants on the coarse rings and in the far view, and a plant cut from a script kept by column and number.
+Not done: woods past their draw distance, as colour in the far view's tiles.
 
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,

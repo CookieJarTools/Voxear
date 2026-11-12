@@ -14,6 +14,9 @@
 //! ([`grow_far`]), so trees stand on far hills and are still there, each
 //! where it was, when the ground under them is made.
 //!
+//! Further still, past where any plant is drawn, a rule's plants show as a
+//! wood of blocks in the far view's tiles ([`Woods`]).
+//!
 //! Plants grow on the ground as it was made. Each keeps the block it stands
 //! on ([`Grown`]); once that block is dug away or changed, or the block
 //! over it is filled, the plant is gone ([`gone`]), and it is back when the
@@ -29,8 +32,9 @@ use super::{
     chunk::{AIR, BlockId, CHUNK, Chunk, depth_of},
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
-    generate::BlockGenerate,
+    generate::{BlockGenerate, far::FarTile},
     is_water,
+    stream::{BlockMaking, FarBuilt},
 };
 use crate::generate::{
     WorldGen,
@@ -441,6 +445,133 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
     liked(rule, Some(ground.world), position, grown)
 }
 
+/// A rule's plants as the far view shows them, too far off for plants of
+/// their own: a wood as blocks. Where a far tile's column is ground the
+/// rule grows on, `block` lies over it as high as the plants stand; or, in
+/// a ring whose blocks are more than twice as high as they are, in place of
+/// its top block, so far woods are at least their colour. As many such
+/// columns are wooded as would hold a plant, so a thin wood shows gaps. Only plants that
+/// stand thick enough to close over the ground show: a lone tree to a
+/// field is no wood.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Woods {
+    pub rule: GrowRule,
+    /// The block they show as: leaves, say.
+    pub block: BlockId,
+    /// How tall a plant stands and how far across it is, in metres, at
+    /// its middle size.
+    pub height: f32,
+    pub width: f32,
+    /// The first ring it shows in, by its level: the first past the ones
+    /// its plants themselves are drawn on (see [`Woods::first_past`]).
+    pub from: u32,
+}
+
+/// How much of the ground a rule's plants must cover between them, each
+/// its width across, to show far off as a wood.
+const WOODED: f32 = 0.08;
+
+impl Woods {
+    /// The first ring a wood shows in where its plants are drawn out to
+    /// `reach` metres in a world whose own blocks reach `distance`: the
+    /// first whose inner edge the plants reach with a quarter to spare, so
+    /// plants stand on every ring inside it and the wood begins where they
+    /// end, with no bare ground between and none wooded twice.
+    pub fn first_past(reach: f32, distance: f32) -> u32 {
+        let rings = (reach / (1.25 * distance.max(1.0))).log2().floor();
+        (rings.max(0.0) as u32 + 1).min(super::stream::MOST_LEVELS - 1)
+    }
+
+    /// Whether its plants stand thick enough to show as a wood.
+    pub fn shows(&self) -> bool {
+        let spacing = self.rule.spacing.max(1.0);
+        let crown = std::f32::consts::FRAC_PI_4 * self.width * self.width;
+        self.block != AIR && self.rule.chance.clamp(0.0, 1.0) * crown / (spacing * spacing) >= WOODED
+    }
+}
+
+impl FarBuilt for Woods {
+    fn stamp(&self) -> u64 {
+        crate::layers::stable_hash(format!("{self:?}").as_bytes())
+    }
+
+    fn from_level(&self) -> u32 {
+        self.from
+    }
+
+    fn build(&self, making: &BlockMaking, tile: &mut FarTile) {
+        if !self.shows() {
+            return;
+        }
+        let rule = &self.rule;
+        let side = CHUNK;
+        let size = making.file.block_size.max(0.01) * (1u32 << tile.level.min(16)) as f32;
+        let position = making.generate.position;
+        let (sea, world) = (tile.sea.0, &*making.world);
+        // The top of each column's ground, in the tile's blocks, and its block: none under the sea.
+        let ground = |x: u32, z: u32| {
+            let top = tile.column([x, z]).last()?;
+            (top.block != AIR && (sea == AIR || top.block != sea)).then_some((top.to, top.block))
+        };
+        let patch = world.seed() ^ rule.seed.wrapping_mul(0x9E37_79B9);
+        // How many plants a column of the tile holds, where its ground grows them: one at the most counts.
+        let spacing = rule.spacing.max(1.0);
+        let holds = rule.chance.clamp(0.0, 1.0) * size * size / (spacing * spacing);
+        let mut wooded: Vec<([u32; 2], i32)> = Vec::new();
+        let (mut xs, mut zs, mut heights) = (Vec::new(), Vec::new(), Vec::new());
+        for z in 0..side {
+            for x in 0..side {
+                let Some((top, block)) = ground(x, z) else { continue };
+                if !(rule.on.is_empty() || rule.on.contains(&block)) {
+                    continue;
+                }
+                // How the ground rises there, from the columns beside it, the tile's own.
+                let beside = |x: u32, z: u32| ground(x, z).map_or(top, |(top, _)| top) as f32;
+                let along = |low: f32, high: f32, both: bool| (high - low) / if both { 2.0 } else { 1.0 };
+                let last = side - 1;
+                let dx = along(beside(x.saturating_sub(1), z), beside((x + 1).min(last), z), x > 0 && x < last);
+                let dz = along(beside(x, z.saturating_sub(1)), beside(x, (z + 1).min(last)), z > 0 && z < last);
+                let height = top as f32 * size;
+                if !rule.stands_on(height - world.sea_level(), (dx * dx + dz * dz).sqrt()) {
+                    continue;
+                }
+                let middle = |cell: u32, axis: usize| {
+                    position[axis] + ((tile.at[axis] * side as i32 + cell as i32) as f32 + 0.5) * size
+                };
+                let place = [middle(x, 0), middle(z, 1)];
+                if rule.patches > 0.0 && patchy(patch, place, rule.patches.max(1.0)) < 0.5 {
+                    continue;
+                }
+                // As many columns wooded as would hold a plant: a thin wood is a broken one far off too.
+                let cell = [tile.at[0] * side as i32 + x as i32, tile.at[1] * side as i32 + z as i32];
+                let drawn = mixed(mixed(patch ^ cell[0] as u32, tile.level + 0x60) ^ cell[1] as u32, 0x61);
+                if unit(drawn) >= holds {
+                    continue;
+                }
+                wooded.push(([x, z], top));
+                xs.push(place[0]);
+                zs.push(place[1]);
+                heights.push(height);
+            }
+        }
+        // Their climate, asked of the generator at once.
+        let mut liked = vec![true; wooded.len()];
+        if rule.temperature.is_some() || rule.humidity.is_some() {
+            let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+            world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
+            liked = warmth.into_iter().zip(wetness).map(|climate| rule.likes(climate)).collect();
+        }
+        // As high as the plants stand, in whole blocks; in blocks far higher than they are, the top block's place.
+        let tall = (self.height / size).round() as i32;
+        for ((column, top), _) in wooded.into_iter().zip(liked).filter(|(_, liked)| *liked) {
+            match tall >= 1 {
+                true => tile.add(column, top, top + tall, self.block),
+                false => tile.add(column, top - 1, top, self.block),
+            }
+        }
+    }
+}
+
 /// The block at `at` as changes kept for ground not made now have it: none
 /// where they change nothing of it.
 fn kept_change(edits: &BlockEdits, at: [i32; 3]) -> Option<BlockId> {
@@ -692,6 +823,73 @@ mod tests {
         let kept = BlockEdits::between(&map, &now);
         assert_eq!(gone_far(&plants, &kept).iter().collect::<Vec<_>>(), [0, 1]);
         assert!(gone_far(&plants, &BlockEdits::default()).is_empty());
+    }
+
+    #[test]
+    fn a_wood_shows_in_the_far_view_as_blocks_over_the_ground_its_trees_grow_on() {
+        use crate::blocks::generate::far::far_tile;
+        use std::sync::Arc;
+        let (file, world, _) = hills();
+        let (_, faces) = file.faces();
+        let making = BlockMaking {
+            generate: file.generate.clone().unwrap(),
+            file: file.clone(),
+            world: Arc::new(world),
+            faces: faces.into(),
+            far_folder: None,
+            far_built: Vec::new(),
+        };
+        let trees = GrowRule { on: vec![1], spacing: 7.0, separation: 4.0, chance: 0.6, ..GrowRule::default() };
+        let wood = Woods { rule: trees.clone(), block: 2, height: 6.5, width: 4.5, from: 3 };
+        assert!(wood.shows());
+        // Trees drawn to 500 m in a world of 128 m stand on its first two rings, and the wood begins with the
+        // third; drawn no further than the world's own blocks, with the first ring.
+        assert_eq!(
+            [500.0, 400.0, 300.0, 128.0, 60.0, 700.0].map(|reach| Woods::first_past(reach, 128.0)),
+            [2, 2, 1, 1, 1, 3]
+        );
+        // A tile of the fourth ring, its blocks 8 m: a block of the wood over every column of grass above the sea.
+        let bare = far_tile(&making.file, &making.generate, &making.world, 3, [0, 0]);
+        let mut tile = bare.clone();
+        wood.build(&making, &mut tile);
+        let (mut wooded, mut open) = (0, 0);
+        for z in 0..32 {
+            for x in 0..32 {
+                let (was, now) = (bare.column([x, z]), tile.column([x, z]));
+                let top = was.last().unwrap();
+                if top.block == 1 {
+                    let over = now.last().unwrap();
+                    let grown = (over.block, over.from, over.to) == (2, top.to, top.to + 1);
+                    assert!(grown || now == was, "a column of grass with or without its wood at {x}, {z}");
+                    wooded += usize::from(grown);
+                } else {
+                    assert_eq!(now, was, "nothing over the sea or bare ground at {x}, {z}");
+                    open += 1;
+                }
+            }
+        }
+        assert!(wooded > 200, "{wooded} columns wooded, {open} not grass");
+        // In blocks of 32 m the wood is the top block's colour, the ground no higher.
+        let far_bare = far_tile(&making.file, &making.generate, &making.world, 5, [0, 0]);
+        let mut far_off = far_bare.clone();
+        wood.build(&making, &mut far_off);
+        let recoloured = (0..32u32).flat_map(|z| (0..32u32).map(move |x| [x, z])).filter(|at| {
+            let (was, now) = (far_bare.column(*at).last().unwrap(), far_off.column(*at).last().unwrap());
+            (now.block, now.to) == (2, was.to) && was.block == 1
+        });
+        assert!(recoloured.count() > 50);
+        // A rule that likes no climate here, one with trees too few to close over the ground, and a wood with no
+        // block: nothing built; and each another stamp, so tiles are built on again when a rule changes.
+        let cold = Woods { rule: GrowRule { temperature: Some([-80.0, -60.0]), ..trees.clone() }, ..wood.clone() };
+        let lone = Woods { rule: GrowRule { spacing: 60.0, ..trees.clone() }, ..wood.clone() };
+        let none = Woods { block: AIR, ..wood.clone() };
+        for other in [&cold, &lone, &none] {
+            let mut tile = bare.clone();
+            other.build(&making, &mut tile);
+            assert!(tile == bare && other.stamp() != wood.stamp());
+        }
+        assert!(!lone.shows() && !none.shows() && cold.shows());
+        assert_eq!(wood.clone().stamp(), wood.stamp());
     }
 
     #[test]

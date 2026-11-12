@@ -2270,8 +2270,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   to undo; a click on a grown plant picks its Foliage. Tests: the rule (same every time, a column alone, by block, climate, height and slope, separation,
   patches, gone and back), the engine on a world without end (two rules, the camera moved and back, digging and
   building, a second run the same), a GPU picture of all six starters, the editor (a starter picked, grown,
-  changed, undone). Manual: Foliage, Block Worlds, Box Models. Not done: woods showing past their draw distance, as
-  colour in the far view's tiles; the same rule on heightmap terrains.
+  changed, undone). Manual: Foliage, Block Worlds, Box Models. Woods in the far view: a Foliage's `far_block` shows
+  its plants past where they are drawn as a wood of that block (`grow::Woods`), over the ground as high as they
+  stand on as many of a ring's columns as would hold a plant, or as the top block's colour in rings of far taller
+  blocks; from the first ring the plants do not reach (`Woods::first_past`), where the plants themselves stop.
+  The streamer takes it through a hook any generated thing can use (`stream::FarBuilt`: a stamp, the first ring,
+  and a tile to build into): far tiles are kept on disk without what is built into them, a nearer ring made in
+  full takes it block for block from the tile its ground would be, and a change builds those rings again and no
+  ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
+  near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
+  terrains.
 - ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
   is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
   (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing

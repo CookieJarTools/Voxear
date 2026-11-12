@@ -65,6 +65,28 @@ pub const MOST_LEVELS: u32 = 8;
 /// generator's heights alone, kept on disk where the world has a folder.
 pub const FAR_FROM: u32 = 3;
 
+/// Something a world's generator builds past its near chunks, as the far
+/// view shows it: a wood, a town's roofs, a tower. It is handed each far
+/// tile as the ground alone makes it, and puts its own blocks into the
+/// tile's columns ([`FarTile::add`]). Tiles are kept without them, so what
+/// is built far off can change, and be made again, with no ground made
+/// again.
+pub trait FarBuilt: Send + Sync {
+    /// A number that changes whenever what it would put into a tile does.
+    fn stamp(&self) -> u64;
+
+    /// The first ring it is built into, by its level: the far view's first
+    /// unless it says nearer. A coarser ring made in full, with its ground's
+    /// overhangs and caves, takes what is built into the tile its ground
+    /// would be as a far tile, block for block.
+    fn from_level(&self) -> u32 {
+        FAR_FROM
+    }
+
+    /// Puts its blocks into `tile`, a tile of the ground `making` makes.
+    fn build(&self, making: &BlockMaking, tile: &mut FarTile);
+}
+
 /// What a world of blocks without end's chunks are made from: its file, the
 /// way it generates, its generator, and the surfaces its blocks' faces are
 /// drawn with.
@@ -77,6 +99,10 @@ pub struct BlockMaking {
     /// Where its far view's tiles are kept, the world's own folder, in which
     /// they go into a folder of what they were made from; none to keep none.
     pub far_folder: Option<std::path::PathBuf>,
+    /// What is built into its far view's tiles over their ground, each in
+    /// turn. None of the ground is made again when these change: only the
+    /// far view's tiles are built on again.
+    pub far_built: Vec<Arc<dyn FarBuilt>>,
 }
 
 impl BlockMaking {
@@ -88,6 +114,26 @@ impl BlockMaking {
             && Arc::ptr_eq(&self.world, &other.world)
             && other.faces.starts_with(&self.faces)
             && self.far_folder == other.far_folder
+    }
+
+    /// A number for everything built into its far view's tiles.
+    fn built_stamp(&self) -> u64 {
+        let stamp = |built: &Arc<dyn FarBuilt>| [built.stamp(), u64::from(built.from_level())];
+        let stamps: Vec<u8> = self.far_built.iter().flat_map(stamp).flat_map(u64::to_le_bytes).collect();
+        crate::layers::stable_hash(&stamps)
+    }
+
+    /// The first ring anything is built into, by its level; none where
+    /// nothing is built far off.
+    fn built_from(&self) -> Option<u32> {
+        self.far_built.iter().map(|built| built.from_level().max(1)).min()
+    }
+
+    /// Builds into `tile`, of ring `level`, everything built into that ring.
+    fn build_into(&self, level: u32, tile: &mut FarTile) {
+        for built in self.far_built.iter().filter(|built| built.from_level().max(1) <= level) {
+            built.build(self, tile);
+        }
     }
 
     /// The folder its far view's tiles are kept in, named by what they are
@@ -129,8 +175,16 @@ fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, level: 
 /// from.
 enum Finished {
     /// A chunk column's chunks, at its level and place, and for a coarse
-    /// one their faces.
-    Made { number: u64, level: u32, at: [i32; 2], chunks: Vec<([i32; 3], Chunk)>, meshes: Vec<([i32; 3], ChunkMesh)> },
+    /// one their faces; and what was built into its far view when it was
+    /// made, by its stamp.
+    Made {
+        number: u64,
+        level: u32,
+        at: [i32; 2],
+        chunks: Vec<([i32; 3], Chunk)>,
+        meshes: Vec<([i32; 3], ChunkMesh)>,
+        built: u64,
+    },
     /// A near column's chunks' faces, and the chunks round it they were made
     /// from.
     Meshed { number: u64, at: [i32; 2], meshes: Vec<([i32; 3], ChunkMesh)>, from: BlockMap },
@@ -290,6 +344,20 @@ impl BlockStreamer {
         camera: [f32; 2],
     ) -> bool {
         let mut changed = false;
+        // What is built into the far view changed, its ground the same: its tiles are built on again, the old drawn
+        // till then, and nothing else is made again.
+        let rebuilt =
+            self.making.as_ref().is_some_and(|kept| kept.same(&making) && kept.built_stamp() != making.built_stamp());
+        if rebuilt {
+            // From the first ring either builds into.
+            let kept = self.making.as_ref().and_then(|kept| kept.built_from());
+            let first = kept.into_iter().chain(making.built_from()).min().unwrap_or(FAR_FROM);
+            let far = |(level, _): &&(u32, [i32; 2])| *level >= first;
+            let stale: Vec<(u32, [i32; 2])> =
+                self.coarse.keys().chain(self.coarse_blocks.keys()).filter(far).copied().collect();
+            self.stale.extend(stale);
+            self.again = true;
+        }
         if !self.making.as_ref().is_some_and(|kept| kept.same(&making)) {
             // Made anew: every column let go, the changes on those near kept.
             if !self.near.is_empty() {
@@ -312,6 +380,8 @@ impl BlockStreamer {
             world.faces = making.faces.clone();
             self.making = Some(Arc::new(making));
             changed = true;
+        } else if rebuilt {
+            self.making = Some(Arc::new(making));
         }
         let making = self.making.clone().expect("kept above");
         let windows = windows(&making.file, distance, far, camera);
@@ -389,9 +459,14 @@ impl BlockStreamer {
                     came.push(at);
                     changed = true;
                 }
-                Finished::Made { level, at, chunks, meshes, .. } => {
+                Finished::Made { level, at, chunks, meshes, built, .. } => {
                     self.asked.remove(&(level, at));
                     let was_stale = self.stale.remove(&(level, at));
+                    // Made while what is built into the far view was other than it is now: shown, and made again.
+                    if self.making.as_ref().is_some_and(|making| making.built_stamp() != built) {
+                        self.stale.insert((level, at));
+                        self.again = true;
+                    }
                     if self.making.as_ref().is_some_and(|making| making.file.smooth) {
                         // Its faces made again with those round it, its old ones drawn till then.
                         if was_stale {
@@ -637,13 +712,24 @@ impl BlockStreamer {
                 let under = |key: &[i32; 3]| [key[0] >> level, key[2] >> level] == at;
                 built.chunks.extend(pending.chunks.iter().filter(|(key, _)| under(key)).map(|(k, c)| (*k, c.clone())));
             }
+            let stamp = making.built_stamp();
             crate::workers::spawn(move || {
                 if latest.load(Ordering::Acquire) == number {
                     let mut chunks = if level >= FAR_FROM {
-                        let tile = far_tile_kept(&making, far_tiles.as_deref(), level, at);
+                        let mut tile = far_tile_kept(&making, far_tiles.as_deref(), level, at);
+                        making.build_into(level, &mut tile);
                         far_chunks(&tile, making.file.smooth)
                     } else {
-                        column_chunks(&making.file, &making.generate, &making.world, level, at, None)
+                        let mut chunks = column_chunks(&making.file, &making.generate, &making.world, level, at, None);
+                        // What is built into a ring this near is built into the tile its ground would be, and put
+                        // into its chunks.
+                        if level > 0 && making.built_from().is_some_and(|first| first <= level) {
+                            let bare = far_tile(&making.file, &making.generate, &making.world, level, at);
+                            let mut built = bare.clone();
+                            making.build_into(level, &mut built);
+                            put_built(&mut chunks, &bare, &built);
+                        }
+                        chunks
                     };
                     raise(&mut chunks, &built, level, making.file.smooth);
                     // A coarse column's faces made here, alone: the columns beside it not made.
@@ -662,7 +748,7 @@ impl BlockStreamer {
                             })
                             .collect()
                     };
-                    let _ = send.send(Finished::Made { number, level, at, chunks, meshes });
+                    let _ = send.send(Finished::Made { number, level, at, chunks, meshes, built: stamp });
                 }
                 making_now.fetch_sub(1, Ordering::AcqRel);
             });
@@ -696,6 +782,33 @@ impl BlockStreamer {
             world.far = Arc::new(far);
         }
         !same_far
+    }
+}
+
+/// Puts into `chunks`, a coarse column's, every block of far tile `built`
+/// that tile `bare`, the same ground with nothing built into it, has not.
+fn put_built(chunks: &mut Vec<([i32; 3], Chunk)>, bare: &FarTile, built: &FarTile) {
+    let side = CHUNK as i32;
+    let block_at =
+        |runs: &[far::Run], y: i32| runs.iter().find(|run| run.from <= y && y < run.to).map_or(0, |run| run.block);
+    for z in 0..CHUNK {
+        for x in 0..CHUNK {
+            let (was, now) = (bare.column([x, z]), built.column([x, z]));
+            if was == now {
+                continue;
+            }
+            let low = was.iter().chain(now).map(|run| run.from).min().unwrap_or(0);
+            let high = was.iter().chain(now).map(|run| run.to).max().unwrap_or(0);
+            for y in (low..high).filter(|&y| block_at(was, y) != block_at(now, y)) {
+                let key = [built.at[0], y.div_euclid(side), built.at[1]];
+                let found = chunks.iter().position(|(at, _)| *at == key);
+                let at = found.unwrap_or_else(|| {
+                    chunks.push((key, Chunk::filled(0)));
+                    chunks.len() - 1
+                });
+                chunks[at].1.set(x, y.rem_euclid(side) as u32, z, block_at(now, y));
+            }
+        }
     }
 }
 
@@ -810,7 +923,7 @@ mod tests {
         let (_, faces) = file.faces();
         let generate = file.generate.clone().unwrap();
         let world = Arc::new(Preset::RollingHills.world());
-        BlockMaking { file, generate, world, faces: faces.into(), far_folder: None }
+        BlockMaking { file, generate, world, faces: faces.into(), far_folder: None, far_built: Vec::new() }
     }
 
     /// Brings `world` round `at` and waits until every column is made.
@@ -895,6 +1008,82 @@ mod tests {
         };
         assert!(quads(&bare) > 0, "the ground there drawn coarse");
         assert!(quads(&built) > quads(&bare), "and the tower with it: {} against {}", quads(&built), quads(&bare));
+    }
+
+    #[test]
+    fn what_is_built_into_the_far_view_shows_in_its_tiles_and_is_built_again_when_it_changes_with_no_ground_made_again()
+    {
+        // A slab over every column of a far tile, as many blocks thick as it says.
+        struct Slab(i32, u32);
+        impl FarBuilt for Slab {
+            fn stamp(&self) -> u64 {
+                self.0 as u64
+            }
+            fn from_level(&self) -> u32 {
+                self.1
+            }
+            fn build(&self, _making: &BlockMaking, tile: &mut FarTile) {
+                for z in 0..CHUNK {
+                    for x in 0..CHUNK {
+                        let top = tile.column([x, z]).last().map(|run| run.to);
+                        if let Some(top) = top.filter(|_| self.0 > 0) {
+                            tile.add([x, z], top, top + self.0, 3);
+                        }
+                    }
+                }
+            }
+        }
+        // One ground throughout, with one thing or another built into its far view.
+        let ground = making();
+        let with = |built: Vec<Arc<dyn FarBuilt>>| BlockMaking { far_built: built, ..ground.clone() };
+        let mut world = BlockWorld::made(BlockMap::default(), &ground.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        let mut settle = |streamer: &mut BlockStreamer, world: &mut BlockWorld, making: BlockMaking| {
+            let start = std::time::Instant::now();
+            loop {
+                streamer.update(world, &mut base, &mut pending, making.clone(), (100.0, 3000.0), [10.0, 10.0]);
+                if streamer.settled() {
+                    return;
+                }
+                assert!(start.elapsed().as_secs() < 60, "never settled");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        // The highest face of the far view's rings and of the nearer ones, in metres.
+        let highest = |world: &BlockWorld, far: bool| -> f32 {
+            let rings = world.far.iter().filter(|(key, _)| (key[0] as u32 >= FAR_FROM) == far);
+            let top = |key: &[i32; 4], mesh: &ChunkMesh| {
+                let block = 2.0 * (1u32 << key[0]) as f32;
+                let high = mesh.positions.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
+                (key[2] as f32 * CHUNK as f32 + high) * block
+            };
+            rings.map(|(key, mesh)| top(key, mesh)).fold(f32::MIN, f32::max)
+        };
+        settle(&mut streamer, &mut world, with(Vec::new()));
+        let (bare_far, bare_near) = (highest(&world, true), highest(&world, false));
+        let near: HashMap<[i32; 3], Arc<Chunk>> = world.blocks.chunks().map(|(k, c)| (*k, c.clone())).collect();
+        let coarse: Vec<([i32; 4], Arc<ChunkMesh>)> =
+            world.far.iter().filter(|(k, _)| (k[0] as u32) < FAR_FROM).map(|(k, m)| (*k, m.clone())).collect();
+        assert!(!near.is_empty() && !coarse.is_empty());
+        // A slab two blocks thick built in: the far view stands higher by it, in each ring's own blocks.
+        settle(&mut streamer, &mut world, with(vec![Arc::new(Slab(2, FAR_FROM))]));
+        assert!(highest(&world, true) >= bare_far + 2.0 * 16.0, "{} over {bare_far}", highest(&world, true));
+        assert_eq!(highest(&world, false), bare_near, "rings made in full have none of it");
+        // Nothing of the ground was made again: the near chunks and the nearer rings' faces are the ones they were.
+        assert!(near.iter().all(|(key, chunk)| world.blocks.chunk(*key).is_some_and(|now| Arc::ptr_eq(now, chunk))));
+        assert!(coarse.iter().all(|(key, mesh)| world.far.get(key).is_some_and(|now| Arc::ptr_eq(now, mesh))));
+        // Thicker, then built into the nearer rings too, from the first: those stand higher by it as well, and
+        // the world's own chunks are still as they were.
+        settle(&mut streamer, &mut world, with(vec![Arc::new(Slab(5, FAR_FROM))]));
+        assert!(highest(&world, true) >= bare_far + 5.0 * 16.0);
+        assert_eq!(highest(&world, false), bare_near);
+        settle(&mut streamer, &mut world, with(vec![Arc::new(Slab(5, 1))]));
+        assert!(highest(&world, false) >= bare_near + 5.0 * 4.0, "{} over {bare_near}", highest(&world, false));
+        assert!(near.iter().all(|(key, chunk)| world.blocks.chunk(*key).is_some_and(|now| Arc::ptr_eq(now, chunk))));
+        // Gone: built on again, as the ground alone makes them.
+        settle(&mut streamer, &mut world, with(Vec::new()));
+        assert_eq!((highest(&world, true), highest(&world, false)), (bare_far, bare_near));
     }
 
     #[test]

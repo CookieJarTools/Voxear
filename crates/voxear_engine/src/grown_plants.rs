@@ -36,9 +36,9 @@ use voxear_scene::{
 use voxear_terrain::blocks::{
     BlockMap, BlockWorld,
     chunk::{CHUNK, Chunk},
-    grow::{FarGround, Ground, GrowRule, Grown, Tops, chunks_under, gone, gone_far, grow_far, grow_on},
+    grow::{FarGround, Ground, GrowRule, Grown, Tops, Woods, chunks_under, gone, gone_far, grow_far, grow_on},
     mesh::ChunkMesh,
-    stream::MOST_LEVELS,
+    stream::{FarBuilt, MOST_LEVELS},
 };
 use voxear_terrain::generate::WorldGen;
 
@@ -101,6 +101,8 @@ struct Seen {
     made: Option<Arc<HashSet<[i32; 2]>>>,
     from: Option<[i32; 2]>,
     reach: f32,
+    /// The first ring its plants show as a wood in, where they do.
+    wood_from: Option<u32>,
 }
 
 impl Seen {
@@ -110,7 +112,8 @@ impl Seen {
             (None, None) => true,
             _ => false,
         };
-        Arc::ptr_eq(&self.far, &other.far) && made && self.from == other.from && self.reach == other.reach
+        let same = self.from == other.from && self.reach == other.reach && self.wood_from == other.wood_from;
+        Arc::ptr_eq(&self.far, &other.far) && made && same
     }
 }
 
@@ -268,6 +271,17 @@ pub fn update(world: &mut World, content: &mut Content) {
         }
         grows
     });
+    // A far block its world does not hold yet is numbered there, as a block built with is: the far view takes it
+    // up from the next tick.
+    for grower in &growers {
+        let Some(far_block) = grower.data.far_block.as_deref() else { continue };
+        let held = content.block(far_block).is_none_or(|(guid, _)| {
+            world.get::<BlockWorldAsset>(grower.world).is_none_or(|asset| asset.drawn.number_of(guid).is_some())
+        });
+        if !held {
+            crate::blocks::block_number(world, content, grower.world, far_block, true);
+        }
+    }
     let viewer = crate::terrain::viewer(world);
     let mut all_tops: HashMap<Entity, HashMap<[i32; 2], ([i32; 3], Arc<Chunk>)>> = HashMap::new();
     growth.shown.retain(|world, _| growers.iter().any(|grower| grower.world == *world));
@@ -291,6 +305,9 @@ pub fn update(world: &mut World, content: &mut Content) {
             asset.drawn.number_of(guid)
         });
         let stamp = stamp_of(&rule, &asset, &blocks, generator.as_deref(), grower.world);
+        // Where its plants show as a wood far off, they are grown only on the rings inside the wood's first.
+        let wood_from = woods_of(world, content, &grower, &asset).map(|woods| woods.from);
+        let inside = |ring: Option<u32>| ring.is_some_and(|ring| wood_from.is_none_or(|from| ring < from));
         let growing = growth.sources.entry(grower.entity).or_insert_with(|| Growing {
             stamp,
             look: grower.look.clone(),
@@ -329,6 +346,7 @@ pub fn update(world: &mut World, content: &mut Content) {
             made: made.clone(),
             from: from.map(|from| from.map(|v| (v / 8.0).floor() as i32)),
             reach,
+            wood_from,
         };
         let unchanged = growing.settled && growing.seen.as_ref().is_some_and(|was| was.same(&seen));
         let shown = match (&far, growth.shown.get(&grower.world)) {
@@ -350,7 +368,10 @@ pub fn update(world: &mut World, content: &mut Content) {
                 .as_ref()
                 .is_none_or(|(key, chunk)| asset.base.chunk(*key).is_some_and(|now| Arc::ptr_eq(now, chunk)));
             let there = match kept.far {
-                Some(rings) => !is_made && far.is_some() && suits(rings, finest(shown, *column)),
+                Some(rings) => {
+                    let ring = finest(shown, *column);
+                    !is_made && far.is_some() && suits(rings, ring) && inside(ring)
+                }
                 None => is_made && same_ground,
             };
             there && near(*column, CHUNK as f32 * 0.5)
@@ -418,7 +439,10 @@ pub fn update(world: &mut World, content: &mut Content) {
             let around = span(1).flat_map(|z| span(0).map(move |x| [x, z]));
             // Clear of the ground of the finest ring showing there and of the next out, which shows as the
             // camera goes from it.
-            let rings = |column: &[i32; 2]| finest(shown, *column).map(|finest| (finest + 1).min(MOST_LEVELS - 1));
+            let rings = |column: &[i32; 2]| {
+                let ring = finest(shown, *column).filter(|ring| inside(Some(*ring)))?;
+                Some((ring + 1).min(MOST_LEVELS - 1))
+            };
             let far_off = around.filter(|column| !made.contains(column));
             wanted.extend(far_off.filter_map(|column| Some((column, Some(rings(&column)?)))));
         }
@@ -515,6 +539,38 @@ pub fn update(world: &mut World, content: &mut Content) {
     world.insert_resource(growth);
 }
 
+/// The wood a growing Foliage shows as far off (see
+/// `voxear_terrain::blocks::grow::Woods`): where it has a far block its
+/// world holds, its world is one without end, and its plants stand thick
+/// enough, as tall and as wide as its mesh at its middle size. It begins
+/// in the first ring past those its plants are drawn on. None where nothing
+/// draws, as on a server: the far view is only seen.
+fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &BlockWorldAsset) -> Option<Woods> {
+    let far_block = grower.data.far_block.as_deref()?;
+    let endless = asset.file.generate.as_ref()?.endless?;
+    let block = content.block(far_block).and_then(|(guid, _)| asset.drawn.number_of(guid))?;
+    let boxes = world.resource::<crate::mesh_boxes::MeshBoxes>()?;
+    let (least, most) = boxes.of(grower.look.foliage.as_ref()?.mesh)?;
+    let rule = grower.data.rule(|block| {
+        let (guid, _) = content.block(block)?;
+        asset.drawn.number_of(guid)
+    });
+    let size = (rule.scale[0] + rule.scale[1]) * 0.5;
+    let wide = (most.x - least.x).max(most.z - least.z);
+    let from = Woods::first_past(grower.draw_distance, endless.distance);
+    let woods = Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from };
+    woods.shows().then_some(woods)
+}
+
+/// What the Foliage growing under the Block World on `entity` show as in
+/// its far view, each a wood (see [`woods_of`]).
+pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Arc<dyn FarBuilt>> {
+    let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Vec::new() };
+    let growers = growers(world).into_iter().filter(|grower| grower.world == entity);
+    let woods = growers.filter_map(|grower| woods_of(world, content, &grower, asset));
+    woods.map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+}
+
 /// Gives a column's Obj what its plants share with their Foliage.
 fn dress(world: &mut World, child: Entity, look: &Look) {
     world.remove::<Foliage>(child);
@@ -556,7 +612,7 @@ fn stamp_of(
 /// keeps to the world's top block: what a Foliage growing it starts with.
 fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>, &'static str, bool) {
     const SMALL: &str = "shadow_distance = 0.0\nimpostors = \"off\"\n";
-    const TALL: &str = "draw_distance = 500.0\nfade_distance = 40.0\nshadow_distance = 80.0\n";
+    const TALL: &str = "draw_distance = 400.0\nfade_distance = 40.0\nshadow_distance = 80.0\n";
     const TRUNK: &str = "radius = 0.3\nheight = 3.5\n";
     match plant {
         StarterPlant::Tuft => (SMALL, None, "spacing = 1.0\nseparation = 0.0\nchance = 0.6\nslope = 40.0\n", true),
@@ -592,10 +648,15 @@ fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>,
 
 /// A Foliage that grows by itself, as a scene writes it under an Obj: its
 /// `[obj.foliage]` section, drawing `mesh` with `material`, growing on
-/// block `top` where one is given. For a starter plant's model it is drawn
+/// block `top` where one is given, and showing far off as block `far`. For a starter plant's model it is drawn
 /// and grown as suits the plant: grass thick and near, flowers in patches,
 /// trees far apart where it is wet enough, rocks on any ground.
-pub fn foliage_text(mesh: &str, material: Option<&str>, starter: Option<StarterPlant>, top: Option<&str>) -> String {
+pub fn foliage_text(
+    mesh: &str,
+    material: Option<&str>,
+    starter: Option<StarterPlant>,
+    (top, far): (Option<&str>, Option<&str>),
+) -> String {
     let string = |text: &str| toml::Value::String(text.to_string()).to_string();
     let (drawn, trunk, grown, on_top) = starter.map_or(("", None, "", true), starter_settings);
     let mut text = format!("[obj.foliage]\nmesh = {}\n", string(mesh));
@@ -609,6 +670,9 @@ pub fn foliage_text(mesh: &str, material: Option<&str>, starter: Option<StarterP
     text += &format!("[obj.foliage.grow]\n{grown}");
     if let Some(top) = top.filter(|_| on_top) {
         text += &format!("on = [{}]\n", string(top));
+    }
+    if let Some(far) = far {
+        text += &format!("far_block = {}\n", string(far));
     }
     text
 }

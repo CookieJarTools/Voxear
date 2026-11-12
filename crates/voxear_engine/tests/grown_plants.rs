@@ -344,6 +344,59 @@ fn a_plant_a_script_takes_away_stays_gone_when_its_ground_is_made_again() {
     assert_eq!(gone(&game, again), [0, 2], "what the Foliage's Obj says, as after a save is put back");
 }
 
+#[test]
+fn a_wood_shows_in_the_far_view_as_its_far_block_past_where_its_trees_are_drawn() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_render::{Renderer, RendererSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(64, 64, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    // The far view's faces drawn as leaves, in a world whose trees, six metres across, show far off as leaves
+    // (`far`) or do not.
+    let mut leaves_far_off = |far: bool| -> (usize, bool) {
+        let dir = project(0.0);
+        let leaves = BlockDef::colored([0.1, 0.35, 0.12]);
+        std::fs::write(dir.path().join("Blocks/Leaves.block"), leaves.to_text()).unwrap();
+        // Coarser rings out to 1500 m, so the far view's begin, 400 m off.
+        let world = dir.path().join("Blocks/Field.blockworld");
+        let text = std::fs::read_to_string(&world).unwrap();
+        assert!(text.contains("far = 300.0"));
+        std::fs::write(&world, text.replace("far = 300.0", "far = 1500.0")).unwrap();
+        let scene = dir.path().join("Scenes/Field.scene");
+        let text = std::fs::read_to_string(&scene).unwrap();
+        let far_block = if far { "far_block = \"Blocks/Leaves.block\"\n" } else { "" };
+        let trees = format!("chance = 0.8\nseed = 1\nscale = [6.0, 6.0]\n{far_block}");
+        assert!(text.contains("chance = 0.8\nseed = 1\n"));
+        std::fs::write(&scene, text.replace("chance = 0.8\nseed = 1\n", &trees)).unwrap();
+        let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+        game.start(Some(&mut renderer)).unwrap();
+        for tick in 0..6000 {
+            game.tick(1.0 / 60.0, Some(&mut renderer));
+            let made = voxear_engine::blocks::streamed(&game.engine.world) && grown_plants::settled(&game.engine.world);
+            if made && tick >= 30 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let field = named(&game, "Blocks");
+        let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+        let guid = game.content.parse("Blocks/Leaves.block").unwrap().guid().unwrap();
+        let Some(number) = asset.drawn.number_of(guid) else { return (0, false) };
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        let look = blocks.faces[usize::from(number)].top;
+        let far_view = blocks.far.iter().filter(|(key, _)| key[0] >= 3);
+        let leafy = |mesh: &voxear_terrain::blocks::mesh::ChunkMesh| {
+            mesh.quads.iter().filter(|quad| voxear_terrain::blocks::mesh::unpack(**quad).3 == look).count()
+        };
+        (far_view.map(|(_, mesh)| leafy(mesh)).sum(), true)
+    };
+    let (leafy, held) = leaves_far_off(true);
+    assert!(held, "the world numbers its Foliage's far block");
+    assert!(leafy > 50, "{leafy} faces of leaves in the far view");
+    assert_eq!(leaves_far_off(false), (0, false), "none where no Foliage shows far off");
+}
+
 /// A project as [`project`]'s, its world growing every starter plant, each a model in its Plants folder, under a
 /// low sun, seen from a little over the ground at (40, 40); with `plants` off, the same world bare.
 fn starter_project(plants: bool) -> tempfile::TempDir {
@@ -362,7 +415,8 @@ fn starter_project(plants: bool) -> tempfile::TempDir {
         let path = format!("Plants/{}.boxmodel", plant.name());
         std::fs::write(dir.path().join(&path), plant.model().to_text()).unwrap();
         let (mesh, material) = (format!("{path}#mesh0.0"), format!("{path}#material0"));
-        let foliage = grown_plants::foliage_text(&mesh, Some(&material), Some(plant), Some("Blocks/Grass.block"));
+        let on = (Some("Blocks/Grass.block"), None);
+        let foliage = grown_plants::foliage_text(&mesh, Some(&material), Some(plant), on);
         scene += &format!("\n[[obj]]\nid = {}\nname = \"{}\"\nparent = 1\n{foliage}", at + 10, plant.name());
     }
     std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();

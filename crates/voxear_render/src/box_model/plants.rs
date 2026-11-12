@@ -88,6 +88,17 @@ impl StarterPlant {
         }
     }
 
+    /// The colour a wood of it is far off, where it is a tree: its leaves',
+    /// sRGB from 0 to 1. None for plants too small to show in a far view.
+    pub fn far_color(self) -> Option<[f32; 3]> {
+        let color = |[r, g, b]: Color| [r, g, b].map(|part| f32::from(part) / 255.0);
+        match self {
+            StarterPlant::Tree => Some(color(LEAVES[1])),
+            StarterPlant::Pine => Some(color(NEEDLES[1])),
+            _ => None,
+        }
+    }
+
     /// How many of its cubes make a metre, and how many it measures along
     /// X, Y and Z.
     fn grid(self) -> (f32, [u32; 3]) {

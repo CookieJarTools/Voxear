@@ -396,6 +396,22 @@ pub fn starter_plant_at(path: &str) -> Option<StarterPlant> {
     StarterPlant::ALL.into_iter().find(|plant| starter_plant_path(*plant) == path)
 }
 
+/// The block a starter tree shows as in a world's far view, by reference:
+/// one of its leaves' colour, in the Plants folder beside its model, made
+/// where the project has none. None for a plant too small to show so far.
+fn starter_far_block(game: &mut Game, plant: StarterPlant) -> Result<Option<String>> {
+    let Some(color) = plant.far_color() else { return Ok(None) };
+    let path = format!("{PLANTS_FOLDER}/{} Leaves.block", plant.name());
+    let file = game.project.root.join(&path);
+    if !file.is_file() {
+        let block = voxear_terrain::blocks::block::BlockDef::colored(color);
+        std::fs::create_dir_all(game.project.root.join(PLANTS_FOLDER)).context("making the Plants folder")?;
+        std::fs::write(&file, block.to_text()).with_context(|| format!("making {path}"))?;
+        game.content.rescan()?;
+    }
+    Ok(Some(game.content.parse(&path)?.to_string()))
+}
+
 /// Writes starter plant `plant`'s model into the project, where it has
 /// none, and has the project take it up.
 pub fn make_starter_plant(game: &mut Game, plant: StarterPlant) -> Result<String> {
@@ -427,7 +443,11 @@ pub fn create_grown_plant(game: &mut Game, renderer: &mut Renderer, world: Entit
     let asset = game.engine.world.get::<BlockWorldAsset>(world).context("the Block World has no asset")?;
     let top = asset.drawn.guid(asset.file.ground.top).map(|top| top.to_string());
     let name = stem(path);
-    let foliage = grown_plants::foliage_text(&mesh, material.as_deref(), starter_plant_at(path), top.as_deref());
+    // A starter tree shows far off as a block of its leaves' colour, made beside its model.
+    let starter = starter_plant_at(path);
+    let far = starter.and_then(|plant| starter_far_block(game, plant).transpose()).transpose()?;
+    let blocks = (top.as_deref(), far.as_deref());
+    let foliage = grown_plants::foliage_text(&mesh, material.as_deref(), starter, blocks);
     let text = format!("format = 1\n\n[[obj]]\nid = 1\nname = {}\n{foliage}", toml::Value::String(name.to_string()));
     let file = scene_file::parse(&text, name)?;
     let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;

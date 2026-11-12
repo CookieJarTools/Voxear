@@ -101,6 +101,7 @@ pub enum PlantsField {
     GrowScale,
     GrowAligned,
     GrowSeed,
+    GrowFarBlock,
 }
 
 use PlantsField as F;
@@ -123,7 +124,7 @@ pub fn props(world: &World, entity: Entity, settings: Vec<Prop>) -> Vec<Prop> {
             fields.push(F::GrowHeightMask);
             fields.extend(grow.height.map(|_| F::GrowHeights));
             fields.extend([F::GrowSteepest, F::GrowSpacing, F::GrowSeparation, F::GrowChance, F::GrowPatches]);
-            fields.extend([F::GrowScale, F::GrowAligned, F::GrowSeed]);
+            fields.extend([F::GrowScale, F::GrowAligned, F::GrowSeed, F::GrowFarBlock]);
         }
         return fields.into_iter().map(Prop::Plants).collect();
     }
@@ -170,6 +171,7 @@ pub fn label(field: PlantsField) -> &'static str {
         F::GrowScale => "Sizes",
         F::GrowAligned => "Align to blocks",
         F::GrowSeed => "Seed",
+        F::GrowFarBlock => "Far block",
     }
 }
 
@@ -244,6 +246,7 @@ pub fn get(game: &Game, entity: Entity, field: PlantsField) -> Option<Value> {
         F::GrowScale => Value::Vector(grow()?.scale.to_vec()),
         F::GrowAligned => Value::Toggle(grow()?.aligned),
         F::GrowSeed => Value::Whole(i64::from(grow()?.seed)),
+        F::GrowFarBlock => Value::Asset(path_of(game, grow()?.far_block.as_deref())),
         F::Trunk => Value::Toggle(data.trunk.is_some()),
         F::TrunkRadius => Value::Number(data.trunk?.radius),
         F::TrunkHeight => Value::Number(data.trunk?.height),
@@ -373,7 +376,8 @@ fn change(world: &mut World, entity: Entity, how: impl FnOnce(&mut voxear_engine
 }
 
 /// What a picker shows: the project's prefabs, for what a plant cut down
-/// becomes, or its blocks, for the block a Foliage grows on.
+/// becomes, or its blocks, for the block a Foliage grows on and the one its
+/// plants show as far off.
 pub fn choices(game: &Game, field: PlantsField) -> Vec<(String, Pick)> {
     match takes(field) {
         Some(kind) => fields::assets_of(game, Some(kind)),
@@ -385,7 +389,7 @@ pub fn choices(game: &Game, field: PlantsField) -> Vec<(String, Pick)> {
 pub fn takes(field: PlantsField) -> Option<AssetKind> {
     match field {
         F::Cut => Some(AssetKind::Prefab),
-        F::GrowOn => Some(AssetKind::Block),
+        F::GrowOn | F::GrowFarBlock => Some(AssetKind::Block),
         _ => None,
     }
 }
@@ -393,7 +397,7 @@ pub fn takes(field: PlantsField) -> Option<AssetKind> {
 /// What a picker calls the kind of asset a value takes.
 pub fn takes_name(field: PlantsField) -> &'static str {
     match field {
-        F::GrowOn => "Block",
+        F::GrowOn | F::GrowFarBlock => "Block",
         _ => "Prefab",
     }
 }
@@ -415,6 +419,7 @@ pub fn pick(game: &mut Game, entity: Entity, field: PlantsField, choice: &Pick) 
     };
     change(&mut game.engine.world, entity, |data| match (field, data.grow.as_mut()) {
         (F::GrowOn, Some(grow)) => grow.on = reference.into_iter().collect(),
+        (F::GrowFarBlock, Some(grow)) => grow.far_block = reference,
         (F::Cut, _) => data.cut = reference,
         _ => {}
     })

@@ -64,12 +64,17 @@ Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Gr
 | Sizes | The smallest and the largest |
 | Align to blocks | Stands each plant on the middle of its block, turned by quarter turns, so it sits square with the blocks. Off, a plant stands anywhere on its block, turned any way |
 | Seed | Another seed grows the plants in other places. Give each Foliage of a world its own, or two kinds of plant try the same places |
+| Far block | The block the plants show as far off, where they stand thick enough to be a wood (see below). None for plants that are not seen so far |
 
 A plant stands on the highest block of its place, under the open sky, and only on ground the world made: nothing grows on what was built afterwards. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
 
 Plants are grown only as far as they are drawn: a Foliage's grown plants reach its **Draw distance** from the camera. In the editor they grow round where the Scene view looks from.
 
-A draw distance longer than the world's **View distance** carries plants out over the coarser ground beyond the world's own blocks, so trees stand on far hills. Out there a plant is worked out from the generator's heights, and it is the same plant, in the same place, once the camera comes near and its ground is made. Until then it stands on the coarse blocks, sunk a little into them at times and never hanging over them. Where a generator pushes its ground about with overhangs and caves, a few far plants may differ from the ones that grow once the ground is made. Past the draw distance the far view shows the ground bare.
+A draw distance longer than the world's **View distance** carries plants out over the coarser ground beyond the world's own blocks, so trees stand on far hills. Out there a plant is worked out from the generator's heights, and it is the same plant, in the same place, once the camera comes near and its ground is made. Until then it stands on the coarse blocks, sunk a little into them at times and never hanging over them. Where a generator pushes its ground about with overhangs and caves, a few far plants may differ from the ones that grow once the ground is made.
+
+**Woods in the far view.** Give trees a **Far block**, a block of their leaves' colour, and past where the trees themselves are drawn the world shows them as a wood of that block: over the ground as high as the trees stand, on about as many of a ring's columns as would hold a tree, so a thin wood shows gaps and a thick one closes over. In rings whose blocks are far taller than the trees, the ground's top block takes the colour instead. The wood begins in the first ring the trees do not reach, and the trees stop where it begins, so no ground is left bare between and none is wooded twice. Only plants standing thick enough to cover about a twelfth of the ground show as a wood; flowers and lone trees do not. A change to the Foliage's rule builds the far view's woods again, and none of the ground.
+
+Past the draw distance, plants with no Far block are not seen.
 
 Trunks and the Cut prefab work for grown plants as they do for painted ones. A Foliage that grows can still have plants painted or placed on it; they are drawn beside the grown ones.
 
@@ -77,7 +82,7 @@ Trunks and the Cut prefab work for grown plants as they do for painted ones. A F
 [obj.foliage]
 mesh = "Plants/Tree.boxmodel#mesh0.0"
 material = "Plants/Tree.boxmodel#material0"
-draw_distance = 500.0
+draw_distance = 400.0
 [obj.foliage.grow]
 on = ["Blocks/Grass.block"]   # the blocks it stands on; left out for any ground
 humidity = [0.45, 1.0]        # only where it is wet enough
@@ -87,6 +92,7 @@ chance = 0.6                  # how many tries grow
 slope = 25.0                  # the steepest ground, in degrees
 scale = [0.8, 1.3]
 seed = 4
+far_block = "Plants/Tree Leaves.block"   # what a wood of them is made of, far off
 ```
 
 `temperature` and `height` are ranges like `humidity`; `patches` is the patch size; `aligned = false` lets plants stand anywhere on their block.

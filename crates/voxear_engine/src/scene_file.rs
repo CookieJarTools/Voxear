@@ -989,6 +989,11 @@ pub struct GrowData {
     /// turns, as the blocks are.
     #[serde(skip_serializing_if = "is_true")]
     pub aligned: bool,
+    /// The block its plants show as in a world's far view, where they are
+    /// thick enough to be a wood: a `.block` by GUID or project path; left
+    /// out for plants that do not show so far off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub far_block: Option<String>,
 }
 
 impl Default for GrowData {
@@ -1007,6 +1012,7 @@ impl Default for GrowData {
             seed: 0,
             scale: rule.scale,
             aligned: true,
+            far_block: None,
         }
     }
 }
@@ -2882,7 +2888,7 @@ seed = 3
         assert_eq!(again, data);
         // What is as it starts is left out; a Foliage that grows nowhere says nothing of it.
         let plain = toml::to_string(&FoliageData { grow: Some(GrowData::default()), ..data.clone() }).unwrap();
-        for left_out in ["on", "humidity", "temperature", "height", "patches", "seed", "aligned"] {
+        for left_out in ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"] {
             assert!(!plain.contains(&format!("\n{left_out} =")), "{left_out} in {plain}");
         }
         assert!(!toml::to_string(&FoliageData { grow: None, ..data }).unwrap().contains("grow"));

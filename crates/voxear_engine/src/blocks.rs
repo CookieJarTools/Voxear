@@ -422,6 +422,8 @@ pub fn stream(world: &mut World, content: &mut Content) {
             world: generator,
             faces: faces.into(),
             far_folder,
+            // Woods of the plants it grows, where they are thick enough to show so far off.
+            far_built: crate::grown_plants::far_built(world, content, entity),
         };
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];

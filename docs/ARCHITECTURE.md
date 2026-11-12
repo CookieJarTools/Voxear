@@ -3408,7 +3408,17 @@ away shows as a bit the engine did not set; it is kept on the Foliage's Obj by c
 on again whenever that column's plants are made, and written after the blocks' changes (`VXCP`) that saves and
 joining players carry. The starter plants
 (`voxear_render::StarterPlant`) are box models of cubes made by code, written into a project as it picks them.
-Not done: woods past their draw distance, as colour in the far view's tiles.
+Past where plants are drawn they show as blocks. The streamer has one hook for anything a generator builds
+beyond the near chunks (`stream::FarBuilt`, a list on `BlockMaking`): each says a stamp, the first ring it is
+built into, and builds into a far tile with `FarTile::add`. Tiles are cached on disk bare and built into as they
+are read, so the cache never depends on what is built; rings below the far view's first are real chunks, so
+there the bare tile and the built one are made from heights and their difference is put into the chunks. The
+list is no part of `BlockMaking::same`: when its stamps change, every coarse column from the first ring built
+into is marked stale and made again while the old shows, and a column that comes back made under an older stamp
+stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the rule's tests on the tile's own
+top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
+plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
+plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
 
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,

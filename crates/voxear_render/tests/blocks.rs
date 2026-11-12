@@ -645,7 +645,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
     let file = BlockFile { generate: Some(generate.clone()), smooth: true, ..BlockFile::default() };
     let (looks, faces) = file.faces();
     let hills = Arc::new(Preset::RollingHills.world());
-    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into(), far_folder: None };
+    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into(), far_folder: None, far_built: Vec::new() };
     let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, true);
     let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
     let mut streamer = BlockStreamer::default();
@@ -721,7 +721,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
     let file = BlockFile { generate: Some(generate.clone()), ..BlockFile::default() };
     let (looks, faces) = file.faces();
     let alps = Arc::new(Preset::Alpine.world());
-    let making = BlockMaking { file, generate, world: alps.clone(), faces: faces.clone().into(), far_folder: None };
+    let making = BlockMaking { file, generate, world: alps.clone(), faces: faces.clone().into(), far_folder: None, far_built: Vec::new() };
     let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, false);
     let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
     let mut streamer = BlockStreamer::default();

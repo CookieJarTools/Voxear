@@ -22,7 +22,8 @@
 //! `Segmented` (of `Segment`s with `text` and `icon`, and `value`), `Icon`
 //! (`icon`, one of [`crate::ICONS`]), `Keymap` (a device drawn as its keys, given them from code with
 //! [`Ui::set_keymap`]), `Image` (given a texture from code
-//! with [`Ui::set_image`]) and `FieldRow` (`field`, a panel the editor's
+//! with [`Ui::set_image`]), `Minimap` and `Map` (a map of the game's world, see [`crate::MapViewSettings`]: `zoom`,
+//! the blocks to a cell, `turns`, `round` and `tilt` in degrees) and `FieldRow` (`field`, a panel the editor's
 //! Inspector puts that field's rows in), each taking `name`, `class`
 //! (several, separated by spaces), `style` (declarations that win over
 //! sheets) and `tooltip` (what shows when the pointer rests on it, which
@@ -292,6 +293,21 @@ impl Ui {
                     let node = self.prompt(parent, child.attribute("action").unwrap_or_default());
                     self.attributes(node, child, &["name", "class", "style", "action"], builder);
                 }
+                tag @ ("Minimap" | "Map") => {
+                    let kind = if tag == "Map" { crate::MapViewKind::Map } else { crate::MapViewKind::Minimap };
+                    let node = self.map_view(parent, kind);
+                    self.attributes(node, child, &["name", "class", "style", "zoom", "turns", "round", "tilt"], builder);
+                    let mut settings = crate::MapViewSettings::of(kind);
+                    settings.zoom = crate::MapViewSettings::zoom_of(number(child, "zoom", settings.zoom as f32, builder)?);
+                    settings.tilt = number(child, "tilt", settings.tilt, builder)?;
+                    if child.attribute("turns").is_some() {
+                        settings.turns = flag(child, "turns", builder)?;
+                    }
+                    if child.attribute("round").is_some() {
+                        settings.round = flag(child, "round", builder)?;
+                    }
+                    self.set_map_view_settings(node, settings);
+                }
                 "Segmented" => {
                     let node = self.segmented(parent);
                     self.attributes(node, child, &["name", "class", "style", "value"], builder);
@@ -326,7 +342,8 @@ impl Ui {
                 }
                 other => {
                     let known = "Panel, ScrollView, ListView, TreeView, SplitView, Tabs, DockSpace, Label, Button, \
-                                 Icon, Image, Keymap, Prompt, TextField, Toggle, Slider, Foldout, Dropdown, Segmented or Style";
+                                 Icon, Image, Keymap, Prompt, Minimap, Map, TextField, Toggle, Slider, Foldout, Dropdown, Segmented \
+                                 or Style";
                     return Err(builder.error(child, format!("unknown element <{other}>; expected {known}")));
                 }
             }

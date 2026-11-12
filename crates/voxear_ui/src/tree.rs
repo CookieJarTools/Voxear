@@ -306,6 +306,7 @@ pub struct Ui {
     /// Key maps, by their element; see [`keymap`](crate::keymap).
     pub(crate) keymaps: HashMap<taffy::NodeId, crate::keymap::Keymap>,
     pub(crate) prompts: HashMap<taffy::NodeId, crate::prompt::Prompt>,
+    pub(crate) map_views: HashMap<taffy::NodeId, crate::map_view::MapView>,
     /// The elements whose text is a key's, in the language the game is in,
     /// and whether any were bound since the last look (see
     /// [`Ui::set_text_key`]).
@@ -386,6 +387,7 @@ impl Ui {
             reorders: Default::default(),
             keymaps: HashMap::new(),
             prompts: HashMap::new(),
+            map_views: HashMap::new(),
             text_keys: HashMap::new(),
             text_keys_added: false,
             tooltips: HashMap::new(),
@@ -900,6 +902,7 @@ impl Ui {
         self.reorders.forget(node.0);
         self.forget_keymap(node.0);
         self.forget_prompt(node.0);
+        self.forget_map_view(node.0);
         self.text_keys.remove(&node.0);
         self.tooltips.remove(&node.0);
         self.lists.retain(|&n| n != node.0);

@@ -1159,3 +1159,62 @@ DockSpace .split-column > .split-divider {
     height: 32px;
     flex-shrink: 0;
 }
+
+/* A map of the game's world (see `map_view`): a minimap on the HUD, and a map opened over the game. The ground is
+   drawn into its picture; markers and their labels lie over it. */
+.minimap {
+    position: relative;
+    width: 220px;
+    height: 220px;
+    flex-shrink: 0;
+}
+
+/* A map covers what it is in, as it is opened over the game. */
+.map {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+}
+
+.map-picture, .map-overlay {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+}
+
+.map-overlay {
+    pointer-events: none;
+}
+
+.map-header {
+    position: absolute;
+    right: 28px;
+    top: 18px;
+    align-items: flex-end;
+    gap: 2px;
+    pointer-events: none;
+}
+
+.map-readout {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.map-title {
+    font-size: 30px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.map-compass {
+    position: absolute;
+    right: 28px;
+    top: 92px;
+    width: 76px;
+    height: 76px;
+    pointer-events: none;
+}

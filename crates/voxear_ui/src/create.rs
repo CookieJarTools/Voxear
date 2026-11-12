@@ -28,11 +28,15 @@ pub enum ElementKind {
     Keymap,
     /// The controls of an action, its text, as glyphs; see [`crate::prompt`].
     Prompt,
+    /// A map of the world small on the HUD, and one opened large; see
+    /// [`crate::map_view`].
+    Minimap,
+    Map,
 }
 
 impl ElementKind {
     /// Every kind, in the order scripts number them.
-    pub const ALL: [ElementKind; 15] = [
+    pub const ALL: [ElementKind; 17] = [
         Self::Panel,
         Self::ScrollView,
         Self::Label,
@@ -48,6 +52,8 @@ impl ElementKind {
         Self::TreeView,
         Self::Keymap,
         Self::Prompt,
+        Self::Minimap,
+        Self::Map,
     ];
 
     /// The kind scripts know by this number, or none.
@@ -97,6 +103,9 @@ impl Ui {
             // Empty until its owner gives it a device and its keys.
             ElementKind::Keymap => self.keymap(parent),
             ElementKind::Prompt => self.prompt(parent, text),
+            // Empty until its owner draws the world into it.
+            ElementKind::Minimap => self.map_view(parent, crate::MapViewKind::Minimap),
+            ElementKind::Map => self.map_view(parent, crate::MapViewKind::Map),
         }
     }
 }

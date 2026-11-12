@@ -1000,6 +1000,31 @@ Done so far:
   grid round the sky, each show where it outshines a few hundredths of the sky behind it, so none by day and the
   brightest first at dusk. The moon and the stars are drawn as the dark-adapted eye sees them, whatever the
   exposure. `[sky] stars` scales them. GPU test: stars and the moon under the moon, none in a day sky.
+- **Clouds:** `[sky.clouds]` (`Sky::clouds`): cover, height, thickness, size, density, drift and shadows, with a
+  Clouds tab on the Lighting page, and clouds to suit in every built-in look but Candlelit Castle. A layer between
+  two heights over the level's ground, shaped from the smoke's baked tiling noise: round puffs for the bodies,
+  smaller puffs and swirls bitten out of their edges, more cloud here and less there from a noise hashed on whole
+  numbers, and one flat underside for them all.
+  - **Clouds** pass: the layer marched along each pixel's ray at half size, 40 steps from a start jittered each
+    frame and 4 towards the sun from each, blended with last frame's picture where that part of the sky was then.
+    Lit by the sun through the air and by the sky, hazed with distance, laid over the sky by the sky pass with the
+    sun, moon and stars behind.
+  - **Cloud shadows** pass: a 256² map of the sun let through, 6 km each way round the camera, read wherever the
+    sun's shadow is (`sunShadow`, `sunShadowHard`), so cloud shadows cross ground, blocks, plants, water, smoke and
+    particles, and the fog's shafts fall between clouds. Under the atmosphere the sky's light greys with cover.
+  - **Clouds built of cubes:** `kind = "blocks"` (`CloudKind::Blocks`) with `block`, a cube's width. A cube is
+    cloud or not as its middle is, so the shadow map's shadows are square too; the Clouds pass walks the cubes
+    along each ray, 128 at most, out to 16 km, to the first one's face, and lights the face all one colour by
+    where it faces and the cubes between it and the sun. The ray's place within its pixel moves each frame, so the
+    blend with last frame's picture smooths the cubes' edges.
+  - The clouds drift along the Wind Zone's direction, and keep their place as the world's middle moves.
+  - At 1080p on an RTX 3070, both passes together: 0.7 to 0.85 ms for soft clouds, under 0.4 ms for cubes; nothing
+    with no cover. GPU tests: cover fills the sky by its amount and is the same each run, clouds show in a gradient
+    sky and under the moon, shadows put the ground in light and shade and move on as the clouds drift, cubes have
+    flat faces and shade the ground, and the cost at 1080p. Editor and file tests: the Clouds tab's settings are
+    written under `[sky.clouds]` one at a time over the look's.
+  - Later: weather that changes them (rain, storms, snow, fog, from scripts), clouds in front of far ground and
+    round a camera inside them, clouds in reflections.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

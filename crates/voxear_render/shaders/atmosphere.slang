@@ -18,6 +18,7 @@
 #pragma once
 
 #include "common.slang"
+#include "clouds.slang"
 
 static const float2 TRANSMITTANCE_SIZE = float2(256.0, 64.0);
 static const float2 MULTI_SCATTERING_SIZE = float2(32.0, 32.0);

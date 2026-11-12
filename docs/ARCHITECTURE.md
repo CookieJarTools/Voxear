@@ -1029,6 +1029,35 @@ point, area or tube light a cube's six, the nearest eight lights a frame.
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.
 
+**Clouds** *(implemented; weather planned)*. A sky's `clouds` (`voxear_render::Clouds`, `[sky.clouds]`) are a layer
+between two heights over the level's ground (`src/clouds.rs`, `shaders/clouds.slang`, the passes in
+`shaders/sky.slang`). `cloudDensityAt` shapes them from the smoke's baked noise atlas, so they need no texture of
+their own: round puffs make the bodies, a noise over the plane hashed on whole numbers puts more cloud here and less
+there, smaller puffs and swirls are bitten out of the edges, and below a quarter of the layer's height a cloud keeps
+its outline, so all stand on one flat underside. With any cover, two passes run after the atmosphere's tables:
+
+1. **Cloud shadows** draws a 256² map of how much sun the layer lets through, 6 km each way round the camera,
+   snapped to its texels. `cloudShadowAt` reads it where the way from a point to the sun crosses the layer's middle,
+   and `sunShadow` and `sunShadowHard` multiply by it, so everything the sun lights is under the clouds' shadows
+   without knowing of them: opaque shading, blocks, plants, water, particles, smoke and the fog's froxels.
+2. **Clouds** marches the layer for each pixel at half the picture's size: the ray's stretch between the two
+   heights round a curved Earth (worked out from the heights' difference, which stays exact in metres), 40 steps
+   from a start jittered by pixel and frame, 4 doubling steps towards the sun from each. It is blended nine parts
+   in ten with last frame's picture, one of two history images, found by the pixel's direction through last
+   frame's view. The result is colour to add and, in alpha, how much of the sky shows through.
+
+Clouds of the **Blocks** kind (`CloudKind::Blocks`, `[sky.clouds] kind = "blocks"`) are the same field built of
+cubes `block` metres wide: `cloudDensityIn` snaps a place to its cube's middle, so a cube is cloud or not as a
+whole, and the shadow map needs no path of its own. The Clouds pass walks the cubes along the ray instead of
+marching (`cloudBlocksSeen`: up to 128 cubes, out to 16 km, in a flat layer), stops at the first cube that is cloud,
+and lights the face it came in by all one colour, from the way it faces and four cubes' worth of the way to the sun.
+The ray's place within its pixel moves each frame, which the history blend turns into smooth edges.
+
+The sky pass lays that picture over the sky it draws. Clouds are therefore behind everything drawn, and are not in
+reflections. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
+so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
+passes.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 

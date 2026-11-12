@@ -659,6 +659,46 @@ pub struct GpuLighting {
     pub sun_shadow_tint: [f32; 3],
     /// 1 when the sky's light is the moon: its disc, and a night sky.
     pub moon: u32,
+    pub clouds: GpuClouds,
+}
+
+/// The sky's clouds as the shaders read them (see `clouds`). Mirrors
+/// `Clouds` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuClouds {
+    /// How much of the sky they cover; 0 for none, and nothing else read.
+    pub cover: f32,
+    /// Their undersides' height over the level's ground and how tall they
+    /// are, in metres.
+    pub base: f32,
+    pub thickness: f32,
+    /// How far across a cloud is, in metres.
+    pub size: f32,
+    pub density: f32,
+    /// How dark their shadows are, 0 to 1.
+    pub shadows: f32,
+    /// How far they have drifted, in metres along x and z.
+    pub drift: [f32; 2],
+    /// The picture of them the sky is drawn with, the sun let through them
+    /// over the ground round the camera, and the noise they are shaped
+    /// from: textures, or `NO_TEXTURE`.
+    pub view: u32,
+    pub shadow_map: u32,
+    pub noise: u32,
+    /// How far the shadow map reaches from its middle, in metres.
+    pub shadow_reach: f32,
+    /// Its middle, in the world along x and z.
+    pub shadow_middle: [f32; 2],
+    /// 1 when last frame's picture cannot be built on.
+    pub reset: u32,
+    /// How fast they drift, in metres a second.
+    pub speed: f32,
+    /// 0 for soft clouds, 1 for clouds built of cubes, each `block` metres
+    /// wide.
+    pub kind: u32,
+    pub block: f32,
+    pub _pad: [f32; 2],
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's
@@ -1269,7 +1309,8 @@ mod tests {
         let motion = 64 * 2 + 16;
         let post = 16 * 20;
         let meshlets = 16;
-        let lighting = 16 * 4 + 16 * 6 + 16;
+        let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>();
+        assert_eq!(size_of::<GpuClouds>(), 80);
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;

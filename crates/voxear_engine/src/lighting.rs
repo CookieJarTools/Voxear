@@ -191,6 +191,19 @@ mod tests {
     }
 
     #[test]
+    fn lighting_changes_its_looks_clouds_one_setting_at_a_time() {
+        let highland = Look::of(LookName::HighlandSummer).sky.clouds;
+        assert!(highland.cover > 0.0, "the look has clouds");
+        let file: LightingFile = toml::from_str("look = \"highland_summer\"\n[sky.clouds]\ndrift = 30.0").unwrap();
+        let clouds = file.resolve().unwrap().sky.clouds;
+        assert_eq!((clouds.drift, clouds.cover, clouds.height), (30.0, highland.cover, highland.height));
+        // A clear sky under a look.
+        let clear: LightingFile = toml::from_str("look = \"highland_summer\"\n[sky.clouds]\ncover = 0.0").unwrap();
+        assert!(clear.resolve().unwrap().sky.clouds.is_none());
+        assert!(Look::of(LookName::CandlelitCastle).sky.clouds.is_none(), "none indoors");
+    }
+
+    #[test]
     fn a_sun_temperature_tints_it_and_builtin_lighting_is_a_look() {
         let file: LightingFile = toml::from_str("[sun]\ntemperature = 1900").unwrap();
         let sun = file.resolve().unwrap().sun;

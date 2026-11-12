@@ -568,6 +568,36 @@ struct Atmosphere
     float2 pad;
 };
 
+// The sky's clouds (clouds.slang); mirrors GpuClouds in src/gpu.rs. No cover, no clouds.
+struct Clouds
+{
+    float cover;
+    // Their undersides' height over the level's ground, how tall they are, and how far across one is, in metres.
+    float base;
+    float thickness;
+    float size;
+    float density;
+    // How dark their shadows are, 0 to 1.
+    float shadows;
+    // How far they have drifted, in metres along x and z.
+    float2 drift;
+    // The picture of them the sky is drawn with, the sun let through them over the ground round the camera, and
+    // the noise they are shaped from: textures, or NO_TEXTURE.
+    uint view;
+    uint shadowMap;
+    uint noise;
+    // How far the shadow map reaches from its middle, in metres, and its middle along x and z.
+    float shadowReach;
+    float2 shadowMiddle;
+    // 1 when last frame's picture cannot be built on.
+    uint reset;
+    float speed;
+    // CLOUDS_SOFT, or CLOUDS_BLOCKS for clouds built of cubes `block` metres wide.
+    uint kind;
+    float block;
+    float2 pad;
+};
+
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.
 struct Lighting
 {
@@ -589,6 +619,7 @@ struct Lighting
     float3 sunShadowTint;
     // 1 when the sky's light is the moon: its disc, and a night sky.
     uint moon;
+    Clouds clouds;
 };
 
 // The level's wind; mirrors GpuWind in src/gpu.rs. Strength 0 without a Wind Zone.

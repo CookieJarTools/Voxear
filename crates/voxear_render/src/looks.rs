@@ -39,7 +39,7 @@ use crate::{
         AmbientOcclusion, Bloom, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper,
         Vignette,
     },
-    scene::{Sky, SkyMode, temperature_color},
+    scene::{Clouds, Sky, SkyMode, temperature_color},
     shadows::{SHADOW_DISTANCE, SHADOW_SPLIT},
 };
 
@@ -201,6 +201,8 @@ impl Look {
             haze_glow: 0.85,
             distance_haze: 16.0,
             sun_size: 0.8,
+            // High, scattered clouds for the low sun to catch.
+            clouds: Clouds { height: 1800.0, ..Clouds::covering(0.35) },
             ..Sky::default()
         };
         // The air reddens a low sun already; a touch warmer than white keeps it golden as it climbs. Warm brown in
@@ -242,6 +244,9 @@ impl Look {
             horizon: linear([0.83, 0.87, 0.92]),
             ground: linear([0.5, 0.49, 0.47]),
             ambient: 1.6,
+            // A sky all but full of cloud. Its light is an overcast sky's already, so the clouds take no more of
+            // the sun.
+            clouds: Clouds { shadows: 0.0, ..Clouds::covering(0.9) },
             ..Sky::default()
         };
         // About 5200K, giving a few times the sky's light rather than ten.
@@ -279,6 +284,8 @@ impl Look {
             horizon: linear([0.66, 0.8, 0.74]),
             ground: linear([0.45, 0.34, 0.24]),
             ambient: 1.2,
+            // Fair-weather clouds.
+            clouds: Clouds::covering(0.4),
             ..Sky::default()
         };
         // About 4000K and pushed towards yellow-green, with shadows never black but warm.
@@ -327,6 +334,8 @@ impl Look {
             haze_tint: linear([0.95, 1.0, 0.86]),
             haze_glow: 0.75,
             distance_haze: 24.0,
+            // Heaped clouds in the humid air.
+            clouds: Clouds::covering(0.5),
             ..Sky::default()
         };
         let sun = SunLook {
@@ -377,6 +386,8 @@ impl Look {
             haze_glow: 0.9,
             distance_haze: 30.0,
             sun_size: 1.2,
+            // A few thin clouds, high over the dust.
+            clouds: Clouds { height: 2500.0, thickness: 400.0, density: 0.6, ..Clouds::covering(0.15) },
             ..Sky::default()
         };
         let sun = SunLook {
@@ -423,6 +434,8 @@ impl Look {
             horizon: linear([0.72, 0.74, 0.74]),
             ground: linear([0.36, 0.33, 0.3]),
             ambient: 1.4,
+            // Overcast, the light already what it lets through.
+            clouds: Clouds { shadows: 0.0, ..Clouds::covering(0.95) },
             ..Sky::default()
         };
         let sun = SunLook {
@@ -470,6 +483,8 @@ impl Look {
             haze_tint: linear([0.84, 0.92, 1.0]),
             haze_glow: 0.7,
             distance_haze: 40.0,
+            // A few clouds in clear air.
+            clouds: Clouds::covering(0.3),
             ..Sky::default()
         };
         let sun = SunLook {
@@ -515,6 +530,8 @@ impl Look {
             horizon: linear([0.9, 0.92, 0.95]),
             ground: linear([0.82, 0.84, 0.88]),
             ambient: 2.0,
+            // Broken cloud.
+            clouds: Clouds::covering(0.55),
             ..Sky::default()
         };
         let sun = SunLook {
@@ -562,6 +579,8 @@ impl Look {
             ground: linear([0.02, 0.02, 0.03]),
             ambient: 0.3,
             stars: 1.5,
+            // A few clouds for the moon to light.
+            clouds: Clouds::covering(0.3),
             ..Sky::default()
         };
         // The moon: faint, blue and soft.
@@ -610,6 +629,8 @@ impl Look {
             horizon: linear([0.34, 0.4, 0.38]),
             ground: linear([0.16, 0.16, 0.15]),
             ambient: 0.9,
+            // A low, heavy ceiling of cloud, the light already what it lets through.
+            clouds: Clouds { height: 800.0, thickness: 1500.0, density: 2.0, shadows: 0.0, ..Clouds::covering(1.0) },
             ..Sky::default()
         };
         let sun = SunLook {
@@ -706,6 +727,8 @@ impl Look {
             horizon: linear([0.32, 0.44, 0.4]),
             ground: linear([0.1, 0.12, 0.08]),
             ambient: 0.6,
+            // Heavy cloud, the gloom under it the look's own.
+            clouds: Clouds { shadows: 0.0, ..Clouds::covering(0.75) },
             ..Sky::default()
         };
         let sun = SunLook {
@@ -752,6 +775,8 @@ impl Look {
             horizon: linear([0.84, 0.86, 0.9]),
             ground: linear([0.8, 0.82, 0.86]),
             ambient: 1.5,
+            // A winter sky nearly full of cloud, the light already soft.
+            clouds: Clouds { shadows: 0.0, ..Clouds::covering(0.8) },
             ..Sky::default()
         };
         let sun = SunLook {
@@ -796,6 +821,8 @@ impl Look {
             haze_tint: linear([0.94, 0.97, 1.0]),
             haze_glow: 0.6,
             distance_haze: 50.0,
+            // Fair-weather clouds.
+            clouds: Clouds::covering(0.4),
             ..Sky::default()
         };
         let sun = SunLook {
@@ -843,6 +870,8 @@ impl Look {
             ground: linear([0.03, 0.02, 0.05]),
             ambient: 0.4,
             stars: 2.0,
+            // A few clouds for the moon to light.
+            clouds: Clouds::covering(0.25),
             ..Sky::default()
         };
         let sun = SunLook {

@@ -388,10 +388,12 @@ ShadowLookup shadowLookup(Frame* frame, float3 position, float3 normal)
 // sun's shadow with a hard edge, as the volumetric fog takes it.
 float sunShadowHard(Frame* frame, float3 position, float3 normal)
 {
+    // Under the clouds' shadow too, wherever the point is.
+    float clouds = cloudShadowAt(frame, position);
     ShadowLookup lookup = shadowLookup(frame, position, normal);
     if (!lookup.found)
     {
-        return 1.0;
+        return clouds;
     }
     float texel = 0.5 / float(push.size.x);
     float lit = 0.0;
@@ -403,7 +405,7 @@ float sunShadowHard(Frame* frame, float3 position, float3 normal)
             lit += textures[frame->shadowTexture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
         }
     }
-    return lit / 9.0;
+    return lit / 9.0 * clouds;
 }
 
 // Points on a disc spread evenly by the golden angle, turned by `angle`.
@@ -435,10 +437,11 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     {
         return sunShadowHard(frame, position, normal);
     }
+    float clouds = cloudShadowAt(frame, position);
     ShadowLookup lookup = shadowLookup(frame, position, normal);
     if (!lookup.found)
     {
-        return 1.0;
+        return clouds;
     }
     float texelUv = 0.5 / float(push.size.x);
     float worldTexel = frame->cascadeTexel[lookup.cascade];
@@ -465,7 +468,7 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     // Nothing round it is above it, or everything is: wholly lit or wholly shaded, with no edge to soften.
     if (blockers == 0.0)
     {
-        return 1.0;
+        return clouds;
     }
     if (blockers == float(PCSS_BLOCKER_TAPS))
     {
@@ -479,7 +482,7 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
         float2 atlasUv = clamp(lookup.uv + vogelDisc(i, PCSS_FILTER_TAPS, angle) * filterTexels * texelUv * 2.0, lookup.low, lookup.high);
         lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
     }
-    return lit / float(PCSS_FILTER_TAPS);
+    return lit / float(PCSS_FILTER_TAPS) * clouds;
 }
 
 // The shadow atlas's cascades, each this many texels across (src/shadows.rs).

@@ -6822,3 +6822,235 @@ fn a_box_model_draws_its_pixels_sharp_and_its_boxes_follow_their_bones() {
     assert!(green(at(&turned, -0.75, 0.75)), "{:?}", at(&turned, -0.75, 0.75));
     assert!(red(at(&turned, 0.25, 0.75)), "the body stays");
 }
+
+/// The rotation of a camera looking along `direction`, level from side to side.
+fn looking_along(direction: Vec3) -> Quat {
+    let direction = direction.normalize();
+    Quat::from_rotation_y(direction.x.atan2(direction.z)) * Quat::from_rotation_x(-direction.y.asin())
+}
+
+/// A sky's worth of settings for the cloud tests: a sun `elevation` degrees up, straight ahead along +Z.
+struct CloudView {
+    clouds: voxear_render::Clouds,
+    elevation: f32,
+    looking: Vec3,
+    /// How high the camera is.
+    from: f32,
+    /// Whether a wide ground lies under it.
+    ground: bool,
+    /// How many seconds pass before the picture is taken.
+    wait: f32,
+    size: (u32, u32),
+    /// A sky of its own colours rather than the atmosphere.
+    gradient: bool,
+    /// The moon for a light, and a camera that gets used to the dark.
+    moon: bool,
+}
+
+impl CloudView {
+    fn of(clouds: voxear_render::Clouds) -> Self {
+        Self {
+            clouds,
+            elevation: 50.0,
+            looking: bearing(40.0, 60.0),
+            from: 1.7,
+            ground: false,
+            wait: 0.0,
+            size: (640, 360),
+            gradient: false,
+            moon: false,
+        }
+    }
+}
+
+/// The view's picture, and the least the passes named "Cloud…" took together over sixty frames, in milliseconds.
+fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky, SkyMode};
+    let Ok(mut renderer) = Renderer::new_offscreen(view.size.0, view.size.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return None;
+    };
+    let mut world = World::new();
+    let eye = Transform::new(Vec3::new(0.0, view.from, 0.0), looking_along(view.looking), Vec3::ONE);
+    world.spawn((Camera::default(), eye));
+    let sun = looking_along(-bearing(view.elevation, 0.0));
+    let light = match view.moon {
+        true => Light { body: voxear_render::SkyBody::Moon, ..Light::directional(Vec3::new(0.6, 0.7, 1.0), 0.15) },
+        false => Light::directional(Vec3::ONE, 1.0),
+    };
+    world.spawn((light, Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if view.ground {
+        let plane = renderer.primitive(Primitive::Plane).unwrap();
+        let material = renderer.add_material(&MaterialDesc { roughness: 1.0, ..MaterialDesc::default() }).unwrap();
+        let wide = Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30000.0));
+        world.spawn((MeshRenderer::new(plane, material), wide));
+    }
+    let mode = if view.gradient { SkyMode::Gradient } else { SkyMode::Atmosphere };
+    world.insert_resource(Sky { mode, clouds: view.clouds, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let post = if view.moon { PostProcess::default() } else { PostProcess::neutral() };
+    world.insert_resource(PostProcess { anti_aliasing, ..post });
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 2);
+    // A frame is never taken for longer than a quarter of a second.
+    for _ in 0..(view.wait * 4.0) as u32 {
+        time += 0.25;
+        renderer.render(&world, time).expect("frame renders");
+    }
+    // Long enough for the clouds' picture to settle from its first frame's.
+    let mut least = f32::INFINITY;
+    for _ in 0..60 {
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+        let cloud = |(name, _): &&(String, f32)| name.starts_with("Cloud");
+        let spent: f32 = renderer.timings().iter().filter(cloud).map(|(_, ms)| *ms).sum();
+        if spent > 0.0 {
+            least = least.min(spent);
+        }
+    }
+    Some((renderer.read_pixels().unwrap().2, least))
+}
+
+/// Keeps an image `size` across as `name` when `VOXEAR_TEST_OUTPUT` names a folder.
+fn keep_sized(name: &str, pixels: &[u8], size: (u32, u32)) {
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, size.0, size.1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+    }
+}
+
+/// How much of a sky is cloud: the share of its pixels unlike the same sky's with none.
+fn cloud_share(pixels: &[u8], clear: &[u8]) -> f32 {
+    let unlike = |(a, b): &(&[u8], &[u8])| (0..3).any(|c| a[c].abs_diff(b[c]) > 24);
+    pixels.chunks_exact(4).zip(clear.chunks_exact(4)).filter(unlike).count() as f32 / (pixels.len() / 4) as f32
+}
+
+#[test]
+fn clouds_fill_as_much_of_the_sky_as_their_cover() {
+    use voxear_render::Clouds;
+    let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };
+    let (some, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    let (overcast, _) = cloud_render(&CloudView::of(Clouds::covering(1.0))).unwrap();
+    keep_image("clouds none.png", &clear);
+    keep_image("clouds half.png", &some);
+    keep_image("clouds overcast.png", &overcast);
+    let shares = [&some, &overcast].map(|pixels| cloud_share(pixels, &clear));
+    assert!(shares[0] > 0.15 && shares[0] < 0.85, "half cover leaves blue between the clouds: {shares:?}");
+    assert!(shares[1] > 0.95, "full cover leaves none: {shares:?}");
+    // Lit by the sun, a cloud is brighter than the sky behind it.
+    let brightness = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[0]) + u64::from(p[1])).sum::<u64>();
+    assert!(brightness(&some) > brightness(&clear), "clouds are bright against the sky");
+    // The same clouds each run.
+    let (again, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    assert!(some == again, "the same sky twice");
+}
+
+#[test]
+fn clouds_show_in_a_sky_of_its_own_colours_and_under_the_moon() {
+    use voxear_render::Clouds;
+    let gradient =
+        |clouds: Clouds| cloud_render(&CloudView { gradient: true, ..CloudView::of(clouds) }).map(|(p, _)| p);
+    let Some(clear) = gradient(Clouds::default()) else { return };
+    let cloudy = gradient(Clouds::covering(0.5)).unwrap();
+    keep_image("clouds gradient sky.png", &cloudy);
+    // A pale sky is nearly as bright as the clouds in it, so a smaller difference counts here.
+    let unlike = |(a, b): &(&[u8], &[u8])| (0..3).any(|c| a[c].abs_diff(b[c]) > 8);
+    let share = cloudy.chunks_exact(4).zip(clear.chunks_exact(4)).filter(unlike).count() as f32 / (640.0 * 360.0);
+    assert!(share > 0.15 && share < 0.85, "half cover in a sky of its own colours: {share}");
+    // By night the moon lights them: paler than the dark sky between them, and not day-bright.
+    let night = |clouds: Clouds| cloud_render(&CloudView { moon: true, ..CloudView::of(clouds) }).map(|(p, _)| p);
+    let (dark, moonlit) = (night(Clouds::default()).unwrap(), night(Clouds::covering(0.5)).unwrap());
+    keep_image("clouds under the moon.png", &moonlit);
+    let brightness = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 360);
+    let (without, with) = (brightness(&dark), brightness(&moonlit));
+    assert!(with > without + 4, "moonlit clouds stand out from the night sky: {with} against {without}");
+    assert!(with < 140, "and stay a night's: {with}");
+}
+
+#[test]
+fn clouds_drift_and_their_shadows_cross_the_ground() {
+    use voxear_render::Clouds;
+    // Looking down on the ground from high up, under the clouds.
+    let down = |clouds: Clouds, wait: f32| {
+        let looking = bearing(-60.0, 60.0);
+        let view = CloudView { looking, from: 800.0, ground: true, wait, ..CloudView::of(clouds) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(open) = down(Clouds::default(), 0.0) else { return };
+    let shaded = down(Clouds::covering(0.5), 0.0).unwrap();
+    let unshaded = down(Clouds { shadows: 0.0, ..Clouds::covering(0.5) }, 0.0).unwrap();
+    let later = down(Clouds { drift: 40.0, ..Clouds::covering(0.5) }, 20.0).unwrap();
+    keep_image("cloud shadows none.png", &open);
+    keep_image("cloud shadows.png", &shaded);
+    keep_image("cloud shadows later.png", &later);
+    // How far apart the ground's darkest and brightest are, but for a fiftieth of it at each end.
+    let spread = |pixels: &[u8]| {
+        let mut green: Vec<u8> = pixels.chunks_exact(4).map(|p| p[1]).collect();
+        green.sort_unstable();
+        i32::from(green[green.len() * 49 / 50]) - i32::from(green[green.len() / 50])
+    };
+    let spreads = [&open, &shaded, &unshaded].map(|pixels| spread(pixels));
+    assert!(spreads[1] > spreads[0] + 40, "clouds put the ground in light and shade: {spreads:?}");
+    assert!(spreads[2] < spreads[0] + 12, "none with their shadows off: {spreads:?}");
+    let moved = shaded.chunks_exact(4).zip(later.chunks_exact(4)).filter(|(a, b)| a[1].abs_diff(b[1]) > 30).count();
+    assert!(moved * 20 > shaded.len() / 4, "the shadows have moved on: {moved} pixels");
+}
+
+#[test]
+fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
+    use voxear_render::Clouds;
+    let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };
+    let (soft, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    let (cubes, _) = cloud_render(&CloudView::of(Clouds::blocks(0.5))).unwrap();
+    keep_image("clouds of cubes.png", &cubes);
+    let share = cloud_share(&cubes, &clear);
+    assert!(share > 0.15 && share < 0.85, "half cover of cubes leaves blue between them: {share}");
+    // A soft cloud shades from one pixel to the next all over; a cube's face is one colour, with a step at its
+    // edges. So more of the neighbouring pixels within the cubes' clouds are alike.
+    let flat = |pixels: &[u8]| {
+        let cloud = |i: usize| (0..3).any(|c| pixels[i * 4 + c].abs_diff(clear[i * 4 + c]) > 24);
+        let pairs = (0..640 * 360 - 1).filter(|&i| i % 640 != 639 && cloud(i) && cloud(i + 1));
+        let (mut alike, mut all) = (0.0, 0.0);
+        for i in pairs {
+            all += 1.0;
+            alike += f32::from(u8::from(pixels[i * 4 + 1].abs_diff(pixels[i * 4 + 5]) <= 1));
+        }
+        alike / all
+    };
+    let (in_soft, in_cubes) = (flat(&soft), flat(&cubes));
+    assert!(in_cubes > 0.62 && in_cubes > in_soft + 0.12, "flat faces: {in_cubes} of cubes' pixels, {in_soft} of soft");
+    // Their shadows on the ground are cubes' too.
+    let looking = bearing(-60.0, 60.0);
+    let view = CloudView { looking, from: 800.0, ground: true, ..CloudView::of(Clouds::blocks(0.5)) };
+    let (shadows, _) = cloud_render(&view).unwrap();
+    keep_image("cloud shadows of cubes.png", &shadows);
+    let mut green: Vec<u8> = shadows.chunks_exact(4).map(|p| p[1]).collect();
+    green.sort_unstable();
+    let spread = i32::from(green[green.len() * 49 / 50]) - i32::from(green[green.len() / 50]);
+    assert!(spread > 40, "cubes shade the ground: {spread}");
+}
+
+#[test]
+fn clouds_cost_little_at_full_hd() {
+    use voxear_render::Clouds;
+    let size = (1920, 1080);
+    for (name, cover, elevation, looking) in [
+        ("clouds fair.png", 0.45, 50.0, bearing(18.0, 70.0)),
+        ("clouds towards the sun.png", 0.55, 25.0, bearing(20.0, 10.0)),
+        ("clouds sunset.png", 0.5, 4.0, bearing(14.0, 25.0)),
+        ("clouds heavy.png", 0.9, 50.0, bearing(25.0, 120.0)),
+        ("clouds of cubes fair.png", -0.45, 50.0, bearing(18.0, 70.0)),
+        ("clouds of cubes low.png", -0.3, 30.0, bearing(6.0, 200.0)),
+    ] {
+        // A cover below nothing stands for as much cover of cubes.
+        let clouds = if cover < 0.0 { Clouds::blocks(-cover) } else { Clouds::covering(cover) };
+        let view = CloudView { elevation, looking, ground: true, size, ..CloudView::of(clouds) };
+        let Some((pixels, least)) = cloud_render(&view) else { return };
+        keep_sized(name, &pixels, size);
+        eprintln!("{name}: the cloud passes took {least:.2} ms at 1920x1080");
+        // Twice the 1.5 ms they are meant to stay within, for a GPU other tests are sharing.
+        assert!(least < 3.0, "{name}: {least} ms");
+    }
+}

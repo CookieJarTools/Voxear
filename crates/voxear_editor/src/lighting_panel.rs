@@ -75,6 +75,8 @@ const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
 }
 
+const CLOUD_KINDS: &[(&str, &str)] = &[("Soft", "soft"), ("Blocks", "blocks")];
+const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
@@ -105,6 +107,24 @@ const SETTINGS: &[Info] = &[
         help: "How big the sun's disc looks in the sky, in degrees." },
     Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, ""), when: ALWAYS,
         help: "How bright the stars are at night. 0 hides them." },
+    Info { path: &["sky", "clouds", "kind"], title: "Kind", group: "Clouds", kind: Kind::Choice(CLOUD_KINDS), when: ALWAYS,
+        help: "Soft clouds have billowing edges. Blocks builds the same clouds out of cubes, flat-sided, for a world of blocks." },
+    Info { path: &["sky", "clouds", "block"], title: "Block size", group: "Clouds", kind: number(1.0, 2000.0, "m"), when: BLOCK_CLOUDS,
+        help: "How wide one cube of the clouds is." },
+    Info { path: &["sky", "clouds", "cover"], title: "Cover", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How much of the sky the clouds fill: 0 for none, 0.4 for a fair day, 1 for overcast." },
+    Info { path: &["sky", "clouds", "height"], title: "Height", group: "Clouds", kind: number(0.0, 10000.0, "m"), when: ALWAYS,
+        help: "How high the clouds' undersides are above the level's ground." },
+    Info { path: &["sky", "clouds", "thickness"], title: "Thickness", group: "Clouds", kind: number(10.0, 5000.0, "m"), when: ALWAYS,
+        help: "How tall the clouds are, from their undersides to their tops." },
+    Info { path: &["sky", "clouds", "size"], title: "Size", group: "Clouds", kind: number(10.0, 10000.0, "m"), when: ALWAYS,
+        help: "How far across one cloud is." },
+    Info { path: &["sky", "clouds", "density"], title: "Density", group: "Clouds", kind: number(0.0, 4.0, ""), when: ALWAYS,
+        help: "How thick the clouds are. Lower lets more light through them; higher makes them heavy and dark underneath." },
+    Info { path: &["sky", "clouds", "drift"], title: "Drift", group: "Clouds", kind: number(0.0, 200.0, "m/s"), when: ALWAYS,
+        help: "How fast the clouds move. They go the way the level's Wind Zone blows." },
+    Info { path: &["sky", "clouds", "shadows"], title: "Shadows", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How dark the clouds' shadows on the world are. 0 turns them off." },
     Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS,
         help: "The sun's colour as a temperature, in kelvin: about 2000 K is a candle-orange sunset, 5500 K is white noon light, above 7000 K is cool and blue." },
     Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
@@ -504,6 +524,7 @@ impl LightingFields {
 fn group_help(group: &str) -> &'static str {
     match group {
         "Sky" => "The sky, and the light it gives everything from all round.",
+        "Clouds" => "The clouds in the sky, and the shadows they cast as they drift.",
         "Sun" => "How the sun looks: its colour, brightness and shadows. Where it shines from is the sun Obj's rotation.",
         "Exposure" => "How bright the picture is, and how the camera adjusts to light and dark, as an eye does.",
         "Colour" => "The colour grade: contrast, saturation, warmth and lens effects over the finished picture.",
@@ -565,6 +586,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
         ("haze_glow", toml::Value::Float(f64::from(sky.haze_glow))),
         ("distance_haze", toml::Value::Float(f64::from(sky.distance_haze))),
         ("sun_size", toml::Value::Float(f64::from(sky.sun_size))),
+        ("clouds", toml::Value::try_from(sky.clouds)?),
         (
             "mode",
             toml::Value::String(if sky.mode == SkyModeData::Atmosphere { "atmosphere" } else { "gradient" }.into()),
@@ -838,6 +860,24 @@ mod tests {
         write_setting(&file, &["sky", "haze"], None).unwrap();
         let read: LightingFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(read.sky.unwrap().get("haze").is_none(), "back to the look's");
+    }
+
+    #[test]
+    fn a_clouds_setting_is_written_under_the_skys_clouds_and_changes_only_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Summer.lighting");
+        std::fs::write(&file, "format = 1\nlook = \"highland_summer\"\n").unwrap();
+        write_setting(&file, &["sky", "clouds", "cover"], Some(0.75.into())).unwrap();
+        let read: LightingFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let clouds = read.resolve().unwrap().sky.clouds;
+        let look = LightingFile::builtin("highland_summer").unwrap().resolve().unwrap().sky.clouds;
+        assert_eq!((clouds.cover, clouds.height, clouds.drift), (0.75, look.height, look.drift));
+        let shown = effective(&read).unwrap();
+        assert_eq!(find(&shown, &["sky", "clouds", "cover"]).and_then(|v| v.as_float()), Some(0.75));
+        // A look without clouds still shows every setting of theirs, at none.
+        let indoors = effective(&LightingFile::builtin("candlelit_castle").unwrap()).unwrap();
+        assert_eq!(find(&indoors, &["sky", "clouds", "cover"]).and_then(|v| v.as_float()), Some(0.0));
+        assert!(find(&indoors, &["sky", "clouds", "height"]).is_some());
     }
 
     #[test]

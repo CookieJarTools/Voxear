@@ -487,6 +487,7 @@ fn mesas() -> Starter {
         talus: 10.0,
         valleys: 0.4,
         river: 4.0,
+        canyon: 110.0,
         ..Plateaus::default()
     };
     let land = g.add(NodeKind::Plateaus(land));

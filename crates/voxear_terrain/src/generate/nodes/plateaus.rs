@@ -10,7 +10,10 @@
 //! that a player walks up from one level to the next. Rim raises a lip
 //! along each level's edge, or under nothing rounds the edge off. Valleys
 //! is how much of the land the lowest level takes, and River how deep a
-//! winding bed is cut into it. Wander bends the walls' lines.
+//! winding bed is cut into it. Canyon is how wide a canyon the river cuts
+//! through the tablelands it meets, down to the valley floor, so the
+//! valleys are joined; with none the river keeps to the valleys. Wander
+//! bends the walls' lines.
 //!
 //! A mask wired into Ramps keeps the ramps to where it is over a half.
 //!
@@ -37,6 +40,11 @@ use crate::{
 /// The most levels there are.
 const MOST_LEVELS: usize = 12;
 
+/// How far either side of its line a river's bed reaches, in metres, and
+/// how far a line is said to be where there is none.
+const BED: f32 = 14.0;
+const FAR: f32 = 1.0e9;
+
 /// How steep a wall's rubble lies, as rise over run.
 const RUBBLE: f32 = 0.7;
 
@@ -55,6 +63,7 @@ pub struct Plateaus {
     pub talus: f32,
     pub valleys: f32,
     pub river: f32,
+    pub canyon: f32,
     pub wander: f32,
     pub ramp_slope: f32,
     pub step: f32,
@@ -74,6 +83,7 @@ impl Default for Plateaus {
             talus: 8.0,
             valleys: 0.35,
             river: 0.0,
+            canyon: 0.0,
             wander: 0.5,
             ramp_slope: 0.5,
             step: 1.0,
@@ -101,6 +111,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("talus", "Talus", 0.0, 1000.0, "m"),
     ValueSpec::number("valleys", "Valleys", 0.0, 1.0, ""),
     ValueSpec::number("river", "River", 0.0, 1000.0, "m"),
+    ValueSpec::number("canyon", "Canyon", 0.0, 10000.0, "m"),
     ValueSpec::number("wander", "Wander", 0.0, 1.0, ""),
     ValueSpec::angle("ramp_slope", "Ramp Slope").advanced(),
     ValueSpec::number("step", "Step", 0.1, 100.0, "m").advanced(),
@@ -139,10 +150,11 @@ impl Kind for Plateaus {
             7 => Value::Number(self.talus),
             8 => Value::Number(self.valleys),
             9 => Value::Number(self.river),
-            10 => Value::Number(self.wander),
-            11 => Value::Number(self.ramp_slope),
-            12 => Value::Number(self.step),
-            13 => Value::Whole(self.seed),
+            10 => Value::Number(self.canyon),
+            11 => Value::Number(self.wander),
+            12 => Value::Number(self.ramp_slope),
+            13 => Value::Number(self.step),
+            14 => Value::Whole(self.seed),
             _ => return None,
         })
     }
@@ -159,10 +171,11 @@ impl Kind for Plateaus {
             (7, Value::Number(number)) => self.talus = number,
             (8, Value::Number(number)) => self.valleys = number,
             (9, Value::Number(number)) => self.river = number,
-            (10, Value::Number(number)) => self.wander = number,
-            (11, Value::Number(number)) => self.ramp_slope = number,
-            (12, Value::Number(number)) => self.step = number,
-            (13, Value::Whole(whole)) => self.seed = whole,
+            (10, Value::Number(number)) => self.canyon = number,
+            (11, Value::Number(number)) => self.wander = number,
+            (12, Value::Number(number)) => self.ramp_slope = number,
+            (13, Value::Number(number)) => self.step = number,
+            (14, Value::Whole(whole)) => self.seed = whole,
             _ => {}
         }
     }
@@ -171,9 +184,9 @@ impl Kind for Plateaus {
         let seed = seed_for(cx, node, self.seed);
         let size = (self.size * cx.world.scale.max(0.01)).max(1.0);
         let ramps = cx.input(node, Self::RAMPS, at).unwrap_or_else(|| cx.constant(1.0));
-        let river = match self.river > 0.0 {
-            true => cx.run(Winding { size: size * 0.8, seed }, &[at.x, at.z]),
-            false => cx.constant(1.0),
+        let river = match self.river > 0.0 || self.canyon > 0.0 {
+            true => cx.run(Winding { size: size * 1.6, seed }, &[at.x, at.z]),
+            false => cx.constant(FAR),
         };
         cx.run(Cut::new(self, size, seed, port), &[at.x, at.z, ramps, river])
     }
@@ -184,8 +197,9 @@ fn smooth(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// How far from a river's winding line each place is, 0 on it to 1 away
-/// from it, from rows of x and z.
+/// How far from a river's winding line each place is, in metres, from
+/// rows of x and z: the line is where noise is nothing, and how far it is
+/// comes from how fast the noise changes.
 #[derive(Debug)]
 struct Winding {
     size: f32,
@@ -199,20 +213,24 @@ impl Kernel for Winding {
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (at, out) in out.iter_mut().enumerate() {
-            let (x, z) = (inputs[0][at] / self.size, inputs[1][at] / self.size);
-            let noise = noise::gradient(x, z, self.seed.wrapping_add(0x5A));
+            let read = |x: f32, z: f32| noise::gradient(x / self.size, z / self.size, self.seed.wrapping_add(0x5A));
+            let (x, z) = (inputs[0][at], inputs[1][at]);
+            let noise = read(x, z);
+            let (along, across) = ((read(x + 4.0, z) - noise) / 4.0, (read(x, z + 4.0) - noise) / 4.0);
+            let climb = (along * along + across * across).sqrt();
             let off = if noise < 0.0 { -noise } else { noise };
-            *out = (off / 0.05).clamp(0.0, 1.0);
+            // Where the noise runs level the line is far off, however near nothing the noise is.
+            *out = off / if climb > 0.2 / self.size { climb } else { 0.2 / self.size };
         }
     }
 }
 
 /// A number from 0 to 1 from a whole number.
-fn share(hash: u32) -> f32 {
+pub(super) fn share(hash: u32) -> f32 {
     (hash >> 8) as f32 / (1u32 << 24) as f32
 }
 
-fn mix(seed: u32, values: [i32; 3]) -> u32 {
+pub(super) fn mix(seed: u32, values: [i32; 3]) -> u32 {
     let mut h = seed ^ 0x9E37_79B9;
     for value in values {
         h = (h ^ value as u32).wrapping_mul(0x85EB_CA6B);
@@ -244,6 +262,7 @@ struct Cut {
     talus: f32,
     rim: f32,
     river: f32,
+    canyon: f32,
     ramps: f32,
     ramp_slope: f32,
     step: f32,
@@ -284,6 +303,7 @@ impl Cut {
             talus: set.talus.max(0.0),
             rim: set.rim,
             river: set.river.max(0.0),
+            canyon: set.canyon.max(0.0),
             ramps: set.ramps.clamp(0.0, 1.0),
             ramp_slope: if set.ramp_slope > 0.02 { set.ramp_slope } else { 0.02 },
             step: if set.step > 0.1 { set.step } else { 0.1 },
@@ -312,7 +332,7 @@ impl Kernel for Cut {
             key.number(*height).number(*edge);
         }
         key.number(self.size).whole(self.seed).number(self.wall).number(self.talus).number(self.rim);
-        key.number(self.river).number(self.ramps).number(self.ramp_slope).number(self.step).number(self.wander);
+        key.number(self.river).number(self.canyon).number(self.ramps).number(self.ramp_slope).number(self.step).number(self.wander);
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
@@ -414,18 +434,26 @@ impl Kernel for Cut {
                     lip = if part < 1.0 { -rounded * (1.0 - part) * (1.0 - part) } else { 0.0 };
                 }
             }
-            // A river's bed along its line, on the lowest level clear of the walls.
-            let floor = if mine.level == 0 && high == level { smooth(clear / 24.0) } else { 0.0 };
-            let bed = if self.river > 0.0 && floor > 0.0 {
-                let off = inputs[3][at];
-                self.river * (1.0 - off * off) * floor
-            } else {
-                0.0
-            };
+            let mut ground = high + lip;
+            let mut floor = if mine.level == 0 && high == level { smooth(clear / 24.0) } else { 0.0 };
+            // The river's canyon through whatever stands in its way, down to the valley floor.
+            let off = inputs[3][at];
+            let half = self.canyon * 0.5;
+            if self.canyon > 0.0 {
+                let cut = self.heights[0] + if off > half { (off - half) * self.wall } else { 0.0 };
+                if cut < ground {
+                    ground = cut;
+                    (walled, floor) = if off > half { (1.0, 0.0) } else { (0.0, 1.0) };
+                }
+            }
+            // The river's bed along its line, on the lowest level clear of the walls.
+            if self.river > 0.0 && floor > 0.0 && off < BED {
+                ground -= self.river * (1.0 - off * off / (BED * BED)) * floor;
+            }
             *out = match self.port {
                 Plateaus::WALLS => walled,
                 Plateaus::FLOOR => floor,
-                _ => high + lip - bed,
+                _ => ground,
             };
         }
     }

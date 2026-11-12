@@ -41,6 +41,7 @@ mod terrace;
 pub(crate) mod testing;
 mod warp;
 
+mod arches;
 mod cave_network;
 mod chambers;
 mod combine;
@@ -70,6 +71,7 @@ pub use smooth::Smooth;
 pub use terrace::Terrace;
 pub use warp::Bend;
 
+pub use arches::Arches;
 pub use cave_network::{CaveNetwork, Laid};
 pub use chambers::Chambers;
 pub use combine::{Combine, Combining};
@@ -337,6 +339,7 @@ pub enum NodeKind {
     Tunnels(Tunnels),
     Chambers(Chambers),
     Combine(Combine),
+    Arches(Arches),
     #[serde(rename = "cave_network")]
     CaveNetwork(CaveNetwork),
 }
@@ -371,6 +374,7 @@ macro_rules! each_kind {
             NodeKind::Tunnels($kind) => $do,
             NodeKind::Chambers($kind) => $do,
             NodeKind::Combine($kind) => $do,
+            NodeKind::Arches($kind) => $do,
             NodeKind::CaveNetwork($kind) => $do,
         }
     };
@@ -410,6 +414,7 @@ impl NodeKind {
             NodeKind::Tunnels(Tunnels::default()),
             NodeKind::Chambers(Chambers::default()),
             NodeKind::Combine(Combine::default()),
+            NodeKind::Arches(Arches::default()),
             NodeKind::CaveNetwork(CaveNetwork::default()),
             NodeKind::Output(Output::default()),
         ]

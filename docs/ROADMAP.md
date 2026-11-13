@@ -2787,6 +2787,54 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   crown and lit ground in its shadow. Manual: Blocks. Not done: the same for a world drawn smooth, rays for
   bounced light, which take it as solid, and light through a leaf from behind (a material's foliage lighting is
   not read for block faces).
+- ~~**Living trees: logs that thin, trees that come down, saplings that grow:**~~ done.
+  - **Logs** (`BlockShape::Log`): a log's placed state keeps the way it lies (`BlockFacing::axis`: up, east, north)
+    and how thick it is across (`BlockState::size`, sixteenths, `LOG_SIZES` 4 to 14, 0 whole), set over the
+    facing with the top bit (`to_byte`), so no older byte reads otherwise. A thin log is a post with arms of its
+    thickness to the logs of its block beside it across its way (`shape::log_boxes`, `Around::joins` in
+    `BlockFacing::ALL`'s order, by family); a whole upright one is drawn as a cube (`BlockKind::drawn_shape`); a
+    log's ends take its Top surface by the way it lies (`mesh::log_facing`). `.voxplant`s grow trunks of whole
+    blocks at the foot that thin to logs as they rise and branches of thin logs lying along the way they reach,
+    each face to face (`plant::blocks_along`, `lying`, `branch`); `PlantModel::blocks` keeps each block's state,
+    and `StructureBlocks::Plant::logs` its numbers (`structure::log_number`, `engine::blocks::log_numbers`).
+    The starter oak, birch and pine logs are logs with ring pictures, and Starter Blocks has an oak log.
+  - **Chopping and felling** (`engine::trees`, `terrain::blocks::fell`): a log that chops (`BlockDef::chops`,
+    `slice`) stands a slice thinner each time it is mined (`trees::chop`), and its last cuts it through; one that
+    fells (`BlockDef::fells`) brings down what it held up: `fell::loose_tree` takes the logs of its family over the
+    cut, corner to corner, unless one goes lower or stands on ground, with leaves within five blocks nearer it than
+    another tree's logs and the vines hanging from them, and only where it holds leaves. They come out of the world
+    onto an Obj of their own (`FallingTree`, `fell::LooseBlocks`, `loose_map` keeping each block where it was),
+    which turns about the cut away from whoever cut it as a pole falls until a block meets ground, and a moment
+    later breaks: each block's drops roll where it lies (`item_drops::rolled`, a thin log a share as thin as it
+    is), and `trees::Felled` is told to scripts. Rendering: a Block World can be drawn turned (`BLOCKS_TURNED`,
+    `GpuBlockWorld::turn`, `turnedPoint` in `block_quads.slang`, its faces' pictures read where they rest as a
+    moving part's are, chunks picked in its own space by `turned_planes`), lit by the bounced light of the world
+    it came from, no rays for the GI.
+  - **Items on the ground** (`engine::item_drops`): an `ItemDrop` falls onto any world's blocks and rests, turning;
+    those of one item resting together join; drawn as a small cube of the material its item's block has, or its
+    item's Dropped prefab (`DroppedAs`); taken up after half a second, gone after five minutes; not saved.
+  - **Saplings** (`BlockShape::Sapling`, `BlockDef::grows`; `terrain::blocks::sapling`, `engine::saplings`): a
+    sapling is crossed sheets, no ground. It takes root on a whole block of ground with light enough for its plant
+    (`sapling::light_at`: open sky, a fifth less a leaf over it, none under ground). A world keeps its growing ones
+    (`Saplings`, nineteen bytes each, `VXSW` in script captures); each stage is the same tree at a share of its
+    size from its place's seed (`stage_model`, `young`), grown where it has room (`has_room`); one that waits a
+    stage long dies, a young tree stops. Planted by hand, scattered by a felled tree (`PlantDef::sapling`,
+    `saplings`), by a sapling item resting four seconds, or found as a world's chunks change. `.voxplant`:
+    `grow_time`, `stages`, `light`.
+  - **Editor:** Log and Sapling shapes, Chops and Fells under Breaking, a Sapling's Grows into; a `.voxplant` has
+    an Inspector of its own (`plant_inspector`: Trunk, Crown, Blocks, Saplings). Starter trees have saplings, ring
+    pictures, and items for their logs and saplings.
+  - **Scripts** (native API 86): `Trees.Chop`, `Fell`, `SlicesLeft`, `Away`, `Felled`; `ItemDrops.Drop`, `Near`,
+    `Take`, `Collect`; `ItemDrop`; the `ItemPickup` behaviour; `Saplings.Plant`, `Grow`, `All`; `Block.Chops`,
+    `Fells`, `IsSapling`; `BlockState.Size`. `Blocks.Mine` and `BlockMiner` chop and fell by themselves, and
+    `Blocks.Place` plants a sapling item. Console (`vox editor call game.console`): `ChopLog`, `FellTree`,
+    `PlantSapling`, `GrowSapling`, `ListSaplings`, `ListDrops`.
+  - Tests: log states and boxes, trees that thin with branches face to face, what a cut log held up, sapling
+    stages, light and bytes; a game chopping, felling and taking up logs, and saplings rooting, growing, dying and
+    scattered; a script doing it all; saplings in captures; GPU pictures of a tree of logs and of loose blocks
+    turned. Manual: Blocks (Logs, Saplings, Breaking), Block Worlds (Trees that come down, Saplings), Structures,
+    Blocks and Items from Scripts. Not done: generated trees seeding by themselves, leaves that wither, items and
+    falling trees in a save, the fall shown to a player who joins, thin logs in the far view and in smooth worlds.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

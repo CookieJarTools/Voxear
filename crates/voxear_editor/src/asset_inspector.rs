@@ -142,6 +142,25 @@ pub enum AssetAction {
     },
     /// Make an item that places the block at this path, which drops it.
     MakeBlockItem(String),
+    /// Write the plant at this path as this, for the worlds growing it to
+    /// grow it anew, and when `rebuild`, show it again.
+    SavePlant {
+        path: String,
+        plant: voxear_terrain::blocks::plant::PlantDef,
+        rebuild: bool,
+    },
+    /// Open the object picker under `anchor` for one of the blocks of the
+    /// plant at this path, or take what was dragged onto it.
+    BrowsePlantRef {
+        plant: String,
+        field: crate::plant_inspector::PlantRef,
+        anchor: NodeId,
+    },
+    DropPlantRef {
+        plant: String,
+        field: crate::plant_inspector::PlantRef,
+        source: DragSource,
+    },
     /// Write the biome at this path as this, for the worlds of blocks
     /// listing it to make their ground again, and when `rebuild`, show it
     /// again.
@@ -283,6 +302,7 @@ pub struct AssetView {
     world_gen: Option<crate::world_gen_inspector::WorldFields>,
     block: Option<crate::block_inspector::BlockFields>,
     biome: Option<crate::biome_inspector::BiomeFields>,
+    plant: Option<crate::plant_inspector::PlantFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -468,6 +488,7 @@ impl AssetView {
             world_gen: None,
             block: None,
             biome: None,
+            plant: None,
             prompt_icons: None,
             preview,
             listen: None,
@@ -519,6 +540,16 @@ impl AssetView {
                     Some(db.get(guid)?.path.clone())
                 };
                 view.biome = Some(crate::biome_inspector::BiomeFields::new(ui, root, biome, &path_of));
+            }
+            ItemKind::Asset(AssetKind::Plant) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let plant = voxear_terrain::blocks::plant::PlantDef::parse(&text).unwrap_or_default();
+                let db = game.content.db();
+                let path_of = |reference: &str| {
+                    let guid = game.content.parse(reference).ok()?.guid()?;
+                    Some(db.get(guid)?.path.clone())
+                };
+                view.plant = Some(crate::plant_inspector::PlantFields::new(ui, root, plant, &path_of));
             }
             ItemKind::Asset(AssetKind::Particles) => particle_effect(ui, root, &file),
             ItemKind::Asset(AssetKind::PromptIcons) => {
@@ -663,6 +694,7 @@ impl AssetView {
             world_gen: None,
             block: None,
             biome: None,
+            plant: None,
             prompt_icons: None,
             preview: None,
             listen: None,
@@ -763,6 +795,19 @@ impl AssetView {
                 BlockChange::Drop(field, source) => AssetAction::DropBlockRef { block: path, field, source },
                 BlockChange::Ping(path) => AssetAction::Ping(path),
                 BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
+            });
+        }
+        if let Some(fields) = self.plant.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            use crate::plant_inspector::PlantChange;
+            let (path, plant) = (self.item.path.clone(), fields.plant.clone());
+            return Some(match change {
+                PlantChange::Typed => AssetAction::SavePlant { path, plant, rebuild: false },
+                PlantChange::Shape => AssetAction::SavePlant { path, plant, rebuild: true },
+                PlantChange::Browse(field, anchor) => AssetAction::BrowsePlantRef { plant: path, field, anchor },
+                PlantChange::Drop(field, source) => AssetAction::DropPlantRef { plant: path, field, source },
+                PlantChange::Ping(path) => AssetAction::Ping(path),
             });
         }
         if let Some(fields) = self.biome.as_mut()

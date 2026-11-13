@@ -51,6 +51,18 @@ public readonly struct Block : IEquatable<Block>, IAsset<Block>
 	/// <summary>Whether a player can use it: a door, a trap door, a gate, a lever, a button, or a block marked usable.</summary>
 	public bool IsUsable => Info?.Usable ?? false;
 
+	/// <summary>
+	/// For a log: how many times it is mined before a whole one is cut through, a slice off it each time; 0 for a
+	/// block that breaks at once.
+	/// </summary>
+	public int Chops => Info?.Chops ?? 0;
+
+	/// <summary>For a log: whether cutting it through brings down the tree it holds up.</summary>
+	public bool Fells => Info?.Fells ?? false;
+
+	/// <summary>Whether it is a sapling: it grows into a tree where it has room and light.</summary>
+	public bool IsSapling => Info?.IsSapling ?? false;
+
 	/// <summary>How many seconds it takes to break by hand.</summary>
 	public float Hardness => Info?.Hardness ?? 0f;
 

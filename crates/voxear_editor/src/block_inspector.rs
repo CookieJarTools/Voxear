@@ -4,7 +4,9 @@
 //! or a vine), and which liquid it is (a liquid is drawn in its colour
 //! alone, so its materials and its shape go). **Breaking**: how long it takes
 //! by hand, the kind of tool that breaks it fast, and the tier of that tool
-//! that gets its drops. Its **Drops**, each an item, how many and how
+//! that gets its drops, and for a log, how many hits cut it through and
+//! whether that fells the tree it holds up. A sapling has the **Plant** it
+//! grows into. Its **Drops**, each an item, how many and how
 //! often. Its **Sounds**, and the **Data** asset a game gives it. A block of
 //! parts has its **Use** (whether a player uses it, how long a button stays
 //! on, how far a hanging block swings), its **Motion**'s keys, and a block
@@ -54,6 +56,8 @@ pub enum BlockRef {
     PlaceSound,
     StepSound,
     Data,
+    /// The plant a sapling grows into.
+    Grows,
 }
 
 impl BlockRef {
@@ -74,6 +78,7 @@ impl BlockRef {
             BlockRef::PlaceSound => block.sounds.placed.as_deref(),
             BlockRef::StepSound => block.sounds.step.as_deref(),
             BlockRef::Data => block.data.as_deref(),
+            BlockRef::Grows => block.grows.as_deref(),
         }
     }
 
@@ -93,6 +98,7 @@ impl BlockRef {
             BlockRef::PlaceSound => block.sounds.placed = reference,
             BlockRef::StepSound => block.sounds.step = reference,
             BlockRef::Data => block.data = reference,
+            BlockRef::Grows => block.grows = reference,
         }
     }
 
@@ -104,6 +110,7 @@ impl BlockRef {
             BlockRef::Drop(_) => ("Item", "file"),
             BlockRef::BreakSound | BlockRef::PlaceSound | BlockRef::StepSound => ("Sound", "audio"),
             BlockRef::Data => ("Data Asset", "file"),
+            BlockRef::Grows => ("Plant", "sprout"),
         }
     }
 }
@@ -181,6 +188,10 @@ pub struct BlockFields {
     /// Its shape; none for a liquid.
     shape: Option<NodeId>,
     tier: NodeId,
+    /// For a log: how many hits cut a whole one through, and whether that
+    /// fells what it holds up.
+    chops: Option<NodeId>,
+    fells: Option<NodeId>,
     /// Whether it is hot or cold, and how much and how far when it is.
     heat: NodeId,
     celsius: Option<NodeId>,
@@ -244,7 +255,8 @@ impl BlockFields {
             let tip = "Cube: a block as most are. Bushy: a cube with tufts of leaves reaching out past it. Vine: thin \
                        sheets on the blocks beside it, or hanging; walked through. The rest are blocks of parts: slabs, \
                        stairs, fences, walls and panes that join what is beside them, doors, trap doors, gates, levers \
-                       and buttons a player uses, chains and ropes that hang, or Boxes of the block's own";
+                       and buttons a player uses, chains and ropes that hang, or Boxes of the block's own. Log: whole, \
+                       or as thin as it is placed, thinner a slice each hit. Sapling: grows into a tree";
             ui.set_tooltip(row, tip, None);
             let picked = BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or_default();
             let shape = ui.dropdown(row, &BlockShape::ALL.map(BlockShape::name), picked);
@@ -264,6 +276,24 @@ impl BlockFields {
         let unbreakable = ui.toggle(row, "", block.unbreakable);
         field(ui, rows, BlockRef::Tool, "Tool");
         let tier = number_field(ui, rows, "Tier", block.tier as f32);
+        let log = block.liquid.is_none() && block.shape == BlockShape::Log;
+        let chops = log.then(|| {
+            let field = number_field(ui, rows, "Chops", f32::from(block.chops));
+            let tip = "How many hits cut a whole log through, a slice off it each, drawn thinner: 0 breaks at once";
+            if let Some(row) = ui.parent(field) {
+                ui.set_tooltip(row, tip, None);
+            }
+            field
+        });
+        let fells = log.then(|| {
+            let row = prop(ui, rows, "Fells");
+            ui.set_tooltip(row, "Cut through, the tree it holds up topples and breaks into its drops", None);
+            ui.toggle(row, "", block.fells)
+        });
+        if block.liquid.is_none() && block.shape == BlockShape::Sapling {
+            let rows = part(ui, root, "Sapling", "sprout");
+            field(ui, rows, BlockRef::Grows, "Grows into");
+        }
 
         let rows = part(ui, root, "Heat", "sun");
         let row = prop(ui, rows, "Hot or Cold");
@@ -314,6 +344,8 @@ impl BlockFields {
                 overlap,
                 shape,
                 tier,
+                chops,
+                fells,
                 heat,
                 celsius,
                 reach,
@@ -406,6 +438,12 @@ impl BlockFields {
         }
         if let Some(tier) = changed_number(ui, self.tier) {
             (block.tier, typed) = (tier.round().clamp(0.0, 1000.0) as u32, true);
+        }
+        if let Some(chops) = self.chops.and_then(|chops| changed_number(ui, chops)) {
+            (block.chops, typed) = (chops.round().clamp(0.0, 8.0) as u8, true);
+        }
+        if let Some(fells) = self.fells.filter(|&fells| ui.changed(fells)) {
+            (block.fells, typed) = (ui.is_checked(fells), true);
         }
         for (row, drop) in self.drop_rows.iter().zip(&mut block.drops) {
             let counts = row.count.map(|field| changed_number(ui, field));

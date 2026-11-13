@@ -20,10 +20,11 @@ use std::{
 };
 
 use anyhow::Result;
-use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
+use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
+    fell::LooseBlocks,
     BlockWorld, ChunkMeshes,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
@@ -200,11 +201,18 @@ pub struct GpuBlockWorld {
     pub moving: u64,
     pub motion_count: u32,
     pub moving_count: u32,
+    /// How it is turned about its corner, as a quaternion, where it is
+    /// drawn turned (`BLOCKS_TURNED`).
+    pub turn: [f32; 4],
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
 /// corners, two pairs of words each, in place of quads.
 pub const BLOCKS_SMOOTH: u32 = 1;
+
+/// A world of blocks' flag for being drawn turned about its corner: blocks
+/// that came loose (`voxear_terrain::blocks::fell::LooseBlocks`).
+pub const BLOCKS_TURNED: u32 = 2;
 
 /// Where a view's block buffer keeps its surfaces, after its worlds.
 const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
@@ -266,6 +274,20 @@ fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
         );
         x * corner.x + y * corner.y + z * corner.z + d >= 0.0
     })
+}
+
+/// `planes`, inward, from the world's space into that of a world of blocks
+/// whose corner is at `corner` and which is turned back into its own space
+/// by `back`.
+fn turned_planes(planes: &[[f32; 4]], corner: Vec3, back: Quat) -> Vec<[f32; 4]> {
+    planes
+        .iter()
+        .map(|&[x, y, z, d]| {
+            let normal = Vec3::new(x, y, z);
+            let turned = back * normal;
+            [turned.x, turned.y, turned.z, d + normal.dot(corner)]
+        })
+        .collect()
 }
 
 /// Which of a chunk's faces a view draws.
@@ -642,6 +664,12 @@ impl Pool {
 pub(crate) struct DrawnBlocks {
     pub entity: Entity,
     pub corner: Vec3,
+    /// How it is turned about its corner: none but for blocks that came
+    /// loose, which the GI's rays do not see.
+    pub turn: Option<Quat>,
+    /// The world whose bounced light it is lit by, for blocks that came
+    /// loose from it: its own otherwise.
+    pub lit_by: Option<Entity>,
     pub block_size: f32,
     pub smooth: bool,
     /// Where its pool's chunks' places start, and its quads.
@@ -767,21 +795,38 @@ impl BlockWorlds {
         // The frame's chunks to bring up, between every world.
         let mut left = voxear_terrain::WorldBudget::of(world).upload_bytes();
         let any_hidden = world.query_ref::<&voxear_scene::Hidden>().into_iter().next().is_some();
-        let found: Vec<(Entity, &BlockWorld, Vec3)> = if features.terrain {
-            world
+        // Each world, its corner, and for blocks come loose, how they are turned and the world they came from.
+        let found: Vec<(Entity, &BlockWorld, Vec3, Option<(Quat, Option<Entity>)>)> = if features.terrain {
+            let mut found: Vec<_> = world
                 .query_ref::<(Entity, &BlockWorld, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
                 .without::<voxear_scene::Destroying>()
                 .into_iter()
                 .map(|(entity, blocks, local, placed)| {
-                    (entity, blocks, placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+                    (entity, blocks, placed.map_or(local.position, |placed| placed.0.w_axis.truncate()), None)
                 })
-                .collect()
+                .collect();
+            // Blocks come loose, turned about their Obj's place, their corner `offset` from it.
+            let loose = world
+                .query_ref::<(Entity, &LooseBlocks, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+                .without::<voxear_scene::Destroying>();
+            for (entity, loose, local, placed) in loose {
+                let (turn, at) = match placed {
+                    Some(placed) => {
+                        let (_, turn, at) = placed.0.to_scale_rotation_translation();
+                        (turn, at)
+                    }
+                    None => (local.rotation, local.position),
+                };
+                found.push((entity, &loose.world, at + turn * Vec3::from(loose.offset), Some((turn, loose.from))));
+            }
+            found
         } else {
             Vec::new()
         };
         let mut staged: Vec<u8> = Vec::new();
         let mut proxies_left = PROXIES_A_FRAME;
-        for (entity, blocks, corner) in found {
+        for (entity, blocks, corner, loose) in found {
+            let (turn, lit_by) = (loose.map(|(turn, _)| turn), loose.and_then(|(_, from)| from));
             if any_hidden && crate::scene::hidden(world, entity) {
                 continue;
             }
@@ -815,8 +860,9 @@ impl BlockWorlds {
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
-            // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
-            if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
+            // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made; none for
+            // blocks that came loose, a moment from going.
+            if turn.is_none() && !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
                 let before = pool.proxies.len();
                 pool.proxies.retain(|key, (_, mesh)| {
                     let kept = blocks.meshes.contains_key(key);
@@ -885,6 +931,8 @@ impl BlockWorlds {
             let drawn = DrawnBlocks {
                 entity,
                 corner,
+                turn,
+                lit_by,
                 block_size: blocks.block_size,
                 smooth: blocks.smooth,
                 address: pool.buffer.address,
@@ -913,6 +961,8 @@ impl BlockWorlds {
                 Some(old) => {
                     self.drawn.push(DrawnBlocks {
                         corner,
+                        turn,
+                        lit_by,
                         look: drawn.look,
                         moving: drawn.moving,
                         sea_top: drawn.sea_top,
@@ -1128,8 +1178,8 @@ pub(crate) fn gather(
             surfaces: buffer.address + surfaces_at,
             surface_count: looks.len() as u32,
             material: blocks.look.material.0,
-            anchor: anchors.get(&blocks.entity).copied().unwrap_or(0),
-            flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 },
+            anchor: anchors.get(&blocks.lit_by.unwrap_or(blocks.entity)).copied().unwrap_or(0),
+            flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 } | if blocks.turn.is_some() { BLOCKS_TURNED } else { 0 },
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
             sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
@@ -1138,10 +1188,13 @@ pub(crate) fn gather(
             moving: buffer.address + moving_at,
             motion_count: motions.len() as u32,
             moving_count: moving.len() as u32,
+            turn: blocks.turn.unwrap_or(Quat::IDENTITY).to_array(),
         });
-        let local = camera - blocks.corner;
+        // Its chunks are picked in its own space: turned back where it is turned.
+        let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
+        let local = back * (camera - blocks.corner);
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
-        let planes = voxear_terrain::lod::planes_from(&frame.planes, blocks.corner);
+        let planes = turned_planes(&frame.planes, blocks.corner, back);
         // The chunks the camera can see into, walking from its own through their sides that see each other.
         let seen = blocks.sights.as_ref().and_then(|(map, sights)| {
             let side = CHUNK as f32 * blocks.block_size;
@@ -1161,9 +1214,9 @@ pub(crate) fn gather(
             water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
-            let sunlit = Facing::Light(Vec3::from(frame.sun_direction));
+            let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
             for cascade in 0..CASCADES {
-                let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
+                let planes = turned_planes(&frame.cascade_planes[cascade], blocks.corner, back);
                 lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None);
             }
         }

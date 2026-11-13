@@ -3,6 +3,7 @@
 //! which looks through the level's. Play mode is in [`play`].
 
 mod biomes;
+mod block_plants;
 mod color_popup;
 mod component_clipboard;
 mod blocks;
@@ -1369,6 +1370,9 @@ impl Editor {
             AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
             AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
             AssetAction::SaveBiome { path, biome, rebuild } => self.save_biome(&path, &biome, rebuild),
+            AssetAction::SavePlant { path, plant, rebuild } => self.save_plant(&path, &plant, rebuild),
+            AssetAction::BrowsePlantRef { plant, field, anchor } => self.browse_plant_ref(&plant, field, anchor),
+            AssetAction::DropPlantRef { plant, field, source } => self.drop_plant_ref(&plant, field, &source),
             AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
             AssetAction::DropBiomeRef { biome, field, source } => self.drop_biome_ref(&biome, field, &source),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
@@ -2707,6 +2711,7 @@ impl Editor {
                 }
                 (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
                 (PickFor::BiomeRef { biome, field }, Chosen::Value(pick)) => self.pick_biome_ref(&biome, field, &pick),
+                (PickFor::PlantRef { plant, field }, Chosen::Value(pick)) => self.pick_plant_ref(&plant, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {

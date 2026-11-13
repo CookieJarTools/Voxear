@@ -204,4 +204,11 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, Vector3*, int> BlockPlacedState;
 	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, int> BlockLink;
 	public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, int, int> BlockLinks;
+	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, int> TreeCall;
+	public delegate* unmanaged[Cdecl]<TreeFelledData*, int, ulong*, int, int> TreesFelled;
+	public delegate* unmanaged[Cdecl]<byte*, int, Vector3*, int> SaplingPlant;
+	public delegate* unmanaged[Cdecl]<Vector4*, int, int> Saplings;
+	public delegate* unmanaged[Cdecl]<byte*, int, int, Vector3*, Vector3*, ulong> ItemDrop;
+	public delegate* unmanaged[Cdecl]<Vector3*, float, ulong*, int, int> ItemDropsNear;
+	public delegate* unmanaged[Cdecl]<ulong, int, byte*, int, int*, Vector3*, int> ItemDropRead;
 }

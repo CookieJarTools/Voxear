@@ -208,6 +208,8 @@ Nothing stands on water. Physics leaves it out, so things fall through it to the
 
 Water flows. Each block of water you place is a **source**: it stays full and never runs dry. Water runs out of it, down first and then out over the ground or over still water, an eighth of a block lower for each block it goes, for seven blocks at most. Over an edge it falls as a column to the ground below and runs on from there. Falling water runs out only once it lands on ground, so a waterfall keeps to its column, and water falling into a lake joins it. A block with a source on each of two sides becomes a source itself, so a gap between two pools fills to the brim. Take a source away and the water it fed dries up behind it. Dig into the bank of a pond or the sea and the water runs into the hole.
 
+Falling water shows that it falls. White threads run down its sides: few at its top, where it is still a sheet, and most of it lower down, where it has broken up. Where it lands, mist hangs over its foot and spray is thrown up from it, more the taller the fall, and where it lands in water, foam is churned up beside it. The mist and spray show for the eight falls nearest the camera, within about a hundred metres.
+
 Water flows five blocks a second, the same on every machine, both in play and in the editor as you build; while a game is paused, it stands still. It starts wherever something changes, so a generated sea stays as it was made until you dig into it or build beside it. It stays within the chunks its world reaches: at the world's edge it stops as if at a wall. Saving keeps the water where it has run to.
 
 For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it.
@@ -232,7 +234,7 @@ In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks
 
 With the camera in the water, the view is the same as under a Pool: the water's own colour thickening with distance, light fading with depth, the surface from below, a waterline across the lens as you come up. The water round the camera is found from the top of its column, as far as that top runs along X and Z, so the ground beside a pond stays dry to look at. The waterline lies level, as the water's top is flat, and the ground under the water is lit as it is from far off, whether the camera is near the water or not.
 
-Not done yet: the ground under the water has no dappled light, as a Pool's bed has.
+Not done yet: the ground under the water has no dappled light, as a Pool's bed has; a fall makes no sound; and in a [[Voxel Terrain]] falling water has neither its threads nor its splash.
 
 ### Rough seas
 

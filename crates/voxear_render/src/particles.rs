@@ -716,6 +716,18 @@ pub(crate) fn gather(
             systems.push((distance, drawn, Drawn { count: at.capacity, trails: system.trails, mesh, half }));
         }
     }
+    // The splash where falling water of a world of blocks lands: mist hanging over its foot, and spray thrown up.
+    for foot in crate::blocks::fall_feet(world, camera) {
+        let distance = foot.at.distance_squared(camera);
+        for system in [fall_mist(&foot), fall_spray(&foot)] {
+            // Worked out from their age alone: they have no particles kept for them.
+            debug_assert!(!system.is_simulated(), "a fall's splash is not simulated");
+            let half = halving && system.largest() > HALF_SIZE_FROM * distance.sqrt().max(1.0);
+            let how = Drawn { count: system.slots(), trails: ParticleTrails::Off, mesh: None, half };
+            let drawn = gpu(&system, Mat4::from_translation(foot.at), time, None);
+            systems.push((distance, GpuParticleSystem { flags: drawn.flags & !SIMULATED, ..drawn }, how));
+        }
+    }
     // The farthest first; one Obj's emitters stay in their effect's order.
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
     let over = systems.len().saturating_sub(MAX_PARTICLE_SYSTEMS - 1 - SPRAYING_STREAMS);
@@ -750,6 +762,63 @@ pub(crate) fn gather(
         gpus.push(gpu(&drops, Mat4::IDENTITY, time, None));
     }
     (gpus, counts, spray, rapids)
+}
+
+/// How much a fall `high` metres tall throws up, against one six metres tall.
+fn fall_force(high: f32) -> f32 {
+    (high / 6.0).sqrt().clamp(0.5, 1.8)
+}
+
+/// The mist over the foot of a fall of blocks' water: soft puffs rising off
+/// where it lands, spreading and thinning as they go, lit as the day is;
+/// more of them the wider the foot and the taller the fall. Not carried by
+/// the wind, which would need them kept and stepped each frame.
+fn fall_mist(foot: &crate::blocks::FallFoot) -> ParticleSystem {
+    let force = fall_force(foot.high);
+    let wide = foot.size[0] * foot.size[1];
+    ParticleSystem {
+        rate: (40.0 * wide.sqrt() * force).min(400.0),
+        lifetime: [1.4, 2.8],
+        speed: [0.3, 1.1 * force],
+        size: [0.45, 0.9],
+        size_end: 2.6,
+        color: [1.0, 1.0, 1.0, 0.13],
+        color_end: [1.0, 1.0, 1.0, 0.0],
+        shape: EmitShape::Box,
+        box_size: [foot.size[0] + 0.6, 0.3, foot.size[1] + 0.6],
+        gravity: -0.03,
+        drag: 0.9,
+        lit: true,
+        softness: 0.6,
+        seed: 0xFA11_0001,
+        ..ParticleSystem::default()
+    }
+}
+
+/// The spray thrown up from the foot of a fall of blocks' water: fine drops
+/// flung up and outwards from where it lands and falling back, each too
+/// small to show as a puff; more and further the taller the fall.
+fn fall_spray(foot: &crate::blocks::FallFoot) -> ParticleSystem {
+    let force = fall_force(foot.high);
+    let wide = foot.size[0] * foot.size[1];
+    ParticleSystem {
+        rate: (220.0 * wide.sqrt() * force).min(3000.0),
+        lifetime: [0.35, 0.9],
+        speed: [1.4 * force, 4.2 * force],
+        size: [0.05, 0.11],
+        size_end: 1.6,
+        color: [1.0, 1.0, 1.0, 0.75],
+        color_end: [1.0, 1.0, 1.0, 0.0],
+        shape: EmitShape::Cone,
+        radius: 0.5 * foot.size[0].max(foot.size[1]),
+        angle: 55.0,
+        gravity: 1.0,
+        drag: 0.6,
+        lit: true,
+        softness: 0.05,
+        seed: 0xFA11_0002,
+        ..ParticleSystem::default()
+    }
 }
 
 /// The spray over `white` square metres of a Stream's white water: many
@@ -1346,6 +1415,44 @@ mod tests {
         assert_eq!(systems[0].model[3][2], 20.0, "the far one first");
         assert_eq!((systems[0].time, systems[0].stopped), (7.0, 2.0), "seven seconds in, stopped at two");
         assert_eq!(systems[1].stopped, f32::INFINITY);
+    }
+
+    #[test]
+    fn falling_water_of_blocks_throws_up_mist_and_spray_from_where_it_lands_near_the_camera() {
+        use voxear_terrain::blocks::{BlockFaces, BlockMap, BlockWorld, flow::Water};
+        // A pool on a floor, and water falling into it two blocks wide from six blocks up; the world's corner at
+        // (10, 0, 20).
+        let mut map = BlockMap::default();
+        for z in 0..12 {
+            for x in 0..12 {
+                map.set([x, 0, z], 1);
+                map.set([x, 1, z], 2);
+            }
+        }
+        for y in 2..8 {
+            map.set_cell([5, y, 5], 2, Water::Falling.fill());
+            map.set_cell([6, y, 5], 2, Water::Falling.fill());
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(0, 0, 0), BlockFaces::water(1)];
+        let mut world = World::new();
+        world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(Vec3::new(10.0, 0.0, 20.0))));
+        let near = Vec3::new(16.0, 4.0, 10.0);
+        let foot = crate::blocks::fall_feet(&world, near);
+        // One foot for the two blocks side by side, on the pool's top under their middle.
+        assert_eq!(foot.len(), 1);
+        assert_eq!((foot[0].at, foot[0].size, foot[0].high), (Vec3::new(16.0, 2.0, 25.5), [2.0, 1.0], 6.0));
+        let none = &Default::default();
+        let (systems, slots, _, _) = gather(&world, near, 10.0, none, (&PlacedSystems::new(), NO_TEXTURES));
+        // Its mist and its spray, from its foot, neither kept and stepped: both worked out from their age.
+        assert_eq!((systems.len(), slots.len()), (2, 2));
+        for (system, drawn) in systems.iter().zip(&slots) {
+            assert_eq!(system.model[3], [16.0, 2.0, 25.5, 1.0]);
+            assert_eq!(system.flags & SIMULATED, 0);
+            assert!(drawn.count > 20 && drawn.count == system.slots, "{} particles", drawn.count);
+        }
+        // Far from it, none.
+        let far = Vec3::new(16.0, 4.0, -200.0);
+        assert!(gather(&world, far, 10.0, none, (&PlacedSystems::new(), NO_TEXTURES)).0.is_empty());
     }
 
     #[test]

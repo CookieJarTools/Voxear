@@ -3728,7 +3728,11 @@ world without end none faces a chunk column not made (`BlockWorld::columns`; dra
 one as the made column beside it), and every coarse ring's sea stands as high as the finest's, so the rings meet
 without walls or steps. Water's faces are drawn with the Pools (`water::record`): first the farthest face turned from
 the camera at each pixel, which is where the view leaves the water, then the faces turned towards it shaded as still
-water over a copy of the picture.
+water over a copy of the picture. A side of falling water keeps in its quad how many blocks it has fallen
+(`mesh::water_fall`), so `blockWaterFragment` runs white threads down it, more the further down, and a still top the
+sides a fall lands beside (`mesh::water_foam`), for foam there; a chunk keeps where its falls land (`ChunkMesh::falls`),
+and the particles' `gather` throws mist and spray up from the nearest (`blocks::fall_feet`), worked out from their age
+alone, none kept.
 Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is under the water's
 top (`BlockWorld::water_depth`). Water flows (`blocks::flow`) from
 sources, down and then out over ground, a level lower each block, its level and way up kept

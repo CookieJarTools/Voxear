@@ -2524,6 +2524,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     quads' shapes, the engine's steps the same however frames fall, the GPU drawing water lower the further it runs,
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls, reading how deep it is under the water's top (`BlockWorld::water_depth`).
+    Falls: a side of falling water keeps how many blocks it has fallen at its top, as far as fourteen, where a full
+    block has no shape to keep (`mesh::water_fall`; a quad a block down to there, then one), and `blockWaterFragment`
+    runs white threads down it by lattice noise read from the level's middle, thin at its top and most of it once broken
+    up, its pixels' motion that of the threads so they stay sharp; a still top keeps the sides a fall lands beside
+    (`mesh::water_foam`) for foam fading out across the block; a chunk keeps where its falls land (`ChunkMesh::falls`)
+    and `particles::gather` gives the eight nearest feet (`blocks::fall_feet`, falls side by side one foot) mist and
+    spray, neither simulated. Not done: a sound, a Voxel Terrain's falls, foam where a fall lands on water that stands
+    lower than its block. Tests: a fall's quads, its foot and the pool beside it; a long fall one quad from fourteen
+    down; the splash's systems from a foot near the camera and none far off; the GPU drawing a fall whiter lower down,
+    changed a tenth of a second on, with foam by its foot.
     After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
     dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
     by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's

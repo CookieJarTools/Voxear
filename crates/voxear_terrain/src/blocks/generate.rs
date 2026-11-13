@@ -173,6 +173,55 @@ mod tests {
     }
 
     #[test]
+    fn no_piece_of_ground_is_left_loose_in_the_air_where_caves_and_overhangs_cut_under_it() {
+        // Steep ground pushed out in overhangs, over caves, great halls and wide tunnels among them.
+        let (file, world) = generated(1.0, 8.0);
+        let map = file.make_ground(Some(&world));
+        let (side, low, high) = (64, -40, 400);
+        let solid = |at: [i32; 3]| map.get(at) != AIR;
+        // Every piece of ground joined to nothing but itself, within the map and over its foot: none as small as
+        // loose rock, wherever it is. What is known held up, by a piece looked at before, holds up what meets it.
+        let mut known: std::collections::HashMap<[i32; 3], bool> = std::collections::HashMap::new();
+        let mut loose = Vec::new();
+        for y in low + 1..high {
+            for z in 0..side {
+                for x in 0..side {
+                    if !solid([x, y, z]) || known.contains_key(&[x, y, z]) {
+                        continue;
+                    }
+                    let mut piece = vec![[x, y, z]];
+                    let mut within = std::collections::HashSet::from([[x, y, z]]);
+                    let (mut next, mut held) = (0, false);
+                    while next < piece.len() && !held && piece.len() <= 300 {
+                        let p = piece[next];
+                        next += 1;
+                        for w in [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] {
+                            let q = [p[0] + w[0], p[1] + w[1], p[2] + w[2]];
+                            // Past the map's sides or its foot, it may be held up: what this world has not made.
+                            let past = q[0] < 0 || q[2] < 0 || q[0] >= side || q[2] >= side || q[1] <= low;
+                            if past || known.get(&q) == Some(&true) {
+                                held = true;
+                                break;
+                            }
+                            if solid(q) && within.insert(q) {
+                                piece.push(q);
+                            }
+                        }
+                    }
+                    let held = held || piece.len() > 256;
+                    if !held {
+                        loose.push((piece[0], piece.len()));
+                    }
+                    for p in piece {
+                        known.insert(p, held);
+                    }
+                }
+            }
+        }
+        assert!(loose.is_empty(), "loose pieces of ground: {loose:?}");
+    }
+
+    #[test]
     fn generated_ground_takes_its_blocks_from_the_biome_each_place_is() {
         use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
         let (mut file, world) = generated(0.0, 0.0);
@@ -529,7 +578,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xb5c2_959f_3398_5e27, 0x06fa_ee9e_a714_aca3, 0x7257_8dd2_041f_3d95],
+            [0xbd24_a714_3e22_e08f, 0x06fa_ee9e_a714_aca3, 0x97e3_2cd8_e4e4_3c43],
             "generated blocks changed: were they meant to? {hashes:#x?}"
         );
     }
@@ -782,7 +831,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0x879c_99e5_626f_1886, 0x06fa_ee9e_a714_aca3, 0xfc09_8f2b_e038_785a],
+            [0xebe7_713d_2d66_92e6, 0x06fa_ee9e_a714_aca3, 0x9e5d_1b83_bd14_7c1b],
             "overhanging blocks changed: were they meant to? {hashes:#x?}"
         );
     }

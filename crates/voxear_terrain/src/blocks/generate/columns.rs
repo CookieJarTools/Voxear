@@ -213,6 +213,151 @@ pub(super) fn waters_and_currents(
     Some((made, currents))
 }
 
+/// The most blocks a piece of ground may hold, standing loose in the air
+/// with nothing under or beside it, and be cleared away: more is ground
+/// standing apart on purpose, an island in the sky or a slab of rock.
+const LOOSE: usize = 256;
+
+/// Clears every piece of ground in a chunk column's `chunks` that stands
+/// loose in the air: a few blocks touching no others, as a cave or a
+/// passage cut under ground leaning out over it may leave hanging. A piece
+/// reaching under the column's lowest block may be held up there, and
+/// stays. One reaching past its sides is followed on into the columns
+/// beside it, `beyond` saying whether each block there is ground, by where
+/// it is from this column's corner and its lowest chunk's foot: so each
+/// column finds the same piece and clears its own part of it alike. Water
+/// (`water`) holds nothing up.
+fn clear_loose(chunks: &mut [([i32; 3], Chunk)], water: BlockId, beyond: &dyn Fn([i32; 3]) -> bool) {
+    let side = CHUNK as i32;
+    let (Some(low), Some(high)) = (chunks.iter().map(|(at, _)| at[1]).min(), chunks.iter().map(|(at, _)| at[1]).max())
+    else {
+        return;
+    };
+    let tall = ((high - low + 1) * side) as usize;
+    let index = |[x, y, z]: [i32; 3]| (y as usize * CHUNK as usize + z as usize) * CHUNK as usize + x as usize;
+    // Which blocks are ground, the column's from its lowest chunk up.
+    let mut ground = vec![false; tall * (CHUNK * CHUNK) as usize];
+    for (at, chunk) in chunks.iter() {
+        if chunk.is_air() {
+            continue;
+        }
+        let from = (at[1] - low) * side;
+        for y in 0..CHUNK {
+            for z in 0..CHUNK {
+                for x in 0..CHUNK {
+                    let block = chunk.get(x, y, z);
+                    ground[index([x as i32, from + y as i32, z as i32])] = block != AIR && block != water;
+                }
+            }
+        }
+    }
+    let own = |[x, _, z]: [i32; 3]| (0..side).contains(&x) && (0..side).contains(&z);
+    const WAYS: [[i32; 3]; 6] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    let step = |p: [i32; 3], w: [i32; 3]| [p[0] + w[0], p[1] + w[1], p[2] + w[2]];
+    let within = |p: [i32; 3]| own(p) && (0..tall as i32).contains(&p[1]);
+    // First, all ground joined within the column to its foot, the lowest blocks of ground in it, is held up: nearly
+    // all of it, asked about nowhere else.
+    let mut held = vec![false; ground.len()];
+    let mut edge: Vec<[i32; 3]> = Vec::new();
+    let row = (CHUNK * CHUNK) as usize;
+    let foot = (0..tall).find(|&y| ground[y * row..(y + 1) * row].iter().any(|&solid| solid)).unwrap_or(0) as i32;
+    for z in 0..side {
+        for x in 0..side {
+            if ground[index([x, foot, z])] {
+                held[index([x, foot, z])] = true;
+                edge.push([x, foot, z]);
+            }
+        }
+    }
+    while let Some(p) = edge.pop() {
+        for w in WAYS {
+            let q = step(p, w);
+            if within(q) && ground[index(q)] && !held[index(q)] {
+                held[index(q)] = true;
+                edge.push(q);
+            }
+        }
+    }
+    // Then each piece left, joined within the column: one larger than LOOSE stands apart on purpose; a smaller one
+    // reaching nowhere past the column's sides is loose; one reaching past them is followed on there.
+    let mut loose = vec![false; ground.len()];
+    let mut seen = vec![false; ground.len()];
+    let asked = std::cell::RefCell::new(std::collections::HashMap::new());
+    let solid_beyond = |at: [i32; 3]| *asked.borrow_mut().entry(at).or_insert_with(|| beyond(at));
+    let mut piece: Vec<[i32; 3]> = Vec::new();
+    for at in 0..ground.len() {
+        if !ground[at] || held[at] || seen[at] {
+            continue;
+        }
+        let (across, up) = (CHUNK as usize, (CHUNK * CHUNK) as usize);
+        let first = [(at % across) as i32, (at / up) as i32, (at / across % across) as i32];
+        piece.clear();
+        piece.push(first);
+        seen[at] = true;
+        let mut next_at = 0;
+        while next_at < piece.len() {
+            let p = piece[next_at];
+            next_at += 1;
+            for w in WAYS {
+                let q = step(p, w);
+                if within(q) && ground[index(q)] && !seen[index(q)] {
+                    seen[index(q)] = true;
+                    piece.push(q);
+                }
+            }
+        }
+        if piece.len() > LOOSE {
+            continue;
+        }
+        let sides = piece.iter().any(|&p| {
+            WAYS.iter().any(|&w| {
+                let q = step(p, w);
+                !own(q) && q[1] >= foot && solid_beyond(q)
+            })
+        });
+        // Reaching past the sides: followed on there, as far as LOOSE blocks in all, held up where it grows past
+        // that, reaches under the column's foot or meets ground of this column held up.
+        let holds = sides && {
+            let mut all: Vec<[i32; 3]> = piece.clone();
+            let mut grows = 0;
+            let mut found = false;
+            while grows < all.len() && !found {
+                let p = all[grows];
+                grows += 1;
+                for w in WAYS {
+                    let q = step(p, w);
+                    if q[1] < foot || within(q) && held[index(q)] || all.len() >= LOOSE {
+                        found = true;
+                        break;
+                    }
+                    let solid = if own(q) { within(q) && ground[index(q)] } else { solid_beyond(q) };
+                    if solid && !all.contains(&q) {
+                        all.push(q);
+                    }
+                }
+            }
+            found
+        };
+        if !holds {
+            for &p in &piece {
+                loose[index(p)] = true;
+            }
+        }
+    }
+    for (at, chunk) in chunks.iter_mut() {
+        let from = (at[1] - low) * side;
+        for y in 0..CHUNK {
+            for z in 0..CHUNK {
+                for x in 0..CHUNK {
+                    if loose[index([x as i32, from + y as i32, z as i32])] {
+                        chunk.set(x, y, z, AIR);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// How many blocks further into or out of the ground than a block's middle
 /// its fill is no longer measured against the blocks round it: a whole
 /// block or none, on any slope a block can show.
@@ -525,6 +670,32 @@ pub fn column_chunks(
     let mut chunks: Vec<([i32; 3], Chunk)> =
         (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?))).collect();
     // What its generator builds on its ground, at its own level alone: far off, structures are too small to see.
+    // Rock a cave or a passage cut away from under, left loose in the air, is cleared, before anything is built:
+    // followed into the columns beside where it reaches past this one's sides.
+    if level == 0 && !file.smooth {
+        let foot = chunks.iter().map(|(at, _)| at[1]).min().unwrap_or(0) * side;
+        let beyond = |[x, y, z]: [i32; 3]| {
+            let (bx, by, bz) = (cx * side + x, foot + y, cz * side + z);
+            let (gx, gz) = (middle(bx, 0), middle(bz, 1));
+            let mut height = [0.0];
+            world.heights(&[gx], &[gz], &mut height);
+            let cy = (by as f32 + 0.5) * size;
+            if !asked {
+                return cy < height[0];
+            }
+            let carried = volume.carried(&[gx], &[gz], &height);
+            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+            let (px, pz) = match source.own() {
+                true => (gx, gz),
+                false => ((bx as f32 + 0.5) * size, (bz as f32 + 0.5) * size),
+            };
+            let (mut inside, mut under) = ([0.0], [0.0]);
+            let cells = Cells { x: &[px], y: &[cy], z: &[pz], carried: &rows, size };
+            volume.densities(cells, false, &mut inside, &mut under);
+            inside[0] > 0.0
+        };
+        clear_loose(&mut chunks, sea, &beyond);
+    }
     let built = generate.built.as_deref().filter(|built| !built.list.is_empty());
     if let Some(built) = built.filter(|_| level == 0) {
         let biomes = generate.placed.as_deref().map(|placed| &placed.biomes).filter(|biomes| !biomes.is_empty());

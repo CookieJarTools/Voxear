@@ -1833,3 +1833,42 @@ fn a_generated_river_runs_between_its_banks_and_pours_over_a_waterfall_into_a_po
     );
     assert!(water(&pixels) > 500, "{} pixels of the waterfall and its pool", water(&pixels));
 }
+
+#[test]
+fn a_great_cave_mouth_opens_in_the_hillside_into_a_hall() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let caves = starters().into_iter().find(|starter| starter.name == "Highlands").unwrap().world(1, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    let rooms = caves.caves().expect("its caves").rooms_near([0.0, 200.0, 0.0], 2000.0);
+    let mouth = rooms.iter().find(|room| room.mouth).expect("a mouth");
+    let out = mouth.out.expect("where its passage comes out");
+    let corner = [out[0] - 128.0, out[2] - 128.0];
+    // From 45 m out down the hillside and a little over it, looking back at its mouth.
+    let (dx, dz) = (out[0] - mouth.at[0], out[2] - mouth.at[2]);
+    let long = (dx * dx + dz * dz).sqrt().max(0.01);
+    let (ax, az) = (dx / long, dz / long);
+    let eye = Vec3::new(128.0 + ax * 45.0, out[1] + 12.0, 128.0 + az * 45.0);
+    let yaw = (-ax).atan2(-az);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &caves,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, yaw, 0.2),
+        "blocks cave mouth.png",
+    );
+    assert!(sky_pixels(&pixels) > 0);
+    // From the hall's floor, looking out through its passage.
+    let eye = Vec3::new(mouth.floor[0] - corner[0], mouth.floor[1] + 4.0, mouth.floor[2] - corner[1]);
+    let (inside, _) = generated_view(
+        &mut renderer,
+        &caves,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, (ax).atan2(az), 0.0),
+        "blocks cave mouth inside.png",
+    );
+    assert!(sky_pixels(&inside) > 100, "sky through the mouth: {}", sky_pixels(&inside));
+}

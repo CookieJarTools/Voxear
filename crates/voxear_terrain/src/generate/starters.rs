@@ -447,9 +447,9 @@ fn canyons() -> Starter {
 /// Rocky hills over caves without end, every room made by rules: halls
 /// with pillars and ledges and smaller chambers between, in three layers
 /// one under another, joined by winding tunnels of many widths and by
-/// ramps from layer to layer, with ways round and dead ends, and here and
-/// there a way up to the surface. For a world of blocks; a Terrain shows
-/// the hills alone.
+/// ramps from layer to layer, with ways round and dead ends, and many ways
+/// up to the surface, half of them great rooms open in the hillsides. For a
+/// world of blocks; a Terrain shows the hills alone.
 fn caves() -> Starter {
     let mut g = Layout::new();
     let hills = Noise { size: 420.0, octaves: 4, low: 48.0, high: 110.0, ..Noise::default() };
@@ -461,9 +461,9 @@ fn caves() -> Starter {
     // Halls tens of metres across and many high, of several shapes stacked up and out, with a floor that
     // rolls and steps; chambers half their size between; near enough that rooms meet now and then.
     let hall = RoomRules {
-        size: [38.0, 60.0],
-        shapes: 6,
-        height: 22.0,
+        size: [60.0, 100.0],
+        shapes: 7,
+        height: 34.0,
         roughness: 1.6,
         floor: 0.6,
         pillars: 2,
@@ -472,21 +472,22 @@ fn caves() -> Starter {
         exits: 5,
         exits_apart: 0.8,
     };
-    let chamber = RoomRules { size: [20.0, 32.0], shapes: 4, height: 11.0, pillars: 1, hanging: 3, ledges: 2, ..hall };
+    let chamber = RoomRules { size: [30.0, 50.0], shapes: 5, height: 18.0, pillars: 1, hanging: 4, ledges: 2, ..hall };
     let network = CaveNetwork {
-        spacing: 72.0,
-        depth: 44.0,
-        tunnel_width: 4.0,
-        tunnel_width_max: 9.0,
+        spacing: 128.0,
+        depth: 50.0,
+        tunnel_width: 12.0,
+        tunnel_width_max: 27.0,
         winding: 1.0,
         slope_limit: 0.6,
         branches: 0.35,
         loops: 0.4,
         roughness: 1.4,
-        entrances: 0.2,
+        entrances: 0.5,
+        mouths: 0.5,
         // Three layers of rooms, for a world with a great deal of rock under it.
         layers: 3,
-        layer_depth: 56.0,
+        layer_depth: 80.0,
         rooms: vec![Room { weight: 2.0, ..Room::made(hall) }, Room { weight: 3.0, ..Room::made(chamber) }],
         ..CaveNetwork::default()
     };
@@ -607,10 +608,10 @@ fn highlands() -> Starter {
         Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, windows: 0.6, seed: 0 };
     let arches = g.add(NodeKind::Arches(arches));
     let hall = RoomRules {
-        size: [30.0, 52.0],
-        shapes: 5,
-        height: 18.0,
-        roughness: 1.5,
+        size: [50.0, 90.0],
+        shapes: 6,
+        height: 30.0,
+        roughness: 2.2,
         floor: 0.5,
         pillars: 2,
         hanging: 4,
@@ -619,18 +620,19 @@ fn highlands() -> Starter {
         exits_apart: 0.8,
     };
     let network = CaveNetwork {
-        spacing: 84.0,
+        spacing: 140.0,
         depth: 50.0,
-        tunnel_width: 4.0,
-        tunnel_width_max: 8.0,
+        tunnel_width: 12.0,
+        tunnel_width_max: 24.0,
         winding: 1.0,
         slope_limit: 0.6,
         branches: 0.3,
         loops: 0.4,
         roughness: 1.3,
-        entrances: 0.25,
+        entrances: 0.5,
+        mouths: 0.5,
         layers: 4,
-        layer_depth: 70.0,
+        layer_depth: 80.0,
         rooms: vec![Room::made(hall)],
         ..CaveNetwork::default()
     };
@@ -833,7 +835,17 @@ fn cave_level() -> Starter {
     g.expose(rock, "value", "Height");
     g.next();
     let solid = g.after(rock, NodeKind::Solid(Solid::default()));
-    let network = CaveNetwork { layout: Laid::Level, depth: 32.0, entrances: 0.0, ..CaveNetwork::default() };
+    // Tunnels as narrow as its rooms are small, a few metres across, as a level of rooms you make is.
+    let network = CaveNetwork {
+        layout: Laid::Level,
+        spacing: 64.0,
+        depth: 32.0,
+        tunnel_width: 4.0,
+        tunnel_width_max: 6.0,
+        entrances: 0.0,
+        mouths: 0.0,
+        ..CaveNetwork::default()
+    };
     let caves = g.add(NodeKind::CaveNetwork(network));
     g.expose(caves, "main_rooms", "Rooms");
     g.expose(caves, "side_rooms", "Side Rooms");
@@ -884,12 +896,17 @@ mod tests {
         // Halls and chambers both, each under the hills, with places on its rock.
         let wide = |room: &crate::generate::PlacedRoom| room.bounds[1][0] - room.bounds[0][0];
         assert!(rooms.iter().any(|room| wide(room) > 70.0) && rooms.iter().any(|room| wide(room) < 60.0));
-        // In three layers, each 56 m under the one over it.
+        // In three layers, each 80 m under the one over it; a mouth, where a hillside is steep enough, in it.
         assert!((0..3).all(|layer| rooms.iter().any(|room| room.region[1] == layer)));
         for room in &rooms {
-            let under = world.height_at(room.at[0], room.at[2]) - room.at[1] - room.region[1] as f32 * 56.0;
-            assert!((30.0..=58.0).contains(&under), "a room {under} m under where its layer starts");
+            let ground = world.height_at(room.at[0], room.at[2]);
             assert!(!room.floors.is_empty() && !room.ceilings.is_empty());
+            if room.mouth {
+                assert_eq!(room.region[1], 0, "a mouth in the topmost layer");
+                continue;
+            }
+            let under = ground - room.at[1] - room.region[1] as f32 * 80.0;
+            assert!((32.0..=68.0).contains(&under), "a room {under} m under where its layer starts");
         }
         assert_ne!(starter.world(2, 1.0).caves().unwrap().rooms_near([0.0, 40.0, 0.0], 600.0), rooms);
     }

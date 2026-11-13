@@ -32,7 +32,6 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
-    flow::Water,
     is_ground, is_water,
 };
 
@@ -349,6 +348,7 @@ fn merge(mask: &mut [u32], side: usize) -> Vec<(usize, usize, usize, usize, u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blocks::flow::Water;
     use crate::blocks::chunk::Chunk;
 
     /// Faces counted one a block: each side of a solid block that meets air.

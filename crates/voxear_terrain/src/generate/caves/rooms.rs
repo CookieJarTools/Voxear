@@ -231,6 +231,27 @@ impl Room {
         Self { rules: Some(rules), ..Self::default() }
     }
 
+    /// The rooms a network with none of its own places: great halls with
+    /// pillars, hanging rock and ledges, and chambers half their size
+    /// between, made by rules.
+    pub fn standard() -> Vec<Self> {
+        let hall = RoomRules {
+            size: [60.0, 100.0],
+            shapes: 7,
+            height: 34.0,
+            roughness: 2.5,
+            floor: 0.6,
+            pillars: 3,
+            hanging: 8,
+            ledges: 4,
+            exits: 5,
+            exits_apart: 0.8,
+        };
+        let chamber =
+            RoomRules { size: [30.0, 50.0], shapes: 5, height: 18.0, pillars: 1, hanging: 5, ledges: 2, ..hall };
+        vec![Self { weight: 2.0, ..Self::made(hall) }, Self { weight: 3.0, ..Self::made(chamber) }]
+    }
+
     /// Whether a network can place it: it has rules, or a shape.
     pub fn placeable(&self) -> bool {
         self.rules.is_some() || !self.shapes.is_empty()

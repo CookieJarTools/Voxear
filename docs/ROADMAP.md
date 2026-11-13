@@ -1965,6 +1965,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Character Controller is carried as its **Water Push** says (C# `WaterPush`, `AddPush`, `Pushed`). Every land
     preset runs rivers. Tests: banks hold their water in; water runs downhill; waterfalls over pools; river blocks
     flowing their way with no water against air; a crate, a boulder and characters in a river.
+  - ~~**Great caves, mouths in hillsides and no loose rock:**~~ done: a Cave Network with no rooms of its own makes
+    great halls (60 to 100 m, pillars, hanging rock, ledges) and chambers by rules, joined by tunnels 12 to 18 m
+    wide; its new **Mouths** makes some ways up the hall itself where the ground falls steeply beside it, set level
+    with the ground below and back into the hill, a wide smooth passage running out level from its floor to the
+    hillside. A world's own Caves over 0 add such a network. Regions look at their diagonal neighbours' rooms too,
+    as great halls reach over corners. Generated chunk columns clear every piece of ground of 256 blocks or fewer
+    left loose in the air, followed into the columns beside where it reaches past the sides. A river's surface
+    steps down in eighths of a block. Tests: halls, wide tunnels and mouths with a level way out; hollows whole
+    where regions meet; no loose ground left; a GPU render from inside a mouth.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

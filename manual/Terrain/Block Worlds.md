@@ -38,7 +38,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Offset | Where its corner is in the generator's world, in metres |
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
-| Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
+| Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 
 Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° is pushed a little, and ground steeper than about 45° by the whole amount. The bulges are about 14 m across, so the ground hangs over open air once Overhangs is 9 m or so; under that, cliffs lean and bulge. The far rings of a world without end, whose blocks are too large to hold a bulge, are left unpushed.
@@ -46,6 +46,8 @@ Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° 
 The ground's layers follow the pushed ground. The top block is whatever has open air over it, with the under block below, counted down each column, so the under block never shows through where the ground was pushed out. Under an overhang the count starts again on the ground below, and the overhang's underside has no top block.
 
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
+
+Where a cave or a passage cuts under ground that leans out over it, the rock left hanging in the air is cleared: no piece of ground of 256 blocks or fewer stands loose, joined to nothing. Larger ground standing apart, an island in the sky or a slab of rock, is there on purpose and stays. A piece reaching into the chunk column beside is followed on there, so each column clears it alike.
 
 ### Tall worlds
 
@@ -192,7 +194,7 @@ For a sea, pick a block of water as the **Sea block** of generated ground: the a
 
 A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
 
-A river's blocks are sources, so it never runs dry, and each keeps which way and how fast its river flows. Its ripples drift that way. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
+A river's blocks are sources, so it never runs dry, and each keeps which way its river flows and how high its water stands in it, so its surface comes down in eighths of a block as water placed and running out does, not a block at a time. Its ripples drift the way it flows. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
 
 Flowing water pushes:
 

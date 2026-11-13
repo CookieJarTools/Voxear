@@ -56,8 +56,11 @@ pub struct CaveNetwork {
     /// How far its walls are pushed in and out, in metres.
     pub roughness: f32,
     /// How many of an endless network's rooms have a way up to the
-    /// surface, 0 to 1.
+    /// surface, 0 to 1, and how many of those ways up are the room itself:
+    /// a great mouth open in the ground.
     pub entrances: f32,
+    #[serde(default)]
+    pub mouths: f32,
     /// How many rooms a level's main path has, and how many lie off it.
     pub main_rooms: u32,
     pub side_rooms: u32,
@@ -114,16 +117,17 @@ impl Default for CaveNetwork {
     fn default() -> Self {
         Self {
             layout: Laid::Endless,
-            spacing: 64.0,
-            depth: 24.0,
-            tunnel_width: 4.0,
-            tunnel_width_max: 6.0,
+            spacing: 128.0,
+            depth: 40.0,
+            tunnel_width: 12.0,
+            tunnel_width_max: 18.0,
             winding: 0.6,
             slope_limit: 0.7,
             branches: 0.2,
             loops: 0.3,
             roughness: 0.8,
-            entrances: 0.25,
+            entrances: 0.5,
+            mouths: 0.5,
             main_rooms: 8,
             side_rooms: 4,
             layers: 1,
@@ -140,12 +144,12 @@ impl CaveNetwork {
     pub const GROUND: usize = 0;
 
     /// Its values as its kernel reads them, seeded `seed`: its rooms that
-    /// have a shape, or a plain chamber; its regions wide enough to hold
-    /// the largest of them and a tunnel's bends.
+    /// have a shape, or else great halls and chambers made by rules; its
+    /// regions wide enough to hold the largest of them and a tunnel's bends.
     fn settings(&self, seed: u32) -> Settings {
         let mut rooms: Vec<Room> = self.rooms.iter().filter(|room| room.placeable()).cloned().collect();
         if rooms.is_empty() {
-            rooms.push(Room::chamber());
+            rooms = Room::standard();
         }
         let mut set = Settings {
             rooms,
@@ -161,6 +165,7 @@ impl CaveNetwork {
             rough: self.roughness.clamp(0.0, 16.0),
             roof: self.roof.max(0.0),
             entrances: self.entrances.clamp(0.0, 1.0),
+            mouths: self.mouths.clamp(0.0, 1.0),
             main: self.main_rooms.clamp(1, 64),
             side: self.side_rooms.min(64),
             layers: self.layers.clamp(1, 16),
@@ -199,6 +204,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("layer_depth", "Layer Depth", 4.0, 10000.0, "m"),
     ValueSpec::number("roof", "Roof", 0.0, 10000.0, "m").advanced(),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
+    ValueSpec::number("mouths", "Mouths", 0.0, 1.0, ""),
 ];
 
 const INPUTS: &[Port] = &[Port::volume("ground", "Ground")];
@@ -240,6 +246,7 @@ impl Kind for CaveNetwork {
             14 => Value::Number(self.layer_depth),
             15 => Value::Number(self.roof),
             16 => Value::Whole(self.seed),
+            17 => Value::Number(self.mouths),
             _ => return None,
         })
     }
@@ -263,6 +270,7 @@ impl Kind for CaveNetwork {
             (14, Value::Number(number)) => self.layer_depth = number,
             (15, Value::Number(number)) => self.roof = number,
             (16, Value::Whole(whole)) => self.seed = whole,
+            (17, Value::Number(number)) => self.mouths = number,
             _ => {}
         }
     }
@@ -282,7 +290,7 @@ impl Kind for CaveNetwork {
         key.whole(set.layers).number(set.layer_depth);
         key.whole(heights.hash as u32).whole((heights.hash >> 32) as u32);
         key.whole(set.layout as u32).number(set.spacing).number(set.depth).number(set.radius);
-        key.number(set.winding).number(set.rough).number(set.roof).number(set.entrances);
+        key.number(set.winding).number(set.rough).number(set.roof).number(set.entrances).number(set.mouths);
         key.whole(set.main).whole(set.side).whole(set.seed).whole(set.rooms.len() as u32);
         for room in &set.rooms {
             room.key(&mut key);
@@ -471,6 +479,22 @@ mod tests {
         values.iter().map(|value| value.to_bits()).collect()
     }
 
+    /// A network as they came before networks were made of great halls by default: a plain chamber to each
+    /// region 64 m across, 24 m down, joined by tunnels 4 to 6 m wide, a quarter of them with a way up and none a
+    /// mouth. What a network does is tested on these, and the rooms it makes by default apart.
+    fn plain() -> CaveNetwork {
+        CaveNetwork {
+            spacing: 64.0,
+            depth: 24.0,
+            tunnel_width: 4.0,
+            tunnel_width_max: 6.0,
+            entrances: 0.25,
+            mouths: 0.0,
+            rooms: vec![Room::chamber()],
+            ..CaveNetwork::default()
+        }
+    }
+
     /// Cells of a metre through the box from `low`, `count` along each
     /// axis, `step` metres apart.
     fn grid(low: [f32; 3], count: [usize; 3], step: f32) -> Vec<[f32; 3]> {
@@ -490,8 +514,44 @@ mod tests {
     }
 
     #[test]
-    fn a_network_hollows_rooms_and_tunnels_under_the_ground_and_none_without_one() {
+    fn by_default_great_halls_join_by_wide_tunnels_and_many_open_in_the_hillsides_as_mouths() {
         let caves = world(CaveNetwork::default(), None, 3);
+        let rooms = caves.caves().expect("its caves").rooms_near([0.0, 40.0, 0.0], 700.0);
+        assert!(rooms.len() > 12 && rooms.iter().all(|room| room.made), "{} rooms made by rules", rooms.len());
+        let wide = |room: &PlacedRoom| room.bounds[1][0] - room.bounds[0][0];
+        assert!(rooms.iter().any(|room| wide(room) > 60.0), "great halls");
+        // Its tunnels are three times as wide as they were: 12 m across at the narrowest.
+        let net = caves.caves().unwrap();
+        let tunnels = net.network().gathered(&net.network().grid(), [0, 0, 0]).tunnels.clone();
+        let tunnel = tunnels.iter().find(|tunnel| tunnel.roofed).expect("a tunnel");
+        assert!(tunnel.radius >= 6.0, "a tunnel {} m wide", tunnel.radius * 2.0);
+        // Where the ground is steep, as in the highlands, some rooms are mouths: from over the floor, level, a way
+        // out into the open, the hill over the rest of the room.
+        let caves = crate::generate::starters().into_iter().find(|s| s.name == "Highlands").unwrap().world(1, 1.0);
+        let rooms = caves.caves().expect("its caves").rooms_near([0.0, 200.0, 0.0], 2000.0);
+        let mouths: Vec<&PlacedRoom> = rooms.iter().filter(|room| room.mouth).collect();
+        assert!(!mouths.is_empty(), "no mouth among {} rooms", rooms.len());
+        for mouth in &mouths {
+            let from = mouth.floor.map(|v| v + 2.0);
+            assert!(open(&caves, from), "open over its floor");
+            let out = (0..64).any(|way| {
+                let turn = way as f32 * std::f32::consts::PI / 32.0;
+                (1..120).map(|step| step as f32).try_fold((), |_, far| {
+                    let at = [from[0] + turn.cos() * far, from[1], from[2] + turn.sin() * far];
+                    match (open(&caves, at), caves.height_at(at[0], at[2]) < at[1]) {
+                        (_, true) => Err(true),
+                        (true, false) => Ok(()),
+                        (false, false) => Err(false),
+                    }
+                }) == Err(true)
+            });
+            assert!(out, "a way out level from the mouth at {:?}", mouth.floor);
+        }
+    }
+
+    #[test]
+    fn a_network_hollows_rooms_and_tunnels_under_the_ground_and_none_without_one() {
+        let caves = world(plain(), None, 3);
         let rooms = caves.caves().expect("its caves").rooms_near([0.0, 40.0, 0.0], 400.0);
         assert!(rooms.len() > 20, "{} rooms within 400 m", rooms.len());
         for room in &rooms {
@@ -514,7 +574,7 @@ mod tests {
         }
         assert!(mouths > 8, "{mouths} places open at the ground's top over {} rooms", rooms.len());
         // Nothing is hollow over the roof, where no entrance is.
-        let plain = world(CaveNetwork { entrances: 0.0, ..CaveNetwork::default() }, None, 3);
+        let plain = world(CaveNetwork { entrances: 0.0, ..plain() }, None, 3);
         for i in 0..4000 {
             let (x, z) = (i as f32 * 3.7 - 500.0, i as f32 * 2.9 - 300.0);
             let ground = plain.height_at(x, z);
@@ -612,7 +672,7 @@ mod tests {
     fn ruled(layout: Laid) -> CaveNetwork {
         let rules = RoomRules { size: [10.0, 14.0], height: 6.0, ..RoomRules::default() };
         let rooms = vec![Room { weight: 3.0, ..Room::made(rules) }, Room::chamber()];
-        CaveNetwork { layout, spacing: 48.0, entrances: 0.0, rooms, ..CaveNetwork::default() }
+        CaveNetwork { layout, spacing: 48.0, entrances: 0.0, rooms, ..plain() }
     }
 
     #[test]
@@ -951,8 +1011,7 @@ mod tests {
             shapes: vec![hall],
             exits: vec![RoomExit { at: [14.0, 1.5, 0.0], way: [1.0, 0.0, 0.0] }],
         };
-        let set =
-            CaveNetwork { layout: Laid::Level, roughness: 0.0, rooms: vec![room.clone()], ..CaveNetwork::default() };
+        let set = CaveNetwork { layout: Laid::Level, roughness: 0.0, rooms: vec![room.clone()], ..plain() };
         let made = world(set, Some(100.0), 4);
         let rooms = made.caves().unwrap().rooms();
         let mut turns = Vec::new();

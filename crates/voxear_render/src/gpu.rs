@@ -1367,8 +1367,8 @@ mod tests {
         assert_eq!(size_of::<GpuBuffers>(), 67 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
-        // then its motions' and moving blocks' addresses and how many of each.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16);
+        // then its motions' and moving blocks' addresses and how many of each, and how it is turned.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

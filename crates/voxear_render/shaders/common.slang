@@ -204,6 +204,8 @@ static const uint MATERIAL_IMPOSTOR = 128;
 static const uint MATERIAL_DISPLACED = 256;
 // Its base colour's pixels drawn sharp, each a square of one colour (baseColorUv).
 static const uint MATERIAL_PIXELS = 512;
+// Its pictures are the five tiles of a block's face that joins those beside it (blocks.slang).
+static const uint MATERIAL_CONNECTED = 1024;
 
 struct Material
 {
@@ -1328,6 +1330,8 @@ static const uint TERRAIN_SURFACE_LAVA = 8;
 static const uint TERRAIN_SURFACE_GLITTER = 16;
 // A world of blocks' surface of leaves or of a vine: with no picture, drawn as small leaves (blocks.slang).
 static const uint TERRAIN_SURFACE_LEAFY = 32;
+// A world of blocks' look's twin: each of its faces one block, with the look that creeps over its edge (blocks.slang).
+static const uint TERRAIN_SURFACE_MIXED = 64;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

@@ -87,6 +87,8 @@ pub const MATERIAL_IMPOSTOR: u32 = 128;
 pub const MATERIAL_DISPLACED: u32 = 256;
 /// Its base colour's pixels drawn sharp, each a square of one colour.
 pub const MATERIAL_PIXELS: u32 = 512;
+/// Its pictures are the five tiles of a block's face that joins those beside it.
+pub const MATERIAL_CONNECTED: u32 = 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]

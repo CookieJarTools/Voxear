@@ -222,6 +222,7 @@ fn thirty_two_surfaces_are_drawn_each_where_its_shares_put_it_and_blended_betwee
             liquid: voxear_terrain::surfaces::Liquid::None,
             glitter: false,
             leafy: false,
+            mixed: false,
         });
     }
     // 128 m across in stripes 4 m wide along x, each all of one surface.
@@ -387,6 +388,7 @@ fn a_track_maker_presses_a_track_into_snow_that_stays_until_it_fills_in() {
             liquid: voxear_terrain::surfaces::Liquid::None,
             glitter: false,
             leafy: false,
+            mixed: false,
         }
     };
     let surfaces = vec![look([0.3, 0.2, 0.1], 0.0), look([0.9, 0.9, 0.9], 1.0)];
@@ -556,6 +558,7 @@ fn wet_ground_puddles_lava_and_glitter_each_change_how_their_surface_looks() {
             liquid,
             glitter,
             leafy: false,
+            mixed: false,
         }
     };
     let mud = [0.5, 0.4, 0.3];
@@ -660,6 +663,7 @@ fn a_model_whose_material_blends_into_the_ground_takes_the_grounds_look_at_its_f
         liquid: Liquid::None,
         glitter: false,
         leafy: false,
+        mixed: false,
     };
     let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(0))]);
     let terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
@@ -721,6 +725,7 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
             liquid: Liquid::None,
             glitter: false,
             leafy: false,
+            mixed: false,
         }
     };
     // Green grass over the field, and brown earth for what digging bares.

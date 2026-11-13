@@ -98,6 +98,13 @@ pub struct MaterialDesc {
     /// Its base colour's pixels drawn sharp however near, each a square of
     /// one colour, as a box model's are, rather than smoothed into the next.
     pub pixels: bool,
+    /// Its pictures are five tiles side by side, for a block's face that
+    /// joins those of its kind beside it: the face alone, with its border
+    /// all round; filled, with none; joined left and right; joined up and
+    /// down; and joined all round, its inner corners showing. Each corner
+    /// of a face is drawn from the tile the faces round it make it (see
+    /// `shaders/blocks.slang`). Only a world of blocks draws it so.
+    pub connected: bool,
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground's own look; 0 for not at all.
     pub ground_blend: f32,
@@ -158,6 +165,7 @@ impl Default for MaterialDesc {
             emissive_texture: None,
             alpha_cutoff: None,
             pixels: false,
+            connected: false,
             ground_blend: 0.0,
             foliage: false,
             glass: false,
@@ -953,6 +961,7 @@ impl Assets {
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
                 | if desc.pixels { crate::gpu::MATERIAL_PIXELS } else { 0 }
+                | if desc.connected { crate::gpu::MATERIAL_CONNECTED } else { 0 }
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }

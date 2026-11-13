@@ -338,6 +338,9 @@ pub enum LightingAction {
     /// The scene is shown under a look pack, as a player who picked it
     /// would see it, or under none. Nothing of it is saved.
     Wear(Option<String>),
+    /// The scene is shown under a texture pack, as a player who picked it
+    /// would see it, or under none. Nothing of it is saved.
+    WearTextures(Option<String>),
 }
 
 /// Two changes are the same when they write the same text: the file's values
@@ -352,6 +355,7 @@ impl PartialEq for LightingAction {
             }
             (Self::Copy, Self::Copy) => true,
             (Self::Wear(a), Self::Wear(b)) => a == b,
+            (Self::WearTextures(a), Self::WearTextures(b)) => a == b,
             _ => false,
         }
     }
@@ -368,6 +372,10 @@ pub struct LightingPanel {
     /// menu's entries names.
     look: NodeId,
     looks: Vec<Option<String>>,
+    /// The texture pack the scene is shown under, and what each of its
+    /// menu's entries names.
+    textures: NodeId,
+    packs: Vec<Option<String>>,
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
@@ -396,8 +404,18 @@ impl LightingPanel {
         ui.set_tooltip(label, tip, None);
         let look = ui.dropdown(row, &["None"], 0);
         ui.add_class(look, "value-choice");
+        let row = ui.panel(top, Style::default());
+        ui.add_class(row, "prop");
+        let label = ui.add_label(row, "Texture pack");
+        ui.add_class(label, "prop-label");
+        let tip = "Shows the scene under a texture pack, as a player who picked it would see it. It is not saved \
+                   with the scene: players pick their own";
+        ui.set_tooltip(label, tip, None);
+        let textures = ui.dropdown(row, &["None"], 0);
+        ui.add_class(textures, "value-choice");
         let fields = LightingFields::new(ui, tab_bar, view);
-        Self { scene, choices: vec![None], note, copy, look, looks: vec![None], fields, shown: None }
+        let packs = vec![None];
+        Self { scene, choices: vec![None], note, copy, look, looks: vec![None], textures, packs, fields, shown: None }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -408,6 +426,32 @@ impl LightingPanel {
         let own = world_own(game);
         self.show_scene(ui, game, current, own);
         self.show_looks(ui, game);
+        self.show_textures(ui, game);
+    }
+
+    /// Lists the texture packs there are, the engine's and the project's,
+    /// with the one the scene is shown under picked.
+    fn show_textures(&mut self, ui: &mut Ui, game: &mut Game) {
+        let worn = voxear_engine::texture_packs::worn(&game.content).map(str::to_string);
+        let mut labels = vec!["None".to_string()];
+        let mut packs = vec![None];
+        for pack in voxear_engine::texture_packs::list(&mut game.content, None) {
+            labels.push(pack.name);
+            packs.push(Some(pack.reference));
+        }
+        let index = match packs.iter().position(|pack| *pack == worn) {
+            Some(index) => index,
+            // One worn that is not listed, as a player's own folder a script wore.
+            None => {
+                labels.push(worn.clone().unwrap_or_default());
+                packs.push(worn);
+                packs.len() - 1
+            }
+        };
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        ui.set_options(self.textures, &labels);
+        ui.set_selected_option(self.textures, index);
+        self.packs = packs;
     }
 
     /// Lists the look packs there are, the engine's and the project's, with
@@ -506,7 +550,16 @@ impl LightingPanel {
             let chosen = self.looks.get(ui.selected_option(self.look)).cloned().flatten();
             return Some(LightingAction::Wear(chosen));
         }
+        if ui.changed(self.textures) {
+            let chosen = self.packs.get(ui.selected_option(self.textures)).cloned().flatten();
+            return Some(LightingAction::WearTextures(chosen));
+        }
         self.fields.update(ui)
+    }
+
+    /// The menu the texture pack the scene is shown under is picked from.
+    pub fn texture_menu(&self) -> NodeId {
+        self.textures
     }
 
     /// The menu the look pack the scene is shown under is picked from.

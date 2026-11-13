@@ -20,6 +20,29 @@
 //! too, so a crown of leaves is leaves all the way in. It is ground in
 //! every other way: it closes corners in, and is stood on.
 //!
+//! A block with faces that join (`BlockFaces::connects`), as panes of glass
+//! do, shows no face towards another of its kind, seen through or not, and
+//! each of its faces that join is a quad of its own, never merged: in place
+//! of its size it
+//! keeps which of the eight faces round it, in its own plane, it joins
+//! ([`joins`]), a bit each, by which the renderer picks each of its
+//! corners from its picture's five tiles. A face joins one beside it of the
+//! same block that shows too. Which way is which is the way its picture
+//! lies (`terrainSide` in `shaders/terrain_ground.slang`), not the way its
+//! quad is wound.
+//!
+//! A block creeps over those beside it by its `overlap` (`BlockFaces`):
+//! where a face lies beside a face of another block with a higher one, in
+//! its own plane, it is a quad of its own drawn with its look's twin
+//! (`file::MIXED_LOOK`), which keeps in place of its size and its swaying
+//! corners the look that creeps over it and from where ([`mixing`]): from
+//! which of its four edges, or from which of its corners. The renderer
+//! draws that look's picture a few ragged pixels in from there. Each block
+//! that creeps over a face, and each way it does, is a quad more over the
+//! same face, after it among the layer's quads and so drawn over it, the
+//! higher in the order the later: such a quad is drawn only where its
+//! fringe is. A face that joins, sways or is seen through takes none.
+//!
 //! A block that is bushy (`block::BlockShape::Bushy`) keeps its cube and has
 //! three sheets of leaves besides, crossed through its middle and reaching
 //! out past it, wherever it meets open air; a vine is a sheet against each
@@ -48,8 +71,54 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
-    hides, is_bushy, is_ground, is_vine, is_water, sways,
+    connects,
+    file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP, MIXED_LOOK},
+    hides, is_bushy, is_ground, is_see_through, is_vine, is_water, sways,
 };
+
+/// The faces round a face it may join, in the order of their bits: where
+/// each lies along its picture, to the right and down: left, right, up,
+/// down, then up left, up right, down left and down right.
+pub const JOINS: [(i32, i32); 8] = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)];
+
+/// For a face facing along each axis, the way its picture runs to the
+/// right and the way it runs down, as the renderer lays a surface's
+/// pictures on it: an axis and whether along it.
+const PICTURE: [[(usize, i32); 2]; 3] = [[(2, 1), (1, -1)], [(0, 1), (2, -1)], [(0, 1), (1, -1)]];
+
+/// Which of the faces round it a quad of a block that joins is joined to,
+/// a bit each in [`JOINS`]' order. Such a quad is one face; only a surface
+/// that joins keeps these where another quad keeps its size.
+pub fn joins(quad: [u32; 2]) -> u8 {
+    (quad[0] >> 15) as u8
+}
+
+/// What creeps over a quad drawn with a look's twin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mixing {
+    /// The look whose picture creeps over it.
+    pub look: u8,
+    /// From where, a bit each: its edges in [`JOINS`]' order (left, right,
+    /// up, down), or with `corners` its corners in the order [`JOINS`] has
+    /// them after its edges (up left, up right, down left, down right).
+    pub from: u8,
+    pub corners: bool,
+    /// Whether it is a quad more over a face drawn already, drawn only
+    /// where its fringe is.
+    pub over: bool,
+}
+
+/// What creeps over a quad drawn with a look's twin, from its first word.
+pub fn mixing(quad: [u32; 2]) -> Mixing {
+    let first = quad[0];
+    Mixing { look: (first >> 15) as u8, from: (first >> 28) as u8, corners: first >> 24 & 1 != 0, over: first >> 23 & 1 != 0 }
+}
+
+/// A [`Mixing`] as the bits a quad's first word keeps it in.
+fn mixed(mixing: Mixing) -> u32 {
+    let (corners, over) = (u32::from(mixing.corners), u32::from(mixing.over));
+    u32::from(mixing.look) << 15 | over << 23 | corners << 24 | u32::from(mixing.from & 15) << 28
+}
 
 /// The ways a face can face, in the order quads are kept: +x, -x, +y, -y,
 /// +z, -z.
@@ -222,16 +291,28 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     // Ground that stands still holds every corner it touches.
     let any_sway = faces.iter().any(|faces| faces.sways);
     let still = |p: [i32; 3]| is_ground(faces, block(p)) && !sways(faces, block(p));
+    let any_join = faces.iter().any(|faces| faces.connects != 0);
+    let any_mix = faces.iter().any(|faces| faces.mixes != 0);
+    let kind = |id: BlockId| faces.get(usize::from(id)).copied().unwrap_or_default();
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
     let mut plain = vec![0u32; side * side];
+    // What each face of the layer keeps where its size would be: which faces round it it joins, for the blocks
+    // that join, and what creeps over it, for a face drawn with its look's twin.
+    let mut joined = vec![0u32; side * side];
+    // The quads more over faces of the layer that more than one block creeps over, or one from an edge and a
+    // corner apart from it: drawn after the layer's own.
+    let mut layered: Vec<[u32; 2]> = Vec::new();
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         mesh.buckets[facing] = mesh.quads.len() as u32;
         let step = if out { 1 } else { -1 };
         for layer in 0..side {
             shaded.fill(0);
             plain.fill(0);
+            if any_join || any_mix {
+                joined.fill(0);
+            }
             for j in 0..side {
                 for i in 0..side {
                     let mut p = [0i32; 3];
@@ -242,6 +323,12 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                     if !is_ground(faces, id) || hidden_by(beyond) {
                         continue;
                     }
+                    // A block whose faces join is one body with those of its kind: no face between two of them.
+                    let joining = if any_join { connects(faces, id) } else { 0 };
+                    if joining != 0 && block(beyond) == id {
+                        continue;
+                    }
+                    let joining = joining & joins_bit(facing) != 0;
                     let look = surface(faces, id, facing);
                     // Each corner, as the blocks beside it in the air before the face close it in.
                     let shade = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map(|(su, sv)| {
@@ -269,6 +356,77 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                             key |= free << 16 | ((j * side + i) as u32 + 1) << 20;
                         }
                     }
+                    if joining {
+                        // A face of its own, by its place in the layer, with the faces round it that are its
+                        // block's and show as it does.
+                        key |= ((j * side + i) as u32 + 1) << 20;
+                        let [right, down] = PICTURE[axis];
+                        let mut round = 0u8;
+                        for (bit, (du, dv)) in JOINS.into_iter().enumerate() {
+                            let mut q = p;
+                            q[right.0] += du * right.1;
+                            q[down.0] += dv * down.1;
+                            let mut before = q;
+                            before[axis] += step;
+                            let shows = block(q) == id && !hidden_by(before) && block(before) != id;
+                            round |= u8::from(shows) << bit;
+                        }
+                        joined[j * side + i] = u32::from(round) << 15;
+                    }
+                    if any_mix && !joining && kind(id).mixes & joins_bit(facing) != 0 {
+                        // The blocks beside it in its plane that lie higher in the order and show a face as it
+                        // does: each creeps over it.
+                        let [right, down] = PICTURE[axis];
+                        let own = kind(id).overlap;
+                        let mut beside = [AIR; 8];
+                        for (at, (du, dv)) in JOINS.into_iter().enumerate() {
+                            let mut q = p;
+                            q[right.0] += du * right.1;
+                            q[down.0] += dv * down.1;
+                            let mut before = q;
+                            before[axis] += step;
+                            let other = block(q);
+                            let its = kind(other);
+                            let creeps = other != id
+                                && is_ground(faces, other)
+                                && !is_see_through(faces, other)
+                                && its.overlap > own
+                                && its.connects & joins_bit(facing) == 0
+                                && !hidden_by(before);
+                            if creeps {
+                                beside[at] = other;
+                            }
+                        }
+                        // The lowest in the order first, so the higher is drawn over it where two meet.
+                        let mut creeping: Vec<BlockId> = beside.into_iter().filter(|&other| other != AIR).collect();
+                        creeping.sort_by_key(|&other| (kind(other).overlap, std::cmp::Reverse(other)));
+                        creeping.dedup();
+                        let mut ways: Vec<Mixing> = Vec::new();
+                        for over in creeping {
+                            let look = surface(faces, over, facing);
+                            let edges = (0..4).fold(0u8, |all, at| all | u8::from(beside[at] == over) << at);
+                            // Its corners that none of its own edges reaches: left or right of it, and above or
+                            // below.
+                            let apart = |corner: usize| edges & (1 << (corner & 1) | 4 << (corner >> 1)) == 0;
+                            let corners = (0..4).filter(|&corner| beside[4 + corner] == over && apart(corner));
+                            let corners = corners.fold(0u8, |all, corner| all | 1 << corner);
+                            if edges != 0 {
+                                ways.push(Mixing { look, from: edges, corners: false, over: !ways.is_empty() });
+                            }
+                            if corners != 0 {
+                                ways.push(Mixing { look, from: corners, corners: true, over: !ways.is_empty() });
+                            }
+                        }
+                        if let Some(&first) = ways.first() {
+                            // Its look's twin, a face of its own by its place in the layer.
+                            key |= u32::from(MIXED_LOOK) | ((j * side + i) as u32 + 1) << 20;
+                            joined[j * side + i] = mixed(first);
+                            let mut at = [0u32; 3];
+                            (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
+                            let [place, second] = pack(at, [1, 1], facing, look | MIXED_LOOK, shade);
+                            layered.extend(ways[1..].iter().map(|&way| [place | mixed(way), second]));
+                        }
+                    }
                     shaded[j * side + i] = key + 1;
                     plain[j * side + i] = u32::from(look) + 1;
                 }
@@ -279,8 +437,12 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
                 let (look, shade) = (key as u8, std::array::from_fn(|c| ((key >> (8 + 2 * c)) & 3) as u8));
                 let [first, second] = pack(at, [w as u32, h as u32], facing, look, shade);
-                mesh.quads.push([first | ((key >> 16) & 15) << 28, second]);
+                // One face of a block that joins keeps the faces it joins where its size would be, and one another
+                // block creeps over what does: a block wide and high, its size is nothing there. Any other face
+                // keeps nothing.
+                mesh.quads.push([first | joined[j * side + i] | ((key >> 16) & 15) << 28, second]);
             }
+            mesh.quads.append(&mut layered);
             // Merged by surface alone, as triangles.
             for (i, j, w, h, _) in merge(&mut plain, side) {
                 let mut corner = [0.0f32; 3];
@@ -363,6 +525,16 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
+}
+
+/// The bit of a block's faces facing `facing` among those that join (see
+/// `BlockFaces::connects`).
+fn joins_bit(facing: usize) -> u8 {
+    match facing {
+        2 => JOINS_TOP,
+        3 => JOINS_BOTTOM,
+        _ => JOINS_SIDES,
+    }
 }
 
 /// The surface block `id` is drawn with on its faces facing `facing`.
@@ -782,6 +954,160 @@ mod tests {
         let crown = mesh_chunk(&full, [0, 0, 0], &faces);
         assert!(!crown.is_empty());
         assert_eq!(crown.sights, crate::blocks::sight::ALL_SIGHTS);
+    }
+
+    #[test]
+    fn a_block_that_joins_shows_no_face_between_two_of_it_and_each_face_says_which_round_it_it_joins() {
+        // Glass: seen through, and its faces join. Stone is plain ground.
+        let glass = BlockFaces { see_through: true, connects: 7, ..BlockFaces::new(3, 3, 3) };
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), glass];
+        let quads = |blocks: &[([i32; 3], BlockId)]| {
+            let mut map = BlockMap::default();
+            blocks.iter().for_each(|&(at, block)| map.set(at, block));
+            mesh_chunk(&map, [0, 0, 0], &faces).quads
+        };
+        let of = |quads: &[[u32; 2]], at: [u32; 3], facing: usize| -> Vec<u8> {
+            let found = quads.iter().filter(|&&quad| {
+                let (place, _, way, look, _) = unpack([quad[0] & !(0x3FF << 15), quad[1]]);
+                place == at && way == facing && look == 3
+            });
+            found.map(|&quad| joins(quad)).collect()
+        };
+        let bits = |round: &[(i32, i32)]| -> u8 {
+            round.iter().fold(0, |all, way| all | 1 << JOINS.iter().position(|kept| kept == way).unwrap())
+        };
+        // One alone: six faces, none joined.
+        let alone = quads(&[([4, 4, 4], 2)]);
+        assert_eq!(alone.len(), 6);
+        assert!(alone.iter().all(|&quad| joins(quad) == 0));
+        // A wall of three by three in the plane of x and y, facing along z: each pane a face of its own each
+        // way it shows, none between two panes, though glass is seen through.
+        let wall: Vec<([i32; 3], BlockId)> =
+            (4..7).flat_map(|y| (4..7).map(move |x| ([x, y, 8], 2))).collect();
+        let made = quads(&wall);
+        assert_eq!(made.len(), 9 + 9 + 4 * 3, "its two sides, and its four edges");
+        // The middle pane joins all eight round it; a picture on a face facing along z runs right along x and
+        // down against y.
+        assert_eq!(of(&made, [5, 5, 8], 4), [0xFF]);
+        assert_eq!(of(&made, [5, 5, 8], 5), [0xFF]);
+        // The pane at the wall's top left, seen from +z: those to its right, below it, and down right.
+        assert_eq!(of(&made, [4, 6, 8], 4), [bits(&[(1, 0), (0, 1), (1, 1)])]);
+        // The middle of its bottom row: left, right, up, and the two above.
+        assert_eq!(of(&made, [5, 4, 8], 4), [bits(&[(-1, 0), (1, 0), (0, -1), (-1, -1), (1, -1)])]);
+        // The wall's top edge, facing up: a row along x, a picture there running right along x.
+        assert_eq!(of(&made, [5, 6, 8], 2), [bits(&[(-1, 0), (1, 0)])]);
+        // Its side edge, facing +x: a column, a picture there running down against y.
+        assert_eq!(of(&made, [6, 5, 8], 0), [bits(&[(0, -1), (0, 1)])]);
+
+        // A pane whose face is covered joins nothing there: stone before the pane to the right, and the
+        // middle's face no longer joins it; glass before it, the same.
+        for cover in [1, 2] {
+            let mut covered = wall.clone();
+            covered.push(([6, 5, 9], cover));
+            let made = quads(&covered);
+            let middle = of(&made, [5, 5, 8], 4);
+            assert_eq!(middle, [0xFF & !bits(&[(1, 0)])], "covered by {cover}");
+            assert!(of(&made, [6, 5, 8], 4).is_empty(), "the covered pane shows no face that way");
+        }
+        // Another kind of block beside it is not joined: stone in the wall's middle.
+        let mut holed = wall.clone();
+        holed[4] = ([5, 5, 8], 1);
+        let made = quads(&holed);
+        assert_eq!(of(&made, [4, 5, 8], 4), [bits(&[(0, -1), (0, 1), (1, -1), (1, 1)])]);
+        // A block whose sides alone join: its top is merged as ever, and still none shows between two of it.
+        let shelf = BlockFaces { connects: JOINS_SIDES, ..BlockFaces::new(4, 3, 4) };
+        let shelves = [BlockFaces::default(), BlockFaces::new(1, 1, 1), shelf];
+        let mut map = BlockMap::default();
+        (0..3).for_each(|x| map.set([x, 0, 0], 2));
+        let made = mesh_chunk(&map, [0, 0, 0], &shelves).quads;
+        let tops: Vec<[u32; 2]> = made.iter().map(|&quad| unpack(quad)).filter(|quad| quad.2 == 2).map(|quad| quad.1).collect();
+        assert_eq!(tops, [[1, 3]], "one quad three blocks long");
+        assert_eq!(made.len(), 2 + 3 + 3 + 2, "top and bottom, three faces each long side, an end each");
+        // Stone's own faces are merged and keep their size as ever.
+        let field: Vec<([i32; 3], BlockId)> = (0..4).flat_map(|z| (0..4).map(move |x| ([x, 0, z], 1))).collect();
+        let (_, size, facing, ..) = unpack(quads(&field)[2]);
+        assert_eq!((size, facing), ([4, 4], 2));
+    }
+
+    #[test]
+    fn a_block_higher_in_the_order_creeps_over_the_faces_beside_it_in_their_plane() {
+        // Stone (1) keeps to itself, dirt (2) lies over it and grass (3) over both; each can take another's edge.
+        let ground = |look: u8, overlap: u8| BlockFaces { mixes: 7, overlap, ..BlockFaces::new(look, look, look) };
+        let faces = [BlockFaces::default(), ground(1, 0), ground(2, 1), ground(3, 2)];
+        let quads = |blocks: &[([i32; 3], BlockId)]| {
+            let mut map = BlockMap::default();
+            blocks.iter().for_each(|&(at, block)| map.set(at, block));
+            mesh_chunk(&map, [0, 0, 0], &faces).quads
+        };
+        // A face by its place and the way it faces: its look, and what creeps over it.
+        let top = |quads: &[[u32; 2]], at: [u32; 3]| -> Vec<(u8, Mixing)> {
+            let found = quads.iter().filter(|&&quad| {
+                let first = quad[0] & !(0x3FF << 15) & !(15 << 28);
+                let (place, _, way, ..) = unpack([first, quad[1]]);
+                place == at && way == 2 && quad[1] as u8 & MIXED_LOOK != 0
+            });
+            found.map(|&quad| (quad[1] as u8, mixing(quad))).collect()
+        };
+        let edge = |look: u8, way: (i32, i32)| {
+            let from = 1u8 << JOINS.iter().position(|kept| *kept == way).unwrap();
+            Mixing { look, from, corners: false, over: false }
+        };
+        // A floor of stone five by five with one block of grass in its middle. A top's picture runs right along
+        // x and down against z, so the stone at lower x has the grass to its right.
+        let mut floor: Vec<([i32; 3], BlockId)> = (0..5).flat_map(|z| (0..5).map(move |x| ([x, 0, z], 1))).collect();
+        floor[12] = ([2, 0, 2], 3);
+        let made = quads(&floor);
+        assert_eq!(top(&made, [1, 0, 2]), [(1 | MIXED_LOOK, edge(3, (1, 0)))], "from its right");
+        assert_eq!(top(&made, [3, 0, 2]), [(1 | MIXED_LOOK, edge(3, (-1, 0)))], "from its left");
+        assert_eq!(top(&made, [2, 0, 3]), [(1 | MIXED_LOOK, edge(3, (0, 1)))], "the grass is down its picture");
+        assert_eq!(top(&made, [2, 0, 1]), [(1 | MIXED_LOOK, edge(3, (0, -1)))]);
+        // The four stones that touch the grass by a corner alone: from that corner.
+        let corner = |look: u8, way: (i32, i32)| {
+            let from = 1u8 << JOINS[4..].iter().position(|kept| *kept == way).unwrap();
+            Mixing { look, from, corners: true, over: false }
+        };
+        assert_eq!(top(&made, [1, 0, 3]), [(1 | MIXED_LOOK, corner(3, (1, 1)))]);
+        assert_eq!(top(&made, [3, 0, 1]), [(1 | MIXED_LOOK, corner(3, (-1, -1)))]);
+        // Eight faces of their own round the grass; the grass's top is its own look, and the rest of the floor is
+        // still merged: far fewer quads than faces.
+        let up = |quad: &&[u32; 2]| (quad[0] >> 25) & 7 == 2;
+        let twins = made.iter().filter(up).filter(|quad| quad[1] as u8 & MIXED_LOOK != 0).count();
+        assert_eq!(twins, 8);
+        assert!(top(&made, [2, 0, 2]).is_empty() && top(&made, [0, 0, 0]).is_empty());
+        let tops = made.iter().filter(|&&quad| (quad[0] >> 25) & 7 == 2).count();
+        assert!(tops < 9 + 8, "{tops} quads for 25 tops");
+
+        // Each block beside a face that lies higher creeps over it from its own side: the lower first, and the
+        // higher a quad more over the same face, drawn after it and only where its fringe is.
+        let over = |mixing: Mixing| Mixing { over: true, ..mixing };
+        let made = quads(&[([0, 0, 0], 2), ([1, 0, 0], 1), ([2, 0, 0], 3)]);
+        let both = [(1 | MIXED_LOOK, edge(2, (-1, 0))), (1 | MIXED_LOOK, over(edge(3, (1, 0))))];
+        assert_eq!(top(&made, [1, 0, 0]), both, "dirt from its left, then grass from its right");
+        let first = made.iter().position(|&quad| mixing(quad) == both[0].1 && (quad[0] >> 25) & 7 == 2);
+        let second = made.iter().position(|&quad| mixing(quad) == both[1].1 && (quad[0] >> 25) & 7 == 2);
+        assert!(first < second && first.is_some(), "the quad more comes after the face's own");
+        assert_eq!(made[first.unwrap()][1], made[second.unwrap()][1], "the same look and shading");
+        // One block from an edge and from a corner apart from it: two quads; a corner its edge reaches, one.
+        let made = quads(&[([1, 0, 1], 1), ([0, 0, 1], 3), ([2, 0, 0], 3), ([0, 0, 0], 3)]);
+        let ways = [(1 | MIXED_LOOK, edge(3, (-1, 0))), (1 | MIXED_LOOK, over(corner(3, (1, 1))))];
+        assert_eq!(top(&made, [1, 0, 1]), ways, "from its left, and from the corner down right of it");
+        let made = quads(&[([0, 0, 0], 2), ([1, 0, 0], 3)]);
+        assert_eq!(top(&made, [0, 0, 0]), [(2 | MIXED_LOOK, edge(3, (1, 0)))], "grass over dirt");
+        assert!(top(&made, [1, 0, 0]).is_empty(), "nothing creeps over the higher");
+        // A face that does not show creeps over nothing: grass under a block, or a step up or down from it.
+        let made = quads(&[([0, 0, 0], 1), ([1, 0, 0], 3), ([1, 1, 0], 1)]);
+        assert!(top(&made, [0, 0, 0]).is_empty(), "the grass's top is covered");
+        let made = quads(&[([0, 0, 0], 1), ([1, 1, 0], 3)]);
+        assert!(top(&made, [0, 0, 0]).is_empty(), "a step up is another plane");
+        // Sides take it as tops do: grass beside stone in a wall, a side's picture running right along x.
+        let made = quads(&[([0, 0, 0], 1), ([1, 0, 0], 3)]);
+        let side: Vec<[u32; 2]> = made.iter().copied().filter(|quad| (quad[0] >> 25) & 7 == 4).collect();
+        assert!(side.iter().any(|&quad| quad[1] as u8 == 1 | MIXED_LOOK && mixing(quad) == edge(3, (1, 0))));
+        // A block that takes none keeps its faces merged beside any.
+        let hard = [BlockFaces::default(), BlockFaces::new(1, 1, 1), ground(2, 1), ground(3, 2)];
+        let mut map = BlockMap::default();
+        [([0, 0, 0], 1), ([1, 0, 0], 3)].into_iter().for_each(|(at, block)| map.set(at, block));
+        assert!(mesh_chunk(&map, [0, 0, 0], &hard).quads.iter().all(|quad| quad[1] as u8 & MIXED_LOOK == 0));
     }
 
     #[test]

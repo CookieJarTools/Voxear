@@ -1253,6 +1253,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",
             AssetKind::LookPack => "look pack",
+            AssetKind::TexturePack => "texture pack",
             AssetKind::Shader => "shader",
             AssetKind::MotionSet => "motion set",
             AssetKind::GunHandling => "gun handling",

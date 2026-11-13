@@ -423,6 +423,7 @@ fn gather(
                 AssetKind::Texture
                 | AssetKind::LightProfile
                 | AssetKind::LookPack
+                | AssetKind::TexturePack
                 | AssetKind::Shader
                 | AssetKind::Ui
                 | AssetKind::InputActions

@@ -36,6 +36,12 @@ struct BlockPoint
     // blocks it is, counted in blocks from the world's first: every face that meets there moves it alike.
     bool sways;
     int3 corner;
+    // For a face that joins those of its block beside it (voxear_terrain::blocks::mesh::joins): which of the eight
+    // round it, a bit each. For a face another block creeps over (mesh::mixing): that block's surface, then whether
+    // it is a quad more over a face drawn already (the eighth bit), whether it creeps from corners rather than edges
+    // (the ninth), and from which (four bits from the tenth). Over either, from the fourteenth bit, the level of
+    // its chunk: how many times its blocks were doubled.
+    uint joins;
     // For a loose quad, a sheet of bushy leaves or of a vine: which it is (BLOCK_TUFT or BLOCK_VINE, 0 for a face),
     // which of its kind's sheets with the vine's foot flag, how open its block is from 0 to 3, a number of its own
     // for its pattern, where the corner is across and up its sheet from 0 to 1, and how much further than a
@@ -168,6 +174,7 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
     int3 nearest = int3(offset.x > 0.0 ? 1 : 0, offset.y > 0.0 ? 1 : 0, offset.z > 0.0 ? 1 : 0);
     b.sways = chunk.w == 0 && ((first >> (28 + corner)) & 1) != 0;
     b.corner = block + nearest;
+    b.joins = 0;
     b.loose = kind;
     b.sheet = sheet & 15;
     b.open = (quad.y >> 8) & 3;
@@ -202,6 +209,7 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     b.shade = 1.0;
     b.sways = false;
     b.corner = 0;
+    b.joins = 0;
     b.loose = 0;
     b.sheet = 0;
     b.open = 3;
@@ -227,6 +235,27 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     uint first = quad.x;
     uint3 at = uint3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
     float2 size = float2(((first >> 15) & 31) + 1, ((first >> 20) & 31) + 1);
+    // A face drawn with a material whose pictures are a joining face's five tiles is one block, and keeps the faces
+    // round it that it joins where its size would be.
+    // And so is a face drawn with a look's twin, which keeps what creeps over it there and where its swaying corners
+    // would be: it sways at none.
+    uint joins = 0;
+    uint swaying = first >> 28;
+    if (world.surfaceCount > 0)
+    {
+        TerrainSurface drawn = world.surfaces[min(quad.y & 0xFF, world.surfaceCount - 1)];
+        if ((drawn.flags & TERRAIN_SURFACE_MIXED) != 0)
+        {
+            joins = ((first >> 15) & 0x3FF) | (swaying << 10);
+            size = float2(1.0, 1.0);
+            swaying = 0;
+        }
+        else if ((buffers()->materials[drawn.material].flags & MATERIAL_CONNECTED) != 0)
+        {
+            joins = (first >> 15) & 0xFF;
+            size = float2(1.0, 1.0);
+        }
+    }
     uint facing = (first >> 25) & 7;
     if (facing >= BLOCK_TUFT && loose)
     {
@@ -250,8 +279,9 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     b.surface = quad.y & 0xFF;
     b.shade = float(shades[corner]) / 3.0;
     // Only the world's own blocks sway: a far ring's are too large to.
-    b.sways = chunk.w == 0 && ((first >> (28 + corner)) & 1) != 0;
+    b.sways = chunk.w == 0 && ((swaying >> corner) & 1) != 0;
     b.corner = chunk.xyz * 32 + int3(p);
+    b.joins = joins | (uint(chunk.w) << 14);
     b.loose = 0;
     b.sheet = 0;
     b.open = 3;

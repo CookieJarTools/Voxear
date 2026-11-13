@@ -63,6 +63,11 @@ pub struct BlockDef {
     pub top: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bottom: Option<String>,
+    /// How far up the order of blocks that meet it lies: where it lies
+    /// beside a block with a lower one, in one plane, its picture creeps
+    /// over that block's edge (see `mesh`). 0 keeps to itself.
+    #[serde(skip_serializing_if = "is_no_overlap")]
+    pub overlap: u8,
     /// Which liquid it is, where it is one.
     #[serde(skip_serializing_if = "Liquid::is_none")]
     pub liquid: Liquid,
@@ -122,6 +127,10 @@ pub const MAX_HEAT_REACH: f32 = 16.0;
 
 fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+fn is_no_overlap(overlap: &u8) -> bool {
+    *overlap == 0
 }
 
 /// Something a block drops: an item, by reference to its data asset, from
@@ -220,6 +229,7 @@ impl Default for BlockDef {
             material: None,
             top: None,
             bottom: None,
+            overlap: 0,
             liquid: Liquid::None,
             sways: false,
             shape: BlockShape::Cube,
@@ -275,7 +285,8 @@ impl BlockDef {
     /// Whether it is drawn as `other` is, whatever their rules.
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
-        look(self) == look(other) && self.liquid == other.liquid && self.shape == other.shape
+        let shape = |block: &Self| (block.liquid, block.overlap, block.shape);
+        look(self) == look(other) && shape(self) == shape(other)
     }
 
     /// Gives `kind`, a world's entry naming this block, the block's look.
@@ -286,6 +297,7 @@ impl BlockDef {
         kind.bottom = self.bottom.clone();
         kind.water = self.liquid == Liquid::Water;
         kind.sways = self.sways;
+        kind.overlap = if self.liquid.is_none() { self.overlap } else { 0 };
         kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
     }
 }
@@ -316,6 +328,14 @@ mod tests {
         assert_eq!(BlockDef::from_kind(&kind), grass);
         water.fill(&mut kind);
         assert!(kind.water && kind.material.is_none() && kind.top.is_none());
+        // A block that creeps over those beside it says how far up the order it lies; a liquid never does.
+        let creeping = BlockDef { overlap: 2, ..grass.clone() };
+        assert!(creeping.to_text().contains("overlap = 2") && !grass.to_text().contains("overlap"));
+        assert_eq!(BlockDef::parse(&creeping.to_text()).unwrap(), creeping);
+        creeping.fill(&mut kind);
+        assert!(kind.overlap == 2 && !creeping.looks_like(&grass));
+        BlockDef { overlap: 2, ..water.clone() }.fill(&mut kind);
+        assert_eq!(kind.overlap, 0);
         assert_eq!(BlockDef::from_kind(&kind), water);
     }
 

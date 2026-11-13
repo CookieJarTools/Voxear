@@ -94,6 +94,7 @@ fn sea(renderer: &mut Renderer) -> World {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
             }
         })
         .collect();

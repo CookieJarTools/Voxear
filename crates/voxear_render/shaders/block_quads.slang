@@ -52,6 +52,11 @@ struct BlockPoint
     uint seed;
     float2 across;
     float reach;
+    // For a face of a block of parts: 1 and, over it, the way the face looks as it rests unmoved, a facing; 0 for
+    // any other. How far its motion has carried it from where it rests, and where it was a frame ago from here.
+    uint part;
+    float3 posedBy;
+    float3 back;
 };
 
 // What a loose quad is, where a face says which way it faces (voxear_terrain::blocks::mesh::TUFT and VINE).
@@ -182,6 +187,9 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
     b.seed = blockNumber(kind == BLOCK_TUFT ? block : int3(block.x, 0, block.z), 3 + (sheet & 7)) & 0xFFFF;
     b.across = sign * 0.5 + 0.5;
     b.reach = reach;
+    b.part = 0;
+    b.posedBy = 0.0;
+    b.back = 0.0;
     return b;
 }
 
@@ -216,6 +224,9 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     b.seed = 0;
     b.across = 0.0;
     b.reach = 1.0;
+    b.part = 0;
+    b.posedBy = 0.0;
+    b.back = 0.0;
     return b;
 }
 
@@ -257,6 +268,16 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
         }
     }
     uint facing = (first >> 25) & 7;
+    // A face of a box of a block of parts, two quads' words, and the second of them, which draws nothing.
+    if (facing == BLOCK_VINE && (first & BLOCK_PART_HEAD) != 0)
+    {
+        return partPoint(world, quad, world.quads[push.output + vertexId / 6 + 1], vertexId % 6);
+    }
+    if (facing == BLOCK_VINE && (first & BLOCK_PART_TAIL) != 0)
+    {
+        BlockPoint none = partPoint(world, world.quads[push.output + vertexId / 6 - 1], quad, 0);
+        return none;
+    }
     if (facing >= BLOCK_TUFT && loose)
     {
         return loosePoint(world, quad, vertexId % 6, push.frame->cameraPosition);
@@ -288,6 +309,199 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     b.seed = 0;
     b.across = 0.0;
     b.reach = 1.0;
+    b.part = 0;
+    b.posedBy = 0.0;
+    b.back = 0.0;
+    return b;
+}
+
+// The bits of a part quad's first and second quads' words (voxear_terrain::blocks::mesh::PART_HEAD and PART_TAIL).
+static const uint BLOCK_PART_HEAD = 1u << 24;
+static const uint BLOCK_PART_TAIL = 1u << 23;
+
+// The six ways a block can face (voxear_terrain::blocks::shape::BlockFacing): north, east, south, west, up, down.
+float3 blockFacingWay(uint facing)
+{
+    static const float3 WAYS[6] = { float3(0, 0, -1), float3(1, 0, 0), float3(0, 0, 1), float3(-1, 0, 0), float3(0, 1, 0), float3(0, -1, 0) };
+    return WAYS[min(facing, 5u)];
+}
+
+// `v` turned `angle` radians about the unit axis `axis`, as a right hand curls.
+float3 turnAbout(float3 v, float3 axis, float angle)
+{
+    float s = sin(angle);
+    float c = cos(angle);
+    return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
+}
+
+// How far along its way from one key to the next a motion is, a share `t` of the time, as `ease` goes.
+float motionEase(uint ease, float t)
+{
+    t = saturate(t);
+    if (ease == 1)
+    {
+        return t * t * (3.0 - 2.0 * t);
+    }
+    if (ease == 2)
+    {
+        return t >= 1.0 ? 1.0 : 0.0;
+    }
+    return t;
+}
+
+// How far a motion has its parts turned (radians) and moved (sixteenths) `time` seconds in, as
+// voxear_terrain::blocks::shape::BlockMotion::at has it.
+float2 motionAt(BlockMotion motion, float time)
+{
+    if (motion.count == 0)
+    {
+        return 0.0;
+    }
+    BlockMotionKey first = motion.keys[0];
+    if (time <= first.time || motion.count == 1)
+    {
+        return float2(first.turn, first.shift);
+    }
+    for (uint i = 0; i + 1 < min(motion.count, 8u); i++)
+    {
+        BlockMotionKey from = motion.keys[i];
+        BlockMotionKey to = motion.keys[i + 1];
+        if (time <= to.time)
+        {
+            float share = motionEase(from.ease, (time - from.time) / max(to.time - from.time, 1e-6));
+            return float2(lerp(from.turn, to.turn, share), lerp(from.shift, to.shift, share));
+        }
+    }
+    BlockMotionKey last = motion.keys[min(motion.count, 8u) - 1];
+    return float2(last.turn, last.shift);
+}
+
+// How far into its motion the block at `block` is, `ago` seconds before now: at its end where it rests open (or
+// on), at its start where it rests shut, and where it has got to while it moves.
+float motionTime(BlockWorld world, BlockMotion motion, int3 block, bool open, float ago)
+{
+    for (uint i = 0; i < min(world.movingCount, 64u); i++)
+    {
+        MovingBlock moving = world.moving[i];
+        if (all(moving.at.xyz == block))
+        {
+            float since = max(moving.timing.x - ago, 0.0);
+            return open ? since : motion.length - since;
+        }
+    }
+    return open ? motion.length : 0.0;
+}
+
+// How far a block that hangs is swung, at `time`, as a turn about an axis through what holds it up, a little:
+// downwind as the wind blows over where it hangs from, to and fro at a pace of its own, and away from what brushes
+// past it (foliagePush). `swing` is the most it swings, in radians.
+float3 hangSwing(Frame* frame, float3 anchor, int3 holder, float swing, float time)
+{
+    Wind wind = frame->wind;
+    float3 tilt = 0.0;
+    if (wind.strength > 0.0)
+    {
+        float push = saturate(max(windPush(wind, levelPosition(frame, anchor, 4096.0).xz, time), 0.0) / 1.5);
+        float phase = float(blockNumber(holder, 29) & 1023) / 1023.0 * 6.2831853;
+        float to = 0.55 + 0.3 * sin(time * 1.3 + phase) + 0.15 * sin(time * 2.9 + phase * 1.7);
+        float side = sin(time * 1.1 + phase * 2.3) * 0.25;
+        float2 along = wind.direction * to + float2(-wind.direction.y, wind.direction.x) * side;
+        tilt += float3(along.x, 0.0, along.y) * push;
+    }
+    float2 pushed = foliagePush(frame, anchor);
+    tilt += float3(pushed.x, 0.0, pushed.y) * 0.6;
+    float amount = length(tilt);
+    if (amount < 1e-4)
+    {
+        return 0.0;
+    }
+    // Swung as a pendulum: the axis across the way it tips, as far as it tips, no further than its swing.
+    float3 way = tilt / amount;
+    return normalize(cross(float3(0.0, -1.0, 0.0), way)) * (min(amount, 1.0) * swing);
+}
+
+// Corner `vertex` of a face of a box of a block of parts (voxear_terrain::blocks::mesh::PartQuad), from its two
+// quads' words: posed by its block's motion where it moves, swung where its block hangs. Where it rests unmoved and
+// how its motion has carried it are kept for its pictures, which stay on it as it moves.
+BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
+{
+    Frame* frame = push.frame;
+    uint3 at = uint3(head.x & 31, (head.x >> 5) & 31, (head.x >> 10) & 31);
+    uint facing = (head.x >> 15) & 7;
+    float plane = float((head.x >> 18) & 31);
+    bool moves = ((head.x >> 23) & 1) != 0;
+    float2 across = float2(head.x >> 28, tail.x & 31);
+    float2 up = float2((head.y >> 8) & 15, (tail.x >> 5) & 31);
+    uint hangs = (head.y >> 12) & 15;
+    uint motion = (tail.x >> 10) & 63;
+    bool open = ((tail.x >> 16) & 1) != 0;
+    float3 axis = blockFacingWay((tail.x >> 17) & 7);
+    float3 pivot = float3(tail.y & 31, (tail.y >> 5) & 31, (tail.y >> 10) & 31) * 0.5;
+    uint corner = BLOCK_CORNERS[vertex];
+    uint3 axes = BLOCK_AXES[facing];
+    bool out = (facing & 1) == 0;
+    // In sixteenths of its block, from its corner.
+    float3 p = blockAxis(axes.x) * plane;
+    p += blockAxis(axes.y) * (corner == 1 || corner == 2 ? across.y : across.x);
+    p += blockAxis(axes.z) * (corner >= 2 ? up.y : up.x);
+    float3 normal = blockAxis(axes.x) * (out ? 1.0 : -1.0);
+    int4 chunk = world.origins[head.y >> 16];
+    float blockSize = world.blockSize * float(1u << uint(chunk.w));
+    int3 block = chunk.xyz * 32 + int3(at);
+    float3 rest = world.corner + (float3(block) + p / 16.0) * blockSize;
+    float3 posed = p;
+    float3 before = p;
+    float3 turned = normal;
+    if (moves && motion > 0 && motion <= world.motionCount)
+    {
+        BlockMotion kept = world.motions[motion - 1];
+        float2 now = motionAt(kept, motionTime(world, kept, block, open, 0.0));
+        float2 then = motionAt(kept, motionTime(world, kept, block, open, frame->deltaTime));
+        posed = pivot + turnAbout(p - pivot, axis, now.x) + axis * now.y;
+        before = pivot + turnAbout(p - pivot, axis, then.x) + axis * then.y;
+        turned = turnAbout(normal, axis, now.x);
+    }
+    float3 placed = world.corner + (float3(block) + posed / 16.0) * blockSize;
+    float3 placedBefore = world.corner + (float3(block) + before / 16.0) * blockSize;
+    if (hangs > 0 && motion > 0 && motion <= world.motionCount && chunk.w == 0)
+    {
+        // Swung about the bottom of what holds it up, the whole hanging run alike.
+        float swing = world.motions[motion - 1].swing;
+        int3 holder = block + int3(0, int(hangs), 0);
+        float3 anchor = world.corner + (float3(holder) + float3(0.5, 0.0, 0.5)) * blockSize;
+        float3 now = hangSwing(frame, anchor, holder, swing, frame->time);
+        float3 then = hangSwing(frame, anchor, holder, swing, frame->time - frame->deltaTime);
+        float nowAngle = length(now);
+        float thenAngle = length(then);
+        if (nowAngle > 0.0)
+        {
+            placed = anchor + turnAbout(placed - anchor, now / nowAngle, nowAngle);
+            turned = turnAbout(turned, now / nowAngle, nowAngle);
+        }
+        if (thenAngle > 0.0)
+        {
+            placedBefore = anchor + turnAbout(placedBefore - anchor, then / thenAngle, thenAngle);
+        }
+    }
+    BlockPoint b;
+    b.world = placed;
+    b.normal = turned;
+    b.surface = head.y & 0xFF;
+    b.shade = 1.0;
+    b.sways = false;
+    b.corner = block;
+    b.joins = uint(chunk.w) << 14;
+    b.loose = 0;
+    b.sheet = 0;
+    b.open = 3;
+    b.seed = 0;
+    b.across = 0.0;
+    b.reach = 1.0;
+    // The way it rests facing, as a block can face: east, west, up, down, south, north from its facing's number.
+    static const uint FACES[6] = { 1, 3, 4, 5, 2, 0 };
+    b.part = 1 | (FACES[facing] << 1);
+    b.posedBy = placed - rest;
+    b.back = placedBefore - placed;
     return b;
 }
 

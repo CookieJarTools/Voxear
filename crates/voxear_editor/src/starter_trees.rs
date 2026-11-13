@@ -146,7 +146,7 @@ const SQUARE: u32 = 4;
 /// A number from a square's place and `salt`, well mixed: whole numbers
 /// alone, so a picture is the same wherever it is made. Places wrap at the
 /// picture's edge, so the picture repeats without a seam.
-fn mixed(x: u32, y: u32, salt: u32) -> u32 {
+pub(crate) fn mixed(x: u32, y: u32, salt: u32) -> u32 {
     let mut h = salt.wrapping_mul(0x9E37_79B9) ^ (x % SQUARES).wrapping_mul(0x85EB_CA77);
     h = h.rotate_left(13) ^ (y % SQUARES).wrapping_mul(0xC2B2_AE3D);
     h ^= h >> 15;
@@ -157,14 +157,14 @@ fn mixed(x: u32, y: u32, salt: u32) -> u32 {
 }
 
 /// A colour a share lighter or darker, a byte each with `alpha`.
-fn toned(color: [f32; 3], tone: f32, alpha: u8) -> [u8; 4] {
+pub(crate) fn toned(color: [f32; 3], tone: f32, alpha: u8) -> [u8; 4] {
     let [r, g, b] = color.map(|part| ((part * tone).clamp(0.0, 1.0) * 255.0).round() as u8);
     [r, g, b, alpha]
 }
 
 /// A picture of `SQUARES` squares a side, each `SQUARE` pixels wide, as
 /// RGBA: `square` gives each square's colour.
-fn picture(square: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+pub(crate) fn picture(square: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
     let side = SQUARES * SQUARE;
     (0..side * side).flat_map(|at| square(at % side / SQUARE, at / side / SQUARE)).collect()
 }
@@ -198,7 +198,7 @@ fn bark_picture(color: [f32; 3], marks: Option<[f32; 3]>, salt: u32) -> Vec<u8> 
 /// Writes the picture `rgba` as a PNG at `path` and a material beside it
 /// that draws it, cut out where `cut_out` says its clear parts are; gives
 /// the material's path. One of that name already there is left as it is.
-fn material_with(game: &mut Game, path: &str, rgba: &[u8], cut_out: bool) -> Result<String> {
+pub(crate) fn material_with(game: &mut Game, path: &str, rgba: &[u8], cut_out: bool) -> Result<String> {
     let (picture, material) = (format!("{path}.png"), format!("{path}.material"));
     let root = game.project.root.clone();
     if root.join(&material).is_file() {
@@ -235,7 +235,7 @@ pub fn leaf_blocks() -> Vec<&'static str> {
 /// The block called `name` in `folder`: made there as `block` where there
 /// is none. Only that folder is looked in: a starter plant's far block, in
 /// the Plants folder, may have a tree's leaves' name and is another block.
-fn block_named(game: &mut Game, folder: &str, name: &str, block: &BlockDef) -> Result<String> {
+pub(crate) fn block_named(game: &mut Game, folder: &str, name: &str, block: &BlockDef) -> Result<String> {
     let here = format!("{folder}/{name}.block");
     if game.content.db().guid_of(&here).is_some() {
         return Ok(here);

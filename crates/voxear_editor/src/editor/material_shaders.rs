@@ -30,7 +30,13 @@ impl Editor {
         let draws_ui =
             |path: &str| registry.shaders.iter().any(|s| s.path == path && s.info.as_ref().is_ok_and(|info| info.ui || info.look));
         let db = self.game.content.db();
-        let materials = |e: &&voxear_assets::AssetEntry| e.kind == AssetKind::Shader && !draws_ui(&e.path);
+        // Nor VoxShade sub-graphs, which are no shaders: the registry has no shader at their paths.
+        let sub_graph = |path: &str| !registry.shaders.iter().any(|s| s.path == path);
+        let materials = |e: &&voxear_assets::AssetEntry| match e.kind {
+            AssetKind::Shader => !draws_ui(&e.path),
+            AssetKind::VoxShade => !draws_ui(&e.path) && !sub_graph(&e.path),
+            _ => false,
+        };
         let mut paths: Vec<String> = db.entries().filter(materials).map(|e| e.path.clone()).collect();
         paths.sort();
         let mut listed = vec![("None".to_string(), Pick::Asset(None))];
@@ -74,8 +80,11 @@ impl Editor {
     /// A shader dragged from the Project panel onto a material's Shader.
     pub(super) fn drop_material_shader(&mut self, material: &str, source: &DragSource, renderer: &mut Renderer) {
         let Some(path) = self.dragged_asset(source) else { return };
-        if self.asset_kind_of(&path) != Some(AssetKind::Shader) {
+        if !matches!(self.asset_kind_of(&path), Some(AssetKind::Shader | AssetKind::VoxShade)) {
             return self.notify("Only a shader goes in a material's Shader");
+        }
+        if !self.game.content.shaders().shaders.iter().any(|s| s.path == path) {
+            return self.notify("A sub-graph is used in other VoxShade graphs, not by materials");
         }
         self.pick_material_shader(material, &Pick::Asset(Some(path)), renderer);
     }
@@ -130,7 +139,7 @@ impl Editor {
             .map(|start| Choice {
                 label: start.label().to_string(),
                 detail: start.detail().to_string(),
-                icon: "shader",
+                icon: start.icon(),
                 pick: Chosen::Shader(start),
                 preview: None,
                 folder: String::new(),

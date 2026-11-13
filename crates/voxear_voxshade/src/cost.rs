@@ -1,0 +1,121 @@
+//! What a compiled graph costs, as its nodes and stages show it: the work
+//! left once everything that could be folded, merged or left out has been,
+//! counted in rough instructions, and the pictures read.
+//!
+//! The counts are a guide, not a measure: a sum or a product is one for each
+//! number, a division or a root about four, a power about nine, as the GPUs
+//! the engine runs on take them. They are there to show where a graph's
+//! work is, and that a node which comes to nothing costs nothing.
+
+use std::collections::HashMap;
+
+use crate::{
+    graph::NodeId,
+    ir::{Binary, Op, Program, Rate, Step, Ternary, Unary},
+};
+
+/// The rough instructions and the picture reads of one step.
+pub fn of(step: &Step, program: &Program) -> (u32, u32) {
+    let width = |n: usize| program.step(step.args[n]).ty.width() as u32;
+    let own = step.ty.width() as u32;
+    let alu = match &step.op {
+        Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::Construct | Op::Swizzle(_) | Op::CallOut(_) => 0,
+        Op::Call(function) => code_cost(&function.code),
+        Op::Sample(_) => return (2, 1),
+        Op::Unary(op) => match op {
+            Unary::Negate | Unary::Abs | Unary::Saturate => 0,
+            Unary::Floor | Unary::Ceil | Unary::Frac | Unary::Sign => own,
+            Unary::Sin | Unary::Cos | Unary::Sqrt | Unary::Exp => own * 4,
+            Unary::Normalize => width(0) * 2 + 4,
+            Unary::Length => width(0) + 4,
+            Unary::Random => 8,
+        },
+        Op::Binary(op) => match op {
+            Binary::Add | Binary::Sub | Binary::Mul | Binary::Min | Binary::Max | Binary::Step => own,
+            Binary::Div => own * 4,
+            Binary::Pow => own * 9,
+            Binary::Dot => width(0),
+            Binary::Cross => 6,
+            Binary::Distance => width(0) * 2 + 4,
+            Binary::Reflect => width(0) * 3,
+            Binary::Compare(_) => 1,
+        },
+        Op::Ternary(op) => match op {
+            Ternary::Lerp | Ternary::Clamp => own * 2,
+            Ternary::Smoothstep => own * 6,
+        },
+        Op::Select { .. } => own,
+    };
+    (alu, 0)
+}
+
+/// A guess at what Slang written by hand costs: one for each sum,
+/// product or comparison in it, four for each call. It cannot know what a
+/// loop in it comes to.
+fn code_cost(code: &str) -> u32 {
+    let mut cost = 0;
+    let mut previous = ' ';
+    for c in code.chars() {
+        cost += match c {
+            '+' | '-' | '*' | '<' | '>' if previous != c => 1,
+            '/' if previous != '/' => 4,
+            '(' if previous.is_ascii_alphanumeric() => 4,
+            _ => 0,
+        };
+        previous = c;
+    }
+    cost
+}
+
+/// What a node costs once compiled: its instructions and picture reads in
+/// each stage it runs in. A node whose work was folded away, merged into
+/// another's or left out costs nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NodeCost {
+    pub alu: u32,
+    pub samples: u32,
+    /// Its instructions worked out once a material, on the CPU, rather than on the GPU.
+    pub once: u32,
+}
+
+/// What a stage costs: its instructions and picture reads, how many of the
+/// instructions are the same all over a draw (worked out from properties
+/// and the time alone, which could be done once rather than each time),
+/// and how many of its branches are real.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StageCost {
+    pub alu: u32,
+    pub samples: u32,
+    pub uniform_alu: u32,
+    pub branches: u32,
+    /// Instructions worked out once a material, on the CPU, rather than here.
+    pub once: u32,
+}
+
+/// What `program` costs, as a whole and node by node, written as `plan`
+/// says: the work on the GPU, and apart from it, what is worked out once a
+/// material on the CPU.
+pub fn program(program: &Program, plan: &crate::emit::Plan, nodes: &mut HashMap<NodeId, NodeCost>) -> StageCost {
+    let mut total = StageCost { branches: plan.branches() as u32, ..StageCost::default() };
+    for (index, step) in program.steps.iter().enumerate() {
+        let (alu, samples) = of(step, program);
+        let cost = step.node.map(|node| nodes.entry(node).or_default());
+        if !plan.on_gpu(index) {
+            total.once += alu;
+            if let Some(cost) = cost {
+                cost.once += alu;
+            }
+            continue;
+        }
+        total.alu += alu;
+        total.samples += samples;
+        if matches!(step.rate, Rate::Material | Rate::Frame) {
+            total.uniform_alu += alu;
+        }
+        if let Some(cost) = cost {
+            cost.alu += alu;
+            cost.samples += samples;
+        }
+    }
+    total
+}

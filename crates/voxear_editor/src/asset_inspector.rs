@@ -552,6 +552,17 @@ impl AssetView {
                 view.shader_state = shader(ui, root, game, &item.path);
                 code(ui, root, &file, "slang", dark);
             }
+            // A graph's state and properties as a shader's, and the Slang it compiles into.
+            ItemKind::Asset(AssetKind::VoxShade) => {
+                view.shader_state = shader(ui, root, game, &item.path);
+                let found = game.content.shaders().shaders.iter().find(|shader| shader.path == item.path);
+                if found.is_none() {
+                    sub_graph(ui, root, &file, dark);
+                }
+                if let Some(compiled) = found.map(|shader| shader.source.as_str()).filter(|source| !source.is_empty()) {
+                    code_text(ui, root, compiled, "slang", dark);
+                }
+            }
             ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
             // As lighting settings are shown, a tab for each group: a row is empty where the pack leaves a setting
             // to the level.
@@ -615,7 +626,9 @@ impl AssetView {
         let opens = matches!(
             item.kind,
             ItemKind::Script
-                | ItemKind::Asset(AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions)
+                | ItemKind::Asset(
+                    AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions | AssetKind::VoxShade
+                )
         );
         if opens {
             let label = if item.kind == ItemKind::Script { "Open in Code Editor" } else { "Open" };
@@ -1403,6 +1416,11 @@ fn script(ui: &mut Ui, root: NodeId, item: &ProjectItem, types: &ScriptTypes) {
 /// how many more there are, so a long file does not make the Inspector slow.
 fn code(ui: &mut Ui, root: NodeId, file: &std::path::Path, language: &str, dark: bool) {
     let Ok(text) = std::fs::read_to_string(file) else { return };
+    code_text(ui, root, &text, language, dark);
+}
+
+/// Code shown as `code` shows a file's.
+fn code_text(ui: &mut Ui, root: NodeId, text: &str, language: &str, dark: bool) {
     let lines: Vec<&str> = text.lines().collect();
     let shown = lines[..lines.len().min(CODE_LINES)].join("\n");
     let rows = part(ui, root, "Code", "code");
@@ -1490,6 +1508,24 @@ fn shader(ui: &mut Ui, root: NodeId, game: &Game, path: &str) -> Option<(NodeId,
     }
     // Never a state the renderer has, so the first frame shows its own.
     Some((label, voxear_render::CustomShaderState::Failed(String::new())))
+}
+
+/// A VoxShade sub-graph: its name, inputs and outputs, and its work as a
+/// Slang function of them.
+fn sub_graph(ui: &mut Ui, root: NodeId, file: &std::path::Path, dark: bool) {
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let Ok(graph) = voxear_voxshade::Graph::from_toml(&text) else { return };
+    let rows = part(ui, root, "Sub-graph", "nodes");
+    text_row(ui, rows, "Name", &graph.name);
+    let pins = |pins: &[voxear_voxshade::Pin]| {
+        let listed: Vec<String> = pins.iter().map(|pin| format!("{} ({})", pin.name, pin.ty.name())).collect();
+        if listed.is_empty() { "None".to_string() } else { listed.join(", ") }
+    };
+    text_row(ui, rows, "Inputs", &pins(&graph.inputs));
+    text_row(ui, rows, "Outputs", &pins(&graph.outputs));
+    if let Ok(compiled) = voxear_voxshade::compile(&graph) {
+        code_text(ui, root, &compiled.source, "slang", dark);
+    }
 }
 
 /// A property's kind as the shader's Inspector names it.
@@ -1669,6 +1705,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
         ItemKind::Asset(AssetKind::TexturePack) => "Texture pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
+        ItemKind::Asset(AssetKind::VoxShade) => "VoxShade",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
         ItemKind::Asset(AssetKind::Particles) => "Particle Effect",
@@ -1705,6 +1742,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LookPack) => "eye",
         ItemKind::Asset(AssetKind::TexturePack) => "image",
         ItemKind::Asset(AssetKind::Shader) => "shader",
+        ItemKind::Asset(AssetKind::VoxShade) => "nodes",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",
         ItemKind::Asset(AssetKind::Particles) => "particles",

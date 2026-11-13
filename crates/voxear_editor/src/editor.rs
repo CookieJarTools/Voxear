@@ -18,6 +18,8 @@ mod framing;
 mod gun_handlings;
 mod world_gens;
 mod generators;
+mod voxshades;
+pub(crate) use voxshades::VOXSHADE_HEADING;
 mod models;
 mod grown_plants;
 mod heat_view;
@@ -29,6 +31,7 @@ mod inspectors;
 mod languages;
 mod lighting;
 mod level_edits;
+mod link_calls;
 mod material_drops;
 mod material_shaders;
 mod model_clips;
@@ -193,6 +196,8 @@ struct Nodes {
     frame_debugger_panel: NodeId,
     /// The Generator panel's content, a World Generator's graph.
     generator_panel: NodeId,
+    /// The VoxShade panel's content, a shader made of nodes.
+    voxshade_panel: NodeId,
     /// The Model window's content, a box model to build.
     model_panel: NodeId,
     memory_panel: NodeId,
@@ -350,6 +355,9 @@ pub struct Editor {
     /// The World Generator's graph open to edit, and its file, to follow it when it is renamed.
     generator: GeneratorPanel,
     generator_guid: Option<voxear_assets::AssetGuid>,
+    /// The VoxShade shader open to edit, and its file, to follow it when it is renamed.
+    voxshade: crate::voxshade_panel::VoxShadePanel,
+    voxshade_guid: Option<voxear_assets::AssetGuid>,
     /// The box model open to build, and its file, to follow it when it is renamed.
     model: ModelPanel,
     model_guid: Option<voxear_assets::AssetGuid>,
@@ -464,6 +472,8 @@ pub struct Editor {
     /// The scripts build and are described again once no build is under
     /// way, whether or not a script changed, as after the packages change.
     rebuild_scripts: bool,
+    /// Tools reaching the editor through its link (see `link_calls`).
+    link: link_calls::Link,
 }
 
 impl Editor {
@@ -537,6 +547,7 @@ impl Editor {
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             generator_panel: find(&ui, "generator-panel"),
+            voxshade_panel: find(&ui, "voxshade-panel"),
             model_panel: find(&ui, "model-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
@@ -596,6 +607,7 @@ impl Editor {
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let generator = GeneratorPanel::new(&mut ui, nodes.generator_panel);
+        let voxshade = crate::voxshade_panel::VoxShadePanel::new(&mut ui, nodes.voxshade_panel);
         let model = ModelPanel::new(&mut ui, nodes.model_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
@@ -680,6 +692,8 @@ impl Editor {
             frame_debugger,
             generator,
             generator_guid: None,
+            voxshade,
+            voxshade_guid: None,
             model,
             model_guid: None,
             world_gen_to_save: None,
@@ -738,6 +752,7 @@ impl Editor {
             described_from: None,
             scripts_checked: None,
             rebuild_scripts: false,
+            link: Default::default(),
             layout_checked: Instant::now(),
         };
         editor.restore_layout();
@@ -745,6 +760,12 @@ impl Editor {
     }
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
+    /// Turns the block the Build tool's brush puts down on, as R does over
+    /// a world of blocks.
+    pub fn turn_brush_block(&mut self) {
+        self.block_tools.turn();
+    }
+
     pub fn select(&mut self, entity: Option<Entity>) {
         self.selected_part = None;
         self.reselect(entity);
@@ -818,6 +839,10 @@ impl Editor {
             }
             if let Some(delta) = self.game_delta(delta) {
                 self.game.tick(delta, Some(renderer));
+            }
+            // Blocks used while editing move by their motions, as they do in play.
+            if !self.is_playing() {
+                voxear_engine::blocks::tick(&mut self.game.engine.world, &mut self.game.content, delta);
             }
         }
         let views = {
@@ -938,6 +963,10 @@ impl Editor {
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
         }
+        {
+            profile_scope!("Link");
+            self.update_link(renderer);
+        }
         self.update_windows();
         self.update_layouts();
         self.keep_layout();
@@ -992,6 +1021,7 @@ impl Editor {
             self.docs.set_dark(&mut self.ui, theme.is_dark());
             self.packages.set_dark(theme.is_dark());
             self.generator.set_dark(theme.is_dark());
+            self.voxshade.set_dark(theme.is_dark());
             self.model.set_dark(theme.is_dark());
             for inspector in self.inspectors_mut() {
                 inspector.set_dark(theme.is_dark());
@@ -1013,6 +1043,10 @@ impl Editor {
             {
                 profile_scope!("Generator");
                 self.update_generator(renderer);
+            }
+            {
+                profile_scope!("VoxShade");
+                self.update_voxshade(renderer);
             }
             {
                 profile_scope!("Model");
@@ -1289,6 +1323,9 @@ impl Editor {
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
             ItemKind::Asset(AssetKind::WorldGen) => {
                 self.open_generator(&item.path);
+            }
+            ItemKind::Asset(AssetKind::VoxShade) => {
+                self.open_voxshade(&item.path.clone(), renderer);
             }
             ItemKind::Asset(AssetKind::Model) if voxear_render::is_box_model(&item.path) => {
                 self.open_model(&item.path);
@@ -1719,6 +1756,10 @@ impl Editor {
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
             let free = free && !self.terrain_tools.is_hovered();
+            // The block the brush builds with read, so how it would stand put down shows before the first click.
+            if let Some(guid) = crate::block_props::built_with(&self.game) {
+                let _ = self.game.content.block(&guid.to_string());
+            }
             self.block_tools.hover(&self.game, &camera, selected, over_field.filter(|_| free));
             let free = free && !self.block_tools.is_hovered();
             self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));
@@ -2169,6 +2210,7 @@ impl Editor {
                 }
                 Ok(Err(error)) => {
                     tracing::warn!("the scripts could not be described: {error:#}");
+                    self.link.scripts_failed = Some(format!("{error:#}"));
                     self.notify("The scripts failed to build; their fields show as they last built");
                     self.describing = None;
                 }
@@ -2262,7 +2304,9 @@ impl Editor {
             _ if self.is_playing() => {
                 self.notify("Stop playing to save or undo; edits while playing are not kept");
             }
-            Command::Save => self.save(),
+            Command::Save => {
+                self.save();
+            }
             Command::AlignWithView => self.align_with_view(),
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
@@ -2285,26 +2329,32 @@ impl Editor {
         }
     }
 
-    /// Writes the open level's scenes that changed back to their files.
-    pub fn save(&mut self) {
+    /// Writes the open level's scenes that changed back to their files, and
+    /// returns their paths.
+    pub fn save(&mut self) -> Vec<String> {
         let game = &mut self.game;
         let saved = game.levels.save(&game.engine, &mut game.content, &game.project.root);
-        match saved {
-            Ok(written) if written.is_empty() => self.notify("Nothing to save: the scenes are as they are on disk"),
+        let written = match saved {
+            Ok(written) if written.is_empty() => {
+                self.notify("Nothing to save: the scenes are as they are on disk");
+                written
+            }
             Ok(written) => {
                 self.prefab_saved();
                 tracing::info!("saved {}", written.join(", "));
                 let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
                 self.notify(&format!("Saved {}", names.join(", ")));
+                written
             }
             Err(error) => {
                 tracing::error!("could not save: {error:#}");
                 self.notify("Could not save; the Console says why");
-                return;
+                return Vec::new();
             }
-        }
+        };
         self.unsaved = false;
         self.discard_armed = None;
+        written
     }
 
     /// Takes back the last edit, as Ctrl+Z does.
@@ -2472,7 +2522,10 @@ impl Editor {
             && let Some(asked) = self.graph_key(&key.logical_key)
         {
             // Ctrl+C, Ctrl+V and Space are the open graph's while its panel was the last pressed in.
-            self.generator_key(asked);
+            match self.voxshade_has_keys() {
+                true => self.voxshade_key(asked),
+                false => self.generator_key(asked),
+            }
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
@@ -2490,6 +2543,18 @@ impl Editor {
             && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)
         {
             self.commands.push(Command::Delete);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && text.to_lowercase() == "r"
+            && self.block_tools.is_hovered()
+        {
+            // Over a world of blocks under its Build tool, R turns the block the brush puts down.
+            self.turn_brush_block();
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
@@ -2667,6 +2732,7 @@ impl Editor {
                 }
                 (PickFor::InputControl | PickFor::ActionIcon, picked) => self.pick_for_input(picked),
                 (PickFor::GraphNode, Chosen::GraphNode(place)) => self.pick_graph_node(place),
+                (PickFor::ShaderNode, Chosen::GraphNode(place)) => self.pick_shader_node(place),
                 _ => {}
             }
         }

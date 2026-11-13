@@ -37,7 +37,7 @@ const TALLEST: f32 = 336.0;
 /// How much more a recent result counts when typed for, against one match.
 const RECENT_BONUS: i32 = 30 * 64;
 /// The docked panels, by id, as the palette offers to show them.
-const PANELS: [(&str, &str); 16] = [
+const PANELS: [(&str, &str); 17] = [
     ("Hierarchy", "hierarchy"),
     ("Levels", "levels"),
     ("Scene", "scene"),
@@ -50,6 +50,7 @@ const PANELS: [(&str, &str); 16] = [
     ("Localization Tables", "localization"),
     ("Package Manager", "packages"),
     ("Generator", "generator"),
+    ("VoxShade", "voxshade"),
     ("Blocks", "blocks"),
     ("Model", "model"),
     ("Inspector", "inspector"),
@@ -339,6 +340,12 @@ pub fn command_titles(sources: &Sources) -> Vec<String> {
     gather(sources).into_iter().filter(|entry| entry.command).map(|entry| entry.title).collect()
 }
 
+/// Every command as the palette lists them, by the key it is remembered by,
+/// with its title, its keys and what it does, as tools run them by key.
+pub fn command_list(sources: &Sources) -> Vec<(String, String, String, PaletteAction)> {
+    gather(sources).into_iter().filter(|entry| entry.command).map(|e| (e.key, e.title, e.detail, e.action)).collect()
+}
+
 /// Everything the palette offers: the commands first, those added by code,
 /// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {
@@ -433,6 +440,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Paths => ("Sound paths", "branch"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
                 AssetKind::Shader => ("Shader", "shader"),
+                AssetKind::VoxShade => ("VoxShade", "nodes"),
                 AssetKind::MotionSet => ("Motion Set", "play"),
                 AssetKind::GunHandling => ("Gun Handling", "crosshair"),
                 AssetKind::Particles => ("Particle Effect", "particles"),

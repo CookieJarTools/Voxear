@@ -868,7 +868,7 @@ impl Content {
         let found: Vec<(AssetGuid, String)> = self
             .db
             .entries()
-            .filter(|entry| entry.kind == AssetKind::Shader)
+            .filter(|entry| matches!(entry.kind, AssetKind::Shader | AssetKind::VoxShade))
             .map(|entry| (entry.guid, entry.path.clone()))
             .collect();
         let read = found.into_iter().filter_map(|(guid, path)| match self.read_text(&path) {
@@ -1520,8 +1520,10 @@ impl Content {
                 loaded.pending = Arc::new(all_changes(&stale.base, &stale.world.blocks, &stale.pending));
                 loaded.base = Arc::default();
                 loaded.world = BlockWorld::made(Default::default(), &faces, placed.block_size, placed.smooth);
+                loaded.world.set_links(&stale.world.link_list());
             } else if regrown {
-                let changes = BlockEdits::between(&stale.base, &stale.world.blocks);
+                let mut changes = BlockEdits::between(&stale.base, &stale.world.blocks);
+                changes.links = stale.world.link_list();
                 loaded.base = Arc::new(crate::blocks::ground(self, &placed));
                 loaded.world = crate::blocks::make(&file, &loaded.base, Some(&changes));
             } else if *stale.world.faces != faces[..] {
@@ -1553,9 +1555,10 @@ impl Content {
             let drawn = crate::blocks::resolved(self, &file);
             if file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
                 let (_, faces) = drawn.faces();
-                let world =
+                let mut world =
                     voxear_terrain::blocks::BlockWorld::made(Default::default(), &faces, file.block_size, file.smooth);
                 let pending = Arc::new(edits.unwrap_or_default());
+                world.set_links(&pending.links);
                 return Ok(Arc::new(LoadedBlockWorld { world, base: Arc::default(), pending, file, derived }));
             }
             let base = Arc::new(crate::blocks::ground(self, &file));
@@ -2056,6 +2059,7 @@ impl Content {
             tracing::warn!("{} draws {draws}, not materials, so a material picking it draws as the standard shader", info.name);
         }
         let found = found.filter(|(_, info)| !info.ui && !info.look).map(|(number, info)| (number, info.clone()));
+        let worked = data.shader.and_then(|shader| self.shaders.worked(shader));
         if let Some((number, info)) = found {
             desc.shader = number;
             desc.max_offset = info.max_offset;
@@ -2064,6 +2068,9 @@ impl Content {
                     Some(value) => self.property_values(renderer, value, property.kind)?,
                     None => default_on_gpu(property),
                 };
+            }
+            if let Some(worked) = worked {
+                crate::shaders::fill_worked(&mut desc.properties, info.properties.len(), &worked);
             }
         }
         Ok(desc)

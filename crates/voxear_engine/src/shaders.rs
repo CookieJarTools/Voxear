@@ -169,6 +169,9 @@ pub struct ProjectShader {
     /// Whether it is compiled into the renderer's shaders: every one of the
     /// project's own, and the built-in ones its materials use.
     pub used: bool,
+    /// For a VoxShade shader, what a material works out from its
+    /// properties for it, once, on the CPU (see [`fill_worked`]).
+    pub worked: Option<std::sync::Arc<voxear_voxshade::Derived>>,
 }
 
 /// The shaders materials can pick: the built-in ones first, in their order,
@@ -183,18 +186,38 @@ pub struct ShaderRegistry {
 impl ShaderRegistry {
     /// Numbers and reads the built-in shaders and these of the project's,
     /// each its asset, path and source; `used` are the built-in ones that
-    /// materials pick.
+    /// materials pick. VoxShade sub-graphs among them are not shaders: they
+    /// are worked into the graphs that use them.
     pub fn new(mut found: Vec<(AssetGuid, String, String)>, used: &BTreeSet<BuiltinShader>) -> Self {
         found.sort_by(|a, b| a.1.cmp(&b.1));
+        let mut library = std::collections::HashMap::new();
+        found.retain(|(guid, path, text)| match is_graph(path).then(|| voxear_voxshade::Graph::from_toml(text)) {
+            Some(Ok(graph)) if graph.sub_graph => {
+                library.insert(*guid, graph);
+                false
+            }
+            _ => true,
+        });
         let builtin = BuiltinShader::ALL.into_iter().map(|shader| {
             (ShaderRef::Builtin(shader), shader.reference(), shader.source().to_string(), used.contains(&shader))
         });
         let project = found.into_iter().map(|(guid, path, source)| (ShaderRef::Asset(guid), path, source, true));
         let shaders = (1..)
             .zip(builtin.chain(project))
-            .map(|(number, (reference, path, source, used))| {
-                let info = read(&source).map_err(|error| format!("{error:#}"));
-                ProjectShader { reference, path, number, source, info, used }
+            .map(|(number, (reference, path, text, used))| {
+                // A graph's file is its nodes, compiled here into the Slang a `.shader` holds.
+                let compiled =
+                    if is_graph(&path) { graph_shader_in(&text, &library) } else { Ok((text, Default::default())) };
+                let (source, derived) = match compiled {
+                    Ok((source, derived)) => (Ok(source), derived),
+                    Err(error) => (Err(error), voxear_voxshade::Derived::default()),
+                };
+                let mut info = source.as_ref().map_err(String::clone).and_then(|s| read(s).map_err(|e| format!("{e:#}")));
+                if let Ok(info) = &mut info {
+                    info.worked = derived.types().into_iter().map(PropertyKind::of).collect();
+                }
+                let worked = (!derived.is_empty()).then(|| std::sync::Arc::new(derived));
+                ProjectShader { reference, path, number, source: source.unwrap_or_default(), info, used, worked }
             })
             .collect();
         Self { shaders }
@@ -205,6 +228,12 @@ impl ShaderRegistry {
     pub fn get(&self, reference: ShaderRef) -> Option<(u32, &ShaderInfo)> {
         let shader = self.shaders.iter().find(|shader| shader.reference == reference)?;
         Some((shader.number, shader.info.as_ref().ok()?))
+    }
+
+    /// What a material using the shader works out from its properties for
+    /// it, when it is a VoxShade shader that has any.
+    pub fn worked(&self, reference: ShaderRef) -> Option<std::sync::Arc<voxear_voxshade::Derived>> {
+        self.shaders.iter().find(|shader| shader.reference == reference)?.worked.clone()
     }
 
     /// The project's own shaders, without the built-in ones.
@@ -245,6 +274,16 @@ pub enum PropertyKind {
 }
 
 impl PropertyKind {
+    /// The kind a value of type `ty` is held as.
+    fn of(ty: voxear_voxshade::Ty) -> Self {
+        match ty {
+            voxear_voxshade::Ty::Float2 => Self::Float2,
+            voxear_voxshade::Ty::Float3 => Self::Float3,
+            voxear_voxshade::Ty::Float4 => Self::Float4,
+            _ => Self::Float,
+        }
+    }
+
     /// How many of its four values the property uses.
     pub fn values(self) -> usize {
         match self {
@@ -291,6 +330,51 @@ pub struct ShaderInfo {
     /// `[MaxOffset(metres)]`: how far its `vertex` may move a vertex, which
     /// culling allows for.
     pub max_offset: f32,
+    /// For a VoxShade shader, the values worked out from its properties on
+    /// the CPU, held after them; named `worked0` on in its struct.
+    pub worked: Vec<PropertyKind>,
+}
+
+/// Whether the shader at `path` is a graph of nodes rather than Slang.
+pub fn is_graph(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".voxshade")
+}
+
+/// Whether a VoxShade file's text is a sub-graph, which other graphs use,
+/// rather than a shader materials can pick.
+pub fn is_sub_graph(text: &str) -> bool {
+    voxear_voxshade::Graph::from_toml(text).is_ok_and(|graph| graph.sub_graph)
+}
+
+/// The Slang a VoxShade shader's file compiles into, or what stops it, each
+/// thing wrong with the node it is at, by its title.
+pub fn graph_source(text: &str) -> Result<String, String> {
+    graph_shader(text).map(|(source, _)| source)
+}
+
+/// The Slang a VoxShade shader's file compiles into, and what a material
+/// using it works out from its properties, or what stops it.
+pub fn graph_shader(text: &str) -> Result<(String, voxear_voxshade::Derived), String> {
+    graph_shader_in(text, &std::collections::HashMap::new())
+}
+
+/// As [`graph_shader`], its Sub-graph nodes using the sub-graphs in `library`.
+pub fn graph_shader_in(
+    text: &str,
+    library: &dyn voxear_voxshade::Library,
+) -> Result<(String, voxear_voxshade::Derived), String> {
+    let graph = voxear_voxshade::Graph::from_toml(text).map_err(|error| format!("{error:#}"))?;
+    let options = voxear_voxshade::Options { library: Some(library), ..Default::default() };
+    match voxear_voxshade::compile_with(&graph, options) {
+        Ok(compiled) => Ok((compiled.source, compiled.derived)),
+        Err(errors) => {
+            let at = |error: &voxear_voxshade::CompileError| {
+                let node = error.node.and_then(|id| graph.node(id)).map(|node| node.kind.title());
+                node.map_or(error.message.clone(), |title| format!("{title}: {}", error.message))
+            };
+            Err(errors.iter().map(at).collect::<Vec<_>>().join("; "))
+        }
+    }
 }
 
 /// Reads a shader's struct, properties and functions from its source.
@@ -307,6 +391,7 @@ pub fn read(source: &str) -> Result<ShaderInfo> {
         look: declares(&code, "look"),
         unlit: attributes.iter().any(|(attribute, _)| attribute == "Unlit"),
         max_offset: 0.0,
+        worked: Vec::new(),
     };
     if let Some((_, arguments)) = attributes.iter().find(|(attribute, _)| attribute == "MaxOffset") {
         info.max_offset = number(arguments).with_context(|| format!("[MaxOffset] on {name} takes metres"))?.max(0.0);
@@ -614,7 +699,24 @@ fn properties_reader(namespace: &str, info: &ShaderInfo, argument: &str, values:
         };
         code += &format!("    properties.{} = {value};\n", property.name);
     }
+    // What the CPU worked out from them, in the slots after them.
+    let own = info.properties.len();
+    for (n, kind) in info.worked.iter().enumerate().filter(|(n, _)| own + n < MAX_PROPERTIES) {
+        let swizzle = ["", ".x", ".xy", ".xyz", ""][kind.values()];
+        code += &format!("    properties.{} = values[{}]{swizzle};\n", voxear_voxshade::emit::derived_name(n), own + n);
+    }
     code + "    return properties;\n}\n\n"
+}
+
+/// Fills in what a material using a VoxShade shader works out from its
+/// properties, `properties`' first `own`, in the slots after them, as the
+/// shader reads them.
+pub fn fill_worked(properties: &mut [[f32; 4]], own: usize, worked: &voxear_voxshade::Derived) {
+    let own = own.min(properties.len());
+    let values = worked.values(&properties[..own]);
+    for (slot, value) in properties[own..].iter_mut().zip(values) {
+        *slot = value;
+    }
 }
 
 /// The code a project's UI shaders compile into the UI's shader as
@@ -806,6 +908,71 @@ mod tests {
         assert_eq!(info.properties[1].tooltip.as_deref(), Some("How fast the waves go"));
         assert_eq!(info.properties[2].kind, PropertyKind::Picture);
         assert_eq!(info.properties[3].default[0], 1.0);
+    }
+
+    #[test]
+    fn a_voxshade_is_compiled_into_the_registry_and_what_stops_it_is_kept_as_its_error() {
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let good = voxear_voxshade::starters::lit("Glow").to_toml();
+        let mut broken = voxear_voxshade::starters::lit("Broken");
+        let light = broken.add(voxear_voxshade::NodeKind::Input { input: voxear_voxshade::Input::LightColor }, [0.0; 2]);
+        let out = broken.nodes.iter().find(|n| n.kind == voxear_voxshade::NodeKind::SurfaceOutput).unwrap().id;
+        broken.link(light, 0, out, 5);
+        let registry = ShaderRegistry::new(
+            vec![
+                (guid(1), "Shaders/Glow.voxshade".into(), good),
+                (guid(2), "Shaders/Broken.voxshade".into(), broken.to_toml()),
+            ],
+            &BTreeSet::new(),
+        );
+        let (_, info) = registry.get(ShaderRef::Asset(guid(1))).expect("compiled and read");
+        assert_eq!((info.name.as_str(), info.properties.len()), ("Glow", 2));
+        let failed = registry.shaders.iter().find(|s| s.path.ends_with("Broken.voxshade")).unwrap();
+        let error = failed.info.as_ref().unwrap_err();
+        assert!(error.starts_with("Light Color: ") && error.contains("Surface"), "{error}");
+        assert!(is_graph("A/B.VoxShade") && !is_graph("A/B.shader"));
+    }
+
+    #[test]
+    fn a_voxshade_sub_graph_is_worked_into_the_shaders_using_it_and_is_not_a_shader_itself() {
+        use voxear_voxshade::{NodeKind, Pin, Ty, starters};
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let sub = starters::sub_graph("Edges");
+        let mut shader = starters::lit("Rim");
+        let edges = NodeKind::SubGraph {
+            graph: guid(5),
+            name: "Edges".into(),
+            inputs: sub.inputs.clone(),
+            outputs: sub.outputs.clone(),
+        };
+        let used = shader.add(edges, [0.0; 2]);
+        let code = NodeKind::Code {
+            name: "Glow".into(),
+            inputs: vec![Pin::new("edge", Ty::Float)],
+            outputs: vec![Pin::new("glow", Ty::Float3)],
+            code: "glow = float3(edge, edge, edge) * 2.0;".into(),
+        };
+        let glow = shader.add(code, [0.0; 2]);
+        shader.link(used, 0, glow, 0);
+        let out = shader.nodes.iter().find(|n| n.kind == NodeKind::SurfaceOutput).unwrap().id;
+        shader.link(glow, 0, out, 5);
+        let registry = ShaderRegistry::new(
+            vec![
+                (guid(5), "Shaders/Edges.voxshade".into(), sub.to_toml()),
+                (guid(6), "Shaders/Rim.voxshade".into(), shader.to_toml()),
+            ],
+            &BTreeSet::new(),
+        );
+        assert!(registry.get(ShaderRef::Asset(guid(5))).is_none(), "a sub-graph is no shader");
+        let rim = registry.shaders.iter().find(|s| s.path.ends_with("Rim.voxshade")).unwrap();
+        assert!(rim.info.is_ok(), "{:?}\n{}", rim.info, rim.source);
+        assert!(rim.source.contains("abs(") && rim.source.contains("void Glow_"), "{}", rim.source);
+        assert!(is_sub_graph(&sub.to_toml()) && !is_sub_graph(&shader.to_toml()));
+        // Without its sub-graph, the shader says what it is missing.
+        let rim = vec![(guid(6), "Shaders/Rim.voxshade".into(), shader.to_toml())];
+        let alone = ShaderRegistry::new(rim, &BTreeSet::new());
+        let error = alone.shaders.iter().find(|s| s.path.ends_with("Rim.voxshade")).unwrap().info.clone().unwrap_err();
+        assert!(error.contains("not in the project"), "{error}");
     }
 
     #[test]

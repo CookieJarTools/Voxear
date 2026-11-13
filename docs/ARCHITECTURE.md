@@ -95,7 +95,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | Required Vulkan features | dynamic rendering, synchronization2, timeline semaphores, buffer device address, descriptor indexing | Bindless, GPU-driven rendering. Supported by NVIDIA Maxwell+, AMD GCN+ and Intel Gen9+ on current drivers. |
 | Optional tiers | mesh shaders, ray query / acceleration structures | Detected at startup (`vox doctor` shows them). Compute fallbacks always exist. |
 | GPU memory | gpu-allocator | Proven allocator. It can be replaced later without API churn. |
-| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make shader graph output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
+| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make node shaders' output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
 | Windowing | winit | Handles Wayland, X11 and Win32. |
 | Scripting | C# on **CoreCLR**, .NET 10 LTS now, .NET 11 when it ships (November 2026) | The engine hosts `hostfxr` itself, with no `nethost` download. `Voxear.Core` is built with `RollForward=LatestMajor`, so newer runtimes work. |
 | Shipping scripts | CoreCLR now; NativeAOT as an option later | NativeAOT gives faster startup and no JIT for players and consoles. Hot reload stays CoreCLR-only. |
@@ -1365,7 +1365,7 @@ history on camera cuts.
 - An inspector with live previews.
 - A C# API: `Post.Current.Bloom.Intensity = 0.1f` for the easy path, and the full struct for the advanced one.
 
-## Materials and Shader Graph
+## Materials and VoxShade
 
 **Shaders.** Shaders are Slang modules. A material is a Definition: a shader plus parameter values. Material
 variants inherit from a parent and override only what differs.
@@ -1376,11 +1376,12 @@ variants inherit from a parent and override only what differs.
 - Drag a texture onto an Obj and a material is made for it.
 
 **Advanced.**
-- **Shader Graph:** a node graph that compiles to Slang.
+- **VoxShade:** shaders made of nodes, compiled to Slang.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler, the `.voxshade` asset and its panel, previews, work moved to the CPU,
+sub-graphs and Slang nodes implemented; moving work to the vertex stage planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1401,8 +1402,57 @@ in five places, and each has its answer here:
   off the stateless path says so.
 
 Values being dragged are kept as properties, so dragging never compiles; they are folded in when the graph is
-saved. A custom node is Slang read into the same form, so it does not stand in the way of any of this. The test:
+saved. A custom node is a call of its own Slang, which the compiler merges as any step but cannot see into, so it only stands in the way of work moved to the CPU after it. The test:
 the built-in shaders made again as graphs draw the same picture in the same GPU time as the hand-written ones.
+
+How it is built so far. Lowering asks each output node for its inputs back through the wires (`lower`), so a node
+no output reaches is never lowered. Steps are made through one builder (`ir::Builder`) that does at once what a
+later pass would: a step whose inputs are all known is the number it comes to, one that changes nothing (adding
+nothing, times one, a vector taken apart and put back together) is its input, and one asked for again with the
+same inputs, either way round for those that commute, is the step already made, keyed by its numbers to the bit.
+What no output reads is dropped when the program is finished. Each step's rate is the highest of its inputs',
+properties and the time counting as once a draw. Writing Slang (`emit`) places every step in the innermost block
+all its readers are in, so the steps only one side of a real branch reads go inside it; a Branch is real when a
+side holds a picture read or work enough to skip (two instructions behind a condition the same all over a draw,
+sixteen behind one that changes from pixel to pixel), settled by placing again until nothing changes. Known
+values, what the function is given and properties are written where they are read; every other step is a local
+of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
+pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
+
+Rates are four: constant, once a material (properties), once a frame (the time) and from place to place. Work
+once a material that something changing more often reads is worked out on the CPU (`hoist`): the roots picked,
+costliest first, in the room a material has left after its own properties (16 values in all, shared by a
+shader's stages), become plain fields `worked0` on after the properties in the struct, the steps only they need
+are not written, and the shader registry keeps the steps (`Derived`) beside the shader. Whenever a material's
+values are made for the GPU (`content.look`), `shaders::fill_worked` runs those steps on its property values with
+the same evaluator the previews use (`eval`) and writes the answers in the slots after them, which the
+properties reader reads into the struct. A `.shader` copied from the Slang gets no such values filled. Moving
+work to the vertex stage waits on a way for `vertex` to hand values to `surface`: the vertex output every pass
+shares, mesh shaders included, has no room for a graph's own.
+
+Previews are worked out on the CPU, not drawn on the GPU: a node's value at each pixel of a 72-pixel ball,
+from the same steps lowered with every node's value kept (`lower_all`), so a preview is what the shader works
+out, and an edit needs no shader compiled to show it.
+
+A sub-graph is worked into each graph that uses it while that graph is lowered, not compiled on its own and
+called: its nodes are lowered through the same builder, with its Input nodes reading the values wired into the
+Sub-graph node, so every fold, merge and cut reaches across it, and two uses with the same inputs are one. Its
+steps count against the Sub-graph node, and its errors are said there. The shader registry keeps the project's
+sub-graphs apart from its shaders (`Library`, by GUID), so a reference is typed and survives a rename; the node
+keeps the sub-graph's ports as last read, for the canvas, and the editor brings them up to date. A Slang node is
+the one thing the compiler cannot see into: it is a call (`Op::Call`, its other outputs `Op::CallOut`) of a
+function declared once, its name made from everything about it, so it is merged as any step is, but never folded,
+run on the CPU, or hoisted out of the GPU's work; its cost is a guess from its code. Reading Slang into the
+compiler's own steps, as planned at first, would let it see into a custom node too, at the cost of a Slang reader
+of its own; the opaque call costs nothing a hand-written shader would not.
+
+A `.voxshade` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
+`.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream
+knows the difference, and a graph that does not compile is a shader with an error, named by node. The panel
+compiles the graph itself at every change, in well under a millisecond, for the costs and errors it draws; the
+renderer's compile follows each save on its own thread, as any shader's does. Chose a side column of the
+panel's own for a node's values over the Inspector the generator graphs use: a VoxShade shader's nodes have few
+values, mostly the numbers an unwired input takes, and the properties belong beside the graph they are read in.
 
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
@@ -2744,7 +2794,7 @@ terrain, brush tools and asset names are placeholders, not planned features.
   - folders with item counts
   - files with their sizes
 - **Viewport:**
-  - Scene, Game and Shader Graph tabs
+  - Scene, Game and VoxShade tabs
   - a shading mode menu, a Gizmos toggle and full screen
   - a floating tool strip: select, move, rotate, scale, tool modes, Pivot/Global and grid snap
   - Unity's axis colours on the gizmo, and a view gizmo bottom right
@@ -3066,7 +3116,7 @@ next.
    by one compute pass for every system and every view (`voxear_render::particle_sim`,
    `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
 3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
-   the shared graph compiler (see Materials and Shader Graph).
+   the shared graph compiler (see Materials and VoxShade).
 
 **The simulated path.** Every simulated system shares one pool of particles, 36 bytes each (position, velocity,
 age, life and a seed; size, colour and spin are worked out from the seed and age where it is drawn, as on the
@@ -3659,6 +3709,16 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**Blocks of parts.** A slab, a stair, a fence, a door is no new kind of storage: a placed block's state, a byte
+(`shape::BlockState`), is part of its number, as a world numbers each block and state it holds, so chunks, saved
+edits and network bytes stay as they were and using a door is one block changed. What joins (a fence's rails, a
+stair's corner) is read from the neighbours as the chunk is meshed, never kept. A part face is two quads' words
+in a bucket of its own, so it can say sixteenths, a hinge and a motion; the renderer's pool and draws are
+unchanged, and the second word of each pair draws a degenerate quad. Motion is the renderer's alone: the world
+keeps when each moving block started, by its own clock, and the shader poses its moving boxes by the motion's keys,
+so collision and saves hold only the state it ends in. Hanging blocks swing in the vertex shader from the wind
+and the foliage push, never in physics.
+
 **See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
 materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
 `BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block
@@ -4122,15 +4182,56 @@ Every operation the editor can do should be scriptable.
 - `--stats` on `run` and `render` shows the stats overlay (F1 toggles it in a window).
 
 **Planned.**
-- Project: `vox new`, `vox open`.
+- Project: `vox open`.
 - Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.
 
-**Editor RPC.** A running editor exposes a local JSON-RPC socket, so `vox` can drive it: select, create and modify
-Objs, run play mode, capture the viewport. AI tooling can later sit on the same RPC, for example as an MCP server,
-without changing the engine.
+### The editor link *(implemented)*
+
+A running editor answers calls from other programs on the same computer, so a script, a test or an AI assistant
+can change an open project and see the result, each change a step on the editor's own undo.
+
+- **Transport** (`voxear_engine::local_link`). The editor listens on the loopback address, on a port the system
+  picks, and writes the address and a fresh secret to `<project>/.voxear/Editor` (mode 0600 on Unix; removed on
+  close). A connection sends the secret on its first line, then JSON-RPC 2.0 requests, a line each, answered in
+  order. Each connection has a thread of its own; calls go over a channel to the editor's thread, which runs them
+  in its frame, beside the shortcuts (`Editor::update_link`), so they meet the editor's state as a click does.
+  `link.hello` is answered by the connection's thread, to tell a live link from a file left by an editor that
+  crashed (which the client then removes). A second editor on the project does not open a link. Errors carry a
+  kind (`ErrorKind`: `no_such_obj`, `wrong_value`, `unsaved_conflict`, `refused_while_playing`, `not_allowed`…).
+- **Calls** (`voxear_editor::link`, run in `editor/link_calls.rs`). The calls are not written per feature:
+  - Components and fields go through the Inspector's own `Part`/`Prop` layer (`props::parts`, `props`, `get`,
+    `set`, `pick`, `choices`), so every built-in component and every script field the Inspector shows is
+    reachable.
+  - Commands are the command palette's (`palette::command_list`), scripts' `[Command]`s included.
+  - Files are the Project panel's (`project_files`).
+  - `link::every_part` and `link::asset_kind_id` match their enums whole, so a new component or asset kind does
+    not build until it says how a tool reaches it. A test adds every offered component to an Obj and sets each of
+    its fields back as it is.
+  - Objs are named by scene GUID and `ObjPath`, which survive undo, Play and saving.
+  - A change records an `Edit` as the panels do; `batch` folds its steps into one (`History::group_since`).
+  - Calls that take frames (`play`, `capture`, `scripts.build`, `editor.wait`) answer when done.
+  - The editor setting `tools_may_change` refuses every changing call, and a tool cannot turn it back on.
+  - Each change logs a `[Tools]` line to the Console.
+- **Files changed on disk.** The open scenes, the open level and `voxear.toml` are looked at twice a second. A
+  scene whose file no longer holds what the scene has (`Levels::scene_matches_disk`, so the editor's own saves do
+  not count) is read again with `Levels::reload_scenes` when no edits wait. Undo starts afresh and the selection
+  is kept by Obj path. With edits waiting, the file is left and the status bar says so; `scene.reload` with
+  `discard` reads it anyway. `voxear.toml` is read again into the project and Project Settings.
+- **`vox editor call <call> [name=value…]`** prints the answer as JSON. Exit codes: 0 done, 1 failed, 2 usage,
+  3 no editor open, 4 refused. `--headless` opens an offscreen editor for the call when none is open
+  (`voxear_editor::call_headless`); `batch` with no arguments reads its calls from stdin. `--describe [--json]`
+  lists every call with its arguments, and the open project's components, commands and kinds.
+- **`vox editor serve`** keeps a headless editor answering (`voxear_editor::serve`). A windowed editor opening on
+  the project asks it to save and close, and takes the link (`take_over_from_headless`).
+- **`vox mcp`** serves the calls as Model Context Protocol tools over stdio, hand-written on `serde_json`. Each
+  call is a tool, `.` written `_`, its arguments as the input schema; one `vox` tool runs the other commands.
+  `capture` returns the PNG inline. It uses the open editor, or starts `vox editor serve` and closes it on exit.
+- **Not yet.** Brush tools (terrain sculpt and paint, block placing and digging, plant painting), the generator
+  graph and the Model window are reached only through their files and `files.look`; no pointer or key input;
+  nothing is pushed to a tool (it polls, as `console.read` with `after` does); undo steps carry no tool's name.
 
 ## Debugging and profiling tools
 

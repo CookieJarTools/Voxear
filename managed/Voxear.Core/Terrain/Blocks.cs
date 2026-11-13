@@ -31,7 +31,7 @@ namespace Voxear;
 /// A save of the scene keeps what scripts changed, as only the chunks that differ from the world as its level built
 /// it, and <see cref="CaptureEdits"/> gives them to a player joining a game.
 /// </summary>
-public static unsafe class Blocks
+public static unsafe partial class Blocks
 {
 	/// <summary>Air: no block.</summary>
 	public const ushort Air = 0;

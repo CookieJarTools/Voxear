@@ -3945,6 +3945,7 @@ name = "voxear_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.13.1",
  "clap",
  "png",
  "semver",
@@ -4041,6 +4042,7 @@ dependencies = [
  "voxear_scripting",
  "voxear_terrain",
  "voxear_ui",
+ "voxear_voxshade",
  "wayland-backend",
  "winit",
 ]
@@ -4081,6 +4083,7 @@ dependencies = [
  "voxear_scripting",
  "voxear_terrain",
  "voxear_ui",
+ "voxear_voxshade",
  "winit",
 ]
 
@@ -4269,6 +4272,16 @@ dependencies = [
  "taffy",
  "tracing",
  "voxear_core",
+]
+
+[[package]]
+name = "voxear_voxshade"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml",
+ "voxear_assets",
 ]
 
 [[package]]

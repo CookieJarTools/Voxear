@@ -38,6 +38,8 @@ internal sealed class BlockInfo
 		data = json.GetProperty("data").GetString();
 		var named = json.GetProperty("sounds");
 		sounds = [named.GetProperty("break").GetString(), named.GetProperty("place").GetString(), named.GetProperty("step").GetString()];
+		Shape = json.TryGetProperty("shape", out var shape) ? (BlockShape)shape.GetInt32() : BlockShape.Cube;
+		Usable = json.TryGetProperty("usable", out var usable) && usable.GetBoolean();
 		foreach (var drop in json.GetProperty("drops").EnumerateArray())
 		{
 			var count = drop.GetProperty("count");
@@ -50,6 +52,10 @@ internal sealed class BlockInfo
 	public Color Color { get; init; } = Color.Grey;
 
 	public bool Liquid { get; init; }
+
+	public BlockShape Shape { get; init; }
+
+	public bool Usable { get; init; }
 
 	public float Hardness { get; }
 

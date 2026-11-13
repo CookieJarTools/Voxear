@@ -1781,9 +1781,55 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
-- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders: on the graph compiler
-  particles share, whose shaders must cost what hand-written ones do (see
-  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
+- **The VoxShade compiler ✅** (`voxear_voxshade`). A graph of typed nodes
+  (inputs a stage is given, the surface as it stands, constants and colours, properties and picture reads, the
+  usual maths, Compare and Branch, Split, Combine, Swizzle and a whole-number Random) is lowered from its output
+  nodes into typed steps, which are folded, simplified and merged as they are made, with what no output reads
+  left out; each step knows whether it changes never, once a draw or from place to place. A Branch with a side
+  worth skipping becomes a real `if` holding only that side's work, the rest selects. It writes the same
+  properties struct and `surface`, `vertex` and `light` functions as a hand-written `.shader`, and counts each
+  node's instructions and picture reads once all that is done. Hologram and Sway made again as graphs
+  (`starters`) draw the same picture as the built-in ones and take the same GPU time (0.226 against 0.228 ms,
+  0.240 against 0.239 ms, least of sixty frames). Tests: folding, merging, leaving out, branches, errors at their
+  nodes, files read back; on a GPU, the two graphs against the hand-written shaders.
+- **VoxShade in the editor ✅.** `.voxshade` assets (`AssetKind::VoxShade`) are compiled as project
+  shaders wherever `.shader` ones are (`shaders::graph_source` in `ShaderRegistry`, and in builds), so materials
+  pick them as any shader, and a graph that does not compile keeps its errors by node. The **VoxShade**
+  panel (`voxshade_panel`) puts one on the generator graphs' canvas: the search by folder, wires dragged,
+  each node's instructions and picture reads once compiled under it and errors on it, each stage's sum on the
+  bar; beside it the picked node's values and the numbers its unwired inputs take (an output's left empty keeps
+  the material's), the properties (name, kind, default, range, tooltip) and the shader's settings. Undo, copy
+  and paste, saved as it changes and compiled in the background. **New Shader…** offers VoxShade, Hologram (VoxShade)
+  and Sway (VoxShade); the Inspector shows a graph's state and its Slang. The manual's VoxShade. Tests: the
+  panel opened, a node added and wired, a value typed, saved, compiled and undone on a GPU; rows, wires and
+  costs; a registry with a broken graph; a new graph from New Shader.
+- **VoxShade previews and work done once a material ✅.** Each node shows what it makes on a 72-pixel ball,
+  worked out on the CPU from the compiled steps (`voxear_voxshade::eval`, the panel's `voxshade_previews`), every
+  picture a cell of one texture, made again when the graph's work changes and 15 times a second while it reads
+  the time. Steps now run at one of four rates, constant, once a material, once a frame and from place to place;
+  the costliest work on properties alone that a higher rate reads (`hoist`) is worked out on the CPU when a
+  material's properties are set (`Derived`, `shaders::fill_worked`) and read by the shader as hidden values
+  after its properties, in the room left of the 16, with what only it needs left out of the Slang. Each node
+  and the bar say what is done once a material. Hologram and Sway now take 0.220 against 0.220 ms and 0.229
+  against 0.230 ms by hand; a graph with 200 sines on its properties draws the same in 0.226 ms against
+  0.239 ms with them at every pixel (least of sixty frames). Tests: previews, hoisting and its values, a full
+  material, the panel's costs; on a GPU, the heavy graph both ways.
+- **VoxShade sub-graphs and Slang nodes ✅.** A sub-graph is a `.voxshade` with `sub_graph`, inputs and outputs
+  (`Pin`s) in place of properties, Input nodes and a Sub-graph Output; the shader registry keeps them apart as a
+  `Library` by GUID, and a Sub-graph node (a typed reference, its ports kept up to date by the editor) is worked in
+  where it is used, through the same builder, so folding, merging and leaving out reach across it and its cost is
+  its nodes' (the same as the nodes put in by hand). A sub-graph on its own compiles to a Slang function to show.
+  A Slang node is a function the shader declares once (named from its code), called as one step with its other
+  outputs read from it, merged for the same inputs, never run on the CPU (previews striped, nothing after it
+  hoisted), its cost guessed from its code. The panel: rows for a Slang node's name, ports and code, a sub-graph
+  pick, a sub-graph's Inputs and Outputs; the search's Custom and Sub-graphs folders; New Shader's Sub-graph; the
+  Inspector's sub-graph. Tests: inlining, sharing, costs equal to plain nodes, errors at the node (missing, inside
+  itself, properties), Slang declared once and called once, ports added and taken away with their wires; on a GPU,
+  a rim made with a sub-graph and a Slang node against the same in plain nodes.
+- VoxShade to come: pictures passed into sub-graphs, material variants, the graph from `vox`, and work moved
+  to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
+  every pass shares (mesh shaders included) would need values of the graph's own first (see
+  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
   and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or
@@ -1920,7 +1966,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
   - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
-  - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
+  - the graph compiler shared with VoxShade, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order
 
@@ -2511,6 +2557,48 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     by biome, biomes numbered as a world loads, a saved biome making worlds again, a place's biome, the list added
     to, moved, taken from and undone, the Inspector's fields saved, the starters made once and listed, snow by
     height through the editor, scripts asking a place's biome.
+  - ~~**Blocks of parts, blocks you use, and hanging blocks:**~~ done: `block::BlockShape` grows slabs, stairs,
+    fences, walls, panes, doors, trap doors, fence gates, levers, buttons, chains, ropes and a block's own boxes
+    (`blocks::shape`: each drawn as boxes in sixteenths, `part_boxes`, from its placed state and what it takes from
+    the blocks beside it, `Around`: which sides a fence, a wall or a pane joins, which corner a stair turns). A
+    placed block's state is a byte (`BlockState`: facing of six, half, open, on, hinge), normalized to what its
+    shape keeps, and is part of its number: a palette entry names a block and a state (`BlockKind::state`), so
+    chunks, saved edits and what is sent to a player who joins are no larger. The mesher keeps a chunk's part
+    quads between its loose quads and its water (`ChunkMesh::parts`, `buckets[FACINGS + 1]`), each face of a box
+    two quads' words (`mesh::pack_part`: its rectangle and plane in sixteenths, its surface, whether it moves, its
+    hinge, its motion's number, whether its block is open, and how many hanging blocks are over it); a whole
+    block's face is hidden only against a side a block of parts covers whole (`BlockFaces::covers`). Solid
+    parts are triangles posed as they rest, for physics and the GI; fences, walls and shut gates have colliders a
+    block and a half high (`ChunkMesh::colliders`); levers, buttons, chains, ropes and open doors are walked
+    through (`PART_PASSES`, `is_ground`); water keeps out (`keeps_water_out`); Block Mobs stand on slabs and stop
+    at fences (`path::can_stand`); a Character Controller steps half a block on a world of blocks; the far rings
+    draw solid parts as cubes and thin ones not at all (`far_faces`, `far_block`), and so do maps.
+    - **Using blocks** (`blocks::usable`, `engine::blocks::{use_block, set_moved, change_state, tick}`): a door
+      opens whole with its pair hung on the other side (`door_group`), a lever toggles, a button is on for its
+      press time, and a lever or a button drives what it is linked to (`BlockWorld::links`, within 64 blocks,
+      saved in `.blocks` version 3 and in script captures). A door put down takes its upper block
+      (`with_door_halves`). Each state is numbered as it is first used (`state_number`).
+    - **Motion:** a block's `[motion]` keys (time, turn, move, ease; a shape's own unless it has one) are uploaded
+      per world (`GpuBlockMotion`) with the blocks moving now (`BlockWorld::moving`, by the world's own clock,
+      `GpuMovingBlock`); `partPoint` in `block_quads.slang` poses a part's corners by them, the previous frame's
+      too for motion vectors, and reads its pictures where it rests. Hanging blocks swing a few degrees about what
+      holds them in the wind and by the foliage push (`hangSwing`).
+    - **Structures** place a palette entry in a state (`[[model.states]]`) and turn it with the structure
+      (`WorldStructures::turns`, eight numbers a block that faces).
+    - **Scripts** (native API 85): `Blocks.Use`, `Using`, `Used`, `StateAt`, `SetState`, `Set(position, block,
+      state)`, `Place(hit, block, looking)`, `Link`, `Unlink`, `LinksFrom`; `BlockState`, `BlockShape`,
+      `BlockFacing`, `BlockHalf`, `DoorHinge`, `BlockUseKind`; `Block.Shape`, `IsUsable`; `BlockRules.CanUse`
+      and `OnUsed`; the **Block User** behaviour. Script captures name each block numbered in a state once
+      (`VXBT` version 2).
+    - **Editor:** the block Inspector's Use, Motion and Boxes; the Build tool puts a block down as a player would
+      (`shape::placed_state`), R turns it, its outline shows its boxes, and Use and Link brushes; Starter Blocks in
+      the Blocks panel with pictures drawn in code; blocks move while editing.
+    - Tests: shapes' boxes, states, turning and placing; meshing, collision and hanging of each; doors and levers;
+      links saved; turned structure doors; a C# script; GPU pictures of the shapes and a door half way open; the
+      Build tool and the Inspector in the editor.
+    - Later: water inside part blocks, part shapes in Voxel Terrain, small-cube faces on parts, signals past
+      links (wires, pressure plates, delays, gates), mobs opening doors, links in structures, climbing ropes and
+      ladders, blocks holding things, a box model's own pictures and clips as a block.
 - **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
   origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -2766,7 +2854,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - pages read by someone new to Voxear following them step by step, and rewritten where they get stuck
   - Docs Health in the editor holding the line after: pages older than the code they describe, samples that no
     longer build, and APIs with no page
-- Editor RPC for `vox`, and the hook for AI tooling.
+- ~~**Editor RPC for `vox`, and the hook for AI tooling:**~~ done: a running editor answers calls from programs on the
+  same computer (`voxear_engine::local_link`): loopback only, a secret in `.voxear/Editor` only its user reads,
+  JSON-RPC 2.0 a line each. 52 calls (`voxear_editor::link::CALLS`): read the open level, Objs, components and
+  fields as JSON; make, change, copy, move and delete Objs; add, remove and switch components; set any field the
+  Inspector shows by its typed reference; undo, redo and `batch` as one step; select and frame; every command
+  palette command by id; save, open levels and scenes; the Project panel's files; Play, Pause, Step, Stop and the
+  played game's console; the Console's lines; a PNG of the Scene view, Game view or whole editor; script builds
+  with their errors by file and line; settings; the manual's pages. Each change is a step on the editor's undo
+  and a `[Tools]` line in the Console; **Let tools change the project** in Settings makes tools read only. Open
+  scenes and `voxear.toml` written on disk are read again, unless edits wait. `vox editor call` (JSON out, exit
+  codes, `--headless`, `--describe --json`), `vox editor serve` (a headless editor a windowed one takes over
+  from), and `vox mcp`, every call a tool for an AI assistant, with captures sent as pictures. Tests: the link
+  (order, a wrong secret, loopback and 0600, a second editor, a stale file), an editor driven over the socket
+  (make an Obj, set a field, undo, redo, save, capture, the Console), a batch as one step, refusals, scenes
+  changed on disk, every component's fields reached, `vox editor call` and `vox mcp` from outside. Manual: The
+  Command Line, Driving the Editor from a Terminal. Not done: brush tools, the generator graph and the Model
+  window by call rather than by file; pointer and key input; events pushed to tools.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

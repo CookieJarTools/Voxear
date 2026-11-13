@@ -17,7 +17,10 @@
 //! whole, or its blocks one by one with how full each is, and then either
 //! how many and each block's place in the chunk and number (and fill), or
 //! its palette, bits and words (see `chunk::Chunk::parts`), and whether its
-//! fills follow, a byte a block. Version 1 had no fills.
+//! fills follow, a byte a block; then how many links from a lever or a
+//! button to the blocks it drives (see `usable`), each where it is from
+//! and how far to what it drives, a byte each way. Version 1 had no fills,
+//! version 2 no links.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,7 +32,7 @@ use super::{
 };
 
 const MAGIC: &[u8; 8] = b"VXBLOCKS";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// How one chunk changed.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,10 +47,12 @@ pub enum ChunkChange {
     Whole(Chunk),
 }
 
-/// Every chunk changed, by where it is.
+/// Every chunk changed, by where it is, and the world's links from a lever
+/// or a button to each block it drives, as they are now (see `usable`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlockEdits {
     pub chunks: BTreeMap<[i32; 3], ChunkChange>,
+    pub links: Vec<([i32; 3], [i32; 3])>,
 }
 
 /// Block `index` of a chunk, as `(x, y, z)`.
@@ -204,7 +209,7 @@ impl BlockEdits {
         let listed = |cells: BTreeMap<u16, (BlockId, Fill)>| {
             ChunkChange::Cells(cells.into_iter().map(|(index, (block, fill))| (index, block, fill)).collect())
         };
-        Self { chunks: chunks.into_iter().map(|(key, cells)| (key, listed(cells))).collect() }
+        Self { chunks: chunks.into_iter().map(|(key, cells)| (key, listed(cells))).collect(), links: Vec::new() }
     }
 
     /// These changes for a world whose blocks change size as `resize` says,
@@ -256,11 +261,11 @@ impl BlockEdits {
             };
             chunks.insert(key, change);
         }
-        Self { chunks }
+        Self { chunks, links: Vec::new() }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.chunks.is_empty()
+        self.chunks.is_empty() && self.links.is_empty()
     }
 
     /// These changes with every block they make renumbered by `change`, as
@@ -282,7 +287,7 @@ impl BlockEdits {
             ),
             ChunkChange::Whole(chunk) => ChunkChange::Whole(chunk.remapped(&change)),
         };
-        Self { chunks: self.chunks.iter().map(|(key, kept)| (*key, renumber(kept))).collect() }
+        Self { chunks: self.chunks.iter().map(|(key, kept)| (*key, renumber(kept))).collect(), links: self.links.clone() }
     }
 
     /// Makes these changes to `blocks`; the chunks changed, by where they are.
@@ -381,6 +386,13 @@ impl BlockEdits {
                 }
             }
         }
+        // Each link where it is from, and how far to what it drives, a byte each way.
+        let links: Vec<_> = self.links.iter().filter(|(from, to)| (0..3).all(|i| (to[i] - from[i]).abs() <= 127)).collect();
+        body.extend((links.len() as u32).to_le_bytes());
+        for (from, to) in links {
+            from.iter().for_each(|v| body.extend(v.to_le_bytes()));
+            body.extend((0..3).map(|i| (to[i] - from[i]) as i8 as u8));
+        }
         let mut bytes = MAGIC.to_vec();
         bytes.extend(VERSION.to_le_bytes());
         bytes.extend(lz4_flex::compress_prepend_size(&body));
@@ -454,7 +466,19 @@ impl BlockEdits {
             };
             chunks.insert(key, change);
         }
-        Ok(Self { chunks })
+        let mut links = Vec::new();
+        if version >= 3 {
+            let count = word(take(4)?);
+            for _ in 0..count {
+                let mut from = [0i32; 3];
+                for v in &mut from {
+                    *v = i32::from_le_bytes(take(4)?.try_into().expect("four bytes"));
+                }
+                let by = take(3)?;
+                links.push((from, std::array::from_fn(|i| from[i] + i32::from(by[i] as i8))));
+            }
+        }
+        Ok(Self { chunks, links })
     }
 }
 
@@ -584,7 +608,7 @@ mod tests {
         let bytes = edits.to_bytes();
         // Three blocks dug at a dozen bytes, and a chunk of three kinds in less than its two bits a block.
         assert!(bytes.len() < CHUNK_LEN / 4, "{} bytes", bytes.len());
-        let few = BlockEdits { chunks: edits.chunks.iter().take(1).map(|(k, c)| (*k, c.clone())).collect() };
+        let few = BlockEdits { chunks: edits.chunks.iter().take(1).map(|(k, c)| (*k, c.clone())).collect(), links: Vec::new() };
         assert!(few.to_bytes().len() < 64, "{} bytes for three blocks", few.to_bytes().len());
         let back = BlockEdits::from_bytes(&bytes).unwrap();
         assert_eq!(back, edits);
@@ -621,7 +645,7 @@ mod tests {
         assert_eq!((rebuilt.fill([3, 4, 3]), rebuilt.fill([8, 4, 8]), rebuilt.get([8, 4, 8])), (140, 120, AIR));
         // A whole chunk keeps its fills.
         let whole =
-            BlockEdits { chunks: [([0, 0, 0], ChunkChange::Whole((**now.chunk([0, 0, 0]).unwrap()).clone()))].into() };
+            BlockEdits { chunks: [([0, 0, 0], ChunkChange::Whole((**now.chunk([0, 0, 0]).unwrap()).clone()))].into(), links: Vec::new() };
         assert_eq!(BlockEdits::from_bytes(&whole.to_bytes()).unwrap(), whole);
         // Version 1: a block dug out, as it was written then.
         let mut body = 1u32.to_le_bytes().to_vec();
@@ -636,5 +660,23 @@ mod tests {
         assert!(
             matches!(BlockEdits::from_bytes(&old).unwrap().chunks[&[0, 0, 0]], ChunkChange::Blocks(ref list) if list == &[(7, AIR)])
         );
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn a_worlds_links_are_kept_with_its_changes_a_few_bytes_each() {
+        let mut map = BlockMap::default();
+        map.set([3, 4, 5], 2);
+        let mut edits = BlockEdits::between(&BlockMap::default(), &map);
+        let bare = edits.to_bytes().len();
+        edits.links = vec![([3, 4, 5], [10, 4, -20]), ([3, 4, 5], [3, 5, 5])];
+        let bytes = edits.to_bytes();
+        assert_eq!(BlockEdits::from_bytes(&bytes).unwrap(), edits);
+        assert!(bytes.len() <= bare + 2 * 15, "{} past {bare}", bytes.len());
+        assert!(!BlockEdits { chunks: BTreeMap::new(), links: edits.links.clone() }.is_empty());
     }
 }

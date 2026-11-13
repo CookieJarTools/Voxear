@@ -257,6 +257,20 @@ pub trait ScriptServices {
         anyhow::bail!("look packs are listed only in a running game, not here")
     }
 
+    /// Every texture pack there is to wear, for `TexturePacks` in
+    /// Voxear.Core, as JSON: `packs`, each with what names it, its name,
+    /// its description and where it is from; `worn`, what names the one
+    /// worn, if any; and `folder`, where a player keeps their own.
+    fn texture_packs_json(&mut self) -> Result<String> {
+        anyhow::bail!("texture packs are listed only in a running game, not here")
+    }
+
+    /// Makes a texture pack to start from, called `name`, in the player's
+    /// folder, for `TexturePacks.WriteStarter`: what names it.
+    fn texture_pack_starter(&mut self, name: &str) -> Result<String> {
+        anyhow::bail!("a texture pack is started only in a running game, not here ({name})")
+    }
+
     /// The biome the place `at` is, by its GUID, for `Biomes.At` in
     /// Voxear.Core: none where no world of blocks with biomes reaches.
     fn biome_at(&mut self, _world: &World, _at: [f32; 3]) -> Option<String> {
@@ -682,6 +696,21 @@ pub(crate) unsafe extern "C" fn data_assets(buffer: *mut u8, capacity: i32) -> i
 pub(crate) unsafe extern "C" fn look_packs_info(buffer: *mut u8, capacity: i32) -> i32 {
     let said = crate::interop::with_world(|world| with_services(|services| services.look_packs_json(world)));
     unsafe { answer_json(said, buffer, capacity) }
+}
+
+/// The texture packs as JSON for `TexturePacks` in Voxear.Core (see
+/// [`ScriptServices::texture_packs_json`]), written when it fits: its
+/// length, or -1 when there is none.
+pub(crate) unsafe extern "C" fn texture_packs_info(buffer: *mut u8, capacity: i32) -> i32 {
+    unsafe { answer_json(with_services(|services| services.texture_packs_json()), buffer, capacity) }
+}
+
+/// What names the texture pack made to start from (see
+/// [`ScriptServices::texture_pack_starter`]), written when it fits: its
+/// length, or -1, with the error logged, where it could not be made.
+pub(crate) unsafe extern "C" fn texture_pack_starter(name: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let name = unsafe { crate::interop::utf8(name, len) };
+    unsafe { answer_json(with_services(|services| services.texture_pack_starter(&name)), buffer, capacity) }
 }
 
 /// Writes JSON a service gave into `buffer` when it fits, and gives its

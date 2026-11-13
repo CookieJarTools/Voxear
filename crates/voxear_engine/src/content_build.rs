@@ -403,6 +403,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::LightProfile
         | AssetKind::Lighting
         | AssetKind::LookPack
+        | AssetKind::TexturePack
         | AssetKind::Shader
         | AssetKind::PromptIcons => false,
     }
@@ -510,6 +511,7 @@ fn usage_sets(
                         | AssetKind::Shader
                         | AssetKind::Block
                         | AssetKind::LookPack
+                        | AssetKind::TexturePack
                 ),
                 Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
             } || matches(&settings.include, &e.path);
@@ -637,6 +639,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Biome
         | AssetKind::Structure
         | AssetKind::Plant
+        // The pictures a texture pack draws blocks and materials with, and those blocks and materials.
+        | AssetKind::TexturePack
         // The pictures a set of prompt icons shows, and the set the input actions name.
         | AssetKind::PromptIcons
         | AssetKind::InputActions => {

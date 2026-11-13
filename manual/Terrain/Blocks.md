@@ -19,7 +19,7 @@ A **Block** is one kind of block: a `.block` asset with how it looks and its rul
 
 While worlds hold a block, **Delete** first says which, and offers **Delete Anyway**. A block deleted so is drawn bright pink in the worlds that hold it, until you put its file back.
 
-A block is called what its file is. Rename it in the Project panel, where **New Block** in a folder's menu makes one too.
+A block is called what its file is. Rename it in the Project panel, where **New Block** in a folder's menu makes one too, and **New Glass Block** a block of glass whose panes join (see [Faces that join](#faces-that-join)).
 
 ## A block's settings
 
@@ -35,6 +35,7 @@ Pick a block, and the Inspector shows:
 | Bottom | Its bottom's material |
 | Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
 | Shape | **Cube**, as most blocks are; **Bushy**, a cube with tufts of leaves reaching out of it (see [Bushy leaves](#bushy-leaves)); or **Vine**, thin sheets on the blocks beside it (see [Vines](#vines)) |
+| Overlap | Where it lies in the order of blocks that meet: its picture creeps over the edge of a block beside it with a lower Overlap. 0 keeps to itself (see [Blocks that meet](#blocks-that-meet)) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour, matt: it shines back nothing of the sky. For a block that shines, such as ice or polished stone, give it a material with a low **Roughness**. A liquid is drawn in its colour alone, so its materials go.
@@ -50,6 +51,44 @@ A block drawn with a material that is **cut out** is see-through: leaves, a grat
 - It is a block in every other way: stood on, built on, dug, and it shades the corners of the blocks round it.
 
 If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Far off, in the coarser rings, it is drawn like any block. Bounced light takes it as solid, and a see-through block is lit as any block is: light does not glow through a leaf from behind.
+
+### Faces that join
+
+A block drawn with a material that has **Connected tiles** joins those of its own kind beside it: a wall of glass is one sheet with a frame round the whole of it, not a frame round every pane, and a floor of slabs has one border round its edge.
+
+**New Glass Block** in a folder's menu makes one to start from: a block, its material and its picture, side by side. To make your own, give the block's material a colour map of five tiles side by side, each as wide as it is high, and turn on **Connected tiles** (see [[Materials#Pictures for blocks]]):
+
+| Tile | What it shows |
+| --- | --- |
+| 1 | The face alone: its border all round |
+| 2 | Filled: no border |
+| 3 | Joined left and right: its border along its top and bottom |
+| 4 | Joined up and down: its border down its sides |
+| 5 | Joined all round: only its inner corners |
+
+Draw the same inside in all five, and only the border differently. Each quarter of a face is taken from the tile the three faces round that quarter make it, so five tiles cover every shape a group of blocks can have.
+
+- A face joins the face beside it when that is the same block and shows too. A block in front of the one beside it breaks the join, so a border runs along where a wall meets it.
+- No face is drawn between two of the block, see-through or not: glass is one body, with nothing inside it.
+- Faces join by their own material: a block whose sides join and whose top does not is a bookcase, or a row of crates.
+- For glass, give the material a `cutout` and a picture that is clear inside its frame. The sun passes the panes and the frame casts its shadow.
+- A [[Texture Packs|texture pack]] can make a block join, or stop it joining, with the pictures it brings.
+- A joining face is drawn plain in a world of [[Block Worlds#Faces of small cubes|small cubes]].
+- A world drawn smooth joins nothing: give its blocks pictures of one tile.
+- Only a block whose **Shape** is **Cube** joins.
+
+### Blocks that meet
+
+Where two different blocks lie side by side, the edge between them is a straight line unless one of them has an **Overlap**. The block with the higher Overlap creeps over the edge of the other: a ragged fringe of its own picture, a few pixels deep, with teeth of uneven length. Give grass 2, dirt 1 and rock 0, and grass grows over the edge of both, and dirt spills onto rock.
+
+- Nothing needs drawing: the fringe is the block's own picture carried on past its edge, so it suits any picture, and any [[Texture Packs|texture pack]] a player wears.
+- A picture drawn with **Sharp pixels**, and a block of a colour alone, creep a whole pixel at a time. A smoothed picture creeps over a soft, wavy edge.
+- Blocks meet in one plane: grass creeps over the rock level with it, not over a step up or down, and not over a block whose face is covered.
+- Every higher block beside a face creeps over it, each from its own side, the highest on top: rock with grass on one side and dirt on another takes a fringe of each.
+- Two blocks with the same Overlap keep a straight edge between them.
+- A liquid, a see-through block, one that sways, a bushy block, a vine and a face that joins take no fringe and give none.
+- Far off, past the world's own blocks, edges are straight. So are those of a world drawn smooth, which blends its ground its own way.
+- A world can mix its blocks while it draws 128 looks or fewer.
 
 ### Bushy leaves
 
@@ -106,6 +145,10 @@ What it drops when it is broken: each an **Item**, how many of it, from the fewe
 **Break**, **Place** and **Step** are the sounds of breaking it, putting it down and walking on it. **Data** is a [[Data Assets|data asset]] of your own for it: whatever your scripts want to know of the block, or rules of its own (see [[Blocks and Items from Scripts#Rules of your own|Rules of your own]]).
 
 Each change is written to the block's file as you make it, and every world holding the block is drawn as it now says at once. There is nothing to save, and nothing to undo.
+
+## Other pictures for blocks
+
+Whoever plays your game can pick other pictures for its blocks: a [[Texture Packs|texture pack]] names a block and the pictures its top, sides and bottom are drawn with in its place. A block of a colour alone can be given a picture so, and a block with a material another.
 
 ## Blocks in a build
 

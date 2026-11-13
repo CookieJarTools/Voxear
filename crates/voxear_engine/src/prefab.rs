@@ -1136,6 +1136,7 @@ pub fn surface_look(
         liquid: surface.liquid,
         glitter: surface.glitter,
         leafy: false,
+        mixed: false,
     })
 }
 

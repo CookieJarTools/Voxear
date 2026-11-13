@@ -270,6 +270,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::VoxModel) => "blocks",
                 FileKind::Asset(AssetKind::Lighting) => "light",
                 FileKind::Asset(AssetKind::LookPack) => "eye",
+                FileKind::Asset(AssetKind::TexturePack) => "image",
                 FileKind::Asset(AssetKind::Data) => "file",
             },
         }

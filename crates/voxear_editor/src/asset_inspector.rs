@@ -349,6 +349,10 @@ struct MaterialFields {
     /// How far its height map moves it, and how finely it is diced.
     displacement: NodeId,
     detail: NodeId,
+    /// Whether its colour map's pixels are drawn sharp, and whether its
+    /// maps are the five tiles of a block's face that joins those beside it.
+    pixels: NodeId,
+    connected: NodeId,
     foliage: NodeId,
     /// How much it bends in the wind, and its leaves flutter.
     wind: [NodeId; 2],
@@ -559,6 +563,10 @@ impl AssetView {
                 let mut fields = LightingFields::for_pack(ui, tabs, body);
                 fields.show_file(ui, &file);
                 view.lighting = Some((fields, file.clone()));
+            }
+            ItemKind::Asset(AssetKind::TexturePack) => {
+                texture_pack_rows(ui, root, game, &file);
+                code(ui, root, &file, "toml", dark);
             }
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
@@ -810,6 +818,7 @@ impl AssetView {
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
+            .chain([&fields.pixels, &fields.connected])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -838,6 +847,7 @@ impl AssetView {
         data.glow = Glow::ALL[ui.selected_option(fields.glow).min(Glow::ALL.len() - 1)];
         data.glow_speed = read(fields.glow_speed, data.glow_speed).clamp(0.0, 30.0);
         data.glass = ui.is_checked(fields.glass);
+        (data.pixels, data.connected) = (ui.is_checked(fields.pixels), ui.is_checked(fields.connected));
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
         data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
@@ -1090,6 +1100,38 @@ fn particle_effect(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     }
 }
 
+/// What a texture pack says of itself and how much of the project it
+/// draws, over its file's text: the blocks and materials it names that are
+/// there, and how many it names that are not.
+fn texture_pack_rows(ui: &mut Ui, root: NodeId, game: &Game, file: &std::path::Path) {
+    let rows = part(ui, root, "Texture Pack", "image");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let pack = match voxear_engine::texture_packs::TexturePackFile::parse(&text) {
+        Ok(pack) => pack,
+        Err(error) => return text_row(ui, rows, "Not read", &format!("{error:#}")),
+    };
+    text_row(ui, rows, "Description", if pack.description.is_empty() { "None" } else { &pack.description });
+    text_row(ui, rows, "Pixels", if pack.pixels { "Sharp" } else { "Smooth" });
+    // How many of those it names are in the project, and how many are not.
+    let found = |named: &mut dyn Iterator<Item = &str>, kind: AssetKind| {
+        let db = game.content.db();
+        let is = |named: &str| {
+            let guid = game.content.parse(named).ok().and_then(|parsed| parsed.guid());
+            guid.and_then(|guid| db.get(guid)).is_some_and(|entry| entry.kind == kind)
+        };
+        let (there, missing): (Vec<&str>, Vec<&str>) = named.partition(|named| is(named));
+        match missing.len() {
+            0 => there.len().to_string(),
+            missing => format!("{}, {missing} not found", there.len()),
+        }
+    };
+    text_row(ui, rows, "Blocks", &found(&mut pack.blocks.iter().map(|entry| entry.block.as_str()), AssetKind::Block));
+    let materials = &mut pack.materials.iter().map(|entry| entry.material.as_str());
+    text_row(ui, rows, "Materials", &found(materials, AssetKind::Material));
+    let grain = pack.grain.map(|grain| format!("{} px", grain.pixels));
+    text_row(ui, rows, "Grain", grain.as_deref().unwrap_or("None"));
+}
+
 /// A box model's size on its sheet and in the world, and how much it is
 /// made of.
 fn box_model_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
@@ -1203,6 +1245,16 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         (slot, path)
     });
     let (displacement, detail) = (one(ui, "Displacement", data.displacement), one(ui, "Detail", data.detail));
+    let row = prop(ui, rows, "Sharp pixels");
+    ui.set_tooltip(row, "Draws the colour map's pixels sharp however near, as pixel art is", None);
+    let pixels = ui.toggle(row, "", data.pixels);
+    ui.add_class(pixels, "checkbox");
+    let row = prop(ui, rows, "Connected tiles");
+    let tip = "Its maps are five tiles side by side, and a block's faces drawn with it join those of its kind \
+               beside them: alone, filled, joined left and right, joined up and down, joined all round";
+    ui.set_tooltip(row, tip, None);
+    let connected = ui.toggle(row, "", data.connected);
+    ui.add_class(connected, "checkbox");
     let row = prop(ui, rows, "Foliage");
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
@@ -1228,6 +1280,8 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         maps,
         displacement,
         detail,
+        pixels,
+        connected,
         foliage,
         wind,
         leaves,
@@ -1613,6 +1667,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
+        ItemKind::Asset(AssetKind::TexturePack) => "Texture pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
@@ -1648,6 +1703,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::LookPack) => "eye",
+        ItemKind::Asset(AssetKind::TexturePack) => "image",
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",

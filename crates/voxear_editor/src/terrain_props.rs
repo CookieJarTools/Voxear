@@ -1164,6 +1164,7 @@ fn restyle(game: &mut Game, entity: Entity) {
             liquid: surface.liquid,
             glitter: surface.glitter,
             leafy: false,
+            mixed: false,
         });
     }
     look.surfaces = surfaces.into();

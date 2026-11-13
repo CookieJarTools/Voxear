@@ -139,11 +139,34 @@ pub struct BlockKind {
     /// where the world is made, as `cutout` is.
     #[serde(skip)]
     pub sways: bool,
+    /// Which of its faces join those of its own kind beside it, as panes
+    /// of glass do: those drawn with a material whose pictures are the five
+    /// tiles of a face that joins, a bit each ([`JOINS_SIDES`],
+    /// [`JOINS_TOP`], [`JOINS_BOTTOM`]). Never written: it is read from its
+    /// materials where the world is made, as `cutout` is.
+    #[serde(skip)]
+    pub connected: u8,
+    /// How far up the order of blocks that meet it lies (see
+    /// `block::BlockDef::overlap`). Never written: its block says, or the
+    /// texture pack worn.
+    #[serde(skip)]
+    pub overlap: u8,
     /// Its shape, as its block says: a cube, a cube with tufts of leaves,
     /// or a vine. Never written: a kind of the world's own is a cube.
     #[serde(skip)]
     pub shape: super::block::BlockShape,
 }
+
+/// Over a look's number, the look it is with another block's picture over
+/// its edge: a look and its twin are that far apart (see
+/// [`BlockFile::faces`]).
+pub const MIXED_LOOK: u8 = 0x80;
+
+/// The bits of a kind's faces that join: its material's, on its sides and
+/// wherever its top or bottom has none of its own; its top's; its bottom's.
+pub const JOINS_SIDES: u8 = 1;
+pub const JOINS_TOP: u8 = 2;
+pub const JOINS_BOTTOM: u8 = 4;
 
 /// An entry as its file says it: one naming a block says which and where it
 /// covers, one taken out only that, and a kind of the world's own all its
@@ -234,6 +257,8 @@ impl Default for BlockKind {
             water: false,
             cutout: false,
             sways: false,
+            connected: 0,
+            overlap: 0,
             shape: super::block::BlockShape::Cube,
         }
     }
@@ -305,13 +330,18 @@ impl Default for BlockFile {
     }
 }
 
-/// How one face is drawn: with a material, or else its colour; and whether
-/// it is a face of leaves or of a vine, which with no picture is drawn as
-/// small leaves in shades of its colour.
+/// How one face is drawn: with a material, or else its colour; whether its
+/// material's pictures are the five tiles of a face that joins those beside
+/// it; whether it is a look's twin, drawn the same but for another block's
+/// picture over its edge (see `mesh`); and whether it is a face of leaves or
+/// of a vine, which with no picture is drawn as small leaves in shades of
+/// its colour.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceLook {
     pub material: Option<String>,
     pub color: [f32; 3],
+    pub connected: bool,
+    pub mixed: bool,
     pub leafy: bool,
 }
 
@@ -424,10 +454,37 @@ impl BlockFile {
     /// place a block was taken out of has no look. Its entries naming
     /// blocks are drawn as they stand here, so fill them in first (see
     /// `block::BlockDef::fill`).
+    ///
+    /// Where a block of it creeps over those beside it (an `overlap` over
+    /// 0), every look has a twin [`MIXED_LOOK`] after it, drawn the same
+    /// but for another block's picture over its edge, and each block says
+    /// which of its faces can take one (`BlockFaces::mixes`). The looks
+    /// between are fillers no face names. A world of more looks than
+    /// `MIXED_LOOK` has no room for twins, and its blocks keep to
+    /// themselves.
     pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
+        let (mut looks, mut faces) = self.own_faces();
+        let twins = usize::from(MIXED_LOOK);
+        let creeps = self.blocks.iter().any(|kind| kind.is_live() && !kind.water && kind.overlap > 0);
+        if !creeps || looks.len() > twins {
+            faces.iter_mut().for_each(|faces| faces.mixes = 0);
+            return (looks, faces);
+        }
+        let own = looks.clone();
+        let filler = FaceLook { material: None, color: [0.6; 3], connected: false, mixed: false, leafy: false };
+        looks.resize(twins, filler);
+        looks.extend(own.into_iter().map(|look| FaceLook { mixed: true, ..look }));
+        (looks, faces)
+    }
+
+    /// Its looks without their twins, and each block's faces (see
+    /// [`faces`](Self::faces)).
+    fn own_faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
-        let mut find = |material: &Option<String>, color: [f32; 3], leafy: bool| {
-            let look = FaceLook { material: material.clone(), color, leafy };
+        let mut find = |material: &Option<String>, color: [f32; 3], connected: bool, leafy: bool| {
+            // A face with no picture has nothing to join with.
+            let connected = connected && material.is_some();
+            let look = FaceLook { material: material.clone(), color, connected, mixed: false, leafy };
             let at = looks.iter().position(|kept| *kept == look).unwrap_or_else(|| {
                 looks.push(look);
                 looks.len() - 1
@@ -442,20 +499,37 @@ impl BlockFile {
             }
             let shape = if kind.water { BlockShape::Cube } else { kind.shape };
             let leafy = !shape.is_cube();
-            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, leafy);
-            let sides = find(&kind.material, kind.color, leafy);
-            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, leafy);
+            // Which of its faces join: each by the material it is drawn with. Only a cube's do.
+            let joins = |own: &Option<String>, bit: u8| {
+                let bit = if own.is_some() { bit } else { JOINS_SIDES };
+                let joining = shape.is_cube() && !kind.water && kind.connected & bit != 0;
+                joining && (own.is_some() || kind.material.is_some())
+            };
+            let joined = [joins(&kind.top, JOINS_TOP), joins(&kind.material, JOINS_SIDES), joins(&kind.bottom, JOINS_BOTTOM)];
+            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, joined[0], leafy);
+            let sides = find(&kind.material, kind.color, joined[1], leafy);
+            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, joined[2], leafy);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
             let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
+            let connects = u8::from(joined[0]) * JOINS_TOP | u8::from(joined[1]) * JOINS_SIDES | u8::from(joined[2]) * JOINS_BOTTOM;
+            // A face takes another block's picture over its edge where it is plain ground: not seen through, not
+            // swaying, and not one that joins.
+            let plain = !kind.water && !see_through && !sways && shape.is_cube();
+            let takes = |joined: bool, bit: u8| if plain && !joined { bit } else { 0 };
+            let mixes = takes(joined[0], JOINS_TOP) | takes(joined[1], JOINS_SIDES) | takes(joined[2], JOINS_BOTTOM);
+            // Only a cube creeps: a bush's tufts and a vine's sheets are their own edge.
+            let overlap = if kind.water || !shape.is_cube() { 0 } else { kind.overlap };
             let drawn = BlockFaces::new(top, sides, bottom);
-            faces.push(BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn });
+            let shown = BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn };
+            faces.push(BlockFaces { connects, mixes, overlap, ..shown });
         }
         (looks, faces)
     }
 
-    /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can.
+    /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can,
+    /// their twins not counted.
     pub fn looks(&self) -> usize {
-        self.faces().0.len()
+        self.own_faces().0.len()
     }
 
     /// The blocks its ground starts as: made by `generator` where it is

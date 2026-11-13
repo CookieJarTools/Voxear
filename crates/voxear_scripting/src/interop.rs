@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 83;
+pub(crate) const API_VERSION: u32 = 84;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -552,6 +552,15 @@ pub(crate) struct NativeApi {
     pub storm_call: unsafe extern "C" fn(what: i32, id: u32, values: *mut [f32; 16]) -> i32,
     /// `Storms.CaptureState` and `Storms.ApplyState`: the storms' clock and those scripts made, as bytes, and back.
     pub storm_state: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
+    /// `TexturePacks.Use`: wears the texture pack a reference names from the next frame, or with none, takes off
+    /// the one worn; and, with `remember`, keeps the choice beside the saves for the game's next run.
+    pub texture_pack_wear: unsafe extern "C" fn(reference: *const u8, len: i32, remember: i32),
+    /// `TexturePacks`: every texture pack there is to wear, which is worn and where a player keeps their own, as
+    /// JSON; its length, or -1 when there is none.
+    pub texture_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// `TexturePacks.WriteStarter`: makes a pack to start from, called `name`, in the player's folder, and writes
+    /// what names it; its length, or -1 where it could not be made.
+    pub texture_pack_starter: unsafe extern "C" fn(name: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1208,6 +1217,7 @@ thread_local! {
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LOOK_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
+    static TEXTURE_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
     /// The level's time of year, as `Seasons.TimeOfYear` reads it: NaN
     /// without Seasons. Scripts setting it change it here at once, and the
     /// engine takes what they set after the frame.
@@ -1274,6 +1284,10 @@ pub(crate) fn take_lighting_requests() -> Vec<String> {
 
 pub(crate) fn take_look_pack_requests() -> Vec<(String, bool)> {
     LOOK_PACK_REQUESTS.take()
+}
+
+pub(crate) fn take_texture_pack_requests() -> Vec<(String, bool)> {
+    TEXTURE_PACK_REQUESTS.take()
 }
 
 /// The level's weather as scripts read it: its kind, by its place among the kinds; what it adds this moment
@@ -1561,6 +1575,11 @@ unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
 unsafe extern "C" fn look_pack_wear(reference: *const u8, len: i32, remember: i32) {
     let reference = unsafe { utf8(reference, len) }.into_owned();
     LOOK_PACK_REQUESTS.with_borrow_mut(|r| r.push((reference, remember != 0)));
+}
+
+unsafe extern "C" fn texture_pack_wear(reference: *const u8, len: i32, remember: i32) {
+    let reference = unsafe { utf8(reference, len) }.into_owned();
+    TEXTURE_PACK_REQUESTS.with_borrow_mut(|r| r.push((reference, remember != 0)));
 }
 
 unsafe extern "C" fn seasons_time() -> f32 {
@@ -2146,6 +2165,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         clock_value: crate::heat::clock_value,
         storm_call: crate::storms::storm_call,
         storm_state: crate::storms::storm_state,
+        texture_pack_wear,
+        texture_packs_info: crate::services::texture_packs_info,
+        texture_pack_starter: crate::services::texture_pack_starter,
     }
 }
 

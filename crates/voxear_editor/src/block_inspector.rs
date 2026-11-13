@@ -121,6 +121,8 @@ pub struct BlockFields {
     unbreakable: NodeId,
     /// Whether it sways in the wind; none for a liquid.
     sways: Option<NodeId>,
+    /// How far up the order of blocks that meet it lies; none for a liquid.
+    overlap: Option<NodeId>,
     /// Its shape; none for a liquid.
     shape: Option<NodeId>,
     tier: NodeId,
@@ -171,6 +173,15 @@ impl BlockFields {
                        with a foliage material sways without this";
             ui.set_tooltip(row, tip, None);
             ui.toggle(row, "", block.sways)
+        });
+        let overlap = block.liquid.is_none().then(|| {
+            let field = number_field(ui, rows, "Overlap", f32::from(block.overlap));
+            let tip = "Where it lies beside a block with a lower Overlap, in one plane, its picture creeps over that \
+                       block's edge: 2 for grass, 1 for dirt and 0 for rock has grass over both and dirt over rock";
+            if let Some(row) = ui.parent(field) {
+                ui.set_tooltip(row, tip, None);
+            }
+            field
         });
         let shape = block.liquid.is_none().then(|| {
             let row = prop(ui, rows, "Shape");
@@ -240,6 +251,7 @@ impl BlockFields {
                 hardness,
                 unbreakable,
                 sways,
+                overlap,
                 shape,
                 tier,
                 heat,
@@ -310,6 +322,9 @@ impl BlockFields {
         }
         if ui.changed(self.unbreakable) {
             (block.unbreakable, typed) = (ui.is_checked(self.unbreakable), true);
+        }
+        if let Some(overlap) = self.overlap.and_then(|overlap| changed_number(ui, overlap)) {
+            (block.overlap, typed) = (overlap.round().clamp(0.0, 255.0) as u8, true);
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);

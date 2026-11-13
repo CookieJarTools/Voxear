@@ -64,6 +64,9 @@ pub(super) enum Mode {
 pub(super) struct Run {
     edit: Engine,
     levels: Levels,
+    /// The texture pack the edited level was shown under, which it is
+    /// shown under again once the game stops.
+    textures: Option<String>,
     pub paused: bool,
     /// Step was pressed: move the paused game on one frame.
     step: bool,
@@ -332,7 +335,7 @@ impl Editor {
         self.game.audio.stop_game();
         self.game.input.release_all();
         self.game_focused = false;
-        let Run { edit, levels, .. } = *run;
+        let Run { edit, levels, textures, .. } = *run;
         let selected = self.selected().and_then(|entity| self.game.levels.counterpart(entity, &levels));
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         // The values to keep, read before the played world goes.
@@ -350,6 +353,15 @@ impl Editor {
         let mut played = std::mem::replace(&mut self.game.engine, edit);
         self.game.levels = levels;
         self.game.content.bring_back();
+        // The game's texture pack goes with it, and the level is shown under the one it was: its faces made
+        // again, since the game's pack took their materials' place.
+        let shown = match textures {
+            Some(reference) => voxear_engine::texture_packs::wear_again(&mut self.game.content, &reference),
+            None => voxear_engine::texture_packs::wear(&mut self.game.content, ""),
+        };
+        if let Err(error) = shown {
+            tracing::warn!("{error:#}");
+        }
         self.play.scripts = played.shutdown();
         drop(played);
         self.scene_cameras_back(flown);
@@ -516,8 +528,12 @@ impl Editor {
         let locked = self.locked_shown(|entity| self.game.levels.counterpart(entity, &levels));
         let edit = std::mem::replace(&mut self.game.engine, engine);
         let levels = std::mem::replace(&mut self.game.levels, levels);
-        // As a build does: the look pack chosen last time.
+        // As a build does: the look pack and the texture pack chosen last time.
         self.game.wear_remembered_look();
+        let textures = voxear_engine::texture_packs::worn(&self.game.content).map(str::to_string);
+        if voxear_engine::texture_packs::wear(&mut self.game.content, "").is_ok() {
+            self.game.wear_remembered_textures();
+        }
         // The game may change levels as it plays, and let go of what it no longer uses, but not of what the level put aside here draws.
         self.game.content.set_aside(&edit.world);
         self.kept.clear();
@@ -529,7 +545,7 @@ impl Editor {
         // As in Unity, the Game view has the focus as play starts, so the game hears the keys at once.
         self.game.input.release_all();
         self.game_focused = true;
-        let run = Run { edit, levels, paused, step: false };
+        let run = Run { edit, levels, textures, paused, step: false };
         self.play.mode = Mode::Playing(Box::new(run));
         self.after_swap(selected, "game");
         self.show_locked(locked);

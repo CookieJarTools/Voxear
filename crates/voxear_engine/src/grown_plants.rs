@@ -593,15 +593,55 @@ fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &Block
     let size = (rule.scale[0] + rule.scale[1]) * 0.5;
     let wide = (most.x - least.x).max(most.z - least.z);
     let from = Woods::first_past(grower.draw_distance, endless.distance);
-    Some(Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from })
+    Some(Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from, biomes: Vec::new() })
 }
 
 /// What the Foliage growing under the Block World on `entity` show as in
-/// its far view, each a wood (see [`woods_of`]): those whose plants stand
+/// its far view, each a wood (see [`woods_of`]), and the trees its
+/// structures grow (see [`structure_woods`]): those whose plants stand
 /// thick enough to show so far off.
 pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Arc<dyn FarBuilt>> {
-    let woods = on_maps(world, content, entity).into_iter().filter(Woods::shows);
-    woods.map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+    let mut woods = on_maps(world, content, entity);
+    woods.extend(structure_woods(world, entity));
+    woods.into_iter().filter(Woods::shows).map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+}
+
+/// The trees the structures of the Block World on `entity` grow, as woods
+/// in its far view past its own blocks, where its structures stand no
+/// more: each plant's woods of its own leaves, so a grove of blossom is
+/// pink far off and a wood of pines dark. They keep to their structure's
+/// biomes, and stand as
+/// often, on as steep and as high ground, as the structure's placement
+/// says; as tall as the plant at its middle size and as wide as its crown.
+pub fn structure_woods(world: &World, entity: Entity) -> Vec<Woods> {
+    use voxear_terrain::blocks::{grow::GrowRule, structure::StructureBlocks};
+    let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Vec::new() };
+    let Some(generate) = asset.file.generate.as_ref() else { return Vec::new() };
+    let (Some(endless), Some(built)) = (generate.endless, generate.built.as_deref()) else { return Vec::new() };
+    let middle = |[from, to]: [f32; 2]| (from + to) * 0.5;
+    let size = asset.file.block_size.max(0.01);
+    built
+        .list
+        .iter()
+        .filter_map(|structure| {
+            let StructureBlocks::Plant { plant, leaves, .. } = &structure.blocks else { return None };
+            let placement = &structure.placement;
+            let rule = GrowRule {
+                height: placement.height,
+                slope: placement.slope,
+                spacing: placement.spacing,
+                separation: placement.separation,
+                chance: placement.chance,
+                seed: placement.salt ^ 0x7EE5,
+                ..GrowRule::default()
+            };
+            let crown = middle(plant.crown_height);
+            let height = (middle(plant.height) + crown / 3.0 + plant.leaf_size * 0.25) * size;
+            let width = middle(plant.crown_width).max(plant.leaf_size) * size;
+            let from = Woods::first_past(endless.distance, endless.distance);
+            Some(Woods { rule, block: *leaves, height, width, from, biomes: structure.biomes.clone() })
+        })
+        .collect()
 }
 
 /// The Foliage growing under the Block World on `entity` that a map of it

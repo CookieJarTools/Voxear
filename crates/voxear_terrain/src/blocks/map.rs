@@ -955,7 +955,7 @@ mod tests {
             ..GrowRule::default()
         };
         // Trees six metres tall and five across, drawn as leaves.
-        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1 };
+        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1, biomes: Vec::new() };
         let grows = |edits: Arc<BlockEdits>| MapGround::made(making.clone(), edits).growing(vec![trees.clone()]);
         let plain = map_tile(&MapGround::made(making.clone(), Arc::default()), 0, [0, 0]);
         let tile = map_tile(&grows(Arc::default()), 0, [0, 0]);

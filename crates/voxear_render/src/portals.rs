@@ -460,11 +460,16 @@ pub struct PortalQuality {
     /// The sun casts shadows on a far side while the camera is within this
     /// many metres of the opening; 0 for never.
     pub shadow_distance: f32,
+    /// How far round a Portal's far side a world without end makes its own
+    /// blocks, in metres, and how far its far view reaches from there:
+    /// never further than the world's own distances.
+    pub far_side_distance: f32,
+    pub far_side_far_view: f32,
 }
 
 impl Default for PortalQuality {
     fn default() -> Self {
-        Self { views: 4, depth: 1, shadow_distance: 30.0 }
+        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0, far_side_far_view: 2000.0 }
     }
 }
 

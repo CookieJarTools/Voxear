@@ -646,7 +646,11 @@ impl Game {
         // Before physics steps, so ground made round the camera stands things on it this frame.
         crate::terrain::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        // The far sides of Portals near by are made with the ground round the camera, and each Portal opens
+        // once its own is.
+        crate::portals::find_exits(&mut self.engine.world);
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
+        crate::portals::update_far(&mut self.engine.world, delta);
         crate::blocks::flow(&mut self.engine.world, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.

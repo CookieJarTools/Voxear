@@ -211,3 +211,150 @@ fn a_camera_goes_on_seeing_what_it_follows_through_the_opening() {
         assert!(far_pose.local(last).z > 0.0 && last.distance(THERE) < 30.0, "{name} ends in the far place: {last:?}");
     }
 }
+
+fn write(dir: &std::path::Path, files: &[(&str, String)]) {
+    for (path, text) in files {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+#[test]
+fn a_character_walks_through_to_ground_made_for_it_far_off_in_a_world_without_end() {
+    use voxear_core::math::DVec3;
+    use voxear_engine::{Game, Project};
+    use voxear_render::PortalFar;
+    use voxear_scene::WorldOrigin;
+    use voxear_terrain::{
+        blocks::{
+            file::BlockFile,
+            generate::{BlockEndless, BlockGenerate},
+        },
+        generate::Preset,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = BlockFile { block_size: 2.0, ..BlockFile::default() };
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -4,
+        caves: 0.0,
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        ..BlockGenerate::default()
+    });
+    let scene = "format = 1\n\n[[obj]]\nid = 1\nname = \"Blocks\"\nposition = [-16.0, 0.0, -16.0]\n\
+                 [obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n";
+    let project = "[project]\nname = \"Blocks\"\nstart_level = \"Levels/Main.level\"\n\n\
+                   [floating_origin]\nmode = \"endless\"\n";
+    write(
+        dir.path(),
+        &[
+            ("voxear.toml", project.into()),
+            ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".into()),
+            ("Scenes/Field.scene", scene.into()),
+            ("Blocks/Field.blockworld", file.to_text()),
+            ("Worlds/Hills.worldgen", Preset::RollingHills.world().to_text()),
+        ],
+    );
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    // The top of the highest block under a place of the world, where its blocks are made.
+    let blocks = game.engine.world.query_ref::<(Entity, &voxear_terrain::blocks::BlockWorld)>().into_iter().next().unwrap().0;
+    let top = |game: &Game, x: f32, z: f32| -> Option<f32> {
+        let world = &game.engine.world;
+        let corner = at(&game.engine, blocks);
+        let held = world.get::<voxear_terrain::blocks::BlockWorld>(blocks)?;
+        let column = [((x - corner.x) / 2.0).floor() as i32, ((z - corner.z) / 2.0).floor() as i32];
+        let highest = (-8..200).rev().find(|&y| held.blocks.get([column[0], y, column[1]]) != 0)?;
+        Some(corner.y + (highest + 1) as f32 * 2.0)
+    };
+    // A walker with its eye under it, held over the middle until there is ground to stand on.
+    let world = &mut game.engine.world;
+    let walker = world.spawn((CharacterController::default(), Transform::from_position(Vec3::new(8.0, 300.0, 8.0))));
+    world.spawn((Camera::default(), Parent(walker), Transform::from_position(Vec3::new(0.0, 1.6, 0.0))));
+    // How fast it walks, and how fast it falls.
+    let walking = Arc::new(Mutex::new((0.0f32, 0.0f32)));
+    let speed = walking.clone();
+    game.engine.schedule.add_system("Update", "walk", move |world| {
+        let Some(mut physics) = world.remove_resource::<PhysicsScene>() else { return };
+        let ahead = world.get::<Transform>(walker).map_or(Vec3::Z, |transform| transform.rotation * Vec3::Z);
+        let (walk, fall) = *speed.lock().unwrap();
+        if walk != 0.0 || fall != 0.0 {
+            physics.move_character(world, walker, ahead * walk - Vec3::Y * fall, FRAME);
+        }
+        world.insert_resource(physics);
+    });
+    let settle = |game: &mut Game| {
+        for _ in 0..6000 {
+            game.tick(FRAME, None);
+            if voxear_engine::blocks::streamed(&game.engine.world) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the blocks were never all made");
+    };
+    settle(&mut game);
+    let under = top(&game, 8.0, 8.0).expect("ground under the walker");
+    game.engine.world.get_mut::<Transform>(walker).unwrap().position.y = under + 2.0;
+    walking.lock().unwrap().1 = 6.0;
+    for _ in 0..90 {
+        game.tick(FRAME, None);
+    }
+    let stood = at(&game.engine, walker);
+    assert!((stood.y - under).abs() < 0.1, "the walker stands on the hills: {stood:?}, ground at {under}");
+
+    // A Portal 6 m in front of it, tall enough that the hill it stands on does not hide its opening, and the
+    // Portal that one leads to 9 km off.
+    let there = Vec3::new(9000.0, 0.0, -2500.0);
+    let facing_back = Quat::from_rotation_y(std::f32::consts::PI);
+    let world = &mut game.engine.world;
+    let near = world.spawn((Portal::default(), Transform::new(stood + Vec3::new(0.0, -6.0, 6.0), facing_back, Vec3::ONE)));
+    let far = world.spawn((Portal::default(), Transform::new(there, Quat::from_rotation_y(TURN), Vec3::ONE)));
+    *world.get_mut::<Portal>(near).unwrap() = Portal::to(Vec2::new(4.0, 40.0), far);
+    *world.get_mut::<Portal>(far).unwrap() = Portal::to(Vec2::new(4.0, 40.0), near);
+
+    // Its far side is not there yet: the Portal is shut until the ground round the far one is made.
+    game.tick(FRAME, None);
+    let shut = *game.engine.world.get::<PortalFar>(near).expect("a world without end says how far along it is");
+    assert!(!shut.ready && shut.shown == 0.0, "{shut:?}");
+    assert!(top(&game, there.x, there.z).is_none(), "no ground made 9 km off before a Portal led there");
+    settle(&mut game);
+    for _ in 0..40 {
+        game.tick(FRAME, None);
+    }
+    let open = *game.engine.world.get::<PortalFar>(near).unwrap();
+    assert!(open.ready && open.shown == 1.0, "made, and its mist cleared: {open:?}");
+    let far_ground = top(&game, there.x, there.z).expect("the far ground is made");
+    // The far Portal set where coming out of it lands a little over that ground: the walker goes in 6 m up the
+    // near one's opening.
+    game.engine.world.get_mut::<Transform>(far).unwrap().position.y = far_ground - 5.0;
+    game.tick(FRAME, None);
+    assert_eq!(WorldOrigin::of(&game.engine.world), WorldOrigin::default(), "nothing moved the world's middle yet");
+
+    // It walks through, and four seconds on stands on the hills 9 km off, the world's middle having come with it.
+    walking.lock().unwrap().0 = 3.0;
+    let mut events = Vec::new();
+    for _ in 0..240 {
+        game.tick(FRAME, None);
+        events.extend(passed(&game.engine));
+    }
+    assert_eq!(events.len(), 1, "{events:?}");
+    walking.lock().unwrap().0 = 0.0;
+    for _ in 0..120 {
+        game.tick(FRAME, None);
+    }
+    let origin = WorldOrigin::of(&game.engine.world);
+    assert_ne!(origin, WorldOrigin::default(), "the world's middle came with the camera");
+    let now = origin.to_level(at(&game.engine, walker));
+    let away = now.distance(DVec3::new(f64::from(there.x), now.y, f64::from(there.z)));
+    assert!(away < 20.0, "by the far Portal: {now:?}");
+    let here = at(&game.engine, walker);
+    let under = top(&game, here.x, here.z).expect("ground under it");
+    assert!((here.y - under).abs() < 0.1, "standing on the hills there, at {} on ground at {under}", here.y);
+    let state = game.engine.physics().unwrap().character_state(walker).unwrap();
+    assert!(matches!(state.ground, voxear_physics::Ground::Ground), "{:?}", state.ground);
+    // The near side is the far side now, and still made, to look back into.
+    let back = *game.engine.world.get::<PortalFar>(far).unwrap();
+    assert!(back.ready, "the way back is open: {back:?}");
+}

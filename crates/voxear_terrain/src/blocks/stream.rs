@@ -220,6 +220,61 @@ impl Window {
     }
 }
 
+/// A place a world of blocks without end is seen from, which its chunks are
+/// kept round: where, in metres from the world's corner along x and z, and
+/// how far, near and coarse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StreamFrom {
+    pub at: [f32; 2],
+    pub distance: f32,
+    pub far: f32,
+}
+
+/// The chunk columns of one level kept: the window round each place the
+/// world is seen from that reaches this level.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Area(Vec<Window>);
+
+impl Area {
+    fn contains(&self, at: [i32; 2]) -> bool {
+        self.0.iter().any(|window| window.contains(at))
+    }
+
+    /// Every column of it, once each.
+    fn columns(&self) -> Vec<[i32; 2]> {
+        let mut columns: Vec<[i32; 2]> = Vec::new();
+        for (index, window) in self.0.iter().enumerate() {
+            // Only those no window before it holds.
+            columns.extend(window.columns().filter(|at| !self.0[..index].iter().any(|before| before.contains(*at))));
+        }
+        columns
+    }
+
+    /// Each window a column wider each way.
+    fn grown(&self) -> Area {
+        Area(self.0.iter().map(Window::grown).collect())
+    }
+}
+
+/// Each level's columns kept round the places in `from`: every place's own
+/// windows (see `windows`), a level's together. Each window's sides lie on
+/// its next level's columns, so a coarse column is wholly in or out of each
+/// finer window, and so of them all.
+fn areas(file: &BlockFile, from: &[StreamFrom]) -> Vec<Area> {
+    let mut areas: Vec<Area> = Vec::new();
+    for place in from {
+        for (level, window) in windows(file, place.distance, place.far, place.at).into_iter().enumerate() {
+            if areas.len() <= level {
+                areas.push(Area::default());
+            }
+            if !areas[level].0.contains(&window) {
+                areas[level].0.push(window);
+            }
+        }
+    }
+    areas
+}
+
 /// The nine chunk columns round `at`, its own among them.
 fn round([x, z]: [i32; 2]) -> impl Iterator<Item = [i32; 2]> {
     (-1..=1).flat_map(move |dz| (-1..=1).map(move |dx| [x + dx, z + dz]))
@@ -269,8 +324,8 @@ pub struct BlockStreamer {
     /// The world's faces as the last update left them, to find faces made
     /// since, by changes to its blocks, for columns not drawn.
     seen: Option<Arc<HashMap<[i32; 3], Arc<ChunkMesh>>>>,
-    /// Each level's window as the last update left them.
-    windows: Option<Vec<Window>>,
+    /// Each level's columns kept as the last update left them.
+    windows: Option<Vec<Area>>,
     /// Whether faces made were let go, their blocks changed since, to be
     /// asked for again.
     again: bool,
@@ -328,6 +383,17 @@ impl BlockStreamer {
             && self.making_now.load(Ordering::Acquire) == 0
     }
 
+    /// Whether every near column within `radius` metres of `at`, in metres
+    /// from the world's corner along x and z, is made and drawn: there is
+    /// ground to see there, and to stand on once physics has taken it up.
+    pub fn drawn_round(&self, at: [f32; 2], radius: f32) -> bool {
+        let Some(making) = &self.making else { return false };
+        let column = CHUNK as f32 * making.file.block_size.max(0.01);
+        let low = at.map(|v| ((v - radius) / column).floor() as i32);
+        let high = at.map(|v| ((v + radius) / column).floor() as i32);
+        (low[1]..=high[1]).all(|z| (low[0]..=high[0]).all(|x| self.drawn.contains(&[x, z])))
+    }
+
     /// Brings `world`'s chunks round `camera`, in metres from its corner
     /// along x and z, made by `making`, out to `distance` metres near and
     /// `far` metres coarse: `base` keeps the near chunks as made and
@@ -342,6 +408,22 @@ impl BlockStreamer {
         making: BlockMaking,
         (distance, far): (f32, f32),
         camera: [f32; 2],
+    ) -> bool {
+        self.update_from(world, base, pending, making, &[StreamFrom { at: camera, distance, far }])
+    }
+
+    /// As [`update`](Self::update), with chunks kept round every place in
+    /// `from` and not the camera alone: the first is where the world is
+    /// looked at from, and the rest are where it is seen from besides, as
+    /// the far sides of Portals, each as far as it says. What is nearest any
+    /// of them is made first.
+    pub fn update_from(
+        &mut self,
+        world: &mut BlockWorld,
+        base: &mut Arc<BlockMap>,
+        pending: &mut Arc<BlockEdits>,
+        making: BlockMaking,
+        from: &[StreamFrom],
     ) -> bool {
         let mut changed = false;
         // What is built into the far view changed, its ground the same: its tiles are built on again, the old drawn
@@ -384,11 +466,11 @@ impl BlockStreamer {
             self.making = Some(Arc::new(making));
         }
         let making = self.making.clone().expect("kept above");
-        let windows = windows(&making.file, distance, far, camera);
-        // Near columns are drawn within the first window, their blocks made a column further.
-        let (shown, made) = (windows[0], windows[0].grown());
-        changed |= self.take_finished(world, (base, pending), (shown, made));
-        changed |= self.let_go(world, (base, pending), (shown, made));
+        let windows = areas(&making.file, from);
+        // Near columns are drawn within the first level's windows, their blocks made a column further.
+        let (shown, made) = (windows[0].clone(), windows[0].grown());
+        changed |= self.take_finished(world, (base, pending), (&shown, &made));
+        changed |= self.let_go(world, (base, pending), (&shown, &made));
         self.coarse.retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.contains(*at)));
         self.coarse_blocks
             .retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.grown().contains(*at)));
@@ -408,7 +490,7 @@ impl BlockStreamer {
         // Asked again only where something came or went, or the camera moved, or there is still more to make.
         let moved = self.windows.as_deref() != Some(&windows[..]);
         if changed || moved || self.waiting > 0 || std::mem::take(&mut self.again) {
-            self.ask(world, &making, &windows, (camera, pending));
+            self.ask(world, &making, &windows, (from, pending));
         }
         if changed || moved {
             changed |= self.show_coarse(world, &windows);
@@ -426,7 +508,7 @@ impl BlockStreamer {
         &mut self,
         world: &mut BlockWorld,
         (base, pending): (&mut Arc<BlockMap>, &mut Arc<BlockEdits>),
-        (shown, made): (Window, Window),
+        (shown, made): (&Area, &Area),
     ) -> bool {
         voxear_core::profile_scope!("Take Finished");
         let mut changed = false;
@@ -533,7 +615,7 @@ impl BlockStreamer {
         &mut self,
         world: &mut BlockWorld,
         (base, pending): (&mut Arc<BlockMap>, &mut Arc<BlockEdits>),
-        (shown, made): (Window, Window),
+        (shown, made): (&Area, &Area),
     ) -> bool {
         voxear_core::profile_scope!("Let Go");
         let hidden: Vec<[i32; 2]> = self.drawn.iter().copied().filter(|at| !shown.contains(*at)).collect();
@@ -589,11 +671,11 @@ impl BlockStreamer {
         &mut self,
         world: &BlockWorld,
         making: &Arc<BlockMaking>,
-        windows: &[Window],
-        (camera, pending): ([f32; 2], &BlockEdits),
+        windows: &[Area],
+        (from, pending): (&[StreamFrom], &BlockEdits),
     ) {
         voxear_core::profile_scope!("Ask");
-        let (shown, made) = (windows[0], windows[0].grown());
+        let (shown, made) = (windows[0].clone(), windows[0].grown());
         let mut columns = None;
         let smooth = making.file.smooth;
         // What to make: its level (0 for a near column's blocks, and none for its faces), place and how far away.
@@ -603,8 +685,12 @@ impl BlockStreamer {
         for (level, window) in windows.iter().enumerate() {
             let level = level as u32;
             let size = CHUNK as f32 * making.file.block_size * (1u32 << level) as f32;
-            let middle = camera.map(|v| v / size - 0.5);
-            let away = |at: [i32; 2]| (at[0] as f32 - middle[0]).powi(2) + (at[1] as f32 - middle[1]).powi(2);
+            // How far a column is from the nearest place the world is seen from, in columns, squared.
+            let middles: Vec<[f32; 2]> = from.iter().map(|place| place.at.map(|v| v / size - 0.5)).collect();
+            let away = |at: [i32; 2]| {
+                let from = |middle: &[f32; 2]| (at[0] as f32 - middle[0]).powi(2) + (at[1] as f32 - middle[1]).powi(2);
+                middles.iter().map(from).fold(f32::MAX, f32::min)
+            };
             if level == 0 {
                 for at in shown.columns() {
                     let ready = round(at).all(|column| self.near.contains(&column));
@@ -624,11 +710,11 @@ impl BlockStreamer {
                 }
             }
             let window = if level == 0 {
-                made
+                made.clone()
             } else if smooth {
                 window.grown()
             } else {
-                *window
+                window.clone()
             };
             for at in window.columns() {
                 let done = if level == 0 {
@@ -757,14 +843,14 @@ impl BlockStreamer {
 
     /// Draws each coarse column where the four finer columns under it are
     /// not all drawn. True if what is drawn changed.
-    fn show_coarse(&self, world: &mut BlockWorld, windows: &[Window]) -> bool {
+    fn show_coarse(&self, world: &mut BlockWorld, windows: &[Area]) -> bool {
         voxear_core::profile_scope!("Coarse");
         let drawn_fine = |level: u32, at: [i32; 2]| {
             if level == 0 { self.drawn.contains(&at) } else { self.coarse.contains_key(&(level, at)) }
         };
         let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
         for ((level, at), meshes) in &self.coarse {
-            let finer = windows[*level as usize - 1];
+            let finer = &windows[*level as usize - 1];
             let covered = (0..4).all(|i| {
                 let child = [at[0] * 2 + (i & 1), at[1] * 2 + (i >> 1)];
                 finer.contains(child) && drawn_fine(level - 1, child)
@@ -1385,6 +1471,53 @@ mod tests {
         for (level, at) in streamer.coarse_blocks.keys() {
             assert!(windows[*level as usize].grown().contains(*at), "level {level}'s {at:?} kept");
         }
+    }
+
+    #[test]
+    fn chunks_are_kept_round_every_place_a_world_is_seen_from_and_let_go_when_one_goes() {
+        let making = making();
+        let mut streamer = BlockStreamer::default();
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        // The camera at the middle, and a second place 9 km off, seen less far.
+        let camera = StreamFrom { at: [0.0, 0.0], distance: 100.0, far: 600.0 };
+        let second = StreamFrom { at: [9000.0, -3000.0], distance: 64.0, far: 300.0 };
+        let start = std::time::Instant::now();
+        let mut settle = |streamer: &mut BlockStreamer, world: &mut BlockWorld, from: &[StreamFrom]| {
+            while start.elapsed().as_secs() < 120 {
+                streamer.update_from(world, &mut base, &mut pending, making.clone(), from);
+                if streamer.settled() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("never settled");
+        };
+        assert!(!streamer.drawn_round(second.at, 32.0), "nothing made yet");
+        settle(&mut streamer, &mut world, &[camera, second]);
+        // Columns are 64 m: both places have their ground, with faces, and nothing in between has.
+        let column = |at: [f32; 2]| at.map(|v| (v / 64.0).floor() as i32);
+        let has_faces = |world: &BlockWorld, at: [i32; 2]| world.meshes.keys().any(|key| [key[0], key[2]] == at);
+        assert!(has_faces(&world, column(camera.at)) && has_faces(&world, column(second.at)));
+        assert!(!has_faces(&world, column([4500.0, -1500.0])), "no ground made between the two");
+        assert!(streamer.drawn_round(second.at, 32.0) && streamer.drawn_round(camera.at, 64.0));
+        assert!(!streamer.drawn_round([4500.0, -1500.0], 32.0));
+        // Round the second its coarse ground too, as far as it is seen there and no further.
+        let coarse_by = |world: &BlockWorld, at: [f32; 2], within: f32| {
+            world.far.keys().any(|key| {
+                let size = 64.0 * (1u32 << key[0]) as f32;
+                let middle = [(key[1] as f32 + 0.5) * size, (key[3] as f32 + 0.5) * size];
+                (middle[0] - at[0]).abs() < within && (middle[1] - at[1]).abs() < within
+            })
+        };
+        assert!(coarse_by(&world, second.at, 400.0), "coarse ground round the second place");
+        assert!(!coarse_by(&world, [4500.0, -1500.0], 400.0));
+        let both = world.meshes.len();
+        // The second place gone: its columns go, the camera's stay.
+        settle(&mut streamer, &mut world, &[camera]);
+        assert!(!has_faces(&world, column(second.at)) && has_faces(&world, column(camera.at)));
+        assert!(world.meshes.len() < both && !coarse_by(&world, second.at, 400.0));
+        assert!(!streamer.drawn_round(second.at, 32.0));
     }
 
     #[test]

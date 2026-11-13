@@ -139,6 +139,134 @@ fn set_down(world: &mut World, entity: Entity, carry: &Carry) {
     }
 }
 
+/// The far side of a Portal near enough to show it, which the world is
+/// made round as it is round the camera, less far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortalExit {
+    /// The Portal whose far side it is.
+    pub portal: Entity,
+    /// Where the Portal it leads to stands.
+    pub at: Vec3,
+    /// How far round it a world without end makes its own blocks, and how
+    /// far its far view reaches from there.
+    pub distance: f32,
+    pub far: f32,
+}
+
+/// The far sides being made this tick, as a world's resource, and how many
+/// ticks each has had its ground.
+#[derive(Clone, Debug, Default)]
+struct PortalExits {
+    exits: Vec<PortalExit>,
+    made_for: HashMap<Entity, u32>,
+}
+
+/// The far sides the world is made round this tick (see [`find_exits`]).
+pub fn exits(world: &World) -> Vec<PortalExit> {
+    world.resource::<PortalExits>().map(|exits| exits.exits.clone()).unwrap_or_default()
+}
+
+/// How much further from a Portal than it shows its far side that far side
+/// starts to be made, in metres, so it is there by the time it shows; and
+/// how much further again one being made is kept, so a step back and forth
+/// at the edge makes nothing twice.
+const MADE_BEFORE: f32 = 24.0;
+const KEPT_PAST: f32 = 32.0;
+
+/// How far round a Portal's far side the ground must be made, with what
+/// stands on it, before the Portal opens: room to come out and look round.
+const READY_ROUND: f32 = 40.0;
+
+/// How many ticks a far side's ground must have stood before the Portal
+/// opens: physics takes it up the tick after it is made.
+const READY_TICKS: u32 = 3;
+
+/// How long a Portal's mist takes to clear once its far side is ready, in
+/// seconds.
+const CLEARS_IN: f32 = 0.4;
+
+/// Finds the far sides to make this tick: of each Portal that leads to one
+/// that is there, while where the world is seen from is near enough for it
+/// to show. Before the world's ground is brought round where it is seen
+/// from, which takes them in.
+pub(crate) fn find_exits(world: &mut World) {
+    let was = world.remove_resource::<PortalExits>().unwrap_or_default();
+    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+    let switched = Switched::of(world);
+    let exits: Vec<PortalExit> = world
+        .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity))
+        .filter_map(|(entity, portal, transform, placed)| {
+            let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to))?;
+            let pose = PortalPose::of(transform, placed);
+            let kept = was.exits.iter().any(|exit| exit.portal == entity);
+            let reach = portal.view_distance.max(0.0) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
+            let local = pose.local(viewer);
+            let nearest = Vec3::new(local.x.clamp(-portal.size.x * 0.5, portal.size.x * 0.5), local.y.clamp(0.0, portal.size.y), 0.0);
+            (local.distance(nearest) <= reach).then_some(())?;
+            let at = PortalPose::of_obj(world, to)?.position;
+            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, far: quality.far_side_far_view })
+        })
+        .collect();
+    if exits.is_empty() && was.made_for.is_empty() {
+        return;
+    }
+    world.insert_resource(PortalExits { exits, made_for: was.made_for });
+}
+
+/// Says of each Portal whether its far side is made (its [`PortalFar`]),
+/// and clears its mist once it is. After the world's ground is brought
+/// round where it is seen from. Where no world is without end, every far
+/// side is there as it stands, and no Portal is given one.
+pub(crate) fn update_far(world: &mut World, delta: f32) {
+    let portals: Vec<(Entity, Option<PortalFar>)> = world
+        .query_ref::<(Entity, &Portal, Option<&PortalFar>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, _, far)| (entity, far.copied()))
+        .collect();
+    if portals.is_empty() {
+        world.remove_resource::<PortalExits>();
+        return;
+    }
+    let mut exits = world.remove_resource::<PortalExits>().unwrap_or_default();
+    let mut made_for = HashMap::new();
+    for (entity, was) in portals {
+        let exit = exits.exits.iter().find(|exit| exit.portal == entity).copied();
+        // Nothing streams at all: as it stands.
+        let streams = exit.map_or_else(|| crate::blocks::made_round(world, Vec3::ZERO, 0.0), |exit| crate::blocks::made_round(world, exit.at, READY_ROUND));
+        let now = match (streams, exit) {
+            (None, _) => None,
+            (Some(made), Some(_)) => {
+                let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
+                made_for.insert(entity, ticks);
+                let ready = ticks >= READY_TICKS;
+                let shown = match (ready, was) {
+                    (true, Some(was)) => (was.shown + delta.max(0.0) / CLEARS_IN).min(1.0),
+                    _ => 0.0,
+                };
+                Some(PortalFar { ready, shown })
+            }
+            // Too far for its far side to be made.
+            (Some(_), None) => Some(PortalFar { ready: false, shown: 0.0 }),
+        };
+        match now {
+            Some(far) if was != Some(far) => {
+                world.insert(entity, far);
+            }
+            None if was.is_some() => {
+                world.remove::<PortalFar>(entity);
+            }
+            _ => {}
+        }
+    }
+    exits.made_for = made_for;
+    world.insert_resource(exits);
+}
+
 /// Empties the frame's [`PortalEvents`]: at the start of each frame.
 pub(crate) fn begin_frame(world: &mut World) {
     if let Some(events) = world.resource_mut::<PortalEvents>() {

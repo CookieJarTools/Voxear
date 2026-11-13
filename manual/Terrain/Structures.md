@@ -67,7 +67,7 @@ leaves = "Blocks/Oak Leaves.block"
 vine = "Blocks/Vine.block"
 ```
 
-Give the wood a block whose **Shape** is **Log** for a trunk that thins as it rises and branches of thin logs, the leaves one whose Shape is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. Wood that is a cube grows every block of it whole. A tree's vines hang only in open air: none where a hillside rises into them.
+Give the wood a block whose **Shape** is **Log** for a trunk that thins as it rises and branches of thin logs, the leaves one whose Shape is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. A plain cube named as a plant's wood is taken as a log, so a block made before logs had their shape still grows a tree that thins; its trunk thins most low down, and leaves always cover the wood at the top of its crown and the ends of its branches. A tree's vines hang only in open air: none where a hillside rises into them.
 
 **Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga. The [[Biomes#Showcase biomes|showcase biomes]] bring two more of their own, a maple in the Autumn Woods and a blossom tree in the Blossom Grove.
 

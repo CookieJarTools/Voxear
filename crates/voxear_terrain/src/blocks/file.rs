@@ -316,18 +316,31 @@ impl BlockKind {
     /// `kind`, a cube, made a slab lying in the lower half (see
     /// [`BlockKind::slab`]).
     pub fn slab_of(kind: &BlockKind) -> Self {
-        let mut slab = Self { slab: true, cover: None, ..kind.clone() };
+        use super::{block::BlockShape, shape::BlockState};
+        Self::slab_placed(kind, BlockState::default_for(BlockShape::Slab).to_byte())
+    }
+
+    /// `kind`, a cube, made a slab against the side `state` faces (see
+    /// `shape::BlockState`): lying low or high, or standing up. Only a
+    /// slab of a `.block` keeps its state; one of a kind of the world's own
+    /// lies low.
+    pub fn slab_placed(kind: &BlockKind, state: u8) -> Self {
+        let mut slab = Self { slab: true, cover: None, state, ..kind.clone() };
         slab.shaped();
         slab
     }
 
-    /// Its shape made a slab's, lying low, where it is one and its block a
-    /// cube.
+    /// Its shape made a slab's where it is one and its block a cube: lying
+    /// as its state says for a slab of a `.block`, low for one of a kind of
+    /// the world's own, whose state is never written.
     pub fn shaped(&mut self) {
         use super::{block::BlockShape, shape::BlockState};
         if self.slab && matches!(self.shape, BlockShape::Cube | BlockShape::Slab) {
             self.shape = BlockShape::Slab;
-            self.state = BlockState::default_for(BlockShape::Slab).to_byte();
+            self.state = match self.block {
+                Some(_) => BlockState::from_byte(self.state).normalized(BlockShape::Slab).to_byte(),
+                None => BlockState::default_for(BlockShape::Slab).to_byte(),
+            };
         }
     }
 

@@ -616,16 +616,18 @@ fn a_generated_block_world_builds_its_structures_trees_grown_from_a_plant_and_hu
     let world = &game.engine.world;
     let blocks = world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
     let asset = world.query_ref::<&BlockWorldAsset>().into_iter().next().expect("its asset").clone();
-    // Planks, then log and leaves, numbered after what it held, in the order the structures name them.
-    assert_eq!(asset.file.blocks.len(), held + 3);
+    // Planks, then log and leaves, numbered after what it held, in the order the structures name them; then the
+    // log in each way it stands thinner or lying down, a plain block a plant grows as its wood being a log.
+    assert_eq!(asset.file.blocks.len(), held + 3 + 20);
     let (planks, log, leaves) = ((held + 1) as u16, (held + 2) as u16, (held + 3) as u16);
+    let thin = (held + 4) as u16..=(held + 23) as u16;
     let mut counts = [0usize; 3];
     for z in 0..64 {
         for x in 0..64 {
             for y in -8..120 {
                 let block = blocks.blocks.get([x, y, z]);
                 for (at, wanted) in [planks, log, leaves].into_iter().enumerate() {
-                    counts[at] += usize::from(block == wanted);
+                    counts[at] += usize::from(block == wanted || at == 1 && thin.contains(&block));
                 }
             }
         }

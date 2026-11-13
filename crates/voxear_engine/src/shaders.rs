@@ -181,6 +181,23 @@ pub struct ProjectShader {
 #[derive(Clone, Debug, Default)]
 pub struct ShaderRegistry {
     pub shaders: Vec<ProjectShader>,
+    /// The project's VoxShade particle graphs, which Particle Systems pick,
+    /// numbered from 1 in the order of their paths.
+    pub particle_graphs: Vec<ParticleGraph>,
+}
+
+/// A VoxShade particle graph as the particle shaders call it: its asset,
+/// path and number, its compiled Slang, whether it has an Update and a
+/// Look, or what stops it compiling.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParticleGraph {
+    pub guid: AssetGuid,
+    pub path: String,
+    pub number: u32,
+    pub source: String,
+    pub update: bool,
+    pub look: bool,
+    pub error: Option<String>,
 }
 
 impl ShaderRegistry {
@@ -191,13 +208,33 @@ impl ShaderRegistry {
     pub fn new(mut found: Vec<(AssetGuid, String, String)>, used: &BTreeSet<BuiltinShader>) -> Self {
         found.sort_by(|a, b| a.1.cmp(&b.1));
         let mut library = std::collections::HashMap::new();
+        let mut particle_graphs = Vec::new();
         found.retain(|(guid, path, text)| match is_graph(path).then(|| voxear_voxshade::Graph::from_toml(text)) {
             Some(Ok(graph)) if graph.sub_graph => {
                 library.insert(*guid, graph);
                 false
             }
+            Some(Ok(graph)) if graph.particles => {
+                particle_graphs.push((*guid, path.clone(), graph));
+                false
+            }
             _ => true,
         });
+        let particle_graphs = (1..)
+            .zip(particle_graphs)
+            .map(|(number, (guid, path, graph))| {
+                let options = voxear_voxshade::Options { library: Some(&library), ..Default::default() };
+                let compiled = voxear_voxshade::compile_with(&graph, options)
+                    .map_err(|errors| graph_errors(&graph, &errors));
+                let has = |stage| compiled.as_ref().is_ok_and(|c| c.stages.iter().any(|(s, _)| *s == stage));
+                let (update, look) = (has(voxear_voxshade::Stage::Update), has(voxear_voxshade::Stage::Look));
+                let (source, error) = match compiled {
+                    Ok(compiled) => (compiled.source, None),
+                    Err(error) => (String::new(), Some(error)),
+                };
+                ParticleGraph { guid, path, number, source, update, look, error }
+            })
+            .collect();
         let builtin = BuiltinShader::ALL.into_iter().map(|shader| {
             (ShaderRef::Builtin(shader), shader.reference(), shader.source().to_string(), used.contains(&shader))
         });
@@ -220,7 +257,16 @@ impl ShaderRegistry {
                 ProjectShader { reference, path, number, source: source.unwrap_or_default(), info, used, worked }
             })
             .collect();
-        Self { shaders }
+        Self { shaders, particle_graphs }
+    }
+
+    /// The particle graphs as the renderer calls them: those that compile,
+    /// by their assets.
+    pub fn particle_graph_numbers(&self) -> voxear_render::ParticleGraphs {
+        let compiled = self.particle_graphs.iter().filter(|graph| graph.error.is_none());
+        let info =
+            |graph: &ParticleGraph| voxear_render::ParticleGraphInfo { number: graph.number, update: graph.update };
+        voxear_render::ParticleGraphs(compiled.map(|graph| (graph.guid, info(graph))).collect())
     }
 
     /// A shader's number and what it declares, when there is such a shader
@@ -244,7 +290,7 @@ impl ShaderRegistry {
     /// Whether any shader is compiled in: the project has one of its own, or
     /// a material picks a built-in one.
     pub fn any_used(&self) -> bool {
-        self.shaders.iter().any(|shader| shader.used)
+        self.shaders.iter().any(|shader| shader.used) || !self.particle_graphs.is_empty()
     }
 }
 
@@ -367,14 +413,49 @@ pub fn graph_shader_in(
     let options = voxear_voxshade::Options { library: Some(library), ..Default::default() };
     match voxear_voxshade::compile_with(&graph, options) {
         Ok(compiled) => Ok((compiled.source, compiled.derived)),
-        Err(errors) => {
-            let at = |error: &voxear_voxshade::CompileError| {
-                let node = error.node.and_then(|id| graph.node(id)).map(|node| node.kind.title());
-                node.map_or(error.message.clone(), |title| format!("{title}: {}", error.message))
-            };
-            Err(errors.iter().map(at).collect::<Vec<_>>().join("; "))
-        }
+        Err(errors) => Err(graph_errors(&graph, &errors)),
     }
+}
+
+/// What stops a graph compiling, each thing wrong with the node it is at, by its title.
+fn graph_errors(graph: &voxear_voxshade::Graph, errors: &[voxear_voxshade::CompileError]) -> String {
+    let at = |error: &voxear_voxshade::CompileError| {
+        let node = error.node.and_then(|id| graph.node(id)).map(|node| node.kind.title());
+        node.map_or(error.message.clone(), |title| format!("{title}: {}", error.message))
+    };
+    errors.iter().map(at).collect::<Vec<_>>().join("; ")
+}
+
+/// The code a project's particle graphs compile into the particle shaders
+/// as (`project_particle_graphs.slang`; see `shaders/particle_custom.slang`):
+/// each in a namespace of its own, named for its number, and
+/// `customParticleUpdate` and `customParticleLook`, which call the one a
+/// system names by its number. Empty for a project without any, which
+/// compiles to none.
+pub fn particle_dispatch_code(registry: &ShaderRegistry) -> String {
+    let graphs: Vec<&ParticleGraph> = registry.particle_graphs.iter().filter(|graph| graph.error.is_none()).collect();
+    if graphs.is_empty() {
+        return String::new();
+    }
+    let mut code =
+        String::from("// Written by the engine from the project's VoxShade particle graphs.\n\n#pragma once\n\n");
+    for graph in &graphs {
+        let n = graph.number;
+        code += &format!("namespace particle_graph_{n}\n{{\n#line 1 \"{}\"\n{}\n}}\n\n", graph.path, graph.source);
+    }
+    let stages: [(&str, fn(&ParticleGraph) -> bool); 2] = [("Update", |graph| graph.update), ("Look", |graph| graph.look)];
+    for (stage, has) in stages {
+        code += &format!(
+            "void customParticle{stage}(uint graph, Particle{stage}Input input, inout Particle{stage}Output output)\n\
+             {{\n    switch (graph)\n    {{\n"
+        );
+        for graph in graphs.iter().filter(|graph| has(graph)) {
+            let n = graph.number;
+            code += &format!("    case {n}:\n        particle_graph_{n}::particle{stage}(input, output);\n        break;\n");
+        }
+        code += "    default:\n        break;\n    }\n}\n\n";
+    }
+    code
 }
 
 /// Reads a shader's struct, properties and functions from its source.

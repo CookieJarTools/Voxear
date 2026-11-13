@@ -234,7 +234,12 @@ impl Lowering<'_, '_> {
     ) -> Result<ValueId, CompileError> {
         self.mark(node);
         let value = match kind {
-            NodeKind::SurfaceOutput | NodeKind::VertexOutput | NodeKind::LightOutput | NodeKind::SubGraphOutput => {
+            NodeKind::SurfaceOutput
+            | NodeKind::VertexOutput
+            | NodeKind::LightOutput
+            | NodeKind::UpdateOutput
+            | NodeKind::LookOutput
+            | NodeKind::SubGraphOutput => {
                 return Err(error(Some(node), "an output node gives nothing to wire on"));
             }
             NodeKind::Input { input } => self.build.given(Given::Input(*input), input.ty()),
@@ -246,6 +251,20 @@ impl Lowering<'_, '_> {
             },
             NodeKind::Property { .. } | NodeKind::SamplePicture { .. } if self.graph.sub_graph => {
                 return Err(error(Some(node), "a sub-graph has no properties: bring values in through its inputs"));
+            }
+            // A particle graph's properties are its own settings, worked in as the numbers they are.
+            NodeKind::Property { property } if self.graph.particles => {
+                let Some(found) = self.graph.property(*property) else {
+                    return Err(error(Some(node), "it reads a property the graph no longer has"));
+                };
+                let Some(ty) = found.kind.ty() else {
+                    return Err(error(Some(node), "a particle graph reads no pictures yet"));
+                };
+                let value = match found.kind {
+                    PropertyKind::Color | PropertyKind::ColorAlpha => linear(found.default),
+                    _ => found.default,
+                };
+                self.build.constant(ty, value)
             }
             NodeKind::Property { property } => {
                 let Some(found) = self.graph.property(*property) else {

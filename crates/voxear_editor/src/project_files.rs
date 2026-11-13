@@ -506,6 +506,7 @@ pub enum GraphStart {
     Hologram,
     Sway,
     SubGraph,
+    Particles,
 }
 
 impl ShaderStart {
@@ -514,6 +515,7 @@ impl ShaderStart {
         let mut all = vec![
             Self::Graph(GraphStart::Lit),
             Self::Graph(GraphStart::SubGraph),
+            Self::Graph(GraphStart::Particles),
             Self::Lit,
             Self::Unlit,
             Self::Ui,
@@ -535,6 +537,7 @@ impl ShaderStart {
             Self::Graph(GraphStart::Hologram) => "Hologram (VoxShade)",
             Self::Graph(GraphStart::Sway) => "Sway (VoxShade)",
             Self::Graph(GraphStart::SubGraph) => "Sub-graph",
+            Self::Graph(GraphStart::Particles) => "Particle Graph",
         }
     }
 
@@ -550,6 +553,7 @@ impl ShaderStart {
             Self::Copy(_) => "Built in, to change",
             Self::Graph(GraphStart::Lit) => "Made of nodes",
             Self::Graph(GraphStart::SubGraph) => "Nodes other graphs use as one",
+            Self::Graph(GraphStart::Particles) => "Moves and draws Particle Systems' particles",
             Self::Graph(_) => "Built in as nodes, to change",
         }
     }
@@ -578,6 +582,7 @@ fn create_voxshade(root: &Path, folder: &str, start: GraphStart) -> Result<Strin
         GraphStart::Hologram => "Hologram",
         GraphStart::Sway => "Sway",
         GraphStart::SubGraph => "New Sub-graph",
+        GraphStart::Particles => "New Particle Graph",
     };
     let name = unique(&root.join(folder), stem, ".voxshade");
     let path = join(folder, &name);
@@ -587,6 +592,7 @@ fn create_voxshade(root: &Path, folder: &str, start: GraphStart) -> Result<Strin
         GraphStart::Hologram => starters::hologram(),
         GraphStart::Sway => starters::sway(),
         GraphStart::SubGraph => starters::sub_graph(&named),
+        GraphStart::Particles => starters::particles(&named),
     };
     graph.name = named;
     let text = format!("{}{}", crate::editor::VOXSHADE_HEADING, graph.to_toml());
@@ -1018,6 +1024,12 @@ mod tests {
         assert_eq!(sub, "New Sub-graph.voxshade");
         let text = std::fs::read_to_string(dir.path().join(&sub)).unwrap();
         assert!(voxear_engine::shaders::is_sub_graph(&text));
+        // A particle graph, which Particle Systems pick.
+        let particles = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::Particles), "Game").unwrap();
+        assert_eq!(particles, "New Particle Graph.voxshade");
+        let text = std::fs::read_to_string(dir.path().join(&particles)).unwrap();
+        let graph = voxear_voxshade::Graph::from_toml(&text).unwrap();
+        assert!(graph.particles && voxear_voxshade::compile(&graph).is_ok());
     }
 
     #[test]

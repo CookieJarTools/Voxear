@@ -137,6 +137,10 @@ pub struct Graph {
     /// A sub-graph, for other graphs to use, not a shader of its own.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sub_graph: bool,
+    /// A particle graph, which Particle Systems pick to move and draw their
+    /// particles, not a shader materials pick.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub particles: bool,
     /// A sub-graph's inputs and outputs, in order.
     #[serde(rename = "input", skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<Pin>,
@@ -229,6 +233,9 @@ impl Graph {
     /// will not take, two of anything with one number, a wire to a port or
     /// node that is not there, or two wires into one input.
     pub fn check(&self) -> Result<()> {
+        if self.sub_graph && self.particles {
+            bail!("a graph is a sub-graph or a particle graph, not both");
+        }
         if !is_identifier(&self.name) {
             bail!("\"{}\" will not do as a shader's name: use letters, digits and _", self.name);
         }

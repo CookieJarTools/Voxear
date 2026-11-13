@@ -84,7 +84,7 @@ impl Editor {
             return self.notify("Only a shader goes in a material's Shader");
         }
         if !self.game.content.shaders().shaders.iter().any(|s| s.path == path) {
-            return self.notify("A sub-graph is used in other VoxShade graphs, not by materials");
+            return self.notify("A sub-graph or a particle graph draws no materials");
         }
         self.pick_material_shader(material, &Pick::Asset(Some(path)), renderer);
     }

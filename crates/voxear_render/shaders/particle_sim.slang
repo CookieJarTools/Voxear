@@ -34,6 +34,7 @@
 
 #include "particle_motion.slang"
 #include "wind.slang"
+#include "particle_custom.slang"
 
 // How fast a particle takes up the wind's speed, each second, at Wind 1.
 static const float WIND_PULL = 2.0;
@@ -366,6 +367,26 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
             {
                 carried = transform(system->toLocal, float4(carried, 0.0)).xyz;
             }
+        }
+        if (system->graph != 0)
+        {
+            // The particle graph's say, in the world: a force, and how fast it goes after it.
+            ParticleUpdateInput given;
+            given.age = particle.age;
+            given.life = saturate(particle.age / max(particle.life, 1e-6));
+            uint numbered = (flags & PARTICLES_MESH) != 0 ? particle.seed & ~PARTICLE_TURNED : particle.seed;
+            given.seed = particleGraphSeed(particleHash(numbered));
+            given.velocity = inWorld ? velocity : transform(system->model, float4(velocity, 0.0)).xyz;
+            given.position = world;
+            given.objectPosition = transform(system->model, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+            given.time = sim->time;
+            given.deltaTime = step;
+            ParticleUpdateOutput made;
+            made.force = 0.0;
+            made.velocity = given.velocity;
+            customParticleUpdate(system->graph, given, made);
+            float3 next = made.velocity + made.force * step;
+            velocity = inWorld ? next : transform(system->toLocal, float4(next, 0.0)).xyz;
         }
         velocity *= exp(-drag * step);
         float pace = speedKeys > 0 ? curveAt(system->speedCurve, speedKeys, particle.age / particle.life) : 1.0;

@@ -691,7 +691,14 @@ impl VoxShadePanel {
         let sub = graph.sub_graph;
         show_part(ui, self.property_rows, None, !sub);
         show_part(ui, self.pin_rows, None, sub);
-        show_part(ui, self.shader_rows, Some(if sub { "Sub-graph" } else { "Shader" }), true);
+        let title = if sub {
+            "Sub-graph"
+        } else if graph.particles {
+            "Particle Graph"
+        } else {
+            "Shader"
+        };
+        show_part(ui, self.shader_rows, Some(title), true);
         let rows = self.node_rows;
         let mut choosable = Vec::new();
         match picked {
@@ -821,12 +828,14 @@ impl VoxShadePanel {
                         PortTy::Any => 1,
                     };
                     let fields = numbers_row(ui, rows, &port.label, width);
-                    // An output's input with nothing set takes the material's own, which it says.
-                    if node.kind.output_stage().is_some() {
+                    // An output's input with nothing set takes the material's own, or the particle system's.
+                    if let Some(stage) = node.kind.output_stage() {
+                        let (shown, whose) =
+                            if stage.is_particles() { ("System's", "system's") } else { ("Material's", "material's") };
                         for &field in &fields {
-                            ui.set_placeholder(field, "Material's");
+                            ui.set_placeholder(field, shown);
                         }
-                        ui.set_tooltip(fields[0], "Empty to keep the material's own", None);
+                        ui.set_tooltip(fields[0], &format!("Empty to keep the {whose} own"), None);
                     }
                     self.rows.push((Field::Literal(index), Control::Numbers(fields)));
                 }
@@ -905,12 +914,14 @@ impl VoxShadePanel {
         let name = ui.text_field(row, &graph.name);
         let named = if sub {
             "The name its Slang function and the nodes using it have"
+        } else if graph.particles {
+            "Its name in the particle shaders"
         } else {
             "The name its Slang gives its properties"
         };
         ui.set_tooltip(name, &format!("{named}: letters, digits and _"), None);
         self.rows.push((Field::Name, Control::Text(name)));
-        if sub {
+        if sub || graph.particles {
             return;
         }
         let row = prop(ui, rows, "Unlit");
@@ -1653,10 +1664,20 @@ pub fn new_code_node() -> NodeKind {
 pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
     let mut all = Vec::new();
     let mut offer = |label: String, folder: &'static str, kind: NodeKind| all.push(Offer { label, folder, kind });
-    for input in Input::ALL {
+    // The inputs a particle graph's stages are given, or a shader's; a sub-graph may be used in either.
+    let stages: &[Stage] = if graph.particles {
+        &Stage::PARTICLES
+    } else if graph.sub_graph {
+        &[Stage::Surface, Stage::Vertex, Stage::Light, Stage::Update, Stage::Look]
+    } else {
+        &Stage::ALL
+    };
+    for input in Input::ALL.into_iter().filter(|input| stages.iter().any(|stage| input.in_stage(*stage))) {
         offer(input.name().into(), "Inputs", NodeKind::Input { input });
     }
-    offer("Surface".into(), "Inputs", NodeKind::Surface);
+    if !graph.particles {
+        offer("Surface".into(), "Inputs", NodeKind::Surface);
+    }
     for ty in NUMBER_TYS {
         offer(ty.name().into(), "Values", NodeKind::Constant { ty, value: [0.0; 4] });
     }
@@ -1666,6 +1687,7 @@ pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
     }
     for property in &graph.properties {
         match property.kind {
+            PropertyKind::Picture if graph.particles => {}
             PropertyKind::Picture => offer(
                 format!("Sample {}", property.name),
                 "Properties",
@@ -1695,7 +1717,10 @@ pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
         };
         offer(sub.name.clone(), "Sub-graphs", kind);
     }
-    if !graph.sub_graph {
+    if graph.particles {
+        offer("Update Output".into(), "Outputs", NodeKind::UpdateOutput);
+        offer("Look Output".into(), "Outputs", NodeKind::LookOutput);
+    } else if !graph.sub_graph {
         offer("Surface Output".into(), "Outputs", NodeKind::SurfaceOutput);
         offer("Vertex Output".into(), "Outputs", NodeKind::VertexOutput);
         offer("Light Output".into(), "Outputs", NodeKind::LightOutput);
@@ -1812,6 +1837,22 @@ mod tests {
         let inside = offers(&starters::sub_graph("Other"), &Vec::new());
         assert!(inside.iter().any(|o| o.folder == "Sub-graph" && o.label == "power"));
         assert!(!inside.iter().any(|o| o.kind == NodeKind::SurfaceOutput));
+    }
+
+    #[test]
+    fn a_particle_graph_is_offered_particle_inputs_and_outputs_and_no_pictures() {
+        let mut graph = starters::particles("Swirl");
+        graph.add_property("map", PropertyKind::Picture, [0.0; 4]);
+        let offered = offers(&graph, &Vec::new());
+        let has = |kind: NodeKind| offered.iter().any(|offer| offer.kind == kind);
+        assert!(has(NodeKind::Input { input: Input::Age }) && has(NodeKind::Input { input: Input::DeltaTime }));
+        assert!(has(NodeKind::UpdateOutput) && has(NodeKind::LookOutput));
+        assert!(!has(NodeKind::Input { input: Input::Uv }) && !has(NodeKind::SurfaceOutput) && !has(NodeKind::Surface));
+        assert!(!offered.iter().any(|offer| offer.label == "Sample map"));
+        // And a shader is offered none of a particle's.
+        let shader = offers(&starters::lit("Plain"), &Vec::new());
+        assert!(!shader.iter().any(|offer| offer.kind == NodeKind::Input { input: Input::Age }));
+        assert!(!shader.iter().any(|offer| offer.kind == NodeKind::LookOutput));
     }
 
     #[test]

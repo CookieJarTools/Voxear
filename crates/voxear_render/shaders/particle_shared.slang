@@ -6,6 +6,7 @@
 #include "shading.slang"
 #include "volume.slang"
 #include "particle_motion.slang"
+#include "particle_custom.slang"
 
 struct ParticleOut
 {
@@ -228,7 +229,38 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     output.corner = corner;
     output.softness = system.softness;
     output.additive = (system.flags & PARTICLES_ADDITIVE) != 0 ? 1 : 0;
+    uint first = h;
     float size = particleWide(system, aged, h);
+    float4 color = lerp(system.color, system.colorEnd, aged);
+    if (system.curveCounts.w > 0)
+    {
+        color.rgb = gradientAt(system.gradient, system.curveCounts.w, aged);
+    }
+    if (system.curveCounts.y > 0)
+    {
+        color.a = system.color.a * curveAt(system.opacityCurve, system.curveCounts.y, aged);
+    }
+    if (system.graph != 0)
+    {
+        // The particle graph's say on its colour, opacity and width, from what the settings give.
+        ParticleLookInput given;
+        given.age = age;
+        given.life = aged;
+        given.seed = particleGraphSeed(first);
+        given.velocity = velocity;
+        given.position = world;
+        given.objectPosition = transform(system.model, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+        given.time = frame->time;
+        given.color = color;
+        given.size = size;
+        ParticleLookOutput made;
+        made.color = color.rgb;
+        made.alpha = color.a;
+        made.size = size;
+        customParticleLook(system.graph, given, made);
+        color = float4(max(made.color, 0.0), saturate(made.alpha));
+        size = max(made.size, 0.0);
+    }
     particleRandom(h);
     float turned = particleRandom(h) * 2.0 * PI + system.spin * age * (particleRandom(h) < 0.5 ? -1.0 : 1.0);
     float2 spun = float2(corner.x * cos(turned) - corner.y * sin(turned), corner.x * sin(turned) + corner.y * cos(turned));
@@ -266,15 +298,6 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
     output.tileNext = float4(float2(next % tiles.x, next / tiles.x) * share, share);
     output.blend = playing && next != picture ? saturate(played - float(picture)) : 0.0;
 
-    float4 color = lerp(system.color, system.colorEnd, aged);
-    if (system.curveCounts.w > 0)
-    {
-        color.rgb = gradientAt(system.gradient, system.curveCounts.w, aged);
-    }
-    if (system.curveCounts.y > 0)
-    {
-        color.a = system.color.a * curveAt(system.opacityCurve, system.curveCounts.y, aged);
-    }
     float4 centre = transform(frame->viewProj, float4(world, 1.0));
     bool lit = (system.flags & PARTICLES_LIT) != 0;
     bool sixWay = lit && (system.flags & PARTICLES_SIX_WAY) != 0;

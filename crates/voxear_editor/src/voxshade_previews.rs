@@ -171,10 +171,16 @@ fn shown(ty: Ty, value: [f32; 4]) -> [f32; 3] {
 /// Every node's picture, at `time`; and whether any reads the time, so would change with it.
 pub fn draw(graph: &Graph, library: Option<&dyn Library>, time: f32) -> (Pictures, bool) {
     // Each node in the first stage it can run in.
+    // A particle graph's nodes in its two stages; a shader's or a sub-graph's in a shader's, and then those.
+    let tried: &[Stage] = if graph.particles {
+        &Stage::PARTICLES
+    } else {
+        &[Stage::Surface, Stage::Light, Stage::Vertex, Stage::Update, Stage::Look]
+    };
     let stages: Vec<(Stage, voxear_voxshade::ir::Program, HashMap<(NodeId, usize), voxear_voxshade::ir::ValueId>)> =
-        [Stage::Surface, Stage::Light, Stage::Vertex]
-            .into_iter()
-            .map(|stage| {
+        tried
+            .iter()
+            .map(|&stage| {
                 let (program, found) = lower_all(graph, stage, library);
                 (stage, program, found)
             })
@@ -190,7 +196,11 @@ pub fn draw(graph: &Graph, library: Option<&dyn Library>, time: f32) -> (Picture
             node.kind.output_stage().is_none_or(|own| own == *stage) && found.contains_key(&(node.id, 0))
         });
         if let Some(at) = in_stage {
-            let slots = if node.kind == NodeKind::SurfaceOutput { vec![0, 1, 5] } else { vec![0] };
+            let slots = match node.kind {
+                NodeKind::SurfaceOutput => vec![0, 1, 5],
+                NodeKind::LookOutput => vec![0, 1],
+                _ => vec![0],
+            };
             shows.push((node.id, at, slots));
         }
     }
@@ -225,6 +235,14 @@ pub fn draw(graph: &Graph, library: Option<&dyn Library>, time: f32) -> (Picture
                 Given::Surface(4) => [0.5; 4],
                 Given::Surface(_) => [0.0; 4],
                 Given::Argument(n) => graph.inputs.get(n).map_or([0.0; 4], |pin| pin.default),
+                // A particle's life lived from left to right across the ball, its number from top to bottom.
+                Given::Input(Input::Age) => [(position[0] + 0.5) * 2.0; 4],
+                Given::Input(Input::Life) => [position[0] + 0.5; 4],
+                Given::Input(Input::Seed) => [0.5 - position[1]; 4],
+                Given::Input(Input::Velocity) => three(normal.map(|n| n * 2.0)),
+                Given::Input(Input::DeltaTime) => [1.0 / 60.0; 4],
+                Given::Input(Input::ParticleColor) => [0.8, 0.8, 0.8, 1.0],
+                Given::Input(Input::ParticleSize) => [1.0; 4],
             };
             let property = |id| property_value(graph, id);
             let inputs = Inputs { given: &given, property: &property, sample: &|_, _| [1.0; 4] };
@@ -241,8 +259,17 @@ pub fn draw(graph: &Graph, library: Option<&dyn Library>, time: f32) -> (Picture
                 };
                 // Not known on the CPU: stripes.
                 let unknown = slots.iter().any(|&slot| read(slot).is_some_and(|(_, v)| v.iter().any(|c| c.is_nan())));
+                // A Look Output's input left as it is keeps the particle's own.
+                let set = |slot: usize| {
+                    graph.link_into(*node, slot).is_some()
+                        || graph.node(*node).is_some_and(|n| n.literals.iter().any(|l| l.input == slot))
+                };
                 let color = if unknown {
                     [if (x + y) / 6 % 2 == 0 { 0.30 } else { 0.12 }; 3]
+                } else if *slots == [0, 1] {
+                    let base = if set(0) { read(0).map_or([0.8; 3], |(ty, v)| shown(ty, v)) } else { [0.8; 3] };
+                    let alpha = if set(1) { read(1).map_or(1.0, |(_, v)| v[0].clamp(0.0, 1.0)) } else { 1.0 };
+                    base.map(|c| c * alpha)
                 } else if slots.len() > 1 {
                     // The surface lit, as it would be drawn: its colour in the light, and what it gives off.
                     let base = read(0).map_or([0.8; 3], |(ty, v)| shown(ty, v));
@@ -327,5 +354,21 @@ mod tests {
         let out = sub.nodes.iter().find(|n| n.kind == NodeKind::SubGraphOutput).unwrap().id;
         let (middle, edge) = (pixel(&pictures, out, SIDE / 2, SIDE / 2), pixel(&pictures, out, 3, SIDE / 2));
         assert!(edge[0] > middle[0] + 60, "brighter edge on: {middle:?} {edge:?}");
+    }
+
+    #[test]
+    fn a_particle_graphs_nodes_show_a_particles_life_across_the_ball() {
+        let graph = starters::particles("Swirl");
+        let (pictures, _) = draw(&graph, None, 0.0);
+        let life = graph.nodes.iter().find(|n| n.kind == NodeKind::Input { input: Input::Life }).unwrap().id;
+        let (young, old) = (pixel(&pictures, life, SIDE / 4, SIDE / 2), pixel(&pictures, life, SIDE * 3 / 4, SIDE / 2));
+        assert!(old[0] > young[0] + 60, "life lived from left to right: {young:?} {old:?}");
+        // The Look Output: the particle's own colour, fading as its life is lived.
+        let look = graph.nodes.iter().find(|n| n.kind == NodeKind::LookOutput).unwrap().id;
+        let (early, late) =
+            (pixel(&pictures, look, SIDE / 4, SIDE / 2), pixel(&pictures, look, SIDE * 3 / 4, SIDE / 2));
+        assert!(early[0] > late[0] + 60 && early[0] == early[2], "grey, faded: {early:?} {late:?}");
+        let update = graph.nodes.iter().find(|n| n.kind == NodeKind::UpdateOutput).unwrap().id;
+        assert!(pictures.iter().any(|(node, _)| *node == update), "the force shown");
     }
 }

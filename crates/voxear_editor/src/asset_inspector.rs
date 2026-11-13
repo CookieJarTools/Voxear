@@ -556,7 +556,10 @@ impl AssetView {
             ItemKind::Asset(AssetKind::VoxShade) => {
                 view.shader_state = shader(ui, root, game, &item.path);
                 let found = game.content.shaders().shaders.iter().find(|shader| shader.path == item.path);
-                if found.is_none() {
+                let particles = game.content.shaders().particle_graphs.iter().find(|graph| graph.path == item.path);
+                if let Some(graph) = particles {
+                    particle_graph(ui, root, graph, dark);
+                } else if found.is_none() {
                     sub_graph(ui, root, &file, dark);
                 }
                 if let Some(compiled) = found.map(|shader| shader.source.as_str()).filter(|source| !source.is_empty()) {
@@ -1508,6 +1511,24 @@ fn shader(ui: &mut Ui, root: NodeId, game: &Game, path: &str) -> Option<(NodeId,
     }
     // Never a state the renderer has, so the first frame shows its own.
     Some((label, voxear_render::CustomShaderState::Failed(String::new())))
+}
+
+/// A VoxShade particle graph: which stages it has, whether it compiles,
+/// and the Slang it compiles into.
+fn particle_graph(ui: &mut Ui, root: NodeId, graph: &voxear_engine::shaders::ParticleGraph, dark: bool) {
+    let rows = part(ui, root, "Particle Graph", "particles");
+    if let Some(error) = &graph.error {
+        text_row(ui, rows, "Error", error);
+        return;
+    }
+    let stages: Vec<&str> = [(graph.update, "Update"), (graph.look, "Look")]
+        .into_iter()
+        .filter(|(has, _)| *has)
+        .map(|(_, name)| name)
+        .collect();
+    text_row(ui, rows, "Stages", &stages.join(", "));
+    text_row(ui, rows, "Simulated", if graph.update { "Yes, for its Update" } else { "No" });
+    code_text(ui, root, &graph.source, "slang", dark);
 }
 
 /// A VoxShade sub-graph: its name, inputs and outputs, and its work as a

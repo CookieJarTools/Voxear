@@ -196,6 +196,11 @@ impl Game {
                 tracing::error!("the shader {}: {error}", shader.path);
             }
         }
+        // Particle Systems call their particle graphs by these numbers.
+        let numbers = registry.particle_graph_numbers();
+        if self.engine.world.resource::<voxear_render::ParticleGraphs>() != Some(&numbers) {
+            self.engine.world.insert_resource(numbers);
+        }
         // The UI's backgrounds can be drawn with the built-in effects and the project's UI shaders.
         self.ui.set_shaders(std::rc::Rc::new(crate::shaders::ui_shaders(registry)));
         // A built game draws with the shaders its build compiled, built-in ones and all.
@@ -213,6 +218,7 @@ impl Game {
                 materials: crate::shaders::dispatch_code(registry),
                 ui: crate::shaders::ui_dispatch_code(registry),
                 look: crate::shaders::look_dispatch_code(registry),
+                particles: crate::shaders::particle_dispatch_code(registry),
             };
             if !renderer.set_custom_shaders(code) {
                 return;

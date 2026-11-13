@@ -400,7 +400,14 @@ pub struct GpuFrame {
     pub origin: [f32; 4],
     /// How rough a world of blocks' sea is, and where (see `sea`).
     pub sea: crate::sea::GpuSea,
+    /// A plane nothing behind is drawn, inside when `dot(n, p) + d >= 0`:
+    /// the far Portal's, for a view through a Portal (see `portals`), and
+    /// one that cuts nothing for every other view.
+    pub cut: [f32; 4],
 }
+
+/// The plane in `GpuFrame::cut` that cuts nothing.
+pub const NO_CUT: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 /// How often the origin's x, y and z wrap in `GpuFrame::origin`, in metres:
 /// the longest a pattern can be before it repeats, exact to 4 mm out there.
@@ -962,6 +969,8 @@ pub struct GpuBuffers {
     /// Where the step writes the strikes of systems that report them, as
     /// many as `particle_sim::MAX_HITS`, counted in the counters' second.
     pub particle_hits: u64,
+    /// This view's Portals' openings (see `portals`).
+    pub portal_quads: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1346,7 +1355,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>()
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16
         );
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
@@ -1354,11 +1363,11 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 66 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 67 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
         // then its motions' and moving blocks' addresses and how many of each.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8);
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

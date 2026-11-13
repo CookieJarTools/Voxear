@@ -116,7 +116,11 @@ fn camera_position(world: &World) -> Option<Vec3> {
         .into_iter()
         .filter(|(entity, ..)| voxear_scene::is_on(world, *entity, Switch::Camera))
         .min_by_key(|(entity, ..)| entity.index())
-        .map(|(_, _, local, placed)| placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+        .map(|(entity, _, local, placed)| {
+            let position = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+            // A camera whose view a Portal carries looks from the other side of it.
+            voxear_render::ViewCarry::of(world, entity, position, local.rotation).0
+        })
 }
 
 /// Brings each terrain without end's ground round where it is seen from:

@@ -72,6 +72,9 @@ pub struct PlayerSettings {
     /// The project's `[world]` budget for making worlds of blocks.
     #[serde(default)]
     pub world: voxear_terrain::WorldBudget,
+    /// The project's `[portals]` settings.
+    #[serde(default)]
+    pub portals: crate::project::PortalSettings,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -244,6 +247,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             floating_origin: settings.floating_origin.clone(),
             quality: crate::project::QualitySettings { particles: settings.particles },
             world: settings.world,
+            portals: settings.portals,
             modules: Some(settings.modules),
         },
     };

@@ -514,9 +514,12 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         }
                     } else if is_vine(faces, id) {
                         let look = surface(faces, id, 0);
-                        let tip = if is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
-                        let clings: Vec<u32> =
-                            (0..4).filter(|&s| is_ground(faces, block(step(beside[s as usize])))).collect();
+                        // A sapling stands crossed on what is under it, clinging to nothing beside it.
+                        let sapling = faces[usize::from(id)].shape == super::block::BlockShape::Sapling;
+                        let tip = if sapling || is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
+                        let clings: Vec<u32> = (0..4)
+                            .filter(|&s| !sapling && is_ground(faces, block(step(beside[s as usize]))))
+                            .collect();
                         for &sheet in &clings {
                             mesh.quads.push(pack_loose(at, VINE, sheet | tip, look, 3, 0));
                         }
@@ -667,6 +670,18 @@ pub fn around_of(faces: &[BlockFaces], block: &dyn Fn([i32; 3]) -> BlockId, p: [
             };
             Around { corner, ..Around::default() }
         }
+        BlockShape::Log => {
+            // Every log of its block beside it across the way it lies, thin or whole.
+            let mut joins = 0;
+            let along = BlockState::from_byte(kind.state).facing.axis();
+            for way in BlockFacing::ALL {
+                let other = faces_of(block(step(way)));
+                if way.axis() != along && kind.family != 0 && other.family == kind.family && !other.water {
+                    joins |= 1 << way.index();
+                }
+            }
+            Around { joins, ..Around::default() }
+        }
         _ => Around::default(),
     }
 }
@@ -722,9 +737,13 @@ fn mesh_parts(
                         if part.moves.is_none() && on_side && hidden_from(beyond, facing) {
                             continue;
                         }
-                        // A rail's end against the fence, wall or gate it joins lies inside what it joins.
+                        // A rail's end against the fence, wall or gate it joins lies inside what it joins, and a
+                        // log's arm's in the log it reaches.
                         let joined = BlockFacing::of_side(facing);
-                        let bit = BlockFacing::AROUND.iter().position(|&way| way == joined);
+                        let bit = match kind.shape {
+                            super::block::BlockShape::Log => Some(usize::from(joined.index())),
+                            _ => BlockFacing::AROUND.iter().position(|&way| way == joined),
+                        };
                         if on_side && bit.is_some_and(|bit| around.joins & (1 << bit) != 0) && is_part(faces, block(beyond)) {
                             continue;
                         }
@@ -738,7 +757,7 @@ fn mesh_parts(
                             plane: u32::from(plane.min(16)),
                             across: across.map(|v| u32::from(v.min(16))),
                             up: up.map(|v| u32::from(v.min(16))),
-                            surface: surface(faces, id, facing),
+                            surface: surface(faces, id, log_facing(kind.shape, state, facing)),
                             moves: part.moves,
                             motion: u32::from(kind.motion),
                             open: state.is_moved(),
@@ -812,6 +831,25 @@ fn joins_bit(facing: usize) -> u8 {
         2 => JOINS_TOP,
         3 => JOINS_BOTTOM,
         _ => JOINS_SIDES,
+    }
+}
+
+/// The facing whose surface a face of a block facing `facing` is drawn
+/// with: a log lying down shows its rings at its ends and its bark along
+/// its length, so a face at an end of it is drawn as its top, and one on
+/// its side as a side.
+fn log_facing(shape: super::block::BlockShape, state: BlockState, facing: usize) -> usize {
+    if shape != super::block::BlockShape::Log {
+        return facing;
+    }
+    let axis = match state.facing.axis() {
+        BlockFacing::East => 0,
+        BlockFacing::Up => 1,
+        _ => 2,
+    };
+    match facing / 2 == axis {
+        true => 2 + facing % 2,
+        false => 0,
     }
 }
 

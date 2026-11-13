@@ -228,6 +228,18 @@ pub struct Pipelines {
     pub preview_resolve: vk::Pipeline,
     /// A map of a world of blocks, drawn as a small model of it (see `map`).
     pub map: vk::Pipeline,
+    /// A Portal's opening drawn into a view's depth, as any surface (see
+    /// `portals` and `shaders/portal.slang`).
+    pub portal_surface: vk::Pipeline,
+    /// The pixels an opening shows in, opened in the depth of the view
+    /// through it.
+    pub portal_mask: vk::Pipeline,
+    /// An opening's mist, over what shows in it.
+    pub portal_mist: vk::Pipeline,
+    /// A view's depth as the passes after its scene read it, and the depth
+    /// of a view through an opening laid over it.
+    pub portal_depth: vk::Pipeline,
+    pub portal_depth_over: vk::Pipeline,
     /// A plant drawn into each picture of its impostor's atlas: its colour
     /// and its normals (see `impostors`).
     pub impostor_bake: vk::Pipeline,
@@ -276,6 +288,7 @@ impl Pipelines {
             module("blocks")?,
             module("particle_sim")?,
             module("map")?,
+            module("portal")?,
         ];
         let [
             cull,
@@ -306,6 +319,7 @@ impl Pipelines {
             blocks,
             particle_sim,
             map,
+            portal,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -844,6 +858,39 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Map", map, c"mapVertex", c"mapFragment")
             })?,
+            // Depth is clamped for each, so an opening the camera stands in is not cut by the near plane.
+            portal_surface: graphics(&GraphicsPipelineDesc {
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Portal surface", portal, c"portalVertex", DEPTH_FORMAT)
+            })?,
+            portal_mask: graphics(&GraphicsPipelineDesc {
+                color_formats: &[],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::ALWAYS,
+                cull: vk::CullModeFlags::NONE,
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::new("Portal mask", portal, c"portalVertex", c"portalMaskFragment")
+            })?,
+            portal_mist: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Alpha,
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::new("Portal mist", portal, c"portalVertex", c"portalMistFragment")
+            })?,
+            portal_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: &[PYRAMID_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Portal depth", portal, c"portalDepthVertex", c"portalDepthFragment")
+            })?,
+            portal_depth_over: graphics(&GraphicsPipelineDesc {
+                color_formats: &[PYRAMID_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Portal depth over", portal, c"portalDepthVertex", c"portalDepthOverFragment")
+            })?,
             mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
             ddgi_software: [
                 create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
@@ -991,6 +1038,11 @@ impl Pipelines {
             self.preview,
             self.preview_resolve,
             self.map,
+            self.portal_surface,
+            self.portal_mask,
+            self.portal_mist,
+            self.portal_depth,
+            self.portal_depth_over,
             self.impostor_bake,
         ];
         let mesh =

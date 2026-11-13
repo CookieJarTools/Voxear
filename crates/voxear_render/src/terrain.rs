@@ -780,7 +780,7 @@ pub(crate) fn add_proxies(drawn: &[Drawn], extracted: &mut ExtractedFrame) {
                 flags: INSTANCE_RAYS_ONLY,
                 ..GpuInstance::default()
             });
-            extracted.entities.push(Owner { entity: terrain.entity, plant: None, part: Some(tile as u32) });
+            extracted.entities.push(Owner { entity: terrain.entity, plant: None, part: Some(tile as u32), far_side: false });
         }
     }
 }

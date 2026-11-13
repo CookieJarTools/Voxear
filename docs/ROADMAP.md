@@ -1708,6 +1708,31 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
   in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads;
   a GPU tint over every surface in place of the Heat shading's squares.
+- **Portals (in progress).** Built: a **Portal** on an Obj (`[obj.portal]`, Add Component ▸ Physics ▸ Portal,
+  the Hierarchy's **+ ▸ Portals** for a framed pair marked on maps) shows the place the Portal it leads to stands
+  in, live and in perspective, drawn into the frame only where its opening shows: a child view a Portal with its
+  own camera in a space whose middle is the far Portal's, its depth first, a mask, the far plane as a clip
+  distance, the parent's sky and post, clouds only in the opening, the sun's shadows to 48 m near the opening,
+  and the far side's depth laid over the parent's for its fog. Portals seen through Portals, two deep; mist while
+  closed, too far, or not ready. Characters, Rigidbodies and what is under them go through with their speed and
+  spin turned, never shown between the places; a camera filming something on the other side of an opening looks
+  through it (`Camera.Follows`), the renderer carrying its history, so a third-person camera never cuts; Objs
+  part-way through drawn on both sides. In a world of blocks without end, chunks, collision and plants are made
+  round each far side near the camera (`BlockStreamer::update_from`), each view drawing the chunks of the place
+  nearest it, and a Portal opens once its far side stands. Remote Objs snap across. Scripts: `Portal.Create`,
+  `CreatePair`, `Link`, `Between`, `Obj.Portal`/`AddPortal` (`To`, `Size`, `IsOpen`, `Mist`, `ViewDistance`,
+  `Passes`, `IsReady`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
+  side matching a camera standing there from three angles and with the far Portal turned three ways, a Portal two
+  deep, blocks and water 20 km off, mist, only the opening changing; a character walking through to ground made
+  for it 9 km off in a world without end and standing on it; a thrown body keeping speed and spin; nothing shown
+  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through. Manual:
+  Portals. Cost at 1080p on an RTX 3070, the least of 60 frames: in the test scene +0.15 ms for one Portal over a
+  third of the picture and +0.5 ms for two (the timing test holds +1.5 and +2.5); in an endless world of Ultra
+  quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
+  draw_distance` cuts. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
+  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
+  bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
+  part-way through, the server deciding and checking crossings, Portals to other levels.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2807,6 +2832,54 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   crown and lit ground in its shadow. Manual: Blocks. Not done: the same for a world drawn smooth, rays for
   bounced light, which take it as solid, and light through a leaf from behind (a material's foliage lighting is
   not read for block faces).
+- ~~**Living trees: logs that thin, trees that come down, saplings that grow:**~~ done.
+  - **Logs** (`BlockShape::Log`): a log's placed state keeps the way it lies (`BlockFacing::axis`: up, east, north)
+    and how thick it is across (`BlockState::size`, sixteenths, `LOG_SIZES` 4 to 14, 0 whole), set over the
+    facing with the top bit (`to_byte`), so no older byte reads otherwise. A thin log is a post with arms of its
+    thickness to the logs of its block beside it across its way (`shape::log_boxes`, `Around::joins` in
+    `BlockFacing::ALL`'s order, by family); a whole upright one is drawn as a cube (`BlockKind::drawn_shape`); a
+    log's ends take its Top surface by the way it lies (`mesh::log_facing`). `.voxplant`s grow trunks of whole
+    blocks at the foot that thin to logs as they rise and branches of thin logs lying along the way they reach,
+    each face to face (`plant::blocks_along`, `lying`, `branch`); `PlantModel::blocks` keeps each block's state,
+    and `StructureBlocks::Plant::logs` its numbers (`structure::log_number`, `engine::blocks::log_numbers`).
+    The starter oak, birch and pine logs are logs with ring pictures, and Starter Blocks has an oak log.
+  - **Chopping and felling** (`engine::trees`, `terrain::blocks::fell`): a log that chops (`BlockDef::chops`,
+    `slice`) stands a slice thinner each time it is mined (`trees::chop`), and its last cuts it through; one that
+    fells (`BlockDef::fells`) brings down what it held up: `fell::loose_tree` takes the logs of its family over the
+    cut, corner to corner, unless one goes lower or stands on ground, with leaves within five blocks nearer it than
+    another tree's logs and the vines hanging from them, and only where it holds leaves. They come out of the world
+    onto an Obj of their own (`FallingTree`, `fell::LooseBlocks`, `loose_map` keeping each block where it was),
+    which turns about the cut away from whoever cut it as a pole falls until a block meets ground, and a moment
+    later breaks: each block's drops roll where it lies (`item_drops::rolled`, a thin log a share as thin as it
+    is), and `trees::Felled` is told to scripts. Rendering: a Block World can be drawn turned (`BLOCKS_TURNED`,
+    `GpuBlockWorld::turn`, `turnedPoint` in `block_quads.slang`, its faces' pictures read where they rest as a
+    moving part's are, chunks picked in its own space by `turned_planes`), lit by the bounced light of the world
+    it came from, no rays for the GI.
+  - **Items on the ground** (`engine::item_drops`): an `ItemDrop` falls onto any world's blocks and rests, turning;
+    those of one item resting together join; drawn as a small cube of the material its item's block has, or its
+    item's Dropped prefab (`DroppedAs`); taken up after half a second, gone after five minutes; not saved.
+  - **Saplings** (`BlockShape::Sapling`, `BlockDef::grows`; `terrain::blocks::sapling`, `engine::saplings`): a
+    sapling is crossed sheets, no ground. It takes root on a whole block of ground with light enough for its plant
+    (`sapling::light_at`: open sky, a fifth less a leaf over it, none under ground). A world keeps its growing ones
+    (`Saplings`, nineteen bytes each, `VXSW` in script captures); each stage is the same tree at a share of its
+    size from its place's seed (`stage_model`, `young`), grown where it has room (`has_room`); one that waits a
+    stage long dies, a young tree stops. Planted by hand, scattered by a felled tree (`PlantDef::sapling`,
+    `saplings`), by a sapling item resting four seconds, or found as a world's chunks change. `.voxplant`:
+    `grow_time`, `stages`, `light`.
+  - **Editor:** Log and Sapling shapes, Chops and Fells under Breaking, a Sapling's Grows into; a `.voxplant` has
+    an Inspector of its own (`plant_inspector`: Trunk, Crown, Blocks, Saplings). Starter trees have saplings, ring
+    pictures, and items for their logs and saplings.
+  - **Scripts** (native API 86): `Trees.Chop`, `Fell`, `SlicesLeft`, `Away`, `Felled`; `ItemDrops.Drop`, `Near`,
+    `Take`, `Collect`; `ItemDrop`; the `ItemPickup` behaviour; `Saplings.Plant`, `Grow`, `All`; `Block.Chops`,
+    `Fells`, `IsSapling`; `BlockState.Size`. `Blocks.Mine` and `BlockMiner` chop and fell by themselves, and
+    `Blocks.Place` plants a sapling item. Console (`vox editor call game.console`): `ChopLog`, `FellTree`,
+    `PlantSapling`, `GrowSapling`, `ListSaplings`, `ListDrops`.
+  - Tests: log states and boxes, trees that thin with branches face to face, what a cut log held up, sapling
+    stages, light and bytes; a game chopping, felling and taking up logs, and saplings rooting, growing, dying and
+    scattered; a script doing it all; saplings in captures; GPU pictures of a tree of logs and of loose blocks
+    turned. Manual: Blocks (Logs, Saplings, Breaking), Block Worlds (Trees that come down, Saplings), Structures,
+    Blocks and Items from Scripts. Not done: generated trees seeding by themselves, leaves that wither, items and
+    falling trees in a save, the fall shown to a player who joins, thin logs in the far view and in smooth worlds.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

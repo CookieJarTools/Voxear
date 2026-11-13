@@ -17,6 +17,7 @@ public readonly struct Camera : IEquatable<Camera>, IObjComponent
 	private const int FieldOfViewValue = 3;
 	private const int NearValue = 4;
 	private const int ExposureValue = 5;
+	private const int FollowsValue = 6;
 
 	public static readonly Camera None = default;
 
@@ -50,6 +51,17 @@ public readonly struct Camera : IEquatable<Camera>, IObjComponent
 	{
 		get { return Number(ExposureValue); }
 		set { Set(ExposureValue, value); }
+	}
+
+	/// <summary>
+	/// The Obj it films. While a Portal's opening lies between the two, the camera's view is carried through it, so
+	/// a camera that follows something through a Portal goes on seeing it through the opening until the camera
+	/// crosses too. A camera under a Character Controller or a Rigidbody films that without being told.
+	/// </summary>
+	public Obj Follows
+	{
+		get { return NativeComponent.Get(NativeComponent.Camera, Obj, FollowsValue, out var value) ? NativeComponent.ObjOf(value) : Obj.None; }
+		set { NativeComponent.Set(NativeComponent.Camera, Obj, FollowsValue, NativeComponent.ValueOf(value)); }
 	}
 
 	/// <summary>The way it looks, in the world.</summary>

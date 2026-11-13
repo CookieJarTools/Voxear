@@ -369,9 +369,34 @@ Plants grow under leaves: a tree of blocks has grass and flowers on the ground b
 
 ### Trees of blocks
 
-**Starter Trees of Blocks**, on the same row, gives a generated world trees built of its own blocks: an oak, a birch and a pine, each grown afresh at every place so no two are alike, with [[Blocks#Bushy leaves|bushy leaves]] that sway and, on some oaks and birches, [[Blocks#Vines|vines]]. They are [[Structures#Trees of blocks|structures]] the world's generator builds, so they are dug, stood on and built on as the ground is. Their logs and leaves are blocks made in the Blocks folder beside the world, each drawn with a small picture made with it, in a `Pictures` folder there: bark for a log, and cut-out leaves. Paint over a picture, or give a block a material of your own, and every tree of that kind changes with it.
+**Starter Trees of Blocks**, on the same row, gives a generated world trees built of its own blocks: an oak, a birch and a pine, each grown afresh at every place so no two are alike, with [[Blocks#Bushy leaves|bushy leaves]] that sway and, on some oaks and birches, [[Blocks#Vines|vines]]. They are [[Structures#Trees of blocks|structures]] the world's generator builds, so they are dug, stood on and built on as the ground is. Their logs and leaves are blocks made in the Blocks folder beside the world, each drawn with a small picture made with it, in a `Pictures` folder there: bark for a log with rings at its ends, cut-out leaves, and a sapling. Paint over a picture, or give a block a material of your own, and every tree of that kind changes with it.
+
+Their logs are [[Blocks#Logs|logs]]: each trunk is whole logs at its foot, thinning to posts towards its top, and its branches are thin logs reaching out to its leaves. Each tree also has a [[Blocks#Saplings|sapling]], and an item in the project's **Items** folder for its log and one for its sapling: a felled log drops its item, and a sapling item put down or dropped takes root.
 
 Trees of blocks stand only on the world's own blocks, out to its **View distance**, and the far view does not show them. The starter Tree, Birch and Pine are models, drawn far and shown as woods beyond: use either, or both.
+
+## Trees that come down
+
+A log whose block **Fells**, cut through, brings down the tree it held up: the logs of its block joined to it at its height and over it, the leaves round them, and the vines hanging from them. It comes down only where nothing else holds it, none of its logs going lower than the cut or standing on ground of its own, and where it holds leaves: so a tree falls, and a wall or a house of logs does not. Leaves nearer another tree's trunk stay with that tree.
+
+What comes down is taken out of the world and topples as one piece, away from the side it was cut from: slowly at first, faster as it goes, about the cut, until one of its blocks meets the ground. It is drawn as it stood, its bark, its thin branches and its swaying leaves turning with it, and casts its shadow as it falls. It passes through characters and is no ground while it falls.
+
+A moment after it lands it breaks. Each block drops what its block's **Drops** say, where it lies: by default a log drops its own item, a thin log a share of that as thin as it is, and leaves nothing. The drops are thrown up a little and lie on the ground as small blocks of what they place, turning slowly, those of one item that come to rest together in one stack. An **Item Pickup** on a player takes them up as it walks over them (see [[Blocks and Items from Scripts#Items on the ground|Items on the ground]]), and they go after five minutes lying. If its plant has saplings, the tree scatters some of them where its crown landed, each taking root where it can.
+
+A felled tree's blocks are block changes like any other, saved with the world and sent to a player who joins; the fall itself is not, nor the items lying on the ground.
+
+## Saplings
+
+A [[Blocks#Saplings|sapling]] takes root where there is ground under it, room over it and light enough for its plant. It is planted:
+
+- by a player putting one down, from an item that places it;
+- by a tree that comes down, scattering its plant's saplings where its crown lands;
+- by a sapling item lying a few seconds on the ground where one can take root;
+- by the editor's Build tool, or a script: a sapling block put down any way is found and grows.
+
+Each grows on through its plant's **Stages** over its **Grow time**, a stage at a time: its block, or the stage before, gives way to the next, which is the same tree at a larger share of its size, grown from the seed its place gives, so it grows into the tree it was always going to be. Where the next stage has no room, or the light over it is less than its plant's **Light**, it waits; one that waits as long as a stage takes dies and is gone, and a young tree past its first stage stops where it stands. Grown whole, it is a tree like any other, and comes down as one.
+
+A world keeps its growing saplings in a short list, a few bytes each, saved with its changes. Saplings grow only while the game plays, and only in worlds that are loaded.
 
 ## How blocks are drawn
 

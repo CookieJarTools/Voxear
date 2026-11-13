@@ -138,6 +138,10 @@ impl ObjState {
 
 pub(super) const ALL: u8 = 0b1_1111;
 
+/// How far a remote Obj may move in a tick and still be shown moving there,
+/// in metres: further, it was set down there, as tick smoothing takes it.
+const SET_DOWN: f32 = 4.0;
+
 /// Steps a metre: about a millimetre.
 const STEPS: f64 = 1024.0;
 /// A position takes this many bits an axis within 8 km of the level's
@@ -387,6 +391,11 @@ impl Replication {
             Some(0) => samples.front().map(|(_, s)| *s),
             Some(i) => {
                 let ((t0, s0), (t1, s1)) = (samples[i - 1], samples[i]);
+                // Further apart than anything moves in the ticks between them: it went through a Portal, or was
+                // set down elsewhere. It is shown where it was until it is there, never sliding from one to the other.
+                if s0.position.distance(s1.position) > SET_DOWN * (t1 - t0).max(1) as f32 {
+                    return Some(if at >= t1 as f64 { s1 } else { s0 });
+                }
                 let t = ((at - t0 as f64) / (t1 - t0).max(1) as f64) as f32;
                 Some(s0.lerp(&s1, t.clamp(0.0, 1.0)))
             }
@@ -427,6 +436,25 @@ impl Replication {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_remote_obj_set_down_far_off_is_never_shown_between_the_two_places() {
+        let at = |x: f32| ObjState {
+            position: Vec3::new(x, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            mist: None,
+            root: true,
+        };
+        // Walking 5 cm a tick, then through a Portal to a place 7 km off, then walking on.
+        let samples: VecDeque<(u64, ObjState)> =
+            [(10, at(1.0)), (12, at(1.1)), (14, at(7000.0)), (16, at(7000.1))].into_iter().collect();
+        let shown = |tick: f64| Replication::sample(&samples, tick).unwrap().position.x;
+        assert!((shown(11.0) - 1.05).abs() < 1e-4, "between two steps, part-way");
+        assert_eq!((shown(12.5), shown(13.9)), (1.1, 1.1), "where it was until it is through");
+        assert_eq!(shown(14.0), 7000.0);
+        assert!((shown(15.0) - 7000.05).abs() < 1e-3, "and walking on from there");
+    }
 
     #[test]
     fn a_state_survives_being_sent_to_a_millimetre() {

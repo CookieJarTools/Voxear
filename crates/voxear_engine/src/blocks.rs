@@ -376,6 +376,29 @@ fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named:
     number_placed(content, file, owner, named, None)
 }
 
+/// The numbers `file` gives the log `wood`, which `owner` names, in each
+/// way a tree's wood stands but whole and upright (the block's own number):
+/// thinner than a block or lying down, each by its state's byte, `file`
+/// growing to hold them. None where the wood is no log.
+fn log_numbers(content: &mut Content, file: &mut BlockFile, owner: &str, wood: Option<&str>) -> Vec<(u8, BlockId)> {
+    use voxear_terrain::blocks::shape::{BlockFacing, LOG_SIZES};
+    let Some(wood) = wood.filter(|wood| content.block(wood).is_some_and(|(_, block)| block.shape == BlockShape::Log))
+    else {
+        return Vec::new();
+    };
+    let mut numbers = Vec::new();
+    for facing in [BlockFacing::Up, BlockFacing::East, BlockFacing::North] {
+        for size in std::iter::once(0).chain(LOG_SIZES) {
+            if facing == BlockFacing::Up && size == 0 {
+                continue;
+            }
+            let state = BlockState { facing, size, ..BlockState::default() };
+            numbers.push((state.to_byte(), number_placed(content, file, owner, wood, Some(state))));
+        }
+    }
+    numbers
+}
+
 /// Each block that faces a way, by its number, as it is numbered turned each
 /// way and mirrored (see `WorldStructures::turns`).
 type Turns = std::collections::BTreeMap<BlockId, [BlockId; 8]>;
@@ -478,7 +501,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
                 // A plant that grows no vines numbers no block for them.
                 let vine = if def.vines > 0.0 { number(&def.vine) } else { 0 };
-                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine }
+                let logs = log_numbers(content, &mut file, plant, def.wood.as_deref());
+                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine, logs }
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");
@@ -771,6 +795,9 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "drops": drops,
         "sounds": { "break": block.sounds.broken, "place": block.sounds.placed, "step": block.sounds.step },
         "shape": BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or(0),
+        "chops": block.slice().map_or(0, |_| block.chops),
+        "fells": block.fells,
+        "grows": block.grows,
         "usable": block.part_look().usable || matches!(
             block.shape,
             BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate | BlockShape::Lever | BlockShape::Button
@@ -1023,6 +1050,7 @@ struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blo
 /// else the game's camera. Without a camera or a generator, left as it is.
 pub fn stream(world: &mut World, content: &mut Content) {
     use voxear_scene::{Transform, WorldTransform};
+    use voxear_terrain::blocks::stream::StreamFrom;
     voxear_core::profile_scope!("Block Streaming");
     let endless: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
         .query_ref::<(voxear_ecs::Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
@@ -1037,6 +1065,8 @@ pub fn stream(world: &mut World, content: &mut Content) {
     }
     let Some(viewer) = crate::terrain::viewer(world) else { return };
     let budget = voxear_terrain::WorldBudget::of(world);
+    // The far sides of the Portals near enough to show them are made too, less far.
+    let exits = crate::portals::exits(world);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
@@ -1050,12 +1080,34 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // As many columns at once and as far as the game's budget lets it, and no further than the world's own.
         streamer.at_once = budget.columns as usize;
         let distances = (far.distance.min(budget.view_distance), far.far.min(budget.far_distance));
-        if streamer.update(&mut blocks, &mut asset.base, &mut asset.pending, making, distances, camera) {
+        let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1 }];
+        from.extend(exits.iter().map(|exit| StreamFrom {
+            at: [exit.at.x - corner.x, exit.at.z - corner.z],
+            distance: exit.distance.min(distances.0),
+            far: distances.1,
+        }));
+        if streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from) {
             world.insert(entity, blocks);
             world.insert(entity, asset);
         }
     }
     world.insert_resource(streams);
+}
+
+/// Whether every world of blocks without end has made its own blocks, with
+/// their faces, within `radius` metres of `at`: there is ground to see
+/// there, and to stand on once physics has taken it up. `None` where no
+/// world of blocks is without end, so nothing is being made anywhere.
+pub fn made_round(world: &World, at: voxear_core::math::Vec3, radius: f32) -> Option<bool> {
+    use voxear_scene::{Transform, WorldTransform};
+    let streams = world.resource::<Streams>()?;
+    let mut made = None;
+    for (entity, streamer) in &streams.0 {
+        let Some(local) = world.get::<Transform>(*entity) else { continue };
+        let corner = voxear_terrain::corner(local, world.get::<WorldTransform>(*entity));
+        made = Some(made.unwrap_or(true) && streamer.drawn_round([at.x - corner.x, at.z - corner.z], radius));
+    }
+    made
 }
 
 /// How far into its next step the worlds of blocks' water is, in seconds.

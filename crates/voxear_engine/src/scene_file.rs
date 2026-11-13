@@ -39,7 +39,8 @@
 //! written by hand may name it instead, as `layer = "Player"` (see
 //! [`LayerRef`]). `[obj.collider]`, `[obj.rigidbody]` and
 //! `[obj.character]` are its physics (see [`crate::physics`]), with
-//! `[obj.joint]` holding it to another (see [`crate::joints`]), and
+//! `[obj.joint]` holding it to another (see [`crate::joints`]), `[obj.portal]`
+//! showing the place another Portal stands in (see [`crate::portals`]), and
 //! `[obj.vehicle]` and `[obj.wheel]` a vehicle and its wheels,
 //! `[obj.collider2d]` and `[obj.rigidbody2d]` its 2D physics (see
 //! [`crate::physics2d`]).
@@ -413,6 +414,14 @@ pub struct ObjData {
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joint: Option<JointData>,
+    /// A Portal, which shows the place another stands in and takes Objs
+    /// there (see [`crate::portals`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal: Option<crate::portals::PortalData>,
+    /// The Obj its camera films, by its place in the same file: the
+    /// camera's view is carried through a Portal that lies between them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_follows: Option<crate::lod_groups::FileRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider2d: Option<Collider2D>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -498,6 +507,8 @@ impl ObjData {
             rigidbody: None,
             character: None,
             joint: None,
+            portal: None,
+            camera_follows: None,
             collider2d: None,
             rigidbody2d: None,
             vehicle: None,
@@ -1862,6 +1873,12 @@ fn capture_instance(
     if root.joint.is_some() && root.joint != prefab_root.joint {
         instance.joint = root.joint.clone();
     }
+    if root.portal.is_some() && root.portal != prefab_root.portal {
+        instance.portal = root.portal.clone();
+    }
+    if root.camera_follows.is_some() && root.camera_follows != prefab_root.camera_follows {
+        instance.camera_follows = root.camera_follows.clone();
+    }
     if root.collider2d.is_some() && root.collider2d != prefab_root.collider2d {
         instance.collider2d = root.collider2d;
     }
@@ -2095,6 +2112,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(joint) = actual.joint.as_ref().filter(|j| Some(*j) != expected.joint.as_ref()) {
         put("joint", joint.whole()?);
+    }
+    if let Some(portal) = actual.portal.as_ref().filter(|p| Some(*p) != expected.portal.as_ref()) {
+        put("portal", portal.whole()?);
+    }
+    if let Some(follows) = actual.camera_follows.as_ref().filter(|f| Some(*f) != expected.camera_follows.as_ref()) {
+        put("camera_follows", toml::Value::try_from(follows)?);
     }
     if let Some(collider) = actual.collider2d.filter(|c| Some(*c) != expected.collider2d) {
         put("collider2d", whole(&collider, &Collider2D::default())?);
@@ -2405,6 +2428,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.rigidbody = world.get::<Rigidbody>(entity).copied();
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
+    let portal = world.get::<voxear_render::Portal>(entity);
+    obj.portal = portal.map(|portal| crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e)));
+    let follows = world.get::<voxear_render::CameraFollows>(entity).and_then(|follows| file_path(world, ids, follows.0));
+    obj.camera_follows = follows.map(|path| crate::lod_groups::FileRef::new(&path));
     obj.collider2d = world.get::<Collider2D>(entity).copied();
     obj.rigidbody2d = world.get::<Rigidbody2D>(entity).copied();
     // What drives a Vehicle and how it goes are the game's, not the scene's.

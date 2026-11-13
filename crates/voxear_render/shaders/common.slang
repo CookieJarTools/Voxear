@@ -860,7 +860,16 @@ struct Frame
     // ORIGIN_WRAP metres, exact, for levelPosition; and its height, whole, for the sky and fog.
     float4 origin;
     Sea sea;
+    // A plane nothing behind is drawn: the far Portal's, for a view through a Portal (src/portals.rs); one that
+    // cuts nothing otherwise.
+    float4 cut;
 };
+
+// How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.
+float cutAt(Frame* frame, float3 world)
+{
+    return dot(frame->cut.xyz, world) + frame->cut.w;
+}
 
 float weatherShare(Frame* frame, uint index, float2 xz)
 {
@@ -1274,6 +1283,9 @@ struct BlockWorld
     // its foliage tint, red, green and blue a byte each, each out of 2.
     uint* tints;
     int2 tintCorner;
+    // How it is turned about its corner, as a quaternion, where it is drawn turned (BLOCKS_TURNED): blocks come loose
+    // from their world, as a tree that falls.
+    float4 turn;
 };
 
 // How many blocks apart a world's tint points are (voxear_terrain::blocks::generate::tints::TINT_STEP).
@@ -1310,6 +1322,7 @@ struct MovingBlock
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).
 static const uint BLOCKS_SMOOTH = 1;
+static const uint BLOCKS_TURNED = 2;
 
 // A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
 // ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the
@@ -1389,6 +1402,14 @@ struct TerrainPatch
     float2 origin;
     float size;
     uint packed;
+};
+
+// A Portal's opening (src/portals.rs's GpuPortalQuad): its corners as the view sees them, and its mist's colour
+// with how much of it covers the far side.
+struct PortalQuad
+{
+    float4 corners[4];
+    float4 mist;
 };
 
 struct Buffers
@@ -1486,6 +1507,8 @@ struct Buffers
     float3* particleTrails;
     // The strikes of systems that report them (PARTICLES_HITS), counted in particleCounters[1].
     ParticleHit* particleHits;
+    // This view's Portals' openings (portal.slang).
+    PortalQuad* portalQuads;
 };
 
 struct Push

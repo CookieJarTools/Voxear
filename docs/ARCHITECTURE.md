@@ -1175,6 +1175,56 @@ and swaying bits as the look that creeps over it and from where. Twins are a fix
 a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
 in the same place, later in the pool and discarded but for its fringe.
 
+**Portals** *(implemented; light, shadows and sound through them, other levels and the server's checks planned)*.
+A `voxear_render::Portal` on an Obj is an opening `size` wide about the Obj and high from it, facing its +Z, that
+leads to another Portal. `Carry::between` is what going through does: turned about the near Portal, half a turn about
+its up, and set down at the far one, worked from the near Portal's place so small numbers stay small far out.
+
+*Drawing* (`portals.rs`, `shaders/portal.slang`, `draw_portals` in `lib.rs`). A camera's view draws its own world,
+then every Portal in sight (`portals::in_sight`) into its depth as a quad (`Portal surfaces`, depth clamped so a
+camera standing in the opening is not cut by the near plane), so nothing behind an opening is shaded. For each of the
+nearest `PortalQuality::views` whose far side is ready, a child `View` kept per Portal draws the far side into the
+same colour and motion targets, after the camera's opaque passes and before its sky and water: `Portal mask` opens a
+depth of its own only where the opening is the nearest thing (the furthest depth there, the nearest elsewhere, so
+nothing else passes), and the child records the usual passes with a `PortalPass` — no clears, its depth drawn first,
+no AO, contact shadows, reflections, GI, glass, particles, smoke, Terrains or sea, the parent's sky tables and cloud
+drift, clouds marched only in the opening's rectangle, and the sun's cascades out to 48 m, or none past
+`shadow_distance`. Its camera (`portals::Through`) is where going through takes the parent's, in a space of its own
+whose middle is the far Portal's place rounded to whole metres: every instance, light, block world corner, plant and
+storm is moved into it while extracting (`scene::rebase`), so a far side 30 km off draws to the millimetre. Its
+frustum is the opening's rectangle on screen (`rect_in_view`) and the far Portal's plane, which `GpuFrame::cut`
+also gives every vertex shader as `SV_ClipDistance0` (`cutAt`), so nothing between the far Portal and its camera is
+drawn. `Portal depth over` lays its depth over a copy of the parent's, which the parent's fog and post read. A Portal
+seen through a Portal is drawn the same way to `depth` levels deep (at most 2); every opening that does not draw
+its far side gets `Portal mist`, which also fades a far side in. Worlds of blocks seen from more than one place
+(`BlockWorld::places`) show each view the chunks kept round the place nearest its camera, so the detail kept round a
+far side never lies over another place's coarser rings, and a far side is picked without the camera's sight map.
+
+*Going through* (`voxear_engine::portals`). `look` notes where every Obj with a Character Controller, a Rigidbody or
+a `PortalTraveller` is before each tick and before Update; `carry_objs`, after each physics step, after Update and
+after animation, finds the open, ready Portal whose opening the way since crossed (`crossing`, with a 25 cm margin),
+sets the Obj down where `Carry` takes it, a millimetre clear of the far plane, and tells physics
+(`PhysicsScene::teleported`: the body or character placed at once, its speed and spin turned) and tick smoothing
+(`tick_smoothing::carried`: its kept poses go through too). Each crossing is a `PortalPassed` in `PortalEvents`,
+which scripts hear as `Portal.Passed`. A remote Obj whose snapshots lie further apart than anything moves in their
+ticks is shown at one or the other, never between (`Replication::sample`).
+
+*Cameras.* After LateUpdate, `carry_views` gives each camera whose subject (its `CameraFollows`, else the body it is
+under) is on the other side of an opening from it a `ViewCarry`: extraction, the viewer worlds stream round, and the
+renderer look from where that takes the camera. When where a camera looks from goes through a Portal, its subject's
+crossing, or its carry changes, the renderer is told (`Renderer::carry_view`) and moves last frame's camera and
+view-projection by the same move, so motion vectors and TAA see nothing jump; Objs that went through move their last
+model matrices (`carry_objs`). `mark_straddlers` gives each Obj within 1.5 m of an opening a `Straddles`, and
+extraction draws its instances a second time on the far side.
+
+*The far side's world.* `find_exits` lists the far Portal of every open Portal within its view distance and 24 m
+(56 m once listed) of the viewer or a camera's subject. `blocks::stream` passes each to `BlockStreamer::update_from`
+as a `StreamFrom` beside the camera's: each place gets windows of its own, as many levels as the camera's and its
+near ones out to `far_side_distance`, a level's windows together (`Area`), work nearest any place first, and coarse
+columns shown from each place by its own windows (`show_coarse`). Collision and grown plants follow from the chunks.
+`update_far` gives each Portal a `PortalFar`: ready once the ground 40 m round where it leads has stood three ticks,
+its mist then clearing over 0.4 s. Rays for the GI are made only of chunks round the camera.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 
@@ -3687,6 +3737,22 @@ unchanged, and the second word of each pair draws a degenerate quad. Motion is t
 keeps when each moving block started, by its own clock, and the shader poses its moving boxes by the motion's keys,
 so collision and saves hold only the state it ends in. Hanging blocks swing in the vertex shader from the wind
 and the foliage push, never in physics.
+
+**Logs, falling trees and saplings.** A log's thickness and the way it lies are its placed state too, set over
+its facing with the state byte's top bit (which no other shape sets), so a tree of thin logs, a log chopped thinner
+and what a player joining is sent cost no more than whole blocks; a trunk thins and a branch steps aside by
+numbering states, never by new storage. What a cut log held up is found in the world as it is
+(`terrain::blocks::fell::loose_tree`: logs of the cut log's family, the leaves nearer them than another tree's,
+the vines on them) and taken out as ordinary block changes. While it falls it is a second world of blocks on an Obj
+of its own (`fell::LooseBlocks`): its blocks stay at their own places, so its tufts and pictures match, and the
+renderer draws it turned about its Obj (`BLOCKS_TURNED`, a quaternion on `GpuBlockWorld`), picking its chunks in its
+own space and reading its pictures where they rest, as a moving part's are. Only the renderer sees a `LooseBlocks`:
+no physics, rays, maps or saves. Its fall is the engine's alone (`engine::trees`), stepped as a pole falls and
+stopped by the first of its blocks to meet ground; its drops are `engine::item_drops::ItemDrop` Objs, the
+moment's, never saved. A sapling is a block; growing it is a short list on its world (`sapling::Saplings`,
+nineteen bytes each, captured with a world's script changes as `VXSW`). Each stage is the plant at a share of its
+size grown from its place's seed, so a stage can be grown again at any time from three numbers and the block
+changes it makes are those a player's would be.
 
 **See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
 materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and

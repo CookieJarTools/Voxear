@@ -136,7 +136,7 @@ impl Skinning {
                 if rows.len() / 4 + skin.joints.len() > MAX_SKIN_MATRICES as usize {
                     break;
                 }
-                let owner = Owner { entity, plant: None, part: Some(index as u32) };
+                let owner = Owner { entity, plant: None, part: Some(index as u32), far_side: false };
                 let Some(kept) = self.slot(assets, owner, u64::from(count), frame) else { continue };
                 // Each joint's matrix: where its bone is now, from where it was when the mesh was bound to it.
                 let matrices = (rows.len() / 4) as u32;

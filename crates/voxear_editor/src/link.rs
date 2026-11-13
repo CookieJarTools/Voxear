@@ -713,6 +713,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Rigidbody
             | Part::Character
             | Part::Joint
+            | Part::Portal
             | Part::Collider2D
             | Part::Rigidbody2D
             | Part::Vehicle

@@ -34,7 +34,7 @@ use crate::{
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
-    shadows::{CASCADE_RESOLUTION, CASCADES},
+    shadows::CASCADES,
     volumetric,
 };
 
@@ -48,6 +48,8 @@ pub struct Targets {
     pub pyramid_mips: Vec<StorageImageId>,
     pub pyramid_size: [u32; 2],
     pub shadows: Option<ImageId>,
+    /// How many texels a side each of the sun's cascades has in it.
+    pub cascade_size: u32,
     /// The local lights' shadow atlas, with each light's first view and how
     /// many it takes, when any local light casts a shadow this frame.
     pub local_shadows: Option<(ImageId, Vec<(u32, u32)>)>,
@@ -161,16 +163,25 @@ pub struct Frame {
     /// Reflections trace the scene's triangles by the GPU's ray queries,
     /// with or without the GI, rather than the screen.
     pub traced_reflections: bool,
+    /// How many Portals' openings the view draws into its depth (see
+    /// `portals`): the first of its buffer's.
+    pub portal_openings: u32,
+    /// The view is one through a Portal: it draws over what the view it is
+    /// seen in has drawn, and reads that view's sky tables.
+    pub through: bool,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
 /// under the water, which is drawn after the air's fog (`water::record_under`),
-/// and the particles, drawn after it too.
+/// and the particles, drawn after it too. `far_sides` records the views
+/// through the Portals it sees, once its own surfaces are drawn and before
+/// its sky and water.
 pub fn record(
     fg: &mut FrameGraph<'_>,
     frame: &Frame,
     targets: &Targets,
     draws: &Draws,
+    far_sides: &mut dyn FnMut(&mut FrameGraph<'_>),
 ) -> (Option<crate::water::UnderWater>, Option<crate::particles::Draw>, Option<crate::smoke::Draw>) {
     let culling = [
         (draws.count, BufferAccess::ComputeWrite),
@@ -280,18 +291,19 @@ pub fn record(
             cull(ctx, pipelines.cull, &push, LIST_SHADOW, instances, CASCADES as u32);
         });
         meshlet_pass(fg, "Shadow meshlets", &[], [LIST_SHADOW, LIST_SHADOW + CASCADES as u32]);
+        let cascade_size = targets.cascade_size;
         fg.add_pass("Shadows", &[(atlas, ImageAccess::DepthAttachment)], &drawing, move |ctx| {
-            let size = CASCADE_RESOLUTION * 2;
+            let size = cascade_size * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
             let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
             bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
-                    x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                    y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                    x: (cascade % 2 * cascade_size) as i32,
+                    y: (cascade / 2 * cascade_size) as i32,
                 };
-                set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 indirect.draw(ctx, LIST_SHADOW + cascade);
             }
@@ -341,8 +353,9 @@ pub fn record(
     let contact_shadows = frame.contact_shadows;
     let reflections = frame.reflections;
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
-    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
-    if let Some(atmosphere) = frame.atmosphere {
+    let through = frame.through;
+    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || through;
+    if let Some(atmosphere) = frame.atmosphere.filter(|_| !frame.through) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
     // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry; and the
@@ -351,7 +364,10 @@ pub fn record(
     let caustics = frame.water.as_ref().map(crate::water::Water::caustics);
     if let Some(water) = &frame.water {
         crate::water::record_dry_mask(fg, (pipelines, push), water, draws.index_buffer);
-        crate::water::record_waves(fg, (pipelines, push), water);
+        // A view through a Portal draws with the waves the camera's own view worked out.
+        if !water.shares_waves() {
+            crate::water::record_waves(fg, (pipelines, push), water);
+        }
     }
     let mut tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     if let Some(clouds) = frame.clouds {
@@ -376,7 +392,7 @@ pub fn record(
         images.extend(caustics.map(|image| (image, ImageAccess::Sampled)));
         images
     };
-    let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
+    let shading_push = Push { size: [targets.cascade_size; 2], ..draw_push };
     let forward = match (mesh, frame.wireframe) {
         (Some(mesh), true) => mesh.wireframe,
         (Some(mesh), false) => mesh.forward,
@@ -385,13 +401,32 @@ pub fn record(
     };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
+    // The Portals' openings, drawn into the depth as any surface: nothing of the view's own world behind one is
+    // shaded after it, and the view through it finds its pixels by it (portal.slang).
+    let openings = frame.portal_openings;
+    let portal_surfaces = |fg: &mut FrameGraph<'_>| {
+        if openings == 0 {
+            return;
+        }
+        fg.add_pass("Portal surfaces", &[(depth, ImageAccess::DepthAttachment)], &[], move |ctx| {
+            let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+            begin_rendering(ctx, ctx.extent(depth), &[], Some(&target));
+            bind(ctx, pipelines.portal_surface, vk::PipelineBindPoint::GRAPHICS, &push);
+            for opening in 0..openings {
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: opening, ..push });
+                unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, 0, 0) };
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    };
     let depth_pass = |fg: &mut FrameGraph<'_>, name: &str, list: u32| {
         let pipeline = mesh.map_or(pipelines.depth, |mesh| mesh.depth);
         let push = Push { list, ..draw_push };
         let surface = frame.surface.expect("the depth passes' surface");
         let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
         fg.add_pass(name, &images, &shading_buffers, move |ctx| {
-            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY);
+            // A view through a Portal draws into the depth opened for it.
+            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY && !through);
         });
     };
 
@@ -431,17 +466,18 @@ pub fn record(
             (draws.dice_patches, BufferAccess::ShaderRead),
             (draws.dice_splits, BufferAccess::ShaderRead),
         ];
+        let cascade_size = targets.cascade_size;
         fg.add_pass("Shadows (diced)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
-            let size = CASCADE_RESOLUTION * 2;
+            let size = cascade_size * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
             bind(ctx, pipelines.shadow_diced, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
-                    x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                    y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                    x: (cascade % 2 * cascade_size) as i32,
+                    y: (cascade / 2 * cascade_size) as i32,
                 };
-                set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 dice.draw(ctx);
             }
@@ -452,7 +488,7 @@ pub fn record(
         crate::terrain::record_shadows(fg, (pipelines, push), terrains, atlas);
     }
     if let (Some(atlas), Some(blocks)) = (targets.shadows, &frame.blocks) {
-        crate::blocks::record_shadows(fg, (pipelines, push), blocks, atlas);
+        crate::blocks::record_shadows(fg, (pipelines, push), blocks, (atlas, targets.cascade_size));
     }
     // The grass round the camera, scattered afresh before anything draws it.
     if let Some(grass) = &frame.grass {
@@ -490,7 +526,7 @@ pub fn record(
         }
         false => {
             fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-                let clear = Clear { color: true, depth: true };
+                let clear = Clear { color: !through, depth: !through };
                 opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
             });
             fg.add_pass("Opaque (diced)", &shading(ImageAccess::ColorAttachment), &diced_buffers, move |ctx| {
@@ -553,11 +589,14 @@ pub fn record(
                 let maps = &shadow_maps;
                 ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, traced, maps);
             }
+            // After what reads the depth for the view's own world, and before any of it is shaded.
+            portal_surfaces(fg);
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
             let again = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
             for (name, list) in [("Opaque (early)", LIST_EARLY), ("Opaque (late)", LIST_LATE)] {
-                let clear = Clear { color: list == LIST_EARLY, depth: false };
+                // A view through a Portal draws over what the view it is seen in drew.
+                let clear = Clear { color: list == LIST_EARLY && !through, depth: false };
                 fg.add_pass(name, &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
                     opaque(ctx, forward, &Push { list, ..again }, indirect, scene, clear);
                 });
@@ -588,6 +627,9 @@ pub fn record(
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
         }),
     }
+    if !depth_first {
+        portal_surfaces(fg);
+    }
     if let Some(probes) = frame.probes {
         ddgi::record(fg, (pipelines, push), probes, &shadow_maps);
     }
@@ -603,6 +645,7 @@ pub fn record(
         ctx.gpu.device.cmd_copy_buffer(ctx.cmd, stats_handle, readback, &[region]);
     });
     fg.sync_buffer(draws.stats_readback, BufferAccess::HostRead);
+    far_sides(fg);
 
     let extent = frame.extent;
     let mut sky_images = vec![
@@ -899,7 +942,7 @@ fn clear_color(color: [f32; 4]) -> vk::ClearValue {
     vk::ClearValue { color: vk::ClearColorValue { float32: color } }
 }
 
-fn clear_depth(depth: f32) -> vk::ClearValue {
+pub(crate) fn clear_depth(depth: f32) -> vk::ClearValue {
     vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth, stencil: 0 } }
 }
 

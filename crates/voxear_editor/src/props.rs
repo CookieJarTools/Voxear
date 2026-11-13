@@ -40,7 +40,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
+    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Portal, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
     BuiltinMesh, BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleMesh, ParticleTexture, ParticleTrails, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
 };
@@ -92,6 +92,7 @@ pub enum Part {
     Rigidbody,
     Character,
     Joint,
+    Portal,
     Collider2D,
     Rigidbody2D,
     Vehicle,
@@ -172,6 +173,7 @@ impl Part {
             Part::Rigidbody => "rigidbody".into(),
             Part::Character => "character".into(),
             Part::Joint => "joint".into(),
+            Part::Portal => "portal".into(),
             Part::Collider2D => "collider2d".into(),
             Part::Rigidbody2D => "rigidbody2d".into(),
             Part::Vehicle => "vehicle".into(),
@@ -247,6 +249,7 @@ impl Part {
             Part::Rigidbody => "Rigidbody",
             Part::Character => "Character Controller",
             Part::Joint => "Joint",
+            Part::Portal => "Portal",
             Part::Collider2D => "Collider 2D",
             Part::Rigidbody2D => "Rigidbody 2D",
             Part::Vehicle => "Vehicle",
@@ -335,6 +338,7 @@ impl Part {
             Part::Rigidbody => "move",
             Part::Character => "obj",
             Part::Joint => "pivot",
+            Part::Portal => "box",
             Part::Collider2D => "box",
             Part::Rigidbody2D => "move",
             Part::Vehicle => "move",
@@ -833,6 +837,16 @@ pub enum Prop {
     JointLimited,
     JointMin,
     JointMax,
+    /// A Portal's: the Portal it leads to, its opening's size, whether it
+    /// is open, its mist's colour and how far off its far side shows.
+    PortalTo,
+    PortalSize,
+    PortalOpen,
+    PortalMist,
+    PortalViewDistance,
+    /// The Obj a camera films, which its view is carried through Portals
+    /// to go on seeing.
+    CameraFollows,
     /// A Collider 2D's, as a Collider's, in the XY plane.
     Shape2D,
     Offset2D,
@@ -912,7 +926,7 @@ impl Prop {
             | Prop::LightBody => {
                 Part::Light
             }
-            Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
+            Prop::FieldOfView | Prop::Near | Prop::Exposure | Prop::CameraFollows => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
             Prop::WindStrength
             | Prop::WindGusts
@@ -1198,6 +1212,9 @@ impl Prop {
             | Prop::JointLimited
             | Prop::JointMin
             | Prop::JointMax => Part::Joint,
+            Prop::PortalTo | Prop::PortalSize | Prop::PortalOpen | Prop::PortalMist | Prop::PortalViewDistance => {
+                Part::Portal
+            }
             Prop::Shape2D
             | Prop::Offset2D
             | Prop::Size2D
@@ -1578,6 +1595,12 @@ impl Prop {
             Prop::JointAnchor => "anchor",
             Prop::JointAxis => "axis",
             Prop::JointLimited | Prop::JointMin | Prop::JointMax => "limits",
+            Prop::PortalTo => "to",
+            Prop::PortalSize => "size",
+            Prop::PortalOpen => "open",
+            Prop::PortalMist => "mist",
+            Prop::PortalViewDistance => "view_distance",
+            Prop::CameraFollows => "camera_follows",
             Prop::Shape2D => "shape",
             Prop::Offset2D => "offset",
             Prop::Size2D => "size",
@@ -1793,6 +1816,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Joint>(entity) {
         parts.push(Part::Joint);
     }
+    if world.has::<Portal>(entity) {
+        parts.push(Part::Portal);
+    }
     if world.has::<Collider2D>(entity) {
         parts.push(Part::Collider2D);
     }
@@ -1865,7 +1891,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             }
             props
         }
-        Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
+        Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::WindZone => {
             // A Global one's gusts for the plants; a Sphere's or a Box's size over the sea.
@@ -2231,6 +2257,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 }
             }
             props
+        }
+        Part::Portal => {
+            vec![Prop::PortalTo, Prop::PortalSize, Prop::PortalOpen, Prop::PortalMist, Prop::PortalViewDistance]
         }
         Part::Collider2D => {
             let shape = world.get::<Collider2D>(entity).map_or(ColliderShape2D::Box, |c| c.shape);
@@ -2657,6 +2686,12 @@ pub fn label(prop: &Prop) -> String {
         Prop::JointLimited => "Use limits",
         Prop::JointMin => "Min",
         Prop::JointMax => "Max",
+        Prop::PortalTo => "Leads To",
+        Prop::PortalSize => "Size",
+        Prop::PortalOpen => "Open",
+        Prop::PortalMist => "Mist",
+        Prop::PortalViewDistance => "View Distance",
+        Prop::CameraFollows => "Follows",
         Prop::Shape2D => "Shape",
         Prop::Offset2D => "Offset",
         Prop::Size2D => "Size",
@@ -2717,6 +2752,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
         (Prop::BlockWorld(field), _) => crate::block_props::unit(*field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
+        (Prop::PortalSize | Prop::PortalViewDistance, _) => Some("m"),
         (Prop::Heat(field), _) => crate::heat_props::unit(*field),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
@@ -2814,6 +2850,9 @@ pub fn add(
         }
         Part::Joint => {
             world.insert(entity, Joint::default());
+        }
+        Part::Portal => {
+            world.insert(entity, Portal::default());
         }
         Part::Collider2D => {
             world.insert(entity, Collider2D::default());
@@ -3060,6 +3099,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Rigidbody => drop(world.remove::<Rigidbody>(entity)),
         Part::Character => drop(world.remove::<CharacterController>(entity)),
         Part::Joint => drop(world.remove::<Joint>(entity)),
+        Part::Portal => {
+            world.remove::<voxear_render::PortalFar>(entity);
+            drop(world.remove::<Portal>(entity));
+        }
         Part::Collider2D => drop(world.remove::<Collider2D>(entity)),
         Part::Rigidbody2D => drop(world.remove::<Rigidbody2D>(entity)),
         Part::Vehicle => drop(world.remove::<Vehicle>(entity)),
@@ -3175,6 +3218,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::JointConnected => {
             let connected = world.get::<Joint>(entity)?.connected;
             Value::Obj(connected.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+        }
+        Prop::PortalTo => {
+            let to = world.get::<Portal>(entity)?.to;
+            Value::Obj(to.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+        }
+        Prop::PortalSize => Value::Vector(world.get::<Portal>(entity)?.size.to_array().to_vec()),
+        Prop::PortalOpen => Value::Toggle(world.get::<Portal>(entity)?.open),
+        Prop::PortalMist => Value::Color(srgb(world.get::<Portal>(entity)?.mist.to_array()).map(round3)),
+        Prop::PortalViewDistance => Value::Number(world.get::<Portal>(entity)?.view_distance),
+        Prop::CameraFollows => {
+            world.get::<Camera>(entity)?;
+            let follows = world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0);
+            Value::Obj(follows.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
         }
         Prop::JointAnchor => Value::Vector(world.get::<Joint>(entity)?.anchor.to_vec()),
         Prop::JointAxis => Value::Vector(world.get::<Joint>(entity)?.axis.to_vec()),
@@ -3752,7 +3808,10 @@ pub fn set(
             | Prop::MapOpenAction,
             Value::Asset(label),
         )
-        | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
+        | (
+            Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected | Prop::PortalTo | Prop::CameraFollows,
+            Value::Obj(label),
+        ) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer.as_deref_mut(), types, entity, prop, &choice))
         }
@@ -4061,6 +4120,22 @@ pub fn pick(
         (Prop::LodAdd(level), Pick::Obj(Some(obj))) => {
             with(&mut game.engine.world, entity, |group: &mut LodGroup| group.put(*level, &[*obj]))
         }
+        // The Portal picked leads back, unless it already leads somewhere: two join both ways from one pick.
+        (Prop::PortalTo, Pick::Obj(obj)) => {
+            let world = &mut game.engine.world;
+            let to = obj.filter(|&obj| obj != entity && world.has::<Portal>(obj));
+            if let Some(other) = to.and_then(|to| world.get_mut::<Portal>(to)).filter(|other| other.to.is_none()) {
+                other.to = Some(entity);
+            }
+            with(world, entity, |portal: &mut Portal| portal.to = to)
+        }
+        (Prop::CameraFollows, Pick::Obj(obj)) => {
+            let world = &mut game.engine.world;
+            match obj.filter(|&obj| obj != entity) {
+                Some(follows) => world.insert(entity, voxear_render::CameraFollows(follows)),
+                None => world.remove::<voxear_render::CameraFollows>(entity).is_some(),
+            }
+        }
         // None holds it to the world.
         (Prop::JointConnected, Pick::Obj(obj)) => {
             let obj = obj.filter(|&obj| obj != entity);
@@ -4093,6 +4168,8 @@ pub fn obj_target(world: &World, entity: Entity, prop: &Prop) -> Option<Entity> 
     match prop {
         Prop::LodObj(level, index) => world.get::<LodGroup>(entity)?.levels.get(*level)?.objs.get(*index).copied(),
         Prop::JointConnected => world.get::<Joint>(entity)?.connected,
+        Prop::PortalTo => world.get::<Portal>(entity)?.to,
+        Prop::CameraFollows => world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0),
         _ => None,
     }
 }
@@ -4308,6 +4385,21 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::ModelAsset => return fields::assets_of(game, Some(AssetKind::Model)),
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
+        // A Portal leads to another: every other Obj with one. A camera follows any Obj.
+        Prop::PortalTo | Prop::CameraFollows => {
+            let world = &game.engine.world;
+            let mut found = vec![("None".to_string(), Pick::Obj(None))];
+            let named = world.query_ref::<(Entity, &Name)>().without::<voxear_scene::Destroying>();
+            let mut others: Vec<(String, Pick)> = named
+                .into_iter()
+                .filter(|(other, _)| *other != entity && !world.has::<voxear_scene::EditorOnly>(*other))
+                .filter(|(other, _)| *prop == Prop::CameraFollows || world.has::<Portal>(*other))
+                .map(|(other, name)| (name.0.clone(), Pick::Obj(Some(other))))
+                .collect();
+            others.sort_by(|a, b| a.0.cmp(&b.0));
+            found.extend(others);
+            return found;
+        }
         // A joint holds to an Obj physics moves: every other with a Rigidbody, or the world.
         Prop::JointConnected => {
             let world = &game.engine.world;
@@ -4366,6 +4458,9 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
     if *prop == Prop::JointConnected {
         return "A joint holds to another Obj with a Rigidbody".to_string();
     }
+    if *prop == Prop::PortalTo {
+        return "A Portal leads to another Obj with a Portal".to_string();
+    }
     let Prop::Field { behaviour, path } = prop else {
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));
     };
@@ -4395,6 +4490,8 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::MapOpenAction => "Input Action".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
+        Prop::PortalTo => "Portal".into(),
+        Prop::CameraFollows => "Obj".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
         Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => {
             crate::block_props::takes_name(*field).into()
@@ -4545,6 +4642,17 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::JointKind, Value::Choice(index, _)) => with(world, entity, |joint: &mut Joint| {
             joint.kind = JointType::ALL[index.min(JointType::ALL.len() - 1)];
         }),
+        (Prop::PortalSize, Value::Vector(v)) => with(world, entity, |portal: &mut Portal| {
+            let side = |at: usize| v.get(at).copied().unwrap_or(1.0).max(0.1);
+            portal.size = voxear_core::math::Vec2::new(side(0), side(1));
+        }),
+        (Prop::PortalOpen, Value::Toggle(on)) => with(world, entity, |portal: &mut Portal| portal.open = on),
+        (Prop::PortalMist, Value::Color(color)) => with(world, entity, |portal: &mut Portal| {
+            portal.mist = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0))));
+        }),
+        (Prop::PortalViewDistance, Value::Number(n)) => {
+            with(world, entity, |portal: &mut Portal| portal.view_distance = n.max(0.0))
+        }
         (Prop::JointAnchor, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.anchor = three(&v)),
         (Prop::JointAxis, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.axis = three(&v)),
         // Limits start as a door's quarter turn, or a rope from no length to two metres.

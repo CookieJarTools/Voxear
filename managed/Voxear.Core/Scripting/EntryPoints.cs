@@ -102,6 +102,8 @@ internal static unsafe class EntryPoints
 			InputEvents.Dispatch();
 			Weather.Dispatch();
 			Storms.Dispatch();
+			Trees.Dispatch();
+			Portal.Dispatch();
 			ModuleHooks.Dispatch?.Invoke();
 			Localized.Dispatch();
 			SaveWrite.Update();
@@ -349,7 +351,7 @@ internal static unsafe class EntryPoints
 	{
 		try
 		{
-			var bytes = Encoding.UTF8.GetBytes(DevConsole.Names(GameScripts.Assemblies));
+			var bytes = Encoding.UTF8.GetBytes(DevConsole.Names(DevConsole.Searched));
 			if (bytes.Length <= capacity)
 			{
 				bytes.CopyTo(new Span<byte>(buffer, capacity));
@@ -380,6 +382,18 @@ internal static unsafe class EntryPoints
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void Invoke(int phase, uint* handles, int count)
 	{
+		// What Update took through a Portal is told before anything follows it in LateUpdate.
+		if ((Phase)phase == Phase.LateUpdate)
+		{
+			try
+			{
+				Portal.Dispatch();
+			}
+			catch (Exception exception)
+			{
+				Log.Exception(exception);
+			}
+		}
 		BehaviourTable.Invoke((Phase)phase, new ReadOnlySpan<uint>(handles, count));
 	}
 

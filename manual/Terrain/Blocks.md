@@ -125,6 +125,39 @@ Vines grow by themselves in a generated world: a [[Biomes#Vines|biome]] hangs th
 
 Vines are not climbed yet: a game's own script can ask which block a character is in (`Blocks.DefinitionAt`) and move the character up while it is a vine.
 
+### Logs
+
+A block whose **Shape** is **Log** is wood. Placed whole, it is a cube with its **Top** picture at its ends and its **Material** along its sides. A log can also be thinner than its block: a post running the length of the block, from three quarters of a block across down to a quarter. Wherever a thin log meets another log of the same block beside it, it reaches across to it with an arm of its own thickness, so a branch that steps up or aside reads as one bending limb.
+
+- **Lying down.** A log put against the side of a block lies out from it, along the way it was put, its rings at its ends. Put on the ground, it stands up. **R** in the Build tool turns it through its three ways.
+- **Thickness.** How thick a log is, and which way it lies, are kept in how it stands (see [How a placed block stands](#how-a-placed-block-stands)), so a world of thin logs is no larger to save or send.
+- **Trees.** A [[Structures#Trees of blocks|tree of blocks]] whose wood is a log grows a trunk of whole logs at its foot that thins as it rises, and branches of thin logs lying along the way they reach.
+- **Chopping.** Each time a log is mined it loses a slice and stands thinner; the last cuts it through (see [Breaking](#breaking)). A tree cut through at its foot comes down.
+- **Collision.** A thin log collides as it is drawn: a character walks between thin branches, and stands on a thick one.
+
+```toml
+color = [0.42, 0.31, 0.2]
+shape = "log"
+material = "Blocks/Pictures/Oak Log.material"
+top = "Blocks/Pictures/Oak Log Rings.material"
+bottom = "Blocks/Pictures/Oak Log Rings.material"
+```
+
+### Saplings
+
+A block whose **Shape** is **Sapling** is a young tree: two crossed sheets standing on the block under it, drawn with its picture, swaying when it **Sways in wind**. It is no ground, as a vine is. Its **Grows into** names the [[Structures#Trees of blocks|plant]] it grows into.
+
+A sapling takes root only on a whole block of ground, not on leaves, a log or a block of parts, where it has open sky, or enough light through leaves over it for its plant. Then it grows through its plant's stages, each the same tree at a larger share of its size, until it stands whole. Where its next stage has no room, or the light over it is too little, it waits; a sapling that waits as long as a stage takes dies and is gone, and a young tree stops growing where it stands. See [[Block Worlds#Saplings|Saplings]] for where saplings come from.
+
+```toml
+color = [0.22, 0.46, 0.16]
+shape = "sapling"
+sways = true
+hardness = 0.0
+grows = "Plants/Oak.voxplant"
+material = "Blocks/Pictures/Oak Sapling.material"
+```
+
 ### Blocks of parts
 
 A block whose **Shape** is one of these is drawn as a few boxes in place of a cube:
@@ -163,6 +196,7 @@ A block of parts keeps how it stands where it is placed: which way it faces, whi
 
 | Shape | What it keeps |
 | --- | --- |
+| Log | The way it lies, along x, y or z, and how thick it is across, in sixteenths of a block |
 | Slab | The side it lies against, one of six |
 | Stairs | The way it rises, and its half |
 | Door | The way it faces, its half (its lower or upper block), whether it is open, and its hinge |
@@ -236,7 +270,7 @@ Put down, a block of its own boxes faces the way it was put, turned a quarter at
 
 ### Starter blocks
 
-**Starter Blocks** in the Blocks panel makes a set of blocks of parts in the project's **Blocks/Starter** folder: an oak slab, stairs, fence, fence gate, door and trap door, a stone slab, stairs, wall and button, a lever, a glass pane, a chain, a rope and a lantern that hangs. The oak, the glass and the chain are drawn with small pictures of their own, made with them: planks, clear glass in a frame, and links. A block of a starter's name already there is left as it is.
+**Starter Blocks** in the Blocks panel makes a set of blocks of parts in the project's **Blocks/Starter** folder: an oak slab, stairs, fence, fence gate, door and trap door, a stone slab, stairs, wall and button, a lever, a glass pane, a chain, a rope, a lantern that hangs and an oak log. The oak, the glass and the chain are drawn with small pictures of their own, made with them: planks, clear glass in a frame, and links. A block of a starter's name already there is left as it is.
 
 ### Breaking
 
@@ -246,8 +280,12 @@ Put down, a block of its own boxes faces the way it was put, turned a quarter at
 | Unbreakable | Nothing breaks it |
 | Tool | The [[Tool Kinds and Stations|kind of tool]] that breaks it fast |
 | Tier | The lowest tier of that tool that gets its drops; 0 for anything, a hand too |
+| Chops | For a log: how many times a whole one is mined before it is cut through, a slice off it each time; 0 for at once |
+| Fells | For a log: whether cutting it through brings down the tree it holds up |
 
 With a tool of its kind in hand, a block takes its Hardness divided by the tool's **Speed**. Any other tool is no better than a hand. A block with a Tier still breaks for a weaker tool, but drops nothing.
+
+A log that chops takes its Hardness a slice at a time: each a share of a whole one's. A whole log with four chops is three quarters as thick after the first, half after the second, a quarter after the third, and cut through by the fourth; a thin branch goes in one or two. Only the last drops anything, and only that one is heard by scripts as mined. Cut through, a log that **Fells** brings down what it held up (see [[Block Worlds#Trees that come down|Trees that come down]]).
 
 ### Drops
 

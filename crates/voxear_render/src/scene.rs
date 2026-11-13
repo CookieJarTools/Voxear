@@ -293,6 +293,9 @@ pub struct Owner {
     pub entity: Entity,
     pub plant: Option<u32>,
     pub part: Option<u32>,
+    /// Drawn again where a Portal its Obj is part-way through takes it
+    /// (see `portals::Straddles`): the instance on the far side.
+    pub far_side: bool,
 }
 
 /// What the game draws of what it may leave out, as its project's modules
@@ -504,6 +507,7 @@ pub fn extract(
     (time, frame_index): (f32, u64),
     options: &ViewOptions,
     sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
+    through: Option<&crate::portals::Through>,
 ) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
     // Nothing switched off draws, lights or looks: neither an Obj that is off nor a component.
@@ -515,13 +519,20 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| on(*entity, Switch::Camera))
         .find(|(entity, ..)| options.camera.is_none_or(|chosen| chosen == *entity))
-        .map(|(_, camera, local, world)| (camera, local, world))
-        .map(|(camera, local, world)| {
+        .map(|(entity, camera, local, placed)| {
             let (_, rotation, position) =
-                world.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+                placed.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+            // A camera whose view a Portal carries looks from the other side of it.
+            let (position, rotation) = crate::portals::ViewCarry::of(world, entity, position, rotation);
             (*camera, position, rotation)
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
+    // A view through a Portal looks from the far side, in a space of its own (see `portals::Through`): everything
+    // drawn is moved into it at the end. `seen_from` is where the camera is in the world's, for what is picked by
+    // how far it is.
+    let offset = through.map_or(Vec3::ZERO, |through| through.offset);
+    let (position, rotation) = through.map_or((position, rotation), |through| (through.position, through.rotation));
+    let seen_from = position + offset;
 
     // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
     let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
@@ -549,7 +560,7 @@ pub fn extract(
     let scene_post = match options.post_override {
         Some(_) => scene_post,
         None => {
-            let blended = crate::post_volume::blend_volumes(world, scene_post, position);
+            let blended = crate::post_volume::blend_volumes(world, scene_post, seen_from);
             let mut fog = weather.fog(blended.fog, sky.horizon);
             // What falls from weather far off is drawn with the fog: on, however thin, wherever any does.
             let falls = |place: &crate::weather::WeatherPlace| {
@@ -601,12 +612,13 @@ pub fn extract(
     }
     gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
     // The fog's base is measured from the level's ground, wherever the world's middle has moved to.
-    let origin = voxear_scene::WorldOrigin::of(world).0;
+    let origin = voxear_scene::WorldOrigin::of(world).0 + offset.as_i64vec3();
     gpu_post.fog_base_height = (f64::from(gpu_post.fog_base_height) - origin.y as f64) as f32;
     gpu_post.lut_texture = post.grading.lut.map_or(NO_TEXTURE, |lut| lut.0);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
-        planes: frustum_planes(position, rotation, fov, aspect, camera.near),
+        planes: through.map_or_else(|| frustum_planes(position, rotation, fov, aspect, camera.near), |t| t.planes),
+        cut: through.map_or(crate::gpu::NO_CUT, |through| through.cut),
         camera_position: vec3(position),
         camera_forward: vec3(rotation * Vec3::Z),
         near: camera.near,
@@ -655,7 +667,7 @@ pub fn extract(
     };
 
     // What LOD Groups hide from this camera is neither drawn nor lit.
-    let lods = LodChoices::new(world, LodCamera::new(position, camera.fov_y_degrees), sphere);
+    let lods = LodChoices::new(world, LodCamera::new(seen_from, camera.fov_y_degrees), sphere);
     let mut lights = Vec::new();
     // The local lights that may cast shadows, by their index in `lights`.
     let mut shadowed = Vec::new();
@@ -711,6 +723,8 @@ pub fn extract(
         }
     }
     frame.light_count = lights.len() as u32;
+    // Lamps cast no shadows through a Portal.
+    let shadowed = if through.is_some() { Vec::new() } else { shadowed };
     let local_shadows = local_shadows(&mut frame, &mut lights, shadowed);
     // What pushes through foliage, the nearest the camera first.
     let pushing = world.query_ref::<(Entity, &crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
@@ -722,13 +736,16 @@ pub fn extract(
         .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
         .chain(walkers.iter().copied())
         .collect();
-    frame.pushes = crate::foliage::pushes(position, pushers);
+    // Plants seen through a Portal stand as they grew: what pushes them is where the world has it.
+    if through.is_none() {
+        frame.pushes = crate::foliage::pushes(position, pushers);
+    }
     // What presses tracks into the ground, each with how high it is above the ground under it.
     let pressing = world.query_ref::<(Entity, &crate::TrackMaker, &Transform, Option<&WorldTransform>)>();
     let track_makers = pressing
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, ..)| on(*entity, Switch::TrackMaker))
+        .filter(|(entity, ..)| through.is_none() && on(*entity, Switch::TrackMaker))
         .filter_map(|(entity, maker, transform, at)| {
             let at = at.map_or(transform.position, |w| w.0.w_axis.truncate());
             let ground = voxear_terrain::ground_at(world, at.x, at.z)?;
@@ -773,13 +790,17 @@ pub fn extract(
             w.0.to_scale_rotation_translation()
         });
         let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
-        (water_look.over_ocean(*ocean), position.y, now.map_or_else(blown, |now| now.0))
+        (water_look.over_ocean(*ocean), position.y - offset.y, now.map_or_else(blown, |now| now.0))
     });
-    let water_bodies = water_bodies(world, position, water_look);
+    // Pools, streams and lava are not drawn through a Portal.
+    let water_bodies = match through {
+        Some(_) => crate::water::WaterBodies::default(),
+        None => water_bodies(world, position, water_look),
+    };
     // Lava lights what is round it.
     lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
     // And Particle Systems that cast a light: a fire's flicker, an explosion's flash.
-    lights.extend(crate::particles::lights(world, position, crate::particles::time_of(world, time)));
+    lights.extend(crate::particles::lights(world, seen_from, crate::particles::time_of(world, time)));
     frame.light_count = lights.len() as u32;
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<(Entity, &crate::Seasons)>().without::<Destroying>();
@@ -796,12 +817,15 @@ pub fn extract(
         let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
             (look.shadow_distance, look.shadow_split)
         });
+        // Through a Portal the sun's shadows reach only a little way past the opening: the far side is seen through a
+        // small part of the screen, and what is further off in it casts none.
+        let distance = if through.is_some() { distance.min(PORTAL_SHADOW_REACH) } else { distance };
         let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction), distance, split);
         for (i, cascade) in cascades.iter().enumerate().take(CASCADES) {
             frame.cascade_view_proj[i] = cols(cascade.view_proj);
             frame.cascade_planes[i] = cascade.planes;
             frame.cascade_far[i] = cascade.far;
-            frame.cascade_texel[i] = cascade.texel;
+            frame.cascade_texel[i] = cascade.texel * if through.is_some() { 2.0 } else { 1.0 };
         }
     }
 
@@ -814,7 +838,7 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| shown(*entity) && on(*entity, Switch::Renderer))
         .map(|(entity, renderer, transform, world_transform)| {
-            entities.push(Owner { entity, plant: None, part: None });
+            entities.push(Owner { entity, plant: None, part: None, far_side: false });
             let model = world_transform.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
@@ -848,7 +872,7 @@ pub fn extract(
         let lod = MeshRenderer { lod_bias: drawn.lod_bias, ..MeshRenderer::new(MeshHandle(0), MaterialHandle(0)) };
         let (flags, lod_bias, lod_screen) = lod.lod_bits();
         for (index, part) in drawn.parts.iter().enumerate() {
-            entities.push(Owner { entity, plant: None, part: Some(index as u32) });
+            entities.push(Owner { entity, plant: None, part: Some(index as u32), far_side: false });
             let model = obj * part.transform;
             let normal = Mat3::from_mat4(model).inverse().transpose();
             instances.push(GpuInstance {
@@ -865,7 +889,34 @@ pub fn extract(
             });
         }
     }
+    // An Obj part-way through a Portal is drawn on both sides: here, and where the Portal takes it.
+    for index in 0..instances.len() {
+        let Some(straddles) = world.get::<crate::portals::Straddles>(entities[index].entity) else { continue };
+        let model = straddles.0.matrix() * Mat4::from_cols_array_2d(&instances[index].model);
+        let normal = Mat3::from_mat4(model).inverse().transpose();
+        entities.push(Owner { far_side: true, ..entities[index] });
+        instances.push(GpuInstance {
+            model: cols(model),
+            prev_model: cols(model),
+            normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+            ..instances[index]
+        });
+    }
     frame.instance_count = instances.len() as u32;
+    // Into the view's own space, whose middle is a whole number of metres from the world's.
+    if through.is_some() {
+        for instance in &mut instances {
+            rebase(&mut instance.model, offset);
+            instance.prev_model = instance.model;
+        }
+        for light in &mut lights {
+            light.position = (Vec3::from(light.position) - offset).to_array();
+        }
+        // And where storms and whirlpools are over the sea.
+        for place in frame.sea.places.iter_mut().chain(&mut frame.sea.pools) {
+            (place[0], place[1]) = (place[0] - offset.x, place[1] - offset.z);
+        }
+    }
 
     ExtractedFrame {
         block_voxels: worn.and_then(|worn| worn.voxels),
@@ -881,7 +932,19 @@ pub fn extract(
         ocean,
         water_bodies,
         track_makers,
-        origin: voxear_scene::WorldOrigin::of(world).0,
+        origin,
+    }
+}
+
+/// How far from the camera the sun casts shadows in a view through a
+/// Portal, in metres.
+const PORTAL_SHADOW_REACH: f32 = 48.0;
+
+/// Moves a model matrix into a space whose middle is `offset` from the
+/// world's: by whole metres, so what is near that middle loses nothing.
+pub(crate) fn rebase(model: &mut crate::gpu::Mat4Cols, offset: Vec3) {
+    for axis in 0..3 {
+        model[3][axis] -= offset[axis];
     }
 }
 

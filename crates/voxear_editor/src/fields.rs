@@ -783,6 +783,7 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "ScreenUi" => world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
         "CharacterController" => world.has::<CharacterController>(entity),
         "Joint" => world.has::<Joint>(entity),
+        "Portal" => world.has::<voxear_render::Portal>(entity),
         "Collider2D" => world.has::<Collider2D>(entity),
         "Rigidbody2D" => world.has::<Rigidbody2D>(entity),
         "Vehicle" => world.has::<Vehicle>(entity),

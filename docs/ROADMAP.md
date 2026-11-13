@@ -1778,8 +1778,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   and Sway (VoxShade); the Inspector shows a graph's state and its Slang. The manual's VoxShade. Tests: the
   panel opened, a node added and wired, a value typed, saved, compiled and undone on a GPU; rows, wires and
   costs; a registry with a broken graph; a new graph from New Shader.
-- VoxShade to come: each node's preview, sub-graphs and custom Slang nodes, material variants, work moved
-  to the vertex stage and properties' sums worked out on the CPU, and the graph from `vox` (see
+- **VoxShade previews and work done once a material ✅.** Each node shows what it makes on a 72-pixel ball,
+  worked out on the CPU from the compiled steps (`voxear_voxshade::eval`, the panel's `voxshade_previews`), every
+  picture a cell of one texture, made again when the graph's work changes and 15 times a second while it reads
+  the time. Steps now run at one of four rates, constant, once a material, once a frame and from place to place;
+  the costliest work on properties alone that a higher rate reads (`hoist`) is worked out on the CPU when a
+  material's properties are set (`Derived`, `shaders::fill_worked`) and read by the shader as hidden values
+  after its properties, in the room left of the 16, with what only it needs left out of the Slang. Each node
+  and the bar say what is done once a material. Hologram and Sway now take 0.220 against 0.220 ms and 0.229
+  against 0.230 ms by hand; a graph with 200 sines on its properties draws the same in 0.226 ms against
+  0.239 ms with them at every pixel (least of sixty frames). Tests: previews, hoisting and its values, a full
+  material, the panel's costs; on a GPU, the heavy graph both ways.
+- VoxShade to come: sub-graphs and custom Slang nodes, material variants, the graph from `vox`, and work moved
+  to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
+  every pass shares (mesh shaders included) would need values of the graph's own first (see
   [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours

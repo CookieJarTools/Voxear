@@ -165,10 +165,53 @@ fn the_starters_compile_to_shaders_shaped_as_hand_written_ones() {
     let sway = compiled(&starters::sway());
     assert!(sway.source.contains("[MaxOffset(2.1)]\nstruct Sway"), "{}", sway.source);
     assert!(sway.source.contains("float3 vertex(Sway props, VertexInput input)"), "{}", sway.source);
-    assert_eq!(sway.source.matches("normalize(").count(), 2, "{}", sway.source);
+    let unhoisted = compile_with(&starters::sway(), Options { hoist: false }).unwrap();
+    assert_eq!(unhoisted.source.matches("normalize(").count(), 2, "{}", unhoisted.source);
+    assert!(unhoisted.derived.is_empty() && !unhoisted.source.contains("worked0"));
     // Read back from their files as they were made.
     assert!(compiled(&starters::lit("Plain")).source.contains("surface.color = "));
     for graph in [starters::hologram(), starters::sway(), starters::lit("Plain")] {
         assert_eq!(Graph::from_toml(&graph.to_toml()).unwrap(), graph);
     }
+}
+
+#[test]
+fn work_the_properties_alone_decide_is_done_once_on_the_cpu_and_handed_to_the_shader() {
+    let sway = compiled(&starters::sway());
+    // Which way it sways and the way along it, each made a unit long, and how far it reaches.
+    assert_eq!(sway.source.matches("normalize(").count(), 0, "{}", sway.source);
+    assert_eq!(sway.derived.types(), vec![Ty::Float3, Ty::Float, Ty::Float3, Ty::Float3]);
+    assert!(sway.source.contains("    float3 worked0;\n    float worked1;\n"), "{}", sway.source);
+    assert!(sway.source.contains("props.worked2"), "{}", sway.source);
+    let defaults: Vec<[f32; 4]> = starters::sway().properties.iter().map(|p| p.default).collect();
+    let values = sway.derived.values(&defaults);
+    let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(&b).all(|(a, b)| (a - b).abs() < 1e-5);
+    assert!(values.iter().any(|v| near(*v, [0.0, 1.0, 0.0, 0.0])), "the reach, a unit long: {values:?}");
+    assert!(values.iter().any(|v| near(*v, [1.0, 0.0, 0.0, 0.0])), "the way it sways: {values:?}");
+    // Its own properties changed, what is worked out from them changes with them.
+    let mut turned = defaults.clone();
+    let direction = starters::sway().properties.iter().position(|p| p.name == "direction").unwrap();
+    turned[direction] = [0.0, 0.0, 3.0, 0.0];
+    assert!(sway.derived.values(&turned).iter().any(|v| near(*v, [0.0, 0.0, 1.0, 0.0])));
+    // What is moved off the GPU is counted apart.
+    let (gpu, cpu) =
+        (&sway.stages[0].1, compile_with(&starters::sway(), Options { hoist: false }).unwrap().stages[0].1.clone());
+    assert!(gpu.alu < cpu.alu && gpu.once > 0, "{gpu:?} against {cpu:?}");
+    assert_eq!(gpu.alu + gpu.once, cpu.alu + cpu.once);
+}
+
+#[test]
+fn a_material_with_no_room_left_works_everything_out_on_the_gpu() {
+    let mut g = Graph::new("Full");
+    let mut last = None;
+    for n in 0..hoist::SLOTS {
+        let p = g.add_property(&format!("p{n}"), PropertyKind::Number, [1.0; 4]);
+        let read = g.add(NodeKind::Property { property: p }, [0.0, 0.0]);
+        last = Some(read);
+    }
+    let sine = g.add(math(MathOp::Sine), [0.0, 0.0]);
+    g.link(last.unwrap(), 0, sine, 0);
+    g.link(sine, 0, SURFACE, ALPHA);
+    let full = compiled(&g);
+    assert!(full.derived.is_empty() && full.source.contains("sin("), "{}", full.source);
 }

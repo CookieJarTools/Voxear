@@ -103,12 +103,14 @@ pub enum Op {
     Swizzle(Vec<u8>),
 }
 
-/// How often a value changes: never; once a draw, as a property or the
-/// time; or from one place to the next.
+/// How often a value changes: never; when a material's properties change;
+/// once a frame, as the time does; or from one place to the next. The two
+/// in the middle are the same all over a draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rate {
     Constant,
-    Uniform,
+    Material,
+    Frame,
     Varying,
 }
 
@@ -192,6 +194,11 @@ impl Builder {
 
     pub fn finish(self) -> Program {
         self.program.finish()
+    }
+
+    /// The steps made so far, every one of them kept, as previews read them.
+    pub fn program(self) -> Program {
+        self.program
     }
 
     pub fn ty(&self, id: ValueId) -> Ty {
@@ -397,9 +404,11 @@ impl Builder {
         }
         let rate = match &op {
             Op::Const(_) => Rate::Constant,
-            Op::Property(_) => Rate::Uniform,
-            Op::Given(Given::Input(input)) if input.is_uniform() => Rate::Uniform,
+            Op::Property(_) => Rate::Material,
+            Op::Given(Given::Input(input)) if input.is_uniform() => Rate::Frame,
             Op::Given(_) => Rate::Varying,
+            // A picture is read on the GPU, wherever it is read.
+            Op::Sample(_) => Rate::Varying,
             _ => args.iter().map(|arg| self.program.step(*arg).rate).max().unwrap_or(Rate::Constant),
         };
         let id = ValueId(self.program.steps.len() as u32);
@@ -442,7 +451,7 @@ fn length(v: [f32; 4], width: usize) -> f32 {
     v[..width].iter().map(|c| c * c).sum::<f32>().sqrt()
 }
 
-fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
     let each = |f: fn(f32) -> f32| per_component(width, |i| f(a[i]));
     match op {
         Unary::Negate => each(|x| -x),
@@ -473,7 +482,7 @@ fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
     }
 }
 
-fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
     let each = |f: fn(f32, f32) -> f32| per_component(width, |i| f(a[i], b[i]));
     match op {
         Binary::Add => each(|x, y| x + y),
@@ -495,7 +504,7 @@ fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
     }
 }
 
-fn fold_ternary(op: Ternary, a: [f32; 4], b: [f32; 4], c: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_ternary(op: Ternary, a: [f32; 4], b: [f32; 4], c: [f32; 4], width: usize) -> [f32; 4] {
     match op {
         Ternary::Lerp => per_component(width, |i| a[i] + (b[i] - a[i]) * c[i]),
         Ternary::Clamp => per_component(width, |i| a[i].max(b[i]).min(c[i])),
@@ -541,7 +550,7 @@ mod tests {
         assert!(!program.steps.iter().any(|step| step.op == Op::Unary(Unary::Cos)), "{unread:?} is read by nothing");
         assert_eq!(program.steps.len(), 5, "uv, its x, the time, the sum and its sine: {:?}", program.steps);
         let time = program.steps.iter().find(|step| step.op == Op::Given(Given::Input(Input::Time))).unwrap();
-        assert_eq!(time.rate, Rate::Uniform, "the time is the same all over a draw");
+        assert_eq!(time.rate, Rate::Frame, "the time is the same all over a draw");
         assert_eq!(program.steps[4].rate, Rate::Varying);
     }
 

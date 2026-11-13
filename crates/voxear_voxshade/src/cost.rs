@@ -55,6 +55,8 @@ pub fn of(step: &Step, program: &Program) -> (u32, u32) {
 pub struct NodeCost {
     pub alu: u32,
     pub samples: u32,
+    /// Its instructions worked out once a material, on the CPU, rather than on the GPU.
+    pub once: u32,
 }
 
 /// What a stage costs: its instructions and picture reads, how many of the
@@ -67,20 +69,31 @@ pub struct StageCost {
     pub samples: u32,
     pub uniform_alu: u32,
     pub branches: u32,
+    /// Instructions worked out once a material, on the CPU, rather than here.
+    pub once: u32,
 }
 
-/// What `program` costs, as a whole and node by node.
-pub fn program(program: &Program, nodes: &mut HashMap<NodeId, NodeCost>) -> StageCost {
-    let mut total = StageCost { branches: crate::emit::real_count(program) as u32, ..StageCost::default() };
-    for step in &program.steps {
+/// What `program` costs, as a whole and node by node, written as `plan`
+/// says: the work on the GPU, and apart from it, what is worked out once a
+/// material on the CPU.
+pub fn program(program: &Program, plan: &crate::emit::Plan, nodes: &mut HashMap<NodeId, NodeCost>) -> StageCost {
+    let mut total = StageCost { branches: plan.branches() as u32, ..StageCost::default() };
+    for (index, step) in program.steps.iter().enumerate() {
         let (alu, samples) = of(step, program);
+        let cost = step.node.map(|node| nodes.entry(node).or_default());
+        if !plan.on_gpu(index) {
+            total.once += alu;
+            if let Some(cost) = cost {
+                cost.once += alu;
+            }
+            continue;
+        }
         total.alu += alu;
         total.samples += samples;
-        if step.rate == Rate::Uniform {
+        if matches!(step.rate, Rate::Material | Rate::Frame) {
             total.uniform_alu += alu;
         }
-        if let Some(node) = step.node {
-            let cost = nodes.entry(node).or_default();
+        if let Some(cost) = cost {
             cost.alu += alu;
             cost.samples += samples;
         }

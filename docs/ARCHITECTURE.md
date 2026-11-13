@@ -1330,8 +1330,8 @@ variants inherit from a parent and override only what differs.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(the compiler, the `.voxshade` asset and its panel implemented; previews, sub-graphs,
-moving work to the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler, the `.voxshade` asset and its panel, previews and work moved to the CPU
+implemented; sub-graphs and moving work to the vertex stage planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1368,6 +1368,21 @@ sixteen behind one that changes from pixel to pixel), settled by placing again u
 values, what the function is given and properties are written where they are read; every other step is a local
 of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
 pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
+
+Rates are four: constant, once a material (properties), once a frame (the time) and from place to place. Work
+once a material that something changing more often reads is worked out on the CPU (`hoist`): the roots picked,
+costliest first, in the room a material has left after its own properties (16 values in all, shared by a
+shader's stages), become plain fields `worked0` on after the properties in the struct, the steps only they need
+are not written, and the shader registry keeps the steps (`Derived`) beside the shader. Whenever a material's
+values are made for the GPU (`content.look`), `shaders::fill_worked` runs those steps on its property values with
+the same evaluator the previews use (`eval`) and writes the answers in the slots after them, which the
+properties reader reads into the struct. A `.shader` copied from the Slang gets no such values filled. Moving
+work to the vertex stage waits on a way for `vertex` to hand values to `surface`: the vertex output every pass
+shares, mesh shaders included, has no room for a graph's own.
+
+Previews are worked out on the CPU, not drawn on the GPU: a node's value at each pixel of a 72-pixel ball,
+from the same steps lowered with every node's value kept (`lower_all`), so a preview is what the shader works
+out, and an edit needs no shader compiled to show it.
 
 A `.voxshade` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
 `.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream

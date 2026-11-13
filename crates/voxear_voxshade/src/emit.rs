@@ -9,7 +9,9 @@
 //!
 //! Where a step goes: each is placed in the innermost block every one of
 //! its readers is in, so a step read by both sides of a branch, or by
-//! something after it, is worked out once before it.
+//! something after it, is worked out once before it. A step worked out on
+//! the CPU (see `hoist`) is read from the shader's hidden properties, and
+//! what only it needs is not written at all.
 
 use std::fmt::Write;
 
@@ -37,10 +39,11 @@ struct Block {
     depth: usize,
 }
 
-/// The steps placed in each block, the branches made real, and each step's block.
+/// The steps placed in each block, the branches made real, and each step's
+/// block: none for a step not written, as what only a hoisted step needs.
 struct Placing {
     blocks: Vec<Block>,
-    of_step: Vec<usize>,
+    of_step: Vec<Option<usize>>,
     /// For each real branch, by its step, its two sides' blocks.
     sides: Vec<Option<[usize; 2]>>,
 }
@@ -64,8 +67,9 @@ fn common_block(blocks: &[Block], mut a: usize, mut b: usize) -> usize {
     a
 }
 
-/// Places every step, `real` saying which branch steps are real branches.
-fn place(program: &Program, real: &[bool]) -> Placing {
+/// Places every step, `real` saying which branch steps are real branches;
+/// what a hoisted step reads is not placed for it.
+fn place(program: &Program, real: &[bool], hoisted: &[Option<usize>]) -> Placing {
     let count = program.steps.len();
     let mut blocks = vec![Block { parent: None, depth: 0 }];
     let mut of_step: Vec<Option<usize>> = vec![None; count];
@@ -78,6 +82,9 @@ fn place(program: &Program, real: &[bool]) -> Placing {
     for index in (0..count).rev() {
         let Some(block) = wanted[index] else { continue };
         of_step[index] = Some(block);
+        if hoisted[index].is_some() {
+            continue;
+        }
         let step = &program.steps[index];
         if real[index] {
             let depth = blocks[block].depth + 1;
@@ -101,17 +108,19 @@ fn place(program: &Program, real: &[bool]) -> Placing {
             *slot = Some(slot.map_or(needed_in, |other| common_block(&blocks, other, needed_in)));
         }
     }
-    let of_step = of_step.into_iter().map(|block| block.unwrap_or(0)).collect();
     Placing { blocks, of_step, sides }
 }
 
 /// The work placed in each block, by the cost of its steps.
-fn block_costs(program: &Program, placing: &Placing) -> Vec<(u32, u32)> {
+fn block_costs(program: &Program, placing: &Placing, hoisted: &[Option<usize>]) -> Vec<(u32, u32)> {
     let mut costs = vec![(0, 0); placing.blocks.len()];
     for (index, step) in program.steps.iter().enumerate() {
+        if hoisted[index].is_some() {
+            continue;
+        }
         let (alu, samples) = cost::of(step, program);
         // A block's cost counts what is in the blocks inside it too.
-        let mut block = Some(placing.of_step[index]);
+        let mut block = placing.of_step[index];
         while let Some(b) = block {
             costs[b].0 += alu;
             costs[b].1 += samples;
@@ -124,11 +133,11 @@ fn block_costs(program: &Program, placing: &Placing) -> Vec<(u32, u32)> {
 /// Which of the program's Branch steps are worth real branches: those with
 /// a side whose own work is worth skipping, settled by placing again until
 /// nothing changes, as a branch made a select moves its sides' work out.
-pub fn real_branches(program: &Program) -> Vec<bool> {
+fn real_branches(program: &Program, hoisted: &[Option<usize>]) -> Vec<bool> {
     let mut real: Vec<bool> = program.steps.iter().map(|step| step.op == Op::Select { branch: true }).collect();
     loop {
-        let placing = place(program, &real);
-        let costs = block_costs(program, &placing);
+        let placing = place(program, &real, hoisted);
+        let costs = block_costs(program, &placing, hoisted);
         let mut changed = false;
         for (index, step) in program.steps.iter().enumerate() {
             let Some(sides) = placing.sides[index] else { continue };
@@ -202,7 +211,7 @@ struct Writer<'a> {
     graph: &'a Graph,
     program: &'a Program,
     stage: Stage,
-    placing: Placing,
+    plan: &'a Plan,
     text: String,
 }
 
@@ -210,6 +219,9 @@ impl Writer<'_> {
     /// How step `id` is read where it is used.
     fn read(&self, id: ValueId) -> String {
         let step = self.program.step(id);
+        if let Some(slot) = self.plan.hoisted[id.0 as usize] {
+            return format!("props.{}", derived_name(slot));
+        }
         match &step.op {
             Op::Const(value) => constant(step.ty, *value),
             Op::Given(what) => given(self.stage, *what),
@@ -281,7 +293,7 @@ impl Writer<'_> {
     fn block(&mut self, block: usize, indent: usize) {
         let pad = "    ".repeat(indent);
         for index in 0..self.program.steps.len() {
-            if self.placing.of_step[index] != block {
+            if self.plan.placing.of_step[index] != Some(block) || self.plan.hoisted[index].is_some() {
                 continue;
             }
             let step = &self.program.steps[index];
@@ -289,7 +301,7 @@ impl Writer<'_> {
                 continue;
             }
             let ty = step.ty.slang();
-            match self.placing.sides[index] {
+            match self.plan.placing.sides[index] {
                 Some([yes, no]) => {
                     let _ = writeln!(self.text, "{pad}{ty} v{index};");
                     let _ = writeln!(self.text, "{pad}if ({})\n{pad}{{", self.read(step.args[0]));
@@ -311,11 +323,45 @@ impl Writer<'_> {
     }
 }
 
+/// How a stage's program is written: which branches are real, where each
+/// step goes, and which steps are read from the shader's hidden properties,
+/// by their place among them.
+pub struct Plan {
+    placing: Placing,
+    hoisted: Vec<Option<usize>>,
+}
+
+impl Plan {
+    /// Plans `program`, its steps `hoisted` read from hidden properties
+    /// numbered from `first`.
+    pub fn new(program: &Program, hoisted: &[ValueId], first: usize) -> Self {
+        let mut slots = vec![None; program.steps.len()];
+        for (n, id) in hoisted.iter().enumerate() {
+            slots[id.0 as usize] = Some(first + n);
+        }
+        let real = real_branches(program, &slots);
+        Self { placing: place(program, &real, &slots), hoisted: slots }
+    }
+
+    /// Whether step `index` is worked out on the GPU.
+    pub fn on_gpu(&self, index: usize) -> bool {
+        self.placing.of_step[index].is_some() && self.hoisted[index].is_none()
+    }
+
+    /// How many of its branches are real.
+    pub fn branches(&self) -> usize {
+        self.placing.sides.iter().filter(|sides| sides.is_some()).count()
+    }
+}
+
+/// The name a hidden property worked out on the CPU has in the shader's struct.
+pub fn derived_name(slot: usize) -> String {
+    format!("worked{slot}")
+}
+
 /// The body of a stage's function, its outputs set at its end.
-pub fn body(graph: &Graph, program: &Program, stage: Stage) -> String {
-    let real = real_branches(program);
-    let placing = place(program, &real);
-    let mut writer = Writer { graph, program, stage, placing, text: String::new() };
+pub fn body(graph: &Graph, program: &Program, stage: Stage, plan: &Plan) -> String {
+    let mut writer = Writer { graph, program, stage, plan, text: String::new() };
     writer.block(0, 1);
     let surface = ["color", "alpha", "normal", "metallic", "roughness", "emission"];
     for &(slot, id) in &program.outputs {
@@ -326,9 +372,4 @@ pub fn body(graph: &Graph, program: &Program, stage: Stage) -> String {
         };
     }
     writer.text
-}
-
-/// How many of the steps' branches are real.
-pub fn real_count(program: &Program) -> usize {
-    real_branches(program).iter().filter(|&&real| real).count()
 }

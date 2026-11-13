@@ -29,8 +29,8 @@ fn error(node: Option<NodeId>, message: impl Into<String>) -> CompileError {
     CompileError { node, message: message.into() }
 }
 
-/// How deep one value may be asked for through others before the graph is
-/// taken to run round in a loop.
+/// How deep one value may be asked for through others, which keeps a very
+/// long chain of nodes from running the compiler out of stack.
 const DEEPEST: usize = 512;
 
 struct Lowering<'g> {
@@ -63,6 +63,38 @@ pub fn lower(graph: &Graph, stage: Stage) -> Result<Option<Program>, CompileErro
         set = true;
     }
     Ok(set.then(|| lowering.build.finish()))
+}
+
+/// Every node's every output in `stage`, for previews: one program with no
+/// step left out, and which step each node's output, and each output
+/// node's input, is. A node that cannot run in `stage`, or is wrong, is
+/// left out.
+pub fn lower_all(graph: &Graph, stage: Stage) -> (Program, HashMap<(NodeId, usize), ValueId>) {
+    let mut lowering = Lowering { graph, build: Builder::new(stage), made: HashMap::new(), asking: HashSet::new() };
+    let mut found = HashMap::new();
+    for node in &graph.nodes {
+        let outputs = node.kind.outputs(match &node.kind {
+            NodeKind::Property { property } => graph.property_ty(*property),
+            _ => None,
+        });
+        if node.kind.output_stage().is_some() {
+            // An output node's inputs, as what it shows.
+            for (slot, port) in node.kind.inputs().iter().enumerate() {
+                lowering.asking.clear();
+                if let Ok(value) = lowering.input(node.id, slot, port.ty, 0) {
+                    found.insert((node.id, slot), value);
+                }
+            }
+            continue;
+        }
+        for output in 0..outputs.len() {
+            lowering.asking.clear();
+            if let Ok(value) = lowering.value(node.id, output, 0) {
+                found.insert((node.id, output), value);
+            }
+        }
+    }
+    (lowering.build.program(), found)
 }
 
 impl Lowering<'_> {
@@ -118,7 +150,10 @@ impl Lowering<'_> {
         let Some(found) = self.graph.node(node) else {
             return Err(error(None, "a wire comes from a node that is not there"));
         };
-        if depth > DEEPEST || !self.asking.insert(node) {
+        if depth > DEEPEST {
+            return Err(error(Some(node), "more nodes one after another than a shader can take, through this node"));
+        }
+        if !self.asking.insert(node) {
             return Err(error(Some(node), "the wires run round in a loop through this node"));
         }
         let stage = self.build.stage;

@@ -4,7 +4,7 @@ order: 8
 
 **VoxShade** makes custom shaders out of nodes rather than written in Slang. You wire nodes together on a canvas, and the editor turns them into the same kind of shader a `.shader` file holds. Materials pick a VoxShade shader as their **Shader** and set its properties in the Inspector, exactly as they would for one written by hand (see [[Custom Shaders]]).
 
-A VoxShade shader costs what the same shader written by hand costs. Before any Slang is written, the editor works out everything it can: numbers known when the graph is saved, work that changes nothing (adding nothing, multiplying by one), the same work done by two nodes, and nodes nothing reaches. Hologram and Sway made again as graphs draw the same pictures as the hand-written ones, in the same time on the graphics card.
+A VoxShade shader costs what the same shader written by hand costs. Before any Slang is written, the editor works out everything it can: numbers known when the graph is saved, work that changes nothing (adding nothing, multiplying by one), the same work done by two nodes, and nodes nothing reaches. Work on a material's properties alone, as a tint made brighter or a direction made a unit long, is done once for each material on the CPU, when its properties are set, rather than at every pixel or vertex. Hologram and Sway made again as graphs draw the same pictures as the hand-written ones, in the same time on the graphics card.
 
 ## Making a VoxShade shader
 
@@ -24,9 +24,13 @@ The graph fills the middle. Down the side are the picked node's values, the shad
 
 Each change is saved as you make it, and the shader compiles into the engine's own in the background, as a `.shader` does when it is saved. Every material using it changes a few seconds later.
 
+### What a node makes
+
+Each node shows what it makes on a small ball: a number in grey, two numbers as red and green, three or four as a colour. The Surface Output shows the ball lit by the colour and glow it gives. Properties show their defaults, and pictures read as white, as they do for a material that has not picked one. A node that reads the time moves while the panel is open. The previews are worked out on the CPU from the same steps the shader compiles to, so they show what the graphics card will work out.
+
 ### What a node costs
 
-Under each node is what it costs once the graph is compiled: how many instructions it takes, roughly, and how many pictures it reads. A node with nothing under it costs nothing, because it was worked out when the graph was saved, its work is shared with another node, or it reaches nothing. The bar adds up each stage: **Surface** runs once a pixel, **Vertex** once a vertex and **Light** once a pixel for each light.
+Under each node is what it costs once the graph is compiled: how many instructions it takes, roughly, and how many pictures it reads. A node with nothing under it costs nothing, because it was worked out when the graph was saved, its work is shared with another node, or it reaches nothing. **Once a material** under a node means its work reads only properties, so it is done on the CPU when a material's properties are set, and the graphics card reads the answer. A shader has room for 16 values: its properties take theirs first, and the rest hold what is worked out once, the costliest work first. The bar adds up each stage: **Surface** runs once a pixel, **Vertex** once a vertex and **Light** once a pixel for each light.
 
 A node that stops the graph compiling says what is wrong on the node itself, as a Light Color in the Surface stage, which has no light.
 
@@ -69,4 +73,4 @@ To read a property in the graph, add it from the search's Properties folder, or 
 
 ## The Slang it makes
 
-Select a `.voxshade` file in the Project panel to see what the Inspector makes of it: its properties, its functions, whether it compiles, and under **Code** the Slang the graph turns into, read only. To change that Slang by hand, copy it into a `.shader` file of your own.
+Select a `.voxshade` file in the Project panel to see what the Inspector makes of it: its properties, its functions, whether it compiles, and under **Code** the Slang the graph turns into, read only. The values worked out once a material are at the end of its properties struct, named `worked0`, `worked1` and on. To change that Slang by hand, copy it into a `.shader` file of your own; the engine does not fill those values for a `.shader` file, so work them out in the Slang again.

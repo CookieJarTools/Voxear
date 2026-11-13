@@ -77,10 +77,10 @@ impl Editor {
 
     /// The VoxShade panel's frame.
     pub(super) fn update_voxshade(&mut self, renderer: &mut Renderer) {
-        self.follow_voxshade_file();
+        self.follow_voxshade_file(renderer);
         self.follow_voxshade_presses();
         let shown = self.shown(self.nodes.voxshade_panel);
-        for event in self.voxshade.update(&mut self.ui, shown, self.alt) {
+        for event in self.voxshade.update(&mut self.ui, renderer, shown, self.alt) {
             match event {
                 VoxShadeEvent::Save(path, graph) => self.save_voxshade(&path, &graph, renderer),
                 VoxShadeEvent::Search(anchor) => self.search_shader_nodes(anchor),
@@ -113,7 +113,7 @@ impl Editor {
     }
 
     /// Keeps the open graph with its file: renamed or moved, it is followed; gone, it closes.
-    fn follow_voxshade_file(&mut self) {
+    fn follow_voxshade_file(&mut self, renderer: &mut Renderer) {
         let (Some(path), Some(guid)) = (self.voxshade.path(), self.voxshade_guid) else { return };
         let db = self.game.content.db();
         if db.guid_of(path) == Some(guid) {
@@ -122,7 +122,7 @@ impl Editor {
         match db.get(guid).map(|entry| entry.path.clone()) {
             Some(moved) => self.voxshade.moved_to(&mut self.ui, &moved),
             None => {
-                self.voxshade.close();
+                self.voxshade.close(renderer);
                 self.voxshade_guid = None;
             }
         }

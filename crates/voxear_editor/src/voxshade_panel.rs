@@ -212,6 +212,9 @@ pub struct VoxShadePanel {
     /// The properties a Property or Sample Picture node's choice lists, in order.
     choosable: Vec<PropertyId>,
     open: Option<Open>,
+    /// Each node's picture, and when the panel was made, which the time they show is counted from.
+    previews: crate::voxshade_previews::Previews,
+    started: Instant,
     copied: Copied,
     /// What the search offered last, which its pick names by place.
     offered: Vec<Offer>,
@@ -271,6 +274,8 @@ impl VoxShadePanel {
             shape: String::new(),
             choosable: Vec::new(),
             open: None,
+            previews: Default::default(),
+            started: Instant::now(),
             copied: Copied::default(),
             offered: Vec::new(),
             active: false,
@@ -309,7 +314,8 @@ impl VoxShadePanel {
         Some((open.path.clone(), open.graph.clone()))
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&mut self, renderer: &mut voxear_render::Renderer) {
+        self.previews.clear(renderer);
         self.open = None;
         self.canvas.pick(Vec::new());
     }
@@ -451,7 +457,13 @@ impl VoxShadePanel {
     }
 
     /// The panel's frame: the canvas's, the side's rows', and what they ask of the editor.
-    pub fn update(&mut self, ui: &mut Ui, shown: bool, alt: bool) -> Vec<VoxShadeEvent> {
+    pub fn update(
+        &mut self,
+        ui: &mut Ui,
+        renderer: &mut voxear_render::Renderer,
+        shown: bool,
+        alt: bool,
+    ) -> Vec<VoxShadeEvent> {
         let mut events = std::mem::take(&mut self.pending);
         let open = self.open.is_some();
         if self.showing != Some(open) {
@@ -470,6 +482,13 @@ impl VoxShadePanel {
                 self.canvas.key(CanvasKey::Frame);
             }
             self.update_rows(ui);
+            // Each node's picture, made again as the graph or the time changes what it shows.
+            let time = self.started.elapsed().as_secs_f32();
+            if let Some(open) = self.open.as_mut()
+                && self.previews.update(renderer, &open.graph, time)
+            {
+                open.stale = true;
+            }
             self.update_canvas(ui, alt, &mut events);
             self.show_toolbar(ui);
         }
@@ -502,6 +521,10 @@ impl VoxShadePanel {
         if std::mem::take(&mut open.stale) {
             open.compiled = compile(&open.graph);
             open.drawn = describe(&open.graph, &open.compiled);
+            for node in &mut open.drawn.nodes {
+                node.picture = self.previews.picture(GraphNode(node.id as u32));
+                node.pictured = node.picture.is_some();
+            }
         }
         self.canvas.set_panning(alt);
         let graph = &open.graph;
@@ -1138,8 +1161,8 @@ fn describe(graph: &Graph, compiled: &Result<Compiled, Vec<voxear_voxshade::Comp
             let mut drawn = describe_node(graph, node);
             match compiled {
                 Ok(compiled) => {
-                    if let Some(cost) = compiled.nodes.get(&node.id).filter(|cost| cost.alu > 0 || cost.samples > 0) {
-                        drawn.detail = cost_text(cost.alu, cost.samples);
+                    if let Some(cost) = compiled.nodes.get(&node.id) {
+                        drawn.detail = node_cost_text(cost);
                     }
                 }
                 Err(errors) => {
@@ -1170,12 +1193,26 @@ fn cost_text(alu: u32, samples: u32) -> String {
     text
 }
 
+/// A node's cost, as its small text: what it does on the GPU, and what is
+/// worked out once a material on the CPU; empty for a node that costs nothing.
+fn node_cost_text(cost: &voxear_voxshade::NodeCost) -> String {
+    match (cost.alu > 0 || cost.samples > 0, cost.once > 0) {
+        (true, true) => format!("{}, {} once", cost_text(cost.alu, cost.samples), cost.once),
+        (true, false) => cost_text(cost.alu, cost.samples),
+        (false, true) => "Once a material".into(),
+        (false, false) => String::new(),
+    }
+}
+
 /// Each stage's cost, for the bar.
 fn summary(compiled: &Compiled) -> String {
     let stage = |(stage, cost): &(Stage, voxear_voxshade::StageCost)| {
         let mut text = format!("{}: {}", stage.name(), cost_text(cost.alu, cost.samples));
         if cost.branches > 0 {
             text += &format!(", {} {}", cost.branches, if cost.branches == 1 { "branch" } else { "branches" });
+        }
+        if cost.once > 0 {
+            text += &format!(", {} once a material", cost.once);
         }
         text
     };
@@ -1298,7 +1335,10 @@ mod tests {
         let samples = drawn.nodes.iter().filter(|n| n.detail.contains("1 picture")).count();
         assert_eq!(samples, 3, "the three reads of the pattern");
         assert!(drawn.nodes.iter().all(|n| n.fault.is_empty()));
-        assert!(summary(compiled.as_ref().unwrap()).starts_with("Surface: "));
+        let bar = summary(compiled.as_ref().unwrap());
+        assert!(bar.starts_with("Surface: ") && bar.contains("once a material"), "{bar}");
+        // The tint made brighter is worked out once a material, not at every pixel.
+        assert!(drawn.nodes.iter().any(|n| n.detail == "Once a material"));
         let mut broken = graph.clone();
         let light = broken.add(NodeKind::Input { input: Input::LightColor }, [0.0; 2]);
         let out = broken.nodes.iter().find(|n| n.kind == NodeKind::SurfaceOutput).unwrap().id;

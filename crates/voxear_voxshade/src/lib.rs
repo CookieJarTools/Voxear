@@ -22,7 +22,9 @@
 
 pub mod cost;
 pub mod emit;
+pub mod eval;
 pub mod graph;
+pub mod hoist;
 pub mod ir;
 pub mod lower;
 pub mod nodes;
@@ -34,16 +36,33 @@ use std::fmt::Write;
 
 pub use cost::{NodeCost, StageCost};
 pub use graph::{Graph, Link, Literal, Node, NodeId, Property, PropertyId, PropertyKind};
+pub use hoist::Derived;
 pub use lower::CompileError;
 pub use nodes::{CompareOp, Component, Input, MathOp, NodeKind, Port, PortTy, Stage};
 pub use types::Ty;
 
-/// A graph compiled: the shader's Slang, and what each stage and node costs.
+/// A graph compiled: the shader's Slang, what each stage and node costs,
+/// and what a material using it works out on the CPU from its properties.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Compiled {
     pub source: String,
     pub stages: Vec<(Stage, StageCost)>,
     pub nodes: HashMap<NodeId, NodeCost>,
+    pub derived: hoist::Derived,
+}
+
+/// How a graph is compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Options {
+    /// Work the properties alone decide is worked out on the CPU, once a
+    /// material, rather than on the GPU.
+    pub hoist: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { hoist: true }
+    }
 }
 
 /// The whole-number hash the Random node runs, as `ir::random` works it out.
@@ -57,6 +76,10 @@ const RANDOM: &str = "float graphRandom(float seed)
 
 /// Compiles `graph` into a shader's Slang, or says everything that stops it.
 pub fn compile(graph: &Graph) -> Result<Compiled, Vec<CompileError>> {
+    compile_with(graph, Options::default())
+}
+
+pub fn compile_with(graph: &Graph, options: Options) -> Result<Compiled, Vec<CompileError>> {
     graph.check().map_err(|e| vec![CompileError { node: None, message: format!("{e:#}") }])?;
     let mut programs = Vec::new();
     let mut errors = Vec::new();
@@ -73,8 +96,23 @@ pub fn compile(graph: &Graph) -> Result<Compiled, Vec<CompileError>> {
     if programs.is_empty() && !graph.unlit {
         return Err(vec![CompileError { node: None, message: "wire something into an output node".into() }]);
     }
+    // What each stage works out on the CPU, as many as the material has room for after its own properties.
+    let mut room = if options.hoist { hoist::SLOTS.saturating_sub(graph.properties.len()) } else { 0 };
+    let mut derived = hoist::Derived { runs: Vec::new(), properties: graph.properties.iter().map(|p| p.id).collect() };
+    let mut plans = Vec::new();
+    for (_, program) in &programs {
+        let roots = hoist::roots(program, room);
+        room -= roots.len();
+        let first = derived.types().len();
+        plans.push(emit::Plan::new(program, &roots, first));
+        derived.runs.push((program.clone(), roots));
+    }
     let mut nodes = HashMap::new();
-    let stages = programs.iter().map(|(stage, program)| (*stage, cost::program(program, &mut nodes))).collect();
+    let stages = programs
+        .iter()
+        .zip(&plans)
+        .map(|((stage, program), plan)| (*stage, cost::program(program, plan, &mut nodes)))
+        .collect();
     let mut source = String::new();
     let _ = writeln!(source, "// {}: made in VoxShade. Change it there, not here.\n", graph.name);
     if graph.unlit {
@@ -87,13 +125,17 @@ pub fn compile(graph: &Graph) -> Result<Compiled, Vec<CompileError>> {
     for property in &graph.properties {
         source.push_str(&declaration(property));
     }
+    // What a material works out from its properties, on the CPU, read here as it reads them.
+    for (slot, ty) in derived.types().iter().enumerate() {
+        let _ = writeln!(source, "    {} {};", ty.slang(), emit::derived_name(slot));
+    }
     source.push_str("}\n");
     let random = programs.iter().any(|(_, p)| p.steps.iter().any(|s| s.op == ir::Op::Unary(ir::Unary::Random)));
     if random {
         source.push('\n');
         source.push_str(RANDOM);
     }
-    for (stage, program) in &programs {
+    for ((stage, program), plan) in programs.iter().zip(&plans) {
         let head = match stage {
             Stage::Surface => {
                 format!("void surface({} props, SurfaceInput input, inout SurfaceOutput surface)", graph.name)
@@ -101,9 +143,12 @@ pub fn compile(graph: &Graph) -> Result<Compiled, Vec<CompileError>> {
             Stage::Vertex => format!("float3 vertex({} props, VertexInput input)", graph.name),
             Stage::Light => format!("float3 light({} props, LightInput light, SurfaceOutput surface)", graph.name),
         };
-        let _ = write!(source, "\n{head}\n{{\n{}}}\n", emit::body(graph, program, *stage));
+        let _ = write!(source, "\n{head}\n{{\n{}}}\n", emit::body(graph, program, *stage, plan));
     }
-    Ok(Compiled { source, stages, nodes })
+    if derived.is_empty() {
+        derived.runs.clear();
+    }
+    Ok(Compiled { source, stages, nodes, derived })
 }
 
 /// A property as its struct declares it.

@@ -95,16 +95,30 @@ impl Make {
                 *at = (*at).max(next);
             }
         }
-        let mut rows = std::collections::HashMap::new();
+        // Down each column, each node below the last with room for its ports and its picture.
+        let mut tops = std::collections::HashMap::new();
+        let properties = self.graph.clone();
         for node in &mut self.graph.nodes {
             let x = column.get(&node.id).copied().unwrap_or(0);
-            let y = rows.entry(x).or_insert(0usize);
-            node.at = [x as f32 * 220.0, *y as f32 * 140.0];
-            *y += 1;
+            let y = tops.entry(x).or_insert(0.0f32);
+            node.at = [x as f32 * 220.0, *y];
+            let ty = match &node.kind {
+                NodeKind::Property { property } => properties.property_ty(*property),
+                _ => None,
+            };
+            let rows = node.kind.inputs().len().max(node.kind.outputs(ty).len()) as f32;
+            *y += HEADER + rows * ROW + PICTURE + GAP;
         }
         self.graph
     }
 }
+
+/// How tall a node's parts stand on the canvas, about, and the gap left
+/// between two nodes, for laying out a starter.
+const HEADER: f32 = 34.0;
+const ROW: f32 = 20.0;
+const PICTURE: f32 = 140.0;
+const GAP: f32 = 30.0;
 
 /// `frac(sin(n * 12.9898) * 43758.5453)`, the hand-written shaders' hash of a number.
 fn sine_hash(make: &mut Make, n: In) -> NodeId {
@@ -122,12 +136,12 @@ pub fn lit(name: &str) -> Graph {
     let picture = m.declare("picture", PropertyKind::Picture, [0.0; 4], None, "");
     let uv = m.input(Input::Uv);
     let read = m.node(NodeKind::SamplePicture { property: picture }, &[Wire(uv)]);
-    let color = m.math(MathOp::Multiply, &[Wire(tint), Out(read, 1)]);
+    let color = m.math(MathOp::Multiply, &[Out(read, 1), Wire(tint)]);
     let out = m.node(NodeKind::SurfaceOutput, &[Wire(color)]);
     let mut graph = m.finish();
-    // The tint under the picture, so its wire runs clear of it.
+    // The tint under the picture, its wire into the lower input, so no wire crosses another.
     for (node, at) in
-        [(uv, [0.0, 0.0]), (read, [220.0, 0.0]), (tint, [220.0, -120.0]), (color, [460.0, 60.0]), (out, [680.0, 40.0])]
+        [(uv, [0.0, 0.0]), (read, [220.0, 0.0]), (tint, [220.0, 340.0]), (color, [460.0, 60.0]), (out, [680.0, 40.0])]
     {
         if let Some(found) = graph.nodes.iter_mut().find(|n| n.id == node) {
             found.at = at;

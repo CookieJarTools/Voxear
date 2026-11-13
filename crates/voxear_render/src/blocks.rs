@@ -162,11 +162,16 @@ impl Component for BlockLook {}
 /// its foliage tint, packed as the lattice packs them. A face beyond it
 /// takes the tint of the nearest point at its edge; a world without one
 /// is drawn untinted.
+/// And its far tints, as many points a side as packed alike, each
+/// `TINT_FAR` times further apart, for the far view past its near
+/// ones: their first point and their points.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockTints {
     pub corner: [i32; 2],
     pub size: u32,
     pub points: Arc<[u32]>,
+    pub far_corner: [i32; 2],
+    pub far_points: Arc<[u32]>,
 }
 
 impl Component for BlockTints {}
@@ -184,10 +189,13 @@ const SLOTS: u32 = 65_536;
 /// room they take: as many points as a world's tints have at most, two
 /// tints each.
 const TINTS_AT: u64 = SLOTS as u64 * 16;
-const TINT_BYTES: u64 = (MOST_TINT_POINTS * 2 * 4) as u64;
+const TINT_BYTES: u64 = (MOST_TINT_POINTS * 2 * 4) as u64 * 2;
 
 // The shaders' BLOCK_TINT_STEP (common.slang) is the lattice's.
 const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_STEP == 4);
+// And its BLOCK_TINT_FAR the far view's, and BLOCK_TINT_MOST how many points the near ones take.
+const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_FAR == 16);
+const _: () = assert!(MOST_TINT_POINTS == 65536);
 
 /// The most points a side a world's tints have.
 pub const MOST_TINT_POINTS_SIDE: usize = 256;
@@ -232,12 +240,15 @@ pub struct GpuBlockWorld {
     pub moving: u64,
     pub motion_count: u32,
     pub moving_count: u32,
-    /// Its tints' points, and the point they start from.
+    /// Its tints' points, its near ones and then its far ones, and the
+    /// points they start from.
     pub tints: u64,
     pub tint_corner: [i32; 2],
     /// How it is turned about its corner, as a quaternion, where it is
     /// drawn turned (`BLOCKS_TURNED`).
     pub turn: [f32; 4],
+    pub far_tint_corner: [i32; 2],
+    pub pad: [u32; 2],
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
@@ -515,7 +526,7 @@ struct Pool {
     shown: Option<DrawnBlocks>,
     /// Its tints as last brought up, where it has any: their points, from
     /// which point and how many a side.
-    tinted: Option<(Arc<[u32]>, [i32; 2], u32)>,
+    tinted: Option<(Arc<[u32]>, [i32; 2], u32, Option<[i32; 2]>)>,
 }
 
 impl Pool {
@@ -744,7 +755,7 @@ pub(crate) struct DrawnBlocks {
     pub proxies: Arc<[(MeshHandle, Vec3)]>,
     /// Its tints in its pool, where it has any: the point they start from
     /// and how many a side.
-    pub tints: Option<([i32; 2], u32)>,
+    pub tints: Option<([i32; 2], u32, Option<[i32; 2]>)>,
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -926,8 +937,12 @@ impl BlockWorlds {
                 {
                     if !pool.tinted.as_ref().is_some_and(|(points, ..)| Arc::ptr_eq(points, &tints.points)) {
                         stage(bytemuck::cast_slice(&tints.points), TINTS_AT);
+                        if tints.far_points.len() == tints.points.len() {
+                            stage(bytemuck::cast_slice(&tints.far_points), TINTS_AT + TINT_BYTES / 2);
+                        }
                     }
-                    pool.tinted = Some((tints.points.clone(), tints.corner, tints.size));
+                    let far = (tints.far_points.len() == tints.points.len()).then_some(tints.far_corner);
+                    pool.tinted = Some((tints.points.clone(), tints.corner, tints.size, far));
                 }
                 _ => pool.tinted = None,
             }
@@ -1030,7 +1045,7 @@ impl BlockWorlds {
                 sea_top: world.get::<crate::sea::SeaLevel>(entity).map(|level| level.0),
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
-                tints: pool.tinted.as_ref().map(|&(_, corner, size)| (corner, size)),
+                tints: pool.tinted.as_ref().map(|&(_, corner, size, far)| (corner, size, far)),
                 id: None,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
@@ -1273,14 +1288,17 @@ pub(crate) fn gather(
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
             sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
-            tint_size: blocks.tints.map_or(0, |(_, size)| size),
+            tint_size: blocks.tints.map_or(0, |(_, size, _)| size),
             motions: buffer.address + parts_at,
             moving: buffer.address + moving_at,
             motion_count: motions.len() as u32,
             moving_count: moving.len() as u32,
             tints: blocks.address + TINTS_AT,
-            tint_corner: blocks.tints.map_or([0; 2], |(corner, _)| corner),
+            tint_corner: blocks.tints.map_or([0; 2], |(corner, ..)| corner),
             turn: blocks.turn.unwrap_or(Quat::IDENTITY).to_array(),
+            // A far corner of i32::MIN for none.
+            far_tint_corner: blocks.tints.and_then(|(_, _, far)| far).unwrap_or([i32::MIN; 2]),
+            pad: [0; 2],
         });
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();

@@ -2335,6 +2335,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Biomes, slabs and tints far off:**~~ done: an endless world's ground kept its block list only to its own
+    top, under, base and sea blocks, so its biomes' blocks and slabs were lost; it keeps every block its ground is
+    laid with now. Slabs are laid at every level, the far tiles too, and the far view takes a second, coarser
+    lattice of tints, a point every 64 blocks over some 16 km. Tests: the far view's slabs match a coarse ring's; the
+    ground's list keeps the biomes' and slabs' blocks; the engine keeps both tint lattices.
+  - ~~**Rivers that start and end somewhere:**~~ done: a river reaching the sea widens over its last few metres
+    of water into a mouth that cuts through the beach and meets the sea, and nothing is raised under the sea, so
+    no banks run out over its floor; it runs on through the shallows past a last point standing on the beach. High
+    ground counts for more of what drains into a point, flat lowland a quarter, so rivers start up on hills; every
+    river rises from a spring's pool at its head, and one running into a hollow too shallow for a lake ends in a
+    pond. No bank or rim is raised inside a lake. Tests: nothing raised under the sea and rivers meeting it; heads
+    and inland ends that are pools; GPU renders of a mouth from above and from the sea, and of a spring.
   - ~~**Biome tints:**~~ done: a block's new **Tint** (None, Grass, Grass Top, Foliage) has its colour take the
     biome it stands in, from each biome's new grass and foliage tints, fading from one biome's to the next: the
     generator's biomes on a lattice every 4 blocks, each point averaged with those 3 each way round it

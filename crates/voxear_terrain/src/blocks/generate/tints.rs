@@ -19,6 +19,10 @@ pub const TINT_STEP: i32 = 4;
 /// How many points a tile is a side.
 pub const TINT_TILE: i32 = 16;
 
+/// How many times further apart the far view's tint points are: a point
+/// every 64 blocks, made as a lattice of blocks as many times larger.
+pub const TINT_FAR: i32 = 16;
+
 /// How many points each way a point's tints are averaged over.
 pub const TINT_BLEND: i32 = 3;
 

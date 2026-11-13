@@ -1287,10 +1287,19 @@ struct BlockWorld
     // How it is turned about its corner, as a quaternion, where it is drawn turned (BLOCKS_TURNED): blocks come loose
     // from their world, as a tree that falls.
     float4 turn;
+    // Its far tints' first point, as many points a side as its near ones, BLOCK_TINT_FAR times further apart, after
+    // them; int.min for none.
+    int2 farTintCorner;
+    uint2 pad;
 };
 
 // How many blocks apart a world's tint points are (voxear_terrain::blocks::generate::tints::TINT_STEP).
 static const float BLOCK_TINT_STEP = 4.0;
+
+// How many times further apart its far tints' points are (tints::TINT_FAR), and how many points its near ones take
+// at most, after which the far ones lie.
+static const float BLOCK_TINT_FAR = 16.0;
+static const uint BLOCK_TINT_MOST = 65536;
 
 // A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
 // along it (in sixteenths of a block), and how the way on to the next key goes (0 linear, 1 smooth, 2 step).

@@ -1098,6 +1098,53 @@ mod tests {
     }
 
     #[test]
+    fn the_far_view_rises_in_half_steps_as_near_by_and_its_ground_keeps_the_blocks_it_is_laid_with() {
+        use crate::blocks::generate::far::{far_chunks, far_tile};
+        let world = Preset::RollingHills.world();
+        let mut file = BlockFile {
+            ground: Ground { size: [64, 64], ..Ground::default() },
+            generate: Some(BlockGenerate {
+                position: [300.0, -200.0],
+                bottom: -20,
+                caves: 0.0,
+                slabs: true,
+                ..BlockGenerate::default()
+            }),
+            ..BlockFile::default()
+        };
+        let grass = file.ground.top;
+        file.blocks.push(BlockKind::slab_of(file.kind(grass).unwrap()));
+        let slab = file.blocks.len() as BlockId;
+        // A block numbered after the slab, as a player's would be.
+        file.blocks.push(BlockKind::colored("Gold", [0.9, 0.8, 0.1]));
+        let mut halves = vec![AIR; file.blocks.len() + 1];
+        halves[usize::from(grass)] = slab;
+        file.generate.as_mut().unwrap().halves = Some(std::sync::Arc::new(halves));
+        // What its ground is made from keeps the slab, and not the block after it.
+        assert_eq!(file.for_ground().blocks.len(), usize::from(slab));
+        let generate = file.generate.clone().unwrap();
+        // A far tile lays the slabs a coarse ring's chunks do, and has some.
+        for (level, at) in [(2, [0, 0]), (3, [-1, 1])] {
+            let tile = far_tile(&file, &generate, &world, level, at);
+            let mut made = far_chunks(&tile, false);
+            let mut coarse = column_chunks(&file, &generate, &world, level, at, None);
+            made.sort_by_key(|(key, _)| key[1]);
+            coarse.sort_by_key(|(key, _)| key[1]);
+            assert_eq!(made.len(), coarse.len(), "level {level}");
+            for ((key, chunk), (_, want)) in made.iter().zip(&coarse) {
+                assert!(chunk == want, "chunk {key:?} of level {level}");
+            }
+            let slabs = made.iter().map(|(_, chunk)| {
+                (0..CHUNK)
+                    .flat_map(|z| (0..CHUNK).flat_map(move |y| (0..CHUNK).map(move |x| [x, y, z])))
+                    .filter(|&[x, y, z]| chunk.get(x, y, z) == slab)
+                    .count()
+            });
+            assert!(slabs.sum::<usize>() > 100, "slabs far off at level {level}");
+        }
+    }
+
+    #[test]
     fn a_world_with_rivers_runs_them_down_a_generator_that_has_none_of_its_own() {
         // A landmass, as generators written before graphs are, with no water but its sea.
         let world = Preset::Archipelago.world();

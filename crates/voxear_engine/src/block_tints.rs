@@ -4,7 +4,9 @@
 //! lattice's points in a `BlockTints` the renderer reads.
 //!
 //! The square is made of tiles, [`REACH`] each way round the tile the
-//! world is seen from, so it reaches a little over 500 blocks each way.
+//! world is seen from, so it reaches a little over 500 blocks each way;
+//! and a second square as many tiles of points `TINT_FAR` times further
+//! apart, for the far view, reaching some 8 km each way.
 //! Tiles are worked out on the worker threads, the nearest first and a few
 //! a frame, and kept while they stay in reach. One not worked out yet is
 //! white, as an untinted world is, until it is. A world whose biomes have
@@ -17,7 +19,7 @@ use voxear_render::BlockTints;
 use voxear_scene::{Destroying, Transform, WorldTransform};
 use voxear_terrain::blocks::{
     BlockWorld,
-    generate::tints::{TINT_STEP, TINT_TILE, tint_tile},
+    generate::tints::{TINT_FAR, TINT_STEP, TINT_TILE, tint_tile},
 };
 
 use crate::{blocks::BlockWorldAsset, content::Content};
@@ -34,12 +36,18 @@ const WHITE: u32 = 0x0080_8080;
 
 /// A world's tiles worked out, and what they were worked out from: its
 /// biomes and generator as read, where it lies in the generator's world
-/// and how large its blocks are.
+/// and how large its blocks are. Its near tints' tiles and its far ones'.
 struct Kept {
     from: (usize, usize, [u32; 2], u32),
+    windows: [Window; 2],
+}
+
+/// A square of tint tiles round where a world is seen from: the tiles
+/// worked out, and the tile it was seen from and how many tiles it had
+/// when they were last put together.
+#[derive(Default)]
+struct Window {
     tiles: HashMap<[i32; 2], Arc<Vec<u32>>>,
-    /// The tile it was seen from and how many tiles it had when its tints
-    /// were last put together.
     shown: Option<([i32; 2], usize)>,
 }
 
@@ -49,7 +57,7 @@ struct TintTiles(HashMap<Entity, Kept>);
 
 /// Brings each generated world of blocks' tints round to where it is seen
 /// from: the editor's view where there is one, or else the game's camera;
-/// with neither, round its corner.
+/// with neither, round its corner. Its near tints first, then its far ones.
 pub fn update(world: &mut World, content: &mut Content) {
     voxear_core::profile_scope!("Block Tints");
     let tinted = |asset: &BlockWorldAsset| {
@@ -87,49 +95,62 @@ pub fn update(world: &mut World, content: &mut Content) {
         let size = asset.file.block_size.max(0.01);
         let placed = generate.placed.as_ref().map_or(0, |placed| Arc::as_ptr(placed) as usize);
         let from = (placed, Arc::as_ptr(&generator) as usize, generate.position.map(f32::to_bits), size.to_bits());
-        let kept = kept.0.entry(entity).or_insert_with(|| Kept { from, tiles: HashMap::new(), shown: None });
+        let kept = kept.0.entry(entity).or_insert_with(|| Kept { from, windows: Default::default() });
         if kept.from != from {
-            *kept = Kept { from, tiles: HashMap::new(), shown: None };
+            *kept = Kept { from, windows: Default::default() };
         }
-        // The tile it is seen from, and those in reach, the nearest first.
         let local = viewer.map_or(voxear_core::math::Vec3::ZERO, |viewer| viewer - corner);
-        let tile_side = (TINT_TILE * TINT_STEP) as f32 * size;
-        let seen = [(local.x / tile_side).floor() as i32, (local.z / tile_side).floor() as i32];
-        let within = |tile: &[i32; 2]| (tile[0] - seen[0]).abs() <= REACH && (tile[1] - seen[1]).abs() <= REACH;
-        kept.tiles.retain(|tile, _| within(tile));
-        let mut missing: Vec<[i32; 2]> = (-REACH..REACH)
-            .flat_map(|dz| (-REACH..REACH).map(move |dx| [seen[0] + dx, seen[1] + dz]))
-            .filter(|tile| !kept.tiles.contains_key(tile))
-            .collect();
-        missing.sort_by_key(|tile| (tile[0] - seen[0]).pow(2) + (tile[1] - seen[1]).pow(2));
-        missing.truncate(left);
-        left -= missing.len();
-        let made = voxear_terrain::workers::each(&missing, |&tile| tint_tile(generate, &generator, size, tile));
-        for (tile, tints) in missing.into_iter().zip(made) {
-            kept.tiles.insert(tile, Arc::new(tints.unwrap_or_default()));
-        }
-        if kept.shown == Some((seen, kept.tiles.len())) && world.get::<BlockTints>(entity).is_some() {
-            continue;
-        }
-        kept.shown = Some((seen, kept.tiles.len()));
-        // Put together, the tiles' points row by row, white where a tile is not worked out yet.
-        let tiles = 2 * REACH;
-        let side = (tiles * TINT_TILE) as usize;
-        let first = [seen[0] - REACH, seen[1] - REACH];
-        let mut points = vec![WHITE; side * side * 2];
-        for (tile, tints) in &kept.tiles {
-            let at = [tile[0] - first[0], tile[1] - first[1]];
-            if !(0..tiles).contains(&at[0]) || !(0..tiles).contains(&at[1]) || tints.is_empty() {
-                continue;
+        let mut changed = world.get::<BlockTints>(entity).is_none();
+        let mut made = Vec::with_capacity(2);
+        for (window, scale) in kept.windows.iter_mut().zip([1, TINT_FAR]) {
+            // As the near tints' tiles are, of blocks as many times larger: points as many times further apart.
+            let size = size * scale as f32;
+            let tile_side = (TINT_TILE * TINT_STEP) as f32 * size;
+            let seen = [(local.x / tile_side).floor() as i32, (local.z / tile_side).floor() as i32];
+            let within = |tile: &[i32; 2]| (tile[0] - seen[0]).abs() <= REACH && (tile[1] - seen[1]).abs() <= REACH;
+            window.tiles.retain(|tile, _| within(tile));
+            let mut missing: Vec<[i32; 2]> = (-REACH..REACH)
+                .flat_map(|dz| (-REACH..REACH).map(move |dx| [seen[0] + dx, seen[1] + dz]))
+                .filter(|tile| !window.tiles.contains_key(tile))
+                .collect();
+            missing.sort_by_key(|tile| (tile[0] - seen[0]).pow(2) + (tile[1] - seen[1]).pow(2));
+            missing.truncate(left);
+            left -= missing.len();
+            let worked = voxear_terrain::workers::each(&missing, |&tile| tint_tile(generate, &generator, size, tile));
+            for (tile, tints) in missing.into_iter().zip(worked) {
+                window.tiles.insert(tile, Arc::new(tints.unwrap_or_default()));
             }
-            let each = TINT_TILE as usize;
-            for z in 0..each {
-                let row = (at[1] as usize * each + z) * side + at[0] as usize * each;
-                points[row * 2..(row + each) * 2].copy_from_slice(&tints[z * each * 2..(z + 1) * each * 2]);
-            }
+            changed |= window.shown != Some((seen, window.tiles.len()));
+            window.shown = Some((seen, window.tiles.len()));
+            made.push(put_together(window, seen));
         }
-        let corner = first.map(|tile| tile * TINT_TILE);
-        world.insert(entity, BlockTints { corner, size: side as u32, points: points.into() });
+        if changed {
+            let [(corner, points), (far_corner, far_points)] = [made[0].clone(), made[1].clone()];
+            let side = (2 * REACH * TINT_TILE) as u32;
+            world.insert(entity, BlockTints { corner, size: side, points, far_corner, far_points });
+        }
     }
     world.insert_resource(kept);
+}
+
+/// A window's tiles put together round the tile `seen`, their points row
+/// by row, white where a tile is not worked out yet: the point they start
+/// from, and the points.
+fn put_together(window: &Window, seen: [i32; 2]) -> ([i32; 2], Arc<[u32]>) {
+    let tiles = 2 * REACH;
+    let side = (tiles * TINT_TILE) as usize;
+    let first = [seen[0] - REACH, seen[1] - REACH];
+    let mut points = vec![WHITE; side * side * 2];
+    for (tile, tints) in &window.tiles {
+        let at = [tile[0] - first[0], tile[1] - first[1]];
+        if !(0..tiles).contains(&at[0]) || !(0..tiles).contains(&at[1]) || tints.is_empty() {
+            continue;
+        }
+        let each = TINT_TILE as usize;
+        for z in 0..each {
+            let row = (at[1] as usize * each + z) * side + at[0] as usize * each;
+            points[row * 2..(row + each) * 2].copy_from_slice(&tints[z * each * 2..(z + 1) * each * 2]);
+        }
+    }
+    (first.map(|tile| tile * TINT_TILE), points.into())
 }

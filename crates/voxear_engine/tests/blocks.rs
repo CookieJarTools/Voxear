@@ -389,15 +389,20 @@ fn a_generated_block_world_whose_biomes_have_tints_keeps_them_round_where_it_is_
     let tints = |game: &Game| game.engine.world.query_ref::<&voxear_render::BlockTints>().into_iter().next().cloned();
     // Worked out a few tiles a frame, the nearest first, till every tile in reach has its tints: a tile not
     // worked out yet is white, as its grass is not.
-    let full = |tints: &voxear_render::BlockTints| tints.points.iter().step_by(2).all(|&grass| grass != 0x0080_8080);
-    for _ in 0..60 {
+    let full = |tints: &voxear_render::BlockTints| {
+        let all = |points: &[u32]| !points.is_empty() && points.iter().step_by(2).all(|&grass| grass != 0x0080_8080);
+        all(&tints.points) && all(&tints.far_points)
+    };
+    for _ in 0..90 {
         game.tick(1.0 / 60.0, None);
         if tints(&game).is_some_and(|tints| full(&tints)) {
             break;
         }
     }
     let kept = tints(&game).expect("its tints");
-    assert_eq!((kept.size, kept.points.len()), (256, 256 * 256 * 2));
+    // Its far tints as many points, 16 times further apart, round the same place.
+    assert_eq!((kept.size, kept.points.len(), kept.far_points.len()), (256, 256 * 256 * 2, 256 * 256 * 2));
+    assert!(kept.far_corner[0] * 16 <= kept.corner[0] && kept.far_corner[1] * 16 <= kept.corner[1]);
     assert!(full(&kept), "every point worked out");
     // The grass yellowed everywhere, each part out of 2 in a byte; the foliage white.
     let part = |packed: u32, shift: u32| ((packed >> shift) & 0xFF) as f32 / 255.0 * 2.0;

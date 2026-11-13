@@ -156,9 +156,11 @@ Rivers running down the ground wired in, lakes in its hollows, and waterfalls wh
 
 Water finds its way over a grid of points 64 m apart: each drains the steepest way down, and a hollow spills over its rim. How much ground drains through a point is counted from the points up its way within half a kilometre, worked out from the points alone, so every chunk of an endless world finds the same rivers and none stops at a seam.
 
+High ground counts for more than low, as rain and snow gather sooner off hills and mountains: a point counts for a quarter on flat lowland and for more the higher it stands over the ground round it. So rivers start up on hills and mountainsides, and seldom out in a flat field.
+
 | Row | What it does |
 | --- | --- |
-| Source | How much ground drains into a place before a river starts there, in hectares. Less makes more, smaller streams |
+| Source | How much ground drains into a place before a river starts there, in hectares of flat ground; a hectare of high ground counts for more. Less makes more, smaller streams |
 | Width | How wide a river is where a square kilometre drains into it, in metres. Where four times as much does, it is twice as wide |
 | Depth | How deep its bed is there, in metres |
 | Valley | How far either side the ground slopes down to its banks, in metres |
@@ -169,6 +171,15 @@ Water finds its way over a grid of points 64 m apart: each drains the steepest w
 Under Advanced: **Spacing** (how far apart the grid's points are) and **Seed**.
 
 A river's water always runs downhill. Its bed is cut into the ground, and where the ground beside it is lower than its water, banks are raised, so water never stands over the air beside it.
+
+Where a river comes from and where it goes:
+
+| Where | What is there |
+| --- | --- |
+| Its head | A spring: a little round pool dug into the ground, its river running out of it |
+| The sea | Its mouth: over its last few metres it widens to three and a half times as wide, its banks falling away, and cuts through the beach to meet the sea. Nothing is raised under the sea, so no bank or wall runs out over its floor |
+| A lake | It runs in at the lake's level, and out where the lake spills. No bank is raised inside a lake |
+| A hollow too shallow for a lake | A pond, dug where it ends, so no river stops in the grass |
 
 **In:** Ground. **Out:** Height, Water (the water's height where there is a river or a lake), Falls (how many metres of a waterfall pour down there), Banks (1 on a river and its banks, fading out across its valley).
 

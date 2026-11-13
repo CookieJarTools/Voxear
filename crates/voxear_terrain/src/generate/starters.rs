@@ -914,9 +914,9 @@ mod tests {
     #[test]
     fn mesas_sky_islands_and_highlands_stand_hundreds_of_metres_tall_with_a_volume_each() {
         let pins: [(&str, u64, f32); 3] = [
-            ("Mesas", 0x63a0_eb0e_453a_a00d, 200.0),
-            ("Sky Islands", 0xdc93_4956_40ea_eef8, 40.0),
-            ("Highlands", 0x63f4_b826_9646_1e7e, 350.0),
+            ("Mesas", 0x4e90_1190_e32e_cac1, 200.0),
+            ("Sky Islands", 0x9288_f492_f118_10f1, 40.0),
+            ("Highlands", 0x7ff0_b07e_1dc4_646a, 350.0),
         ];
         let mut changed = Vec::new();
         for (name, hash, tall) in pins {
@@ -940,9 +940,9 @@ mod tests {
     #[test]
     fn karst_shattered_great_peaks_and_rifts_stand_tall_or_cut_deep_with_a_volume_each() {
         let pins: [(&str, u64, f32); 4] = [
-            ("Karst", 0xd79c_08d6_1d39_f33c, 20.0),
-            ("Shattered", 0xff60_591d_97fc_cf5c, 30.0),
-            ("Great Peaks", 0x511a_ec36_64c2_5904, 1000.0),
+            ("Karst", 0x632e_fbb4_8fd2_bb2e, 20.0),
+            ("Shattered", 0x86d4_9303_59ac_732a, 30.0),
+            ("Great Peaks", 0xc66d_f82f_b66d_864b, 1000.0),
             ("Rifts", 0x8bb1_f777_df4d_e4a3, 150.0),
         ];
         let mut changed = Vec::new();
@@ -1025,11 +1025,11 @@ mod tests {
     #[test]
     fn each_starter_makes_the_same_ground_to_the_bit_on_every_machine() {
         let hashes: [(&str, u64); 5] = [
-            ("Battlefield Plains", 0x0465_38c9_6f8e_f71d),
-            ("Rolling Hills", 0x6ffb_dd4d_466a_6ad4),
-            ("Alpine", 0xf8ef_648c_73a1_a658),
-            ("Archipelago", 0xf830_5087_7dfa_9c48),
-            ("Canyons", 0x33ce_062c_f4a0_6e9d),
+            ("Battlefield Plains", 0xea90_71a4_1e85_6223),
+            ("Rolling Hills", 0x8cea_3f08_715b_a2a7),
+            ("Alpine", 0x2f7e_3671_dac6_b355),
+            ("Archipelago", 0x9d52_9079_336e_df03),
+            ("Canyons", 0x68bf_3a3c_ec5b_019d),
         ];
         let starters = grounds();
         assert_eq!(starters.len(), hashes.len());

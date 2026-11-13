@@ -25,16 +25,17 @@
 static const float BLOCK_SWAY = 0.07;
 static const float BLOCK_SWAY_MOST = 0.22;
 
-// One of a world's tint points: its tint `kind` (1 grass, 2 foliage), each part out of 2.
-float3 blockTintPoint(BlockWorld world, int2 at, uint kind)
+// One of a world's tint points, its near ones' or after them `from` its far ones': its tint `kind` (1 grass, 2
+// foliage), each part out of 2.
+float3 blockTintPoint(BlockWorld world, uint from, int2 at, uint kind)
 {
-    uint packed = world.tints[(uint(at.y) * world.tintSize + uint(at.x)) * 2 + kind - 1];
+    uint packed = world.tints[from + (uint(at.y) * world.tintSize + uint(at.x)) * 2 + kind - 1];
     return float3(packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF) * (2.0 / 255.0);
 }
 
 // The colour a face of surface `flags` takes at `place`, in metres from the world's corner, from the biomes round it:
-// its tint read between the four points round it, so it fades smoothly from biome to biome; past the world's tints
-// the nearest at their edge. White for a face that takes none, or a world without tints.
+// its tint read between the four points round it, so it fades smoothly from biome to biome; past its near tints, its
+// far ones, and past those the nearest at their edge. White for a face that takes none, or a world without tints.
 float3 blockTint(BlockWorld world, uint flags, float3 place)
 {
     uint kind = (flags >> TERRAIN_SURFACE_TINT_SHIFT) & 3;
@@ -43,12 +44,21 @@ float3 blockTint(BlockWorld world, uint flags, float3 place)
         return float3(1.0);
     }
     float last = float(world.tintSize - 1);
-    float2 at = clamp(place.xz / (BLOCK_TINT_STEP * world.blockSize) - float2(world.tintCorner), 0.0, last);
+    float2 at = place.xz / (BLOCK_TINT_STEP * world.blockSize) - float2(world.tintCorner);
+    uint from = 0;
+    // Past its near tints, its far ones', where it has them.
+    bool past = any(at < 0.0) || any(at > last);
+    if (past && world.farTintCorner.x != int(0x80000000))
+    {
+        at = place.xz / (BLOCK_TINT_STEP * BLOCK_TINT_FAR * world.blockSize) - float2(world.farTintCorner);
+        from = BLOCK_TINT_MOST * 2;
+    }
+    at = clamp(at, 0.0, last);
     int2 low = int2(min(floor(at), last - 1.0));
     float2 f = at - float2(low);
-    float3 near = lerp(blockTintPoint(world, low, kind), blockTintPoint(world, low + int2(1, 0), kind), f.x);
-    float3 far = lerp(blockTintPoint(world, low + int2(0, 1), kind), blockTintPoint(world, low + int2(1, 1), kind), f.x);
-    return lerp(near, far, f.y);
+    float3 nearer = lerp(blockTintPoint(world, from, low, kind), blockTintPoint(world, from, low + int2(1, 0), kind), f.x);
+    float3 further = lerp(blockTintPoint(world, from, low + int2(0, 1), kind), blockTintPoint(world, from, low + int2(1, 1), kind), f.x);
+    return lerp(nearer, further, f.y);
 }
 
 // A number from 0 to 1 for a corner of the world's blocks, from whole numbers alone.

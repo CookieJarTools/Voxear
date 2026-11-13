@@ -698,8 +698,9 @@ pub fn column_chunks(
     let (mut row, mut ground_row) = (vec![0.0f32; tall], vec![0.0f32; tall]);
     let mut read = vec![0usize; places.len()];
     let mut made: Vec<(i32, (BlockId, Option<u8>))> = Vec::new();
-    // Slabs, at the world's own level and where it is drawn as cubes, of the blocks that have them.
-    let halves = generate.halves.as_deref().filter(|_| generate.slabs && level == 0 && !file.smooth);
+    // Slabs, at every level where it is drawn as cubes, of the blocks that have them: a coarser ring's half its
+    // larger blocks, so the far view rises in half steps as near by.
+    let halves = generate.halves.as_deref().filter(|_| generate.slabs && !file.smooth);
     let mut chunks: Vec<Option<Chunk>> = vec![None; (high_key - low_key + 1) as usize];
     let mut put = |x: i32, y: i32, z: i32, block: BlockId, fill: Option<u8>| {
         let chunk = chunks[(y.div_euclid(side) - low_key) as usize].get_or_insert_with(|| Chunk::filled(AIR));

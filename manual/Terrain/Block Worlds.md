@@ -213,7 +213,7 @@ For a sea, pick a block of water as the **Sea block** of generated ground: the a
 
 ### Rivers and currents
 
-A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. A world whose generator has none, as one written before presets had rivers, gets them with its **Rivers** setting on. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
+A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. A world whose generator has none, as one written before presets had rivers, gets them with its **Rivers** setting on. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot. A river rises from a spring's pool, high on a hill where it can, and reaches the sea through a mouth that widens to meet it, or ends in a lake or a pond (see [[Generator Nodes#Rivers|Rivers]]).
 
 A river's blocks are sources, so it never runs dry, and each keeps which way its river flows and how high its water stands in it, so its surface comes down in eighths of a block as water placed and running out does, not a block at a time. Its ripples drift the way it flows. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
 

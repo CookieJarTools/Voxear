@@ -55,7 +55,7 @@ const VERSION: u8 = 1;
 
 /// The way tiles are made, counted up when it changes, so tiles kept on
 /// disk made another way are made again (see `stream::BlockMaking`).
-pub const MADE_AS: u32 = 2;
+pub const MADE_AS: u32 = 3;
 
 /// How the sea of `block`, its top `top` blocks up, stands at block `y` of
 /// a far tile's column whose ground's surface is `surface`: as `Sea::at`
@@ -216,6 +216,7 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
     let (sea, sea_top) = sea_of(file, generate, world, level);
     let low = generate.bottom.div_euclid(scale as i32);
     let mut tile = FarTile { level, at, sea: (sea, sea_top), surfaces: Vec::new(), starts: vec![0], runs: Vec::new() };
+    let halves = generate.halves.as_deref().filter(|_| generate.slabs && !file.smooth);
     // Rivers and lakes over the sea, each column's own; far off, no waterfall shows.
     let waters = waters_of(file, generate, world, level, (&xs, &zs));
     for (index, column) in columns.iter().enumerate() {
@@ -251,6 +252,17 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
                 last.block = sea;
             }
         }
+        // Where its top is laid in half blocks, the block within a quarter of one of its surface a slab, as near by.
+        if let Some(slab) = halves.and_then(|halves| far_slab(column, &runs, halves, water_top)) {
+            match runs.last_mut() {
+                Some(last) if last.to == slab.from + 1 && last.to - last.from > 1 => last.to -= 1,
+                Some(last) if last.to == slab.from + 1 => last.block = slab.block,
+                _ => {}
+            }
+            if runs.last().is_none_or(|last| last.to == slab.from) {
+                runs.push(slab);
+            }
+        }
         tile.surfaces.push(column.surface);
         tile.runs.extend(runs);
         tile.starts.push(tile.runs.len() as u32);
@@ -278,6 +290,26 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         }
     }
     tile
+}
+
+/// The slab a far column's top is laid with, where its ground lies within a
+/// quarter of a block of a block's middle, as `columns::slab_cell` lays it
+/// near by: a run of one block, of the slab of the block on top there, or
+/// of its top block where that block is open air over ground. None near a
+/// whole block, under water, or where its block has no slab.
+fn far_slab(column: &super::columns::Column, runs: &[Run], halves: &[BlockId], water_top: f32) -> Option<Run> {
+    let y = (column.surface - 0.25).floor() as i32;
+    if column.surface - y as f32 >= 0.75 || water_top > y as f32 {
+        return None;
+    }
+    let last = runs.last()?;
+    let block = match last.to {
+        to if to == y + 1 => last.block,
+        to if to == y => column.block(0.0),
+        _ => return None,
+    };
+    let slab = halves.get(usize::from(block)).copied().filter(|&slab| slab != AIR)?;
+    Some(Run { from: y, to: y + 1, block: slab })
 }
 
 /// The chunks of `tile`, of a world drawn `smooth` or of cubes: each run's

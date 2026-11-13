@@ -11,7 +11,15 @@
 //!
 //! Where as much ground as Source drains into a point, in hectares, a river
 //! runs from it down the way the water goes, wider and deeper the more
-//! drains into it: Width and Depth are how wide and deep it is where a
+//! drains into it. High ground counts for more than low, as rain and snow
+//! gather sooner off hills and mountains: a point counts as much more as it
+//! stands over the ground round it, and flat lowland for a quarter, so
+//! rivers start up high and seldom out in a flat field. Every river starts
+//! from a spring, a little pool at its head, and one that runs into a
+//! hollow too shallow for a lake ends in a pond there. One that reaches the
+//! sea widens and shallows into its mouth, its banks giving way to the
+//! shore, and leaves the sea's floor as it is. Its size goes by what drains
+//! into it: Width and Depth are how wide and deep it is where a
 //! square kilometre does. Its water falls along every stretch, so it always
 //! runs downhill, and it winds as Meander says. The ground is cut away for
 //! its bed and slopes down to it over Valley metres either side; and where
@@ -241,6 +249,39 @@ const LEVEE: f32 = 4.0;
 /// How far a lake reaches from its hollow's point, in spacings.
 const LAKE_REACH: f32 = 1.6;
 
+/// How much a point counts towards what drains through it: as much more
+/// as it stands over the lowest ground within [`RISE_ROUND`] points of it,
+/// a whole point for every [`RISE_FULL`] metres, from [`LEAST_WEIGHT`] for
+/// flat ground to [`MOST_WEIGHT`].
+const RISE_ROUND: i32 = 2;
+const RISE_FULL: f32 = 12.0;
+const LEAST_WEIGHT: f32 = 0.25;
+const MOST_WEIGHT: f32 = 2.5;
+
+/// A spring's pool at a river's head and a pond where one ends: how wide,
+/// as a share of the river's width and at least so many metres, and how
+/// deep at its middle under its water, in metres.
+const POOL_WIDTHS: f32 = 1.4;
+const LEAST_POOL: f32 = 7.0;
+const POOL_DEPTH: f32 = 1.6;
+
+/// How far over the sea a river's water is still its mouth, in metres: it
+/// widens and its banks fall away as its water comes down to the sea, as
+/// many times wider at the sea as [`MOUTH_WIDENS`] says, its bed at least
+/// [`MOUTH_FLOOR`] metres under the sea, so a world of blocks shows its
+/// water meeting the sea's.
+const MOUTH: f32 = 3.0;
+const MOUTH_WIDENS: f32 = 2.5;
+const MOUTH_FLOOR: f32 = 1.5;
+
+/// How far a river running into the sea runs on past its last point, as a
+/// share of the stretch to it.
+const MOUTH_REACH: f32 = 2.0;
+
+/// How far under the sea a river still runs on to a point, in metres, so
+/// it reaches the shore across a beach whose points stand in the shallows.
+const SHALLOWS: f32 = 6.0;
+
 /// How thick a waterfall's curtain is, in metres.
 const CURTAIN: f32 = 1.6;
 
@@ -285,6 +326,10 @@ struct Point {
     level: f32,
     width: f32,
     depth: f32,
+    /// How far a pool reaches from it, its water as high as its river's:
+    /// a spring's at a river's head, or a pond where a river ends in a
+    /// hollow; 0 for none.
+    pool: f32,
 }
 
 /// A Rivers node's settings held to their ranges, for the ground its
@@ -292,10 +337,10 @@ struct Point {
 #[derive(Debug)]
 struct Finder {
     spacing: f32,
-    /// How many points must drain into one for a river to start there, and
-    /// for a hollow to hold a lake (none at 0).
-    source: u32,
-    lakes: u32,
+    /// How much must drain into a point for a river to start there, and for
+    /// a hollow to hold a lake (none at 0), in points of flat ground.
+    source: f32,
+    lakes: f32,
     width: f32,
     depth: f32,
     valley: f32,
@@ -334,7 +379,7 @@ impl Finder {
         let spacing = number(set.spacing, 16.0, 1000.0) * scale;
         // A point drains this many hectares.
         let hectares = spacing * spacing / 10_000.0;
-        let points = |area: f32| (area / hectares).round().max(1.0) as u32;
+        let points = |area: f32| (area / hectares).round().max(1.0);
         let mut key = Key::default();
         key.name("rivers").number(spacing).number(set.source).number(set.lakes).number(set.width);
         key.number(set.depth).number(set.valley).number(set.falls).number(set.meander).number(sea).whole(seed);
@@ -342,7 +387,7 @@ impl Finder {
         Self {
             spacing,
             source: points(number(set.source, 0.5, 100000.0)),
-            lakes: if set.lakes > 0.0 { points(number(set.lakes, 0.0, 100000.0)) } else { 0 },
+            lakes: if set.lakes > 0.0 { points(number(set.lakes, 0.0, 100000.0)) } else { 0.0 },
             width: number(set.width, 1.0, 1000.0) * scale,
             depth: number(set.depth, 0.2, 100.0),
             valley: number(set.valley, 0.0, 2000.0) * scale,
@@ -530,7 +575,24 @@ impl Finder {
             let inner = (MARGIN - KNOWN) as usize..(MARGIN + TILE + KNOWN) as usize;
             inner.contains(&x) && inner.contains(&z)
         };
-        let mut catch = vec![0u32; places.len()];
+        // How much each point counts: more the higher it stands over the ground round it.
+        let reach = RISE_ROUND;
+        let weight: Vec<f32> = (0..places.len())
+            .map(|at| {
+                let (x, z) = ((at % side) as i32, (at / side) as i32);
+                let mut lowest = ground[at];
+                for dz in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let (bx, bz) = (x + dx, z + dz);
+                        if (0..side as i32).contains(&bx) && (0..side as i32).contains(&bz) {
+                            lowest = lowest.min(ground[index(bx as usize, bz as usize)]);
+                        }
+                    }
+                }
+                (LEAST_WEIGHT + (ground[at] - lowest) / RISE_FULL).min(MOST_WEIGHT)
+            })
+            .collect();
+        let mut catch = vec![0.0f32; places.len()];
         let mut been: Vec<(i32, i32)> = Vec::new();
         for z in 1..side - 1 {
             for x in 1..side - 1 {
@@ -547,7 +609,7 @@ impl Finder {
                         break;
                     }
                     if counted(vx as usize, vz as usize) {
-                        catch[index(vx as usize, vz as usize)] += 1;
+                        catch[index(vx as usize, vz as usize)] += weight[index(x, z)];
                     }
                     let Some([dx, dz]) = down[index(vx as usize, vz as usize)] else { break };
                     (vx, vz) = (vx + i32::from(dx), vz + i32::from(dz));
@@ -560,7 +622,7 @@ impl Finder {
         // A hollow's lake, as high as the lowest of the ground round it, where enough drains into it.
         let lake = |x: usize, z: usize| -> Option<f32> {
             let here = index(x, z);
-            if self.lakes == 0 || !hollow[here] || catch[here] < self.lakes || ground[here] < self.sea {
+            if self.lakes == 0.0 || !hollow[here] || catch[here] < self.lakes || ground[here] < self.sea {
                 return None;
             }
             // As high as the lowest of the ground round it, and no higher than where it spills.
@@ -574,21 +636,25 @@ impl Finder {
             let level = rim - 0.3;
             (level > ground[here] + 0.5).then_some(level)
         };
-        let size = |catch: u32| {
-            let area = catch as f32 * self.spacing * self.spacing / 1_000_000.0;
+        let size = |catch: f32| {
+            let area = catch * self.spacing * self.spacing / 1_000_000.0;
             let root = area.sqrt();
             ((self.width * root).clamp(2.5, 120.0), (self.depth * root.sqrt()).clamp(1.0, 20.0))
         };
+        // Whether a river runs from a point: enough drains into it, it is over the sea or in its shallows, so it runs
+        // on across the shore, and it drains on.
+        let river = |at: usize| catch[at] >= self.source && ground[at] >= self.sea - SHALLOWS && down[at].is_some();
         let point = |x: usize, z: usize| {
             let here = index(x, z);
             let (width, depth) = size(catch[here]);
             let mut point = Point { at: places[here], down: down[here], width, depth, ..Point::default() };
+            let pool = (width * POOL_WIDTHS).max(LEAST_POOL);
             if let Some(level) = lake(x, z) {
                 // Its water runs on from it where it spills, as a river where enough drains into it.
                 (point.lake, point.level) = (true, level);
                 point.river = catch[here] >= self.source;
             } else {
-                point.river = catch[here] >= self.source && ground[here] >= self.sea && down[here].is_some();
+                point.river = river(here);
                 let mut level = ground[here] - depth;
                 // Running into a lake, as high as it.
                 if let Some([dx, dz]) = down[here]
@@ -597,6 +663,18 @@ impl Finder {
                     level = level.max(lake);
                 }
                 point.level = level.max(self.sea);
+                // A river's head, which no river runs into, rises from a spring's pool.
+                let fed = ROUND.iter().any(|&(dx, dz)| {
+                    let there = index((x as i32 + dx) as usize, (z as i32 + dz) as usize);
+                    down[there] == Some([-dx as i8, -dz as i8]) && river(there)
+                });
+                if point.river && !fed {
+                    point.pool = pool;
+                }
+                // A river that runs into a hollow with no lake to hold it ends in a pond there.
+                if down[here].is_none() && catch[here] >= self.source && ground[here] >= self.sea + MOUTH {
+                    (point.pool, point.level) = (pool, ground[here] - 0.3);
+                }
             }
             point
         };
@@ -604,7 +682,10 @@ impl Finder {
         let from = (MARGIN - LOOKED) as usize;
         let wide = (TILE + 2 * LOOKED) as usize;
         let round: Vec<Point> = (0..wide * wide).map(|at| point(from + at % wide, from + at / wide)).collect();
-        let wet = |x: usize, z: usize| round[z * wide + x].river || round[z * wide + x].lake;
+        let wet = |x: usize, z: usize| {
+            let point = &round[z * wide + x];
+            point.river || point.lake || point.pool > 0.0
+        };
         let mut points = Vec::with_capacity((TILE * TILE) as usize);
         for z in LOOKED as usize..(LOOKED + TILE) as usize {
             for x in LOOKED as usize..(LOOKED + TILE) as usize {
@@ -680,12 +761,16 @@ impl Finder {
         }
         let mut nearest: Option<Reached> = None;
         let mut lakes: Vec<Point> = Vec::new();
+        let mut pools: Vec<Point> = Vec::new();
         for dz in -LOOKED..=LOOKED {
             for dx in -LOOKED..=LOOKED {
                 let from = [cell[0] + dx, cell[1] + dz];
                 let point = near.point(from);
                 if point.lake {
                     lakes.push(point);
+                }
+                if point.pool > 0.0 {
+                    pools.push(point);
                 }
                 let Some([sx, sz]) = point.down.filter(|_| point.river) else { continue };
                 let to = near.point([from[0] + i32::from(sx), from[1] + i32::from(sz)]);
@@ -696,8 +781,18 @@ impl Finder {
                 }
             }
         }
-        if let Some(river) = nearest {
-            let top = river.level + BANK;
+        // Within a lake, nothing is raised: its water stands over its bed, rivers running into it and out.
+        let reach = LAKE_REACH * self.spacing;
+        let lake_over = |lake: &Point| {
+            let (ox, oz) = (wx - lake.at[0], wz - lake.at[1]);
+            ox * ox + oz * oz < reach * reach && ground < lake.level
+        };
+        let in_lake = lakes.iter().any(lake_over);
+        // Under the sea its floor is left as it is, but for the shallows a river's mouth cuts through to meet it: a
+        // river ends at the shore, and nothing is raised in the sea.
+        if let Some(river) = nearest.filter(|_| ground >= self.sea - MOUTH_FLOOR) {
+            // Its banks fall away as its water comes down to the sea at its mouth.
+            let top = river.level + BANK * smooth((river.level - self.sea) / MOUTH);
             if river.past < 0.0 {
                 made.height = ground.min(river.bed);
                 (made.water, made.falls, made.banks) = (river.water, river.falls, 1.0);
@@ -706,10 +801,28 @@ impl Finder {
                 let valley = self.valley.max(1.0);
                 made.height = top + (ground - top) * smooth(river.past / valley);
                 made.banks = 1.0 - smooth(river.past / (valley * 0.5));
-            } else {
+            } else if ground >= self.sea && !in_lake {
                 // Banks raised where the ground is lower than the water, level for a few metres from its edge.
                 made.height = top + (ground - top) * smooth((river.past - BANK_TOP) / LEVEE);
                 made.banks = 1.0 - smooth(river.past / (self.valley.max(1.0) * 0.5));
+            }
+        }
+        // A spring's pool at a river's head, and a pond where one ends: dug round its point, its water as high as
+        // the river's there.
+        for pool in pools.into_iter().filter(|_| ground >= self.sea) {
+            let (ox, oz) = (wx - pool.at[0], wz - pool.at[1]);
+            let off = (ox * ox + oz * oz).sqrt();
+            let from = off / pool.pool;
+            if from < 1.0 {
+                made.height = made.height.min(pool.level - POOL_DEPTH * (1.0 - from * from));
+                made.water = made.water.max(pool.level);
+                made.banks = 1.0;
+            } else if made.water == NO_WATER && !in_lake && off < pool.pool + BANK_TOP + LEVEE {
+                // A rim where the ground falls away from it, so its water never stands over the air beside it.
+                let top = pool.level + BANK;
+                if made.height < top {
+                    made.height = top + (made.height - top) * smooth((off - pool.pool - BANK_TOP) / LEVEE);
+                }
             }
         }
         for lake in lakes {
@@ -718,7 +831,7 @@ impl Finder {
             let reach = LAKE_REACH * self.spacing;
             if from < reach && made.height < lake.level {
                 made.water = made.water.max(lake.level);
-            } else if from < reach + BANK_TOP + LEVEE && made.water == NO_WATER {
+            } else if from < reach + BANK_TOP + LEVEE && made.water == NO_WATER && ground >= self.sea {
                 // A rim round it where the ground would let it out, but where a river runs in.
                 made.height = made.height.max(lake.level + BANK);
             }
@@ -732,24 +845,37 @@ impl Finder {
         let (ax, az) = (to.at[0] - from.at[0], to.at[1] - from.at[1]);
         let long = (ax * ax + az * az).sqrt().max(1e-3);
         let (px, pz) = (at[0] - from.at[0], at[1] - from.at[1]);
-        let t = ((px * ax + pz * az) / (long * long)).clamp(0.0, 1.0);
-        let (cx, cz) = (px - ax * t, pz - az * t);
+        // A river running into the sea runs on straight past its point there, whose place may be on the beach,
+        // until it meets the sea: what is under the sea is left as it is.
+        let into_sea = !to.river && !to.lake && to.level <= self.sea;
+        let reach = if into_sea { MOUTH_REACH } else { 1.0 };
+        let on = ((px * ax + pz * az) / (long * long)).clamp(0.0, reach);
+        let (cx, cz) = (px - ax * on, pz - az * on);
         let off = (cx * cx + cz * cz).sqrt();
+        let t = on.min(1.0);
         // As wide and deep as its upper end, and the lower's where a river goes on from it.
         let (width, depth) = match to.river || to.lake {
             true => (from.width + (to.width - from.width) * t, from.depth + (to.depth - from.depth) * t),
             false => (from.width, from.depth),
         };
+        // Its water falls along every stretch: never higher at its lower end than at its upper.
+        let (upper, lower) = (from.level, to.level.min(from.level));
+        // Wider at its mouth, as its water comes down to the sea, its bed under the sea's.
+        let here = upper - (upper - lower) * t;
+        let mouth = 1.0 - smooth((here - self.sea) / MOUTH);
+        let width = width * (1.0 + MOUTH_WIDENS * mouth);
+        let floor = self.sea - MOUTH_FLOOR * mouth;
         let past = off - width * 0.5;
         if past > self.valley.max(BANK_TOP + LEVEE) {
             return None;
         }
-        // Its water falls along every stretch: never higher at its lower end than at its upper.
-        let (upper, lower) = (from.level, to.level.min(from.level));
         let drop = upper - lower;
         let along = t * long;
         let across = (off / (width * 0.5).max(0.01)).min(1.0);
-        let bed = |level: f32, deeper: f32| level - (depth + deeper) * (1.0 - 0.6 * across * across);
+        let bed = |level: f32, deeper: f32| {
+            let bed = level - (depth + deeper) * (1.0 - 0.6 * across * across);
+            if mouth > 0.0 { bed.min(floor) } else { bed }
+        };
         if drop <= self.falls {
             let level = upper - drop * t;
             return Some(Reached { past, water: level, level, bed: bed(level, 0.0), falls: 0.0 });
@@ -825,6 +951,104 @@ mod tests {
 
     fn wet(water: f32) -> bool {
         water > NO_WATER * 0.5
+    }
+
+    /// Starter `name`'s world and the same world with its rivers taken out: the ground its Rivers node is given.
+    fn with_and_without(name: &str) -> (WorldGen, WorldGen) {
+        let starter = starters().into_iter().find(|starter| starter.name == name).expect("a starter");
+        let mut graph = starter.graph.clone();
+        let output = graph.output().expect("an output").id;
+        let rivers = graph.link_into(output, Output::HEIGHT).expect("its ground").from;
+        let ground = *graph.link_into(rivers, Rivers::GROUND).expect("its rivers' ground");
+        assert!(graph.connect(ground.from, ground.output, output, Output::HEIGHT));
+        (starter.world(7, 1.0), WorldGen::new(7, 1.0, starter.sea_level, graph))
+    }
+
+    #[test]
+    fn a_river_meets_the_sea_through_its_mouth_and_raises_nothing_out_in_the_sea() {
+        let (world, plain) = with_and_without("Archipelago");
+        let sea = world.sea_level();
+        let (xs, zs) = grid(-1600.0, -1600.0, 8.0, 400);
+        let (mut heights, mut ground) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+        world.heights(&xs, &zs, &mut heights);
+        plain.heights(&xs, &zs, &mut ground);
+        let (water, _) = world.water(&xs, &zs).unwrap();
+        // Under the sea, nothing is higher than it was: no banks or walls run out over its floor.
+        let raised = (0..xs.len()).filter(|&at| ground[at] < sea && heights[at] > ground[at] + 0.01).count();
+        assert_eq!(raised, 0, "places under the sea raised");
+        // And rivers reach it: water of a river as low as the sea, beside the sea's own.
+        let open = |at: usize| {
+            let (x, z) = ((at % 400) as i32, (at / 400) as i32);
+            (-2..=2).any(|dz: i32| {
+                (-2..=2).any(|dx: i32| {
+                    let (bx, bz) = (x + dx, z + dz);
+                    (0..400).contains(&bx) && (0..400).contains(&bz) && ground[(bz * 400 + bx) as usize] < sea - 2.0
+                })
+            })
+        };
+        let mouths = (0..xs.len()).filter(|&at| wet(water[at]) && water[at] < sea + 1.0 && open(at)).count();
+        assert!(mouths > 3, "{mouths} places where a river meets the sea");
+    }
+
+    /// How much of the ground within `reach` metres of the middle of the water standing highest (`highest`) or
+    /// lowest within `near` metres of `(x, z)` is under water, a metre apart: a pool's or a pond's all of it, a
+    /// river's narrow end little.
+    fn pooled(world: &WorldGen, (x, z): (f32, f32), near: f32, reach: f32, highest: bool) -> f32 {
+        let side = (near * 2.0) as usize + 1;
+        let (xs, zs) = grid(x - near, z - near, 1.0, side);
+        let (water, _) = world.water(&xs, &zs).unwrap();
+        let wet_at: Vec<usize> = (0..xs.len()).filter(|&at| wet(water[at])).collect();
+        let level = match highest {
+            true => wet_at.iter().map(|&at| water[at]).fold(f32::MIN, f32::max),
+            false => wet_at.iter().map(|&at| water[at]).fold(f32::MAX, f32::min),
+        };
+        let flat: Vec<usize> = wet_at.into_iter().filter(|&at| (water[at] - level).abs() < 0.02).collect();
+        let middle = flat.iter().fold([0.0, 0.0], |sum, &at| [sum[0] + xs[at], sum[1] + zs[at]]);
+        let middle = middle.map(|part| part / flat.len() as f32);
+        let side = (reach * 2.0) as usize + 1;
+        let (xs, zs) = grid(middle[0] - reach, middle[1] - reach, 1.0, side);
+        let (water, _) = world.water(&xs, &zs).unwrap();
+        let round: Vec<usize> = (0..xs.len())
+            .filter(|&at| {
+                (xs[at] - xs[side * side / 2]).powi(2) + (zs[at] - zs[side * side / 2]).powi(2) <= reach * reach
+            })
+            .collect();
+        round.iter().filter(|&&at| wet(water[at])).count() as f32 / round.len() as f32
+    }
+
+    #[test]
+    fn every_river_rises_from_a_spring_and_one_ending_inland_ends_in_a_pond() {
+        let (world, _) = with_and_without("Rolling Hills");
+        let sea = world.sea_level();
+        let (xs, zs) = grid(-1600.0, -1600.0, 8.0, 400);
+        let (water, _) = world.water(&xs, &zs).unwrap();
+        let river = |at: usize| wet(water[at]) && water[at] > sea + 3.0;
+        let inside = |at: usize| (30..370).contains(&(at % 400)) && (30..370).contains(&(at / 400));
+        let near = |at: usize, reach: i32| {
+            let (x, z) = ((at % 400) as i32, (at / 400) as i32);
+            (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| ((z + dz) * 400 + x + dx) as usize))
+        };
+        let lone = |at: usize| near(at, 3).filter(|&k| river(k)).count() < 20;
+        // A river's head: its water the highest within 200 m, with no lake round it. Its pool fills the ground round
+        // the highest of it, where a river's narrow end would fill little.
+        let heads: Vec<usize> = (0..xs.len())
+            .filter(|&at| inside(at) && river(at) && lone(at))
+            .filter(|&at| near(at, 25).all(|k| !river(k) || water[k] <= water[at] + 0.01))
+            .collect();
+        assert!(heads.len() >= 3, "{} heads", heads.len());
+        for &at in heads.iter().take(8) {
+            let pooled = pooled(&world, (xs[at], zs[at]), 12.0, 4.0, true);
+            assert!(pooled > 0.6, "the head at ({}, {}) is {pooled} under water", xs[at], zs[at]);
+        }
+        // Where a river ends inland, its water the lowest within 200 m, it ends in a pond.
+        let ends: Vec<usize> = (0..xs.len())
+            .filter(|&at| inside(at) && river(at) && lone(at))
+            .filter(|&at| near(at, 25).all(|k| !river(k) || water[k] >= water[at] - 0.01))
+            .collect();
+        for &at in ends.iter().take(8) {
+            let pooled = pooled(&world, (xs[at], zs[at]), 12.0, 4.0, false);
+            assert!(pooled > 0.6, "the end at ({}, {}) is {pooled} under water", xs[at], zs[at]);
+        }
     }
 
     #[test]

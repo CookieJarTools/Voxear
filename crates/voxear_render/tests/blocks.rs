@@ -1747,7 +1747,14 @@ fn generated_view_with(
             }
         }
         let corner = [first * TINT_TILE; 2];
-        late = Some((spawned, voxear_render::BlockTints { corner, size: wide as u32, points: points.into() }));
+        let tints = voxear_render::BlockTints {
+            corner,
+            size: wide as u32,
+            points: points.into(),
+            far_corner: [0; 2],
+            far_points: std::sync::Arc::from([]),
+        };
+        late = Some((spawned, tints));
     }
     let turn = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
     scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
@@ -2031,6 +2038,126 @@ fn grass_takes_each_biomes_tint_and_fades_from_one_to_the_other_where_they_meet(
     steps.sort_unstable();
     let near_most = steps[steps.len() * 999 / 1000];
     assert!(near_most < (most - least) / 3, "a step of {near_most} from one pixel to the next, of {}", most - least);
+}
+
+#[test]
+fn a_river_opens_into_the_sea_at_its_mouth_and_rises_from_a_spring() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    let world = |name: &str| starters().into_iter().find(|starter| starter.name == name).unwrap().world(7, 1.0);
+    // A river's mouth on the islands: its water at the sea, the sea a little way off.
+    let islands = world("Archipelago");
+    let sea = islands.sea_level();
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..400 * 400).map(|at| ((at % 400) as f32 * 8.0 - 1600.0, (at / 400) as f32 * 8.0 - 1600.0)).unzip();
+    let (water, _) = islands.water(&xs, &zs).unwrap();
+    let mut heights = vec![0.0; xs.len()];
+    islands.heights(&xs, &zs, &mut heights);
+    let at_sea = |at: usize| {
+        (-4..=4).any(|dz: i32| {
+            (-4..=4).any(|dx: i32| {
+                let (x, z) = ((at % 400) as i32 + dx, (at / 400) as i32 + dz);
+                (0..400).contains(&x) && (0..400).contains(&z) && heights[(z * 400 + x) as usize] < sea - 1.5
+            })
+        })
+    };
+    let mouth = (0..xs.len())
+        .find(|&at| water[at] > sea - 0.5 && water[at] < sea + 1.0 && water[at] > heights[at] && at_sea(at))
+        .expect("a river's mouth");
+    let corner = [xs[mouth] - 128.0, zs[mouth] - 128.0];
+    // Straight down from over it, north at the top.
+    let above = (Vec3::new(128.0, sea + 120.0, 128.0), 0.0, 1.5);
+    generated_view(
+        &mut renderer,
+        &islands,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        above,
+        "river mouth above.png",
+    );
+    // From out over the sea towards the shore, low.
+    let towards = |from: [f32; 2]| (128.0 - from[0]).atan2(128.0 - from[1]);
+    let out = (0..16)
+        .map(|k| k as f32 * std::f32::consts::TAU / 16.0)
+        .map(|turn| [128.0 + 70.0 * turn.sin(), 128.0 + 70.0 * turn.cos()])
+        .find(|&[x, z]| islands.height_at(corner[0] + x, corner[1] + z) < sea - 2.0)
+        .expect("the sea off the mouth");
+    let side = (Vec3::new(out[0], sea + 14.0, out[1]), towards(out), 0.22);
+    generated_view(
+        &mut renderer,
+        &islands,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        side,
+        "river mouth side.png",
+    );
+    // A river's head in the hills: river water, well inside the ground looked over, with none higher within 200 m
+    // and little water round it, so no lake.
+    let hills = world("Rolling Hills");
+    let sea = hills.sea_level();
+    let (water, _) = hills.water(&xs, &zs).unwrap();
+    let wet = |at: usize| water[at] > sea + 3.0;
+    let around = |at: usize, reach: i32, keep: &dyn Fn(usize) -> bool| {
+        let (x, z) = ((at % 400) as i32, (at / 400) as i32);
+        (-reach..=reach).all(|dz| (-reach..=reach).all(|dx| keep(((z + dz) * 400 + x + dx) as usize)))
+    };
+    let count = |at: usize, reach: i32| {
+        let (x, z) = ((at % 400) as i32, (at / 400) as i32);
+        (-reach..=reach)
+            .flat_map(|dz| (-reach..=reach).map(move |dx| ((z + dz) * 400 + x + dx) as usize))
+            .filter(|&k| wet(k))
+            .count()
+    };
+    let inside = |at: usize| (40..360).contains(&(at % 400)) && (40..360).contains(&(at / 400));
+    let head = (0..xs.len())
+        .filter(|&at| inside(at) && wet(at) && count(at, 3) < 20)
+        .find(|&at| around(at, 25, &|there| !wet(there) || water[there] <= water[at] + 0.01))
+        .expect("a river's head");
+    let corner = [xs[head] - 128.0, zs[head] - 128.0];
+    let ground = hills.height_at(xs[head], zs[head]);
+    println!("head at ({}, {}): water {} ground {ground}", xs[head], zs[head], water[head]);
+    let above = (Vec3::new(128.0, water[head] + 110.0, 128.0), 0.0, 1.5);
+    generated_view(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        above,
+        "river source above.png",
+    );
+    // And from down its river, looking back up at it.
+    // Its river runs off where the water round it lies.
+    let (hx, hz) = ((head % 400) as i32, (head / 400) as i32);
+    let mut down = [0.0f32; 2];
+    for (dx, dz) in (-10..=10).flat_map(|dz| (-10..=10).map(move |dx| (dx, dz))) {
+        if wet(((hz + dz) * 400 + hx + dx) as usize) {
+            (down[0], down[1]) = (down[0] + dx as f32, down[1] + dz as f32);
+        }
+    }
+    let long = (down[0] * down[0] + down[1] * down[1]).sqrt().max(1e-3);
+    let eye = [128.0 + 30.0 * down[0] / long, 128.0 + 30.0 * down[1] / long];
+    let back = (Vec3::new(eye[0], water[head] + 14.0, eye[1]), towards(eye), 0.42);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        back,
+        "river source.png",
+    );
+    // Water below the horizon, its pool's and its river's: bluer than the grass, and no sky.
+    let watery = |pixels: &[u8]| {
+        (0..WIDTH * HEIGHT)
+            .filter(|at| at / WIDTH > HEIGHT * 2 / 5)
+            .filter(|at| {
+                let [r, g, b] = rgb_at(pixels, at % WIDTH, at / WIDTH);
+                b > g + 12 && r + g + b < 450
+            })
+            .count()
+    };
+    assert!(watery(&pixels) > 1000, "{} pixels of its pool and river", watery(&pixels));
 }
 
 #[test]

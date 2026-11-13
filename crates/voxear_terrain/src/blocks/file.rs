@@ -485,13 +485,25 @@ impl BlockFile {
     }
 
     /// The file with its palette cut after the last entry its ground can be
-    /// made of: one its ground or its sea names, or one that covers. A
+    /// made of: one its ground or its sea names, one that covers, or one its
+    /// generated ground's biomes or slabs are laid with. A
     /// block numbered after those changes nothing of what its ground is, so
     /// a world's ground is made from this, and is not made again as the
     /// world comes to hold more blocks (see `stream::BlockMaking`).
     pub fn for_ground(&self) -> BlockFile {
         let sea = self.generate.as_ref().map_or(AIR, |generate| generate.sea);
-        let named = [self.ground.top, self.ground.under, self.ground.bottom, sea].map(usize::from);
+        let mut named: Vec<usize> =
+            [self.ground.top, self.ground.under, self.ground.bottom, sea].map(usize::from).into();
+        // And those its generated ground is laid with: its biomes' blocks and vines, and the slabs of its top.
+        if let Some(generate) = &self.generate {
+            for blocks in generate.placed.iter().flat_map(|placed| placed.blocks.iter()) {
+                named.extend(
+                    [blocks.top, blocks.under, blocks.deep, blocks.steep, blocks.shore, blocks.vine].map(usize::from),
+                );
+            }
+            named.extend(generate.halves.iter().flat_map(|halves| halves.iter()).map(|&slab| usize::from(slab)));
+        }
+        let named: Vec<usize> = named.into_iter().filter(|&at| at <= self.blocks.len()).collect();
         let covering = self.blocks.iter().rposition(|kind| kind.cover.is_some()).map_or(0, |at| at + 1);
         let mut file = self.clone();
         file.blocks.truncate(named.into_iter().fold(covering, usize::max));

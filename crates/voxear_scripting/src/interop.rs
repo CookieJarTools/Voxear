@@ -630,6 +630,9 @@ pub enum ComponentKind {
     HeatSource = 23,
     /// An area hotter or colder than round it.
     HeatZone = 24,
+    /// An opening onto the place another Portal stands in, and the Objs
+    /// that went through any.
+    Portal = 25,
 }
 
 /// The most kinds `kind_value` answers.

@@ -860,7 +860,16 @@ struct Frame
     // ORIGIN_WRAP metres, exact, for levelPosition; and its height, whole, for the sky and fog.
     float4 origin;
     Sea sea;
+    // A plane nothing behind is drawn: the far Portal's, for a view through a Portal (src/portals.rs); one that
+    // cuts nothing otherwise.
+    float4 cut;
 };
+
+// How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.
+float cutAt(Frame* frame, float3 world)
+{
+    return dot(frame->cut.xyz, world) + frame->cut.w;
+}
 
 float weatherShare(Frame* frame, uint index, float2 xz)
 {
@@ -1384,6 +1393,14 @@ struct TerrainPatch
     uint packed;
 };
 
+// A Portal's opening (src/portals.rs's GpuPortalQuad): its corners as the view sees them, and its mist's colour
+// with how much of it covers the far side.
+struct PortalQuad
+{
+    float4 corners[4];
+    float4 mist;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -1479,6 +1496,8 @@ struct Buffers
     float3* particleTrails;
     // The strikes of systems that report them (PARTICLES_HITS), counted in particleCounters[1].
     ParticleHit* particleHits;
+    // This view's Portals' openings (portal.slang).
+    PortalQuad* portalQuads;
 };
 
 struct Push

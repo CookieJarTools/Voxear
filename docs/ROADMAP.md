@@ -1708,6 +1708,31 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
   in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads;
   a GPU tint over every surface in place of the Heat shading's squares.
+- **Portals (in progress).** Built: a **Portal** on an Obj (`[obj.portal]`, Add Component ▸ Physics ▸ Portal,
+  the Hierarchy's **+ ▸ Portals** for a framed pair marked on maps) shows the place the Portal it leads to stands
+  in, live and in perspective, drawn into the frame only where its opening shows: a child view a Portal with its
+  own camera in a space whose middle is the far Portal's, its depth first, a mask, the far plane as a clip
+  distance, the parent's sky and post, clouds only in the opening, the sun's shadows to 48 m near the opening,
+  and the far side's depth laid over the parent's for its fog. Portals seen through Portals, two deep; mist while
+  closed, too far, or not ready. Characters, Rigidbodies and what is under them go through with their speed and
+  spin turned, never shown between the places; a camera filming something on the other side of an opening looks
+  through it (`Camera.Follows`), the renderer carrying its history, so a third-person camera never cuts; Objs
+  part-way through drawn on both sides. In a world of blocks without end, chunks, collision and plants are made
+  round each far side near the camera (`BlockStreamer::update_from`), each view drawing the chunks of the place
+  nearest it, and a Portal opens once its far side stands. Remote Objs snap across. Scripts: `Portal.Create`,
+  `CreatePair`, `Link`, `Between`, `Obj.Portal`/`AddPortal` (`To`, `Size`, `IsOpen`, `Mist`, `ViewDistance`,
+  `Passes`, `IsReady`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
+  side matching a camera standing there from three angles and with the far Portal turned three ways, a Portal two
+  deep, blocks and water 20 km off, mist, only the opening changing; a character walking through to ground made
+  for it 9 km off in a world without end and standing on it; a thrown body keeping speed and spin; nothing shown
+  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through. Manual:
+  Portals. Cost at 1080p on an RTX 3070, the least of 60 frames: in the test scene +0.15 ms for one Portal over a
+  third of the picture and +0.5 ms for two (the timing test holds +1.5 and +2.5); in an endless world of Ultra
+  quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
+  draw_distance` cuts. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
+  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
+  bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
+  part-way through, the server deciding and checking crossings, Portals to other levels.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,

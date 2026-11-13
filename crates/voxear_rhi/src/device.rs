@@ -437,6 +437,7 @@ impl Features<'_> {
             .shader_int64(true)
             .fill_mode_non_solid(true)
             .depth_clamp(true)
+            .shader_clip_distance(true)
             .independent_blend(true)
             .texture_compression_bc(true)
             .fragment_stores_and_atomics(true);
@@ -496,6 +497,11 @@ impl Features<'_> {
             ("64-bit shader integers", on(r.core.features.shader_int64), on(s.core.features.shader_int64)),
             ("wireframe", on(r.core.features.fill_mode_non_solid), on(s.core.features.fill_mode_non_solid)),
             ("depth clamp", on(r.core.features.depth_clamp), on(s.core.features.depth_clamp)),
+            (
+                "clip distances",
+                on(r.core.features.shader_clip_distance),
+                on(s.core.features.shader_clip_distance),
+            ),
             ("independent blend", on(r.core.features.independent_blend), on(s.core.features.independent_blend)),
             (
                 "BC texture compression",

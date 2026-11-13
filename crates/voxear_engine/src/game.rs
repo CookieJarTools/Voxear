@@ -155,6 +155,7 @@ impl Game {
         crate::modules::put(&mut game.engine.world, game.project.modules());
         game.project.file.quality.put(&mut game.engine.world);
         game.project.file.world.put(&mut game.engine.world);
+        game.project.file.portals.put(&mut game.engine.world);
         game
     }
 
@@ -750,7 +751,11 @@ impl Game {
             crate::texture_packs::sync(&mut self.content, renderer);
         }
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        // The far sides of Portals near by are made with the ground round the camera, and each Portal opens
+        // once its own is.
+        crate::portals::find_exits(&mut self.engine.world);
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
+        crate::portals::update_far(&mut self.engine.world, delta);
         crate::blocks::flow(&mut self.engine.world, delta);
         crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
@@ -794,6 +799,8 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // Before the frame is drawn: what went through a Portal did not cross the world in a frame.
+        crate::portals::tell_renderer(&mut self.engine.world, renderer.as_deref_mut());
         self.make_heat_changes(renderer.as_deref_mut());
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());

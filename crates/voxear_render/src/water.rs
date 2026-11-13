@@ -294,9 +294,32 @@ pub struct Water {
     /// The worlds of blocks' water in view, and where each pixel's view
     /// leaves it; none when there is none.
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
+    /// Its waves and caustics are another view's, worked out there.
+    shared: bool,
+}
+
+/// The waves and caustics a view worked out, for a view through a Portal
+/// to draw its water with rather than work them out again: the waves are
+/// the same anywhere, their phases set by each view's own middle.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedWaves {
+    displacement: [ImageId; CASCADES],
+    slopes: [ImageId; CASCADES],
+    previous: [ImageId; CASCADES],
+    caustics: ImageId,
 }
 
 impl Water {
+    /// Its waves and caustics, for a view through a Portal.
+    pub(crate) fn shared_waves(&self) -> SharedWaves {
+        SharedWaves { displacement: self.displacement, slopes: self.slopes, previous: self.previous, caustics: self.caustics }
+    }
+
+    /// Whether its waves are another view's, so are not worked out here.
+    pub(crate) fn shares_waves(&self) -> bool {
+        self.shared
+    }
+
     /// The first Ocean's sea, at `level`, its wind along `rotation`, if
     /// there is one, else a sea drawn nowhere whose small waves the Pools
     /// take; its waves at `time`: its spectrum written if the sea changed,
@@ -315,6 +338,7 @@ impl Water {
         ),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
         (ground, dry_meshes): (&[Ground], Vec<DryMesh>),
+        shared: Option<SharedWaves>,
     ) -> Result<Self> {
         let (ocean, level, sea) = found.unwrap_or_else(|| (Ocean::default(), 0.0, Ocean::default().sea_state(Quat::IDENTITY)));
         let ocean = &ocean;
@@ -372,7 +396,10 @@ impl Water {
             slopes.push(wave("slopes", cascade, now)?);
         }
         let cascades = |images: Vec<ImageId>| -> [ImageId; CASCADES] { images.try_into().expect("one a cascade") };
-        let (displacement, previous, slopes) = (cascades(displacement), cascades(previous), cascades(slopes));
+        let (displacement, previous, slopes) = match shared {
+            Some(waves) => (waves.displacement, waves.previous, waves.slopes),
+            None => (cascades(displacement), cascades(previous), cascades(slopes)),
+        };
         let mut copy_desc = ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage).with_mips();
         copy_desc.mip_levels = copy_desc.mip_levels.min(7);
         let copy = fg.create_image(gpu, bindless, "water copy", copy_desc)?;
@@ -433,7 +460,10 @@ impl Water {
         // The caustics round the camera, on whole texels, so they do not swim as it moves.
         let mut caustic_desc = ImageDesc::new(CAUSTIC_TEXELS, CAUSTIC_TEXELS, WAVE_FORMAT, usage).with_mips();
         caustic_desc.mip_levels = CAUSTIC_MIPS;
-        let caustics = fg.create_image(gpu, bindless, "ocean caustics", caustic_desc)?;
+        let caustics = match shared {
+            Some(waves) => waves.caustics,
+            None => fg.create_image(gpu, bindless, "ocean caustics", caustic_desc)?,
+        };
         let caustic_texel = CAUSTIC_SPAN / CAUSTIC_TEXELS as f32;
         // On texels counted from the level's middle, in f64, so the world's middle moving shifts none of them.
         let texel = f64::from(caustic_texel);
@@ -503,6 +533,7 @@ impl Water {
             pool_draws: bodies.bodies[..bodies.pools as usize].iter().map(|pool| pool_draw(pool, camera)).collect(),
             spatter: (0u32..).zip(&bodies.bodies[..layered]).filter_map(|(body, lava)| spatter_draw(body, lava)).collect(),
             blocks,
+            shared: shared.is_some(),
         })
     }
 }
@@ -899,7 +930,12 @@ pub fn record(
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
     let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), spatter: Vec::new(), walls: (first_dry, dries), blocks: None };
-    record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
+    // With no sea and no Dry Area's walls it draws nothing, and its copy is wanted only under the water, or by lava,
+    // which draws over it: a world of blocks' water alone needs none, and skips a copy of the whole picture.
+    let empty = !sea && dries == 0 && !under && (second.is_some() || !layered);
+    if !empty {
+        record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
+    }
     // The Pools, their walls, the Streams and the worlds of blocks' water over a copy made after the sea, so the sea
     // shows through them; the blocks' water first finding where each pixel's view leaves it.
     if layered {

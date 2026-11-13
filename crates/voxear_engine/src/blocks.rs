@@ -977,6 +977,7 @@ struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blo
 /// else the game's camera. Without a camera or a generator, left as it is.
 pub fn stream(world: &mut World, content: &mut Content) {
     use voxear_scene::{Transform, WorldTransform};
+    use voxear_terrain::blocks::stream::StreamFrom;
     voxear_core::profile_scope!("Block Streaming");
     let endless: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
         .query_ref::<(voxear_ecs::Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
@@ -991,6 +992,8 @@ pub fn stream(world: &mut World, content: &mut Content) {
     }
     let Some(viewer) = crate::terrain::viewer(world) else { return };
     let budget = voxear_terrain::WorldBudget::of(world);
+    // The far sides of the Portals near enough to show them are made too, less far.
+    let exits = crate::portals::exits(world);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
@@ -1004,12 +1007,34 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // As many columns at once and as far as the game's budget lets it, and no further than the world's own.
         streamer.at_once = budget.columns as usize;
         let distances = (far.distance.min(budget.view_distance), far.far.min(budget.far_distance));
-        if streamer.update(&mut blocks, &mut asset.base, &mut asset.pending, making, distances, camera) {
+        let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1 }];
+        from.extend(exits.iter().map(|exit| StreamFrom {
+            at: [exit.at.x - corner.x, exit.at.z - corner.z],
+            distance: exit.distance.min(distances.0),
+            far: distances.1,
+        }));
+        if streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from) {
             world.insert(entity, blocks);
             world.insert(entity, asset);
         }
     }
     world.insert_resource(streams);
+}
+
+/// Whether every world of blocks without end has made its own blocks, with
+/// their faces, within `radius` metres of `at`: there is ground to see
+/// there, and to stand on once physics has taken it up. `None` where no
+/// world of blocks is without end, so nothing is being made anywhere.
+pub fn made_round(world: &World, at: voxear_core::math::Vec3, radius: f32) -> Option<bool> {
+    use voxear_scene::{Transform, WorldTransform};
+    let streams = world.resource::<Streams>()?;
+    let mut made = None;
+    for (entity, streamer) in &streams.0 {
+        let Some(local) = world.get::<Transform>(*entity) else { continue };
+        let corner = voxear_terrain::corner(local, world.get::<WorldTransform>(*entity));
+        made = Some(made.unwrap_or(true) && streamer.drawn_round([at.x - corner.x, at.z - corner.z], radius));
+    }
+    made
 }
 
 /// How far into its next step the worlds of blocks' water is, in seconds.

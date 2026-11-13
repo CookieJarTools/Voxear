@@ -115,6 +115,18 @@ pub fn shift(world: &mut World, by: Vec3) {
     world.insert_resource(smoothing);
 }
 
+/// An Obj went through a Portal (see `crate::portals`): the poses kept for
+/// it go through too, so it is shown moving evenly out of the far side
+/// rather than sliding there from the near one.
+pub fn carried(world: &mut World, entity: Entity, carry: &voxear_render::Carry) {
+    let Some(smoothing) = world.resource_mut::<TickSmoothing>() else { return };
+    let Some(obj) = smoothing.objs.get_mut(&entity) else { return };
+    for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
+        pose.position = carry.point(pose.position);
+        pose.rotation = carry.turn(pose.rotation);
+    }
+}
+
 /// Shows each Obj the ticks move part-way between its last two ticks.
 pub fn show(world: &mut World) {
     let Some(mut smoothing) = world.remove_resource::<TickSmoothing>() else { return };

@@ -41,7 +41,7 @@ use crate::{
     passes::{attachment, begin_rendering, bind, set_viewport},
     pipelines::Pipelines,
     scene::{ExtractedFrame, Owner},
-    shadows::{CASCADE_RESOLUTION, CASCADES},
+    shadows::CASCADES,
     terrain::{GpuTerrainSurface, SurfaceLook, surface_flags},
 };
 
@@ -336,6 +336,7 @@ pub(crate) fn pick(
     planes: &[[f32; 4]],
     (facing, detail): (Facing, Option<Detail>),
     seen: Option<&HashSet<[i32; 3]>>,
+    shown: Option<&HashSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
     // Turned towards the light, the faces whose way out goes against it.
     let lit = match facing {
@@ -345,6 +346,10 @@ pub(crate) fn pick(
     let mut picked: Vec<[u32; 2]> = Vec::new();
     for chunk in chunks {
         let [level, x, y, z] = chunk.key;
+        // Only the columns shown from the place the view looks from, where the world says which.
+        if shown.is_some_and(|shown| !shown.contains(&[level, x, z])) {
+            continue;
+        }
         if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
             continue;
         }
@@ -414,10 +419,17 @@ fn turned_away([x, y, z, spread]: [f32; 4], [low, high]: [Vec3; 2], facing: Faci
 
 /// The water a view draws of a world's chunks: every face of the water of
 /// the chunks it sees, as [`pick`] picks them.
-pub(crate) fn pick_water(chunks: &[ChunkDraw], planes: &[[f32; 4]], seen: Option<&HashSet<[i32; 3]>>) -> Vec<[u32; 2]> {
+pub(crate) fn pick_water(
+    chunks: &[ChunkDraw],
+    planes: &[[f32; 4]],
+    seen: Option<&HashSet<[i32; 3]>>,
+    shown: Option<&HashSet<[i32; 3]>>,
+) -> Vec<[u32; 2]> {
     let picked = chunks.iter().filter(|chunk| chunk.water[1] > 0).filter(|chunk| {
         let [level, x, y, z] = chunk.key;
-        (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z]))) && within(planes, chunk.bounds)
+        shown.is_none_or(|shown| shown.contains(&[level, x, z]))
+            && (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z])))
+            && within(planes, chunk.bounds)
     });
     merged(picked.map(|chunk| chunk.water).collect())
 }
@@ -460,7 +472,7 @@ struct Pool {
     /// The world's faces, its own and coarser, as the pool was last brought
     /// up to them, and as every one of its own had its mesh for rays made.
     made_from: Option<(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)>,
-    proxied: Option<Arc<ChunkMeshes>>,
+    proxied: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)>,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner, made again as they change.
     placed: Option<Arc<[(MeshHandle, Vec3)]>>,
@@ -678,6 +690,9 @@ pub(crate) struct DrawnBlocks {
     /// For a world of cubes, its blocks and which of each chunk's sides see
     /// each other, for each view to pass over the chunks it cannot see into.
     pub sights: Option<(Arc<voxear_terrain::blocks::BlockMap>, Arc<HashMap<[i32; 3], u16>>)>,
+    /// What it shows from each place it is seen from, where it is seen from
+    /// more than one (see `voxear_terrain::blocks::BlockPlace`).
+    pub places: Arc<Vec<voxear_terrain::blocks::BlockPlace>>,
     pub look: BlockLook,
     /// Its blocks moving now, as the shaders read them.
     pub moving: Arc<[GpuMovingBlock]>,
@@ -862,10 +877,17 @@ impl BlockWorlds {
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made; none for
             // blocks that came loose, a moment from going.
-            if turn.is_none() && !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
+            let same = |(meshes, places): &(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)| {
+                Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places)
+            };
+            if turn.is_none() && !pool.proxied.as_ref().is_some_and(same) {
+                // Seen from more places than one, as through Portals, only what is round the first is traced:
+                // the GI's rays reach no further than round the camera.
+                let own = blocks.places.first().map(|place| &place.columns);
+                let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
                 pool.proxies.retain(|key, (_, mesh)| {
-                    let kept = blocks.meshes.contains_key(key);
+                    let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
                     }
@@ -877,7 +899,7 @@ impl BlockWorlds {
                 let uv_scale = 1.0 / blocks.block_size.max(0.01);
                 // Uploaded and built together, waited for once.
                 let batch = gpu.batch();
-                for (key, mesh) in blocks.meshes.iter() {
+                for (key, mesh) in blocks.meshes.iter().filter(|(key, _)| traced(key)) {
                     if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
                         continue;
                     }
@@ -914,7 +936,7 @@ impl BlockWorlds {
                     batch.finish()?;
                 }
                 if all {
-                    pool.proxied = Some(blocks.meshes.clone());
+                    pool.proxied = Some((blocks.meshes.clone(), blocks.places.clone()));
                 }
                 if changed {
                     pool.placed = None;
@@ -938,6 +960,7 @@ impl BlockWorlds {
                 address: pool.buffer.address,
                 chunks: pool.draws(),
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
+                places: blocks.places.clone(),
                 look,
                 moving: blocks
                     .moving
@@ -1058,7 +1081,7 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
                 flags: INSTANCE_RAYS_ONLY,
                 ..GpuInstance::default()
             });
-            extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32) });
+            extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32), far_side: false });
         }
     }
 }
@@ -1122,16 +1145,22 @@ pub struct BlockCounts {
 /// Picks each world's chunks and faces for this view and writes the
 /// worlds' records into `buffer`; `None` when there is nothing to draw.
 /// `entities` gives each instance's owner, from which each world finds its
-/// anchor among its meshes for rays.
+/// anchor among its meshes for rays. A view through a Portal has a space of
+/// its own, its middle `offset` from the world's (see `portals::Through`),
+/// and may go without the sun's shadows. Only the chunks seen into through
+/// their sides from `sights` are drawn: the camera, or for a view through a
+/// Portal, where the Portal it looks out of stands, as all it sees, it sees
+/// through there, and its camera may stand inside the ground behind it.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
+    (offset, sights, shadows): (Vec3, Option<Vec3>, bool),
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
     }
-    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun);
+    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun && shadows);
     voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
@@ -1170,8 +1199,10 @@ pub(crate) fn gather(
         }
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
+        // Whole metres off the world's own corner, so its far chunks keep their place to the millimetre.
+        let corner = blocks.corner - offset;
         records.push(GpuBlockWorld {
-            corner: blocks.corner.into(),
+            corner: corner.into(),
             block_size: blocks.block_size,
             quads: blocks.address + QUADS_AT,
             origins: blocks.address,
@@ -1192,32 +1223,41 @@ pub(crate) fn gather(
         });
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
-        let local = back * (camera - blocks.corner);
+        let local = back * (camera - corner);
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
-        let planes = turned_planes(&frame.planes, blocks.corner, back);
-        // The chunks the camera can see into, walking from its own through their sides that see each other.
-        let seen = blocks.sights.as_ref().and_then(|(map, sights)| {
+        let planes = turned_planes(&frame.planes, corner, back);
+        // What the world shows from the place nearest the camera, where it is seen from more than one.
+        let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
+            (place.at[0] - local.x).powi(2) + (place.at[1] - local.z).powi(2)
+        };
+        let shown = blocks.places.iter().min_by(|a, b| nearest(a).total_cmp(&nearest(b))).map(|place| &place.columns);
+        // The chunks the camera can see into, walking from its own through their sides that see each other: within
+        // the columns shown from its place, where the world is seen from more than one, as the walk would otherwise
+        // cross every column of air between the places.
+        let seen = blocks.sights.as_ref().zip(sights).and_then(|((map, sights), from)| {
             let side = CHUNK as f32 * blocks.block_size;
-            let from = (local / side).floor().as_ivec3().to_array();
+            let from = ((back * (from - corner)) / side).floor().as_ivec3().to_array();
             let bounds = |key: [i32; 3]| {
                 let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
                 [low, low + Vec3::splat(side)]
             };
-            voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
+            let ours = |key: [i32; 3]| shown.is_none_or(|shown| shown.contains(&[0, key[0], key[2]]));
+            voxear_terrain::blocks::sight::seen(map, sights, from, |key| ours(key) && within(&planes, bounds(key)))
         });
         // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
         let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
         let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref());
-        let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
+        lists[LIST_EARLY as usize] =
+            pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref(), shown);
+        let wet = pick_water(&blocks.chunks, &planes, seen.as_ref(), shown);
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
             let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
             for cascade in 0..CASCADES {
-                let planes = turned_planes(&frame.cascade_planes[cascade], blocks.corner, back);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None);
+                let planes = turned_planes(&frame.cascade_planes[cascade], corner, back);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
             }
         }
         runs.push((number as u32, blocks.smooth, lists));
@@ -1271,7 +1311,7 @@ pub(crate) fn record_shadows(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     view: &ViewBlocks,
-    atlas: ImageId,
+    (atlas, cascade_size): (ImageId, u32),
 ) {
     if !view.shadows {
         return;
@@ -1279,16 +1319,16 @@ pub(crate) fn record_shadows(
     let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
     let view = view.clone();
     fg.add_pass("Shadows (blocks)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
-        let size = CASCADE_RESOLUTION * 2;
+        let size = cascade_size * 2;
         let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
         bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
         for cascade in 0..CASCADES as u32 {
             let offset = vk::Offset2D {
-                x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                x: (cascade % 2 * cascade_size) as i32,
+                y: (cascade / 2 * cascade_size) as i32,
             };
-            set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+            set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
             draw_runs(ctx, &view, &push, LIST_SHADOW + cascade);
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -1365,7 +1405,7 @@ mod tests {
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
-        let picked = pick(&chunks, &[], (Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None), None);
+        let picked = pick(&chunks, &[], (Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None), None, None);
         let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!(has(0) && has(20), "the first's +x and +y faces");
         assert!(!has(30) && !has(90), "no faces turned down");
@@ -1382,21 +1422,24 @@ mod tests {
         second.facings[0] = [40, 40];
         let whole = [smooth(0.0, 0, EVERY_WAY), second];
         let from = Facing::Camera(Vec3::new(16.0, 40.0, 16.0));
-        assert_eq!(pick(&whole, &[], (from, None), None), vec![[0, 80]]);
+        assert_eq!(pick(&whole, &[], (from, None), None, None), vec![[0, 80]]);
         // Looking along +x from x = 40: only the second.
-        let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], (Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None), None);
+        let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], (Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None), None, None);
         assert_eq!(ahead, vec![[40, 40]]);
+        // Only the columns shown from where the view looks, where the world says which: the second's.
+        let shown = HashSet::from([[0, 1, 0]]);
+        assert_eq!(pick(&whole, &[], (from, None), None, Some(&shown)), vec![[40, 40]]);
         // Only the chunks the camera can see into, where it is known which.
         let seen = HashSet::from([[1, 0, 0]]);
-        assert_eq!(pick(&whole, &[], (from, None), Some(&seen)), vec![[40, 40]]);
+        assert_eq!(pick(&whole, &[], (from, None), Some(&seen), None), vec![[40, 40]]);
         // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
         let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0 };
-        let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None);
+        let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None, None);
         assert_eq!([level(-500.0), level(-2000.0), level(-9000.0)], [vec![[0, 40]], vec![[40, 15]], vec![[55, 5]]]);
         // A smooth chunk, its triangles all facing within a tenth of up: drawn from above or beside it, not at all
         // from below, nor into the shadows of light coming up from under it.
         let up = [smooth(0.0, 0, [0.0, 1.0, 0.0, 0.1])];
-        let drawn = |facing: Facing| !pick(&up, &[], (facing, None), None).is_empty();
+        let drawn = |facing: Facing| !pick(&up, &[], (facing, None), None, None).is_empty();
         assert!(drawn(Facing::Camera(Vec3::new(16.0, 60.0, 16.0))));
         assert!(!drawn(Facing::Camera(Vec3::new(16.0, -60.0, 16.0))));
         assert!(drawn(Facing::Camera(Vec3::new(60.0, 10.0, 16.0))), "beside it");
@@ -1404,11 +1447,11 @@ mod tests {
         assert!(!drawn(Facing::Light(Vec3::new(0.2, 1.0, 0.0))));
         // One facing every way, drawn from anywhere.
         for from in [Vec3::new(16.0, -60.0, 16.0), Vec3::new(-60.0, 10.0, 16.0)] {
-            assert_eq!(pick(&whole[..1], &[], (Facing::Camera(from), None), None), vec![[0, 40]]);
+            assert_eq!(pick(&whole[..1], &[], (Facing::Camera(from), None), None, None), vec![[0, 40]]);
         }
-        assert_eq!(pick(&whole[..1], &[], (Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), None), vec![[0, 40]]);
+        assert_eq!(pick(&whole[..1], &[], (Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), None, None), vec![[0, 40]]);
         // The sun's cascades: of each chunk, the faces turned towards sunlight going down, to -x and to +z.
-        let lit = pick(&chunks, &[], (Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None), None);
+        let lit = pick(&chunks, &[], (Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None), None, None);
         let has = |first: u32| lit.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!([0, 20, 50, 60, 80, 110].map(has).iter().all(|&h| h), "+x, +y and -z faces: {lit:?}");
         assert!(![10, 30, 40, 70, 90, 100].map(has).iter().any(|&h| h), "none turned away: {lit:?}");
@@ -1427,10 +1470,10 @@ mod tests {
             cone: None,
         };
         let chunks = [chunk(0.0, 0, 5), chunk(32.0, 65, 0), chunk(64.0, 125, 7)];
-        assert_eq!(pick_water(&chunks, &[], None), vec![[60, 5], [185, 7]]);
+        assert_eq!(pick_water(&chunks, &[], None, None), vec![[60, 5], [185, 7]]);
         // Only those in view, and those the camera can see into.
-        assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None), vec![[185, 7]]);
+        assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None, None), vec![[185, 7]]);
         let seen = HashSet::from([[0, 0, 0]]);
-        assert_eq!(pick_water(&chunks, &[], Some(&seen)), vec![[60, 5]]);
+        assert_eq!(pick_water(&chunks, &[], Some(&seen), None), vec![[60, 5]]);
     }
 }

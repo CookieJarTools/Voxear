@@ -140,6 +140,7 @@ pub fn shift(world: &mut World, by: IVec3) -> WorldOrigin {
     crate::guns::holder::GunHolderState::shift(world, moved);
     voxear_core::debug_draw::shift(moved);
     crate::net::shift(world, moved);
+    crate::portals::shift(world, moved);
     tracing::debug!(target: "origin", "the world moved by {by}: its middle is {} from the level's", origin.0);
     origin
 }

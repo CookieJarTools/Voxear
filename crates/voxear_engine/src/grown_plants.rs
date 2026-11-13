@@ -101,6 +101,8 @@ struct Seen {
     far: FarFaces,
     made: Option<Arc<HashSet<[i32; 2]>>>,
     from: Option<[i32; 2]>,
+    /// The other places it is seen from: the far sides of Portals.
+    also: Vec<[i32; 2]>,
     reach: f32,
     /// The first ring its plants show as a wood in, where they do.
     wood_from: Option<u32>,
@@ -114,6 +116,7 @@ impl Seen {
             _ => false,
         };
         let same = self.from == other.from && self.reach == other.reach && self.wood_from == other.wood_from;
+        let same = same && self.also == other.also;
         Arc::ptr_eq(&self.far, &other.far) && made && same
     }
 }
@@ -287,6 +290,8 @@ pub fn update(world: &mut World, content: &mut Content) {
         }
     }
     let viewer = crate::terrain::viewer(world);
+    // And round the far side of each Portal near enough to show it, where its own blocks are made.
+    let exits = crate::portals::exits(world);
     let mut all_tops: HashMap<Entity, HashMap<[i32; 2], ([i32; 3], Arc<Chunk>)>> = HashMap::new();
     growth.shown.retain(|world, _| growers.iter().any(|grower| grower.world == *world));
     // Each world read once a tick, however many of its Foliage grow.
@@ -347,7 +352,14 @@ pub fn update(world: &mut World, content: &mut Content) {
         let size = blocks.block_size.max(0.01);
         let from = viewer.map(|viewer| [(viewer.x - corner.x) / size, (viewer.z - corner.z) / size]);
         let reach = grower.draw_distance.max(0.0) / size;
-        let near = |column: [i32; 2], slack: f32| from.is_none_or(|from| away(column, from) <= reach + slack);
+        let also: Vec<[f32; 2]> = match from {
+            Some(_) => exits.iter().map(|exit| [(exit.at.x - corner.x) / size, (exit.at.z - corner.z) / size]).collect(),
+            None => Vec::new(),
+        };
+        let near = |column: [i32; 2], slack: f32| {
+            from.is_none_or(|from| away(column, from) <= reach + slack)
+                || also.iter().any(|from| away(column, *from) <= reach + slack)
+        };
         // Ground past the world's own blocks: only a world without end's, seen from somewhere, with plants drawn
         // that far.
         let made = blocks.columns.clone();
@@ -364,6 +376,7 @@ pub fn update(world: &mut World, content: &mut Content) {
             far: blocks.far.clone(),
             made: made.clone(),
             from: from.map(|from| from.map(|v| (v / 8.0).floor() as i32)),
+            also: also.iter().map(|from| from.map(|v| (v / 8.0).floor() as i32)).collect(),
             reach,
             wood_from,
         };
@@ -471,7 +484,10 @@ pub fn update(world: &mut World, content: &mut Content) {
         if wanted.is_empty() || now == 0 {
             continue;
         }
-        let nearness = |column: &[i32; 2]| from.map_or(0.0, |from| away(*column, from));
+        let nearness = |column: &[i32; 2]| {
+            let nearest = also.iter().map(|from| away(*column, *from)).fold(f32::MAX, f32::min);
+            from.map_or(0.0, |from| away(*column, from).min(nearest))
+        };
         wanted.sort_by(|(a, _), (b, _)| nearness(a).total_cmp(&nearness(b)).then(a.cmp(b)));
         // A far column asks the generator for its ground, so it counts as two of those whose blocks are read.
         let mut room = now * 2;

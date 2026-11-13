@@ -44,6 +44,7 @@ pub mod package_scripts;
 pub mod packages;
 mod mist;
 pub mod particles;
+pub mod portals;
 pub mod smoke;
 pub mod storms;
 pub mod tick_smoothing;

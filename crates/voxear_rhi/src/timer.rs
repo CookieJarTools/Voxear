@@ -3,7 +3,7 @@ use ash::vk;
 
 use crate::device::Gpu;
 
-const MAX_SCOPES: u32 = 64;
+const MAX_SCOPES: u32 = 256;
 
 struct SlotQueries {
     pool: vk::QueryPool,

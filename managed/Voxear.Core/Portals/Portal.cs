@@ -29,6 +29,8 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	private const int BetweenFromValue = 30;
 	private const int BetweenToValue = 31;
 	private const int BetweenValue = 32;
+	private const int CreateValue = 33;
+	private const int CreatedValue = 34;
 	private const int PassedValue = 100;
 	private const int PassedKept = 64;
 
@@ -100,6 +102,42 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	{
 		get { return Number(ViewDistanceValue); }
 		set { Write(ViewDistanceValue, new Vector4(value, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>
+	/// A new Obj named Portal with a Portal on it, its opening <paramref name="size"/> wide and high, standing at
+	/// <paramref name="position"/> (the middle of its sill) and facing along <paramref name="rotation"/>'s forward.
+	/// It leads nowhere until its To is set, or it is joined to another with Link.
+	/// </summary>
+	public static Portal Create(Vector3 position, Quaternion rotation, Vector2 size)
+	{
+		NativeComponent.Set(NativeComponent.Portal, Obj.None, CreateValue, new Vector4(position, 0f));
+		if (!NativeComponent.Get(NativeComponent.Portal, Obj.None, CreatedValue, out var value))
+		{
+			return None;
+		}
+		var obj = NativeComponent.ObjOf(value);
+		obj.Rotation = rotation;
+		var portal = new Portal(obj);
+		portal.Size = size;
+		return portal;
+	}
+
+	/// <summary>
+	/// Two new Portals of the same size that lead to each other: one at each place, each facing along its rotation's
+	/// forward. Walk into the front of either and out of the front of the other.
+	/// <code>
+	/// var size = new Vector2(3f, 4f);
+	/// var (town, camp) = Portal.CreatePair(townSquare, Quaternion.Identity, campfire, Quaternion.Identity, size);
+	/// camp.Close();
+	/// </code>
+	/// </summary>
+	public static (Portal First, Portal Second) CreatePair(Vector3 first, Quaternion firstRotation, Vector3 second, Quaternion secondRotation, Vector2 size)
+	{
+		var (a, b) = (Create(first, firstRotation, size), Create(second, secondRotation, size));
+		a.To = b;
+		b.To = a;
+		return (a, b);
 	}
 
 	/// <summary>Gives both Objs a Portal, unless they have one, each leading to the other.</summary>

@@ -899,7 +899,12 @@ pub fn record(
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
     let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), spatter: Vec::new(), walls: (first_dry, dries), blocks: None };
-    record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
+    // With no sea and no Dry Area's walls it draws nothing, and its copy is wanted only under the water, or by lava,
+    // which draws over it: a world of blocks' water alone needs none, and skips a copy of the whole picture.
+    let empty = !sea && dries == 0 && !under && (second.is_some() || !layered);
+    if !empty {
+        record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
+    }
     // The Pools, their walls, the Streams and the worlds of blocks' water over a copy made after the sea, so the sea
     // shows through them; the blocks' water first finding where each pixel's view leaves it.
     if layered {

@@ -739,6 +739,9 @@ impl CpuTimes {
 struct TimingAverage {
     passes: Vec<(String, f32)>,
     frames: u32,
+    /// Each pass's least time over those frames: other programs using the GPU are counted in a pass's time, so on a
+    /// busy GPU the least is the pass's own.
+    least: Vec<f32>,
 }
 
 impl TimingAverage {
@@ -748,10 +751,12 @@ impl TimingAverage {
         if !same {
             // The frame's passes changed, as when an effect turned on: count from this frame.
             self.passes = timings.iter().map(|(name, _)| (name.clone(), 0.0)).collect();
+            self.least = vec![f32::MAX; timings.len()];
             self.frames = 0;
         }
-        for ((_, total), (_, ms)) in self.passes.iter_mut().zip(timings) {
+        for (((_, total), least), (_, ms)) in self.passes.iter_mut().zip(&mut self.least).zip(timings) {
             *total += ms;
+            *least = least.min(*ms);
         }
         self.frames += 1;
     }
@@ -875,6 +880,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     // Other programs using the GPU are counted in a frame's time: the least of the frames is the frame's own.
     let least = frame_gpu.iter().copied().fold(f32::MAX, f32::min);
     println!("  {:<16} {least:>7.3} ms", "frame, the least");
+    println!("GPU time, the least of those frames:");
+    for ((pass, _), ms) in timed.passes.iter().zip(&timed.least) {
+        println!("  {pass:<16} {ms:>7.3} ms");
+    }
 
     let stats = renderer.stats();
     println!(

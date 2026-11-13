@@ -120,11 +120,10 @@ pub fn shift(world: &mut World, by: Vec3) {
 /// rather than sliding there from the near one.
 pub fn carried(world: &mut World, entity: Entity, carry: &voxear_render::Carry) {
     let Some(smoothing) = world.resource_mut::<TickSmoothing>() else { return };
-    if let Some(obj) = smoothing.objs.get_mut(&entity) {
-        for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
-            pose.position = carry.point(pose.position);
-            pose.rotation = carry.turn(pose.rotation);
-        }
+    let Some(obj) = smoothing.objs.get_mut(&entity) else { return };
+    for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
+        pose.position = carry.point(pose.position);
+        pose.rotation = carry.turn(pose.rotation);
     }
 }
 

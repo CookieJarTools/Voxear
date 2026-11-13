@@ -817,6 +817,9 @@ pub fn extract(
         let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
             (look.shadow_distance, look.shadow_split)
         });
+        // Through a Portal the sun's shadows reach only a little way past the opening: the far side is seen through a
+        // small part of the screen, and what is further off in it casts none.
+        let distance = if through.is_some() { distance.min(PORTAL_SHADOW_REACH) } else { distance };
         let cascades = shadows::cascades(&view, Vec3::from(frame.sun_direction), distance, split);
         for (i, cascade) in cascades.iter().enumerate().take(CASCADES) {
             frame.cascade_view_proj[i] = cols(cascade.view_proj);
@@ -932,6 +935,10 @@ pub fn extract(
         origin,
     }
 }
+
+/// How far from the camera the sun casts shadows in a view through a
+/// Portal, in metres.
+const PORTAL_SHADOW_REACH: f32 = 48.0;
 
 /// Moves a model matrix into a space whose middle is `offset` from the
 /// world's: by whole metres, so what is near that middle loses nothing.

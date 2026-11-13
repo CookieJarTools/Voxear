@@ -292,6 +292,29 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
     world.insert_resource(exits);
 }
 
+/// How far clear of the far Portal's plane an Obj that went through is set
+/// down, at least, in metres: a hair, so rounding never puts it back behind
+/// the plane, where its next step would take it through again.
+const CLEAR_OF: f32 = 1e-3;
+
+/// Moves an Obj that came out of the Portal `exit` a hair clear of its
+/// plane, on the side it came out of: the front of `exit` for one that went
+/// in at the front of the other, the back for one that went in at the back.
+fn clear_of(world: &mut World, entity: Entity, exit: Entity, side: PortalSide) {
+    let Some(pose) = PortalPose::of_obj(world, exit) else { return };
+    let out = if side == PortalSide::Front { 1.0 } else { -1.0 };
+    let past = pose.local(place(world, entity)).z * out;
+    if past >= CLEAR_OF {
+        return;
+    }
+    let nudge = pose.front() * out * (CLEAR_OF - past);
+    let parent = world.get::<Parent>(entity).map(|parent| voxear_scene::world_matrix(world, parent.0));
+    let nudge = parent.map_or(nudge, |parent| parent.inverse().transform_vector3(nudge));
+    if let Some(transform) = world.get_mut::<Transform>(entity) {
+        transform.position += nudge;
+    }
+}
+
 /// Empties the frame's [`PortalEvents`]: at the start of each frame.
 pub(crate) fn begin_frame(world: &mut World) {
     if let Some(events) = world.resource_mut::<PortalEvents>() {
@@ -351,6 +374,7 @@ pub(crate) fn carry_objs(world: &mut World) {
             continue;
         };
         set_down(world, entity, &way.carry);
+        clear_of(world, entity, way.to, side);
         if let Some(mut physics) = world.remove_resource::<PhysicsScene>() {
             physics.teleported(world, entity, way.carry.rotation);
             world.insert_resource(physics);
@@ -546,12 +570,16 @@ const PASSED: i32 = 100;
 const BETWEEN_FROM: i32 = 30;
 const BETWEEN_TO: i32 = 31;
 const BETWEEN: i32 = 32;
+// A new Obj with a Portal at a place: written with the place, then read.
+const CREATE: i32 = 33;
+const CREATED: i32 = 34;
 
 /// What a script last asked of the Portals between two places.
 #[derive(Default)]
 struct PortalAsked {
     from: Vec3,
     found: Option<Entity>,
+    made: Option<Entity>,
 }
 
 /// The open Portal whose opening the way from `from` to `to` goes through,
@@ -590,16 +618,26 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
     }
     match (what, written) {
         (BETWEEN_FROM, Some([x, y, z, _])) => {
-            world.insert_resource(PortalAsked { from: Vec3::new(x, y, z), found: None });
+            world.insert_resource(PortalAsked { from: Vec3::new(x, y, z), ..PortalAsked::default() });
             return Some([0.0; 4]);
         }
         (BETWEEN_TO, Some([x, y, z, _])) => {
             let from = world.resource::<PortalAsked>().map_or(Vec3::ZERO, |asked| asked.from);
             let found = between(world, from, Vec3::new(x, y, z));
-            world.insert_resource(PortalAsked { from, found });
+            world.insert_resource(PortalAsked { from, found, made: None });
             return Some([0.0; 4]);
         }
         (BETWEEN, None) => return Some(obj_value(world.resource::<PortalAsked>().and_then(|asked| asked.found))),
+        (CREATE, Some([x, y, z, _])) => {
+            let made = world.spawn((
+                voxear_scene::Name("Portal".into()),
+                Transform::from_position(Vec3::new(x, y, z)),
+                Portal::default(),
+            ));
+            world.insert_resource(PortalAsked { made: Some(made), ..PortalAsked::default() });
+            return Some([0.0; 4]);
+        }
+        (CREATED, None) => return Some(obj_value(world.resource::<PortalAsked>().and_then(|asked| asked.made))),
         _ => {}
     }
     if !world.is_alive(entity) {

@@ -461,6 +461,43 @@ fn a_minimap_has_ground_in_every_corner_of_its_window_however_high_over_the_grou
     }
 }
 
+#[test]
+fn a_ui_started_afresh_gets_its_maps_again_as_when_play_stops_and_starts_in_the_editor() {
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    assert_eq!(game.ui.ui().map_views().len(), 2, "a minimap and a map");
+    // Its map opened, it holds the pointer for itself.
+    let pointer = (game.display.cursor_visible, game.display.cursor_lock);
+    game.display.cursor_visible = false;
+    Maps::set_open(&mut game.engine.world, hud, true);
+    settle(&mut game, None);
+    assert!(game.display.cursor_visible, "an open map shows the pointer");
+
+    // The UI starts afresh, as the editor's does when play stops: nothing is on it, the pointer is as the
+    // game left it, and the maps hold nothing of the UI that is gone.
+    game.reset_ui(None);
+    assert!(game.ui.ui().map_views().is_empty() && !game.display.cursor_visible);
+    (game.display.cursor_visible, game.display.cursor_lock) = pointer;
+    Maps::set_open(&mut game.engine.world, hud, false);
+    // Played again, the Map puts its minimap and its map on the new UI, and they show the world.
+    settle(&mut game, None);
+    assert_eq!(game.ui.ui().map_views().len(), 2, "made again on the new UI");
+    let mini = view(&mut game, MapViewKind::Minimap);
+    assert!(game.ui.ui().is_visible(mini) && game.maps.shown(mini).is_some(), "the minimap shows the world again");
+    assert!(game.engine.world.get::<Map>(hud).unwrap().views.is_some());
+
+    // And where a UI is put in the game's place with nobody telling its maps, they find theirs gone and make
+    // them again.
+    game.ui = voxear_engine::game_ui::GameUi::default();
+    settle(&mut game, None);
+    assert_eq!(game.ui.ui().map_views().len(), 2, "made again on a UI put in its place");
+    let mini = view(&mut game, MapViewKind::Minimap);
+    assert!(game.maps.shown(mini).is_some());
+}
+
 /// What scripts ask of the map view they hold by `number`, to change.
 fn wish_of(game: &mut Game, number: u32) -> &mut voxear_engine::map::MapViewWish {
     game.engine.world.resource_mut::<voxear_engine::map::MapScript>().unwrap().wishes.entry(number).or_default()

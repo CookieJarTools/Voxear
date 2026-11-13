@@ -23,6 +23,11 @@
 //! wood = "Blocks/Oak Log.block"
 //! leaves = "Blocks/Oak Leaves.block"
 //! vine = "Blocks/Vine.block"
+//! sapling = "Blocks/Oak Sapling.block"
+//! saplings = [0, 2]              # how many it scatters as it is felled, from and to
+//! grow_time = 1200.0             # seconds for a sapling to grow into it
+//! stages = 3                     # the sizes it grows through on the way
+//! light = 0.5                    # the least light a sapling needs, 0 to 1
 //! ```
 //!
 //! A broadleaf's crown is grown towards points scattered through its shape:
@@ -115,6 +120,41 @@ pub struct PlantDef {
     /// The block its vines are: one whose shape is a vine.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vine: Option<String>,
+    /// The block its saplings are: one whose shape is a sapling, and which
+    /// grows into it (see `sapling`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sapling: Option<String>,
+    /// How many saplings it scatters where its crown lands when it is
+    /// felled, from and to.
+    #[serde(skip_serializing_if = "is_none_scattered")]
+    pub saplings: [u32; 2],
+    /// How long a sapling takes to grow into it, in seconds of play.
+    #[serde(skip_serializing_if = "is_twenty_minutes")]
+    pub grow_time: f32,
+    /// How many sizes it grows through after the sapling, the last the
+    /// whole plant: 1 for at once.
+    #[serde(skip_serializing_if = "is_three")]
+    pub stages: u32,
+    /// The least light a sapling of it needs to grow, from 0 for none to 1
+    /// for open sky (see `sapling::light_at`).
+    #[serde(skip_serializing_if = "is_half")]
+    pub light: f32,
+}
+
+fn is_none_scattered(range: &[u32; 2]) -> bool {
+    *range == [0, 0]
+}
+
+fn is_twenty_minutes(seconds: &f32) -> bool {
+    *seconds == 1200.0
+}
+
+fn is_three(stages: &u32) -> bool {
+    *stages == 3
+}
+
+fn is_half(light: &f32) -> bool {
+    *light == 0.5
 }
 
 fn is_nothing(amount: &f32) -> bool {
@@ -140,6 +180,11 @@ impl Default for PlantDef {
             wood: None,
             leaves: None,
             vine: None,
+            sapling: None,
+            saplings: [0, 0],
+            grow_time: 1200.0,
+            stages: 3,
+            light: 0.5,
         }
     }
 }

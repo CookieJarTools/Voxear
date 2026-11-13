@@ -34,11 +34,14 @@ Structures are built in the order the world lists them. One listed later keeps c
 
 A structure that names a **plant** grows a tree or a bush of blocks at each of its places, from a `.voxplant` file: a few numbers that say what kind of plant it is, and a seed of its own at every place, so a wood of one file has no two trees alike.
 
+Select a plant in the Project panel and the Inspector shows its settings, under **Trunk**, **Crown**, **Blocks** and **Saplings**: each saved as it is changed, and every world growing it grows it anew. In its file:
+
 | Setting | What it does |
 | --- | --- |
 | `kind` | `broadleaf`, a trunk under a rounded crown of forking branches; `conifer`, rings of branches shorter towards the top; or `bush`, stems from the ground |
 | `height` | How tall the trunk is, in blocks, from and to |
 | `trunk`, `taper` | How thick the trunk is at its foot, in blocks, and how much thinner at its top, from 0 to 1 |
+| `branch` | How thick its branches are, in blocks: logs as thin as this, from a quarter of a block |
 | `bend` | How far the trunk leans and wanders: 0 for straight |
 | `crown_width`, `crown_height` | How wide and how tall the crown is, in blocks, each from and to |
 | `branches` | How thick with branches the crown is, from 0 to 1 |
@@ -46,6 +49,11 @@ A structure that names a **plant** grows a tree or a bush of blocks at each of i
 | `roots` | How many roots run out from its foot |
 | `vines` | How many of its trees have vines, from 0 to 1: one or two up the trunk, and some hanging under the crown's edge |
 | `wood`, `leaves`, `vine` | The [[Blocks|blocks]] its wood, its leaves and its vines are |
+| `sapling` | The [[Blocks#Saplings|sapling]] that grows into it |
+| `saplings` | How many saplings it scatters where its crown lands as it is felled, from and to |
+| `grow_time` | How long a sapling takes to grow into it, in seconds of play; the Inspector shows minutes |
+| `stages` | How many sizes it grows through after the sapling, the last the whole plant |
+| `light` | The least light a sapling of it needs to grow, from 0 to 1: 1 is open sky, and each leaf over it takes a fifth |
 
 ```toml
 kind = "broadleaf"
@@ -59,7 +67,7 @@ leaves = "Blocks/Oak Leaves.block"
 vine = "Blocks/Vine.block"
 ```
 
-Give the leaves a block whose **Shape** is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. A tree's vines hang only in open air: none where a hillside rises into them.
+Give the wood a block whose **Shape** is **Log** for a trunk that thins as it rises and branches of thin logs, the leaves one whose Shape is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. Wood that is a cube grows every block of it whole. A tree's vines hang only in open air: none where a hillside rises into them.
 
 **Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga.
 
@@ -178,4 +186,4 @@ A structure placed turned, as a town turns each house to face its street, turns 
 - A structure's levers and buttons are not linked to its doors. Link them from a script once it stands.
 
 - Structures are built near the camera only. Far off, past a world's own chunks, they do not show.
-- Structures and towns are made by writing their files. The editor has no tools for them yet.
+- Structures and towns are made by writing their files. The editor has no tools for them yet, but for a plant's own settings in the Inspector.

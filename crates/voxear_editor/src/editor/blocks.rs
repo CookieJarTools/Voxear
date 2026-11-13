@@ -286,6 +286,7 @@ impl Editor {
                 (Takes::Kind(AssetKind::Sound), "Select Sound")
             }
             BlockRef::Data => (Takes::Kind(AssetKind::Data), "Select Data Asset"),
+            BlockRef::Grows => (Takes::Kind(AssetKind::Plant), "Select Plant"),
         }
     }
 

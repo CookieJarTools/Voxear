@@ -2380,8 +2380,9 @@ fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
 }
 
 /// An oak of blocks on a field of grass, its wood logs that thin (`logs`) or whole cubes, grown from a seed and seen
-/// from `eye` looking `towards`; and how many of its blocks are thin logs.
-fn oak_render(logs: bool, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, usize)> {
+/// from `eye` looking `towards`; and how many of its blocks are thin logs. `fallen` turns it about its foot, come
+/// loose from the field as a world of its own.
+fn oak_render(logs: bool, eye: Vec3, towards: Vec3, fallen: Option<Quat>) -> Option<(Vec<u8>, usize)> {
     use voxear_terrain::blocks::{
         block::BlockShape,
         file::BlockKind,
@@ -2428,9 +2429,14 @@ fn oak_render(logs: bool, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, usize)> 
     };
     let grown = oak.grow(9);
     let thin = grown.blocks.iter().filter(|(_, part, state)| part.is_wood() && state.size != 0).count();
+    let mut tree = Vec::new();
     for (at, part, state) in grown.blocks {
         let block = if part == PlantPart::Leaf { leaves } else { log_number(wood, &numbers, state) };
-        blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
+        // Its roots stay in the ground.
+        match fallen.is_some() && at[1] >= 0 {
+            true => tree.push(([24 + at[0], 4 + at[1], 24 + at[2]], block)),
+            false => blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block),
+        }
     }
     let (looks, faces) = file.faces();
     let surfaces: Vec<SurfaceLook> = looks
@@ -2455,7 +2461,16 @@ fn oak_render(logs: bool, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, usize)> 
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
     let block_look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
-    world.spawn((BlockWorld::new(blocks, &faces, 1.0), block_look, Transform::default()));
+    if let Some(turn) = fallen {
+        use voxear_terrain::blocks::fell::{LooseBlocks, loose_map};
+        // Turned about the middle of its foot, the corner of its world back at the field's.
+        let loose = BlockWorld::new(loose_map(&tree), &faces, 1.0);
+        let at = Transform::new(Vec3::new(24.5, 4.0, 24.5), turn, Vec3::ONE);
+        let field = world.spawn((BlockWorld::new(blocks, &faces, 1.0), block_look.clone(), Transform::default()));
+        world.spawn((LooseBlocks { world: loose, offset: [-24.5, -4.0, -24.5], from: Some(field) }, block_look, at));
+    } else {
+        world.spawn((BlockWorld::new(blocks, &faces, 1.0), block_look, Transform::default()));
+    }
     let towards = towards.normalize();
     let turned = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
     world.spawn((Camera::default(), Transform::new(eye, turned, Vec3::ONE)));
@@ -2471,8 +2486,11 @@ fn oak_render(logs: bool, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, usize)> 
 #[test]
 fn a_tree_of_logs_thins_as_its_trunk_rises_and_its_branches_are_thin_logs() {
     let (eye, towards) = (Vec3::new(24.5, 11.0, 4.0), Vec3::new(0.0, 0.05, 1.0));
-    let Some((logs, thin)) = oak_render(true, eye, towards) else { return };
-    let (cubes, none) = oak_render(false, eye, towards).unwrap();
+    let Some((logs, thin)) = oak_render(true, eye, towards, None) else { return };
+    let (cubes, none) = oak_render(false, eye, towards, None).unwrap();
+    // Close under its crown, looking up into its branches.
+    let (close, _) = oak_render(true, Vec3::new(26.5, 8.0, 19.0), Vec3::new(-0.2, 0.5, 1.0), None).unwrap();
+    keep_image("tree of logs under its crown.png", &close);
     keep_image("tree of logs.png", &logs);
     keep_image("tree of whole logs.png", &cubes);
     assert!(thin > 20 && none > 20, "the same tree, grown with thin logs: {thin}");
@@ -2494,4 +2512,140 @@ fn a_tree_of_logs_thins_as_its_trunk_rises_and_its_branches_are_thin_logs() {
     };
     let rows: Vec<usize> = (HEIGHT / 2..HEIGHT).step_by(12).map(across).collect();
     eprintln!("trunk across, from halfway down: {rows:?}");
+}
+
+#[test]
+fn blocks_come_loose_are_drawn_turned_about_their_obj_as_they_stood_and_cast_their_shadow() {
+    let (eye, towards) = (Vec3::new(24.5, 11.0, 4.0), Vec3::new(0.0, 0.05, 1.0));
+    let Some((standing, _)) = oak_render(true, eye, towards, Some(Quat::IDENTITY)) else { return };
+    let (upright, _) = oak_render(true, eye, towards, None).unwrap();
+    // Toppling to the east, a third of the way down, and then lying on the ground.
+    let (toppling, _) = oak_render(true, eye, towards, Some(Quat::from_rotation_z(-0.5))).unwrap();
+    let (fallen, _) = oak_render(true, eye, towards, Some(Quat::from_rotation_z(-1.5))).unwrap();
+    keep_image("loose tree standing.png", &standing);
+    keep_image("loose tree toppling.png", &toppling);
+    keep_image("loose tree fallen.png", &fallen);
+    // Come loose but unturned, it is drawn as it stood, but for its roots, left in the ground and hidden.
+    let differ = |a: &[u8], b: &[u8]| {
+        a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 8)).count()
+    };
+    let unlike = differ(&standing, &upright);
+    assert!(unlike < 400, "{unlike} pixels differ come loose");
+    // Where its leaves are: their middle moves east, to the right of the picture, and down as it falls.
+    let leaves = |pixels: &[u8]| {
+        let (mut sum, mut count) = ((0.0f64, 0.0f64), 0.0f64);
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let [r, g, b] = rgb_at(pixels, x, y);
+                // Leaves, not the field's grass: brighter green, above the horizon or in the tree's own place.
+                if g > r + 20 && g > b + 20 && y < HEIGHT * 2 / 3 {
+                    sum = (sum.0 + f64::from(x), sum.1 + f64::from(y));
+                    count += 1.0;
+                }
+            }
+        }
+        (sum.0 / count.max(1.0), sum.1 / count.max(1.0), count)
+    };
+    let (stood, half, down) = (leaves(&standing), leaves(&toppling), leaves(&fallen));
+    eprintln!("leaves: standing {stood:?}, toppling {half:?}, fallen {down:?}");
+    assert!(half.0 > stood.0 + 30.0 && half.1 > stood.1 + 10.0, "toppling: {half:?} from {stood:?}");
+    assert!(down.0 > half.0 + 20.0 && down.1 > half.1, "fallen: {down:?} from {half:?}");
+}
+
+#[test]
+fn a_sapling_stands_crossed_on_the_ground_and_grows_into_its_tree_stage_by_stage() {
+    use voxear_terrain::blocks::{
+        block::BlockShape,
+        file::BlockKind,
+        plant::{PlantDef, PlantPart},
+        sapling::stage_model,
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let mut file = BlockFile::default();
+    file.ground.size = [48, 48];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind::colored("Oak Log", [0.62, 0.3, 0.12]));
+    let wood = file.blocks.len() as u16;
+    let leaf = BlockKind { sways: true, shape: BlockShape::Bushy, ..BlockKind::colored("Oak Leaves", [0.25, 0.5, 0.16]) };
+    file.blocks.push(leaf);
+    let leaves = file.blocks.len() as u16;
+    let sapling = BlockKind { sways: true, shape: BlockShape::Sapling, ..BlockKind::colored("Oak Sapling", [0.3, 0.75, 0.15]) };
+    file.blocks.push(sapling);
+    let sapling = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    let oak = PlantDef { height: [8.0, 8.0], crown_width: [6.0, 6.0], crown_height: [5.0, 5.0], leaf_size: 2.6, ..PlantDef::default() };
+    // A sapling, then the same oak at each of its three stages, along a row.
+    blocks.set([12, 4, 24], sapling);
+    for (stage, x) in [(1u8, 18), (2, 26), (3, 36)] {
+        let at = [x, 4, 24];
+        for (p, part, _) in stage_model(&oak, [12, 4, 24], stage).blocks {
+            let block = if part == PlantPart::Leaf { leaves } else { wood };
+            blocks.set([at[0] + p[0], at[1] + p[1], at[2] + p[2]], block);
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|face| {
+            let [r, g, b] = face.color.map(|c| c.powf(2.2));
+            let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: face.leafy,
+                mixed: face.mixed,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let block_look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
+    let made = BlockWorld::new(blocks, &faces, 1.0);
+    // The sapling's chunk has its crossed sheets.
+    let sheets: u32 = made.meshes.values().map(|mesh| mesh.loose().1).sum();
+    assert!(sheets > 2, "{sheets}");
+    world.spawn((made, block_look, Transform::default()));
+    let (eye, towards) = (Vec3::new(24.0, 9.0, 4.0), Vec3::new(0.0, -0.12, 1.0).normalize());
+    let turned = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+    world.spawn((Camera::default(), Transform::new(eye, turned, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards_sun), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &world, 30);
+    keep_image("sapling and its stages.png", &pixels);
+    // From left to right, each taller: the highest leaf pixel in each quarter of the picture is higher up.
+    let tops: Vec<u32> = (0..4)
+        .map(|quarter| {
+            let columns = quarter * WIDTH / 4..(quarter + 1) * WIDTH / 4;
+            (0..HEIGHT)
+                .find(|&y| {
+                    columns.clone().any(|x| {
+                        let [r, g, b] = rgb_at(&pixels, x, y);
+                        g > r + 20 && g > b + 20 && y < HEIGHT * 3 / 4
+                    })
+                })
+                .unwrap_or(HEIGHT)
+        })
+        .collect();
+    eprintln!("highest leaves by quarter: {tops:?}");
+    // Further along x, further right, and taller.
+    assert!(tops.windows(2).all(|pair| pair[1] <= pair[0]), "{tops:?}");
+    assert!(tops[0] > tops[3] + 30, "{tops:?}");
+    // Every stage has leaves: green over the first stage's trunk, the second quarter of the picture.
+    let leafy = (WIDTH / 4..WIDTH / 2)
+        .flat_map(|x| (0..HEIGHT / 2).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            g > r + 20 && g > b + 20
+        })
+        .count();
+    assert!(leafy > 100, "{leafy} pixels of the first stage's leaves");
 }

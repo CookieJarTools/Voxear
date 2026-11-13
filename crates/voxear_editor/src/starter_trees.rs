@@ -12,6 +12,12 @@
 //! thins to posts towards its top and its branches are thin logs. The oak and the birch have vines on some of their trees, of the
 //! Vine block the starter biomes hang too.
 //!
+//! Each has a sapling too, a block that grows into it, drawn as a small
+//! tree of a stem and leaves, and its plant scatters one to three of them
+//! where it lands as it is felled. Its log and its sapling each have an
+//! item, in the project's Items folder, that places it: a log felled drops
+//! its item, and a sapling item dropped on the ground takes root.
+//!
 //! Where the world has the starter biomes, each tree keeps to the ones
 //! that suit it: oaks in the Forest and the Rainforest, birches in the
 //! Forest, the Grassland and the Taiga, pines in the Taiga. A file of a
@@ -135,6 +141,43 @@ const VINE: &str = "Vine";
 /// The folder, in the Blocks folder beside the world, the starter trees'
 /// pictures and their materials go in.
 const PICTURES_FOLDER: &str = "Pictures";
+
+/// The folder of the project its starter trees' items go in.
+const ITEMS_FOLDER: &str = "Items";
+
+/// A starter tree's sapling as a block: two crossed sheets that sway,
+/// broken at once, growing into its plant.
+fn sapling_block(color: [f32; 3], grows: String) -> BlockDef {
+    BlockDef { shape: BlockShape::Sapling, sways: true, hardness: 0.0, grows: Some(grows), ..BlockDef::colored(color) }
+}
+
+/// A sapling of `leaves` on a stem of `bark`: a stem up the middle of the
+/// lower half, and a little crown of leaves over it, clear round them.
+fn sapling_picture(bark: [f32; 3], leaves: [f32; 3], salt: u32) -> Vec<u8> {
+    picture(|x, y| {
+        let (dx, dy) = (x as f32 - 7.5, y as f32 - 5.0);
+        let crown = dx * dx * 0.8 + dy * dy < 22.0 && mixed(x, y, salt) % 5 != 0;
+        let stem = (7..9).contains(&x) && y >= 6;
+        let twig = y == 9 && (5..11).contains(&x) && mixed(x, y, salt + 1) % 2 == 0;
+        match () {
+            _ if crown => toned(leaves, [0.8, 1.0, 1.2][(mixed(x, y, salt + 2) % 3) as usize], 255),
+            _ if stem || twig => toned(bark, 0.9, 255),
+            _ => toned(leaves, 0.6, 0),
+        }
+    })
+}
+
+/// The item at `Items/<name>.asset` that places `block`, made where there
+/// is none: its path.
+fn item_for(game: &mut Game, name: &str, block: &str) -> Result<String> {
+    let path = format!("{ITEMS_FOLDER}/{name}.asset");
+    if game.content.db().guid_of(&path).is_none() {
+        let places = toml::Table::from_iter([("places".to_string(), toml::Value::String(block.to_string()))]);
+        write_new(game, &path, &crate::data_assets::text("Voxear.Item", &places)?)?;
+        game.content.rescan()?;
+    }
+    Ok(path)
+}
 
 /// A starter tree's log as a block: a log, so its trunk thins and its
 /// branches are thin logs.
@@ -320,18 +363,38 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> 
             let leaves = material_with(game, &format!("{pictures}/{}", tree.leaves.0), &leaves, true)?;
             leaf_block.material = Some(named(game, &leaves));
         }
+        // A felled log drops its item.
+        let log_path = format!("{blocks_folder}/{}.block", tree.log.0);
+        if !has(game, tree.log.0) {
+            let item = item_for(game, tree.log.0, &log_path)?;
+            log_block.drops = vec![voxear_terrain::blocks::block::BlockDrop { item: Some(named(game, &item)), ..Default::default() }];
+        }
         let log = block_named(game, &blocks_folder, tree.log.0, &log_block)?;
         let leaves = block_named(game, &blocks_folder, tree.leaves.0, &leaf_block)?;
+        let sapling_name = format!("{} Sapling", tree.name);
+        let sapling_path = format!("{blocks_folder}/{sapling_name}.block");
+        let plant_path = format!("{PLANTS_FOLDER}/{}.voxplant", tree.name);
         let plant = PlantDef {
             vines: tree.vines,
             wood: Some(named(game, &log)),
             leaves: Some(named(game, &leaves)),
             vine: (tree.vines > 0.0).then(|| named(game, &vine)),
+            sapling: Some(sapling_path.clone()),
+            saplings: [1, 3],
             ..(tree.plant)()
         };
-        let plant_path = format!("{PLANTS_FOLDER}/{}.voxplant", tree.name);
         write_new(game, &plant_path, &plant.to_text())?;
         game.content.rescan()?;
+        // Its sapling, drawn as a small tree, which grows into it; and an item that plants it.
+        if !has(game, &sapling_name) {
+            let pictures = format!("{blocks_folder}/{PICTURES_FOLDER}");
+            let picture = sapling_picture(tree.log.1, tree.leaves.1, salt + 4);
+            let material = material_with(game, &format!("{pictures}/{sapling_name}"), &picture, true)?;
+            let mut block = sapling_block(tree.leaves.1, named(game, &plant_path));
+            block.material = Some(named(game, &material));
+            block_named(game, &blocks_folder, &sapling_name, &block)?;
+            item_for(game, &sapling_name, &sapling_path)?;
+        }
         // Only in the starter biomes that suit it, where the world's project has them.
         let biomes: Vec<String> =
             tree.biomes.iter().filter_map(|biome| reference(game, &format!("{biomes_folder}/{biome}.biome"))).collect();
@@ -373,6 +436,12 @@ mod tests {
             let block = leaves_block(tree.leaves.1);
             assert!(block.shape == BlockShape::Bushy && block.sways, "{}", tree.name);
             assert_eq!(log_block(tree.log.1).shape, BlockShape::Log, "{}", tree.name);
+            let sapling = sapling_block(tree.leaves.1, "Plants/Oak.voxplant".into());
+            assert_eq!((sapling.shape, sapling.grows.as_deref()), (BlockShape::Sapling, Some("Plants/Oak.voxplant")));
+            // A sapling's picture: clear round a crown of leaves on a stem.
+            let picture = sapling_picture(tree.log.1, tree.leaves.1, 9);
+            let clear = picture.chunks_exact(4).filter(|pixel| pixel[3] == 0).count();
+            assert!(clear > picture.len() / 8 && clear < picture.len() / 4 * 3, "{}: {clear} clear", tree.name);
             // Grown from a few seeds: a trunk, and leaves over it; taller than a person, no wider than a house.
             for seed in 0..4 {
                 let model = (tree.plant)().grow(seed);

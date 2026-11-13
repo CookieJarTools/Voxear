@@ -514,9 +514,12 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         }
                     } else if is_vine(faces, id) {
                         let look = surface(faces, id, 0);
-                        let tip = if is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
-                        let clings: Vec<u32> =
-                            (0..4).filter(|&s| is_ground(faces, block(step(beside[s as usize])))).collect();
+                        // A sapling stands crossed on what is under it, clinging to nothing beside it.
+                        let sapling = faces[usize::from(id)].shape == super::block::BlockShape::Sapling;
+                        let tip = if sapling || is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
+                        let clings: Vec<u32> = (0..4)
+                            .filter(|&s| !sapling && is_ground(faces, block(step(beside[s as usize]))))
+                            .collect();
                         for &sheet in &clings {
                             mesh.quads.push(pack_loose(at, VINE, sheet | tip, look, 3, 0));
                         }

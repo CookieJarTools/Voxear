@@ -3642,6 +3642,22 @@ keeps when each moving block started, by its own clock, and the shader poses its
 so collision and saves hold only the state it ends in. Hanging blocks swing in the vertex shader from the wind
 and the foliage push, never in physics.
 
+**Logs, falling trees and saplings.** A log's thickness and the way it lies are its placed state too, set over
+its facing with the state byte's top bit (which no other shape sets), so a tree of thin logs, a log chopped thinner
+and what a player joining is sent cost no more than whole blocks; a trunk thins and a branch steps aside by
+numbering states, never by new storage. What a cut log held up is found in the world as it is
+(`terrain::blocks::fell::loose_tree`: logs of the cut log's family, the leaves nearer them than another tree's,
+the vines on them) and taken out as ordinary block changes. While it falls it is a second world of blocks on an Obj
+of its own (`fell::LooseBlocks`): its blocks stay at their own places, so its tufts and pictures match, and the
+renderer draws it turned about its Obj (`BLOCKS_TURNED`, a quaternion on `GpuBlockWorld`), picking its chunks in its
+own space and reading its pictures where they rest, as a moving part's are. Only the renderer sees a `LooseBlocks`:
+no physics, rays, maps or saves. Its fall is the engine's alone (`engine::trees`), stepped as a pole falls and
+stopped by the first of its blocks to meet ground; its drops are `engine::item_drops::ItemDrop` Objs, the
+moment's, never saved. A sapling is a block; growing it is a short list on its world (`sapling::Saplings`,
+nineteen bytes each, captured with a world's script changes as `VXSW`). Each stage is the plant at a share of its
+size grown from its place's seed, so a stage can be grown again at any time from three numbers and the block
+changes it makes are those a player's would be.
+
 **See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
 materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
 `BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block

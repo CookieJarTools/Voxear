@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 85;
+pub(crate) const API_VERSION: u32 = 86;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -576,6 +576,23 @@ pub(crate) struct NativeApi {
     pub block_link: unsafe extern "C" fn(what: i32, from: *const [f32; 3], to: *const [f32; 3]) -> i32,
     /// `Blocks.LinksFrom`: the middles of the blocks a lever or a button drives.
     pub block_links: unsafe extern "C" fn(from: *const [f32; 3], out: *mut [f32; 3], capacity: i32) -> i32,
+    /// `Trees.Chop`, `Trees.Fell` and `Saplings.Grow`: a log a slice thinner, cut through, or a sapling grown.
+    pub tree_call: unsafe extern "C" fn(what: i32, at: *const [f32; 3], way: *const [f32; 3]) -> i32,
+    /// `Trees.Felled`: the trees that came down since last asked, and their drops.
+    pub trees_felled:
+        unsafe extern "C" fn(out: *mut crate::trees::FelledData, capacity: i32, drops: *mut u64, drop_capacity: i32) -> i32,
+    /// `Saplings.Plant`: a sapling by its `.block` planted on the block under a point.
+    pub sapling_plant: unsafe extern "C" fn(block: *const u8, len: i32, at: *const [f32; 3]) -> i32,
+    /// `Saplings.All`: every sapling growing, where and how far grown.
+    pub saplings: unsafe extern "C" fn(out: *mut [f32; 4], capacity: i32) -> i32,
+    /// `ItemDrops.Drop`: an item dropped at a point, thrown.
+    pub item_drop:
+        unsafe extern "C" fn(item: *const u8, len: i32, count: i32, at: *const [f32; 3], velocity: *const [f32; 3]) -> u64,
+    /// `ItemDrops.Near`: the items lying near a point.
+    pub item_drops_near: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, out: *mut u64, capacity: i32) -> i32,
+    /// `ItemDrop`'s item, count and place, and `ItemDrops.Take`.
+    pub item_drop_read:
+        unsafe extern "C" fn(drop: u64, take: i32, buffer: *mut u8, capacity: i32, count: *mut i32, at: *mut [f32; 3]) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2190,6 +2207,13 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_placed_state: crate::blocks::block_placed_state,
         block_link: crate::blocks::block_link,
         block_links: crate::blocks::block_links,
+        tree_call: crate::trees::tree_call,
+        trees_felled: crate::trees::trees_felled,
+        sapling_plant: crate::trees::sapling_plant,
+        saplings: crate::trees::saplings,
+        item_drop: crate::trees::item_drop,
+        item_drops_near: crate::trees::item_drops_near,
+        item_drop_read: crate::trees::item_drop_read,
     }
 }
 

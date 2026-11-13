@@ -939,7 +939,7 @@ pub fn part_boxes(shape: BlockShape, state: BlockState, around: Around, custom: 
             None => vec![b([4, 0, 4], [12, 8, 12])],
         },
         BlockShape::Log => log_boxes(state, around.joins),
-        BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine => Vec::new(),
+        BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine | BlockShape::Sapling => Vec::new(),
     }
 }
 

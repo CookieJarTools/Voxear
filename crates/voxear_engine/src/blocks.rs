@@ -723,6 +723,9 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "drops": drops,
         "sounds": { "break": block.sounds.broken, "place": block.sounds.placed, "step": block.sounds.step },
         "shape": BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or(0),
+        "chops": block.slice().map_or(0, |_| block.chops),
+        "fells": block.fells,
+        "grows": block.grows,
         "usable": block.part_look().usable || matches!(
             block.shape,
             BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate | BlockShape::Lever | BlockShape::Button

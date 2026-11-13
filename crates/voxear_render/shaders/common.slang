@@ -1265,6 +1265,9 @@ struct BlockWorld
     MovingBlock* moving;
     uint motionCount;
     uint movingCount;
+    // How it is turned about its corner, as a quaternion, where it is drawn turned (BLOCKS_TURNED): blocks come loose
+    // from their world, as a tree that falls.
+    float4 turn;
 };
 
 // A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
@@ -1298,6 +1301,7 @@ struct MovingBlock
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).
 static const uint BLOCKS_SMOOTH = 1;
+static const uint BLOCKS_TURNED = 2;
 
 // A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
 // ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the

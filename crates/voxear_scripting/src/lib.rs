@@ -29,6 +29,7 @@ mod signals;
 mod terrain;
 mod switches;
 mod text;
+mod trees;
 mod ui;
 mod ui_rows;
 mod windows;
@@ -64,5 +65,6 @@ pub use services::{
     SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,
     ui_screen_document,
 };
+pub use trees::FelledInfo;
 pub use ui_rows::RowWork;
 pub use windows::WindowUpdate;

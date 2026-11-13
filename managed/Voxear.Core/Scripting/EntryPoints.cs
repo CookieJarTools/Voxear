@@ -102,6 +102,7 @@ internal static unsafe class EntryPoints
 			InputEvents.Dispatch();
 			Weather.Dispatch();
 			Storms.Dispatch();
+			Trees.Dispatch();
 			ModuleHooks.Dispatch?.Invoke();
 			Localized.Dispatch();
 			SaveWrite.Update();
@@ -349,7 +350,7 @@ internal static unsafe class EntryPoints
 	{
 		try
 		{
-			var bytes = Encoding.UTF8.GetBytes(DevConsole.Names(GameScripts.Assemblies));
+			var bytes = Encoding.UTF8.GetBytes(DevConsole.Names(DevConsole.Searched));
 			if (bytes.Length <= capacity)
 			{
 				bytes.CopyTo(new Span<byte>(buffer, capacity));

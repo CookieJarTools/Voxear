@@ -155,6 +155,28 @@ pub struct BlockDef {
     /// What a block of its own boxes' moving boxes turn about.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hinge: Option<BoxHinge>,
+    /// For a log: how many times it is mined before a whole one is cut
+    /// through, each taking a slice off it, so it is drawn thinner (see
+    /// [`BlockDef::slice`]); 0 for at once, as any other block.
+    #[serde(skip_serializing_if = "is_four")]
+    pub chops: u8,
+    /// For a log: whether cutting it through brings down the tree it holds
+    /// up, its logs and its leaves, which topple and break into what they
+    /// drop where they land.
+    #[serde(skip_serializing_if = "is_yes")]
+    pub fells: bool,
+    /// For a sapling: the plant it grows into, a reference to a
+    /// `.voxplant`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grows: Option<String>,
+}
+
+fn is_four(chops: &u8) -> bool {
+    *chops == 4
+}
+
+fn is_yes(yes: &bool) -> bool {
+    *yes
 }
 
 /// What the moving boxes of a block of its own boxes turn about: a point in
@@ -297,10 +319,19 @@ pub enum BlockShape {
     Rope,
     /// The block's own boxes (see `BlockDef::boxes`).
     Boxes,
+    /// A log, lying along the way it faces: a whole block, or a post as
+    /// thin as its placed state says, reaching to the logs beside it. A
+    /// tree's trunk thins as it rises, its branches are thin logs, and an
+    /// axe takes a slice off it at a time (see `BlockDef::chops`).
+    Log,
+    /// A sapling: two crossed sheets standing on the block under it, which
+    /// grows into the plant its block names (`BlockDef::grows`). It is no
+    /// ground, as a vine is.
+    Sapling,
 }
 
 impl BlockShape {
-    pub const ALL: [BlockShape; 16] = [
+    pub const ALL: [BlockShape; 18] = [
         BlockShape::Cube,
         BlockShape::Bushy,
         BlockShape::Vine,
@@ -317,6 +348,8 @@ impl BlockShape {
         BlockShape::Chain,
         BlockShape::Rope,
         BlockShape::Boxes,
+        BlockShape::Log,
+        BlockShape::Sapling,
     ];
 
     pub fn name(self) -> &'static str {
@@ -337,6 +370,8 @@ impl BlockShape {
             BlockShape::Chain => "Chain",
             BlockShape::Rope => "Rope",
             BlockShape::Boxes => "Boxes",
+            BlockShape::Log => "Log",
+            BlockShape::Sapling => "Sapling",
         }
     }
 
@@ -344,19 +379,21 @@ impl BlockShape {
         *self == BlockShape::Cube
     }
 
+    /// Whether it is drawn as a vine's sheets and is no ground: a vine, or
+    /// a sapling.
     pub fn is_vine(&self) -> bool {
-        *self == BlockShape::Vine
+        matches!(self, BlockShape::Vine | BlockShape::Sapling)
     }
 
     /// Whether it is drawn as sheets besides or in place of a cube: bushy
-    /// leaves and vines.
+    /// leaves, vines and saplings.
     pub fn is_loose(&self) -> bool {
-        matches!(self, BlockShape::Bushy | BlockShape::Vine)
+        matches!(self, BlockShape::Bushy | BlockShape::Vine | BlockShape::Sapling)
     }
 
     /// Whether it is a block of parts, drawn as boxes (see `shape`).
     pub fn is_part(&self) -> bool {
-        !matches!(self, BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine)
+        !matches!(self, BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine | BlockShape::Sapling)
     }
 
     /// Whether it hangs from what is over it, and sways.
@@ -412,11 +449,21 @@ impl Default for BlockDef {
             motion: None,
             boxes: Vec::new(),
             hinge: None,
+            chops: 4,
+            fells: true,
+            grows: None,
         }
     }
 }
 
 impl BlockDef {
+    /// How many sixteenths of a block across each time it is mined takes
+    /// off it, for a log that is chopped: none for any other block, which
+    /// breaks at once.
+    pub fn slice(&self) -> Option<u8> {
+        (self.shape == BlockShape::Log && self.chops > 1).then(|| (16 / self.chops.min(8)).max(2))
+    }
+
     pub fn parse(text: &str) -> Result<Self> {
         let mut block: Self = toml::from_str(text)?;
         block.hardness = if block.hardness.is_finite() { block.hardness.max(0.0) } else { 1.0 };

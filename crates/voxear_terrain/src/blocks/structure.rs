@@ -451,7 +451,10 @@ impl StructureDef {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StructureBlocks {
     Model { size: [u32; 3], blocks: Vec<BlockId> },
-    Plant { plant: PlantDef, wood: BlockId, leaves: BlockId, vine: BlockId },
+    /// `logs` numbers its wood in each way it stands as a log thinner than
+    /// a block or lying down, as its states' bytes: empty where its wood is
+    /// no log, and every block of it is `wood`, whole.
+    Plant { plant: PlantDef, wood: BlockId, leaves: BlockId, vine: BlockId, logs: Vec<(u8, BlockId)> },
     Town(Town),
     Dungeon(Dungeon),
 }
@@ -588,14 +591,15 @@ impl PlacedStructure {
     fn pieces(&self, site: &Site) -> Vec<Piece> {
         let raw: Vec<Piece> = match &self.blocks {
             StructureBlocks::Model { size, blocks } => model_pieces(*size, blocks),
-            StructureBlocks::Plant { plant, wood, leaves, vine } => plant
+            StructureBlocks::Plant { plant, wood, leaves, vine, logs } => plant
                 .grow(site.seed)
                 .blocks
                 .into_iter()
-                .map(|(at, part)| match part {
+                .map(|(at, part, state)| match part {
                     PlantPart::Leaf => (at, *leaves),
                     PlantPart::Vine => (at, *vine),
-                    _ => (at, *wood),
+                    // A log lying along x lies along z once turned a quarter, as its site is turned below.
+                    _ => (at, log_number(*wood, logs, state.turned(site.turns, false))),
                 })
                 .filter(|(_, block)| *block != AIR)
                 .collect(),
@@ -630,6 +634,14 @@ impl PlacedStructure {
             StructureBlocks::Dungeon(dungeon) => dungeon.reach(),
         }
     }
+}
+
+/// The number of the log `wood` standing as `state`, of those `logs`
+/// numbers: `wood` itself where it is whole and standing up, or where its
+/// wood is no log.
+pub fn log_number(wood: BlockId, logs: &[(u8, BlockId)], state: super::shape::BlockState) -> BlockId {
+    let byte = state.normalized(super::block::BlockShape::Log).to_byte();
+    logs.iter().find(|(kept, _)| *kept == byte).map_or(wood, |(_, number)| *number)
 }
 
 /// `pieces` turned `turns` quarter turns about the up axis, mirrored along
@@ -2106,7 +2118,7 @@ mod tests {
             },
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: 7, leaves: 8, vine: 0 },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: 7, leaves: 8, vine: 0, logs: Vec::new() },
             biomes: Vec::new(),
         };
         WorldStructures { list: vec![hut, trees], ..WorldStructures::default() }

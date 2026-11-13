@@ -339,6 +339,51 @@ pub trait ScriptServices {
         changes
     }
 
+    /// A tree's log or sapling at `at`, a point in metres, in the first
+    /// world of blocks with a block there: `what` 0 mines a slice off a log
+    /// that chops, and fells what it held up once it is cut through,
+    /// falling `way`; 1 cuts it through at once; 2 grows the sapling there
+    /// to its next stage now. What happened, as `crate::trees` numbers it.
+    fn tree_call(&mut self, _world: &mut World, _what: i32, _at: [f32; 3], _way: [f32; 3]) -> i32 {
+        0
+    }
+
+    /// Plants the sapling `reference` names (a `.block` path or GUID) on
+    /// the block under `at`, a point in metres, where it has room and
+    /// light, as a sapling item dropped there takes root: whether it did.
+    fn sapling_plant(&mut self, _world: &mut World, _reference: &str, _at: [f32; 3]) -> bool {
+        false
+    }
+
+    /// The saplings growing in every world of blocks, each where it is, in
+    /// metres, and how far grown, from 0 to 1.
+    fn saplings(&mut self, _world: &World) -> Vec<([f32; 3], f32)> {
+        Vec::new()
+    }
+
+    /// The trees that came down since last asked, each taken.
+    fn trees_felled(&mut self, _world: &mut World) -> Vec<crate::trees::FelledInfo> {
+        Vec::new()
+    }
+
+    /// Drops `count` of the item `reference` names at `at`, thrown at
+    /// `velocity`, in metres: its Obj's bits, 0 where none was dropped.
+    fn item_drop(&mut self, _world: &mut World, _reference: &str, _count: u32, _at: [f32; 3], _velocity: [f32; 3]) -> u64 {
+        0
+    }
+
+    /// The items lying within `radius` metres of `at` that can be taken
+    /// up, nearest first, each its Obj's bits.
+    fn item_drops_near(&mut self, _world: &World, _at: [f32; 3], _radius: f32) -> Vec<u64> {
+        Vec::new()
+    }
+
+    /// The item lying on the Obj `drop`, its bits: which item, how many and
+    /// where; taken up where `take` says. None where it is none, or gone.
+    fn item_drop_read(&mut self, _world: &mut World, _drop: u64, _take: bool) -> Option<(String, u32, [f32; 3])> {
+        None
+    }
+
     /// The blocks the world of blocks on `entity` numbered since its file
     /// was read, whose numbers are this machine's own: each number, and its
     /// block's GUID.

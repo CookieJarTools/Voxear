@@ -122,6 +122,8 @@ pub enum PickFor {
     BlockRef { block: String, field: crate::block_inspector::BlockRef },
     /// One of the blocks of the biome at this path.
     BiomeRef { biome: String, field: crate::biome_inspector::BiomeRef },
+    /// One of the blocks of the plant at this path.
+    PlantRef { plant: String, field: crate::plant_inspector::PlantRef },
     /// A control's picture in the Prompt Icons at this path.
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.

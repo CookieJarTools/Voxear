@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 
 namespace Voxear;
@@ -48,7 +49,9 @@ public sealed class BlockMiner
 		{
 			(world, middle, tool, dug, IsDigging) = (hit.Obj, hit.Middle, held, 0f, true);
 		}
-		needed = hit.Definition.BreakTime(held);
+		// A log that chops takes its time a slice at a time: each a share of a whole one's.
+		var chops = hit.Definition.Shape == BlockShape.Log ? hit.Definition.Chops : 0;
+		needed = hit.Definition.BreakTime(held) / Math.Max(chops, 1);
 		dug += seconds >= 0f ? seconds : Time.Delta;
 		if (dug < needed)
 		{

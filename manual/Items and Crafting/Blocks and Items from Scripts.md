@@ -30,6 +30,7 @@ else
 | --- | --- |
 | `Name`, `Color`, `IsLiquid` | What it is called, its colour, and whether it is a liquid |
 | `Hardness`, `Unbreakable`, `Tool`, `Tier` | Its rules, as its Inspector has them |
+| `Chops`, `Fells`, `IsSapling` | For a log, how many hits cut it through and whether that fells its tree; whether it is a sapling |
 | `Drops` | What it drops: each an item, the fewest and most of it, and its chance |
 | `BreakSound`, `PlaceSound`, `StepSound` | Its sounds |
 | `Data<T>()` | Its Data asset, as your own type |
@@ -48,6 +49,53 @@ A colour a world keeps itself, as a model of small blocks brings, has no rules: 
 | `miner.Stop()` | Leaves the block: the next Dig starts from nothing |
 
 An unbreakable block is never mined. `Blocks.Break(hit)` still takes it away, as it takes any block, whatever its rules: that one is for your own tools and the editor's.
+
+## Chopping and felling
+
+A [[Blocks#Logs|log]] that chops is mined a slice at a time by the same calls: `Blocks.Mine` takes a slice off it and gives nothing until the last, and a `BlockMiner` takes a share of the log's break time for each slice, starting again after each. Its last cuts it through, drops what the log drops, and brings the tree over it down, falling away from the face the ray met. So a miner that digs needs nothing more to cut trees down.
+
+For an axe of your own:
+
+| Call | What it does |
+| --- | --- |
+| `Trees.Chop(hit, away)` | A slice off the log a ray met, or its last, felling the tree, falling `away`; what it did, as a `ChopResult` |
+| `Trees.Fell(hit, away)` | Cuts the log through at once and brings the tree down: whether one came down |
+| `Trees.SlicesLeft(hit)` | How many more times the log is mined before it is cut through |
+| `Trees.Away(hit)` | The way along the ground away from the face the ray met |
+| `Trees.Felled` | Raised once a tree has landed and broken: where it was cut, the way it fell, where it landed, and its `Drops` |
+
+```csharp
+// Give the player the logs of every tree they fell, wherever they land.
+Trees.Felled += tree =>
+{
+    foreach (var drop in tree.Drops)
+    {
+        inventory.Add(ItemDrops.Take(drop));
+    }
+};
+```
+
+## Items on the ground
+
+What a felled tree breaks into lies on the ground, each an `ItemDrop`: its `Item`, its `Count` and its `Position`. Drop your own with `ItemDrops.Drop(item, count, at, velocity)`, find those near a point with `ItemDrops.Near(at, radius)`, and take one up with `ItemDrops.Take(drop)`, which gives it as an `ItemStack`. `ItemDrops.Collect(at, radius)` takes up every one within reach at once.
+
+The easy way is **Item Pickup**, under **Add Component**: on a player, it takes up the items within its **Radius** as it walks over them, and raises `PickedUp` with each stack, for the player's inventory to take:
+
+```csharp
+GetBehaviour<ItemPickup>().PickedUp += stack => inventory.Add(stack);
+```
+
+A drop can be taken up half a second after it falls, and goes after five minutes. Drops are the moment's: a save of the game keeps none of them.
+
+## Saplings
+
+A [[Blocks#Saplings|sapling]] item put down with `Blocks.Place` takes root only where its plant can grow, and is false where it cannot. For the rest:
+
+| Call | What it does |
+| --- | --- |
+| `Saplings.Plant(block, at)` | Plants a sapling on the ground under a point, where it has room and light: whether it took root |
+| `Saplings.Grow(at)` | Grows the sapling at a point to its next stage now, where it has room |
+| `Saplings.All` | Every sapling growing: where it stands and how far grown, from 0 to 1 |
 
 ## Placing
 
@@ -121,4 +169,4 @@ public sealed class LockedDoor : BlockRules
 
 ## Over the network
 
-Decide on the server: call `Blocks.Mine` and `Blocks.Place` there, and tell the others which `Block` or `Item` went where. A block's number in a world is that machine's own where the world first held the block in play, so it is never what to send.
+Decide on the server: call `Blocks.Mine` and `Blocks.Place` there, and tell the others which `Block` or `Item` went where. A tree felled on the server is gone from the others' worlds with its block changes, but they do not see it fall, and the items it broke into lie on the server alone: tell the others, or give the items there. A block's number in a world is that machine's own where the world first held the block in play, so it is never what to send.

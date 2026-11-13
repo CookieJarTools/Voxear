@@ -2815,13 +2815,15 @@ impl View {
                 waves: water.as_ref().map(water::Water::shared_waves),
             }
         });
-        // What the passes after the scene read as its depth: with far sides drawn, theirs where they show.
-        let seen_depth = match (&sees, portal) {
+        // What the passes after the scene read as its depth: with far sides drawn, theirs where they show; and the
+        // view's own depth as it was when they were drawn, before its sky, water and glass.
+        let (seen_depth, kept_depth) = match (&sees, portal) {
             (Some(sees), None) if !sees.seen.is_empty() => {
                 let desc = ImageDesc::new(extent.width, extent.height, pipelines::PYRAMID_FORMAT, color_usage);
-                Some(fg.create_image(gpu, bindless, "seen depth", desc)?)
+                let seen = fg.create_image(gpu, bindless, "seen depth", desc)?;
+                (Some(seen), Some(fg.create_image(gpu, bindless, "own depth before water", desc)?))
             }
-            _ => None,
+            _ => (None, None),
         };
         let targets = passes::Targets {
             hdr,
@@ -2907,11 +2909,18 @@ impl View {
         let mut failed = None;
         let mut far_sides = |fg: &mut FrameGraph<'_>| {
             let Some(sees) = sees.as_ref() else { return };
+            if let Some(kept) = kept_depth {
+                keep_own_depth(fg, (pipelines, sees.push), depth, kept);
+            }
             let targets = (hdr, velocity, seen_depth);
             let services = (gpu, &mut *bindless, pipelines, assets);
             failed = draw_portals(&mut children, fg, services, (world, setup, slot), sees, targets).err();
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws, &mut far_sides);
+        // The water and glass drawn since, where they stand in front of what the far sides' depth holds.
+        if let (Some(seen), Some(kept)) = (seen_depth, kept_depth) {
+            lay_nearer_depth(fg, (pipelines, push), depth, kept, seen);
+        }
         // A view not seen for a while lets its buffers go with the view it was seen in.
         self.portals = children;
         if let Some(error) = failed {
@@ -3109,6 +3118,33 @@ const PORTAL_VIEW_KEPT: u64 = 120;
 const PORTAL_VIEW_NUMBERS: usize = 64;
 
 /// A triangle over all of `target`, drawn with `pipeline`.
+/// Copies the view's own depth into `kept`, as it is once its surfaces are
+/// drawn and before its sky, water and glass, for [`lay_nearer_depth`].
+fn keep_own_depth(fg: &mut FrameGraph<'_>, (pipelines, push): (&Pipelines, Push), depth: ImageId, kept: ImageId) {
+    let pipeline = pipelines.portal_depth;
+    let push = Push { textures: [fg.texture(depth).0, 0, 0, 0], ..push };
+    let images = [(depth, ImageAccess::Sampled), (kept, ImageAccess::ColorAttachment)];
+    fg.add_pass("Own depth before water", &images, &[], move |ctx| portal_fullscreen(ctx, pipeline, &push, kept));
+}
+
+/// Lays over `seen`, the depth the passes after the scene read, the view's
+/// `depth` wherever it is nearer now than it was in `kept`: the water and
+/// glass drawn after the far sides. Without it the fog, and all else that
+/// reads that depth, went by what lies under the water, as far off as the
+/// sea floor, whenever a Portal was in view.
+fn lay_nearer_depth(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (&Pipelines, Push),
+    depth: ImageId,
+    kept: ImageId,
+    seen: ImageId,
+) {
+    let pipeline = pipelines.portal_depth_nearer;
+    let push = Push { textures: [fg.texture(depth).0, fg.texture(kept).0, 0, 0], ..push };
+    let images = [(depth, ImageAccess::Sampled), (kept, ImageAccess::Sampled), (seen, ImageAccess::ColorAttachment)];
+    fg.add_pass("Depth before the water's", &images, &[], move |ctx| portal_fullscreen(ctx, pipeline, &push, seen));
+}
+
 fn portal_fullscreen(ctx: &graph::PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId) {
     let color = [passes::attachment(ctx.view(target), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
     passes::begin_rendering(ctx, ctx.extent(target), &color, None);

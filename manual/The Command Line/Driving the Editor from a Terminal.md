@@ -47,7 +47,7 @@ The path is the `id` the scene file gives the Obj. An Obj inside a prefab instan
 
 **A component** is named as scene files name it: `light`, `renderer`, `collider`, or a script's full type name, as `Game.Spinner`. `vox editor call components` lists every one the project can add.
 
-**A field** is named as `obj.get` lists it: `intensity` on a Light, or for a script's field, its name, with a dot before each step into a list or a group, as `waves.2.count`.
+**A field** is named as `obj.get` lists it: `intensity` on a Light, or for a script's field, its name, with a dot before each step into a list or a group, as `waves.2.count`. A component whose Inspector has tabs, as a Block World's **Build** and **Settings**, lists every tab's fields, whichever tab the Inspector shows.
 
 ## A worked example: a lamp
 
@@ -154,6 +154,8 @@ A headless editor saves nothing unless a call saves. So for more than one call, 
 
 `vox editor serve --project MyGame` keeps a headless editor open, answering calls until one closes it with `editor.quit`. If you open the editor while one is serving, the editor you open takes over: the headless one saves and closes.
 
+Only one editor on a project answers calls. An editor opened while another is still open, or still closing, waits, and answers once the other has closed.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -178,6 +180,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `field.set`, `field.reset`, `field.choices`, `list.add`, `list.remove` | Change fields, as the Inspector does |
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |
 | `select`, `frame` | Select Objs, and show them in the Scene view |
+| `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
+| `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |
@@ -197,6 +201,7 @@ A tool can also write files itself and let the editor pick them up:
 - **With edits waiting**, the editor leaves the file alone and says so in the status bar. Saving keeps your edits over the file's. `scene.reload` with `discard=true` reads the file and drops your edits.
 - **While the game plays**, nothing is read until it stops.
 - **`voxear.toml`** is read again, and Project Settings show what it now says.
+- **A Block World's file**, its `.blockworld` or the `.blocks` file beside it, is read again into every Block World drawing it, unless that world has changes not saved.
 - **Other assets**, such as materials and prefabs, are read again when you switch back to the editor, and C# scripts build again within a few seconds of changing.
 
 The editor looks at the open scenes and `voxear.toml` twice a second. `files.look` tells it to look at every file at once, as a script should after writing some.
@@ -230,15 +235,26 @@ With the editor open, the assistant works in it while you watch, and you can und
 
 A connection can stay open for as many calls as you like. Calls are answered in order. A call that waits on the editor, as `play` and `capture` do, answers once it is done.
 
+## Blocks
+
+`blocks.set` puts one block at a point in the world, in metres, and `blocks.fill` fills the box between two points. Give a `.block` asset, or `null` for air:
+
+```bash
+vox editor call blocks.fill obj=713a4d989c654c6ca23b1d63201e0090:12 from=[0,40,0] to=[4,40,4] block=Blocks/Stone.block
+```
+
+Without `obj`, every Block World there is changed, as a script's `Blocks.Set` does. A block the world does not hold yet is added to its blocks. Each call is one step to undo, and the blocks are kept when the scene is saved. `blocks.get` says which block is at a point.
+
+A `[Command]` your scripts add, run with `command.run`, can change blocks too: on the level being edited it has the same `Blocks` and `Block.Load` as a game playing.
+
 ## What tools cannot do yet
 
 Some of the editor's work is done with brushes and canvases rather than fields:
 
 - sculpting and painting terrain
-- placing and digging blocks in a Block World
 - painting plants
 - editing a World Generator's graph
 - editing a VoxShade shader
 - building a box model in the Model window
 
-For these, a tool can write the files themselves (the `.terrain`, `.blockworld`, `.worldgen` or `.voxshade` file) and call `files.look`. A VoxShade shader read with `asset.get` comes back as JSON, its nodes, wires and properties as its file has them, and one written and looked at compiles into the project's shaders as one saved in its panel does. Calls for them come later.
+For these, a tool can write the files themselves (the `.terrain`, `.worldgen` or `.voxshade` file) and call `files.look`. A VoxShade shader read with `asset.get` comes back as JSON, its nodes, wires and properties as its file has them, and one written and looked at compiles into the project's shaders as one saved in its panel does. Calls for them come later.

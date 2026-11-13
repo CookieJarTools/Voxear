@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value as Json, json};
 use voxear_assets::{AssetGuid, AssetKind};
-use voxear_ecs::Entity;
+use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game,
     local_link::{ErrorKind, LinkError},
@@ -24,7 +24,7 @@ use voxear_engine::{
 };
 
 use crate::{
-    fields::{Pick, Step},
+    fields::{Pick, Step, Target},
     props::{self, Part, Prop, Value},
 };
 
@@ -350,6 +350,54 @@ pub const CALLS: &[CallInfo] = &[
         args: &[maybe("objs", ArgKind::Objs, "")],
         changes: false,
         returns: "{}",
+    },
+    CallInfo {
+        name: "view.get",
+        about: "Where the Scene view's camera is and which way it looks, as position and rotation in degrees.",
+        args: &[],
+        changes: false,
+        returns: "{ position, rotation, forward }",
+    },
+    CallInfo {
+        name: "view.set",
+        about: "Moves and turns the Scene view's camera: to `position`, turned to `rotation` in degrees or to look at `look_at`.",
+        args: &[
+            maybe("position", ArgKind::Vector, "Where the camera goes, in metres."),
+            maybe("rotation", ArgKind::Vector, "Degrees about x, y and z, as an Obj's rotation."),
+            maybe("look_at", ArgKind::Vector, "A point to look at, in place of `rotation`."),
+        ],
+        changes: false,
+        returns: "{ position, rotation, forward }",
+    },
+    CallInfo {
+        name: "blocks.get",
+        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there.",
+        args: &[arg("at", ArgKind::Vector, "Metres, in the world."), maybe("obj", ArgKind::Obj, "The Block World.")],
+        changes: false,
+        returns: "{ obj, cell, block }",
+    },
+    CallInfo {
+        name: "blocks.set",
+        about: "Puts a block at a point of the world, in metres, or air for `null`, in a Block World: `obj`'s, or every one there, as a script's Blocks.Set does. A block the world does not hold yet is added to its blocks.",
+        args: &[
+            arg("at", ArgKind::Vector, "Metres, in the world."),
+            arg("block", ArgKind::Asset, "A .block, or null for air."),
+            maybe("obj", ArgKind::Obj, "The Block World."),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
+        name: "blocks.fill",
+        about: "Fills the box between two points of the world, in metres, with a block, or air for `null`, as a script's Blocks.Fill does.",
+        args: &[
+            arg("from", ArgKind::Vector, "One corner, in metres."),
+            arg("to", ArgKind::Vector, "The opposite corner, in metres."),
+            arg("block", ArgKind::Asset, "A .block, or null for air."),
+            maybe("obj", ArgKind::Obj, "The Block World."),
+        ],
+        changes: true,
+        returns: "{ changed }",
     },
     CallInfo {
         name: "commands",
@@ -816,21 +864,74 @@ pub fn part_on(game: &Game, entity: Entity, id: &str) -> Result<Part, LinkError>
         .ok_or_else(|| refuse(ErrorKind::NoSuchComponent, format!("the Obj has no `{id}`")))
 }
 
+/// Every field of a component on an Obj, whichever of its tabs the
+/// Inspector shows: a Block World's Build and Settings, a Terrain's and a
+/// Foliage's tools. The Inspector lists one tab's at a time; a tool reaches
+/// them all.
+pub fn every_prop(world: &mut World, types: &ScriptTypes, entity: Entity, part: &Part) -> Vec<Prop> {
+    fn over<T: Copy>(
+        world: &mut World,
+        tools: &[T],
+        mut tool: impl FnMut(&mut World) -> &mut T,
+        mut list: impl FnMut(&World) -> Vec<Prop>,
+    ) -> Vec<Prop> {
+        let shown = *tool(world);
+        let mut all: Vec<Prop> = Vec::new();
+        for &each in tools {
+            *tool(world) = each;
+            for prop in list(world) {
+                if !all.contains(&prop) {
+                    all.push(prop);
+                }
+            }
+        }
+        *tool(world) = shown;
+        all
+    }
+    let list = |world: &World| props::props(world, entity, part, types);
+    match part {
+        Part::BlockWorld | Part::VoxelTerrain => {
+            let tools = [crate::block_props::BlockTool::Settings, crate::block_props::BlockTool::Build];
+            over(world, &tools, |world| &mut crate::block_props::ui_mut(world).tool, list)
+        }
+        Part::Terrain => {
+            let tools = crate::terrain_props::TerrainTool::ALL;
+            over(world, &tools, |world| &mut crate::terrain_props::ui_mut(world).tool, list)
+        }
+        Part::Foliage => {
+            let tools = crate::plants_props::FoliageTool::ALL;
+            over(world, &tools, |world| &mut crate::plants_props::ui_mut(world).tool, list)
+        }
+        _ => list(world),
+    }
+}
+
 /// Each field of a component on an Obj with the name a tool gives it:
 /// a built-in field by the name its locks give it, a script field by its
-/// path, and a second field of the same name with `.2` after it.
-pub fn named_props(game: &Game, types: &ScriptTypes, entity: Entity, part: &Part) -> Vec<(String, Prop)> {
+/// path, and a second field of the same name with `#2` after it.
+pub fn named_props(game: &mut Game, types: &ScriptTypes, entity: Entity, part: &Part) -> Vec<(String, Prop)> {
     let mut named: Vec<(String, Prop)> = Vec::new();
-    for prop in props::props(&game.engine.world, entity, part, types) {
+    for prop in every_prop(&mut game.engine.world, types, entity, part) {
         let base = match &prop {
             Prop::Field { path, .. } => path_id(path),
-            other => other.lock_key(),
+            // One a prefab's locks have no name for, as most of a Block World's, by its row's label.
+            other => Some(other.lock_key()).filter(|key| !key.is_empty()).unwrap_or_else(|| snake(&props::label(other))),
         };
         let taken = named.iter().filter(|(name, _)| *name == base || name.starts_with(&format!("{base}#"))).count();
         let name = if taken == 0 { base } else { format!("{base}#{}", taken + 1) };
         named.push((name, prop));
     }
     named
+}
+
+/// A label as a field's name: `Block size` is `block_size`.
+fn snake(label: &str) -> String {
+    let words: Vec<String> = label
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    words.join("_")
 }
 
 /// A script field's path as one name: `waves.2.count`.
@@ -846,7 +947,7 @@ pub fn path_id(path: &[Step]) -> String {
 }
 
 /// The field a tool names on a component of an Obj.
-pub fn resolve_prop(game: &Game, types: &ScriptTypes, entity: Entity, part: &Part, id: &str) -> Result<Prop, LinkError> {
+pub fn resolve_prop(game: &mut Game, types: &ScriptTypes, entity: Entity, part: &Part, id: &str) -> Result<Prop, LinkError> {
     named_props(game, types, entity, part).into_iter().find(|(name, _)| name == id).map(|(_, prop)| prop).ok_or_else(|| {
         refuse(ErrorKind::NoSuchField, format!("{} has no field `{id}`; `obj.get` lists them", component_id(part)))
     })
@@ -868,11 +969,17 @@ pub fn field_json(game: &Game, types: &ScriptTypes, entity: Entity, name: &str, 
             ("choice", json!(picked), Some(("options", json!(options))))
         }
         Some(Value::Obj(label)) => {
-            let target = props::obj_target(world, entity, prop).map(|target| obj_ref(game, target));
+            let target = match (script_target(game, types, entity, prop), props::obj_target(world, entity, prop)) {
+                (Some(Target::Obj(target)), _) | (_, Some(target)) => Some(obj_ref(game, target)),
+                _ => chosen(game, types, entity, prop, &label),
+            };
             ("obj", target.unwrap_or(Json::Null), Some(("label", json!(label))))
         }
         Some(Value::Asset(label)) => {
-            let path = props::asset_path(game, entity, prop).map(|path| asset_ref(game, &path));
+            let path = match (script_target(game, types, entity, prop), props::asset_path(game, entity, prop)) {
+                (Some(Target::Asset(path)), _) | (_, Some(path)) => Some(asset_ref(game, &path)),
+                _ => chosen(game, types, entity, prop, &label),
+            };
             ("asset", path.unwrap_or(Json::Null), Some(("label", json!(label))))
         }
         Some(Value::List(count)) => ("list", json!(count), None),
@@ -882,7 +989,7 @@ pub fn field_json(game: &Game, types: &ScriptTypes, entity: Entity, name: &str, 
         Some(Value::Gradient(gradient)) => ("gradient", json!(gradient.keys()), None),
         None => ("none", Json::Null, None),
     };
-    let mut field = json!({ "field": name, "label": props::title(types, prop), "type": kind, "value": value });
+    let mut field = json!({ "field": name, "label": props::label(prop), "type": kind, "value": value });
     if let Some((key, more)) = extra {
         field[key] = more;
     }
@@ -890,6 +997,39 @@ pub fn field_json(game: &Game, types: &ScriptTypes, entity: Entity, name: &str, 
         field["unit"] = json!(unit);
     }
     field
+}
+
+/// What a script's reference field points at.
+fn script_target(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Option<Target> {
+    let Prop::Field { behaviour, path } = prop else { return None };
+    crate::fields::target(&game.engine.world, types, entity, behaviour, path)
+}
+
+/// A reference field's value as its menu has it, for one set by a key or a
+/// name rather than an Obj or a file, as a Map's Open Map action is.
+fn chosen(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, label: &str) -> Option<Json> {
+    let choices = props::choices(game, types, entity, prop);
+    let (_, pick) = choices.into_iter().find(|(shown, _)| shown == label)?;
+    pick_json(game, &pick)
+}
+
+/// A choice of a reference field's menu as `field.choices` gives it.
+pub fn pick_json(game: &Game, pick: &Pick) -> Option<Json> {
+    match pick {
+        Pick::Obj(Some(target)) => Some(obj_ref(game, *target)),
+        Pick::Asset(Some(path)) => Some(asset_ref(game, path)),
+        Pick::Key(Some(key)) => Some(json!({ "key": key })),
+        Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) => None,
+    }
+}
+
+/// The choice of a reference field's menu a tool's value names: by the
+/// value `field.choices` gives it, or by its label.
+pub fn offered_pick(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, json: &Json) -> Option<Pick> {
+    let choices = props::choices(game, types, entity, prop);
+    let by_value = choices.iter().find(|(_, pick)| pick_json(game, pick).is_some_and(|value| value == *json));
+    let by_label = || json.as_str().and_then(|text| choices.iter().find(|(label, _)| label == text));
+    by_value.or_else(by_label).map(|(_, pick)| pick.clone())
 }
 
 /// What a field is set to from JSON, as the value it has now says it is

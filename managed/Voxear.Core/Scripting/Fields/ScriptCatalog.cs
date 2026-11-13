@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -64,11 +65,16 @@ internal static class ScriptCatalog
 		return Encoding.UTF8.GetString(stream.ToArray());
 	}
 
-	/// <summary>Every behaviour a scene can name: not abstract, and not generic.</summary>
+	/// <summary>
+	/// Every behaviour a scene can name: not abstract, and not generic. The engine's own sealed public ones, as
+	/// <see cref="BlockUser"/>, come with them, so Add Component offers them in every project.
+	/// </summary>
 	private static List<Type> Behaviours(IReadOnlyList<Assembly> assemblies)
 	{
 		var found = new List<Type>();
-		foreach (var type in Loadable(assemblies))
+		var engine = typeof(Behaviour).Assembly;
+		IEnumerable<Type> engineTypes = assemblies.Contains(engine) ? [] : engine.GetExportedTypes().Where(type => type.IsSealed);
+		foreach (var type in Loadable(assemblies).Concat(engineTypes))
 		{
 			if (type != null && typeof(Behaviour).IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters)
 			{

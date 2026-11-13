@@ -2297,11 +2297,12 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
     ]
 }
 
-/// The namespace every script is in, as `Hello`, which Add Component's
+/// The namespace every script without a menu path is in, as `Hello`, which Add Component's
 /// folders leave out; empty when they differ.
 pub(crate) fn shared_namespace<'a>(scripts: impl Iterator<Item = &'a BehaviourType>) -> Vec<String> {
     let mut shared: Option<Vec<String>> = None;
-    for script in scripts {
+    // One with a menu path of its own, as the engine's own behaviours have, is listed where that puts it.
+    for script in scripts.filter(|script| script.menu.is_none()) {
         let mut namespace: Vec<String> = script.name.split('.').map(str::to_string).collect();
         namespace.pop();
         shared = Some(match shared {

@@ -152,7 +152,7 @@ impl App {
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
         let mut editor = Editor::open(project, &mut renderer, self.log.clone())?;
         if let Err(error) = editor.serve_link(false) {
-            tracing::warn!("tools cannot reach this editor: {error:#}");
+            tracing::warn!("tools cannot reach this editor yet: {error:#}");
         }
         // Copying and pasting reach the desktop's clipboard, not only the editor's own.
         editor.ui.set_clipboard(Box::new(voxear_engine::ui_input::SystemClipboard::default()));

@@ -572,3 +572,47 @@ fn a_portal_over_a_third_of_the_picture_and_two_in_view_cost_no_more_than_their_
     assert!(one - none <= ONE_PORTAL_MS, "one Portal added {:.2} ms", one - none);
     assert!(two - none <= TWO_PORTALS_MS, "two Portals added {:.2} ms", two - none);
 }
+
+#[test]
+fn the_fog_over_water_is_the_same_with_a_portal_in_view_as_without() {
+    use voxear_render::Fog;
+    use voxear_terrain::blocks::BlockWorld;
+    let Some(mut renderer) = renderer() else { return };
+    let (mut world, [near, far, camera]) = fields(&mut renderer);
+    // A pond in the first field, left of the camera, eight blocks deep over stone, and fog thick enough to hide its
+    // floor.
+    let water = 4;
+    let column = move |x: i32, z: i32| (-5..4).map(move |y| ([x, y, z], if y < -4 { 3 } else { water }));
+    let changes = (6..30).flat_map(move |x| (36..60).flat_map(move |z| column(x, z)));
+    let blocks = world.query::<&mut BlockWorld>().into_iter().next().unwrap();
+    blocks.set_blocks(changes);
+    let mut post = *world.resource::<PostProcess>().unwrap();
+    post.fog = Fog { enabled: true, density: 0.06, height_falloff: 0.0001, ..Fog::default() };
+    world.insert_resource(post);
+    let eye = Vec3::new(36.0, 6.5, 32.0);
+    let turn = looking(eye, Vec3::new(22.0, 2.0, 46.0));
+    *world.get_mut::<Transform>(camera).unwrap() = Transform::new(eye, turn, Vec3::ONE);
+    let seen = frames(&mut renderer, &world, 4);
+    keep_image("portal fog over water.png", &seen);
+    let rect = opening(&world, camera, near, -4);
+    for portal in [near, far] {
+        world.despawn(portal);
+    }
+    let alone = frames(&mut renderer, &world, 4);
+    keep_image("portal fog over water, no portal.png", &alone);
+    // Over the pond, outside the opening: the water fogged as far off as its surface is, whether a Portal is in
+    // view or not. Fogged as far off as its floor, it was a pale sheet.
+    let (mut all, mut differ) = (0, 0);
+    for y in HEIGHT / 2..HEIGHT {
+        for x in 0..WIDTH {
+            if x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3] {
+                continue;
+            }
+            let (p, q) = (pixel(&seen, x, y), pixel(&alone, x, y));
+            all += 1;
+            differ += usize::from(p.iter().zip(q).any(|(p, q)| p.abs_diff(q) > 10));
+        }
+    }
+    assert!(all > 50_000, "{all} pixels looked at");
+    assert!(differ * 200 < all, "{differ} of {all} pixels outside the opening differ with a Portal in view");
+}

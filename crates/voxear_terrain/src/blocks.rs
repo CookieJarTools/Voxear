@@ -40,10 +40,12 @@ pub mod map_known;
 pub mod mesh;
 pub mod path;
 pub mod plant;
+pub mod shape;
 pub mod sight;
 pub mod smooth;
 pub mod structure;
 pub mod stream;
+pub mod usable;
 pub mod vox;
 
 use std::{
@@ -86,14 +88,75 @@ pub struct BlockFaces {
     pub overlap: u8,
     pub shape: block::BlockShape,
     pub color: [u8; 3],
+    /// Its placed state, as a byte (see `shape::BlockState`): each state of
+    /// a block a world holds is its own number.
+    pub state: u8,
+    /// The number of the first entry of its world naming the same block,
+    /// in whatever state: the same for every state of one block.
+    pub family: BlockId,
+    /// Its motion and swing among its world's (`file::BlockFile::motions`),
+    /// counted from 1; 0 for none.
+    pub motion: u8,
+    /// Which of its sides its parts cover whole, a bit each as a chunk
+    /// keeps its faces (see `shape::covers`).
+    pub covers: u8,
+    /// What it is as a block of parts, a bit each: [`PART_DRAWN`],
+    /// [`PART_PASSES`], [`PART_TALL`], [`PART_SOLID`], [`PART_HANGS`] and
+    /// [`PART_USED`].
+    pub part: u8,
+    /// A block of its own boxes' boxes.
+    pub custom: Option<shape::CustomShape>,
+    /// How its moving parts rest in its state, by its motion: turned, in
+    /// tenths of a degree, and moved, in sixty-fourths of a block.
+    pub rest: [i16; 2],
+    /// How long its motion lasts, in thousandths of a second, and how long
+    /// a button stays on once pressed, in hundredths.
+    pub travel: u16,
+    pub press: u16,
 }
+
+/// A block drawn as parts, a few boxes, in place of a cube.
+pub const PART_DRAWN: u8 = 1;
+/// A block walked through: a lever, a chain, an open door.
+pub const PART_PASSES: u8 = 2;
+/// A block that collides a block and a half high: a fence, a wall.
+pub const PART_TALL: u8 = 4;
+/// A block of parts that collides at all.
+pub const PART_SOLID: u8 = 8;
+/// A block that hangs from what is over it, and sways.
+pub const PART_HANGS: u8 = 16;
+/// A block a player can use.
+pub const PART_USED: u8 = 32;
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
         let (water, see_through, sways, shape) = (false, false, false, block::BlockShape::Cube);
         let (connects, mixes, overlap) = (0, 0, 0);
-        Self { top, sides, bottom, water, see_through, sways, connects, mixes, overlap, shape, color: [0; 3] }
+        let (state, family, motion, covers, part, custom, rest) = (0, 0, 0, 0, 0, None, [0; 2]);
+        let (travel, press) = (0, 0);
+        Self {
+            top,
+            sides,
+            bottom,
+            water,
+            see_through,
+            sways,
+            connects,
+            mixes,
+            overlap,
+            shape,
+            color: [0; 3],
+            state,
+            family,
+            motion,
+            covers,
+            part,
+            custom,
+            rest,
+            travel,
+            press,
+        }
     }
 
     /// Water drawn with surface `surface`.
@@ -109,9 +172,68 @@ pub fn is_water(faces: &[BlockFaces], block: BlockId) -> bool {
 }
 
 /// Whether block `block` is ground: neither air nor water, nor a vine,
-/// which hangs in the air and is walked through.
+/// which hangs in the air and is walked through, nor a block of parts that
+/// is walked through, as a lever or an open door is.
 pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
-    block != AIR && !faces.get(usize::from(block)).is_some_and(|faces| faces.water || faces.shape.is_vine())
+    block != AIR
+        && !faces
+            .get(usize::from(block))
+            .is_some_and(|faces| faces.water || faces.shape.is_vine() || faces.part & PART_PASSES != 0)
+}
+
+/// Whether block `block` is drawn as parts, a few boxes, in place of a
+/// cube (see `shape`).
+pub fn is_part(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.part & PART_DRAWN != 0 && !faces.water)
+}
+
+/// What block `block` is as a block of parts (see [`BlockFaces::part`]);
+/// 0 for a cube.
+pub fn part_of(faces: &[BlockFaces], block: BlockId) -> u8 {
+    faces.get(usize::from(block)).filter(|faces| !faces.water).map_or(0, |faces| faces.part)
+}
+
+/// Whether water flowing keeps out of block `block`: ground, and every
+/// block of parts, those walked through too.
+pub fn keeps_water_out(faces: &[BlockFaces], block: BlockId) -> bool {
+    is_ground(faces, block) || is_part(faces, block)
+}
+
+/// `faces` as a world's far rings draw them, their blocks much larger than
+/// its own: a block of parts that collides, a slab, a stair, a wall, as a
+/// whole cube, and any other as air (see [`far_block`]).
+pub fn far_faces(faces: &[BlockFaces]) -> Vec<BlockFaces> {
+    faces
+        .iter()
+        .map(|kind| match kind.part & PART_DRAWN != 0 && !kind.water {
+            true => BlockFaces { shape: block::BlockShape::Cube, part: 0, covers: 0, custom: None, ..*kind },
+            false => *kind,
+        })
+        .collect()
+}
+
+/// Block `block` as a world's far rings hold it: air for a block of parts
+/// that is too thin to see from so far, as a lever, a pane or a door is.
+pub fn far_block(faces: &[BlockFaces], block: BlockId) -> BlockId {
+    let part = part_of(faces, block);
+    let thin = part & PART_DRAWN != 0 && (part & (PART_PASSES | PART_HANGS) != 0 || part & PART_SOLID == 0);
+    let thin = thin
+        || faces.get(usize::from(block)).is_some_and(|kind| {
+            matches!(kind.shape, block::BlockShape::Pane | block::BlockShape::Fence | block::BlockShape::Door)
+                && part & PART_DRAWN != 0
+        });
+    if thin { AIR } else { block }
+}
+
+/// Which of block `block`'s sides are covered whole, a bit each as a chunk
+/// keeps its faces: every side of a cube that hides, and those its parts
+/// cover of a block of parts.
+pub fn covers(faces: &[BlockFaces], block: BlockId) -> u8 {
+    match faces.get(usize::from(block)) {
+        Some(kind) if kind.part & PART_DRAWN != 0 && !kind.water => kind.covers,
+        _ if hides(faces, block) => 0b11_1111,
+        _ => 0,
+    }
 }
 
 /// Whether block `block` is a vine: drawn as sheets on the ground beside
@@ -144,7 +266,7 @@ pub fn connects(faces: &[BlockFaces], block: BlockId) -> u8 {
 /// Whether block `block` hides what is behind it: ground that is not seen
 /// through. A face against such a block is never seen, and is not made.
 pub fn hides(faces: &[BlockFaces], block: BlockId) -> bool {
-    is_ground(faces, block) && !is_see_through(faces, block)
+    is_ground(faces, block) && !is_see_through(faces, block) && !is_part(faces, block)
 }
 
 /// Every block of a world, by chunk: chunks with no block in them are not
@@ -292,6 +414,15 @@ pub struct BlockWorld {
     /// The blocks its water's next step looks at (see [`flow`]): those near
     /// where its blocks changed since the last.
     pub flowing: Arc<BTreeSet<[i32; 3]>>,
+    /// Its links from each lever or button to the blocks it drives (see
+    /// [`usable`]).
+    pub links: Arc<usable::Links>,
+    /// Its blocks moving by their motions now, and its buttons pressed.
+    pub moving: Arc<Vec<usable::MovingBlock>>,
+    pub pressed: Arc<Vec<usable::Pressed>>,
+    /// Its own clock, in seconds, by which its blocks move: on as its game
+    /// or editor goes on (see [`BlockWorld::tick`]).
+    pub clock: f64,
 }
 
 impl Component for BlockWorld {}
@@ -314,6 +445,8 @@ impl PartialEq for BlockWorld {
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
             && (Arc::ptr_eq(&self.flowing, &other.flowing) || self.flowing == other.flowing)
+            // What moves and its clock are the moment's, not what the world is.
+            && self.links == other.links
     }
 }
 
@@ -339,7 +472,110 @@ impl BlockWorld {
             smooth,
             cast_shadows: true,
             flowing: Arc::new(flowing),
+            links: Arc::default(),
+            moving: Arc::default(),
+            pressed: Arc::default(),
+            clock: 0.0,
         }
+    }
+
+    /// Puts each block of `changes` in its new state, by number: those
+    /// marked to move by their motions starting now by its clock, one
+    /// already moving going back from where it is.
+    pub fn change_states(&mut self, changes: &[([i32; 3], BlockId, bool)]) {
+        let clock = self.clock;
+        for &(at, block, animate) in changes {
+            let kind = self.faces.get(usize::from(block)).copied().unwrap_or_default();
+            let length = f32::from(kind.travel) / 1000.0;
+            let moving = Arc::make_mut(&mut self.moving);
+            let was = moving.iter().position(|moving| moving.at == at).map(|at| moving.remove(at));
+            if !animate || length <= 0.0 {
+                continue;
+            }
+            let opening = shape::BlockState::from_byte(kind.state).is_moved();
+            // Turned back part way, it goes back from where it is.
+            let gone = was.map_or(length, |was| ((clock - was.started) as f32).clamp(0.0, was.length));
+            let started = clock - f64::from((length - gone).max(0.0));
+            moving.push(usable::MovingBlock { at, started, length, opening });
+        }
+        self.set_blocks(changes.iter().map(|&(at, block, _)| (at, block)));
+    }
+
+    /// Moves its clock on `delta` seconds: its blocks that are done moving
+    /// rest, and the buttons whose time is up are given back, to be turned
+    /// off.
+    pub fn tick(&mut self, delta: f32) -> Vec<[i32; 3]> {
+        self.clock += f64::from(delta.max(0.0));
+        let clock = self.clock;
+        if self.moving.iter().any(|moving| clock - moving.started > f64::from(moving.length)) {
+            Arc::make_mut(&mut self.moving).retain(|moving| clock - moving.started <= f64::from(moving.length));
+        }
+        if !self.pressed.iter().any(|pressed| pressed.until <= clock) {
+            return Vec::new();
+        }
+        let pressed = Arc::make_mut(&mut self.pressed);
+        let up: Vec<[i32; 3]> = pressed.iter().filter(|pressed| pressed.until <= clock).map(|pressed| pressed.at).collect();
+        pressed.retain(|pressed| pressed.until > clock);
+        up
+    }
+
+    /// Keeps the button at `at` on until `seconds` from now by its clock.
+    pub fn press(&mut self, at: [i32; 3], seconds: f32) {
+        let until = self.clock + f64::from(seconds.max(0.0));
+        let pressed = Arc::make_mut(&mut self.pressed);
+        pressed.retain(|pressed| pressed.at != at);
+        pressed.push(usable::Pressed { at, until });
+    }
+
+    /// Links the lever or button at `from` to the block at `to`, within
+    /// `usable::LINK_REACH`; whether it was linked now.
+    pub fn link(&mut self, from: [i32; 3], to: [i32; 3]) -> bool {
+        let near = (0..3).all(|i| (to[i] - from[i]).abs() <= usable::LINK_REACH);
+        let linked = self.links.get(&from).is_some_and(|all| all.contains(&to));
+        let full = self.links.get(&from).is_some_and(|all| all.len() >= usable::MOST_LINKED);
+        if !near || linked || full || from == to {
+            return false;
+        }
+        Arc::make_mut(&mut self.links).entry(from).or_default().push(to);
+        true
+    }
+
+    /// Takes away the link from `from` to `to`, or every link from `from`
+    /// where `to` is none; whether any went.
+    pub fn unlink(&mut self, from: [i32; 3], to: Option<[i32; 3]>) -> bool {
+        if !self.links.contains_key(&from) {
+            return false;
+        }
+        let links = Arc::make_mut(&mut self.links);
+        let Some(all) = links.get_mut(&from) else { return false };
+        let before = all.len();
+        match to {
+            Some(to) => all.retain(|&linked| linked != to),
+            None => all.clear(),
+        }
+        let gone = all.len() != before;
+        if all.is_empty() {
+            links.remove(&from);
+        }
+        gone
+    }
+
+    /// Its links as a list, from each lever or button to each block it
+    /// drives: as saved edits keep them.
+    pub fn link_list(&self) -> Vec<([i32; 3], [i32; 3])> {
+        self.links.iter().flat_map(|(from, all)| all.iter().map(move |to| (*from, *to))).collect()
+    }
+
+    /// Its links put back from a list, as saved edits keep them.
+    pub fn set_links(&mut self, list: &[([i32; 3], [i32; 3])]) {
+        let mut links = usable::Links::new();
+        for &(from, to) in list {
+            let all = links.entry(from).or_default();
+            if !all.contains(&to) && all.len() < usable::MOST_LINKED {
+                all.push(to);
+            }
+        }
+        self.links = Arc::new(links);
     }
 
     /// Moves its water on a step (see [`flow`]), from the blocks near where
@@ -546,7 +782,9 @@ impl BlockWorld {
         let drawn = |faces: &BlockFaces| {
             let joins = (faces.connects, faces.mixes, faces.overlap);
             let shape = (faces.water, faces.see_through, faces.sways, faces.shape, joins);
-            (faces.top, faces.sides, faces.bottom, shape)
+            let parts = (faces.state, faces.family, faces.motion, faces.covers, faces.part, faces.custom, faces.rest);
+            let parts = (parts, faces.travel, faces.press);
+            (faces.top, faces.sides, faces.bottom, shape, parts)
         };
         if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {
             return Self { faces: faces.into(), ..self.clone() };

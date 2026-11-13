@@ -34,6 +34,8 @@ use voxear_render::{
 use voxear_scene::{Name, Transform};
 use voxear_scripting::find_dotnet;
 
+mod editor_link;
+mod mcp;
 mod package;
 
 /// Counts Rust's heap, for the memory profiler.
@@ -53,6 +55,38 @@ enum ContentCommand {
     Build {
         /// Project folder or its voxear.toml.
         #[arg(default_value = ".")]
+        project: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum EditorCommand {
+    /// Make a call to the editor open on the project and print its answer as JSON: `vox editor call obj.get
+    /// obj=<scene>:3`. `--describe` lists every call.
+    Call {
+        /// The call, as `editor.state`.
+        #[arg(required_unless_present = "describe")]
+        call: Option<String>,
+        /// Its arguments: `name=value` pairs, each value JSON or else text, or one JSON object. `batch` with none
+        /// reads its calls from stdin, a JSON object a line.
+        args: Vec<String>,
+        /// Project folder or its voxear.toml.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// With no editor open, open one without a window for the call, on the project's files.
+        #[arg(long)]
+        headless: bool,
+        /// List every call with its arguments, and the exit codes.
+        #[arg(long)]
+        describe: bool,
+        /// With --describe, as JSON, adding the components, commands and kinds of the editor open.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the editor without a window, answering `vox editor call` until a call closes it.
+    Serve {
+        /// Project folder or its voxear.toml.
+        #[arg(long, default_value = ".")]
         project: PathBuf,
     },
 }
@@ -192,6 +226,15 @@ enum Commands {
         #[command(subcommand)]
         command: package::PackageCommand,
     },
+    /// The editor's calls as tools for an AI assistant, over the Model Context Protocol on stdin and stdout.
+    Mcp {
+        /// Project folder or its voxear.toml.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// With no editor open, say so, rather than starting a headless one for the tools.
+        #[arg(long)]
+        no_headless: bool,
+    },
     /// Run a project in a window, or headless for a number of frames.
     Run {
         /// Project folder or its voxear.toml.
@@ -238,8 +281,11 @@ enum Commands {
         #[arg(long)]
         title: Option<String>,
     },
-    /// Open a project in the editor.
+    /// Open a project in the editor; `vox editor call` and `vox editor serve` reach one from scripts and tools.
+    #[command(args_conflicts_with_subcommands = true)]
     Editor {
+        #[command(subcommand)]
+        action: Option<EditorCommand>,
         /// Project folder or its voxear.toml.
         #[arg(default_value = ".")]
         project: PathBuf,
@@ -361,6 +407,10 @@ fn main() -> Result<()> {
     // The editor keeps every log line for its Console; a build for the editor
     // sends each as JSON.
     let log = match &cli.command {
+        // Tools read these commands' stdout, so their logs go to stderr.
+        Commands::Editor { action: Some(_), .. } | Commands::Mcp { .. } => {
+            Some(voxear_core::logging::init_capturing_stderr())
+        }
         Commands::Editor { .. } => Some(voxear_core::logging::init_capturing()),
         // The launcher reads these commands' stdout, so their logs go to stderr.
         Commands::New { json: true, .. } | Commands::Upgrade { json: true, .. } => {
@@ -380,7 +430,18 @@ fn main() -> Result<()> {
         }
     };
     match cli.command {
-        Commands::Editor { project, screenshot, width, height, frames, open } => {
+        Commands::Editor { action: Some(EditorCommand::Call { call, args, project, headless, describe, json }), .. } => {
+            let request = editor_link::CallRequest { call, args, project, headless, describe, json };
+            let settings = |project: &Project| renderer_settings(project, false);
+            let code = editor_link::call(request, settings, log.expect("captured above"))?;
+            std::process::exit(code);
+        }
+        Commands::Editor { action: Some(EditorCommand::Serve { project }), .. } => {
+            let settings = |project: &Project| RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(project, false) };
+            editor_link::serve(&project, settings, log.expect("captured above"))
+        }
+        Commands::Mcp { project, no_headless } => mcp::serve(&project, !no_headless),
+        Commands::Editor { action: None, project, screenshot, width, height, frames, open } => {
             let log = log.expect("captured above");
             let project = Project::open(&project)?;
             let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, false) };

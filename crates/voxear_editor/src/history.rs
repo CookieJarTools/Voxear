@@ -519,6 +519,26 @@ impl History {
         Some(selected)
     }
 
+    /// How many steps there are to undo.
+    pub fn depth(&self) -> usize {
+        self.done.len()
+    }
+
+    /// How many steps there are to redo.
+    pub fn redo_depth(&self) -> usize {
+        self.undone.len()
+    }
+
+    /// Makes the steps recorded since there were `depth` of them one step,
+    /// as a tool's batch of calls is undone at once.
+    pub fn group_since(&mut self, depth: usize) {
+        if self.done.len() <= depth + 1 {
+            return;
+        }
+        let steps: Vec<Edit> = self.done.drain(depth..).map(|(edit, _)| edit).collect();
+        self.done.push((Edit::Group(steps), Instant::now() - MERGE_WITHIN));
+    }
+
     /// Forgets everything, as when another level opens and the Objs go.
     pub fn clear(&mut self) {
         self.done.clear();

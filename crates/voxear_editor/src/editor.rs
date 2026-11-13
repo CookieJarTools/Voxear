@@ -31,6 +31,7 @@ mod inspectors;
 mod languages;
 mod lighting;
 mod level_edits;
+mod link_calls;
 mod material_drops;
 mod material_shaders;
 mod model_clips;
@@ -471,6 +472,8 @@ pub struct Editor {
     /// The scripts build and are described again once no build is under
     /// way, whether or not a script changed, as after the packages change.
     rebuild_scripts: bool,
+    /// Tools reaching the editor through its link (see `link_calls`).
+    link: link_calls::Link,
 }
 
 impl Editor {
@@ -749,6 +752,7 @@ impl Editor {
             described_from: None,
             scripts_checked: None,
             rebuild_scripts: false,
+            link: Default::default(),
             layout_checked: Instant::now(),
         };
         editor.restore_layout();
@@ -756,6 +760,12 @@ impl Editor {
     }
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
+    /// Turns the block the Build tool's brush puts down on, as R does over
+    /// a world of blocks.
+    pub fn turn_brush_block(&mut self) {
+        self.block_tools.turn();
+    }
+
     pub fn select(&mut self, entity: Option<Entity>) {
         self.selected_part = None;
         self.reselect(entity);
@@ -829,6 +839,10 @@ impl Editor {
             }
             if let Some(delta) = self.game_delta(delta) {
                 self.game.tick(delta, Some(renderer));
+            }
+            // Blocks used while editing move by their motions, as they do in play.
+            if !self.is_playing() {
+                voxear_engine::blocks::tick(&mut self.game.engine.world, &mut self.game.content, delta);
             }
         }
         let views = {
@@ -948,6 +962,10 @@ impl Editor {
         self.update_material_drops(renderer);
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
+        }
+        {
+            profile_scope!("Link");
+            self.update_link(renderer);
         }
         self.update_windows();
         self.update_layouts();
@@ -1738,6 +1756,10 @@ impl Editor {
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
             let free = free && !self.terrain_tools.is_hovered();
+            // The block the brush builds with read, so how it would stand put down shows before the first click.
+            if let Some(guid) = crate::block_props::built_with(&self.game) {
+                let _ = self.game.content.block(&guid.to_string());
+            }
             self.block_tools.hover(&self.game, &camera, selected, over_field.filter(|_| free));
             let free = free && !self.block_tools.is_hovered();
             self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));
@@ -2188,6 +2210,7 @@ impl Editor {
                 }
                 Ok(Err(error)) => {
                     tracing::warn!("the scripts could not be described: {error:#}");
+                    self.link.scripts_failed = Some(format!("{error:#}"));
                     self.notify("The scripts failed to build; their fields show as they last built");
                     self.describing = None;
                 }
@@ -2281,7 +2304,9 @@ impl Editor {
             _ if self.is_playing() => {
                 self.notify("Stop playing to save or undo; edits while playing are not kept");
             }
-            Command::Save => self.save(),
+            Command::Save => {
+                self.save();
+            }
             Command::AlignWithView => self.align_with_view(),
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
@@ -2304,26 +2329,32 @@ impl Editor {
         }
     }
 
-    /// Writes the open level's scenes that changed back to their files.
-    pub fn save(&mut self) {
+    /// Writes the open level's scenes that changed back to their files, and
+    /// returns their paths.
+    pub fn save(&mut self) -> Vec<String> {
         let game = &mut self.game;
         let saved = game.levels.save(&game.engine, &mut game.content, &game.project.root);
-        match saved {
-            Ok(written) if written.is_empty() => self.notify("Nothing to save: the scenes are as they are on disk"),
+        let written = match saved {
+            Ok(written) if written.is_empty() => {
+                self.notify("Nothing to save: the scenes are as they are on disk");
+                written
+            }
             Ok(written) => {
                 self.prefab_saved();
                 tracing::info!("saved {}", written.join(", "));
                 let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
                 self.notify(&format!("Saved {}", names.join(", ")));
+                written
             }
             Err(error) => {
                 tracing::error!("could not save: {error:#}");
                 self.notify("Could not save; the Console says why");
-                return;
+                return Vec::new();
             }
-        }
+        };
         self.unsaved = false;
         self.discard_armed = None;
+        written
     }
 
     /// Takes back the last edit, as Ctrl+Z does.
@@ -2512,6 +2543,18 @@ impl Editor {
             && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)
         {
             self.commands.push(Command::Delete);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && text.to_lowercase() == "r"
+            && self.block_tools.is_hovered()
+        {
+            // Over a world of blocks under its Build tool, R turns the block the brush puts down.
+            self.turn_brush_block();
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event

@@ -38,8 +38,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockFaces, BlockMap,
+    BlockFaces, BlockMap, PART_DRAWN, PART_HANGS, PART_PASSES, PART_SOLID, PART_TALL, PART_USED,
     block::BlockShape,
+    shape::{BlockMotion, BlockState, PartLook, UseKind},
     chunk::{AIR, BlockId},
 };
 
@@ -152,9 +153,19 @@ pub struct BlockKind {
     #[serde(skip)]
     pub overlap: u8,
     /// Its shape, as its block says: a cube, a cube with tufts of leaves,
-    /// or a vine. Never written: a kind of the world's own is a cube.
+    /// a vine, or a block of parts. Never written: a kind of the world's
+    /// own is a cube.
     #[serde(skip)]
     pub shape: super::block::BlockShape,
+    /// The placed state of the block it is (see `shape::BlockState`), as a
+    /// byte: a world numbers each block and state it holds, so the same
+    /// block may have entries of several states, each its own number. 0
+    /// for a block that keeps none.
+    pub state: u8,
+    /// What it is as a block of parts, as its block says: its motion, its
+    /// own boxes, whether it is used. Never written.
+    #[serde(skip)]
+    pub part: PartLook,
 }
 
 /// Over a look's number, the look it is with another block's picture over
@@ -191,6 +202,12 @@ struct Written {
     water: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     cover: Option<BlockCover>,
+    #[serde(skip_serializing_if = "is_no_state")]
+    state: u8,
+}
+
+fn is_no_state(state: &u8) -> bool {
+    *state == 0
 }
 
 impl From<BlockKind> for Written {
@@ -206,6 +223,7 @@ impl From<BlockKind> for Written {
             bottom: kind.bottom.filter(|_| own),
             water: own && kind.water,
             cover: kind.cover.filter(|_| !kind.removed),
+            state: if kind.removed || own { 0 } else { kind.state },
         }
     }
 }
@@ -260,6 +278,8 @@ impl Default for BlockKind {
             connected: 0,
             overlap: 0,
             shape: super::block::BlockShape::Cube,
+            state: 0,
+            part: PartLook::default(),
         }
     }
 }
@@ -273,6 +293,11 @@ impl BlockKind {
     /// An entry naming the `.block` at `reference`.
     pub fn of(reference: &str) -> Self {
         Self { block: Some(reference.into()), ..Self::default() }
+    }
+
+    /// An entry naming the `.block` at `reference` placed in `state`.
+    pub fn of_state(reference: &str, state: u8) -> Self {
+        Self { block: Some(reference.into()), state, ..Self::default() }
     }
 
     /// The place a block was taken out of.
@@ -370,7 +395,8 @@ impl BlockFile {
             if kind.removed {
                 *kind = BlockKind::gap();
             } else if kind.block.is_some() {
-                *kind = BlockKind { block: kind.block.take(), cover: kind.cover, ..BlockKind::default() };
+                let (block, cover, state) = (kind.block.take(), kind.cover, kind.state);
+                *kind = BlockKind { block, cover, state, ..BlockKind::default() };
             }
         }
         file.forget_gaps();
@@ -492,13 +518,14 @@ impl BlockFile {
             at.min(255) as u8
         };
         let mut faces = vec![BlockFaces::default()];
+        let mut motions = Vec::new();
         for kind in &self.blocks {
             if kind.removed {
                 faces.push(BlockFaces::default());
                 continue;
             }
             let shape = if kind.water { BlockShape::Cube } else { kind.shape };
-            let leafy = !shape.is_cube();
+            let leafy = shape.is_loose();
             // Which of its faces join: each by the material it is drawn with. Only a cube's do.
             let joins = |own: &Option<String>, bit: u8| {
                 let bit = if own.is_some() { bit } else { JOINS_SIDES };
@@ -521,9 +548,83 @@ impl BlockFile {
             let overlap = if kind.water || !shape.is_cube() { 0 } else { kind.overlap };
             let drawn = BlockFaces::new(top, sides, bottom);
             let shown = BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn };
-            faces.push(BlockFaces { connects, mixes, overlap, ..shown });
+            let joined = BlockFaces { connects, mixes, overlap, ..shown };
+            faces.push(self.part_faces(kind, shape, &mut motions, joined));
+        }
+        // Each entry of the same block, in whatever state, is of the family of its first.
+        let mut firsts: Vec<(&str, BlockId)> = Vec::new();
+        for (at, kind) in self.blocks.iter().enumerate() {
+            let number = (at + 1) as BlockId;
+            let family = match kind.block.as_deref().filter(|_| kind.is_live()) {
+                Some(reference) => match firsts.iter().find(|(seen, _)| *seen == reference) {
+                    Some(&(_, first)) => first,
+                    None => {
+                        firsts.push((reference, number));
+                        number
+                    }
+                },
+                None if kind.is_live() => number,
+                None => 0,
+            };
+            faces[at + 1].family = family;
         }
         (looks, faces)
+    }
+
+    /// Each motion its blocks move by and how far each that hangs swings,
+    /// once each, in the order `BlockFaces::motion` counts them from 1.
+    pub fn motions(&self) -> Vec<(Option<BlockMotion>, f32)> {
+        let mut motions = Vec::new();
+        for kind in &self.blocks {
+            let shape = if kind.water { BlockShape::Cube } else { kind.shape };
+            let _ = self.part_faces(kind, shape, &mut motions, BlockFaces::default());
+        }
+        motions
+    }
+
+    /// `faces` of entry `kind`, of `shape`, as a block of parts: its state,
+    /// what it covers, how it collides, and its motion, numbered among
+    /// `motions` as they are found.
+    fn part_faces(
+        &self,
+        kind: &BlockKind,
+        shape: BlockShape,
+        motions: &mut Vec<(Option<BlockMotion>, f32)>,
+        faces: BlockFaces,
+    ) -> BlockFaces {
+        if kind.removed || !shape.is_part() && !kind.part.usable {
+            return faces;
+        }
+        let state = BlockState::from_byte(kind.state).normalized(shape);
+        let custom = kind.part.custom;
+        let used = UseKind::of(shape, kind.part.usable, kind.part.motion.is_some()) != UseKind::None;
+        let mut part = u8::from(shape.is_part()) * PART_DRAWN | u8::from(used) * PART_USED;
+        if shape.is_part() {
+            let solid = !shape.passes(false) && !kind.part.hangs;
+            part |= u8::from(shape.passes(state.open) || kind.part.hangs) * PART_PASSES
+                | u8::from(shape.is_tall(state.open)) * PART_TALL
+                | u8::from(solid) * PART_SOLID
+                | u8::from(kind.part.hangs) * PART_HANGS;
+        }
+        let entry = (kind.part.motion.clone(), kind.part.swing);
+        let motion = match entry.0.is_some() || entry.1 > 0.0 {
+            true => match motions.iter().position(|kept| *kept == entry) {
+                Some(at) => at + 1,
+                None => {
+                    motions.push(entry);
+                    motions.len()
+                }
+            },
+            false => 0,
+        };
+        let covers = if shape.is_part() { super::shape::covers(shape, state, custom.as_ref()) } else { 0 };
+        let (turn, shift) = kind.part.motion.as_ref().map_or((0.0, 0.0), |motion| motion.rest(state.is_moved()));
+        let rest = [(turn * 10.0).round() as i16, (shift * 4.0).round() as i16];
+        // A world draws at most 63 motions: a block past them rests as it is, unmoving.
+        let motion = if motion < 64 { motion as u8 } else { 0 };
+        let travel = kind.part.motion.as_ref().map_or(0, |motion| (motion.length() * 1000.0).round() as u16);
+        let press = (kind.part.press_time * 100.0).round().clamp(0.0, 6000.0) as u16;
+        BlockFaces { state: state.to_byte(), part, covers, motion, custom, rest, travel, press, ..faces }
     }
 
     /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can,

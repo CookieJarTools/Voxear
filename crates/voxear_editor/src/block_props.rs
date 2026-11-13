@@ -83,10 +83,17 @@ pub enum BlockBrush {
     Break,
     Paint,
     Model,
+    /// Uses the block clicked, as a player would: opens a door, turns a
+    /// lever.
+    Use,
+    /// Links a lever or a button clicked to each block clicked after it, or
+    /// takes a link there away.
+    Link,
 }
 
 impl BlockBrush {
-    pub const ALL: [BlockBrush; 4] = [BlockBrush::Place, BlockBrush::Break, BlockBrush::Paint, BlockBrush::Model];
+    pub const ALL: [BlockBrush; 6] =
+        [BlockBrush::Place, BlockBrush::Break, BlockBrush::Paint, BlockBrush::Model, BlockBrush::Use, BlockBrush::Link];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -94,6 +101,8 @@ impl BlockBrush {
             BlockBrush::Break => "Break",
             BlockBrush::Paint => "Paint",
             BlockBrush::Model => "Model",
+            BlockBrush::Use => "Use",
+            BlockBrush::Link => "Link",
         }
     }
 }
@@ -663,6 +672,33 @@ pub(crate) fn number_block(
 ) -> Option<BlockId> {
     let mut file = file_of(&game.engine.world, entity)?;
     let number = number_into(game, entity, &mut file, guid)?;
+    change_file(game, renderer, entity, file);
+    Some(number)
+}
+
+/// As [`number_block`], the block placed in `state`, a byte (see
+/// `voxear_terrain::blocks::shape::BlockState`): each state a world holds
+/// a block in is a number of its own.
+pub(crate) fn number_block_state(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    guid: AssetGuid,
+    state: u8,
+) -> Option<BlockId> {
+    let known = drawn_of(&game.engine.world, entity).and_then(|drawn| drawn.number_of_state(guid, state));
+    if known.is_some() {
+        return known;
+    }
+    let mut file = file_of(&game.engine.world, entity)?;
+    let Some((with, _)) = voxear_engine::blocks::with_block_state(&mut game.content, &file, guid, state) else {
+        if let Some(world) = game.engine.world.get::<BlockWorldAsset>(entity).map(|asset| asset.guid) {
+            voxear_engine::blocks::say_full(&mut game.content, world, guid);
+        }
+        return None;
+    };
+    file = with;
+    let number = file.blocks.len() as BlockId;
     change_file(game, renderer, entity, file);
     Some(number)
 }

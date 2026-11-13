@@ -161,6 +161,25 @@ pub fn init_capturing() -> LogCapture {
     capture
 }
 
+/// [`init_capturing`], printing to stderr, for a command whose stdout
+/// another program reads, as tools read `vox editor call` and `vox mcp`.
+pub fn init_capturing_stderr() -> LogCapture {
+    let filter =
+        std::env::var("VOXEAR_LOG").or_else(|_| std::env::var("RUST_LOG")).unwrap_or_else(|_| DEFAULT_FILTER.into());
+    let capture = LogCapture::default();
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::new(filter))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .fmt_fields(printed_fields())
+                .with_writer(std::io::stderr),
+        )
+        .with(Capture::new(capture.clone()))
+        .try_init();
+    capture
+}
+
 /// A subscriber that keeps lines in `capture` and prints nothing, for a
 /// test or a tool with output of its own to set as its thread's default.
 pub fn capturing_only(capture: LogCapture) -> impl Subscriber + Send + Sync {

@@ -197,4 +197,11 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<byte*, int, int, void> TexturePackWear;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> TexturePacksInfo;
 	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> TexturePackStarter;
+	public delegate* unmanaged[Cdecl]<Vector3*, int> BlockUse;
+	public delegate* unmanaged[Cdecl]<Vector3*, int> BlockState;
+	public delegate* unmanaged[Cdecl]<Vector3*, int, int, int> BlockSetState;
+	public delegate* unmanaged[Cdecl]<Vector3*, byte*, int, int, int> BlockSetPlaced;
+	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, Vector3*, int> BlockPlacedState;
+	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, int> BlockLink;
+	public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, int, int> BlockLinks;
 }

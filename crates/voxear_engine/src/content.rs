@@ -1520,8 +1520,10 @@ impl Content {
                 loaded.pending = Arc::new(all_changes(&stale.base, &stale.world.blocks, &stale.pending));
                 loaded.base = Arc::default();
                 loaded.world = BlockWorld::made(Default::default(), &faces, placed.block_size, placed.smooth);
+                loaded.world.set_links(&stale.world.link_list());
             } else if regrown {
-                let changes = BlockEdits::between(&stale.base, &stale.world.blocks);
+                let mut changes = BlockEdits::between(&stale.base, &stale.world.blocks);
+                changes.links = stale.world.link_list();
                 loaded.base = Arc::new(crate::blocks::ground(self, &placed));
                 loaded.world = crate::blocks::make(&file, &loaded.base, Some(&changes));
             } else if *stale.world.faces != faces[..] {
@@ -1553,9 +1555,10 @@ impl Content {
             let drawn = crate::blocks::resolved(self, &file);
             if file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
                 let (_, faces) = drawn.faces();
-                let world =
+                let mut world =
                     voxear_terrain::blocks::BlockWorld::made(Default::default(), &faces, file.block_size, file.smooth);
                 let pending = Arc::new(edits.unwrap_or_default());
+                world.set_links(&pending.links);
                 return Ok(Arc::new(LoadedBlockWorld { world, base: Arc::default(), pending, file, derived }));
             }
             let base = Arc::new(crate::blocks::ground(self, &file));

@@ -340,6 +340,12 @@ pub fn command_titles(sources: &Sources) -> Vec<String> {
     gather(sources).into_iter().filter(|entry| entry.command).map(|entry| entry.title).collect()
 }
 
+/// Every command as the palette lists them, by the key it is remembered by,
+/// with its title, its keys and what it does, as tools run them by key.
+pub fn command_list(sources: &Sources) -> Vec<(String, String, String, PaletteAction)> {
+    gather(sources).into_iter().filter(|entry| entry.command).map(|e| (e.key, e.title, e.detail, e.action)).collect()
+}
+
 /// Everything the palette offers: the commands first, those added by code,
 /// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {

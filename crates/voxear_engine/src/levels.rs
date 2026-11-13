@@ -234,6 +234,47 @@ impl Levels {
         Ok(change)
     }
 
+    /// Loads `scenes` again from their files, as after a tool wrote them,
+    /// leaving the other open scenes as they are and keeping the active one.
+    /// Their Objs come back with the paths their files give them.
+    pub fn reload_scenes(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        renderer: Option<&mut Renderer>,
+        scenes: &[AssetGuid],
+    ) -> Result<LevelChange> {
+        let Some(level) = self.current.clone() else { anyhow::bail!("no level or scene is open") };
+        let targets = self
+            .scenes
+            .iter()
+            .map(|s| Target { guid: s.guid, path: s.path.clone(), reload: scenes.contains(&s.guid), required: true })
+            .collect();
+        let options = LevelOptions { set_active: false, tidy_up: false, ..LevelOptions::default() };
+        let active = self.active;
+        self.change(engine, content, renderer, (level, targets, active), &options)
+    }
+
+    /// Whether an open scene's file holds what the scene has now, as saving
+    /// it would write it: so a file changed on disk is told from one the
+    /// editor saved itself. A particle effect open as a scene always is.
+    pub fn scene_matches_disk(&self, engine: &Engine, content: &mut Content, project: &Path, scene: AssetGuid) -> bool {
+        let Some(open) = self.scenes.iter().find(|s| s.guid == scene) else { return true };
+        if open.path.ends_with(".particles") {
+            return true;
+        }
+        let (mut captured, _) = scene_file::capture_scene_with_ids(&engine.world, content, &open.objs);
+        (captured.sky, captured.post) = (open.sky, open.post.clone());
+        captured.lighting = open.lighting.as_ref().map(|(reference, _)| reference.clone());
+        let on_disk = scene_file::read(&project.join(&open.path)).ok().and_then(|s| toml::to_string(&s).ok());
+        on_disk.is_some() && on_disk == toml::to_string(&captured).ok()
+    }
+
+    /// The open scenes, by GUID, with their paths.
+    pub fn open_scenes(&self) -> Vec<(AssetGuid, &str)> {
+        self.scenes.iter().map(|s| (s.guid, s.path.as_str())).collect()
+    }
+
     /// Opens one scene on its own, as the editor does for a scene that is in
     /// no level: everything else unloads and it is the active scene. A prefab
     /// opens the same way, to edit, its Objs as a scene's, and saves back as

@@ -2508,6 +2508,48 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     by biome, biomes numbered as a world loads, a saved biome making worlds again, a place's biome, the list added
     to, moved, taken from and undone, the Inspector's fields saved, the starters made once and listed, snow by
     height through the editor, scripts asking a place's biome.
+  - ~~**Blocks of parts, blocks you use, and hanging blocks:**~~ done: `block::BlockShape` grows slabs, stairs,
+    fences, walls, panes, doors, trap doors, fence gates, levers, buttons, chains, ropes and a block's own boxes
+    (`blocks::shape`: each drawn as boxes in sixteenths, `part_boxes`, from its placed state and what it takes from
+    the blocks beside it, `Around`: which sides a fence, a wall or a pane joins, which corner a stair turns). A
+    placed block's state is a byte (`BlockState`: facing of six, half, open, on, hinge), normalized to what its
+    shape keeps, and is part of its number: a palette entry names a block and a state (`BlockKind::state`), so
+    chunks, saved edits and what is sent to a player who joins are no larger. The mesher keeps a chunk's part
+    quads between its loose quads and its water (`ChunkMesh::parts`, `buckets[FACINGS + 1]`), each face of a box
+    two quads' words (`mesh::pack_part`: its rectangle and plane in sixteenths, its surface, whether it moves, its
+    hinge, its motion's number, whether its block is open, and how many hanging blocks are over it); a whole
+    block's face is hidden only against a side a block of parts covers whole (`BlockFaces::covers`). Solid
+    parts are triangles posed as they rest, for physics and the GI; fences, walls and shut gates have colliders a
+    block and a half high (`ChunkMesh::colliders`); levers, buttons, chains, ropes and open doors are walked
+    through (`PART_PASSES`, `is_ground`); water keeps out (`keeps_water_out`); Block Mobs stand on slabs and stop
+    at fences (`path::can_stand`); a Character Controller steps half a block on a world of blocks; the far rings
+    draw solid parts as cubes and thin ones not at all (`far_faces`, `far_block`), and so do maps.
+    - **Using blocks** (`blocks::usable`, `engine::blocks::{use_block, set_moved, change_state, tick}`): a door
+      opens whole with its pair hung on the other side (`door_group`), a lever toggles, a button is on for its
+      press time, and a lever or a button drives what it is linked to (`BlockWorld::links`, within 64 blocks,
+      saved in `.blocks` version 3 and in script captures). A door put down takes its upper block
+      (`with_door_halves`). Each state is numbered as it is first used (`state_number`).
+    - **Motion:** a block's `[motion]` keys (time, turn, move, ease; a shape's own unless it has one) are uploaded
+      per world (`GpuBlockMotion`) with the blocks moving now (`BlockWorld::moving`, by the world's own clock,
+      `GpuMovingBlock`); `partPoint` in `block_quads.slang` poses a part's corners by them, the previous frame's
+      too for motion vectors, and reads its pictures where it rests. Hanging blocks swing a few degrees about what
+      holds them in the wind and by the foliage push (`hangSwing`).
+    - **Structures** place a palette entry in a state (`[[model.states]]`) and turn it with the structure
+      (`WorldStructures::turns`, eight numbers a block that faces).
+    - **Scripts** (native API 85): `Blocks.Use`, `Using`, `Used`, `StateAt`, `SetState`, `Set(position, block,
+      state)`, `Place(hit, block, looking)`, `Link`, `Unlink`, `LinksFrom`; `BlockState`, `BlockShape`,
+      `BlockFacing`, `BlockHalf`, `DoorHinge`, `BlockUseKind`; `Block.Shape`, `IsUsable`; `BlockRules.CanUse`
+      and `OnUsed`; the **Block User** behaviour. Script captures name each block numbered in a state once
+      (`VXBT` version 2).
+    - **Editor:** the block Inspector's Use, Motion and Boxes; the Build tool puts a block down as a player would
+      (`shape::placed_state`), R turns it, its outline shows its boxes, and Use and Link brushes; Starter Blocks in
+      the Blocks panel with pictures drawn in code; blocks move while editing.
+    - Tests: shapes' boxes, states, turning and placing; meshing, collision and hanging of each; doors and levers;
+      links saved; turned structure doors; a C# script; GPU pictures of the shapes and a door half way open; the
+      Build tool and the Inspector in the editor.
+    - Later: water inside part blocks, part shapes in Voxel Terrain, small-cube faces on parts, signals past
+      links (wires, pressure plates, delays, gates), mobs opening doors, links in structures, climbing ropes and
+      ladders, blocks holding things, a box model's own pictures and clips as a block.
 - **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
   origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -2763,7 +2805,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - pages read by someone new to Voxear following them step by step, and rewritten where they get stuck
   - Docs Health in the editor holding the line after: pages older than the code they describe, samples that no
     longer build, and APIs with no page
-- Editor RPC for `vox`, and the hook for AI tooling.
+- ~~**Editor RPC for `vox`, and the hook for AI tooling:**~~ done: a running editor answers calls from programs on the
+  same computer (`voxear_engine::local_link`): loopback only, a secret in `.voxear/Editor` only its user reads,
+  JSON-RPC 2.0 a line each. 52 calls (`voxear_editor::link::CALLS`): read the open level, Objs, components and
+  fields as JSON; make, change, copy, move and delete Objs; add, remove and switch components; set any field the
+  Inspector shows by its typed reference; undo, redo and `batch` as one step; select and frame; every command
+  palette command by id; save, open levels and scenes; the Project panel's files; Play, Pause, Step, Stop and the
+  played game's console; the Console's lines; a PNG of the Scene view, Game view or whole editor; script builds
+  with their errors by file and line; settings; the manual's pages. Each change is a step on the editor's undo
+  and a `[Tools]` line in the Console; **Let tools change the project** in Settings makes tools read only. Open
+  scenes and `voxear.toml` written on disk are read again, unless edits wait. `vox editor call` (JSON out, exit
+  codes, `--headless`, `--describe --json`), `vox editor serve` (a headless editor a windowed one takes over
+  from), and `vox mcp`, every call a tool for an AI assistant, with captures sent as pictures. Tests: the link
+  (order, a wrong secret, loopback and 0600, a second editor, a stale file), an editor driven over the socket
+  (make an Obj, set a field, undo, redo, save, capture, the Console), a batch as one step, refusals, scenes
+  changed on disk, every component's fields reached, `vox editor call` and `vox mcp` from outside. Manual: The
+  Command Line, Driving the Editor from a Terminal. Not done: brush tools, the generator graph and the Model
+  window by call rather than by file; pointer and key input; events pushed to tools.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

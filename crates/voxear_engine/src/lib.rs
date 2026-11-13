@@ -57,6 +57,7 @@ pub mod prefab_overrides;
 pub mod previews;
 pub mod prompt_icons;
 mod project;
+pub mod local_link;
 pub mod remote_console;
 pub mod scene_file;
 pub mod screen_ui;

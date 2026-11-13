@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, EMPTY, FULL, Fill, depth_of, fill_of},
-    is_ground, is_water,
+    is_ground, is_water, keeps_water_out,
 };
 
 /// How many blocks water runs on sideways from what feeds it.
@@ -226,13 +226,13 @@ pub fn step(
     // Past the world's chunks is as good as ground: water goes no further.
     let block = |at: [i32; 3]| inside(at).then(|| map.get(at));
     let water = |at: [i32; 3]| block(at).filter(|&b| is_water(faces, b)).map(|b| (b, Water::of(map.fill(at))));
-    let on_ground = |at: [i32; 3]| block(at).is_none_or(|b| is_ground(faces, b));
+    let on_ground = |at: [i32; 3]| block(at).is_none_or(|b| keeps_water_out(faces, b));
     // What water can stand on: ground, or more water that is not falling away under it.
     let held = |at: [i32; 3]| on_ground(at) || water(at).is_some_and(|(_, water)| water != Water::Falling);
     let mut changes = Vec::new();
     for &at in near {
         let Some(now) = block(at) else { continue };
-        if is_ground(faces, now) {
+        if keeps_water_out(faces, now) {
             continue;
         }
         let was = water(at);

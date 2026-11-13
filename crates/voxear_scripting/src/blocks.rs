@@ -94,6 +94,9 @@ const LIQUID_SOURCES: i32 = 4;
 enum Picked<'a> {
     Number(BlockId),
     Named(&'a str),
+    /// By the `.block` it is, placed in a state (see
+    /// `voxear_terrain::blocks::shape::BlockState`).
+    Placed(&'a str, u8),
 }
 
 /// Sets the blocks `shape` reaches to `block` (0 for air) in every world of
@@ -142,6 +145,12 @@ fn set(shape: i32, a: Vec3, b: Vec3, picked: Picked, only: i32) -> i32 {
                 Picked::Number(block) => block,
                 Picked::Named(named) => {
                     let numbered = with_services(|services| services.block_number(world, entity, named, true));
+                    let Some(block) = numbered.flatten() else { continue };
+                    block
+                }
+                Picked::Placed(named, state) => {
+                    let numbered =
+                        with_services(|services| services.block_number_state(world, entity, named, state, true));
                     let Some(block) = numbered.flatten() else { continue };
                     block
                 }
@@ -226,6 +235,16 @@ fn set(shape: i32, a: Vec3, b: Vec3, picked: Picked, only: i32) -> i32 {
             if !world.has::<BuiltBlocks>(entity) {
                 world.insert(entity, BuiltBlocks(blocks.blocks.clone()));
             }
+            // One block put down or taken away takes a door's other block with it: numbered first, so read again.
+            let changes = match shape {
+                ONE => {
+                    let halves = with_services(|services| services.door_halves(world, entity, changes.clone()));
+                    let Some(now) = world.get::<BlockWorld>(entity).cloned() else { continue };
+                    blocks = now;
+                    halves.unwrap_or(changes)
+                }
+                _ => changes,
+            };
             let count = blocks.set_blocks(changes);
             if count > 0 {
                 world.insert(entity, blocks);
@@ -235,6 +254,170 @@ fn set(shape: i32, a: Vec3, b: Vec3, picked: Picked, only: i32) -> i32 {
         Some(changed)
     })
     .unwrap_or(0)
+}
+
+/// The first world of blocks with a block at `at`, a point in metres, and
+/// where that block is in it.
+fn block_place(world: &World, at: Vec3) -> Option<(Entity, [i32; 3])> {
+    worlds(world).into_iter().find_map(|(entity, corner)| {
+        let blocks = world.get::<BlockWorld>(entity)?;
+        let (place, block) = blocks.block_at((at - corner).to_array());
+        (block != AIR).then_some((entity, place))
+    })
+}
+
+/// Where the point `at`, in metres, is among the blocks of the world of
+/// blocks on `entity`.
+fn place_in(world: &World, entity: Entity, at: Vec3) -> Option<[i32; 3]> {
+    let (_, corner) = worlds(world).into_iter().find(|(e, _)| *e == entity)?;
+    Some(world.get::<BlockWorld>(entity)?.block_at((at - corner).to_array()).0)
+}
+
+/// `Blocks.Use`: uses the block at `at`, a point in metres, in the first
+/// world of blocks with one there (see `voxear_terrain::blocks::usable`):
+/// 0 where it is no block a player uses, else what kind of use it was, by
+/// `UseKind`'s place, with 16 over it where it is open (or on) now.
+pub(crate) unsafe extern "C" fn block_use(at: *const [f32; 3]) -> i32 {
+    if at.is_null() {
+        return 0;
+    }
+    let at = Vec3::from(unsafe { *at });
+    with_world(|world| {
+        let (entity, place) = block_place(world, at)?;
+        if !world.has::<BuiltBlocks>(entity) {
+            let built = world.get::<BlockWorld>(entity)?.blocks.clone();
+            world.insert(entity, BuiltBlocks(built));
+        }
+        let (kind, now) = with_services(|services| services.block_use(world, entity, place)).flatten()?;
+        Some(i32::from(kind) | i32::from(now) << 4)
+    })
+    .unwrap_or(0)
+}
+
+/// `Blocks.StateAt`: the state the block at `at`, a point in metres, is
+/// placed in, as a byte; -1 for air everywhere.
+pub(crate) unsafe extern "C" fn block_state(at: *const [f32; 3]) -> i32 {
+    if at.is_null() {
+        return -1;
+    }
+    let at = Vec3::from(unsafe { *at });
+    with_world(|world| {
+        let (entity, place) = block_place(world, at)?;
+        let blocks = world.get::<BlockWorld>(entity)?;
+        Some(i32::from(blocks.faces.get(usize::from(blocks.blocks.get(place)))?.state))
+    })
+    .unwrap_or(-1)
+}
+
+/// `Blocks.SetState`: the block at `at`, a point in metres, put in `state`
+/// (a byte), moving there by its motion where `animate` is not 0; how many
+/// blocks changed.
+pub(crate) unsafe extern "C" fn block_set_state(at: *const [f32; 3], state: i32, animate: i32) -> i32 {
+    if at.is_null() || !(0..=255).contains(&state) {
+        return 0;
+    }
+    let at = Vec3::from(unsafe { *at });
+    with_world(|world| {
+        let (entity, place) = block_place(world, at)?;
+        if !world.has::<BuiltBlocks>(entity) {
+            let built = world.get::<BlockWorld>(entity)?.blocks.clone();
+            world.insert(entity, BuiltBlocks(built));
+        }
+        let changed = with_services(|services| {
+            services.block_change_state(world, entity, place, state as u8, animate != 0)
+        });
+        Some(changed.unwrap_or(0) as i32)
+    })
+    .unwrap_or(0)
+}
+
+/// `Blocks.Set` with a state: the block named by its `.block` (a project
+/// path or GUID) put at `at`, a point in metres, placed in `state` (a
+/// byte), in every world of blocks it falls in; how many blocks changed.
+pub(crate) unsafe extern "C" fn block_set_placed(at: *const [f32; 3], block: *const u8, len: i32, state: i32) -> i32 {
+    if at.is_null() || block.is_null() || len <= 0 || !(0..=255).contains(&state) {
+        return 0;
+    }
+    let at = Vec3::from(unsafe { *at });
+    let named = unsafe { crate::interop::utf8(block, len) };
+    set(ONE, at, Vec3::ZERO, Picked::Placed(&named, state as u8), ALL)
+}
+
+/// The state a block of shape `shape` (its place in `BlockShape::ALL`) is
+/// placed in against a face looking `normal`, put `within` (0 to 1 across
+/// the block it goes in) by someone looking `look`, as a byte (see
+/// `voxear_terrain::blocks::shape::placed_state`).
+pub(crate) unsafe extern "C" fn block_placed_state(
+    shape: i32,
+    within: *const [f32; 3],
+    normal: *const [f32; 3],
+    look: *const [f32; 3],
+) -> i32 {
+    use voxear_terrain::blocks::{block::BlockShape, shape::placed_state};
+    let Some(&shape) = usize::try_from(shape).ok().and_then(|at| BlockShape::ALL.get(at)) else { return 0 };
+    if within.is_null() || normal.is_null() || look.is_null() {
+        return 0;
+    }
+    let (within, normal, look) = unsafe { (*within, *normal, *look) };
+    let normal = normal.map(|v| v.round() as i32);
+    i32::from(placed_state(shape, normal, within, look).to_byte())
+}
+
+/// `Blocks.Link` (`what` 0): links the lever or button at `from` to the
+/// block at `to`, both points in metres in one world of blocks;
+/// `Blocks.Unlink` (`what` 1) takes that link away, and with `what` 2 every
+/// link from `from`. 1 where something changed, 0 where nothing did.
+pub(crate) unsafe extern "C" fn block_link(what: i32, from: *const [f32; 3], to: *const [f32; 3]) -> i32 {
+    if from.is_null() || (what != 2 && to.is_null()) {
+        return 0;
+    }
+    let from = Vec3::from(unsafe { *from });
+    let to = if to.is_null() { None } else { Some(Vec3::from(unsafe { *to })) };
+    with_world(|world| {
+        let (entity, start) = block_place(world, from)?;
+        let end = match to {
+            Some(to) => Some(place_in(world, entity, to)?),
+            None => None,
+        };
+        if !world.has::<BuiltBlocks>(entity) {
+            let built = world.get::<BlockWorld>(entity)?.blocks.clone();
+            world.insert(entity, BuiltBlocks(built));
+        }
+        let blocks = world.get_mut::<BlockWorld>(entity)?;
+        let changed = match (what, end) {
+            (0, Some(end)) => blocks.link(start, end),
+            (1, Some(end)) => blocks.unlink(start, Some(end)),
+            (2, _) => blocks.unlink(start, None),
+            _ => false,
+        };
+        Some(i32::from(changed))
+    })
+    .unwrap_or(0)
+}
+
+/// `Blocks.LinksFrom`: the middles, in metres, of the blocks the lever or
+/// button at `from` drives, written into `out` as many as fit in
+/// `capacity`: how many there are.
+pub(crate) unsafe extern "C" fn block_links(from: *const [f32; 3], out: *mut [f32; 3], capacity: i32) -> i32 {
+    if from.is_null() {
+        return 0;
+    }
+    let from = Vec3::from(unsafe { *from });
+    let found = with_world(|world| {
+        let (entity, start) = block_place(world, from)?;
+        let (_, corner) = worlds(world).into_iter().find(|(e, _)| *e == entity)?;
+        let blocks = world.get::<BlockWorld>(entity)?;
+        let size = blocks.block_size;
+        let middle = |at: &[i32; 3]| (corner + (Vec3::from(at.map(|v| v as f32)) + 0.5) * size).to_array();
+        Some(blocks.links.get(&start).map(|all| all.iter().map(middle).collect::<Vec<_>>()).unwrap_or_default())
+    })
+    .unwrap_or_default();
+    if !out.is_null() {
+        for (at, middle) in found.iter().take(capacity.max(0) as usize).enumerate() {
+            unsafe { *out.add(at) = *middle };
+        }
+    }
+    found.len() as i32
 }
 
 /// `block_raycast`'s flags: whether the ray meets liquids, rather than
@@ -372,8 +555,15 @@ pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
 /// worlds, and for each its key and the blocks it numbered, each number
 /// with its block's GUID. Bytes without it, as they were kept before blocks
 /// were assets of their own, read as they did.
+///
+/// Version 2, for a world that numbered a block in a state (see
+/// `voxear_terrain::blocks::shape::BlockState`), names each block once, as
+/// a door has a number for each way it stands: after its key, how many
+/// blocks and each one's GUID, then how many numbers and each one with its
+/// block's place among those and its state, a byte. Bytes without states
+/// are written as before.
 const NUMBERED: &[u8; 4] = b"VXBT";
-const NUMBERED_VERSION: u32 = 1;
+const NUMBERED_VERSION: u32 = 2;
 
 /// What follows those, where scripts took away plants a world of blocks
 /// grew by itself (see `voxear_scene::CutPlants`): this mark, a version, how
@@ -396,6 +586,9 @@ struct Kept {
     key: String,
     edits: Vec<u8>,
     numbered: Vec<(BlockId, String)>,
+    /// The state each block numbered is placed in, in the same order; none
+    /// for blocks all in their first state.
+    states: Vec<u8>,
 }
 
 /// `kept` as bytes: how many worlds, each one's key and changes, and then,
@@ -440,12 +633,36 @@ fn worlds_bytes(kept: &[Kept]) -> Vec<u8> {
     if numbering.is_empty() {
         return out;
     }
+    // The first version where no block is numbered in a state, so an older Voxear reads them.
+    let stated = numbering.iter().any(|world| world.states.iter().any(|&state| state != 0));
     out.extend_from_slice(NUMBERED);
-    out.extend_from_slice(&NUMBERED_VERSION.to_le_bytes());
+    out.extend_from_slice(&(if stated { NUMBERED_VERSION } else { 1 }).to_le_bytes());
     out.extend_from_slice(&(numbering.len() as u32).to_le_bytes());
     for world in numbering {
         out.extend_from_slice(&(world.key.len() as u16).to_le_bytes());
         out.extend_from_slice(world.key.as_bytes());
+        if stated {
+            // Each block once, then each number by its block's place among them.
+            let mut guids: Vec<&str> = Vec::new();
+            for (_, guid) in &world.numbered {
+                if !guids.contains(&guid.as_str()) {
+                    guids.push(guid);
+                }
+            }
+            out.extend_from_slice(&(guids.len() as u16).to_le_bytes());
+            for guid in &guids {
+                out.extend_from_slice(&(guid.len() as u16).to_le_bytes());
+                out.extend_from_slice(guid.as_bytes());
+            }
+            out.extend_from_slice(&(world.numbered.len() as u16).to_le_bytes());
+            for (at, (number, guid)) in world.numbered.iter().enumerate() {
+                let place = guids.iter().position(|kept| kept == guid).unwrap_or(0) as u16;
+                out.extend_from_slice(&number.to_le_bytes());
+                out.extend_from_slice(&place.to_le_bytes());
+                out.push(world.states.get(at).copied().unwrap_or(0));
+            }
+            continue;
+        }
         out.extend_from_slice(&(world.numbered.len() as u16).to_le_bytes());
         for (number, guid) in &world.numbered {
             out.extend_from_slice(&number.to_le_bytes());
@@ -509,7 +726,7 @@ fn read_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<Kept>, Vec<KeptCuts>)> {
         let key = text(at + 2, key_len)?;
         at += 2 + key_len;
         let len = u32::from_le_bytes(take(at, 4)?.try_into()?) as usize;
-        kept.push(Kept { key, edits: take(at + 4, len)?.to_vec(), numbered: Vec::new() });
+        kept.push(Kept { key, edits: take(at + 4, len)?.to_vec(), numbered: Vec::new(), states: Vec::new() });
         at += 4 + len;
     }
     if bytes.get(at..at + 4) != Some(NUMBERED.as_slice()) {
@@ -517,7 +734,7 @@ fn read_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<Kept>, Vec<KeptCuts>)> {
         return Ok((kept, cuts));
     }
     let version = u32::from_le_bytes(take(at + 4, 4)?.try_into()?);
-    let known = version == NUMBERED_VERSION;
+    let known = (1..=NUMBERED_VERSION).contains(&version);
     anyhow::ensure!(known, "block changes from a newer Voxear (their blocks' numbers, version {version})");
     let worlds = u32::from_le_bytes(take(at + 8, 4)?.try_into()?);
     at += 12;
@@ -525,17 +742,38 @@ fn read_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<Kept>, Vec<KeptCuts>)> {
         let key_len = short(at)?;
         let key = text(at + 2, key_len)?;
         at += 2 + key_len;
-        let blocks = short(at)?;
-        at += 2;
-        let mut numbered = Vec::with_capacity(blocks);
-        for _ in 0..blocks {
-            let number = u16::from_le_bytes(take(at, 2)?.try_into()?);
-            let guid_len = short(at + 2)?;
-            numbered.push((number, text(at + 4, guid_len)?));
-            at += 4 + guid_len;
+        let mut numbered = Vec::new();
+        let mut states = Vec::new();
+        if version >= 2 {
+            let count = short(at)?;
+            at += 2;
+            let mut guids = Vec::with_capacity(count);
+            for _ in 0..count {
+                let guid_len = short(at)?;
+                guids.push(text(at + 2, guid_len)?);
+                at += 2 + guid_len;
+            }
+            let numbers = short(at)?;
+            at += 2;
+            for _ in 0..numbers {
+                let number = u16::from_le_bytes(take(at, 2)?.try_into()?);
+                let guid = guids.get(short(at + 2)?).context("a number of a block not named")?.clone();
+                numbered.push((number, guid));
+                states.push(take(at + 4, 1)?[0]);
+                at += 5;
+            }
+        } else {
+            let blocks = short(at)?;
+            at += 2;
+            for _ in 0..blocks {
+                let number = u16::from_le_bytes(take(at, 2)?.try_into()?);
+                let guid_len = short(at + 2)?;
+                numbered.push((number, text(at + 4, guid_len)?));
+                at += 4 + guid_len;
+            }
         }
         if let Some(world) = kept.iter_mut().find(|world| world.key == key) {
-            world.numbered = numbered;
+            (world.numbered, world.states) = (numbered, states);
         }
     }
     let cuts = cuts_from(bytes, at)?;
@@ -552,7 +790,13 @@ fn capture(world: &World) -> Vec<u8> {
         .filter_map(|(entity, blocks, built)| {
             let key = with_services(|services| services.obj_key(world, entity)).flatten()?;
             let numbered = with_services(|services| services.blocks_grown(world, entity)).unwrap_or_default();
-            Some(Kept { key, edits: BlockEdits::between(&built.0, &blocks.blocks).to_bytes(), numbered })
+            // The state each is placed in, which is part of its number.
+            let states = numbered.iter().map(|(number, _)| blocks.faces.get(usize::from(*number)).map_or(0, |f| f.state));
+            let states: Vec<u8> = states.collect();
+            let states = if states.iter().all(|&state| state == 0) { Vec::new() } else { states };
+            let mut edits = BlockEdits::between(&built.0, &blocks.blocks);
+            edits.links = blocks.link_list();
+            Some(Kept { key, edits: edits.to_bytes(), numbered, states })
         })
         .collect();
     kept.sort_by(|a, b| a.key.cmp(&b.key));
@@ -603,9 +847,13 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
         }
         // Each number the changes gave a block, as this game numbers that block.
         let mut here: std::collections::HashMap<BlockId, BlockId> = std::collections::HashMap::new();
-        for (number, guid) in &kept.numbered {
-            let numbered = with_services(|services| services.block_number(world, entity, guid, true)).flatten();
-            here.insert(*number, numbered.unwrap_or(AIR));
+        for (at, (number, guid)) in kept.numbered.iter().enumerate() {
+            let state = kept.states.get(at).copied();
+            let numbered = with_services(|services| match state {
+                Some(state) => services.block_number_state(world, entity, guid, state, true),
+                None => services.block_number(world, entity, guid, true),
+            });
+            here.insert(*number, numbered.flatten().unwrap_or(AIR));
         }
         let listed = |block: BlockId| {
             block == AIR || with_services(|services| services.block_listed(world, entity, block)).unwrap_or(true)
@@ -623,6 +871,9 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
         edits.apply(&mut blocks);
         let mut remade = BlockWorld::made(blocks, &now.faces, now.block_size, now.smooth);
         remade.cast_shadows = now.cast_shadows;
+        // Its links as the changes say, and its clock going on as it was.
+        remade.set_links(&edits.links);
+        remade.clock = now.clock;
         world.insert(entity, remade);
         world.insert(entity, BuiltBlocks(built));
         found += 1;
@@ -685,11 +936,12 @@ mod tests {
     fn blocks_numbered_while_the_game_ran_are_kept_with_which_block_each_is() {
         let guid = "0123456789abcdef0123456789abcdef";
         let kept = vec![
-            Kept { key: "scene:1".into(), edits: vec![9, 9], numbered: Vec::new() },
+            Kept { key: "scene:1".into(), edits: vec![9, 9], numbered: Vec::new(), states: Vec::new() },
             Kept {
                 key: "scene:4".into(),
                 edits: vec![5],
                 numbered: vec![(6, guid.to_string()), (7, "fedcba9876543210fedcba9876543210".to_string())],
+                states: Vec::new(),
             },
         ];
         let bytes = to_bytes(&kept);
@@ -703,6 +955,22 @@ mod tests {
         let mut newer = bytes.clone();
         newer[mark + 4] = 9;
         assert!(from_bytes(&newer).is_err());
+    }
+
+    #[test]
+    fn blocks_numbered_in_states_name_each_block_once() {
+        let door = "0123456789abcdef0123456789abcdef".to_string();
+        let lever = "fedcba9876543210fedcba9876543210".to_string();
+        let kept = vec![Kept {
+            key: "scene:4".into(),
+            edits: vec![5],
+            numbered: vec![(6, door.clone()), (7, door.clone()), (8, door.clone()), (9, lever.clone())],
+            states: vec![0, 8, 16, 37],
+        }];
+        let bytes = to_bytes(&kept);
+        let read = from_bytes(&bytes).unwrap();
+        assert_eq!((read[0].numbered.clone(), read[0].states.clone()), (kept[0].numbered.clone(), kept[0].states.clone()));
+        assert!(bytes.len() < 4 * 36, "each block named once: {} bytes", bytes.len());
     }
 
     #[test]
@@ -747,7 +1015,7 @@ mod tests {
         assert_eq!(restore(&mut world, &to_bytes(&[])).unwrap(), 0);
         assert!(world.get::<CutPlants>(oaks).is_none() && world.get::<CutPlants>(pines).is_none());
         // After the blocks' numbers too; a newer version is an error, and bytes cut short are.
-        let numbered = vec![Kept { key: "scene:4".into(), edits: vec![5], numbered: vec![(6, "planks".into())] }];
+        let numbered = vec![Kept { key: "scene:4".into(), edits: vec![5], numbered: vec![(6, "planks".into())], states: Vec::new() }];
         let both = to_bytes_with(&numbered, &cuts);
         let (worlds, read) = read_bytes(&both).unwrap();
         assert_eq!((worlds.len(), worlds[0].numbered.len(), read.len()), (1, 1, 2));
@@ -789,6 +1057,7 @@ mod tests {
             key: "scene:4".into(),
             edits: BlockEdits::between(&built, &changed).to_bytes(),
             numbered: vec![(4, "planks".into()), (9, "lost".into())],
+            states: Vec::new(),
         }];
         let mut services = Numbers(entity);
         let _scope = crate::services::ServicesScope::enter(&mut services);

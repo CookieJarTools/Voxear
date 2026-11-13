@@ -15,18 +15,20 @@ use std::{
     collections::{BinaryHeap, HashMap},
 };
 
-use super::{BlockFaces, BlockMap, is_ground, is_water};
+use super::{BlockFaces, BlockMap, PART_TALL, is_ground, is_water, part_of};
 
 /// How many blocks a walker drops from a ledge at most.
 pub const DEEPEST_DROP: i32 = 3;
 
 /// Whether a walker `tall` blocks high can stand in `at`: ground under it,
-/// nothing of ground in it or over it for as high as it is, and water no
-/// higher than its feet.
+/// but a fence or a wall, which nothing stands on, nothing of ground in it
+/// or over it for as high as it is (an open door or gate is none), and
+/// water no higher than its feet.
 pub fn can_stand(blocks: &BlockMap, faces: &[BlockFaces], at: [i32; 3], tall: u32) -> bool {
     let block = |up: i32| blocks.get([at[0], at[1] + up, at[2]]);
     let clear = (0..tall.max(1) as i32).all(|up| !is_ground(faces, block(up)));
-    is_ground(faces, block(-1)) && clear && !is_water(faces, block(1))
+    let under = block(-1);
+    is_ground(faces, under) && part_of(faces, under) & PART_TALL == 0 && clear && !is_water(faces, block(1))
 }
 
 /// The place to stand in the column of `at`, at its height or the nearest

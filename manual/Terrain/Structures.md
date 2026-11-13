@@ -153,7 +153,29 @@ A room's doors are in the middles of its sides, a block over its floor: the corr
 
 A dungeon in a world with [[Caves|caves]] breaks into them. The room of any floor nearest a cave room, within **Caves** blocks of it, has a rough tunnel cut from its middle to that room's floor, four blocks high and as wide as five or so, never steeper than it runs along. So a dungeon can be found from a cave, and a cave from a dungeon, and the way down from the surface may be either.
 
+## Doors and stairs in a structure
+
+A structure's model can put down [[Blocks#Blocks of parts|blocks of parts]] standing a way: a door facing out of a house, its stairs rising to a loft. Under `[[model.states]]`, give the entry of the palette and how it stands. For a door, list the block twice in the palette, once for its lower block and once for its upper:
+
+```toml
+[model]
+palette = ["Blocks/Planks.block", "Blocks/Oak Door.block", "Blocks/Oak Door.block"]
+
+[[model.states]]
+entry = 2
+facing = "north"
+
+[[model.states]]
+entry = 3
+facing = "north"
+half = "upper"
+```
+
+A structure placed turned, as a town turns each house to face its street, turns each block's way with it, and one placed mirrored hangs its doors on the other side.
+
 ## Not yet
+
+- A structure's levers and buttons are not linked to its doors. Link them from a script once it stands.
 
 - Structures are built near the camera only. Far off, past a world's own chunks, they do not show.
 - Structures and towns are made by writing their files. The editor has no tools for them yet.

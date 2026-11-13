@@ -1259,6 +1259,41 @@ struct BlockWorld
     // water.slang). Far below for a world whose water is all its sea.
     float seaTop;
     uint pad;
+    // Its blocks of parts' motions, and those of its blocks moving now (src/blocks.rs, GpuBlockMotion and
+    // GpuMovingBlock), with how many of each.
+    BlockMotion* motions;
+    MovingBlock* moving;
+    uint motionCount;
+    uint movingCount;
+};
+
+// A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
+// along it (in sixteenths of a block), and how the way on to the next key goes (0 linear, 1 smooth, 2 step).
+struct BlockMotionKey
+{
+    float time;
+    float turn;
+    float shift;
+    uint ease;
+};
+
+// A block's motion, from shut to open (voxear_terrain::blocks::shape::BlockMotion): how long it lasts, how many
+// keys it has, and how far a block that hangs swings at most, in radians.
+struct BlockMotion
+{
+    float length;
+    uint count;
+    float swing;
+    uint pad;
+    BlockMotionKey keys[8];
+};
+
+// A block moving now: where it is in the world's blocks, whether it is opening (1) or shutting (0), and how long
+// since it started, in seconds.
+struct MovingBlock
+{
+    int4 at;
+    float4 timing;
 };
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).

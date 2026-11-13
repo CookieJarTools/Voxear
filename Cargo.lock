@@ -4042,6 +4042,7 @@ dependencies = [
  "voxear_scripting",
  "voxear_terrain",
  "voxear_ui",
+ "voxear_voxshade",
  "wayland-backend",
  "winit",
 ]
@@ -4080,9 +4081,9 @@ dependencies = [
  "voxear_rhi",
  "voxear_scene",
  "voxear_scripting",
- "voxear_shader_graph",
  "voxear_terrain",
  "voxear_ui",
+ "voxear_voxshade",
  "winit",
 ]
 
@@ -4243,15 +4244,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voxear_shader_graph"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "toml",
-]
-
-[[package]]
 name = "voxear_terrain"
 version = "0.1.0"
 dependencies = [
@@ -4280,6 +4272,16 @@ dependencies = [
  "taffy",
  "tracing",
  "voxear_core",
+]
+
+[[package]]
+name = "voxear_voxshade"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml",
+ "voxear_assets",
 ]
 
 [[package]]

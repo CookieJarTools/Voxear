@@ -351,6 +351,25 @@ pub struct ParticleSystem {
     /// its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<EffectRef>,
+    /// A VoxShade particle graph of the project's that moves and draws its
+    /// particles where its settings leave off: its Update each step, its
+    /// Look where each is drawn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<voxear_assets::AssetGuid>,
+}
+
+/// The project's particle graphs as the renderer calls them: each by its
+/// asset, its number in the particle shaders' code, and whether it has an
+/// Update, which only simulated particles run. A resource of the world,
+/// kept by whoever compiles the project's shaders; a graph not listed is
+/// not run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParticleGraphs(pub std::collections::HashMap<voxear_assets::AssetGuid, ParticleGraphInfo>);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ParticleGraphInfo {
+    pub number: u32,
+    pub update: bool,
 }
 
 /// How long a tail is and how wide a trail is, to begin with.
@@ -454,6 +473,7 @@ impl Default for ParticleSystem {
             trail_width: TRAIL_WIDTH,
             mesh: None,
             effect: None,
+            graph: None,
         }
     }
 }
@@ -478,6 +498,7 @@ impl ParticleSystem {
             (self.collision != ParticleCollision::Off, "Collision"),
             (self.forces > 0.0, "Forces"),
             (self.trails != ParticleTrails::Off, "Trails"),
+            (self.graph.is_some(), "Graph"),
         ];
         needs
             .into_iter()
@@ -488,6 +509,24 @@ impl ParticleSystem {
 
     pub fn is_simulated(&self) -> bool {
         !self.simulated_for().is_empty()
+    }
+
+    /// What needs it simulated, as `graphs` has its particle graph: one
+    /// without an Update draws its particles without keeping them. With
+    /// nothing known of its graph, the graph counts.
+    pub fn simulated_by(&self, graphs: Option<&ParticleGraphs>) -> Vec<&'static str> {
+        let mut needs = self.simulated_for();
+        let known = self.graph.and_then(|guid| graphs.map(|graphs| graphs.0.get(&guid)));
+        if let Some(found) = known
+            && !found.is_some_and(|graph| graph.update)
+        {
+            needs.retain(|&need| need != "Graph");
+        }
+        needs
+    }
+
+    pub fn is_simulated_with(&self, graphs: Option<&ParticleGraphs>) -> bool {
+        !self.simulated_by(graphs).is_empty()
     }
 
     /// How many particles a simulated system has room for: its stream as
@@ -622,6 +661,7 @@ pub(crate) fn gather(
     let query =
         world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let effects = world.resource::<ParticleEffects>();
+    let graphs = world.resource::<ParticleGraphs>();
     let halving = world.resource::<ParticleHalfSize>().is_none_or(|halving| halving.0);
     let mut systems: Vec<(f32, GpuParticleSystem, Drawn)> = Vec::new();
     for (entity, own, transform, at, playback) in query.without::<Destroying>() {
@@ -631,6 +671,11 @@ pub(crate) fn gather(
         for (emitter, system) in (0..).zip(crate::effects::emitters(effects, own)) {
             let drawn = textured(gpu(system, model, time, playback.copied()), system, textures);
             let mut drawn = GpuParticleSystem { seed: seed_of(own, system, emitter), ..drawn };
+            // Its particle graph, by its number; and kept or worked out where drawn, as the graph's Update says.
+            let graph = system.graph.and_then(|guid| graphs.and_then(|graphs| graphs.0.get(&guid)));
+            drawn.graph = graph.map_or(0, |graph| graph.number);
+            let simulated = system.is_simulated_with(graphs);
+            drawn.flags = if simulated { drawn.flags | SIMULATED } else { drawn.flags & !SIMULATED };
             // Drawn as meshes: nothing until its model is loaded.
             let mesh = system.mesh.map(|mesh| (textures.mesh)(mesh));
             if let Some(mesh) = mesh {
@@ -641,7 +686,7 @@ pub(crate) fn gather(
             // Soft, flat and large on screen: at half size.
             let flat = mesh.is_none() && system.trails == ParticleTrails::Off && system.softness > 0.0;
             let half = halving && flat && system.largest() > HALF_SIZE_FROM * distance.sqrt().max(1.0);
-            if !system.is_simulated() {
+            if !simulated {
                 if system.slots() > 0 {
                     let how = Drawn { count: system.slots(), trails: ParticleTrails::Off, mesh, half };
                     systems.push((distance, drawn, how));

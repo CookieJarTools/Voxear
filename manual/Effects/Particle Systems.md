@@ -133,6 +133,21 @@ A ribbon is for the streak behind a spell, a blade or a rocket. Put the system o
 
 Trails are coloured and lit as their particles are, and drawn soft-edged without the Texture. A particle with a tail takes the room of six in the [budget](#the-particle-budget). A ribbon takes no more than its particles.
 
+## Particle graphs
+
+When the settings can't do what you want, a **particle graph** can: a VoxShade graph (see [[VoxShade]]) that moves and draws the particles, where the settings leave off. Make one with **New Shader… > Particle Graph**, and pick it in the system's **Graph** row.
+
+A particle graph has two outputs, each optional:
+
+- **Update Output** runs for every particle at each step of the simulation. Its **Force** pushes the particle, in metres a second each second; its **Velocity** sets how fast and which way it goes after that. Wind, turbulence, Force Fields and gravity move it first, and Drag and collision still apply after.
+- **Look Output** runs where each particle is drawn. Its **Color**, **Alpha** and **Size** take the place of what the system's colour and size over life give.
+
+An output's input left empty keeps what the settings give. The graph's nodes read the particle's **Age**, its **Life** lived from 0 to 1, a **Seed** of its own from 0 to 1, its **Velocity** and **Position**, the **Object Position** of the system's Obj, **Time**, and in the Update **Delta Time**, in the Look the **Particle Color** and **Particle Size** the settings give.
+
+A graph with an Update has its system simulated; one with only a Look leaves it worked out from its age. A graph's properties are its own settings, set in the graph and worked into it as numbers; it reads no pictures yet. The Look draws flat particles; meshes and trails are drawn as the settings say.
+
+A graph's cost is small: 300,000 particles stepped with the starter's swirl and drawn take 0.85 ms a frame on a mid-range graphics card, against 0.77 ms moved by their settings alone.
+
 ## Simulated systems
 
 A system using none of these settings works out where each particle is from its age alone. Nothing is kept from frame to frame, and it costs almost nothing.
@@ -212,7 +227,7 @@ Particles.Play(ParticleEffect.MuzzleFlash, muzzle);
 
 ## From scripts
 
-`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed but the Texture and Mesh, which are picked in the Inspector. `Effect` is the effect it plays in place of its own settings: setting it plays that effect from its start, and `ParticleEffect.None` goes back to its own. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
+`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed but the Texture, Mesh and Graph, which are picked in the Inspector. `Effect` is the effect it plays in place of its own settings: setting it plays that effect from its start, and `ParticleEffect.None` goes back to its own. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
 
 ```csharp
 // A burst of sparks where the hammer lands.
@@ -277,4 +292,4 @@ A `ParticleHit` has the `Point` struck, the `Normal` of the surface there, the `
 
 ## What's coming
 
-Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.
+Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and particle graphs that read pictures and take their properties from each system.

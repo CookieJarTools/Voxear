@@ -95,16 +95,26 @@ impl Make {
                 *at = (*at).max(next);
             }
         }
-        let mut rows = std::collections::HashMap::new();
+        // Down each column, each node below the last with room for its ports and its picture.
+        let mut tops = std::collections::HashMap::new();
+        let properties = self.graph.clone();
         for node in &mut self.graph.nodes {
             let x = column.get(&node.id).copied().unwrap_or(0);
-            let y = rows.entry(x).or_insert(0usize);
-            node.at = [x as f32 * 220.0, *y as f32 * 140.0];
-            *y += 1;
+            let y = tops.entry(x).or_insert(0.0f32);
+            node.at = [x as f32 * 220.0, *y];
+            let rows = properties.inputs_of(&node.kind).len().max(properties.outputs_of(&node.kind).len()) as f32;
+            *y += HEADER + rows * ROW + PICTURE + GAP;
         }
         self.graph
     }
 }
+
+/// How tall a node's parts stand on the canvas, about, and the gap left
+/// between two nodes, for laying out a starter.
+const HEADER: f32 = 34.0;
+const ROW: f32 = 20.0;
+const PICTURE: f32 = 140.0;
+const GAP: f32 = 30.0;
 
 /// `frac(sin(n * 12.9898) * 43758.5453)`, the hand-written shaders' hash of a number.
 fn sine_hash(make: &mut Make, n: In) -> NodeId {
@@ -112,6 +122,79 @@ fn sine_hash(make: &mut Make, n: In) -> NodeId {
     let sine = make.math(MathOp::Sine, &[Wire(scaled)]);
     let spread = make.math(MathOp::Multiply, &[Wire(sine), Num(43758.5453)]);
     make.math(MathOp::Fraction, &[Wire(spread)])
+}
+
+/// A surface lit as the standard one is, its colour a tint over a picture:
+/// the graph a new one starts as.
+pub fn lit(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    let tint = m.property("tint", PropertyKind::Color, [1.0, 1.0, 1.0, 0.0], None, "");
+    let picture = m.declare("picture", PropertyKind::Picture, [0.0; 4], None, "");
+    let uv = m.input(Input::Uv);
+    let read = m.node(NodeKind::SamplePicture { property: picture }, &[Wire(uv)]);
+    let color = m.math(MathOp::Multiply, &[Out(read, 1), Wire(tint)]);
+    let out = m.node(NodeKind::SurfaceOutput, &[Wire(color)]);
+    let mut graph = m.finish();
+    // The tint under the picture, its wire into the lower input, so no wire crosses another.
+    for (node, at) in
+        [(uv, [0.0, 0.0]), (read, [220.0, 0.0]), (tint, [220.0, 340.0]), (color, [460.0, 60.0]), (out, [680.0, 40.0])]
+    {
+        if let Some(found) = graph.nodes.iter_mut().find(|n| n.id == node) {
+            found.at = at;
+        }
+    }
+    graph
+}
+
+/// A particle graph a new one starts as: particles pulled round their
+/// system's Obj as they rise, and growing and fading over their lives.
+pub fn particles(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    m.graph.particles = true;
+    let swirl = m.property(
+        "swirl",
+        PropertyKind::Number,
+        [2.0; 4],
+        Some([0.0, 20.0]),
+        "How hard particles are pulled round the Obj, in metres a second each second",
+    );
+    let position = m.input(Input::Position);
+    let centre = m.input(Input::ObjectPosition);
+    let out = m.math(MathOp::Subtract, &[Wire(position), Wire(centre)]);
+    let round = m.math(MathOp::Cross, &[Vec3([0.0, 1.0, 0.0]), Wire(out)]);
+    let force = m.math(MathOp::Multiply, &[Wire(round), Wire(swirl)]);
+    m.node(NodeKind::UpdateOutput, &[Wire(force)]);
+    let life = m.input(Input::Life);
+    let size = m.input(Input::ParticleSize);
+    let grown = m.math(MathOp::Lerp, &[Num(1.0), Num(2.0), Wire(life)]);
+    let wide = m.math(MathOp::Multiply, &[Wire(size), Wire(grown)]);
+    let color = m.input(Input::ParticleColor);
+    let alpha = m.node(NodeKind::Split, &[Wire(color)]);
+    let fading = m.math(MathOp::OneMinus, &[Wire(life)]);
+    let faded = m.math(MathOp::Multiply, &[Out(alpha, 3), Wire(fading)]);
+    let look = m.graph.add(NodeKind::LookOutput, [0.0, 0.0]);
+    m.graph.link(faded, 0, look, 1);
+    m.graph.link(wide, 0, look, 2);
+    m.finish()
+}
+
+/// A sub-graph a new one starts as: how far a surface faces away from the
+/// camera, raised to a power, 0 facing it and 1 edge on.
+pub fn sub_graph(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    m.graph.sub_graph = true;
+    let power = m.graph.add_input("power", Ty::Float);
+    m.graph.inputs[0].default = [2.0; 4];
+    m.graph.add_output("result", Ty::Float);
+    let normal = m.input(Input::Normal);
+    let view = m.input(Input::View);
+    let facing = m.math(MathOp::Dot, &[Wire(normal), Wire(view)]);
+    let side = m.math(MathOp::Absolute, &[Wire(facing)]);
+    let away = m.math(MathOp::OneMinus, &[Wire(side)]);
+    let power = m.node(NodeKind::SubGraphInput { input: power }, &[]);
+    let raised = m.math(MathOp::Power, &[Wire(away), Wire(power)]);
+    m.node(NodeKind::SubGraphOutput, &[Wire(raised)]);
+    m.finish()
 }
 
 /// A figure of light, brighter at its edges, with lines scrolling up it and a flicker, as the built-in Hologram.

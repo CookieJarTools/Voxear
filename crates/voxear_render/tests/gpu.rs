@@ -6833,6 +6833,7 @@ float3 customLook(uint shader, LookInput input)
         materials: CUSTOM_SHADERS.to_string(),
         ui: String::new(),
         look: LOOK_SHADERS.to_string(),
+        particles: String::new(),
     });
     for _ in 0..600 {
         run(&mut renderer, &world, &mut 0.0, 1);
@@ -6850,10 +6851,12 @@ float3 customLook(uint shader, LookInput input)
     // The sky's negative, with no blue left by the tint: most red where it was least red.
     assert!(seen[2] <= 2, "its property takes the blue out: {seen:?}");
     assert!(seen[0] > seen[1] && seen[1] > 100, "the negative of a sky bluer than it is red: {seen:?} of {sky_blue:?}");
-    // Taken off, the picture is the level's own again.
+    // Taken off, the picture is the level's own again, within a level or two: how many frames were drawn while the
+    // shaders compiled moves the sky by about that.
     world.remove_resource::<WornLook>();
     run(&mut renderer, &world, &mut 0.0, 3);
-    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue);
+    let back = at(&renderer.read_pixels().unwrap().2);
+    assert!(back.iter().zip(sky_blue).all(|(a, b)| a.abs_diff(b) <= 2), "{back:?} against {sky_blue:?}");
 }
 
 /// A project's UI shader, compiled into the UI's shader as material shaders
@@ -6909,7 +6912,7 @@ float4 customUi(uint shader, uint first, UiInput input)
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [255, 0, 0], "its own background until the shader compiles");
 
-    renderer.set_custom_shaders(CustomCode { look: String::new(), materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
+    renderer.set_custom_shaders(CustomCode { materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string(), ..Default::default() });
     for _ in 0..600 {
         run(&mut renderer, &world, &mut 0.0, 1);
         match renderer.custom_shaders() {

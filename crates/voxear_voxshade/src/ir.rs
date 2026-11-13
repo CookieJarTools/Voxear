@@ -10,7 +10,7 @@
 //! two nodes doing the same work share them. What no output reads is left
 //! out when the program is finished ([`Program::finish`]).
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write, sync::Arc};
 
 use crate::{
     graph::{NodeId, PropertyId},
@@ -28,6 +28,45 @@ pub enum Given {
     Input(Input),
     /// One of the surface's values as it stands, by its place in `SURFACE_OUTPUTS`.
     Surface(usize),
+    /// One of a sub-graph's inputs, by its place, while the sub-graph is
+    /// compiled on its own to be shown.
+    Argument(usize),
+}
+
+/// A Slang node's code, as a function the shader declares: its name, what
+/// it takes and what it sets, each a name and a type, and its body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeFunction {
+    pub name: String,
+    pub inputs: Vec<(String, Ty)>,
+    pub outputs: Vec<(String, Ty)>,
+    pub code: String,
+}
+
+impl CodeFunction {
+    /// What the shader calls it: its node's name and a number made from
+    /// everything about it, so two nodes with the same code share one
+    /// function and two different ones never clash.
+    pub fn slang_name(&self) -> String {
+        let mut hash: u32 = 0x811c_9dc5;
+        for byte in format!("{self:?}").bytes() {
+            hash = (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193);
+        }
+        let name = if self.name.is_empty() { "slang" } else { self.name.as_str() };
+        format!("{name}_{hash:08x}")
+    }
+
+    /// The function as Slang.
+    pub fn declaration(&self) -> String {
+        let inputs = self.inputs.iter().map(|(name, ty)| format!("{} {name}", ty.slang()));
+        let outputs = self.outputs.iter().map(|(name, ty)| format!("out {} {name}", ty.slang()));
+        let parameters: Vec<String> = inputs.chain(outputs).collect();
+        let mut text = format!("void {}({})\n{{\n", self.slang_name(), parameters.join(", "));
+        for line in self.code.lines() {
+            let _ = writeln!(text, "    {line}");
+        }
+        text + "}\n"
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -101,14 +140,20 @@ pub enum Op {
     Construct,
     /// Numbers of its input picked, by place.
     Swizzle(Vec<u8>),
+    /// A Slang node's function called with its inputs: its first output.
+    Call(Arc<CodeFunction>),
+    /// Another output of the call its one input is, by place.
+    CallOut(u8),
 }
 
-/// How often a value changes: never; once a draw, as a property or the
-/// time; or from one place to the next.
+/// How often a value changes: never; when a material's properties change;
+/// once a frame, as the time does; or from one place to the next. The two
+/// in the middle are the same all over a draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rate {
     Constant,
-    Uniform,
+    Material,
+    Frame,
     Varying,
 }
 
@@ -192,6 +237,11 @@ impl Builder {
 
     pub fn finish(self) -> Program {
         self.program.finish()
+    }
+
+    /// The steps made so far, every one of them kept, as previews read them.
+    pub fn program(self) -> Program {
+        self.program
     }
 
     pub fn ty(&self, id: ValueId) -> Ty {
@@ -378,6 +428,22 @@ impl Builder {
     }
 
     /// `yes` where `condition` holds, else `no`; `branch` as for [`Op::Select`].
+    /// `function` called with `args`; its first output.
+    pub fn call(&mut self, function: Arc<CodeFunction>, args: Vec<ValueId>) -> ValueId {
+        let ty = function.outputs.first().map_or(Ty::Float, |(_, ty)| *ty);
+        self.push(Op::Call(function), args, ty)
+    }
+
+    /// Output `output` of the call `call`.
+    pub fn call_out(&mut self, call: ValueId, output: usize) -> ValueId {
+        if output == 0 {
+            return call;
+        }
+        let Op::Call(function) = &self.program.step(call).op else { panic!("not a call") };
+        let ty = function.outputs[output].1;
+        self.push(Op::CallOut(output as u8), vec![call], ty)
+    }
+
     pub fn select(&mut self, condition: ValueId, yes: ValueId, no: ValueId, branch: bool) -> ValueId {
         if let Some(known) = self.known(condition) {
             return if known[0] != 0.0 { yes } else { no };
@@ -397,9 +463,11 @@ impl Builder {
         }
         let rate = match &op {
             Op::Const(_) => Rate::Constant,
-            Op::Property(_) => Rate::Uniform,
-            Op::Given(Given::Input(input)) if input.is_uniform() => Rate::Uniform,
+            Op::Property(_) => Rate::Material,
+            Op::Given(Given::Input(input)) if input.is_uniform() => Rate::Frame,
             Op::Given(_) => Rate::Varying,
+            // A picture is read on the GPU, wherever it is read.
+            Op::Sample(_) => Rate::Varying,
             _ => args.iter().map(|arg| self.program.step(*arg).rate).max().unwrap_or(Rate::Constant),
         };
         let id = ValueId(self.program.steps.len() as u32);
@@ -442,7 +510,7 @@ fn length(v: [f32; 4], width: usize) -> f32 {
     v[..width].iter().map(|c| c * c).sum::<f32>().sqrt()
 }
 
-fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
     let each = |f: fn(f32) -> f32| per_component(width, |i| f(a[i]));
     match op {
         Unary::Negate => each(|x| -x),
@@ -473,7 +541,7 @@ fn fold_unary(op: Unary, a: [f32; 4], width: usize) -> [f32; 4] {
     }
 }
 
-fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
     let each = |f: fn(f32, f32) -> f32| per_component(width, |i| f(a[i], b[i]));
     match op {
         Binary::Add => each(|x, y| x + y),
@@ -495,7 +563,7 @@ fn fold_binary(op: Binary, a: [f32; 4], b: [f32; 4], width: usize) -> [f32; 4] {
     }
 }
 
-fn fold_ternary(op: Ternary, a: [f32; 4], b: [f32; 4], c: [f32; 4], width: usize) -> [f32; 4] {
+pub(crate) fn fold_ternary(op: Ternary, a: [f32; 4], b: [f32; 4], c: [f32; 4], width: usize) -> [f32; 4] {
     match op {
         Ternary::Lerp => per_component(width, |i| a[i] + (b[i] - a[i]) * c[i]),
         Ternary::Clamp => per_component(width, |i| a[i].max(b[i]).min(c[i])),
@@ -541,7 +609,7 @@ mod tests {
         assert!(!program.steps.iter().any(|step| step.op == Op::Unary(Unary::Cos)), "{unread:?} is read by nothing");
         assert_eq!(program.steps.len(), 5, "uv, its x, the time, the sum and its sine: {:?}", program.steps);
         let time = program.steps.iter().find(|step| step.op == Op::Given(Given::Input(Input::Time))).unwrap();
-        assert_eq!(time.rate, Rate::Uniform, "the time is the same all over a draw");
+        assert_eq!(time.rate, Rate::Frame, "the time is the same all over a draw");
         assert_eq!(program.steps[4].rate, Rate::Varying);
     }
 

@@ -352,6 +352,7 @@ impl ParticleSim {
         let query = world
             .query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
         let effects = world.resource::<ParticleEffects>();
+        let graphs = world.resource::<particles::ParticleGraphs>();
         for (entity, own, transform, at, playback) in query.without::<Destroying>() {
             let model = at.map_or_else(|| transform.matrix(), |w| w.0);
             let origin = model.w_axis.truncate();
@@ -360,7 +361,7 @@ impl ParticleSim {
             for (emitter, system) in (0u32..).zip(crate::effects::emitters(effects, own)) {
                 let key = (entity, emitter);
                 let capacity = system.capacity();
-                if !system.is_simulated() || capacity == 0 {
+                if !system.is_simulated_with(graphs) || capacity == 0 {
                     continue;
                 }
                 // Each emitter starts its Delay after the rest, and sends out particles of its own.
@@ -443,6 +444,10 @@ impl ParticleSim {
                     moved: (origin - kept.origin).to_array(),
                     shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },
                     trail_new: if delta_time > 0.0 { ticks.min(particles::TRAIL_POINTS) } else { 0 },
+                    graph: system
+                        .graph
+                        .and_then(|guid| graphs.and_then(|graphs| graphs.0.get(&guid)))
+                        .map_or(0, |graph| graph.number),
                     ..stepped
                 });
                 // Only its particles are stepped: their tails' points, kept after them, are written along with them.

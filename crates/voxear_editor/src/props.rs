@@ -492,6 +492,8 @@ pub enum Prop {
     ParticleTrailWidth,
     /// Whether scripts hear of its particles' strikes.
     ParticleHitEvents,
+    /// A VoxShade particle graph that moves and draws its particles.
+    ParticleGraph,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
     ForceKind,
     ForceStrength,
@@ -974,7 +976,8 @@ impl Prop {
             | Prop::ParticleTrails
             | Prop::ParticleTrailTime
             | Prop::ParticleTrailWidth
-            | Prop::ParticleHitEvents => Part::ParticleSystem,
+            | Prop::ParticleHitEvents
+            | Prop::ParticleGraph => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
@@ -1329,6 +1332,7 @@ impl Prop {
             Prop::ParticleTrailTime => "trail_time",
             Prop::ParticleTrailWidth => "trail_width",
             Prop::ParticleHitEvents => "hit_events",
+            Prop::ParticleGraph => "graph",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
             Prop::ForceRadius => "radius",
@@ -2068,6 +2072,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 ParticleTrails::Particles => vec![Prop::ParticleTrailTime, Prop::ParticleTrailWidth],
                 ParticleTrails::Ribbon => vec![Prop::ParticleTrailWidth],
             });
+            props.push(Prop::ParticleGraph);
             props.push(Prop::ParticleLight);
             // How far its light reaches only while it casts one.
             if system.light > 0.0 {
@@ -2397,6 +2402,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleTrailTime => "Trail Time",
         Prop::ParticleTrailWidth => "Trail Width",
         Prop::ParticleHitEvents => "Hit Events",
+        Prop::ParticleGraph => "Graph",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
         Prop::ForceRadius => "Radius",
@@ -3254,6 +3260,15 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindWidth => Value::Number(world.get::<WindZone>(entity)?.size[0]),
         Prop::WindFalloff => Value::Number(world.get::<WindZone>(entity)?.falloff),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
+        // Which settings have it simulated, its graph only when the graph has an Update.
+        Prop::ParticleSimulated => {
+            let graphs = world.resource::<voxear_render::ParticleGraphs>();
+            Value::Fixed(match world.get::<ParticleSystem>(entity)?.simulated_by(graphs) {
+                needs if needs.is_empty() => "No".into(),
+                needs => needs.join(", "),
+            })
+        }
+        Prop::ParticleGraph => Value::Asset(guid_label(game, world.get::<ParticleSystem>(entity)?.graph)),
         Prop::ParticleDuration
         | Prop::ParticleLooping
         | Prop::ParticleRate
@@ -3291,7 +3306,6 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleFriction
         | Prop::ParticleLifeLost
         | Prop::ParticleForces
-        | Prop::ParticleSimulated
         | Prop::ParticleTiles
         | Prop::ParticleAnimate
         | Prop::ParticleStretch
@@ -3942,6 +3956,22 @@ pub fn pick(
             };
             with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.mesh = mesh)
         }
+        (Prop::ParticleGraph, Pick::Asset(choice)) => {
+            // One of the project's particle graphs, not a shader or a sub-graph.
+            let graph = match choice {
+                None => None,
+                Some(path) => {
+                    let Some(guid) = game.content.parse(path).ok().and_then(|reference| reference.guid()) else {
+                        return false;
+                    };
+                    if !game.content.shaders().particle_graphs.iter().any(|graph| graph.guid == guid) {
+                        return false;
+                    }
+                    Some(guid)
+                }
+            };
+            with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.graph = graph)
+        }
         (Prop::ParticleLightMap, Pick::Asset(choice)) => {
             let map = match choice {
                 None => ParticleTexture::default(),
@@ -4245,6 +4275,15 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return found;
         }
         Prop::ParticleLightMap => return fields::assets_of(game, Some(AssetKind::Texture)),
+        Prop::ParticleGraph => {
+            // None, then the project's particle graphs by their paths.
+            let mut paths: Vec<String> =
+                game.content.shaders().particle_graphs.iter().map(|graph| graph.path.clone()).collect();
+            paths.sort();
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+            return found;
+        }
         Prop::ParticleMesh => {
             // None, the built-in ones, then the project's models.
             let mut found = vec![("None".to_string(), Pick::Asset(None))];

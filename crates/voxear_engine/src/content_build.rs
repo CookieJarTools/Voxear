@@ -335,7 +335,7 @@ pub fn build_mounted(
         .collect();
     let shaders: Vec<(AssetGuid, String, String)> = usage
         .keys()
-        .filter_map(|guid| db.get(*guid).filter(|entry| entry.kind == AssetKind::Shader))
+        .filter_map(|guid| db.get(*guid).filter(|entry| matches!(entry.kind, AssetKind::Shader | AssetKind::VoxShade)))
         .map(|entry| Ok((entry.guid, entry.path.clone(), String::from_utf8(stored[&entry.guid].clone())?)))
         .collect::<Result<_>>()?;
     // The built-in shaders the materials shipped pick, which are compiled in with the project's.
@@ -405,6 +405,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::LookPack
         | AssetKind::TexturePack
         | AssetKind::Shader
+        | AssetKind::VoxShade
         | AssetKind::PromptIcons => false,
     }
 }
@@ -509,6 +510,7 @@ fn usage_sets(
                         | AssetKind::Strings
                         | AssetKind::AssetTable
                         | AssetKind::Shader
+                        | AssetKind::VoxShade
                         | AssetKind::Block
                         | AssetKind::LookPack
                         | AssetKind::TexturePack
@@ -580,12 +582,18 @@ fn compile_shaders(
         materials: crate::shaders::dispatch_code(&registry),
         ui: crate::shaders::ui_dispatch_code(&registry),
         look: crate::shaders::look_dispatch_code(&registry),
+        particles: crate::shaders::particle_dispatch_code(&registry),
     };
     let engine = voxear_render::engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&engine)?.map(|entry| Ok(entry?.path())).collect::<Result<_>>()?;
     sources.sort();
     let mut parts =
-        vec![code.materials.clone().into_bytes(), code.ui.clone().into_bytes(), code.look.clone().into_bytes()];
+        vec![
+            code.materials.clone().into_bytes(),
+            code.ui.clone().into_bytes(),
+            code.look.clone().into_bytes(),
+            code.particles.clone().into_bytes(),
+        ];
     for source in sources.iter().filter(|path| path.extension().is_some_and(|extension| extension == "slang")) {
         parts.push(std::fs::read(source)?);
     }
@@ -695,6 +703,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Shader
+        | AssetKind::VoxShade
         | AssetKind::WorldGen
         | AssetKind::VoxModel => {}
     }

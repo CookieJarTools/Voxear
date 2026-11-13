@@ -1756,7 +1756,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
-- **The shader graph compiler ✅** (`voxear_shader_graph`; no editor or asset for it yet). A graph of typed nodes
+- **The VoxShade compiler ✅** (`voxear_voxshade`). A graph of typed nodes
   (inputs a stage is given, the surface as it stands, constants and colours, properties and picture reads, the
   usual maths, Compare and Branch, Split, Combine, Swizzle and a whole-number Random) is lowered from its output
   nodes into typed steps, which are folded, simplified and merged as they are made, with what no output reads
@@ -1767,9 +1767,57 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   (`starters`) draw the same picture as the built-in ones and take the same GPU time (0.226 against 0.228 ms,
   0.240 against 0.239 ms, least of sixty frames). Tests: folding, merging, leaving out, branches, errors at their
   nodes, files read back; on a GPU, the two graphs against the hand-written shaders.
-- Shader Graph with previews and sub-graphs, plus material variants: `.shadergraph` assets compiled as project
-  shaders, the graph editor on the generator graphs' canvas with each node's cost, then work moved to the vertex
-  stage and properties' sums worked out on the CPU (see [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
+- **VoxShade in the editor ✅.** `.voxshade` assets (`AssetKind::VoxShade`) are compiled as project
+  shaders wherever `.shader` ones are (`shaders::graph_source` in `ShaderRegistry`, and in builds), so materials
+  pick them as any shader, and a graph that does not compile keeps its errors by node. The **VoxShade**
+  panel (`voxshade_panel`) puts one on the generator graphs' canvas: the search by folder, wires dragged,
+  each node's instructions and picture reads once compiled under it and errors on it, each stage's sum on the
+  bar; beside it the picked node's values and the numbers its unwired inputs take (an output's left empty keeps
+  the material's), the properties (name, kind, default, range, tooltip) and the shader's settings. Undo, copy
+  and paste, saved as it changes and compiled in the background. **New Shader…** offers VoxShade, Hologram (VoxShade)
+  and Sway (VoxShade); the Inspector shows a graph's state and its Slang. The manual's VoxShade. Tests: the
+  panel opened, a node added and wired, a value typed, saved, compiled and undone on a GPU; rows, wires and
+  costs; a registry with a broken graph; a new graph from New Shader.
+- **VoxShade previews and work done once a material ✅.** Each node shows what it makes on a 72-pixel ball,
+  worked out on the CPU from the compiled steps (`voxear_voxshade::eval`, the panel's `voxshade_previews`), every
+  picture a cell of one texture, made again when the graph's work changes and 15 times a second while it reads
+  the time. Steps now run at one of four rates, constant, once a material, once a frame and from place to place;
+  the costliest work on properties alone that a higher rate reads (`hoist`) is worked out on the CPU when a
+  material's properties are set (`Derived`, `shaders::fill_worked`) and read by the shader as hidden values
+  after its properties, in the room left of the 16, with what only it needs left out of the Slang. Each node
+  and the bar say what is done once a material. Hologram and Sway now take 0.220 against 0.220 ms and 0.229
+  against 0.230 ms by hand; a graph with 200 sines on its properties draws the same in 0.226 ms against
+  0.239 ms with them at every pixel (least of sixty frames). Tests: previews, hoisting and its values, a full
+  material, the panel's costs; on a GPU, the heavy graph both ways.
+- **VoxShade sub-graphs and Slang nodes ✅.** A sub-graph is a `.voxshade` with `sub_graph`, inputs and outputs
+  (`Pin`s) in place of properties, Input nodes and a Sub-graph Output; the shader registry keeps them apart as a
+  `Library` by GUID, and a Sub-graph node (a typed reference, its ports kept up to date by the editor) is worked in
+  where it is used, through the same builder, so folding, merging and leaving out reach across it and its cost is
+  its nodes' (the same as the nodes put in by hand). A sub-graph on its own compiles to a Slang function to show.
+  A Slang node is a function the shader declares once (named from its code), called as one step with its other
+  outputs read from it, merged for the same inputs, never run on the CPU (previews striped, nothing after it
+  hoisted), its cost guessed from its code. The panel: rows for a Slang node's name, ports and code, a sub-graph
+  pick, a sub-graph's Inputs and Outputs; the search's Custom and Sub-graphs folders; New Shader's Sub-graph; the
+  Inspector's sub-graph. Tests: inlining, sharing, costs equal to plain nodes, errors at the node (missing, inside
+  itself, properties), Slang declared once and called once, ports added and taken away with their wires; on a GPU,
+  a rim made with a sub-graph and a Slang node against the same in plain nodes.
+- **Particle graphs ✅.** A `.voxshade` with `particles` ends in an **Update Output** (Force, Velocity) and a
+  **Look Output** (Color, Alpha, Size), read from a particle's Age, Life, Seed, Velocity, Position, its Obj's
+  place, Time, Delta Time, and the colour and size its settings give; each compiles to `particleUpdate` and
+  `particleLook`, its properties folded in as numbers. The registry keeps particle graphs apart and numbers them;
+  their code goes into `project_particle_graphs.slang`, and the particles' step and drawing (`particle_sim`,
+  `particles`) are compiled with it as material shaders are, calling a system's graph by its number
+  (`shaders/particle_custom.slang`). A Particle System's **Graph** row picks one (`ParticleSystem::graph`, the
+  engine's `ParticleGraphs` resource); one with an Update has its system simulated, one with only a Look leaves it
+  stateless. The panel offers particle inputs and outputs, previews a particle's life across the ball; New
+  Shader's Particle Graph starts as a swirl round the Obj that grows and fades. Tests: compiling, inputs and
+  outputs kept to their graphs; on a GPU, particles coloured by a Look and sent up by an Update (a Look alone
+  moves nothing), and 300,000 particles in 0.854 ms with the graph against 0.772 ms without (least of sixty).
+- VoxShade to come: pictures passed into sub-graphs and read by particle graphs, a particle graph's properties set
+  for each system, material variants, the graph from `vox`, and work moved
+  to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
+  every pass shares (mesh shaders included) would need values of the graph's own first (see
+  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
   and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or
@@ -1906,7 +1954,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
   - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
-  - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
+  - particle graphs that read pictures, take their properties from each system, and say how particles are sent
+    out
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order
 

@@ -95,7 +95,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | Required Vulkan features | dynamic rendering, synchronization2, timeline semaphores, buffer device address, descriptor indexing | Bindless, GPU-driven rendering. Supported by NVIDIA Maxwell+, AMD GCN+ and Intel Gen9+ on current drivers. |
 | Optional tiers | mesh shaders, ray query / acceleration structures | Detected at startup (`vox doctor` shows them). Compute fallbacks always exist. |
 | GPU memory | gpu-allocator | Proven allocator. It can be replaced later without API churn. |
-| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make shader graph output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
+| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make node shaders' output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
 | Windowing | winit | Handles Wayland, X11 and Win32. |
 | Scripting | C# on **CoreCLR**, .NET 10 LTS now, .NET 11 when it ships (November 2026) | The engine hosts `hostfxr` itself, with no `nethost` download. `Voxear.Core` is built with `RollForward=LatestMajor`, so newer runtimes work. |
 | Shipping scripts | CoreCLR now; NativeAOT as an option later | NativeAOT gives faster startup and no JIT for players and consoles. Hot reload stays CoreCLR-only. |
@@ -1315,7 +1315,7 @@ history on camera cuts.
 - An inspector with live previews.
 - A C# API: `Post.Current.Bloom.Intensity = 0.1f` for the easy path, and the full struct for the advanced one.
 
-## Materials and Shader Graph
+## Materials and VoxShade
 
 **Shaders.** Shaders are Slang modules. A material is a Definition: a shader plus parameter values. Material
 variants inherit from a parent and override only what differs.
@@ -1326,12 +1326,12 @@ variants inherit from a parent and override only what differs.
 - Drag a texture onto an Obj and a material is made for it.
 
 **Advanced.**
-- **Shader Graph:** a node graph that compiles to Slang.
+- **VoxShade:** shaders made of nodes, compiled to Slang.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(the compiler implemented in `voxear_shader_graph`; the editor, the asset, moving work to
-the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler, the `.voxshade` asset and its panel, previews, work moved to the CPU,
+sub-graphs and Slang nodes implemented; moving work to the vertex stage planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1352,7 +1352,7 @@ in five places, and each has its answer here:
   off the stateless path says so.
 
 Values being dragged are kept as properties, so dragging never compiles; they are folded in when the graph is
-saved. A custom node is Slang read into the same form, so it does not stand in the way of any of this. The test:
+saved. A custom node is a call of its own Slang, which the compiler merges as any step but cannot see into, so it only stands in the way of work moved to the CPU after it. The test:
 the built-in shaders made again as graphs draw the same picture in the same GPU time as the hand-written ones.
 
 How it is built so far. Lowering asks each output node for its inputs back through the wires (`lower`), so a node
@@ -1368,6 +1368,41 @@ sixteen behind one that changes from pixel to pixel), settled by placing again u
 values, what the function is given and properties are written where they are read; every other step is a local
 of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
 pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
+
+Rates are four: constant, once a material (properties), once a frame (the time) and from place to place. Work
+once a material that something changing more often reads is worked out on the CPU (`hoist`): the roots picked,
+costliest first, in the room a material has left after its own properties (16 values in all, shared by a
+shader's stages), become plain fields `worked0` on after the properties in the struct, the steps only they need
+are not written, and the shader registry keeps the steps (`Derived`) beside the shader. Whenever a material's
+values are made for the GPU (`content.look`), `shaders::fill_worked` runs those steps on its property values with
+the same evaluator the previews use (`eval`) and writes the answers in the slots after them, which the
+properties reader reads into the struct. A `.shader` copied from the Slang gets no such values filled. Moving
+work to the vertex stage waits on a way for `vertex` to hand values to `surface`: the vertex output every pass
+shares, mesh shaders included, has no room for a graph's own.
+
+Previews are worked out on the CPU, not drawn on the GPU: a node's value at each pixel of a 72-pixel ball,
+from the same steps lowered with every node's value kept (`lower_all`), so a preview is what the shader works
+out, and an edit needs no shader compiled to show it.
+
+A sub-graph is worked into each graph that uses it while that graph is lowered, not compiled on its own and
+called: its nodes are lowered through the same builder, with its Input nodes reading the values wired into the
+Sub-graph node, so every fold, merge and cut reaches across it, and two uses with the same inputs are one. Its
+steps count against the Sub-graph node, and its errors are said there. The shader registry keeps the project's
+sub-graphs apart from its shaders (`Library`, by GUID), so a reference is typed and survives a rename; the node
+keeps the sub-graph's ports as last read, for the canvas, and the editor brings them up to date. A Slang node is
+the one thing the compiler cannot see into: it is a call (`Op::Call`, its other outputs `Op::CallOut`) of a
+function declared once, its name made from everything about it, so it is merged as any step is, but never folded,
+run on the CPU, or hoisted out of the GPU's work; its cost is a guess from its code. Reading Slang into the
+compiler's own steps, as planned at first, would let it see into a custom node too, at the cost of a Slang reader
+of its own; the opaque call costs nothing a hand-written shader would not.
+
+A `.voxshade` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
+`.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream
+knows the difference, and a graph that does not compile is a shader with an error, named by node. The panel
+compiles the graph itself at every change, in well under a millisecond, for the costs and errors it draws; the
+renderer's compile follows each save on its own thread, as any shader's does. Chose a side column of the
+panel's own for a node's values over the Inspector the generator graphs use: a VoxShade shader's nodes have few
+values, mostly the numbers an unwired input takes, and the properties belong beside the graph they are read in.
 
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
@@ -2709,7 +2744,7 @@ terrain, brush tools and asset names are placeholders, not planned features.
   - folders with item counts
   - files with their sizes
 - **Viewport:**
-  - Scene, Game and Shader Graph tabs
+  - Scene, Game and VoxShade tabs
   - a shading mode menu, a Gizmos toggle and full screen
   - a floating tool strip: select, move, rotate, scale, tool modes, Pivot/Global and grid snap
   - Unity's axis colours on the gizmo, and a view gizmo bottom right
@@ -3017,7 +3052,7 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   hanging a bone elsewhere keeps them. The Model window keys them on a timeline (`model_timeline`) with the
   model drawn posed on the CPU (`clip_matrices`, `mesh_posed`), as its Motion mode draws it.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, particle graphs, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -3030,8 +3065,12 @@ next.
    world, collision, forces; later trails), the system's particles are kept on the GPU and stepped each frame
    by one compute pass for every system and every view (`voxear_render::particle_sim`,
    `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
-3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
-   the shared graph compiler (see Materials and Shader Graph).
+3. **With a particle graph** *(implemented)*. A system can pick a VoxShade particle graph, which has its say
+   where the settings leave off: its Update in the step, after the settings' forces and before drag and
+   collision, its Look where the particle is drawn, after the settings' colour and size. The project's particle
+   graphs are compiled into the step and the drawing once, as its material shaders are into the material
+   passes, and a system calls its own by number, so there is still one pass for every system. A graph with an
+   Update has its system simulated; one with only a Look leaves it on the first path.
 
 **The simulated path.** Every simulated system shares one pool of particles, 36 bytes each (position, velocity,
 age, life and a seed; size, colour and spin are worked out from the seed and age where it is drawn, as on the
@@ -3076,6 +3115,21 @@ sorting).
   the stats: adding to host-visible memory cost nine times the whole step.
 - On an RTX 3070, 1,048,576 particles blown and stirred are stepped in 0.19 ms and drawn as 2 cm sparks in
   0.9 ms.
+
+**Particle graphs** *(implemented)*. Chose graphs that add to the fixed modules over graphs that replace them:
+the settings stay the easy way in and still do the sending out, the shape, gravity, wind, collision and
+trails; a graph is the full way, for what they cannot say. Chose one program a frame over a program per
+effect: the project's graphs go into `project_particle_graphs.slang`, a switch on the system's graph number
+(`GpuParticleSystem::graph`, 0 for none), compiled into the `particles` and `particle_sim` modules with the
+project's custom shaders, so stepping and drawing stay one dispatch and one pipeline for every system, and a
+system without a graph pays one branch on a number the same for its whole chunk. The registry keeps particle
+graphs apart from shaders and numbers them by path (`shaders::ParticleGraph`); the engine hands the numbers to
+the renderer as the `ParticleGraphs` resource, which also says which graphs have an Update, so a system knows
+whether to keep its particles (`ParticleSystem::simulated_by`). A graph's Update reads the particle in the
+world, whatever its system's space, and its Seed is made from the same number in the step and in drawing, so
+the two stages see one particle. A particle graph's properties are folded in as constants for now: values set
+for each system wait on a store of them beside the system's own. On an RTX 3070, 300,000 particles stepped and
+drawn take 0.85 ms a frame with the starter's graph, against 0.77 ms without.
 
 **Effects** *(implemented)*. An effect is a list of emitters, each a name and a Particle System's settings, and a
 Particle System's Effect plays one in place of its own (`voxear_render::effects`). To the renderer and the

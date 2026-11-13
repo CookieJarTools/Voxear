@@ -65,6 +65,8 @@ mod path_handles;
 mod fields;
 mod frame_debugger_panel;
 pub mod generator_panel;
+pub mod voxshade_panel;
+pub mod voxshade_previews;
 mod generator_previews;
 pub mod box_part_inspector;
 pub mod model_panel;

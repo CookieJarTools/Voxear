@@ -18,6 +18,8 @@ mod framing;
 mod gun_handlings;
 mod world_gens;
 mod generators;
+mod voxshades;
+pub(crate) use voxshades::VOXSHADE_HEADING;
 mod models;
 mod grown_plants;
 mod heat_view;
@@ -194,6 +196,8 @@ struct Nodes {
     frame_debugger_panel: NodeId,
     /// The Generator panel's content, a World Generator's graph.
     generator_panel: NodeId,
+    /// The VoxShade panel's content, a shader made of nodes.
+    voxshade_panel: NodeId,
     /// The Model window's content, a box model to build.
     model_panel: NodeId,
     memory_panel: NodeId,
@@ -351,6 +355,9 @@ pub struct Editor {
     /// The World Generator's graph open to edit, and its file, to follow it when it is renamed.
     generator: GeneratorPanel,
     generator_guid: Option<voxear_assets::AssetGuid>,
+    /// The VoxShade shader open to edit, and its file, to follow it when it is renamed.
+    voxshade: crate::voxshade_panel::VoxShadePanel,
+    voxshade_guid: Option<voxear_assets::AssetGuid>,
     /// The box model open to build, and its file, to follow it when it is renamed.
     model: ModelPanel,
     model_guid: Option<voxear_assets::AssetGuid>,
@@ -540,6 +547,7 @@ impl Editor {
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             generator_panel: find(&ui, "generator-panel"),
+            voxshade_panel: find(&ui, "voxshade-panel"),
             model_panel: find(&ui, "model-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
@@ -599,6 +607,7 @@ impl Editor {
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let generator = GeneratorPanel::new(&mut ui, nodes.generator_panel);
+        let voxshade = crate::voxshade_panel::VoxShadePanel::new(&mut ui, nodes.voxshade_panel);
         let model = ModelPanel::new(&mut ui, nodes.model_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
@@ -683,6 +692,8 @@ impl Editor {
             frame_debugger,
             generator,
             generator_guid: None,
+            voxshade,
+            voxshade_guid: None,
             model,
             model_guid: None,
             world_gen_to_save: None,
@@ -1010,6 +1021,7 @@ impl Editor {
             self.docs.set_dark(&mut self.ui, theme.is_dark());
             self.packages.set_dark(theme.is_dark());
             self.generator.set_dark(theme.is_dark());
+            self.voxshade.set_dark(theme.is_dark());
             self.model.set_dark(theme.is_dark());
             for inspector in self.inspectors_mut() {
                 inspector.set_dark(theme.is_dark());
@@ -1031,6 +1043,10 @@ impl Editor {
             {
                 profile_scope!("Generator");
                 self.update_generator(renderer);
+            }
+            {
+                profile_scope!("VoxShade");
+                self.update_voxshade(renderer);
             }
             {
                 profile_scope!("Model");
@@ -1307,6 +1323,9 @@ impl Editor {
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
             ItemKind::Asset(AssetKind::WorldGen) => {
                 self.open_generator(&item.path);
+            }
+            ItemKind::Asset(AssetKind::VoxShade) => {
+                self.open_voxshade(&item.path.clone(), renderer);
             }
             ItemKind::Asset(AssetKind::Model) if voxear_render::is_box_model(&item.path) => {
                 self.open_model(&item.path);
@@ -2503,7 +2522,10 @@ impl Editor {
             && let Some(asked) = self.graph_key(&key.logical_key)
         {
             // Ctrl+C, Ctrl+V and Space are the open graph's while its panel was the last pressed in.
-            self.generator_key(asked);
+            match self.voxshade_has_keys() {
+                true => self.voxshade_key(asked),
+                false => self.generator_key(asked),
+            }
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event
@@ -2710,6 +2732,7 @@ impl Editor {
                 }
                 (PickFor::InputControl | PickFor::ActionIcon, picked) => self.pick_for_input(picked),
                 (PickFor::GraphNode, Chosen::GraphNode(place)) => self.pick_graph_node(place),
+                (PickFor::ShaderNode, Chosen::GraphNode(place)) => self.pick_shader_node(place),
                 _ => {}
             }
         }

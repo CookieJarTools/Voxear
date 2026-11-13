@@ -14,6 +14,15 @@
 //! A brush that builds reaches through water to the ground under it, and
 //! what it places takes the water's place; building with water itself, or
 //! breaking, meets the water.
+//!
+//! A block that faces a way is put down as a player would put it (see
+//! `voxear_terrain::blocks::shape::placed_state`): a stair rising away from
+//! the view, a slab on the face clicked, a door's hinge on the side of the
+//! face it was put nearer; R turns it on from there, and its outline shows
+//! its parts as they will stand. A door put down takes its upper block, and
+//! breaking either takes both. The Use brush uses the block clicked, as a
+//! player would; the Link brush links a lever or a button clicked to each
+//! block clicked after it, or takes a link away again.
 
 use std::sync::Arc;
 
@@ -27,7 +36,9 @@ use voxear_terrain::blocks::{
     block::Liquid,
     chunk::{AIR, BlockId, Fill},
     is_water,
+    shape::{Around, BlockState, PartBox, StateUse, UseKind, part_boxes, placed_state, turned_on},
     smooth::{self, Ball},
+    usable::use_kind,
     vox::VoxFile,
 };
 use voxear_ui::{Color, Shape};
@@ -39,6 +50,19 @@ use crate::{
 
 /// The brush's outline's colour.
 const COLOR: u32 = 0xF5C542;
+
+/// A box's twelve edges, by its corners numbered a bit an axis.
+const EDGES: [(usize, usize); 12] =
+    [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)];
+
+/// The ray under `point` in `entity`'s world, in blocks from its corner:
+/// where it starts, and the way it goes.
+fn ray_in(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2]) -> Option<([f32; 3], [f32; 3])> {
+    let blocks = game.engine.world.get::<BlockWorld>(entity)?;
+    let corner = corner_of(game, entity)?;
+    let (origin, direction) = camera.ray(point);
+    Some((((origin - corner) / blocks.block_size).to_array(), direction.normalize_or_zero().to_array()))
+}
 
 /// How far into the world a click reaches for a block, in metres.
 const REACH: f32 = 2000.0;
@@ -62,6 +86,12 @@ pub struct BlockTools {
     under: Option<(Entity, BlockHit)>,
     stroke: Option<(Entity, [i32; 3], [f32; 2])>,
     model: Option<(AssetGuid, Option<Model>)>,
+    /// How many times R turned the block put down on from how it would
+    /// face, and that block placed so, as it stands under the pointer.
+    turns: u8,
+    placing: Option<(Entity, BlockState)>,
+    /// The lever or button the Link brush links from, while one is picked.
+    linking: Option<(Entity, [i32; 3])>,
 }
 
 /// The `.vox` model `guid`, read from its file.
@@ -87,6 +117,27 @@ fn corner_of(game: &Game, entity: Entity) -> Option<Vec3> {
 fn picked(game: &Game, entity: Entity) -> Option<BlockId> {
     let guid = block_props::built_with(game)?;
     game.engine.world.get::<BlockWorldAsset>(entity)?.drawn.number_of(guid)
+}
+
+/// The state the block picked to build with is put down in on `hit`, by a
+/// view looking along `look` (in blocks from the world's corner, `from`
+/// where the ray started), turned on `turns` times: none for a block that
+/// keeps no state.
+fn state_for(game: &Game, hit: &BlockHit, (from, look): ([f32; 3], [f32; 3]), turns: u8) -> Option<BlockState> {
+    let block = block_props::built_with(game).and_then(|guid| game.content.loaded_block(guid))?;
+    let shape = if block.liquid == Liquid::None { block.shape } else { return None };
+    if !StateUse::of(shape).any() {
+        return None;
+    }
+    // Where on the face clicked, across the block that goes before it.
+    let point: [f32; 3] = std::array::from_fn(|i| from[i] + look[i] * hit.distance);
+    let cell: [i32; 3] = std::array::from_fn(|i| hit.block[i] + hit.normal[i]);
+    let within: [f32; 3] = std::array::from_fn(|i| (point[i] - cell[i] as f32).clamp(0.0, 1.0));
+    let mut state = placed_state(shape, hit.normal, within, look);
+    for _ in 0..turns {
+        state = turned_on(shape, state);
+    }
+    Some(state)
 }
 
 /// Whether the block picked to build with is water.
@@ -147,7 +198,7 @@ fn smooth_ball(
         BlockBrush::Place => Ball::Add(picked),
         BlockBrush::Break => Ball::Take,
         BlockBrush::Paint => Ball::Paint(picked),
-        BlockBrush::Model => return Vec::new(),
+        BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => return Vec::new(),
     };
     smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does, faces)
 }
@@ -161,6 +212,12 @@ impl BlockTools {
         self.under.is_some()
     }
 
+    /// Turns the block the brush puts down on, a quarter about the up axis,
+    /// or for one that faces six ways to its next way.
+    pub fn turn(&mut self) {
+        self.turns = (self.turns + 1) % 12;
+    }
+
     /// Notes the block under the pointer, for the selected Obj `entity` when
     /// it has a world of blocks and its Build tool shows.
     pub fn hover(&mut self, game: &Game, camera: &ViewCamera, entity: Option<Entity>, point: Option<[f32; 2]>) {
@@ -168,12 +225,17 @@ impl BlockTools {
             return;
         }
         self.under = None;
+        self.placing = None;
         let (Some(entity), Some(point)) = (entity, point) else { return };
         let world = &game.engine.world;
         if !world.has::<BlockWorldAsset>(entity) || block_props::ui(world).tool != BlockTool::Build {
             return;
         }
         self.under = block_under(game, camera, entity, point, Self::brush(game, false)).map(|hit| (entity, hit));
+        // How the block put down would stand there, for its outline and its number.
+        if let (Some((_, hit)), Some(ray)) = (self.under, ray_in(game, camera, entity, point)) {
+            self.placing = state_for(game, &hit, ray, self.turns).map(|state| (entity, state));
+        }
         if block_props::ui(world).brush == BlockBrush::Model {
             self.keep_model(game, false);
         }
@@ -198,6 +260,15 @@ impl BlockTools {
         }
     }
 
+    /// The number of the block picked placed as it stands under the
+    /// pointer, the world numbering that state now where it has not held
+    /// it; none for a block that keeps no state.
+    fn placed_number(&self, game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Option<BlockId> {
+        let (on, state) = self.placing?;
+        let guid = block_props::built_with(game).filter(|_| on == entity)?;
+        block_props::number_block_state(game, renderer, entity, guid, state.to_byte())
+    }
+
     /// The brush as it works now: Shift turns placing into breaking, and
     /// breaking into placing.
     fn brush(game: &Game, shift: bool) -> BlockBrush {
@@ -208,16 +279,40 @@ impl BlockTools {
         }
     }
 
-    /// Works the brush on `hit` in `entity`'s world; the block it worked on.
-    fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush) -> [i32; 3] {
+    /// Works the brush on `hit` in `entity`'s world, putting down `placed`
+    /// where it is a block in a state; the block it worked on.
+    fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush, placed: Option<BlockId>) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
         // With no block picked, or one the world has no room for, there is nothing to place or paint with.
-        let picked = match (picked(game, entity), brush) {
+        let picked = match (placed.or_else(|| picked(game, entity)), brush) {
             (Some(block), _) => block,
             (None, BlockBrush::Break) => AIR,
             (None, _) => return middle,
         };
+        // One block put down or taken away at a time takes a door's other block with it.
+        let one = state.size <= 1 && matches!(brush, BlockBrush::Place | BlockBrush::Break);
+        let smooth = game.engine.world.get::<BlockWorld>(entity).is_some_and(|blocks| blocks.smooth);
+        if one && !smooth {
+            let Some(blocks) = game.engine.world.get::<BlockWorld>(entity) else { return middle };
+            let now = blocks.blocks.get(middle);
+            let room = now == AIR || is_water(&blocks.faces, now) && !is_water(&blocks.faces, picked);
+            let wanted = match brush {
+                BlockBrush::Place if room => picked,
+                BlockBrush::Break if now != AIR => AIR,
+                _ => return middle,
+            };
+            let changes = voxear_engine::blocks::with_door_halves(
+                &mut game.engine.world,
+                &mut game.content,
+                entity,
+                vec![(middle, wanted)],
+            );
+            if let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) {
+                blocks.set_blocks(changes);
+            }
+            return middle;
+        }
         let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return middle };
         let map = blocks.blocks.clone();
         if blocks.smooth {
@@ -236,7 +331,7 @@ impl BlockTools {
                     BlockBrush::Place => (now == AIR || (water(now) && !water(picked))).then_some(picked),
                     BlockBrush::Break => (now != AIR).then_some(AIR),
                     BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then_some(picked),
-                    BlockBrush::Model => None,
+                    BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
                 }?;
                 Some((at, wanted))
             })
@@ -263,6 +358,31 @@ impl BlockTools {
             self.under = block_under(game, camera, entity, point, brush).map(|hit| (entity, hit));
         }
         let Some((_, hit)) = self.under.filter(|(e, _)| *e == entity) else { return false };
+        if brush == BlockBrush::Use {
+            // Used as a player would: a stroke, so a door opened is a step to undo.
+            voxear_engine::blocks::use_block(&mut game.engine.world, &mut game.content, entity, hit.block);
+            self.stroke = Some((entity, hit.block, point));
+            return true;
+        }
+        if brush == BlockBrush::Link {
+            let drives = |game: &Game, at: [i32; 3]| {
+                let Some(blocks) = game.engine.world.get::<BlockWorld>(entity) else { return false };
+                matches!(use_kind(&blocks.faces, blocks.blocks.get(at)), UseKind::Toggles | UseKind::Presses)
+            };
+            match self.linking.filter(|(on, from)| *on == entity && *from != hit.block) {
+                // From a lever or a button to the block clicked, or the link there taken away.
+                Some((_, from)) => {
+                    if let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity)
+                        && !blocks.link(from, hit.block)
+                    {
+                        blocks.unlink(from, Some(hit.block));
+                    }
+                    self.stroke = Some((entity, hit.block, point));
+                }
+                None => self.linking = drives(game, hit.block).then_some((entity, hit.block)),
+            }
+            return true;
+        }
         if brush == BlockBrush::Model {
             // Read again, as its file may have changed since.
             self.keep_model(game, true);
@@ -275,14 +395,24 @@ impl BlockTools {
             return true;
         }
         // The world numbers the block as it first builds with it, here where there is a renderer for its look.
+        let placed = match brush {
+            BlockBrush::Place => self.placed_number(game, Some(&mut *renderer), entity),
+            _ => None,
+        };
         if brush != BlockBrush::Break
+            && placed.is_none()
             && let Some(guid) = block_props::built_with(game)
         {
             block_props::number_block(game, Some(renderer), entity, guid);
         }
-        let last = Self::work(game, entity, &hit, brush);
+        let last = Self::work(game, entity, &hit, brush, placed);
         self.stroke = Some((entity, last, point));
         true
+    }
+
+    /// The lever or button the Link brush links from, while one is picked.
+    pub fn linking(&self) -> Option<(Entity, [i32; 3])> {
+        self.linking
     }
 
     /// Goes on with the stroke under `point`, where the pointer has moved
@@ -295,8 +425,8 @@ impl BlockTools {
         }
         let brush = Self::brush(game, shift);
         let Some(hit) = block_under(game, camera, entity, point, brush) else { return };
-        // A model is built once a click.
-        if brush == BlockBrush::Model {
+        // A model is built once a click, and a block used or linked once.
+        if matches!(brush, BlockBrush::Model | BlockBrush::Use | BlockBrush::Link) {
             return;
         }
         // Placing builds on what it placed, so it waits until the pointer leaves the block it last worked on, and
@@ -307,7 +437,11 @@ impl BlockTools {
         if middle == last || hit.block == last || apart.sqrt() < spacing {
             return;
         }
-        let worked = Self::work(game, entity, &hit, brush);
+        let placed = match brush {
+            BlockBrush::Place => self.placed_number(game, None, entity),
+            _ => None,
+        };
+        let worked = Self::work(game, entity, &hit, brush, placed);
         self.stroke = Some((entity, worked, point));
     }
 
@@ -330,6 +464,42 @@ impl BlockTools {
         let brush = Self::brush(game, shift);
         let middle = Self::middle(&hit, brush).map(|v| v as f32);
         let size = blocks.block_size;
+        let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
+        let line = |shapes: &mut Vec<Shape>, a: Vec3, b: Vec3, color: u32| {
+            if let (Some(from), Some(to)) = (camera.project(a), camera.project(b)) {
+                shapes.push(Shape::Line { from: local(from), to: local(to), width: 1.5, color: Color::hex(color) });
+            }
+        };
+        // The Link brush: a line from the lever or button picked to each block it drives, and to the one under it.
+        if brush == BlockBrush::Link {
+            let mut shapes = Vec::new();
+            let at = |p: [i32; 3]| corner + (Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) + 0.5) * size;
+            let from = self.linking.filter(|(on, _)| *on == entity).map(|(_, from)| from).unwrap_or(hit.block);
+            for to in blocks.links.get(&from).into_iter().flatten() {
+                line(&mut shapes, at(from), at(*to), COLOR);
+            }
+            if self.linking.is_some() {
+                line(&mut shapes, at(from), at(hit.block), 0x7FD1FF);
+            }
+            shapes.extend(self.outline(camera, corner, size, hit.block.map(|v| v as f32), [[0.0; 3], [1.0; 3]]));
+            return shapes;
+        }
+        // A block of parts put down one at a time: its boxes as they will stand.
+        if brush == BlockBrush::Place
+            && state.size <= 1
+            && let Some((_, placed)) = self.placing
+            && let Some(block) = block_props::built_with(game).and_then(|guid| game.content.loaded_block(guid))
+            && block.shape.is_part()
+        {
+            let custom = block.part_look().custom;
+            let boxes: Vec<PartBox> = part_boxes(block.shape, placed, Around::default(), custom.as_ref());
+            let mut shapes = Vec::new();
+            for part in boxes {
+                let [low, high] = [part.from, part.to].map(|c| c.map(|v| f32::from(v) / 16.0));
+                shapes.extend(self.outline(camera, corner, size, middle, [low, high]));
+            }
+            return shapes;
+        }
         // From its lowest corner to its highest, in blocks: the model where it would stand, else the brush's reach.
         let [low, high] = match (brush, &self.model) {
             (BlockBrush::Model, Some((_, Some(model)))) => {
@@ -347,14 +517,30 @@ impl BlockTools {
                 corner + Vec3::new(pick(1, 0), pick(2, 1), pick(4, 2)) * size
             })
             .collect();
-        let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
         let mut shapes = Vec::new();
-        for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
-            if let (Some(from), Some(to)) = (camera.project(corners[a]), camera.project(corners[b])) {
-                shapes.push(Shape::Line { from: local(from), to: local(to), width: 1.5, color: Color::hex(COLOR) });
-            }
+        for (a, b) in EDGES {
+            line(&mut shapes, corners[a], corners[b], COLOR);
         }
         shapes
+    }
+
+    /// The edges of a box from `low` to `high`, in blocks from `at`, a block
+    /// of the world from its `corner`, as lines.
+    fn outline(&self, camera: &ViewCamera, corner: Vec3, size: f32, at: [f32; 3], [low, high]: [[f32; 3]; 2]) -> Vec<Shape> {
+        let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];
+        let corners: Vec<Vec3> = (0..8)
+            .map(|i| {
+                let pick = |bit: u32, axis: usize| at[axis] + if i & bit == 0 { low[axis] } else { high[axis] };
+                corner + Vec3::new(pick(1, 0), pick(2, 1), pick(4, 2)) * size
+            })
+            .collect();
+        EDGES
+            .iter()
+            .filter_map(|&(a, b)| {
+                let (from, to) = (camera.project(corners[a])?, camera.project(corners[b])?);
+                Some(Shape::Line { from: local(from), to: local(to), width: 1.5, color: Color::hex(COLOR) })
+            })
+            .collect()
     }
 }
 

@@ -32,6 +32,7 @@ Then read [[Objs and Components]] and [[Your First Script]].
 - **[[Finding Problems]]**: the Console, the Profiler, and the other tools for finding out why.
 - **[[VoxDocs]]**: writing your project's own pages, guides that do the work for the reader, and linking code to pages.
 - **[[Packages]]**: sharing scripts, tools and assets between projects, from Git, folders and registries.
+- **[[The Command Line]]**: `vox`, and driving the open editor from scripts, tests and AI assistants.
 
 ## Reading the manual
 

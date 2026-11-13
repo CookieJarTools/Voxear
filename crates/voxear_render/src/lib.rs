@@ -152,7 +152,7 @@ pub use particles::{
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
-pub use blocks::{BlockCounts, BlockLook, BlockVoxels};
+pub use blocks::{BlockCounts, BlockLook, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_MOTIONS, MAX_MOVING};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -1357,8 +1357,12 @@ impl Renderer {
             captures.record(&mut fg, gpu, (output, desc), false, frame.slot)?;
         }
         for (image, acquired) in images.iter().zip(&acquired) {
-            if let (Some((output, _)), Some(_)) = (image, acquired) {
-                fg.transition(*output, ImageAccess::Present);
+            match (image, acquired) {
+                (Some((output, _)), Some(_)) => fg.transition(*output, ImageAccess::Present),
+                // An offscreen output ends each frame ready to draw into, as the next frame expects, even after a
+                // capture copied it once the UI was drawn.
+                (Some((output, _)), None) => fg.transition(*output, ImageAccess::ColorAttachment),
+                (None, _) => {}
             }
         }
         let push = push.unwrap_or(ui_push);

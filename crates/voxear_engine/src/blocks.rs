@@ -34,7 +34,8 @@ use voxear_scene::Destroying;
 use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
-        block::{BlockHeat, Liquid, MISSING},
+        block::{BlockHeat, BlockShape, Liquid, MISSING},
+        shape::{BlockState, StateUse},
         chunk::BlockId,
         edits::{BlockEdits, blocks_file},
         file::{BlockFile, BlockKind, MAX_BLOCKS, MAX_LOOKS},
@@ -134,10 +135,27 @@ impl Resolved {
         self.heats.iter().flatten().map(|heat| heat.reach).fold(0.0, f32::max)
     }
 
-    /// The number of the `.block` at `guid`, where it is listed.
+    /// The number of the `.block` at `guid` in the state it is placed in
+    /// when nothing says (see `BlockState::default_for`), where it is
+    /// listed so.
     pub fn number_of(&self, guid: AssetGuid) -> Option<BlockId> {
-        let at = self.guids.iter().position(|listed| *listed == Some(guid))?;
+        let first = self.guids.iter().position(|listed| *listed == Some(guid))?;
+        let shape = self.file.blocks[first].shape;
+        self.number_of_state(guid, BlockState::default_for(shape).normalized(shape).to_byte())
+    }
+
+    /// The number of the `.block` at `guid` placed in `state`, where it is
+    /// listed so.
+    pub fn number_of_state(&self, guid: AssetGuid, state: u8) -> Option<BlockId> {
+        let at = self.guids.iter().zip(&self.file.blocks).position(|(listed, kind)| {
+            *listed == Some(guid) && kind.state == BlockState::from_byte(state).normalized(kind.shape).to_byte()
+        })?;
         Some((at + 1) as BlockId)
+    }
+
+    /// The shape of the block numbered `block`.
+    pub fn shape(&self, block: BlockId) -> Option<BlockShape> {
+        self.file.kind(block).map(|kind| kind.shape)
     }
 }
 
@@ -156,6 +174,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
         match content.block(&reference) {
             Some((guid, block)) => {
                 block.fill(kind);
+                kind.state = BlockState::from_byte(kind.state).normalized(kind.shape).to_byte();
                 kind.name = content.block_name(guid).unwrap_or_default();
                 guids.push(Some(guid));
                 heats[at] = block.heat;
@@ -216,11 +235,26 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
 /// file as it is drawn: none where the world can number no more, or draw no
 /// more ways than it does (see `MAX_LOOKS`).
 pub fn with_block(content: &mut Content, file: &BlockFile, guid: AssetGuid) -> Option<(BlockFile, Resolved)> {
+    let state = content.block(&guid.to_string()).map_or(0, |(_, block)| {
+        let shape = if block.liquid == Liquid::None { block.shape } else { BlockShape::Cube };
+        BlockState::default_for(shape).normalized(shape).to_byte()
+    });
+    with_block_state(content, file, guid, state)
+}
+
+/// `file` with the block at `guid` placed in `state` numbered after those
+/// it has, as [`with_block`] numbers it.
+pub fn with_block_state(
+    content: &mut Content,
+    file: &BlockFile,
+    guid: AssetGuid,
+    state: u8,
+) -> Option<(BlockFile, Resolved)> {
     if file.blocks.len() >= MAX_BLOCKS {
         return None;
     }
     let mut file = file.clone();
-    file.blocks.push(BlockKind::of(&guid.to_string()));
+    file.blocks.push(BlockKind::of_state(&guid.to_string(), state));
     let drawn = resolved(content, &file);
     (drawn.looks() <= MAX_LOOKS).then_some((file, drawn))
 }
@@ -267,14 +301,57 @@ pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
 /// with a warning, for a block not in the project or one the world has no
 /// room for.
 fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named: &str) -> BlockId {
-    let Some((guid, _)) = content.block(named) else {
+    number_placed(content, file, owner, named, None)
+}
+
+/// Each block that faces a way, by its number, as it is numbered turned each
+/// way and mirrored (see `WorldStructures::turns`).
+type Turns = std::collections::BTreeMap<BlockId, [BlockId; 8]>;
+
+/// The numbers `file` gives each entry of `model`'s palette, which `owner`
+/// names, each in the state the model places it in, `file` growing to hold
+/// them; and of each that faces a way, its numbers turned and mirrored, in
+/// `turns`, so it turns as its structure does.
+fn number_model(
+    content: &mut Content,
+    file: &mut BlockFile,
+    owner: &str,
+    model: &voxear_terrain::blocks::structure::StructureModel,
+    turns: &mut Turns,
+) -> Vec<BlockId> {
+    let mut numbers = Vec::with_capacity(model.palette.len());
+    for (at, named) in model.palette.iter().enumerate() {
+        let state = model.state_of(at + 1);
+        let number = number_placed(content, file, owner, named, state);
+        numbers.push(number);
+        let shape = content.block(named).map(|(_, block)| block.shape);
+        let faces = shape.is_some_and(|shape| StateUse::of(shape).facings > 0);
+        if !faces || number == voxear_terrain::blocks::chunk::AIR || turns.contains_key(&number) {
+            continue;
+        }
+        let shape = shape.expect("checked above");
+        let state = state.unwrap_or_else(|| BlockState::default_for(shape));
+        let turned: [BlockId; 8] = std::array::from_fn(|way| {
+            let placed = state.turned((way % 4) as u8, way >= 4);
+            number_placed(content, file, owner, named, Some(placed))
+        });
+        turns.insert(number, turned);
+    }
+    numbers
+}
+
+/// As [`number_named`], the block placed in `state` where it says.
+fn number_placed(content: &mut Content, file: &mut BlockFile, owner: &str, named: &str, state: Option<BlockState>) -> BlockId {
+    let Some((guid, block)) = content.block(named) else {
         tracing::warn!("{owner} names the block {named}, which is not in the project");
         return voxear_terrain::blocks::chunk::AIR;
     };
-    if let Some(number) = resolved(content, file).number_of(guid) {
+    let shape = if block.liquid == Liquid::None { block.shape } else { BlockShape::Cube };
+    let state = state.unwrap_or_else(|| BlockState::default_for(shape)).normalized(shape).to_byte();
+    if let Some(number) = resolved(content, file).number_of_state(guid, state) {
         return number;
     }
-    match with_block(content, file, guid) {
+    match with_block_state(content, file, guid, state) {
         Some((grown, _)) => {
             *file = grown;
             file.blocks.len() as BlockId
@@ -301,6 +378,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     let biome_guids: Vec<Option<AssetGuid>> =
         biomes.iter().map(|reference| content.biome(reference).map(|(guid, _)| guid)).collect();
     let mut list = Vec::new();
+    let mut turns = Turns::new();
     for reference in &references {
         let Some((_, structure)) = content.structure(reference) else {
             tracing::warn!("a world of blocks lists the structure {reference}, which is not in the project");
@@ -312,8 +390,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     tracing::warn!("the structure {reference} has a model whose blocks do not fill its size");
                     continue;
                 };
-                let numbers: Vec<BlockId> =
-                    model.palette.iter().map(|named| number_named(content, &mut file, reference, named)).collect();
+                let numbers = number_model(content, &mut file, reference, model, &mut turns);
                 let blocks =
                     entries.iter().map(|&entry| if entry == 0 { 0 } else { numbers[usize::from(entry) - 1] }).collect();
                 StructureBlocks::Model { size: model.size, blocks }
@@ -333,23 +410,22 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");
-                let piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                let piece = |content: &mut Content, file: &mut BlockFile, turns: &mut Turns, named: &str| -> Option<TownPiece> {
                     let (_, part) = content.structure(named).or_else(|| {
                         tracing::warn!("the dungeon {reference} names {named}, which is not in the project");
                         None
                     })?;
                     let model = part.model.as_ref()?;
                     let entries = model.blocks()?;
-                    let numbers: Vec<BlockId> =
-                        model.palette.iter().map(|block| number_named(content, file, named, block)).collect();
+                    let numbers = number_model(content, file, named, model, turns);
                     let blocks =
                         entries.iter().map(|&e| if e == 0 { 0 } else { numbers[usize::from(e) - 1] }).collect();
                     Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
                 };
-                let entrance = dungeon.entrance.as_deref().and_then(|named| piece(content, &mut file, named));
+                let entrance = dungeon.entrance.as_deref().and_then(|named| piece(content, &mut file, &mut turns, named));
                 let mut rooms = Vec::new();
                 for room in &dungeon.rooms {
-                    let Some(piece) = piece(content, &mut file, &room.structure) else { continue };
+                    let Some(piece) = piece(content, &mut file, &mut turns, &room.structure) else { continue };
                     let kind = TownHouseKind {
                         piece,
                         weight: room.weight,
@@ -388,20 +464,19 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
             (None, None) => {
                 let Some(town) = &structure.town else { continue };
                 // Each of its pieces a structure with a model, read and numbered as one would be.
-                let piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                let piece = |content: &mut Content, file: &mut BlockFile, turns: &mut Turns, named: &str| -> Option<TownPiece> {
                     let (_, part) = content.structure(named).or_else(|| {
                         tracing::warn!("the town {reference} names {named}, which is not in the project");
                         None
                     })?;
                     let model = part.model.as_ref()?;
                     let entries = model.blocks()?;
-                    let numbers: Vec<BlockId> =
-                        model.palette.iter().map(|block| number_named(content, file, named, block)).collect();
+                    let numbers = number_model(content, file, named, model, turns);
                     let blocks =
                         entries.iter().map(|&e| if e == 0 { 0 } else { numbers[usize::from(e) - 1] }).collect();
                     Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
                 };
-                let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, named));
+                let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, &mut turns, named));
                 // Each kind of house with the world's biomes it stands in, by their place in the world's list.
                 let in_biomes = |content: &mut Content, named: &[String]| -> Vec<usize> {
                     let wanted: Vec<Option<AssetGuid>> =
@@ -411,7 +486,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 };
                 let mut houses = Vec::new();
                 for house in &town.houses {
-                    let Some(piece) = piece(content, &mut file, &house.structure) else { continue };
+                    let Some(piece) = piece(content, &mut file, &mut turns, &house.structure) else { continue };
                     let biomes = in_biomes(content, &house.biomes);
                     houses.push(TownHouseKind {
                         piece,
@@ -460,7 +535,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
         });
     }
     if let Some(generate) = file.generate.as_mut() {
-        generate.built = Some(Arc::new(WorldStructures { list }));
+        generate.built = Some(Arc::new(WorldStructures { list, turns }));
     }
     file
 }
@@ -507,6 +582,69 @@ pub fn block_number(
     world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
     world.insert(entity, asset);
     Some(number)
+}
+
+/// As [`block_number`], the block placed in `state`.
+pub fn block_number_state(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    reference: &str,
+    state: u8,
+    grow: bool,
+) -> Option<BlockId> {
+    let (guid, block) = content.block(reference)?;
+    let shape = if block.liquid == Liquid::None { block.shape } else { BlockShape::Cube };
+    let state = BlockState::from_byte(state).normalized(shape).to_byte();
+    let asset = world.get::<BlockWorldAsset>(entity)?;
+    if let Some(known) = asset.drawn.number_of_state(guid, state) {
+        return Some(known);
+    }
+    if !grow {
+        return None;
+    }
+    let Some((file, drawn)) = with_block_state(content, &asset.file, guid, state) else {
+        say_full(content, asset.guid, guid);
+        return None;
+    };
+    let (_, faces) = drawn.faces();
+    let number = file.blocks.len() as BlockId;
+    let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
+    world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
+    world.insert(entity, asset);
+    Some(number)
+}
+
+/// Puts the block at `at` of the world of blocks on `entity` in `state`,
+/// the same block: where only whether it is open (or on) changes, as using
+/// it would, with a door's pair and what a lever drives, by their motions
+/// where `animate` says; any other change at once, alone. How many blocks
+/// changed.
+pub fn change_state(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    at: [i32; 3],
+    state: u8,
+    animate: bool,
+) -> usize {
+    use voxear_terrain::blocks::usable::{StateChange, state_of};
+    let Some(blocks) = world.get::<BlockWorld>(entity) else { return 0 };
+    let id = blocks.blocks.get(at);
+    let Some(kind) = blocks.faces.get(usize::from(id)).copied().filter(|_| id != voxear_terrain::blocks::chunk::AIR)
+    else {
+        return 0;
+    };
+    let Some(now) = state_of(&blocks.faces, id) else { return 0 };
+    let wanted = BlockState::from_byte(state).normalized(kind.shape);
+    if wanted == now {
+        return 0;
+    }
+    if wanted == now.moved(kind.shape, wanted.is_moved()) {
+        return set_moved(world, content, entity, at, wanted.is_moved(), animate);
+    }
+    let change = StateChange { at, family: kind.family, state: wanted.to_byte(), animate };
+    change_states(world, content, entity, &[change])
 }
 
 /// The `.block` numbered `block` in the world of blocks on `entity`, as its
@@ -560,6 +698,11 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "data": block.data,
         "drops": drops,
         "sounds": { "break": block.sounds.broken, "place": block.sounds.placed, "step": block.sounds.step },
+        "shape": BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or(0),
+        "usable": block.part_look().usable || matches!(
+            block.shape,
+            BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate | BlockShape::Lever | BlockShape::Button
+        ),
     });
     Ok(said.to_string())
 }
@@ -590,7 +733,8 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
         let remade = match world.get::<BlockWorld>(entity) {
             Some(blocks) if regrown && !endless => {
                 let ground = Arc::new(ground(content, &asset.file));
-                let changes = BlockEdits::between(&asset.base, &blocks.blocks);
+                let mut changes = BlockEdits::between(&asset.base, &blocks.blocks);
+                changes.links = blocks.link_list();
                 let mut made = make(&file, &ground, Some(&changes));
                 made.cast_shadows = blocks.cast_shadows;
                 asset.base = ground;
@@ -686,7 +830,11 @@ pub fn make(file: &Resolved, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -
     if let Some(edits) = edits {
         edits.apply(&mut blocks);
     }
-    BlockWorld::made(blocks, &faces, file.block_size, file.smooth)
+    let mut world = BlockWorld::made(blocks, &faces, file.block_size, file.smooth);
+    if let Some(edits) = edits.filter(|edits| !edits.links.is_empty()) {
+        world.set_links(&edits.links);
+    }
+    world
 }
 
 /// A face drawn with its block's colour alone: matt, as earth and stone
@@ -732,7 +880,9 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
         });
     }
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
-    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels })
+    let motions: Vec<voxear_render::GpuBlockMotion> =
+        file.motions().iter().map(|(motion, swing)| voxear_render::GpuBlockMotion::of(motion.as_ref(), *swing)).collect();
+    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels, motions: motions.into() })
 }
 
 /// Keeps every world of blocks' file and blocks in `content` as its
@@ -752,10 +902,11 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for (path, file, blocks) in content.take_unsaved_block_worlds() {
         std::fs::write(project.join(&path), file.to_text()).with_context(|| format!("saving {path}"))?;
-        let edits = match file.generate.as_ref().and_then(|g| g.endless) {
+        let mut edits = match file.generate.as_ref().and_then(|g| g.endless) {
             Some(_) => voxear_terrain::blocks::stream::all_changes(&blocks.base, &blocks.world.blocks, &blocks.pending),
             None => BlockEdits::between(&blocks.base, &blocks.world.blocks),
         };
+        edits.links = blocks.world.link_list();
         let changes = project.join(blocks_file(&path));
         if edits.is_empty() {
             if changes.is_file() {
@@ -919,5 +1070,171 @@ mod tests {
         flow(&mut world, 1.0);
         let reached = world.get::<BlockWorld>(entity).unwrap().blocks.get([15, 8, 10]);
         assert_eq!(reached, AIR, "four steps at most in one frame");
+    }
+}
+
+/// The number of the block whose first number is `family` placed in
+/// `state`, in the world of blocks on `entity`: the one it has, or the next
+/// after those it has numbered, which is that state's from now on. None
+/// where it is no block of a `.block` asset, or the world has no room.
+pub fn state_number(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    family: BlockId,
+    state: u8,
+) -> Option<BlockId> {
+    let asset = world.get::<BlockWorldAsset>(entity)?;
+    let guid = asset.drawn.guid(family)?;
+    if let Some(known) = asset.drawn.number_of_state(guid, state) {
+        return Some(known);
+    }
+    let Some((file, drawn)) = with_block_state(content, &asset.file, guid, state) else {
+        say_full(content, asset.guid, guid);
+        return None;
+    };
+    let (_, faces) = drawn.faces();
+    let number = file.blocks.len() as BlockId;
+    let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
+    world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
+    world.insert(entity, asset);
+    Some(number)
+}
+
+/// What using a block did: what kind of use it was, whether the block is
+/// open (or on) now, and how many blocks changed for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Used {
+    pub kind: voxear_terrain::blocks::shape::UseKind,
+    pub now: bool,
+    pub changed: usize,
+}
+
+/// Puts each of `changes` in place in the world of blocks on `entity`, each
+/// state numbered (the world numbering those it has not held), those marked
+/// to move by their motions from now by its clock. How many changed.
+pub fn change_states(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    changes: &[voxear_terrain::blocks::usable::StateChange],
+) -> usize {
+    let mut numbered = Vec::with_capacity(changes.len());
+    for change in changes {
+        if let Some(block) = state_number(world, content, entity, change.family, change.state) {
+            numbered.push((change.at, block, change.animate));
+        }
+    }
+    let Some(blocks) = world.get_mut::<BlockWorld>(entity) else { return 0 };
+    blocks.change_states(&numbered);
+    numbered.len()
+}
+
+/// Uses the block at `at`, in blocks from the corner of the world of blocks
+/// on `entity` (see `voxear_terrain::blocks::usable`): a door opens or
+/// shuts with its pair, a lever turns over and drives what it is linked
+/// to, a button turns on for its time. None where it is no block a player
+/// uses.
+pub fn use_block(world: &mut World, content: &mut Content, entity: voxear_ecs::Entity, at: [i32; 3]) -> Option<Used> {
+    use voxear_terrain::blocks::{shape::UseKind, usable};
+    let blocks = world.get::<BlockWorld>(entity)?;
+    let using = usable::use_at(&blocks.blocks, &blocks.faces, &blocks.links, at)?;
+    let press = blocks.faces.get(usize::from(blocks.blocks.get(at))).map_or(100, |faces| faces.press);
+    let changed = change_states(world, content, entity, &using.changes);
+    if using.kind == UseKind::Presses && using.now {
+        world.get_mut::<BlockWorld>(entity)?.press(at, f32::from(press) / 100.0);
+    }
+    Some(Used { kind: using.kind, now: using.now, changed })
+}
+
+/// Sets the block at `at` of the world of blocks on `entity` open (or on),
+/// or shut, as `moved` says: with a door its pair too, and a lever or a
+/// button driving what it is linked to; by their motions where `animate`
+/// says, or at once. How many blocks changed.
+pub fn set_moved(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    at: [i32; 3],
+    moved: bool,
+    animate: bool,
+) -> usize {
+    use voxear_terrain::blocks::usable;
+    let Some(blocks) = world.get::<BlockWorld>(entity) else { return 0 };
+    let mut changes = usable::set_moved(&blocks.blocks, &blocks.faces, at, moved);
+    let drives = matches!(
+        usable::use_kind(&blocks.faces, blocks.blocks.get(at)),
+        voxear_terrain::blocks::shape::UseKind::Toggles | voxear_terrain::blocks::shape::UseKind::Presses
+    );
+    if drives {
+        changes.extend(usable::driven(&blocks.blocks, &blocks.faces, &blocks.links, at, moved));
+    }
+    changes.iter_mut().for_each(|change| change.animate = animate);
+    change_states(world, content, entity, &changes)
+}
+
+/// The blocks `changes` set in the world of blocks on `entity`, with what
+/// goes with each: a door's upper block over a door put down where there
+/// is room for it, and a door's other block taken away with it.
+pub fn with_door_halves(
+    world: &mut World,
+    content: &mut Content,
+    entity: voxear_ecs::Entity,
+    changes: Vec<([i32; 3], BlockId)>,
+) -> Vec<([i32; 3], BlockId)> {
+    use voxear_terrain::blocks::{chunk::AIR, shape::BlockHalf, usable};
+    let Some(blocks) = world.get::<BlockWorld>(entity) else { return changes };
+    if !blocks.faces.iter().any(|faces| faces.shape == BlockShape::Door) {
+        return changes;
+    }
+    let (map, faces) = (blocks.blocks.clone(), blocks.faces.clone());
+    let mut more: Vec<([i32; 3], BlockId)> = Vec::new();
+    let mut uppers: Vec<([i32; 3], BlockId, u8)> = Vec::new();
+    for &(at, block) in &changes {
+        let up = [at[0], at[1] + 1, at[2]];
+        let is_door = |id: BlockId| faces.get(usize::from(id)).is_some_and(|kind| kind.shape == BlockShape::Door);
+        if block == AIR {
+            if let Some(other) = usable::other_half(&map, &faces, at) {
+                more.push((other, AIR));
+            }
+        } else if is_door(block) {
+            let state = BlockState::from_byte(faces[usize::from(block)].state);
+            let room = map.get(up) == AIR && changes.iter().all(|(place, _)| *place != up);
+            if state.half == BlockHalf::Lower && room {
+                uppers.push((up, faces[usize::from(block)].family, usable::upper_door(state).to_byte()));
+            }
+        }
+    }
+    for (at, family, state) in uppers {
+        if let Some(number) = state_number(world, content, entity, family, state) {
+            more.push((at, number));
+        }
+    }
+    let mut all = changes;
+    for (at, block) in more {
+        if all.iter().all(|(place, _)| *place != at) {
+            all.push((at, block));
+        }
+    }
+    all
+}
+
+/// Moves each world of blocks' clock on `delta` seconds (see
+/// `BlockWorld::tick`): its blocks done moving rest, and each button whose
+/// time is up turns off, with what it drives.
+pub fn tick(world: &mut World, content: &mut Content, delta: f32) {
+    let worlds: Vec<voxear_ecs::Entity> =
+        world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
+    for entity in worlds {
+        // A world with nothing moving keeps its clock as it is: only how long since something started matters.
+        let idle = world.get::<BlockWorld>(entity).is_none_or(|blocks| blocks.moving.is_empty() && blocks.pressed.is_empty());
+        if idle {
+            continue;
+        }
+        let Some(blocks) = world.get_mut::<BlockWorld>(entity) else { continue };
+        let up = blocks.tick(delta);
+        for at in up {
+            set_moved(world, content, entity, at, false, true);
+        }
     }
 }

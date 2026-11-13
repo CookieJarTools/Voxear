@@ -68,6 +68,7 @@ impl Editor {
                 }
                 BlocksEvent::BuildWith(path) => self.build_with_block(&path),
                 BlocksEvent::New => self.new_block(renderer),
+                BlocksEvent::Starters => self.starter_blocks(renderer),
                 BlocksEvent::Duplicate(path) => self.duplicate_block(&path, renderer),
                 BlocksEvent::Delete(path) => self.delete_block(&path, renderer, false),
                 BlocksEvent::DeleteHeld(path) => self.delete_block(&path, renderer, true),
@@ -110,6 +111,19 @@ impl Editor {
         match project_files::create_block(&root, block_props::BLOCKS_FOLDER, "Block", &block) {
             Ok(path) => self.block_made(path, renderer),
             Err(error) => self.notify(&format!("Could not make a block: {error:#}")),
+        }
+    }
+
+    /// Makes the starter blocks in the project's Blocks folder, and picks
+    /// the first.
+    fn starter_blocks(&mut self, renderer: &mut Renderer) {
+        match crate::starter_blocks::add(&mut self.game) {
+            Ok(made) => {
+                if let Some(first) = made.first() {
+                    self.block_made(first.clone(), renderer);
+                }
+            }
+            Err(error) => self.notify(&format!("Could not make the starter blocks: {error:#}")),
         }
     }
 

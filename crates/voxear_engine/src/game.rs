@@ -725,6 +725,7 @@ impl Game {
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
+        crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         crate::heat::prepare(&mut self.engine.world, &mut self.content);
         crate::storms::prepare(&mut self.engine.world, &mut self.content);
@@ -1080,6 +1081,25 @@ impl ScriptServices for GameServices<'_> {
 
     fn block_number(&mut self, world: &mut World, entity: Entity, reference: &str, grow: bool) -> Option<u16> {
         crate::blocks::block_number(world, self.content, entity, reference, grow)
+    }
+
+    fn block_number_state(&mut self, world: &mut World, entity: Entity, reference: &str, state: u8, grow: bool) -> Option<u16> {
+        crate::blocks::block_number_state(world, self.content, entity, reference, state, grow)
+    }
+
+    fn block_use(&mut self, world: &mut World, entity: Entity, at: [i32; 3]) -> Option<(u8, bool)> {
+        use voxear_terrain::blocks::shape::UseKind;
+        let used = crate::blocks::use_block(world, self.content, entity, at)?;
+        let kind = [UseKind::None, UseKind::Opens, UseKind::Toggles, UseKind::Presses, UseKind::Says];
+        Some((kind.iter().position(|kind| *kind == used.kind).unwrap_or(0) as u8, used.now))
+    }
+
+    fn block_change_state(&mut self, world: &mut World, entity: Entity, at: [i32; 3], state: u8, animate: bool) -> usize {
+        crate::blocks::change_state(world, self.content, entity, at, state, animate)
+    }
+
+    fn door_halves(&mut self, world: &mut World, entity: Entity, changes: Vec<([i32; 3], u16)>) -> Vec<([i32; 3], u16)> {
+        crate::blocks::with_door_halves(world, self.content, entity, changes)
     }
 
     fn blocks_grown(&mut self, world: &World, entity: Entity) -> Vec<(u16, String)> {

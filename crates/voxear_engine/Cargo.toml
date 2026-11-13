@@ -45,6 +45,7 @@ uuid.workspace = true
 tracy = ["voxear_core/tracy"]
 
 [dev-dependencies]
+voxear_shader_graph.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 png.workspace = true

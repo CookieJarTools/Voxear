@@ -657,6 +657,32 @@ struct TerrainBodies {
 /// A world of blocks' bodies: where its Obj was, its layer, how large a
 /// block was, its chunks' faces as they were made from, and for each chunk
 /// the faces it was made from, its body and its shape.
+/// How high a character steps up of itself, its controller's `step_offset`
+/// given: at least a little over half the smallest block of `worlds`, so it
+/// walks up slabs and stairs, but no more than 0.6 m for that.
+fn blocks_step(worlds: &HashMap<Entity, BlockBodies>, step_offset: f32) -> f32 {
+    let smallest = worlds.values().map(|world| world.block_size).fold(f32::INFINITY, f32::min);
+    match smallest.is_finite() {
+        true => step_offset.max((smallest * 0.55).min(0.6)),
+        false => step_offset,
+    }
+}
+
+/// A box's six sides as twelve triangles facing out, from `low` to `high`,
+/// put after `points` and `indices`.
+fn box_triangles(points: &mut Vec<Vec3>, indices: &mut Vec<u32>, low: Vec3, high: Vec3) {
+    let first = points.len() as u32;
+    for corner in 0..8u32 {
+        let pick = |bit: u32, a: f32, b: f32| if corner >> bit & 1 == 0 { a } else { b };
+        points.push(Vec3::new(pick(0, low.x, high.x), pick(1, low.y, high.y), pick(2, low.z, high.z)));
+    }
+    // Each side as two triangles, wound to face out: -x, +x, -y, +y, -z, +z.
+    let sides: [[u32; 4]; 6] = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+    for [a, b, c, d] in sides {
+        indices.extend([a, b, c, a, c, d].map(|i| first + i));
+    }
+}
+
 struct BlockBodies {
     corner: Vec3,
     layer: u8,
@@ -1128,8 +1154,11 @@ impl PhysicsScene {
             let mut wanted: Vec<([i32; 3], &Arc<voxear_terrain::blocks::mesh::ChunkMesh>)> = Vec::new();
             for (key, mesh) in blocks.meshes.iter() {
                 // Faces made again with the same triangles, as when only a neighbour's shading changed, keep their body.
+                let same = |made: &voxear_terrain::blocks::mesh::ChunkMesh| {
+                    made.positions == mesh.positions && made.indices == mesh.indices && made.colliders == mesh.colliders
+                };
                 if let Some((made, body, _)) = kept.chunks.get_mut(key)
-                    && (Arc::ptr_eq(made, mesh) || made.positions == mesh.positions && made.indices == mesh.indices)
+                    && (Arc::ptr_eq(made, mesh) || same(made))
                 {
                     *made = mesh.clone();
                     if moved {
@@ -1143,15 +1172,21 @@ impl PhysicsScene {
                     self.owners.remove(&body);
                 }
                 // A chunk of water alone has no ground to stand on.
-                if !mesh.indices.is_empty() {
+                if !mesh.indices.is_empty() || !mesh.colliders.is_empty() {
                     wanted.push((*key, mesh));
                 }
             }
             // The new chunks' shapes made on every core, then given bodies here.
             let block_size = blocks.block_size;
             let made = voxear_terrain::workers::each(&wanted, |(_, mesh)| {
-                let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * block_size).collect();
-                crate::MadeShape::mesh(&points, &mesh.indices)
+                let mut points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * block_size).collect();
+                // Its fences and walls a block and a half high, as boxes of triangles beside its faces.
+                let mut indices = mesh.indices.clone();
+                for [low, high] in &mesh.colliders {
+                    let (low, high) = (Vec3::from(*low) * block_size, Vec3::from(*high) * block_size);
+                    box_triangles(&mut points, &mut indices, low, high);
+                }
+                crate::MadeShape::mesh(&points, &indices)
             });
             for ((key, mesh), shape) in wanted.into_iter().zip(made) {
                 let Some(shape) = shape else { continue };
@@ -1173,6 +1208,13 @@ impl PhysicsScene {
             kept.meshes = Some(blocks.meshes.clone());
             self.block_worlds.insert(entity, kept);
         }
+    }
+
+    /// How high a character steps up of itself: as its controller says, and
+    /// at least half a block where there are worlds of blocks, so it walks
+    /// up slabs and stairs (see [`blocks_step`]).
+    fn step_of(&self, step_offset: f32) -> f32 {
+        blocks_step(&self.block_worlds, step_offset)
     }
 
     fn remove_block_world(&mut self, entity: Entity) {
@@ -1613,7 +1655,7 @@ impl PhysicsScene {
             height: controller.height,
             radius: controller.radius,
             max_slope: controller.slope_limit,
-            step_height: controller.step_offset,
+            step_height: self.step_of(controller.step_offset),
             layer,
             ..CharacterDesc::default()
         };
@@ -1700,7 +1742,9 @@ impl PhysicsScene {
         // Carried along by what it stands in, and shoved, beside the way it is moved.
         let velocity = velocity + walker.carried + walker.shoved;
         walker.shoved *= (1.0 - SHOVE_FADES * dt.max(0.0)).max(0.0);
-        let state = self.world.move_character(walker.id, velocity, dt, walker.controller.step_offset, gravity);
+        let step = blocks_step(&self.block_worlds, walker.controller.step_offset);
+        let walker = self.characters.get_mut(&entity)?;
+        let state = self.world.move_character(walker.id, velocity, dt, step, gravity);
         walker.placed = state.position;
         walker.state = Some(state);
         let parent = world.get::<Parent>(entity).map(|parent| voxear_scene::world_matrix(world, parent.0));

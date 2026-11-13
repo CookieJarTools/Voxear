@@ -295,12 +295,16 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 
 | Setting | What it does |
 | --- | --- |
-| Brush | **Place** puts the picked block against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked block; **Model** builds a model of blocks (see below) |
+| Brush | **Place** puts the picked block against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked block; **Model** builds a model of blocks (see below); **Use** uses the block clicked, as a player would; **Link** links a lever or a button to the blocks it drives |
 | Size | How many blocks across it reaches: 1 for a block at a time, more for a ball of them |
 | Block | The block it builds with, picked from all the project's blocks. The ones you built with last come first |
 | Model | With the Model brush, the `.vox` model it builds |
 
 A block double-clicked in the [[Blocks#The Blocks panel|Blocks panel]], or dragged from it onto **Block**, is picked too.
+
+A [[Blocks#Blocks of parts|block of parts]] is put down standing as a player would put it: a stair rising away from the view, a slab lying on the face clicked, a door on the far side of its block with its hinge on the side it was put nearer. Its outline shows its boxes as they will stand. Press **R** to turn it on a quarter, or, for a slab, a lever or a button, on to its next side. A door put down takes its upper block over it, and breaking either block of it takes both.
+
+With **Use**, a click uses a block as a player would: a door opens, a lever turns over and drives what it is linked to. With **Link**, click a lever or a button, then each block it should drive: a line shows each link. Click a block linked already to take its link away.
 
 Click to build once; drag to go on, the brush working again as the pointer moves on by half its size. A brush that builds reaches through water to the ground under it, and what it places takes the water's place; with water itself picked, or breaking, it meets the water. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo, the number a world gave a new block with it. The brushes work while playing too, on the world selected: what you build there goes when play stops, as everything played does.
 
@@ -427,6 +431,44 @@ Any block of the project can be placed in any world: one that has not held it nu
 
 Breaking by a block's rules, how long it takes with a tool, what it drops, and items that place blocks are in [[Blocks and Items from Scripts]].
 
+### Doors, levers and how blocks stand
+
+A script uses a block as a player does, and reads and sets how a [[Blocks#Blocks of parts|block of parts]] stands:
+
+```csharp
+public Block Door;
+public Block Stairs;
+
+// Open the door the player looks at; a listener may keep it locked.
+if (Blocks.Raycast(eye.Position, eye.Forward, out var hit, 4f))
+{
+    Blocks.Use(hit, Obj);
+}
+
+// A stair facing east, upside down, and a door turned as the player looks.
+Blocks.Set(at, Stairs, new BlockState(BlockFacing.East, BlockHalf.Upper));
+Blocks.Place(hit, Door, eye.Forward);
+
+// A lever opening a gate across the yard.
+Blocks.Link(lever, gate);
+```
+
+| Call | What it does |
+| --- | --- |
+| `Blocks.Use(position, user)` and `Blocks.Use(hit, user)` | Uses a block: opens a door with its pair, turns a lever, presses a button. False where it is no block that is used |
+| `Blocks.Using`, `Blocks.Used` | Before a block is used, with `Cancel` to leave it as it is; after, with what it did and whether it is open now |
+| `Blocks.StateAt(position)` | How the block there stands: its `Facing`, `Half`, `Open`, `On` and `Hinge` |
+| `Blocks.SetState(position, state, animate)` | The block there stood another way. Only opening or shutting moves by its motion, with its pair and what a lever drives |
+| `Blocks.Set(position, block, state)` | Sets a block standing a way |
+| `Blocks.Place(hit, block, looking)` | Puts a block against the face a ray met, standing as someone looking that way puts it down, a door with its upper block |
+| `BlockState.Placed(shape, hit, looking)` | How a block of a shape would stand put down so |
+| `Blocks.Link(from, to)`, `Blocks.Unlink(from, to)`, `Blocks.LinksFrom(from)` | A lever or button's links to the blocks it drives |
+| `block.Shape`, `block.IsUsable` | A block's shape, and whether a player can use it |
+
+A block's [[Blocks and Items from Scripts#Rules of your own|rules of its own]] answer `CanUse`, to keep a door locked until its key is carried, and hear `OnUsed`.
+
+Using a block gives the same changes on every machine that has the same blocks: in a game over the network, send where a player used a block, and use it there on each machine, or send the changes from `Blocks.CaptureEdits` to a player who joins. How each block stands, and the links, are in those changes.
+
 ### Blocks by number
 
 Every call also takes a block's number in its world, from 1, with 0 for air: `Blocks.At(position)`, `hit.Block`, `Blocks.Set(position, 3)`. A number is one world's own. For a block the world first held while the game ran, it is this machine's own too, so over the network send the `Block`, or the item that places it, never its number.
@@ -435,4 +477,4 @@ Physics and drawing follow a change at once: only the chunks it changed are made
 
 ## Collision
 
-A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. It needs no Collider. Its Obj's **Layer** is its blocks' layer. Its water does not collide: things fall into it, and those with Buoyancy float.
+A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. Its blocks of parts collide as their boxes stand, fences and walls a block and a half high, and a character on it steps up half a block by itself (see [[Blocks#Blocks of parts|Blocks of parts]]). It needs no Collider. Its Obj's **Layer** is its blocks' layer. Its water does not collide: things fall into it, and those with Buoyancy float.

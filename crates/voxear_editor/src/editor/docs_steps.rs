@@ -114,7 +114,7 @@ impl Editor {
 
     /// What the palette's commands come from, as a guide finds them: the
     /// editor's own and the scripts'.
-    fn command_sources(&self) -> Sources<'_> {
+    pub(super) fn command_sources(&self) -> Sources<'_> {
         Sources {
             game: &self.game,
             playing: self.is_playing(),

@@ -146,7 +146,7 @@ impl Editor {
     }
 
     /// The view's area in the window's pixels, as the renderer copies it.
-    fn capture_area(&self, view: NodeId) -> [u32; 4] {
+    pub(super) fn capture_area(&self, view: NodeId) -> [u32; 4] {
         let [_, _, width, height] = self.ui.rect(self.ui.root());
         let size = ((width * self.scale) as u32, (height * self.scale) as u32);
         self.viewport_rect(Some(view), size)

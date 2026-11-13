@@ -44,6 +44,9 @@ const PANEL_MIN: (f64, f64) = (180.0, 120.0);
 
 /// Opens the editor on `project` in a window, until it is closed.
 pub fn run_editor(project: Project, settings: RendererSettings, log: LogCapture) -> Result<()> {
+    if let Err(error) = crate::take_over_from_headless(&project.root) {
+        tracing::warn!("{error:#}");
+    }
     let event_loop = EventLoop::new().context("creating the event loop")?;
     let mut app = App {
         project: Some(project),
@@ -148,6 +151,9 @@ impl App {
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
         let mut editor = Editor::open(project, &mut renderer, self.log.clone())?;
+        if let Err(error) = editor.serve_link(false) {
+            tracing::warn!("tools cannot reach this editor: {error:#}");
+        }
         // Copying and pasting reach the desktop's clipboard, not only the editor's own.
         editor.ui.set_clipboard(Box::new(voxear_engine::ui_input::SystemClipboard::default()));
         window.set_ime_allowed(true);
@@ -582,6 +588,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // A tool asked the editor to close, as `editor.quit` does.
+        if self.editor.as_ref().is_some_and(Editor::wants_to_quit) {
+            return event_loop.exit();
+        }
         self.sync_windows(event_loop);
         self.drawn = false;
         for window in self.window.iter().chain(self.desktop.iter().map(|open| &open.os)) {

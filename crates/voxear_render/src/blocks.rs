@@ -53,6 +53,68 @@ pub struct BlockLook {
     pub surfaces: Arc<[SurfaceLook]>,
     /// The small cubes its cubes' faces are cut into; none by default.
     pub voxels: BlockVoxels,
+    /// Its blocks of parts' motions, as `BlockFaces::motion` counts them
+    /// from 1 (see `voxear_terrain::blocks::file::BlockFile::motions`).
+    pub motions: Arc<[GpuBlockMotion]>,
+}
+
+/// A key of a block's motion as the shaders read it (`BlockMotionKey` in
+/// `shaders/common.slang`): when, how far its parts are turned, in
+/// radians, and moved, in sixteenths, and how the way on goes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuMotionKey {
+    pub time: f32,
+    pub turn: f32,
+    pub shift: f32,
+    pub ease: u32,
+}
+
+/// The most keys a motion has on the GPU.
+pub const MOTION_KEYS: usize = 8;
+
+/// The most motions a world of blocks draws, and the most of its blocks
+/// moving at once that it draws moving.
+pub const MAX_MOTIONS: usize = 63;
+pub const MAX_MOVING: usize = 64;
+
+/// A block's motion as the shaders read it (`BlockMotion`): how long it
+/// lasts, how many keys it has, and how far a block that hangs swings at
+/// most, in radians.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBlockMotion {
+    pub length: f32,
+    pub count: u32,
+    pub swing: f32,
+    pub pad: u32,
+    pub keys: [GpuMotionKey; MOTION_KEYS],
+}
+
+impl GpuBlockMotion {
+    /// `motion` as the shaders read it, and a block that hangs swinging
+    /// `swing` degrees at most.
+    pub fn of(motion: Option<&voxear_terrain::blocks::shape::BlockMotion>, swing: f32) -> Self {
+        let mut gpu = Self { swing: swing.to_radians(), ..Self::default() };
+        if let Some(motion) = motion {
+            gpu.length = motion.length();
+            for (place, key) in gpu.keys.iter_mut().zip(&motion.keys) {
+                *place = GpuMotionKey { time: key.time, turn: key.turn.to_radians(), shift: key.shift, ease: key.ease.code() };
+            }
+            gpu.count = motion.keys.len().min(MOTION_KEYS) as u32;
+        }
+        gpu
+    }
+}
+
+/// A block moving as the shaders read it (`MovingBlock`): where it is in
+/// its world's blocks, whether it is opening, and how long since it
+/// started, in seconds.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuMovingBlock {
+    pub at: [i32; 4],
+    pub timing: [f32; 4],
 }
 
 /// The small cubes a world of cubes' faces are drawn as made of: each face
@@ -133,6 +195,11 @@ pub struct GpuBlockWorld {
     /// water is all its sea.
     pub sea_top: f32,
     pub pad: u32,
+    /// Its motions and its blocks moving now, and how many of each.
+    pub motions: u64,
+    pub moving: u64,
+    pub motion_count: u32,
+    pub moving_count: u32,
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
@@ -142,9 +209,13 @@ pub const BLOCKS_SMOOTH: u32 = 1;
 /// Where a view's block buffer keeps its surfaces, after its worlds.
 const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
 
+/// Where a view's block buffer keeps its worlds' motions and moving
+/// blocks, after their surfaces, and how much each world takes there.
+const PARTS_AT: usize = SURFACES_AT + MAX_BLOCK_WORLDS * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>();
+const PARTS_EACH: usize = MAX_MOTIONS * size_of::<GpuBlockMotion>() + MAX_MOVING * size_of::<GpuMovingBlock>();
+
 /// How large a view's block buffer is.
-pub const FRAME_SIZE: u64 =
-    (SURFACES_AT + MAX_BLOCK_WORLDS * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+pub const FRAME_SIZE: u64 = (PARTS_AT + MAX_BLOCK_WORLDS * PARTS_EACH) as u64;
 
 /// One chunk in a pool: the faces it was made from, its slot, where its
 /// quads start, and the box it lies in, in metres from the world's corner.
@@ -166,6 +237,9 @@ pub(crate) struct ChunkDraw {
     /// Its loose quads, sheets of bushy leaves and of vines, drawn
     /// whichever way the view looks while it is near enough.
     pub loose: [u32; 2],
+    /// Its blocks of parts' quads, two quads' words each, drawn whichever
+    /// way the view looks.
+    pub parts: [u32; 2],
     pub water: [u32; 2],
     /// Drawn smooth, the cone the ways its triangles face lie within (see
     /// `voxear_terrain::blocks::mesh::ChunkMesh::cone`), [`EVERY_WAY`] where
@@ -288,6 +362,10 @@ pub(crate) fn pick(
         };
         if level == 0 && chunk.loose[1] > 0 && detail.is_none_or(near) {
             picked.push(chunk.loose);
+        }
+        // Its blocks of parts, their boxes' faces turned every way, and some moving.
+        if level == 0 && chunk.parts[1] > 0 {
+            picked.push(chunk.parts);
         }
     }
     merged(picked)
@@ -548,8 +626,10 @@ impl Pool {
                 let water = [held.first as u32 + water, count];
                 let (loose, count) = held.mesh.loose();
                 let loose = [held.first as u32 + loose, count];
+                let (parts, count) = held.mesh.parts();
+                let parts = [held.first as u32 + parts, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
-                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, water, cone }
+                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, parts, water, cone }
             });
             self.draws = Some(draws.collect());
         }
@@ -571,6 +651,8 @@ pub(crate) struct DrawnBlocks {
     /// each other, for each view to pass over the chunks it cannot see into.
     pub sights: Option<(Arc<voxear_terrain::blocks::BlockMap>, Arc<HashMap<[i32; 3], u16>>)>,
     pub look: BlockLook,
+    /// Its blocks moving now, as the shaders read them.
+    pub moving: Arc<[GpuMovingBlock]>,
     /// How high its sea's top is over its corner, where it has a sea level.
     pub sea_top: Option<f32>,
     pub cast_shadows: bool,
@@ -710,6 +792,7 @@ impl BlockWorlds {
                     material: assets.default_material,
                     surfaces: Arc::from([]),
                     voxels: BlockVoxels::default(),
+                    motions: Arc::from([]),
                 });
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {
@@ -808,6 +891,15 @@ impl BlockWorlds {
                 chunks: pool.draws(),
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 look,
+                moving: blocks
+                    .moving
+                    .iter()
+                    .take(MAX_MOVING)
+                    .map(|moving| GpuMovingBlock {
+                        at: [moving.at[0], moving.at[1], moving.at[2], i32::from(moving.opening)],
+                        timing: [(blocks.clock - moving.started).max(0.0) as f32, moving.length, 0.0, 0.0],
+                    })
+                    .collect(),
                 sea_top: world.get::<crate::sea::SeaLevel>(entity).map(|level| level.0),
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
@@ -822,6 +914,7 @@ impl BlockWorlds {
                     self.drawn.push(DrawnBlocks {
                         corner,
                         look: drawn.look,
+                        moving: drawn.moving,
                         sea_top: drawn.sea_top,
                         cast_shadows: drawn.cast_shadows,
                         ..old
@@ -1014,6 +1107,17 @@ pub(crate) fn gather(
             };
         }
         let surfaces_at = (SURFACES_AT + number * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+        // Its motions, then its blocks moving now, each as many as it has.
+        let parts_at = (PARTS_AT + number * PARTS_EACH) as u64;
+        let moving_at = parts_at + (MAX_MOTIONS * size_of::<GpuBlockMotion>()) as u64;
+        let motions = &blocks.look.motions[..blocks.look.motions.len().min(MAX_MOTIONS)];
+        if !motions.is_empty() {
+            buffer.write(parts_at, motions);
+        }
+        let moving = &blocks.moving[..blocks.moving.len().min(MAX_MOVING)];
+        if !moving.is_empty() {
+            buffer.write(moving_at, moving);
+        }
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
         records.push(GpuBlockWorld {
@@ -1030,6 +1134,10 @@ pub(crate) fn gather(
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
             sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
             pad: 0,
+            motions: buffer.address + parts_at,
+            moving: buffer.address + moving_at,
+            motion_count: motions.len() as u32,
+            moving_count: moving.len() as u32,
         });
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
@@ -1198,6 +1306,7 @@ mod tests {
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
+            parts: [0, 0],
             water: [first + 60, 0],
             cone: None,
         };
@@ -1260,6 +1369,7 @@ mod tests {
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
+            parts: [0, 0],
             water: [first + 60, water],
             cone: None,
         };

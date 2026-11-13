@@ -364,7 +364,10 @@ impl BlockStreamer {
                 Arc::make_mut(pending).chunks.extend(BlockEdits::between(base, &world.blocks).chunks);
             }
             *base = Arc::new(BlockMap::default());
+            // Its links and its clock stay: they are the world's, not its chunks'.
+            let (links, clock) = (world.links.clone(), world.clock);
             *world = BlockWorld::made(BlockMap::default(), &making.faces, making.file.block_size, making.file.smooth);
+            (world.links, world.clock) = (links, clock);
             world.columns = Some(Arc::default());
             (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
             (self.coarse, self.asked, self.stale) = (HashMap::new(), HashSet::new(), HashSet::new());
@@ -732,6 +735,15 @@ impl BlockStreamer {
                         chunks
                     };
                     raise(&mut chunks, &built, level, making.file.smooth);
+                    // A coarse column's blocks of parts as cubes, or as air where they are too thin to see.
+                    let any_part = making.faces.iter().any(|faces| faces.part & super::PART_DRAWN != 0);
+                    if level > 0 && any_part {
+                        for (_, chunk) in &mut chunks {
+                            if chunk.may_hold(|block| super::is_part(&making.faces, block)) {
+                                *chunk = chunk.remapped(|block| super::far_block(&making.faces, block));
+                            }
+                        }
+                    }
                     // A coarse column's faces made here, alone: the columns beside it not made.
                     let meshes = if level == 0 || making.file.smooth {
                         Vec::new()
@@ -740,10 +752,11 @@ impl BlockStreamer {
                         for (key, chunk) in &chunks {
                             alone.put_chunk(*key, chunk.clone());
                         }
+                        let far = if any_part { super::far_faces(&making.faces) } else { making.faces.to_vec() };
                         chunks
                             .iter()
                             .map(|(key, _)| {
-                                let mesh = mesh_made(&alone, *key, &making.faces, making.file.smooth, &|c| c == at);
+                                let mesh = mesh_made(&alone, *key, &far, making.file.smooth, &|c| c == at);
                                 (*key, mesh)
                             })
                             .collect()

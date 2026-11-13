@@ -2431,7 +2431,7 @@ impl Editor {
 
     /// The 3D views drawn this frame, each with its camera: each Scene view
     /// that shows, through its own camera, in the order they were opened,
-    /// and the Game view, through the level's first camera, when it shows and
+    /// and the Game view, through the level's first camera switched on, when it shows and
     /// the level has one. All draw at once, one floating over another. The
     /// order holds while the Scene view in use changes, so each view keeps
     /// its own history in the renderer.
@@ -2460,11 +2460,15 @@ impl Editor {
         ViewOptions { camera: Some(camera), debug_view, gizmos, ..ViewOptions::default() }
     }
 
-    /// The camera the game looks through: the level's first.
+    /// The camera the game looks through: the level's first that is switched
+    /// on, as the game itself picks it. One a script switched off as play
+    /// began, for its own to take over, is not looked through: asked to, the
+    /// renderer would look from nowhere in particular.
     fn game_camera(&self) -> Option<Entity> {
         let world = &self.game.engine.world;
         let cameras = world.query_ref::<(Entity, &Camera)>().without::<EditorOnly>().into_iter();
-        cameras.map(|(entity, _)| entity).min_by_key(|entity| entity.index())
+        let on = cameras.filter(|(entity, _)| voxear_scene::is_on(world, *entity, voxear_scene::Switch::Camera));
+        on.map(|(entity, _)| entity).min_by_key(|entity| entity.index())
     }
 
     /// Gives the UI a window event; returns whether it used it. Ctrl+K goes

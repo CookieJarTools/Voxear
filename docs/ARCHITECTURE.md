@@ -2047,7 +2047,7 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
 - **Docked panels:** the Hierarchy (each open scene under its own header, its Objs by parent in the scene's order,
   with type icons, child counts, a badge on Objs with an `IInstance` behaviour, prefab instances tinted, and a
   filter), the Scene view and
-  the Game view (through the level's first camera; both draw at once when both show, as in Unity), the Project and
+  the Game view (through the level's first camera switched on, as the game picks its own; both draw at once when both show, as in Unity), the Project and
   the Console under them, and the Inspector on the right at 300px. Each panel has a
   32px header of tabs (the Scene's and Game's with icons) and its own controls on the right: the Scene's are its
   shading menu, Gizmos and full screen. They can all be dragged around, as docking allows. Every window's options

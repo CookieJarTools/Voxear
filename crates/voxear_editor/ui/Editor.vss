@@ -233,6 +233,19 @@
     color: var(--vx-muted);
 }
 
+/* A look pack's settings: what the pack writes stands out from what it
+   leaves to the level, and a colour it writes has a button to give it back. */
+.setting.written > .prop-label {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.setting-reset {
+    flex-shrink: 0;
+    width: 20px;
+    padding: 0px;
+}
+
 /* The command palette, under the command bar. */
 .palette {
     position: absolute;

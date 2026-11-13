@@ -2013,7 +2013,6 @@ fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves(
     assert!(stood.0.is_some() && stands == stood, "{stands:?} against {stood:?}");
 }
 
-
 /// A picture of leaves, 16 pixels a side: leaves in three greens with clear gaps between them.
 fn leaf_picture(renderer: &mut Renderer) -> voxear_render::TextureId {
     let size = 16u32;
@@ -2225,4 +2224,39 @@ fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free
     let (still, swayed) = (unlike(&with, &later, 0..WIDTH, under.clone()), unlike(&windy, &windy_later, 0..WIDTH, under));
     eprintln!("vines: {shown} shown, {still} moved with no wind, {swayed} in it");
     assert!(still < 0.01 && swayed > still * 3.0 + 0.004, "{swayed} against {still}");
+}
+
+#[test]
+fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
+    use voxear_render::{WaterLook, WornLook};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond(&mut renderer, &[]);
+    // Straight down on the pond from above its middle: water in the middle of the picture, grass round it.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+    let own = render(&mut renderer, &world, 8);
+    // The level's own lighting, with a pack's water over it: as red as wine.
+    let worn = WornLook {
+        sky: *world.resource::<Sky>().unwrap(),
+        sun: None,
+        post: *world.resource::<PostProcess>().unwrap(),
+        voxels: None,
+        water: WaterLook { deep: Some([0.7, 0.05, 0.1]), ..WaterLook::default() },
+        shader: None,
+    };
+    world.insert_resource(worn);
+    let wine = render(&mut renderer, &world, 8);
+    keep_image("block water own.png", &own);
+    keep_image("block water of a pack.png", &wine);
+    let (middle, corner) = ((WIDTH / 2, HEIGHT / 2), (20, 20));
+    let (was, now) = (rgb_at(&own, middle.0, middle.1), rgb_at(&wine, middle.0, middle.1));
+    assert!(was[1] > was[0] + 10, "the pond is its block's green to begin with: {was:?}");
+    assert!(now[0] > now[1] + 20 && now[0] > was[0] + 20, "and the pack's red under it: {now:?} against {was:?}");
+    let (grass, still) = (rgb_at(&own, corner.0, corner.1), rgb_at(&wine, corner.0, corner.1));
+    assert!((0..3).all(|c| (grass[c] - still[c]).abs() <= 2), "the grass is as it was: {still:?} against {grass:?}");
+    // A pack that sets no water leaves each block's own.
+    world.insert_resource(WornLook { water: WaterLook::default(), ..worn });
+    let back = render(&mut renderer, &world, 8);
+    let again = rgb_at(&back, middle.0, middle.1);
+    assert!((0..3).all(|c| (again[c] - was[c]).abs() <= 3), "its own again: {again:?} against {was:?}");
 }

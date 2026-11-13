@@ -241,6 +241,11 @@ pub(crate) enum Command {
 
 /// How far in front of the Scene camera a new Obj goes.
 const NEW_OBJ_DISTANCE: f32 = 8.0;
+
+/// How far over where an Obj is the ground under it is looked for from,
+/// in metres: what it stands on may be a little over it (see
+/// `Editor::on_ground`).
+const ON_GROUND_FROM: f32 = 1.0;
 /// How often the scripts are looked at for changes, to describe them again.
 const SCRIPTS_CHECK: Duration = Duration::from_secs(2);
 
@@ -1886,7 +1891,12 @@ impl Editor {
             ObjAction::CloseScene(scene) => return self.close_scene(scene),
             _ => {}
         }
-        let position = self.new_obj_position();
+        let position = match action {
+            ObjAction::Create { kind, parent: None, .. } if objs::stands_on_ground(kind) => {
+                self.new_obj_on_ground(renderer)
+            }
+            _ => self.new_obj_position(),
+        };
         let game = &mut self.game;
         let (edit, selected) = match action {
             ObjAction::Create { kind, parent, scene } => {
@@ -1935,6 +1945,31 @@ impl Editor {
         let Some(view) = self.game.engine.world.get::<Transform>(self.scene.camera) else { return Vec3::ZERO };
         let at = view.position + view.rotation * Vec3::Z * NEW_OBJ_DISTANCE;
         (at / self.tools.snap).round() * self.tools.snap
+    }
+
+    /// Where a new Obj that stands on the ground goes: on the ground in the
+    /// middle of the Scene view, on the snap grid across it, as one let go
+    /// there would (a slab's top half a block down); else where
+    /// [`Self::new_obj_position`] puts one.
+    pub(crate) fn new_obj_on_ground(&self, renderer: &Renderer) -> Vec3 {
+        let Some(camera) = self.scene_camera() else { return self.new_obj_position() };
+        let [x, y, w, h] = camera.rect;
+        let world = &self.game.engine.world;
+        let Some(hit) = crate::scene_tools::surface_at(world, renderer, &camera, [x + w * 0.5, y + h * 0.5]) else {
+            return self.new_obj_position();
+        };
+        let snap = self.tools.snap;
+        let (x, z) = ((hit.x / snap).round() * snap, (hit.z / snap).round() * snap);
+        self.on_ground(renderer, Vec3::new(x, hit.y, z), &[])
+    }
+
+    /// `at`, in the world, stood on the ground under it: on the first mesh,
+    /// terrain or ground of a Block World below a little over it (on a
+    /// slab, half a block down), past the Objs in `skip`; `at` itself where
+    /// nothing is under it.
+    pub(crate) fn on_ground(&self, renderer: &Renderer, at: Vec3, skip: &[Entity]) -> Vec3 {
+        let from = (at.x, at.z, at.y + ON_GROUND_FROM);
+        crate::scene_tools::ground_below(&self.game.engine.world, renderer, from, skip).map_or(at, |(ground, _)| ground)
     }
 
     /// Does what a menu in the Inspector asks: keeps a value after play or

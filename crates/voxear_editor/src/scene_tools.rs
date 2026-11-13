@@ -334,7 +334,8 @@ fn mesh_hits(
         }
     }
     // A world of blocks by its blocks: the first that is ground, through its water, as what is planted or
-    // dropped stands on the bottom.
+    // dropped stands on the bottom; a block of parts by its parts, so what stands on a slab stands half a block
+    // down.
     let block_worlds = world
         .query_ref::<(Entity, &voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
@@ -345,7 +346,14 @@ fn mesh_hits(
         let from = ((origin - corner) / size).to_array();
         let ground = |block| voxear_terrain::blocks::is_ground(&blocks.faces, block);
         let reach = BLOCK_REACH / size;
-        let hit = voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), reach, &ground);
+        let hit = voxear_terrain::blocks::raycast_shaped(
+            &blocks.blocks,
+            &blocks.faces,
+            from,
+            direction.to_array(),
+            reach,
+            &ground,
+        );
         if let Some(hit) = hit {
             grounds.push((hit.distance * size, origin + direction * hit.distance * size, entity));
         }

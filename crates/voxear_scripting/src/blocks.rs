@@ -452,8 +452,8 @@ pub(crate) unsafe extern "C" fn block_raycast(
                 let liquids = flags & MEET_LIQUIDS != 0;
                 let meets = |block: BlockId| block != AIR && (liquids || !is_water(&blocks.faces, block));
                 let reach = distance / size;
-                let met =
-                    voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), reach, &meets)?;
+                let (map, faces) = (&blocks.blocks, &blocks.faces);
+                let met = voxear_terrain::blocks::raycast_shaped(map, faces, from, direction.to_array(), reach, &meets)?;
                 let block = blocks.blocks.get(met.block);
                 Some((entity, corner, size, met, block))
             })

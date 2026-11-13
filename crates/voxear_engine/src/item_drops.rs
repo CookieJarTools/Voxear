@@ -17,7 +17,7 @@ use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{MaterialHandle, MeshData, MeshHandle, MeshRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
-use voxear_terrain::blocks::{BlockWorld, block::BlockDrop, chunk::AIR, is_ground};
+use voxear_terrain::blocks::{BlockWorld, block::BlockDrop};
 
 use crate::{Content, MaterialSource};
 
@@ -129,13 +129,14 @@ pub fn take(world: &mut World, entity: Entity) -> Option<(String, u32)> {
 }
 
 /// The ground under or at `at`, in metres, in any world of blocks: the top
-/// of the block of ground `at` is in, where it is in one.
+/// of the block of ground `at` is in, where it is in one and under that
+/// top; a slab's, half a block down (see `voxear_terrain::blocks::ground_top`).
 fn ground_at(worlds: &[(Vec3, &BlockWorld)], at: Vec3) -> Option<f32> {
     worlds.iter().find_map(|(corner, blocks)| {
         let p = (at - *corner) / blocks.block_size;
         let place = p.floor().as_ivec3().to_array();
-        let id = blocks.blocks.get(place);
-        (id != AIR && is_ground(&blocks.faces, id)).then(|| corner.y + (place[1] + 1) as f32 * blocks.block_size)
+        let top = voxear_terrain::blocks::ground_top(&blocks.blocks, &blocks.faces, place, (p.x, p.z))?;
+        (p.y <= top + 1e-3).then(|| corner.y + top * blocks.block_size)
     })
 }
 

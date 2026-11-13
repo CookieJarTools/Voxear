@@ -937,9 +937,170 @@ pub fn raycast_where(
     }
 }
 
+/// As [`raycast_where`], meeting a block of parts by its boxes, as it is
+/// drawn and stood on: the ray meets a slab lying low on its top, half a
+/// block down, and passes through the empty half of its block to what lies
+/// behind; a stair, a fence or a pane where its parts are. One that is
+/// walked through (a lever, a button, a chain, an open door) is met by its
+/// whole block still, so it is easy to point at. `faces` draws `blocks`.
+pub fn raycast_shaped(
+    blocks: &BlockMap,
+    faces: &[BlockFaces],
+    origin: [f32; 3],
+    direction: [f32; 3],
+    max_distance: f32,
+    meets: &dyn Fn(BlockId) -> bool,
+) -> Option<BlockHit> {
+    let length = direction.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if length <= 0.0 {
+        return None;
+    }
+    let direction = direction.map(|v| v / length);
+    // Where the ray goes on from, how far that is along it, and the way the side it crossed there faces.
+    let (mut from, mut gone, mut crossed) = (origin, 0.0f32, [0; 3]);
+    loop {
+        let mut hit = raycast_where(blocks, from, direction, max_distance - gone, meets)?;
+        if hit.normal == [0; 3] {
+            hit.normal = crossed;
+        }
+        let id = blocks.get(hit.block);
+        if !is_part(faces, id) || part_of(faces, id) & PART_PASSES != 0 {
+            return Some(BlockHit { distance: gone + hit.distance, ..hit });
+        }
+        let corner = hit.block.map(|v| v as f32);
+        let entered = mesh::boxes_at(faces, &|at| blocks.get(at), hit.block)
+            .iter()
+            .filter_map(|part| {
+                let low: [f32; 3] = std::array::from_fn(|i| corner[i] + f32::from(part.from[i]) / 16.0);
+                let high: [f32; 3] = std::array::from_fn(|i| corner[i] + f32::from(part.to[i]) / 16.0);
+                enter_box(from, direction, low, high)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((along, normal)) = entered {
+            let normal = if along <= 0.0 { hit.normal } else { normal };
+            return Some(BlockHit { block: hit.block, normal, distance: gone + along });
+        }
+        // Past its parts: on from where the ray leaves its block.
+        let (out, axis) = (0..3)
+            .filter(|&i| direction[i] != 0.0)
+            .map(|i| {
+                let side = if direction[i] > 0.0 { corner[i] + 1.0 } else { corner[i] };
+                ((side - from[i]) / direction[i], i)
+            })
+            .fold((f32::INFINITY, 0), |a, b| if b.0 < a.0 { b } else { a });
+        let out = out.max(0.0) + 1e-4;
+        crossed = [0; 3];
+        crossed[axis] = if direction[axis] > 0.0 { -1 } else { 1 };
+        from = std::array::from_fn(|i| from[i] + direction[i] * out);
+        gone += out;
+        if gone > max_distance {
+            return None;
+        }
+    }
+}
+
+/// How far along a ray from `origin` along `direction` it enters the box
+/// from `low` to `high`, and the way the side it enters by faces; 0 from
+/// inside it. None where it misses the box or the box is behind.
+fn enter_box(origin: [f32; 3], direction: [f32; 3], low: [f32; 3], high: [f32; 3]) -> Option<(f32, [i32; 3])> {
+    let (mut near, mut far, mut side) = (f32::MIN, f32::MAX, [0; 3]);
+    for axis in 0..3 {
+        let (o, d) = (origin[axis], direction[axis]);
+        if d.abs() < 1e-8 {
+            if o < low[axis] || o > high[axis] {
+                return None;
+            }
+            continue;
+        }
+        let (a, b) = ((low[axis] - o) / d, (high[axis] - o) / d);
+        if a.min(b) > near {
+            near = a.min(b);
+            side = [0; 3];
+            side[axis] = if d > 0.0 { -1 } else { 1 };
+        }
+        far = far.min(a.max(b));
+    }
+    (near <= far && far >= 0.0).then_some((near.max(0.0), side))
+}
+
+/// How high the ground is in block `at` of `blocks` under the point
+/// `(x, z)` within it, in blocks from the bottom of the world: the top of a
+/// whole block of ground; the top of a block of parts's boxes under the
+/// point, half a block down on a slab lying low. None where the block is
+/// no ground (air, water, one walked through), or its parts leave the point
+/// open, as beside a pane. `faces` draws `blocks`.
+pub fn ground_top(blocks: &BlockMap, faces: &[BlockFaces], at: [i32; 3], (x, z): (f32, f32)) -> Option<f32> {
+    let id = blocks.get(at);
+    if !is_ground(faces, id) {
+        return None;
+    }
+    let top = (at[1] + 1) as f32;
+    if !is_part(faces, id) {
+        return Some(top);
+    }
+    // The highest of its boxes over the point.
+    let within = [(x - at[0] as f32) * 16.0, (z - at[2] as f32) * 16.0];
+    let over = |part: &shape::PartBox| {
+        (f32::from(part.from[0])..=f32::from(part.to[0])).contains(&within[0])
+            && (f32::from(part.from[2])..=f32::from(part.to[2])).contains(&within[1])
+    };
+    let boxes = mesh::boxes_at(faces, &|place| blocks.get(place), at);
+    let highest = boxes.iter().filter(|part| over(part)).map(|part| part.to[1]).max()?;
+    Some(at[1] as f32 + f32::from(highest) / 16.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ray_meets_a_slab_on_its_top_and_passes_its_empty_half_and_the_ground_on_it_is_half_a_block_down() {
+        use block::BlockShape;
+        use shape::{BlockFacing, BlockState};
+        // Stone at 1; a slab lying low at 2, one lying high at 3, one standing against the east at 4, a stair
+        // rising to the north at 5, and a lever at 6.
+        let state = |facing: BlockFacing| BlockState { facing, ..BlockState::default() }.to_byte();
+        let part =
+            |shape: BlockShape, state: u8| BlockFaces { shape, state, part: PART_DRAWN, ..BlockFaces::default() };
+        let mut faces = vec![BlockFaces::default(); 7];
+        faces[2] = part(BlockShape::Slab, state(BlockFacing::Down));
+        faces[3] = part(BlockShape::Slab, state(BlockFacing::Up));
+        faces[4] = part(BlockShape::Slab, state(BlockFacing::East));
+        faces[5] = part(BlockShape::Stairs, state(BlockFacing::North));
+        faces[6] = BlockFaces { part: PART_DRAWN | PART_PASSES, ..part(BlockShape::Lever, state(BlockFacing::Down)) };
+        let mut map = BlockMap::default();
+        for x in 0..8 {
+            map.set([x, 0, 0], 1);
+        }
+        for (x, block) in [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6)] {
+            map.set([x, 1, 0], block);
+        }
+        let any = |block: BlockId| block != AIR;
+        let down = |x: f32, z: f32| raycast_shaped(&map, &faces, [x, 3.0, z], [0.0, -1.0, 0.0], 10.0, &any).unwrap();
+        // Straight down: the low slab's top half a block down, facing up; the high slab's at the top of its block.
+        let low = down(1.5, 0.5);
+        assert_eq!((low.block, low.normal), ([1, 1, 0], [0, 1, 0]));
+        assert!((low.distance - 1.5).abs() < 1e-3, "{low:?}");
+        assert!((down(2.5, 0.5).distance - 1.0).abs() < 1e-3);
+        // Beside the slab standing against the east, down to the stone; on it, its top.
+        assert_eq!(down(3.25, 0.5).block, [3, 0, 0]);
+        assert_eq!(down(3.75, 0.5).block, [3, 1, 0]);
+        // The stair: its back at the north, the way it rises, its block's top; its step at the south, half a block down.
+        assert!((down(4.5, 0.25).distance - 1.0).abs() < 1e-3);
+        assert!((down(4.5, 0.75).distance - 1.5).abs() < 1e-3);
+        // The lever, walked through, is met by its whole block.
+        assert!((down(5.5, 0.5).distance - 1.0).abs() < 1e-3);
+        // Along the ground just over the low slab's top, the ray passes over it and meets the high slab's side.
+        let along = raycast_shaped(&map, &faces, [0.5, 1.75, 0.5], [1.0, 0.0, 0.0], 10.0, &any).unwrap();
+        assert_eq!((along.block, along.normal), ([2, 1, 0], [-1, 0, 0]));
+        // The ground on each.
+        assert_eq!(ground_top(&map, &faces, [1, 1, 0], (1.5, 0.5)), Some(1.5));
+        assert_eq!(ground_top(&map, &faces, [2, 1, 0], (2.5, 0.5)), Some(2.0));
+        assert_eq!(ground_top(&map, &faces, [3, 1, 0], (3.2, 0.5)), None, "open beside the standing slab");
+        assert_eq!(ground_top(&map, &faces, [4, 1, 0], (4.5, 0.8)), Some(1.5));
+        assert_eq!(ground_top(&map, &faces, [5, 1, 0], (5.5, 0.5)), None, "a lever is no ground");
+        assert_eq!(ground_top(&map, &faces, [6, 0, 0], (6.5, 0.5)), Some(1.0));
+    }
 
     #[test]
     fn blocks_are_kept_by_chunk_on_either_side_of_the_corner_and_let_go_once_air() {

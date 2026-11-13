@@ -390,6 +390,7 @@ fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
                 liquid: Default::default(),
                 glitter: false,
                 leafy: false,
+                mixed: false,
             }
         })
         .collect();
@@ -500,6 +501,7 @@ fn timing_world(renderer: &mut Renderer) -> (World, Entity) {
                 liquid: Default::default(),
                 glitter: false,
                 leafy: false,
+                mixed: false,
             }
         })
         .collect();

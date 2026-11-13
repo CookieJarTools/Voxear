@@ -984,6 +984,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Plant => ("plant", true),
         AssetKind::VoxModel => ("voxmodel", false),
         AssetKind::Particles => ("particles", true),
+        AssetKind::ShaderGraph => ("shadergraph", true),
     }
 }
 

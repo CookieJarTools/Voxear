@@ -184,6 +184,31 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
         };
         kind.sways |= bends(&kind.material) || bends(&kind.top) || bends(&kind.bottom);
     }
+    // And a face drawn with a material whose pictures are a joining face's five tiles joins those of its block
+    // beside it, as panes of glass do.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        use voxear_terrain::blocks::file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP};
+        let mut joins = |material: &Option<String>, bit: u8| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            if guid.is_some_and(|guid| crate::texture_packs::material_connected(content, guid)) { bit } else { 0 }
+        };
+        kind.connected = joins(&kind.material, JOINS_SIDES) | joins(&kind.top, JOINS_TOP) | joins(&kind.bottom, JOINS_BOTTOM);
+    }
+    // The texture pack worn draws the blocks it names, and with a grain those of a colour alone, with faces of
+    // its own: after what a block's own materials say of it is read, which stays so under any pack.
+    if let Some(pack) = content.textures().pack().cloned() {
+        let own = file.clone();
+        for (kind, guid) in file.blocks.iter_mut().zip(&guids) {
+            if let Some(guid) = guid.filter(|_| kind.is_live()) {
+                pack.dress(guid, kind);
+            }
+        }
+        // A world can draw only so many looks: one the pack's faces would take past that keeps its blocks' own.
+        if file.looks() > MAX_LOOKS && own.looks() <= MAX_LOOKS {
+            tracing::warn!("a world of blocks draws {MAX_LOOKS} looks at most, so the texture pack is left off it");
+            file = own;
+        }
+    }
     Resolved { file, guids, heats }
 }
 
@@ -679,6 +704,11 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
     let mut surfaces = Vec::with_capacity(looks.len());
     for face in looks {
         let named = face.material.as_ref().and_then(|reference| {
+            // A face of the texture pack worn: its picture on the block's own material, or on plain white.
+            if let Some(face) = reference.strip_prefix(crate::texture_packs::FACE_PREFIX) {
+                let made = crate::texture_packs::face_material(content, renderer, face);
+                return made.map_err(|error| tracing::warn!("a block's face under the texture pack: {error:#}")).ok();
+            }
             let source = MaterialSource::Asset(content.parse(reference).ok()?);
             content.material(renderer, &source).map_err(|error| tracing::warn!("a block's material: {error:#}")).ok()
         });
@@ -698,6 +728,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             liquid: Default::default(),
             glitter: false,
             leafy: face.leafy,
+            mixed: face.mixed,
         });
     }
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };

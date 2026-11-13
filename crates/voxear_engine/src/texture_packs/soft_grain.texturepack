@@ -1,0 +1,7 @@
+format = 1
+description = "A fine, soft grain on every block of a plain colour, so flat faces look less like paper."
+pixels = false
+
+[grain]
+pixels = 64
+strength = 0.35

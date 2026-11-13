@@ -569,6 +569,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::VoxModel) => "blocks",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::LookPack) => "eye",
+        Some(AssetKind::TexturePack) => "image",
         Some(AssetKind::Data) => "file",
         None => "obj",
     };

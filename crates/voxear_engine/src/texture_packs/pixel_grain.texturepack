@@ -1,0 +1,7 @@
+format = 1
+description = "Every block of a plain colour drawn as sixteen sharp pixels a side, each a shade of its own."
+pixels = true
+
+[grain]
+pixels = 16
+strength = 0.6

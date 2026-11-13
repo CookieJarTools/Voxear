@@ -131,7 +131,7 @@ A block whose **Shape** is **Log** is wood. Placed whole, it is a cube with its 
 
 - **Lying down.** A log put against the side of a block lies out from it, along the way it was put, its rings at its ends. Put on the ground, it stands up. **R** in the Build tool turns it through its three ways.
 - **Thickness.** How thick a log is, and which way it lies, are kept in how it stands (see [How a placed block stands](#how-a-placed-block-stands)), so a world of thin logs is no larger to save or send.
-- **Trees.** A [[Structures#Trees of blocks|tree of blocks]] whose wood is a log grows a trunk of whole logs at its foot that thins as it rises, and branches of thin logs lying along the way they reach.
+- **Trees.** A plain cube that a plant names as its wood is a log too, whatever its Shape says. A [[Structures#Trees of blocks|tree of blocks]] whose wood is a log grows a trunk of whole logs at its foot that thins as it rises, and branches of thin logs lying along the way they reach.
 - **Chopping.** Each time a log is mined it loses a slice and stands thinner; the last cuts it through (see [Breaking](#breaking)). A tree cut through at its foot comes down.
 - **Collision.** A thin log collides as it is drawn: a character walks between thin branches, and stands on a thick one.
 

@@ -2849,7 +2849,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     blocks at the foot that thin to logs as they rise and branches of thin logs lying along the way they reach,
     each face to face (`plant::blocks_along`, `lying`, `branch`); `PlantModel::blocks` keeps each block's state,
     and `StructureBlocks::Plant::logs` its numbers (`structure::log_number`, `engine::blocks::log_numbers`).
-    The starter oak, birch and pine logs are logs with ring pictures, and Starter Blocks has an oak log.
+    The starter oak, birch and pine logs are logs with ring pictures, and Starter Blocks has an oak log. A plain
+    cube a plant names as its wood is read as a log (`Content::plant_woods`), so worlds of plant files made before
+    logs thin too; a trunk thins most low down (with the square root of its height); leaves cover every block of
+    wood in a crown with nothing over it and each branch's end (`plant::cover_wood`).
   - **Chopping and felling** (`engine::trees`, `terrain::blocks::fell`): a log that chops (`BlockDef::chops`,
     `slice`) stands a slice thinner each time it is mined (`trees::chop`), and its last cuts it through; one that
     fells (`BlockDef::fells`) brings down what it held up: `fell::loose_tree` takes the logs of its family over the

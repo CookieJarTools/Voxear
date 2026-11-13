@@ -2639,8 +2639,8 @@ fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_t
     let world = &editor.game.engine.world;
     assert_eq!(world.get::<voxear_scene::Parent>(grass).map(|parent| parent.0), Some(field));
     let grow = world.get::<FoliageSource>(grass).and_then(|source| source.0.grow.clone()).expect("where it grows");
-    // On the world's top block, and the grass and the fallen leaves of its showcase biomes.
-    assert_eq!((grow.spacing, grow.on.len()), (1.0, 3), "thick, on the world's top block and its biomes' soils");
+    // On the world's top block, and the wild grass its showcase biomes share.
+    assert_eq!((grow.spacing, grow.on.len()), (1.0, 2), "thick, on the world's top block and its biomes' grass");
     assert!(world.get::<voxear_render::Foliage>(grass).is_some(), "drawn with the model's mesh");
     assert_eq!(editor.selected(), Some(grass));
     // Its plants grow only as near as they are drawn: none while the Scene view looks from far off.
@@ -3185,18 +3185,29 @@ fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed
     assert_eq!(path_of(&biome("Tundra").ground.shore), "Mine/Gravel.block");
     let made = std::fs::read_dir(dir.path().join("Blocks")).unwrap().flatten();
     let blocks = made.filter(|entry| entry.file_name().to_string_lossy().ends_with(".block")).count();
-    assert_eq!(blocks, 15, "the fifteen of their ground and the vine, but the gravel, which the project has elsewhere");
+    assert_eq!(
+        blocks, 14,
+        "the twelve of their ground and the vine, but the gravel the project has elsewhere; its own grass and moss"
+    );
+    // One grass for the Grassland, the Forest, the Savanna and the Rainforest, each tinting it its own way: Wild
+    // Grass, made beside the project's own.
+    assert_eq!(block("Blocks/Wild Grass.block").tint, voxear_terrain::blocks::block::BlockTint::Grass);
+    for name in ["Grassland", "Forest", "Savanna", "Rainforest"] {
+        assert_eq!(path_of(&biome(name).ground.top), "Blocks/Wild Grass.block", "{name}");
+        assert!(biome(name).tints.grass.is_some(), "{name}");
+    }
     // The wet ones hang vines of that block; the dry and the frozen none.
     assert_eq!(block("Blocks/Vine.block").shape, voxear_terrain::blocks::block::BlockShape::Vine);
     assert_eq!(path_of(&biome("Rainforest").vines.block), "Blocks/Vine.block");
     assert!(biome("Rainforest").vines.amount > biome("Forest").vines.amount && biome("Desert").vines.is_none());
-    // The ground is made again from them: rolling hills in a mild climate, so more than one kind of country and
-    // none of it snow.
+    // The ground is made again from them: rolling hills in a mild climate, the Grassland and the Forest, one wild
+    // grass tinted two ways, and none of it snow nor the world's own grass.
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
     assert_eq!(asset.file.generate.as_ref().unwrap().biomes.len(), 8);
     let snow = asset.drawn.number_of(db.guid_of("Blocks/Snow.block").unwrap()).expect("snow is numbered");
     let now = tops(&editor, field);
-    assert!(!now.contains_key(&snow) && !now.contains_key(&1), "{now:?}");
+    let wild = asset.drawn.number_of(db.guid_of("Blocks/Wild Grass.block").unwrap()).expect("wild grass");
+    assert!(!now.contains_key(&snow) && !now.contains_key(&1) && now.contains_key(&wild), "{now:?}");
     shot_scrolled(&mut editor, &mut renderer, "biomes-starters.png", 420.0);
     // Asked for again, nothing is made twice or listed twice.
     press(&mut editor, &mut renderer, inspector, "Add Starter Biomes");

@@ -30,6 +30,7 @@ use crate::generate::WorldGen;
 mod cells;
 mod columns;
 pub mod far;
+pub mod tints;
 
 pub use cells::CAVE_ROOF;
 pub use columns::column_chunks;

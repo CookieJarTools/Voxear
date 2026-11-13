@@ -1137,6 +1137,7 @@ pub fn surface_look(
         glitter: surface.glitter,
         leafy: false,
         mixed: false,
+        tint: 0,
     })
 }
 

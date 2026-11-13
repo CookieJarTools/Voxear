@@ -69,6 +69,37 @@ pub struct BiomeDef {
     /// The vines that hang in it.
     #[serde(skip_serializing_if = "BiomeVines::is_none")]
     pub vines: BiomeVines,
+    /// The colours its tinted blocks take (see `blocks::block::BlockTint`).
+    #[serde(skip_serializing_if = "BiomeTints::is_none")]
+    pub tints: BiomeTints,
+}
+
+/// The colours a biome's tinted blocks take, each a colour their own is
+/// multiplied by, from 0 to 2 each part: white leaves a block as it is,
+/// more than 1 brightens it. Its grass tint for grass, its foliage tint for
+/// leaves; one left out is white. Where biomes meet, the tints fade from
+/// one to another (see `blocks::generate::tints`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BiomeTints {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grass: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foliage: Option<[f32; 3]>,
+}
+
+impl BiomeTints {
+    /// The most a tint's part is.
+    pub const MOST: f32 = 2.0;
+
+    pub fn is_none(&self) -> bool {
+        self.grass.is_none() && self.foliage.is_none()
+    }
+
+    /// Its grass tint and its foliage tint, white for one left out.
+    pub fn colors(&self) -> [[f32; 3]; 2] {
+        [self.grass.unwrap_or([1.0; 3]), self.foliage.unwrap_or([1.0; 3])]
+    }
 }
 
 /// The vines of a biome: the block they are, one whose shape is a vine,
@@ -112,6 +143,7 @@ impl Default for BiomeDef {
             sunk: None,
             ground: BiomeGround::default(),
             vines: BiomeVines::default(),
+            tints: BiomeTints::default(),
         }
     }
 }

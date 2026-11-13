@@ -21,8 +21,9 @@
 //! for snow there too, switch Height off on its Snow.
 //!
 //! The showcase biomes are three more, each a sight of its own: the
-//! Autumn Woods, orange with fallen leaves under red maples; the Blossom
-//! Grove, fresh grass under pink blossom trees; and the Volcanic Fields,
+//! Autumn Woods, golden-brown grass under red maples; the Blossom Grove,
+//! bright green grass under pink blossom trees, the two fading into each
+//! other where they meet; and the Volcanic Fields,
 //! grey ash over black basalt, its steep faces hot magma rock. They keep
 //! to how warm it is alone: made for a world, they split the warmth of its
 //! land round where it starts into thirds, the woods in the coolest, the
@@ -42,8 +43,8 @@ use voxear_ecs::Entity;
 use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_terrain::{
-    blocks::block::{BlockDef, BlockHeat, BlockShape},
-    generate::{BiomeDef, BiomeGround, BiomeVines},
+    blocks::block::{BlockDef, BlockHeat, BlockShape, BlockTint},
+    generate::{BiomeDef, BiomeGround, BiomeTints, BiomeVines},
     surfaces::Biome,
 };
 
@@ -64,20 +65,23 @@ const SNOW_STEEP: f32 = 58.0;
 /// The folders the starters' biomes and blocks go in, beside the world.
 const BIOMES_FOLDER: &str = "Biomes";
 
-/// The blocks the starters' ground is made of, each a colour.
-const BLOCKS: [(&str, [f32; 3]); 15] = [
+/// The blocks the starters' ground is made of, each a colour. Wild Grass
+/// takes its biome's grass tint, so the Grassland, the Forest, the Savanna
+/// and the Rainforest are one block of grass in four greens and yellows,
+/// fading from one to the next where they meet. It is pale, nearly grey, as
+/// a block tinted by its biome is best: the tints give it its colour. It has
+/// a name of its own, as a project's own Grass is used as it is and is
+/// seldom tinted.
+const BLOCKS: [(&str, [f32; 3]); 12] = [
     ("Snow", [0.95, 0.96, 0.98]),
     ("Ice", [0.72, 0.84, 0.92]),
     ("Frozen Dirt", [0.47, 0.44, 0.4]),
-    ("Moss", [0.24, 0.4, 0.17]),
     ("Needles Floor", [0.33, 0.36, 0.2]),
-    ("Grass", [0.33, 0.52, 0.2]),
+    ("Wild Grass", [0.5, 0.55, 0.42]),
     ("Dirt", [0.45, 0.32, 0.2]),
     ("Sand", [0.86, 0.78, 0.55]),
     ("Sandstone", [0.76, 0.62, 0.4]),
-    ("Dry Grass", [0.7, 0.64, 0.33]),
     ("Red Earth", [0.6, 0.33, 0.2]),
-    ("Jungle Floor", [0.2, 0.36, 0.14]),
     ("Mud", [0.33, 0.25, 0.17]),
     ("Stone", [0.5, 0.5, 0.52]),
     ("Gravel", [0.56, 0.54, 0.51]),
@@ -87,16 +91,22 @@ const BLOCKS: [(&str, [f32; 3]); 15] = [
 /// vine, that sways.
 const VINE: (&str, [f32; 3]) = ("Vine", [0.2, 0.46, 0.14]);
 
+/// The starters' block of ground called `name`, of `color`: Wild Grass
+/// tinted by its biome.
+fn ground_block(name: &str, color: [f32; 3]) -> BlockDef {
+    let tint = if name == "Wild Grass" { BlockTint::Grass } else { BlockTint::None };
+    BlockDef { tint, ..BlockDef::colored(color) }
+}
+
 /// The starters' vine as a block.
 pub fn vine_block() -> BlockDef {
     BlockDef { shape: BlockShape::Vine, sways: true, hardness: 0.2, ..BlockDef::colored(VINE.1) }
 }
 
 /// The blocks the showcase biomes' ground is made of that the starters'
-/// is not, each a colour: Magma Rock is hot.
-const SHOWCASE_BLOCKS: [(&str, [f32; 3]); 6] = [
-    ("Fallen Leaves", [0.74, 0.38, 0.13]),
-    ("Spring Grass", [0.44, 0.66, 0.27]),
+/// is not, each a colour: Magma Rock is hot. The woods and the grove are
+/// the starters' grass, tinted.
+const SHOWCASE_BLOCKS: [(&str, [f32; 3]); 4] = [
     ("Ash", [0.36, 0.35, 0.34]),
     ("Basalt", [0.16, 0.16, 0.18]),
     ("Magma Rock", [0.78, 0.27, 0.07]),
@@ -133,28 +143,31 @@ struct Showcase {
     steep: (&'static str, f32),
     shore: &'static str,
     vines: f32,
+    tints: BiomeTints,
 }
 
 const SHOWCASE: [Showcase; 3] = [
     Showcase {
         name: "Autumn Woods",
         color: [0.8, 0.42, 0.15],
-        top: "Fallen Leaves",
+        top: "Wild Grass",
         under: ("Dirt", 3),
         deep: "Stone",
         steep: ("Stone", STEEP),
         shore: "Gravel",
         vines: 0.05,
+        tints: tints(Some([1.6, 0.95, 0.4]), Some([1.6, 0.9, 0.6])),
     },
     Showcase {
         name: "Blossom Grove",
         color: [0.95, 0.66, 0.78],
-        top: "Spring Grass",
+        top: "Wild Grass",
         under: ("Dirt", 3),
         deep: "Stone",
         steep: ("Stone", STEEP),
         shore: "Sand",
         vines: 0.1,
+        tints: tints(Some([0.85, 1.15, 0.6]), Some([1.2, 1.1, 1.1])),
     },
     Showcase {
         name: "Volcanic Fields",
@@ -165,6 +178,7 @@ const SHOWCASE: [Showcase; 3] = [
         steep: ("Magma Rock", 50.0),
         shore: "Obsidian",
         vines: 0.0,
+        tints: tints(None, None),
     },
 ];
 
@@ -193,6 +207,7 @@ pub fn showcase(split: [f32; 2], mut block: impl FnMut(&str) -> String) -> Vec<(
             true => BiomeVines { block: Some(block(VINE.0)), amount: biome.vines, ..BiomeVines::default() },
             false => BiomeVines::default(),
         },
+        tints: biome.tints,
     };
     SHOWCASE.iter().zip(warmth).map(|(biome, warmth)| (biome.name, made(biome, warmth, &mut block))).collect()
 }
@@ -250,6 +265,12 @@ struct Starter {
     steep: &'static str,
     shore: &'static str,
     vines: f32,
+    tints: BiomeTints,
+}
+
+/// Tints of grass and of foliage, white for none.
+const fn tints(grass: Option<[f32; 3]>, foliage: Option<[f32; 3]>) -> BiomeTints {
+    BiomeTints { grass, foliage }
 }
 
 const STARTERS: [Starter; 8] = [
@@ -262,6 +283,7 @@ const STARTERS: [Starter; 8] = [
         steep: "Stone",
         shore: "Gravel",
         vines: 0.0,
+        tints: tints(None, None),
     },
     Starter {
         climate: Biome::Tundra,
@@ -272,6 +294,7 @@ const STARTERS: [Starter; 8] = [
         steep: "Stone",
         shore: "Gravel",
         vines: 0.0,
+        tints: tints(None, None),
     },
     Starter {
         climate: Biome::Taiga,
@@ -282,26 +305,29 @@ const STARTERS: [Starter; 8] = [
         steep: "Stone",
         shore: "Gravel",
         vines: 0.06,
+        tints: tints(None, Some([0.8, 0.95, 1.05])),
     },
     Starter {
         climate: Biome::Grassland,
         color: [0.45, 0.62, 0.3],
-        top: "Grass",
+        top: "Wild Grass",
         under: ("Dirt", 3),
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
         vines: 0.08,
+        tints: tints(Some([0.75, 1.0, 0.55]), Some([1.1, 1.05, 0.9])),
     },
     Starter {
         climate: Biome::Forest,
         color: [0.24, 0.45, 0.2],
-        top: "Moss",
+        top: "Wild Grass",
         under: ("Dirt", 4),
         deep: "Stone",
         steep: "Stone",
         shore: "Gravel",
         vines: 0.22,
+        tints: tints(Some([0.5, 0.8, 0.42]), Some([0.85, 0.95, 0.85])),
     },
     Starter {
         climate: Biome::Desert,
@@ -312,26 +338,29 @@ const STARTERS: [Starter; 8] = [
         steep: "Sandstone",
         shore: "Sand",
         vines: 0.0,
+        tints: tints(None, None),
     },
     Starter {
         climate: Biome::Savanna,
         color: [0.75, 0.68, 0.36],
-        top: "Dry Grass",
+        top: "Wild Grass",
         under: ("Red Earth", 3),
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
         vines: 0.0,
+        tints: tints(Some([1.4, 1.2, 0.75]), Some([1.5, 1.2, 0.9])),
     },
     Starter {
         climate: Biome::Rainforest,
         color: [0.13, 0.4, 0.16],
-        top: "Jungle Floor",
+        top: "Wild Grass",
         under: ("Mud", 3),
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
         vines: 0.5,
+        tints: tints(Some([0.45, 0.9, 0.4]), Some([0.7, 1.0, 0.7])),
     },
 ];
 
@@ -361,6 +390,7 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
                 true => BiomeVines { block: Some(block(VINE.0)), amount: starter.vines, ..BiomeVines::default() },
                 false => BiomeVines::default(),
             },
+            tints: starter.tints,
         };
         // The heights are snow in any place but a warm one, and low ground never. Snow lies on steeper ground than
         // anything grows on, so a mountain's top is white with rock only in its faces.
@@ -378,7 +408,7 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
 /// blocks on `entity`, and lists them on it, its ground made again with
 /// them. Whether the world changed.
 pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
-    let blocks = BLOCKS.into_iter().map(|(name, color)| (name, BlockDef::colored(color)));
+    let blocks = BLOCKS.into_iter().map(|(name, color)| (name, ground_block(name, color)));
     add_made(game, renderer, entity, blocks.collect(), &|block| biomes(block))
 }
 
@@ -394,7 +424,7 @@ pub fn add_showcase(game: &mut Game, mut renderer: Option<&mut Renderer>, entity
         String::new()
     });
     let starters = BLOCKS.into_iter().filter(|(name, _)| named.contains(*name));
-    let starters = starters.map(|(name, color)| (name, BlockDef::colored(color)));
+    let starters = starters.map(|(name, color)| (name, ground_block(name, color)));
     let own = SHOWCASE_BLOCKS.into_iter().map(|(name, color)| (name, showcase_block(name, color)));
     let listed = add_made(game, renderer.as_deref_mut(), entity, starters.chain(own).collect(), &|block| {
         showcase(split, block)
@@ -548,6 +578,18 @@ mod tests {
         assert!(vines("Rainforest") > vines("Forest") && vines("Forest") > vines("Grassland"));
         assert_eq!((vines("Desert"), vines("Snow")), (0.0, 0.0));
         assert_eq!(vine_block().shape, BlockShape::Vine);
+        // The starters' grass takes its biome's grass tint; nothing else of theirs is tinted.
+        for (name, color) in BLOCKS {
+            assert_eq!(ground_block(name, color).tint == BlockTint::Grass, name == "Wild Grass", "{name}");
+        }
+        // The green ones are one grass, tinted each its own way; the dry and the frozen ones are not grass.
+        let tops: Vec<(&str, String, bool)> = biomes(|name| name.to_string())
+            .into_iter()
+            .map(|(name, biome)| (name, biome.ground.top.unwrap(), biome.tints.grass.is_some()))
+            .collect();
+        for (name, top, tinted) in tops {
+            assert_eq!(top == "Wild Grass", tinted, "{name}: {top}");
+        }
     }
 
     /// For `world`'s land within `reach` metres of `middle`, every 32 m, the showcase biomes parted for it there:

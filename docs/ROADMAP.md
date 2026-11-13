@@ -2254,6 +2254,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Biome tints:**~~ done: a block's new **Tint** (None, Grass, Grass Top, Foliage) has its colour take the
+    biome it stands in, from each biome's new grass and foliage tints, fading from one biome's to the next: the
+    generator's biomes on a lattice every 4 blocks, each point averaged with those 3 each way round it
+    (`blocks::generate::tints`), kept by the engine in tiles round where the world is seen from (`block_tints`), and
+    read between the points in the block shader. The starter biomes' Grassland, Forest, Savanna and Rainforest are
+    one tinted grass, and their trees' leaves take the foliage tint; the showcase woods and grove are that grass too.
+    Tests: tints fade across tiles and are the same every time; the engine keeps them round the world; a GPU render
+    of grass fading from one biome's tint to the other's.
   - ~~**Ground in half steps:**~~ done: a generated world's new **Slabs** setting (on for ground newly generated)
     lays its top to the nearest half block: where the ground lies within a quarter of a block of a block's middle,
     that block is a slab of the top block there. Any cube the top can be is laid as one with no block of its own: a

@@ -122,6 +122,10 @@ pub struct SurfaceLook {
     /// and keep the look that creeps over their edge and from where (see
     /// `voxear_terrain::blocks::mesh::mixing`).
     pub mixed: bool,
+    /// For a world of blocks: which of its biome's tints the face takes
+    /// (`voxear_terrain::blocks::block::TINT_GRASS` or `TINT_FOLIAGE`), 0
+    /// for none (see `BlockTints`).
+    pub tint: u8,
 }
 
 /// A terrain as `shaders/terrain.slang` reads it.
@@ -197,6 +201,8 @@ const SURFACE_LAVA: u32 = 8;
 const SURFACE_GLITTER: u32 = 16;
 const SURFACE_LEAFY: u32 = 32;
 const SURFACE_MIXED: u32 = 64;
+/// Where a block face's tint lies in its flags: two bits, 1 for the grass tint and 2 for the foliage tint.
+const SURFACE_TINT_SHIFT: u32 = 7;
 
 /// A surface's flags for the shaders: drawn from the side, its liquid, and
 /// whether it glitters.
@@ -210,7 +216,14 @@ pub(crate) fn surface_flags(look: &SurfaceLook) -> u32 {
     };
     let leafy = u32::from(look.leafy) * SURFACE_LEAFY;
     let mixed = u32::from(look.mixed) * SURFACE_MIXED;
-    u32::from(look.triplanar) * SURFACE_TRIPLANAR | liquid | u32::from(look.glitter) * SURFACE_GLITTER | leafy | mixed
+    // A face's tint, in the two bits over the rest.
+    let tint = u32::from(look.tint & 3) << SURFACE_TINT_SHIFT;
+    u32::from(look.triplanar) * SURFACE_TRIPLANAR
+        | liquid
+        | u32::from(look.glitter) * SURFACE_GLITTER
+        | leafy
+        | mixed
+        | tint
 }
 
 /// A patch as the vertex shader reads it: its corner in the terrain's

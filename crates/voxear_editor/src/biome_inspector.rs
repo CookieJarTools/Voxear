@@ -12,10 +12,16 @@
 //! and a cross takes it out again: a block of the ground left out is the
 //! world's own there, and a biome with no vine block has no vines.
 //!
+//! Its **Tints**: what its tinted blocks' colour is multiplied by, its
+//! grass's and its leaves', white for none (see `generate::BiomeTints`).
+//!
 //! Each change is saved as it is made, and every world listing the biome
 //! has its ground made again at once (see `editor::biomes`).
 
-use voxear_terrain::{generate::BiomeDef, surfaces::Biome};
+use voxear_terrain::{
+    generate::{BiomeDef, BiomeTints},
+    surfaces::Biome,
+};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -125,6 +131,8 @@ pub struct BiomeFields {
     /// How many vines, how long from and to, and how deep: while it has a
     /// block for them.
     vines: Option<(NodeId, [NodeId; 2], NodeId)>,
+    /// Its grass tint's and its foliage tint's parts, and their swatches.
+    tints: [([NodeId; 3], NodeId); 2],
     slots: Vec<BlockSlot>,
 }
 
@@ -186,6 +194,24 @@ impl BiomeFields {
             (amount, length, depth)
         });
 
+        let rows = part(ui, root, "Tints", "brush");
+        let tint_row = |ui: &mut Ui, label: &str, tint: [f32; 3]| {
+            let (parts, swatch) = color_row(ui, rows, label);
+            for (shown, value) in parts.iter().zip(tint) {
+                ui.set_text(*shown, &number(value));
+            }
+            (parts, swatch)
+        };
+        let [grass, foliage] = biome.tints.colors();
+        let tints = [tint_row(ui, "Grass", grass), tint_row(ui, "Foliage", foliage)];
+        let tip = "What its tinted blocks' colour is multiplied by, each part from 0 to 2: white leaves them as they \
+                   are. Grass for blocks of grass and tufts, Foliage for leaves";
+        for (parts, _) in &tints {
+            if let Some(row) = ui.parent(parts[0]).and_then(|pair| ui.parent(pair)) {
+                ui.set_tooltip(row, tip, None);
+            }
+        }
+
         let fields = Self {
             biome,
             color,
@@ -199,6 +225,7 @@ impl BiomeFields {
             steep_slope,
             shore_height,
             vines,
+            tints,
             slots,
         };
         fields.show_swatch(ui);
@@ -278,6 +305,23 @@ impl BiomeFields {
                 (biome.vines.depth, typed) = (metres.max(0.0), true);
             }
         }
+        for (at, (parts, _)) in self.tints.iter().enumerate() {
+            if !parts.iter().any(|&field| ui.changed(field)) {
+                continue;
+            }
+            let now = biome.tints.colors()[at];
+            let typed_tint = [0, 1, 2].map(|part| {
+                let value = ui.text(parts[part]).trim().parse::<f32>().unwrap_or(now[part]);
+                value.clamp(0.0, BiomeTints::MOST)
+            });
+            // White is no tint at all.
+            let tint = (typed_tint != [1.0; 3]).then_some(typed_tint);
+            match at {
+                0 => biome.tints.grass = tint,
+                _ => biome.tints.foliage = tint,
+            }
+            typed = true;
+        }
         if !typed {
             return None;
         }
@@ -304,6 +348,12 @@ impl BiomeFields {
     fn show_swatch(&self, ui: &mut Ui) {
         let hex = PickedColor::srgb(self.biome.color).hex();
         ui.set_inline_style(self.swatch, &format!("background-color: {hex}"));
+        // A tint's swatch is it over a pale grey-green, as a block of grass made to be tinted would show.
+        for ((_, swatch), tint) in self.tints.iter().zip(self.biome.tints.colors()) {
+            let shown = [0, 1, 2].map(|part| ([0.5, 0.55, 0.42][part] * tint[part]).min(1.0));
+            let hex = PickedColor::srgb(shown).hex();
+            ui.set_inline_style(*swatch, &format!("background-color: {hex}"));
+        }
     }
 }
 

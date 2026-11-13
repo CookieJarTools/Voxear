@@ -1258,14 +1258,23 @@ struct BlockWorld
     // How high its sea's top is over its corner, in metres: only water faces there are drawn rough (blockSwell in
     // water.slang). Far below for a world whose water is all its sea.
     float seaTop;
-    uint pad;
+    // How many points its tints are a side, 0 for none (blockTint in blocks.slang).
+    uint tintSize;
     // Its blocks of parts' motions, and those of its blocks moving now (src/blocks.rs, GpuBlockMotion and
     // GpuMovingBlock), with how many of each.
     BlockMotion* motions;
     MovingBlock* moving;
     uint motionCount;
     uint movingCount;
+    // Its tints round where it is seen from (src/blocks.rs, BlockTints): a square of its tint lattice's points, a
+    // point every BLOCK_TINT_STEP blocks, tintSize a side from point tintCorner, each point its grass tint and then
+    // its foliage tint, red, green and blue a byte each, each out of 2.
+    uint* tints;
+    int2 tintCorner;
 };
+
+// How many blocks apart a world's tint points are (voxear_terrain::blocks::generate::tints::TINT_STEP).
+static const float BLOCK_TINT_STEP = 4.0;
 
 // A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
 // along it (in sixteenths of a block), and how the way on to the next key goes (0 linear, 1 smooth, 2 step).
@@ -1367,6 +1376,9 @@ static const uint TERRAIN_SURFACE_GLITTER = 16;
 static const uint TERRAIN_SURFACE_LEAFY = 32;
 // A world of blocks' look's twin: each of its faces one block, with the look that creeps over its edge (blocks.slang).
 static const uint TERRAIN_SURFACE_MIXED = 64;
+// A world of blocks' surface's tint (src/terrain.rs, SurfaceLook::tint): two bits from the eighth, 1 its biome's grass
+// tint and 2 its foliage tint (blockTint in blocks.slang).
+static const uint TERRAIN_SURFACE_TINT_SHIFT = 7;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

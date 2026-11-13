@@ -357,7 +357,7 @@ The row also offers the **starter plants**, each made of small cubes to sit well
 
 The grasses, flowers, ferns, bushes and trees bend in the [[Wind]] and away from whoever walks through them; stones, stumps, logs and sticks do neither. Seagrass, kelp and the fan coral sway with the water, more under a storm; the other corals, the sponge and the clam stand still.
 
-A starter plant that keeps to the world's top block also grows on the tops of the [[Biomes#Starter biomes|starter biomes]] that things grow on, where the project has them: Grass, Moss, Needles Floor, Jungle Floor and Dry Grass. So add the starter biomes first. Sand, snow and rock stay bare but for stones, dry bushes and dead trees.
+A starter plant that keeps to the world's top block also grows on the tops of the [[Biomes#Starter biomes|starter biomes]] that things grow on, where the project has them: Grass and Needles Floor, and Moss, Jungle Floor, Dry Grass, Spring Grass and Fallen Leaves where a project made them before the starters' grass was tinted. So add the starter biomes first. Sand, snow and rock stay bare but for stones, dry bushes and dead trees.
 
 What grows near something keeps to it by its Foliage's **Near plant** and **Within** (see [[Foliage#Near other plants and blocks]]): the sticks, logs, stumps and mushrooms near the Tree, the Pine and the Birch, and near the leaves of the starter trees of blocks; the pebbles near the Rock and the Boulder. Take the trees away and those have nothing to grow near.
 

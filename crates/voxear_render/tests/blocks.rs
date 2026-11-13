@@ -88,6 +88,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -206,6 +207,7 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -284,6 +286,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -383,6 +386,7 @@ fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted(
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -462,6 +466,7 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -536,6 +541,7 @@ fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -690,6 +696,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -770,6 +777,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -899,6 +907,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -1048,6 +1057,7 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -1263,6 +1273,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -1415,6 +1426,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -1588,6 +1600,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -1636,11 +1649,13 @@ fn generated_view(
     view: (Vec3, f32, f32),
     name: &str,
 ) -> (Vec<u8>, usize) {
-    generated_view_with(renderer, world, (size, side, position), biomes, view, name, false)
+    generated_view_with(renderer, world, (size, side, position), biomes, view, name, (false, false))
 }
 
 /// [`generated_view`], its ground's top laid in half blocks where `slabs`
-/// says: each biome's top block with its slab.
+/// says: each biome's top block with its slab; and where `tinted` says, every
+/// biome's top the first's block, of grass taking each biome's grass tint,
+/// with the world's tints over the whole of it.
 fn generated_view_with(
     renderer: &mut Renderer,
     world: &voxear_terrain::generate::WorldGen,
@@ -1648,7 +1663,7 @@ fn generated_view_with(
     biomes: &[(voxear_terrain::generate::BiomeDef, &str, [f32; 3])],
     (eye, yaw, pitch): (Vec3, f32, f32),
     name: &str,
-    slabs: bool,
+    (slabs, tinted): (bool, bool),
 ) -> (Vec<u8>, usize) {
     use voxear_terrain::{
         blocks::{
@@ -1669,7 +1684,10 @@ fn generated_view_with(
     let mut defs = Vec::new();
     let mut blocks = Vec::new();
     for (biome, block, colour) in biomes {
-        file.blocks.push(BlockKind::colored(block, *colour));
+        if !tinted || blocks.is_empty() {
+            let tint = if tinted { voxear_terrain::blocks::block::BlockTint::Grass } else { Default::default() };
+            file.blocks.push(BlockKind { tint, ..BlockKind::colored(block, *colour) });
+        }
         defs.push(biome.clone());
         blocks.push(BiomeBlocks { top: file.blocks.len() as u16, ..BiomeBlocks::default() });
     }
@@ -1704,6 +1722,7 @@ fn generated_view_with(
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: look.tint,
             }
         })
         .collect();
@@ -1712,7 +1731,24 @@ fn generated_view_with(
     let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
     let made = BlockWorld::made(file.make_ground(Some(world)), &faces, size, false);
     let chunks = made.meshes.len();
-    scene.spawn((made, look, Transform::default()));
+    let spawned = scene.spawn((made, look, Transform::default()));
+    let mut late = None;
+    if tinted {
+        // Its tints over the whole of it, its tiles put together as the engine does.
+        use voxear_terrain::blocks::generate::tints::{TINT_STEP, TINT_TILE, tint_tile};
+        let (tiles, first) = (side as i32 / (TINT_STEP * TINT_TILE), 0);
+        let (each, wide) = (TINT_TILE as usize, (tiles * TINT_TILE) as usize);
+        let mut points = vec![0u32; wide * wide * 2];
+        for (tz, tx) in (0..tiles).flat_map(|tz| (0..tiles).map(move |tx| (tz, tx))) {
+            let tile = tint_tile(file.generate.as_ref().unwrap(), world, size, [tx + first, tz + first]).expect("tints");
+            for z in 0..each {
+                let row = (tz as usize * each + z) * wide + tx as usize * each;
+                points[row * 2..(row + each) * 2].copy_from_slice(&tile[z * each * 2..(z + 1) * each * 2]);
+            }
+        }
+        let corner = [first * TINT_TILE; 2];
+        late = Some((spawned, voxear_render::BlockTints { corner, size: wide as u32, points: points.into() }));
+    }
     let turn = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
     scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
     let towards_sun = Vec3::new(0.45, 0.7, 0.25).normalize();
@@ -1721,6 +1757,11 @@ fn generated_view_with(
     scene.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    // Given its tints once it is drawn, as a world's come a few tiles at a time.
+    if let Some((spawned, tints)) = late {
+        render(renderer, &scene, 2);
+        scene.insert(spawned, tints);
+    }
     let pixels = render(renderer, &scene, 150);
     keep_image(name, &pixels);
     (pixels, chunks)
@@ -1907,7 +1948,15 @@ fn generated_hills_laid_in_half_blocks_rise_in_slabs_where_whole_blocks_step_a_b
     let eye = Vec3::new(128.0 - 22.0, ground + 4.0, 128.0 - 22.0);
     let view = (eye, std::f32::consts::FRAC_PI_4, 0.12);
     let make = |renderer: &mut Renderer, slabs: bool, name: &str| {
-        generated_view_with(renderer, &hills, (1.0, 256, corner), std::slice::from_ref(&grass), view, name, slabs)
+        generated_view_with(
+            renderer,
+            &hills,
+            (1.0, 256, corner),
+            std::slice::from_ref(&grass),
+            view,
+            name,
+            (slabs, false),
+        )
     };
     let (whole, _) = make(&mut renderer, false, "blocks hills whole.png");
     let (halved, _) = make(&mut renderer, true, "blocks hills slabs.png");
@@ -1925,6 +1974,63 @@ fn generated_hills_laid_in_half_blocks_rise_in_slabs_where_whole_blocks_step_a_b
     assert!(seen > all / 4 && seen_halved.abs_diff(seen) < seen / 10, "{seen} and {seen_halved} of grass");
     let differ = whole.chunks_exact(4).zip(halved.chunks_exact(4)).filter(|(a, b)| a != b).count();
     assert!(differ > all / 20, "{differ} pixels differ");
+}
+
+#[test]
+fn grass_takes_each_biomes_tint_and_fades_from_one_to_the_other_where_they_meet() {
+    use voxear_terrain::generate::{BiomeDef, BiomeTints, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let hills = starters().into_iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    // Land well over the sea, and two biomes parted at how warm its middle is: the cooler's grass blue-green, the
+    // warmer's yellow, both one block of grass.
+    let land = (0..400)
+        .map(|i| [i as f32 * 64.0, 0.0])
+        .find(|&[x, z]| hills.height_at(x + 128.0, z + 128.0) > hills.sea_level() + 8.0)
+        .expect("land");
+    let middle = [land[0] + 128.0, land[1] + 128.0];
+    let split = hills.climate(middle[0], middle[1], hills.height_at(middle[0], middle[1])).0;
+    let biome = |temperature: [f32; 2], grass: [f32; 3]| BiomeDef {
+        temperature,
+        humidity: [0.0, 1.0],
+        tints: BiomeTints { grass: Some(grass), foliage: None },
+        ..BiomeDef::default()
+    };
+    let cool = (biome([-60.0, split], [0.5, 1.0, 1.6]), "Grass", [0.4, 0.55, 0.3]);
+    let warm = (biome([split, 60.0], [1.9, 1.3, 0.4]), "Grass", [0.4, 0.55, 0.3]);
+    // From high over its middle, looking down.
+    let ground = hills.height_at(middle[0], middle[1]);
+    let view = (Vec3::new(128.0, ground + 160.0, 128.0), 0.0, 1.5);
+    let (pixels, _) = generated_view_with(
+        &mut renderer,
+        &hills,
+        (1.0, 256, land),
+        &[cool, warm],
+        view,
+        "blocks tinted grass.png",
+        (false, true),
+    );
+    // Yellow somewhere and blue-green somewhere, and between them every shade of the way: along each row, from
+    // one pixel to the next, the balance of red and blue, as a share of how bright the pixel is, changes only a
+    // little, never at once from one to the other. The dark lines along the hills' steps are left out.
+    let balance = |x: u32, y: u32| {
+        let [r, g, b] = rgb_at(&pixels, x, y);
+        (r + g + b > 150).then(|| (r - b) * 255 / (r + g + b))
+    };
+    let all: Vec<i32> =
+        (0..HEIGHT).flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter_map(|(x, y)| balance(x, y)).collect();
+    let (most, least) = (all.iter().copied().max().unwrap(), all.iter().copied().min().unwrap());
+    assert!(most > 40 && least < -20, "yellow to {most}, blue-green to {least}");
+    let mut steps = Vec::new();
+    for y in (0..HEIGHT).step_by(8) {
+        for x in 1..WIDTH {
+            if let (Some(here), Some(before)) = (balance(x, y), balance(x - 1, y)) {
+                steps.push((here - before).abs());
+            }
+        }
+    }
+    steps.sort_unstable();
+    let near_most = steps[steps.len() * 999 / 1000];
+    assert!(near_most < (most - least) / 3, "a step of {near_most} from one pixel to the next, of {}", most - least);
 }
 
 #[test]
@@ -2020,6 +2126,7 @@ fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Ve
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -2129,6 +2236,7 @@ fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();
@@ -2296,6 +2404,7 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
                 glitter: false,
                 leafy: face.leafy,
                 mixed: face.mixed,
+                tint: 0,
             }
         })
         .collect();

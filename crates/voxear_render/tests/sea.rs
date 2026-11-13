@@ -96,6 +96,7 @@ fn sea(renderer: &mut Renderer) -> World {
                 glitter: false,
                 leafy: false,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();

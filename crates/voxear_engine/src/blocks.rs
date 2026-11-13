@@ -949,6 +949,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             glitter: false,
             leafy: face.leafy,
             mixed: face.mixed,
+            tint: face.tint,
         });
     }
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };

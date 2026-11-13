@@ -5,6 +5,7 @@ pub mod acoustics;
 pub mod animation;
 pub mod audio;
 pub mod block_mob;
+pub mod block_tints;
 pub mod build_profile;
 mod cameras;
 pub mod caves;

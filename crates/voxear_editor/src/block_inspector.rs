@@ -13,7 +13,7 @@
 //! block takes it up at once (see `editor::blocks`).
 
 use voxear_terrain::blocks::{
-    block::{BlockDef, BlockDrop, BlockHeat, BlockShape, BoxHinge, Liquid, MAX_HEAT_REACH},
+    block::{BlockDef, BlockDrop, BlockHeat, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH},
     shape::{BlockFacing, BlockMotion, BoxDef, MOST_BOXES, MOST_KEYS, MOST_SWING, MotionEase, MotionKey, UseKind},
 };
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
@@ -176,6 +176,7 @@ pub struct BlockFields {
     unbreakable: NodeId,
     /// Whether it sways in the wind; none for a liquid.
     sways: Option<NodeId>,
+    tint: Option<NodeId>,
     /// How far up the order of blocks that meet it lies; none for a liquid.
     overlap: Option<NodeId>,
     /// Its shape; none for a liquid.
@@ -229,6 +230,17 @@ impl BlockFields {
                        with a foliage material sways without this";
             ui.set_tooltip(row, tip, None);
             ui.toggle(row, "", block.sways)
+        });
+        let tint = block.liquid.is_none().then(|| {
+            let row = prop(ui, rows, "Tint");
+            let tip = "Takes its biome's colour, fading from one biome's to the next where they meet. Grass: the \
+                       biome's grass tint all over, as a tuft. Grass Top: on its top alone, as a block of grass. \
+                       Foliage: the biome's foliage tint, as leaves";
+            ui.set_tooltip(row, tip, None);
+            let picked = BlockTint::ALL.iter().position(|tint| *tint == block.tint).unwrap_or_default();
+            let tint = ui.dropdown(row, &BlockTint::ALL.map(BlockTint::name), picked);
+            ui.add_class(tint, "value-choice");
+            tint
         });
         let overlap = block.liquid.is_none().then(|| {
             let field = number_field(ui, rows, "Overlap", f32::from(block.overlap));
@@ -311,6 +323,7 @@ impl BlockFields {
                 hardness,
                 unbreakable,
                 sways,
+                tint,
                 overlap,
                 shape,
                 tier,
@@ -403,6 +416,9 @@ impl BlockFields {
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);
+        }
+        if let Some(tint) = self.tint.filter(|&tint| ui.changed(tint)) {
+            (block.tint, typed) = (BlockTint::ALL[ui.selected_option(tint).min(BlockTint::ALL.len() - 1)], true);
         }
         if let Some(tier) = changed_number(ui, self.tier) {
             (block.tier, typed) = (tier.round().clamp(0.0, 1000.0) as u32, true);

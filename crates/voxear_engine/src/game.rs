@@ -724,6 +724,7 @@ impl Game {
         }
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
+        crate::block_tints::update(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
         crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);

@@ -363,6 +363,66 @@ fn a_generated_block_world_with_slabs_numbers_its_ground_blocks_slabs_as_it_load
 }
 
 #[test]
+fn a_generated_block_world_whose_biomes_have_tints_keeps_them_round_where_it_is_seen_from() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{blocks::generate::BlockGenerate, generate::Preset};
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Biomes")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    // A biome with yellowed grass, everywhere.
+    let yellow = "temperature = [-60.0, 60.0]\nhumidity = [0.0, 1.0]\n\n[tints]\ngrass = [1.8, 1.2, 0.5]\n";
+    std::fs::write(dir.path().join("Biomes/Yellow.biome"), yellow).unwrap();
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        biomes: vec!["Biomes/Yellow.biome".into()],
+        ..BlockGenerate::default()
+    });
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let tints = |game: &Game| game.engine.world.query_ref::<&voxear_render::BlockTints>().into_iter().next().cloned();
+    // Worked out a few tiles a frame, the nearest first, till every tile in reach has its tints: a tile not
+    // worked out yet is white, as its grass is not.
+    let full = |tints: &voxear_render::BlockTints| tints.points.iter().step_by(2).all(|&grass| grass != 0x0080_8080);
+    for _ in 0..60 {
+        game.tick(1.0 / 60.0, None);
+        if tints(&game).is_some_and(|tints| full(&tints)) {
+            break;
+        }
+    }
+    let kept = tints(&game).expect("its tints");
+    assert_eq!((kept.size, kept.points.len()), (256, 256 * 256 * 2));
+    assert!(full(&kept), "every point worked out");
+    // The grass yellowed everywhere, each part out of 2 in a byte; the foliage white.
+    let part = |packed: u32, shift: u32| ((packed >> shift) & 0xFF) as f32 / 255.0 * 2.0;
+    for point in kept.points.chunks_exact(2).step_by(97) {
+        assert!((part(point[0], 0) - 1.8).abs() < 0.02 && (part(point[0], 16) - 0.5).abs() < 0.02, "{point:x?}");
+        assert!((part(point[1], 8) - 1.0).abs() < 0.01);
+    }
+    // Its biome read again without tints, its world has none.
+    let field = game.engine.world.query_ref::<(voxear_ecs::Entity, &BlockWorldAsset)>().into_iter().next().unwrap().0;
+    let mut asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let generate = asset.file.generate.as_mut().unwrap();
+    let mut placed = (**generate.placed.as_ref().unwrap()).clone();
+    let untinted = |biome: &voxear_terrain::generate::BiomeDef| voxear_terrain::generate::BiomeDef {
+        tints: Default::default(),
+        ..biome.clone()
+    };
+    let plain: Vec<voxear_terrain::generate::BiomeDef> = placed.biomes.list().iter().map(untinted).collect();
+    placed.biomes = voxear_terrain::generate::Biomes::new(plain, 15.0, 0.3, 0);
+    generate.placed = Some(std::sync::Arc::new(placed));
+    game.engine.world.insert(field, asset);
+    game.tick(1.0 / 60.0, None);
+    assert!(tints(&game).is_none(), "untinted");
+}
+
+#[test]
 fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_it_is() {
     use voxear_core::math::Vec3;
     use voxear_engine::blocks::{BlockWorldAsset, biome_at, biome_json};

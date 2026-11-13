@@ -66,7 +66,24 @@ A vine starts in open air with ground over it: under a ledge, an overhang, an ar
 
 Only a world's own blocks have vines, not the larger ones of its far rings, and a Voxel Terrain has none.
 
+### Tints
+
+| Setting | What it does |
+| --- | --- |
+| Grass | What the colour of blocks whose **Tint** is Grass or Grass Top is multiplied by, red, green and blue, each from 0 to 2 |
+| Foliage | The same for blocks whose Tint is Foliage: leaves |
+
+White, 1 for each part, leaves a block as it is; under 1 darkens that part, over 1 brightens it. Its swatch shows it over a pale grey-green, as a block of grass made to be tinted looks.
+
 Each change is written to the biome's file as you make it, and every world listing the biome has its ground made again at once, in the level you are editing and in a game you are playing. There is nothing to save, and nothing to undo.
+
+## Tints
+
+A block whose **Tint** says so (see [[Blocks]]) takes its colour from the biome it stands in, so one block of grass is fresh green in a meadow, deep green in a forest and straw yellow on a savanna, and one block of leaves greener in the rainforest than in the taiga. Where two or more biomes meet, the colour fades from one biome's to the next over a few dozen blocks, never stopping at a line, however ragged the border between their blocks is.
+
+How it fades: the world keeps its tints on a lattice, a point every 4 blocks. Each point takes the tints of the biome there averaged with those of the points 3 each way round it, so 28 blocks across, and each face reads between the four points round it. A point's tints come from where it is alone, so the colour is the same on every machine and in every chunk.
+
+Tints are kept round where the world is seen from, a little over 500 blocks each way, worked out a few tiles a frame, the nearest first; past that, a face takes the tint at their edge. A world drawn smooth is untinted. A block's colour is its own wherever its world has no biomes, or its biomes no tints.
 
 ## How a place picks its biome
 
@@ -89,11 +106,13 @@ How wide a world's warm and cold, wet and dry places are is its generator's **Cl
 | Snow | Above 260 m, up to 14 °C | Snow, over Ice | Stone | Gravel |
 | Tundra | Up to 4 °C, dry | Frozen Dirt | Stone | Gravel |
 | Taiga | -2 to 10 °C, wet | Needles Floor, over Dirt | Stone | Gravel |
-| Grassland | 4 to 22 °C, middling | Grass, over Dirt | Stone | Sand |
-| Forest | 6 to 22 °C, wet | Moss, over Dirt | Stone | Gravel |
+| Grassland | 4 to 22 °C, middling | Grass, fresh green, over Dirt | Stone | Sand |
+| Forest | 6 to 22 °C, wet | Grass, deep green, over Dirt | Stone | Gravel |
 | Desert | From 18 °C, dry | Sand, over Sandstone | Sandstone | Sand |
-| Savanna | From 20 °C, middling | Dry Grass, over Red Earth | Stone | Sand |
-| Rainforest | From 20 °C, wet | Jungle Floor, over Mud | Stone | Sand |
+| Savanna | From 20 °C, middling | Grass, straw yellow, over Red Earth | Stone | Sand |
+| Rainforest | From 20 °C, wet | Grass, lush green, over Mud | Stone | Sand |
+
+The Grassland, the Forest, the Savanna and the Rainforest are one block of **Grass**, its Tint Grass, each biome tinting it its own colour, so they fade into one another where they meet (see [Tints](#tints)). Their foliage tints colour the starter trees' leaves the same way, and the Taiga's its pines'.
 
 All but the Desert have Stone deep down. Ground steeper than 45° is rock; snow lies on ground up to 58°.
 
@@ -111,8 +130,8 @@ A world gets three showcase biomes when it is first given a **Generator**, if it
 
 | Biome | Climate | Top, over | Steep | Shore | Trees |
 | --- | --- | --- | --- | --- | --- |
-| Autumn Woods | The coolest third | Fallen Leaves, over Dirt | Stone | Gravel | Maple, red |
-| Blossom Grove | The middle third | Spring Grass, over Dirt | Stone | Sand | Blossom, pink |
+| Autumn Woods | The coolest third | Grass, golden brown, over Dirt | Stone | Gravel | Maple, red |
+| Blossom Grove | The middle third | Grass, bright green, over Dirt | Stone | Sand | Blossom, pink |
 | Volcanic Fields | The warmest third | Ash, over Basalt | Magma Rock, from 50° | Obsidian | None |
 
 They keep to warmth alone. When they are made for a world, its generator's warmth over the land within a kilometre of where the world starts is split into thirds, and each biome takes one. So all three lie a short walk apart in a world of any climate, cold mountains and tropical islands alike, usually within a few hundred metres of the start. The splits are written into their `.biome` files, so change them there. A world with no generator yet parts them at 10 and 16 °C.

@@ -166,6 +166,10 @@ pub struct BlockKind {
     /// cube's own look, half as high. What generated ground lays where it
     /// lies half a block over a whole one (see `generate::BlockGenerate::slabs`).
     pub slab: bool,
+    /// Which of its biome's tints its colour takes, as its block says (see
+    /// `block::BlockTint`). Never written.
+    #[serde(skip)]
+    pub tint: super::block::BlockTint,
     /// What it is as a block of parts, as its block says: its motion, its
     /// own boxes, whether it is used. Never written.
     #[serde(skip)]
@@ -287,6 +291,7 @@ impl Default for BlockKind {
             shape: super::block::BlockShape::Cube,
             state: 0,
             slab: false,
+            tint: super::block::BlockTint::None,
             part: PartLook::default(),
         }
     }
@@ -394,6 +399,9 @@ pub struct FaceLook {
     pub connected: bool,
     pub mixed: bool,
     pub leafy: bool,
+    /// Which of its biome's tints it takes: `block::TINT_GRASS`,
+    /// `block::TINT_FOLIAGE` or 0 for none.
+    pub tint: u8,
 }
 
 /// A key a file's generated ground may still hold, from when ground could
@@ -524,7 +532,7 @@ impl BlockFile {
             return (looks, faces);
         }
         let own = looks.clone();
-        let filler = FaceLook { material: None, color: [0.6; 3], connected: false, mixed: false, leafy: false };
+        let filler = FaceLook { material: None, color: [0.6; 3], connected: false, mixed: false, leafy: false, tint: 0 };
         looks.resize(twins, filler);
         looks.extend(own.into_iter().map(|look| FaceLook { mixed: true, ..look }));
         (looks, faces)
@@ -534,10 +542,10 @@ impl BlockFile {
     /// [`faces`](Self::faces)).
     fn own_faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
-        let mut find = |material: &Option<String>, color: [f32; 3], connected: bool, leafy: bool| {
+        let mut find = |material: &Option<String>, color: [f32; 3], connected: bool, leafy: bool, tint: u8| {
             // A face with no picture has nothing to join with.
             let connected = connected && material.is_some();
-            let look = FaceLook { material: material.clone(), color, connected, mixed: false, leafy };
+            let look = FaceLook { material: material.clone(), color, connected, mixed: false, leafy, tint };
             let at = looks.iter().position(|kept| *kept == look).unwrap_or_else(|| {
                 looks.push(look);
                 looks.len() - 1
@@ -560,9 +568,11 @@ impl BlockFile {
                 joining && (own.is_some() || kind.material.is_some())
             };
             let joined = [joins(&kind.top, JOINS_TOP), joins(&kind.material, JOINS_SIDES), joins(&kind.bottom, JOINS_BOTTOM)];
-            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, joined[0], leafy);
-            let sides = find(&kind.material, kind.color, joined[1], leafy);
-            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, joined[2], leafy);
+            // Water takes its own colour; a block that is tinted takes its biome's, on its top or all over.
+            let (top_tint, tint) = if kind.water { (0, 0) } else { kind.tint.faces() };
+            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, joined[0], leafy, top_tint);
+            let sides = find(&kind.material, kind.color, joined[1], leafy, tint);
+            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, joined[2], leafy, tint);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
             let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
             let connects = u8::from(joined[0]) * JOINS_TOP | u8::from(joined[1]) * JOINS_SIDES | u8::from(joined[2]) * JOINS_BOTTOM;

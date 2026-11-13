@@ -127,6 +127,11 @@ pub struct BlockDef {
     /// snow. None for a block that is as warm as where it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heat: Option<BlockHeat>,
+    /// Whether its colour takes the biome it is in: grass and leaves green
+    /// in a forest and yellowed on a savanna, fading from one to the other
+    /// where biomes meet (see `generate::tints`).
+    #[serde(skip_serializing_if = "BlockTint::is_none")]
+    pub tint: BlockTint,
     /// Whether a player can use it: a door, a trap door, a gate, a lever
     /// and a button are always; any other block says so, and using it is
     /// for a game's scripts to answer (see `shape::UseKind`).
@@ -172,6 +177,53 @@ impl Default for BoxHinge {
         Self { pivot: [8.0, 0.0, 8.0], axis: BlockFacing::Up }
     }
 }
+
+/// Which of a biome's tints a block's colour takes, and on which faces:
+/// none; the grass tint all over, as a tuft of grass; the grass tint on
+/// its top alone, as a block of grass with earth for sides; or the foliage
+/// tint all over, as leaves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockTint {
+    #[default]
+    None,
+    Grass,
+    GrassTop,
+    Foliage,
+}
+
+impl BlockTint {
+    pub const ALL: [BlockTint; 4] = [BlockTint::None, BlockTint::Grass, BlockTint::GrassTop, BlockTint::Foliage];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BlockTint::None => "None",
+            BlockTint::Grass => "Grass",
+            BlockTint::GrassTop => "Grass Top",
+            BlockTint::Foliage => "Foliage",
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        *self == BlockTint::None
+    }
+
+    /// The tint its top and its other faces take: [`TINT_GRASS`],
+    /// [`TINT_FOLIAGE`] or 0 for none.
+    pub fn faces(self) -> (u8, u8) {
+        match self {
+            BlockTint::None => (0, 0),
+            BlockTint::Grass => (TINT_GRASS, TINT_GRASS),
+            BlockTint::GrassTop => (TINT_GRASS, 0),
+            BlockTint::Foliage => (TINT_FOLIAGE, TINT_FOLIAGE),
+        }
+    }
+}
+
+/// A face's tint, as its look keeps it: the biome's grass tint, or its
+/// foliage tint.
+pub const TINT_GRASS: u8 = 1;
+pub const TINT_FOLIAGE: u8 = 2;
 
 /// A block's own temperature and how far it reaches: at the block it is
 /// `celsius`, and it fades to where it is by `reach` metres away.
@@ -405,6 +457,7 @@ impl Default for BlockDef {
             drops: Vec::new(),
             sounds: BlockSounds::default(),
             heat: None,
+            tint: BlockTint::None,
             usable: false,
             press_time: None,
             swing: None,
@@ -500,6 +553,7 @@ impl BlockDef {
         kind.overlap = if self.liquid.is_none() { self.overlap } else { 0 };
         kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
         kind.part = self.part_look();
+        kind.tint = self.tint;
         // A cube made a slab is one still.
         kind.shaped();
     }

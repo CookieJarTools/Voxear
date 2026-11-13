@@ -28,7 +28,7 @@ use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_terrain::{
     blocks::{
-        block::{BlockDef, BlockShape},
+        block::{BlockDef, BlockShape, BlockTint},
         plant::{PlantDef, PlantKind},
         structure::{GroundFit, StructureDef},
     },
@@ -186,9 +186,11 @@ const VINE: &str = "Vine";
 /// pictures and their materials go in.
 const PICTURES_FOLDER: &str = "Pictures";
 
-/// A starter tree's leaves as a block: bushy, swaying, quick to break.
-fn leaves_block(color: [f32; 3]) -> BlockDef {
-    BlockDef { shape: BlockShape::Bushy, sways: true, hardness: 0.2, ..BlockDef::colored(color) }
+/// A starter tree's leaves as a block: bushy, swaying, quick to break, and
+/// where `tinted`, taking the foliage tint of the biome it grows in.
+fn leaves_block(color: [f32; 3], tinted: bool) -> BlockDef {
+    let tint = if tinted { BlockTint::Foliage } else { BlockTint::None };
+    BlockDef { shape: BlockShape::Bushy, sways: true, hardness: 0.2, tint, ..BlockDef::colored(color) }
 }
 
 /// How many squares a side a starter's picture is, and how many pixels a
@@ -316,21 +318,22 @@ fn write_new(game: &Game, path: &str, text: &str) -> Result<()> {
 /// the structures under the generator of the world of blocks on `entity`,
 /// its ground made again with them. Whether the world changed.
 pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
-    add_trees(game, renderer, entity, &TREES, 100)
+    add_trees(game, renderer, entity, &TREES, (100, true))
 }
 
 /// Makes the showcase biomes' trees as [`add`] makes the starters'.
 pub fn add_showcase(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
-    add_trees(game, renderer, entity, &SHOWCASE_TREES, 200)
+    add_trees(game, renderer, entity, &SHOWCASE_TREES, (200, false))
 }
 
-/// Makes `trees` as [`add`] says, their pictures drawn from `salt` on.
+/// Makes `trees` as [`add`] says, their pictures drawn from `salt` on, their
+/// leaves taking their biome's foliage tint where `tinted`.
 fn add_trees(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
     entity: Entity,
     trees: &[StarterTree],
-    salt: u32,
+    (salt, tinted): (u32, bool),
 ) -> Result<bool> {
     let world = block_props::world_path(game, entity).context("the world has no asset")?;
     let blocks_folder = block_props::blocks_beside(&world);
@@ -353,7 +356,7 @@ fn add_trees(
             let bark = material_with(game, &format!("{pictures}/{}", tree.log.0), &bark, false)?;
             log_block.material = Some(named(game, &bark));
         }
-        let mut leaf_block = leaves_block(tree.leaves.1);
+        let mut leaf_block = leaves_block(tree.leaves.1, tinted);
         if !has(game, tree.leaves.0) {
             let pictures = format!("{blocks_folder}/{PICTURES_FOLDER}");
             let leaves = leaves_picture(tree.leaves.1, salt + 2);
@@ -410,7 +413,7 @@ mod tests {
         assert_eq!(names, ["Oak", "Birch", "Pine"]);
         assert_eq!(leaf_blocks(), ["Oak Leaves", "Birch Leaves", "Pine Needles"]);
         for tree in &TREES {
-            let block = leaves_block(tree.leaves.1);
+            let block = leaves_block(tree.leaves.1, true);
             assert!(block.shape == BlockShape::Bushy && block.sways, "{}", tree.name);
             // Grown from a few seeds: a trunk, and leaves over it; taller than a person, no wider than a house.
             for seed in 0..4 {

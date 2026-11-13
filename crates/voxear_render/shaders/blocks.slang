@@ -25,6 +25,32 @@
 static const float BLOCK_SWAY = 0.07;
 static const float BLOCK_SWAY_MOST = 0.22;
 
+// One of a world's tint points: its tint `kind` (1 grass, 2 foliage), each part out of 2.
+float3 blockTintPoint(BlockWorld world, int2 at, uint kind)
+{
+    uint packed = world.tints[(uint(at.y) * world.tintSize + uint(at.x)) * 2 + kind - 1];
+    return float3(packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF) * (2.0 / 255.0);
+}
+
+// The colour a face of surface `flags` takes at `place`, in metres from the world's corner, from the biomes round it:
+// its tint read between the four points round it, so it fades smoothly from biome to biome; past the world's tints
+// the nearest at their edge. White for a face that takes none, or a world without tints.
+float3 blockTint(BlockWorld world, uint flags, float3 place)
+{
+    uint kind = (flags >> TERRAIN_SURFACE_TINT_SHIFT) & 3;
+    if (kind == 0 || kind > 2 || world.tintSize < 2)
+    {
+        return float3(1.0);
+    }
+    float last = float(world.tintSize - 1);
+    float2 at = clamp(place.xz / (BLOCK_TINT_STEP * world.blockSize) - float2(world.tintCorner), 0.0, last);
+    int2 low = int2(min(floor(at), last - 1.0));
+    float2 f = at - float2(low);
+    float3 near = lerp(blockTintPoint(world, low, kind), blockTintPoint(world, low + int2(1, 0), kind), f.x);
+    float3 far = lerp(blockTintPoint(world, low + int2(0, 1), kind), blockTintPoint(world, low + int2(1, 1), kind), f.x);
+    return lerp(near, far, f.y);
+}
+
 // A number from 0 to 1 for a corner of the world's blocks, from whole numbers alone.
 float blockCornerPhase(int3 corner)
 {
@@ -688,8 +714,10 @@ bool terrainShading(
         {
             discard;
         }
-        Material material = buffers()->materials[world.surfaces[min(input.lod & 0xFF, world.surfaceCount - 1)].material];
-        base = float4(look.rgb, 1.0);
+        TerrainSurface sheet = world.surfaces[min(input.lod & 0xFF, world.surfaceCount - 1)];
+        Material material = buffers()->materials[sheet.material];
+        // Leaves take their biome's tint, as their block's faces do.
+        base = float4(look.rgb * blockTint(world, sheet.flags, spot.place), 1.0);
         metallic = material.metallic;
         roughness = material.roughness;
         return true;
@@ -739,6 +767,8 @@ bool terrainShading(
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.
         TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
         Material material = buffers()->materials[surface.material];
+        // Grass and leaves take their biome's tint.
+        layer.base.rgb *= blockTint(world, surface.flags, spot.place);
         float cutoff = material.alphaCutoff;
         if (cutoff > 0.0 && layer.base.a < cutoff)
         {

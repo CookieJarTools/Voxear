@@ -35,6 +35,7 @@ Pick a block, and the Inspector shows:
 | Top | Its top's material |
 | Bottom | Its bottom's material |
 | Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
+| Tint | Whether its colour takes the biome it is in: **None**; **Grass**, the biome's grass tint all over, as a tuft; **Grass Top**, on its top alone, as a block of grass with earth for sides; **Foliage**, the biome's foliage tint, as leaves (see [[Biomes#Tints|Tints]]) |
 | Shape | **Cube**, as most blocks are; **Bushy**, a cube with tufts of leaves reaching out of it (see [Bushy leaves](#bushy-leaves)); **Vine**, thin sheets on the blocks beside it (see [Vines](#vines)); or a block of parts: a slab, stairs, a fence, a door and more (see [Blocks of parts](#blocks-of-parts)) |
 | Overlap | Where it lies in the order of blocks that meet: its picture creeps over the edge of a block beside it with a lower Overlap. 0 keeps to itself (see [Blocks that meet](#blocks-that-meet)) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |

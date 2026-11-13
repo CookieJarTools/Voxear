@@ -130,6 +130,7 @@ fn scene(renderer: &mut Renderer, file: &BlockFile, blocks: BlockMap) -> (World,
                 glitter: false,
                 leafy: look.leafy,
                 mixed: false,
+                tint: 0,
             }
         })
         .collect();

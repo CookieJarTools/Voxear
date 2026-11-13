@@ -153,6 +153,23 @@ impl BlockVoxels {
 
 impl Component for BlockLook {}
 
+/// The colours a world of blocks' tinted faces take from the biomes they
+/// stand in, round where it is seen from (see
+/// `voxear_terrain::blocks::generate::tints`): a square of its tint
+/// lattice's points, a point every `TINT_STEP` blocks, `size` a side from
+/// point `corner`, row by row along x, each point its grass tint and then
+/// its foliage tint, packed as the lattice packs them. A face beyond it
+/// takes the tint of the nearest point at its edge; a world without one
+/// is drawn untinted.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockTints {
+    pub corner: [i32; 2],
+    pub size: u32,
+    pub points: Arc<[u32]>,
+}
+
+impl Component for BlockTints {}
+
 /// The most worlds of blocks a view draws.
 pub const MAX_BLOCK_WORLDS: usize = 16;
 
@@ -162,8 +179,21 @@ pub const MAX_BLOCK_SURFACES: usize = 256;
 /// The most chunks with faces a world draws.
 const SLOTS: u32 = 65_536;
 
-/// Where a pool's quads start: after each slot's chunk's place.
-const QUADS_AT: u64 = SLOTS as u64 * 16;
+/// Where a pool's tints start, after each slot's chunk's place, and the most
+/// room they take: as many points as a world's tints have at most, two
+/// tints each.
+const TINTS_AT: u64 = SLOTS as u64 * 16;
+const TINT_BYTES: u64 = (MOST_TINT_POINTS * 2 * 4) as u64;
+
+// The shaders' BLOCK_TINT_STEP (common.slang) is the lattice's.
+const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_STEP == 4);
+
+/// The most points a side a world's tints have.
+pub const MOST_TINT_POINTS_SIDE: usize = 256;
+const MOST_TINT_POINTS: usize = MOST_TINT_POINTS_SIDE * MOST_TINT_POINTS_SIDE;
+
+/// Where a pool's quads start: after its tints.
+const QUADS_AT: u64 = TINTS_AT + TINT_BYTES;
 
 /// How many quads a pool starts with room for; it doubles when full.
 const FIRST_CAPACITY: u64 = 1 << 16;
@@ -194,12 +224,16 @@ pub struct GpuBlockWorld {
     /// faces there are drawn rough (see `sea`). Far below for a world whose
     /// water is all its sea.
     pub sea_top: f32,
-    pub pad: u32,
+    /// How many points its tints are a side, 0 for none (see `BlockTints`).
+    pub tint_size: u32,
     /// Its motions and its blocks moving now, and how many of each.
     pub motions: u64,
     pub moving: u64,
     pub motion_count: u32,
     pub moving_count: u32,
+    /// Its tints' points, and the point they start from.
+    pub tints: u64,
+    pub tint_corner: [i32; 2],
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
@@ -445,6 +479,9 @@ struct Pool {
     /// The world as it last drew it, drawn in place of the pool that follows
     /// it until that one has every chunk.
     shown: Option<DrawnBlocks>,
+    /// Its tints as last brought up, where it has any: their points, from
+    /// which point and how many a side.
+    tinted: Option<(Arc<[u32]>, [i32; 2], u32)>,
 }
 
 impl Pool {
@@ -468,6 +505,7 @@ impl Pool {
             sights: None,
             seen: 0,
             made_from: None,
+            tinted: None,
             proxied: None,
             placed: None,
             shown: None,
@@ -591,6 +629,8 @@ impl Pool {
         self.capacity = capacity;
         self.space = RangeAllocator::new(capacity);
         self.made_from = None;
+        // Its tints are brought up again into the new buffer.
+        self.tinted = None;
         // Slots given up wait no longer: nothing draws from the old buffer's quads now.
         for (_, _, _, slot) in self.freeing.drain(..) {
             self.slots.free(slot);
@@ -659,6 +699,9 @@ pub(crate) struct DrawnBlocks {
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
     pub proxies: Arc<[(MeshHandle, Vec3)]>,
+    /// Its tints in its pool, where it has any: the point they start from
+    /// and how many a side.
+    pub tints: Option<([i32; 2], u32)>,
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -815,6 +858,19 @@ impl BlockWorlds {
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
+            // Its tints, brought up where they changed; one larger than its room is left untinted.
+            match world.get::<BlockTints>(entity) {
+                Some(tints)
+                    if tints.size as usize <= MOST_TINT_POINTS_SIDE
+                        && tints.points.len() == (tints.size * tints.size * 2) as usize =>
+                {
+                    if !pool.tinted.as_ref().is_some_and(|(points, ..)| Arc::ptr_eq(points, &tints.points)) {
+                        stage(bytemuck::cast_slice(&tints.points), TINTS_AT);
+                    }
+                    pool.tinted = Some((tints.points.clone(), tints.corner, tints.size));
+                }
+                _ => pool.tinted = None,
+            }
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
             if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
                 let before = pool.proxies.len();
@@ -903,6 +959,7 @@ impl BlockWorlds {
                 sea_top: world.get::<crate::sea::SeaLevel>(entity).map(|level| level.0),
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
+                tints: pool.tinted.as_ref().map(|&(_, corner, size)| (corner, size)),
                 id: None,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
@@ -917,6 +974,8 @@ impl BlockWorlds {
                         moving: drawn.moving,
                         sea_top: drawn.sea_top,
                         cast_shadows: drawn.cast_shadows,
+                        // Its tints are in the new pool alone.
+                        tints: None,
                         ..old
                     })
                 }
@@ -1133,11 +1192,13 @@ pub(crate) fn gather(
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
             sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
-            pad: 0,
+            tint_size: blocks.tints.map_or(0, |(_, size)| size),
             motions: buffer.address + parts_at,
             moving: buffer.address + moving_at,
             motion_count: motions.len() as u32,
             moving_count: moving.len() as u32,
+            tints: blocks.address + TINTS_AT,
+            tint_corner: blocks.tints.map_or([0; 2], |(corner, _)| corner),
         });
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];

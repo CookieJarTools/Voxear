@@ -26,6 +26,7 @@ use std::{
     sync::Arc,
 };
 
+use voxear_assets::AssetGuid;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{Foliage, StarterPlant};
@@ -150,6 +151,8 @@ struct Grower {
     look: Look,
     draw_distance: f32,
     world: Entity,
+    /// The mesh its plants are, as its scene names it: a part of a model.
+    mesh: String,
 }
 
 /// The Block World an Obj is under, or is itself.
@@ -182,7 +185,8 @@ fn growers(world: &World) -> Vec<Grower> {
                 cut: plants.cut.clone(),
                 layer: world.get::<Layer>(entity).copied(),
             };
-            Some(Grower { entity, data, look, draw_distance, world: world_over(world, entity)? })
+            let mesh = source.0.mesh.clone();
+            Some(Grower { entity, data, look, draw_distance, world: world_over(world, entity)?, mesh })
         })
         .collect()
 }
@@ -292,6 +296,10 @@ pub fn update(world: &mut World, content: &mut Content) {
         *unread += 1;
         *unread <= TOPS_KEPT
     });
+    // Each Foliage's model, for the Foliages whose plants keep near another's: found by the model it grows.
+    let model_of = |content: &Content, reference: &str| content.parse(reference).ok().and_then(|parsed| parsed.guid());
+    let grown_models: Vec<(Entity, Option<AssetGuid>, crate::scene_file::GrowData)> =
+        growers.iter().map(|grower| (grower.world, model_of(content, &grower.mesh), grower.data.clone())).collect();
     for grower in growers {
         let read = worlds.entry(grower.world).or_insert_with(|| {
             let asset = world.get::<BlockWorldAsset>(grower.world).cloned()?;
@@ -300,10 +308,21 @@ pub fn update(world: &mut World, content: &mut Content) {
             Some((asset, blocks, generator))
         });
         let Some((asset, blocks, generator)) = read.clone() else { continue };
-        let rule = grower.data.rule(|block| {
+        let wanted: Vec<AssetGuid> =
+            grower.data.near_plants.iter().filter_map(|model| model_of(content, model)).collect();
+        let mut number = |block: &str| {
             let (guid, _) = content.block(block)?;
             asset.drawn.number_of(guid)
-        });
+        };
+        let mut rule = grower.data.rule(&mut number);
+        // The rules of the world's other Foliages that grow the models its plants keep near to.
+        if let Some(near) = &mut rule.near {
+            for (world, model, data) in &grown_models {
+                if *world == grower.world && model.is_some_and(|model| wanted.contains(&model)) {
+                    near.plants.push(GrowRule { near: None, ..data.rule(&mut number) });
+                }
+            }
+        }
         let stamp = stamp_of(&rule, &asset, &blocks, generator.as_deref(), grower.world);
         // Where its plants show as a wood far off, they are grown only on the rings inside the wood's first.
         let wood_from = woods_of(world, content, &grower, &asset).map(|woods| woods.from);
@@ -497,7 +516,7 @@ pub fn update(world: &mut World, content: &mut Content) {
                             highest.clone()
                         }
                         None => {
-                            let highest = Arc::new(Tops::of(&asset.base, column));
+                            let highest = Arc::new(Tops::of(&asset.base, column, &blocks.faces));
                             growth.tops.insert((grower.world, column), (from, 0, highest.clone()));
                             highest
                         }
@@ -615,58 +634,223 @@ fn stamp_of(
     voxear_terrain::layers::stable_hash(text.as_bytes())
 }
 
-/// How a starter plant is drawn, its trunk, where it grows, and whether it
-/// keeps to the world's top block: what a Foliage growing it starts with.
-fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>, &'static str, bool) {
+/// How a starter plant grows on a world: how it is drawn, its trunk or
+/// its solid box, where it grows, whether it keeps to the world's top
+/// block, and the starter plants it keeps near to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StarterGrowth {
+    pub drawn: &'static str,
+    pub trunk: Option<&'static str>,
+    pub grown: &'static str,
+    pub on_top: bool,
+    pub near: &'static [StarterPlant],
+}
+
+/// The starter plants that are trees: what sticks, logs, stumps and
+/// mushrooms keep near to.
+pub const STARTER_TREES: [StarterPlant; 3] = [StarterPlant::Tree, StarterPlant::Pine, StarterPlant::Birch];
+
+/// The starter plants that are large stones: what pebbles keep near to.
+pub const STARTER_STONES: [StarterPlant; 2] = [StarterPlant::Rock, StarterPlant::Boulder];
+
+/// The starter pebbles again, as they lie along a shore: within a few
+/// metres of the sea's height, on any ground, in patches.
+pub const SHORE_PEBBLES: StarterGrowth = StarterGrowth {
+    drawn: "shadow_distance = 0.0\nimpostors = \"off\"\n",
+    trunk: None,
+    grown: "height = [-1.0, 2.5]\nspacing = 1.6\nseparation = 0.6\nchance = 0.5\npatches = 7.0\nslope = 40.0\n\
+            seed = 19\nscale = [0.7, 1.5]\naligned = false\n",
+    on_top: false,
+    near: &[],
+};
+
+/// How a starter plant is drawn, its trunk, where it grows, and what it
+/// keeps near to: what a Foliage growing it starts with. Grass is thick
+/// and near, flowers in patches by climate, trees far apart where it is
+/// wet enough, stones on any ground; sticks, logs, stumps and mushrooms
+/// near trees, and pebbles near larger stones.
+pub fn starter_growth(plant: StarterPlant) -> StarterGrowth {
     const SMALL: &str = "shadow_distance = 0.0\nimpostors = \"off\"\n";
+    const MIDDLING: &str = "draw_distance = 100.0\nshadow_distance = 30.0\n";
     const TALL: &str = "draw_distance = 400.0\nfade_distance = 40.0\nshadow_distance = 80.0\n";
     const TRUNK: &str = "radius = 0.3\nheight = 3.5\n";
+    let growth = |drawn, trunk, grown, on_top| StarterGrowth { drawn, trunk, grown, on_top, near: &[] };
+    let near = |growth: StarterGrowth, near| StarterGrowth { near, ..growth };
     match plant {
-        StarterPlant::Tuft => (SMALL, None, "spacing = 1.0\nseparation = 0.0\nchance = 0.6\nslope = 40.0\n", true),
-        StarterPlant::Flower => (SMALL, None, "spacing = 2.0\nseparation = 1.0\npatches = 14.0\nseed = 1\n", true),
-        StarterPlant::Bush => (
-            "draw_distance = 100.0\nshadow_distance = 30.0\n",
+        StarterPlant::Tuft => growth(SMALL, None, "spacing = 1.0\nseparation = 0.0\nchance = 0.6\nslope = 40.0\n", true),
+        StarterPlant::Flower => growth(SMALL, None, "spacing = 2.0\nseparation = 1.0\npatches = 14.0\nseed = 1\n", true),
+        StarterPlant::Bush => growth(
+            MIDDLING,
             None,
             "spacing = 7.0\nseparation = 3.0\nchance = 0.4\nslope = 35.0\nseed = 2\nscale = [0.8, 1.4]\n",
             true,
         ),
         // A rock is solid: a box a little inside its rounded shape.
-        StarterPlant::Rock => (
+        StarterPlant::Rock => growth(
             "draw_distance = 120.0\nshadow_distance = 40.0\n",
             Some("box = [1.35, 0.65, 1.05]\n"),
             "spacing = 9.0\nseparation = 3.0\nchance = 0.35\nslope = 70.0\nseed = 3\nscale = [0.6, 1.8]\n",
             false,
         ),
-        StarterPlant::Tree => (
+        StarterPlant::Tree => growth(
             TALL,
             Some(TRUNK),
             "humidity = [0.45, 1.0]\nspacing = 7.0\nseparation = 4.0\nchance = 0.6\nslope = 25.0\nseed = 4\n\
              scale = [0.8, 1.3]\n",
             true,
         ),
-        StarterPlant::Pine => (
+        StarterPlant::Pine => growth(
             TALL,
             Some(TRUNK),
             "temperature = [-15.0, 12.0]\nspacing = 6.0\nseparation = 3.5\nchance = 0.6\nseed = 5\n\
              scale = [0.8, 1.4]\n",
             true,
         ),
+        StarterPlant::TallGrass => growth(
+            SMALL,
+            None,
+            "humidity = [0.3, 1.0]\nspacing = 1.5\nseparation = 0.5\nchance = 0.4\npatches = 9.0\nslope = 35.0\n\
+             seed = 6\nscale = [0.8, 1.3]\n",
+            true,
+        ),
+        StarterPlant::Daisy => growth(
+            SMALL,
+            None,
+            "temperature = [4.0, 26.0]\nhumidity = [0.25, 0.75]\nspacing = 1.5\nseparation = 0.8\npatches = 11.0\n\
+             seed = 7\n",
+            true,
+        ),
+        StarterPlant::Bluebell => growth(
+            SMALL,
+            None,
+            "temperature = [2.0, 20.0]\nhumidity = [0.5, 1.0]\nspacing = 1.5\nseparation = 0.8\npatches = 13.0\n\
+             seed = 8\n",
+            true,
+        ),
+        StarterPlant::Fern => growth(
+            "draw_distance = 80.0\nshadow_distance = 0.0\nimpostors = \"off\"\n",
+            None,
+            "humidity = [0.55, 1.0]\nspacing = 3.0\nseparation = 1.5\nchance = 0.5\npatches = 16.0\nseed = 9\n\
+             scale = [0.8, 1.4]\n",
+            true,
+        ),
+        // Where it is hot and dry, on whatever lies there.
+        StarterPlant::DryBush => growth(
+            MIDDLING,
+            None,
+            "temperature = [14.0, 60.0]\nhumidity = [0.0, 0.32]\nspacing = 6.0\nseparation = 3.0\nchance = 0.45\n\
+             slope = 35.0\nseed = 10\nscale = [0.8, 1.5]\n",
+            false,
+        ),
+        StarterPlant::Mushroom => near(
+            growth(
+                SMALL,
+                None,
+                "temperature = [0.0, 20.0]\nhumidity = [0.45, 1.0]\nspacing = 3.0\nseparation = 1.0\nchance = 0.15\n\
+                 seed = 11\nscale = [0.4, 0.9]\nwithin = 5.0\n",
+                true,
+            ),
+            &STARTER_TREES,
+        ),
+        StarterPlant::Birch => growth(
+            TALL,
+            Some(TRUNK),
+            "temperature = [2.0, 17.0]\nhumidity = [0.35, 0.85]\nspacing = 13.0\nseparation = 5.0\nchance = 0.4\n\
+             slope = 25.0\nseed = 12\nscale = [0.8, 1.25]\n",
+            true,
+        ),
+        StarterPlant::DeadTree => growth(
+            "draw_distance = 300.0\nfade_distance = 30.0\nshadow_distance = 60.0\n",
+            Some(TRUNK),
+            "spacing = 34.0\nseparation = 10.0\nchance = 0.5\nslope = 30.0\nseed = 13\nscale = [0.8, 1.3]\n",
+            false,
+        ),
+        // Solid, both: a stump is stepped onto and a log climbed over.
+        StarterPlant::Stump => near(
+            growth(
+                MIDDLING,
+                Some("box = [0.7, 0.45, 0.7]\n"),
+                "spacing = 11.0\nseparation = 4.0\nchance = 0.5\nslope = 30.0\nseed = 14\nscale = [0.8, 1.4]\n\
+                 within = 9.0\n",
+                false,
+            ),
+            &STARTER_TREES,
+        ),
+        StarterPlant::Log => near(
+            growth(
+                "draw_distance = 120.0\nshadow_distance = 40.0\n",
+                Some("box = [2.3, 0.6, 0.7]\n"),
+                "spacing = 15.0\nseparation = 6.0\nchance = 0.55\nslope = 20.0\nseed = 15\nscale = [0.8, 1.3]\n\
+                 aligned = false\nwithin = 9.0\n",
+                false,
+            ),
+            &STARTER_TREES,
+        ),
+        StarterPlant::Stick => near(
+            growth(
+                SMALL,
+                None,
+                "spacing = 2.5\nseparation = 1.0\nchance = 0.45\nslope = 35.0\nseed = 16\nscale = [0.7, 1.4]\n\
+                 aligned = false\n",
+                false,
+            ),
+            &STARTER_TREES,
+        ),
+        StarterPlant::Pebbles => near(
+            growth(
+                SMALL,
+                None,
+                "spacing = 2.5\nseparation = 1.0\nchance = 0.5\nslope = 50.0\nseed = 17\nscale = [0.7, 1.5]\n\
+                 aligned = false\nwithin = 5.0\n",
+                false,
+            ),
+            &STARTER_STONES,
+        ),
+        StarterPlant::Boulder => growth(
+            "draw_distance = 300.0\nfade_distance = 30.0\nshadow_distance = 80.0\n",
+            Some("box = [3.0, 2.3, 2.8]\n"),
+            "spacing = 42.0\nseparation = 12.0\nchance = 0.55\nslope = 60.0\nseed = 18\nscale = [0.7, 1.5]\n\
+             aligned = false\n",
+            false,
+        ),
     }
+}
+
+/// What a Foliage that grows names of its world and its project: the
+/// blocks its plants stand on, the block a wood of them shows as far off,
+/// and what they keep near to, the models other Foliage grow and blocks.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GrownNames<'a> {
+    pub top: Option<&'a str>,
+    /// More blocks its plants stand on, beside the top one: the tops of the
+    /// world's biomes that things grow on, as moss and a forest's floor.
+    pub soils: &'a [String],
+    pub far: Option<&'a str>,
+    pub near_plants: &'a [String],
+    pub near_blocks: &'a [String],
 }
 
 /// A Foliage that grows by itself, as a scene writes it under an Obj: its
 /// `[obj.foliage]` section, drawing `mesh` with `material`, growing on
 /// block `top` where one is given, and showing far off as block `far`. For a starter plant's model it is drawn
-/// and grown as suits the plant: grass thick and near, flowers in patches,
-/// trees far apart where it is wet enough, rocks on any ground.
+/// and grown as suits the plant (see [`starter_growth`]).
 pub fn foliage_text(
     mesh: &str,
     material: Option<&str>,
     starter: Option<StarterPlant>,
     (top, far): (Option<&str>, Option<&str>),
 ) -> String {
+    let growth = starter.map(starter_growth);
+    grown_text(mesh, material, growth.as_ref(), &GrownNames { top, far, ..GrownNames::default() })
+}
+
+/// As [`foliage_text`], growing as `growth` says where there is one, and
+/// keeping near to what `names` names where the growth keeps near to
+/// anything.
+pub fn grown_text(mesh: &str, material: Option<&str>, growth: Option<&StarterGrowth>, names: &GrownNames) -> String {
     let string = |text: &str| toml::Value::String(text.to_string()).to_string();
-    let (drawn, trunk, grown, on_top) = starter.map_or(("", None, "", true), starter_settings);
+    let list = |names: &[String]| names.iter().map(|name| string(name)).collect::<Vec<_>>().join(", ");
+    let (drawn, trunk, grown, on_top) = growth.map_or(("", None, "", true), |g| (g.drawn, g.trunk, g.grown, g.on_top));
     let mut text = format!("[obj.foliage]\nmesh = {}\n", string(mesh));
     if let Some(material) = material {
         text += &format!("material = {}\n", string(material));
@@ -676,11 +860,20 @@ pub fn foliage_text(
         text += &format!("[obj.foliage.trunk]\n{trunk}");
     }
     text += &format!("[obj.foliage.grow]\n{grown}");
-    if let Some(top) = top.filter(|_| on_top) {
-        text += &format!("on = [{}]\n", string(top));
+    if let Some(top) = names.top.filter(|_| on_top) {
+        let more = names.soils.iter().filter(|soil| soil.as_str() != top).map(|soil| format!(", {}", string(soil)));
+        text += &format!("on = [{}{}]\n", string(top), more.collect::<String>());
     }
-    if let Some(far) = far {
+    if let Some(far) = names.far {
         text += &format!("far_block = {}\n", string(far));
+    }
+    if growth.is_some_and(|growth| !growth.near.is_empty()) {
+        if !names.near_plants.is_empty() {
+            text += &format!("near_plants = [{}]\n", list(names.near_plants));
+        }
+        if !names.near_blocks.is_empty() {
+            text += &format!("near_blocks = [{}]\n", list(names.near_blocks));
+        }
     }
     text
 }

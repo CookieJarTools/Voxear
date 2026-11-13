@@ -3573,6 +3573,17 @@ top block, height and slope, its climate asked in one batch, kept with the chanc
 plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
 plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
 
+A rule may keep its plants near something (`grow::Near`). Near another Foliage's plants: the engine finds the
+world's other growing Foliages by the model each draws (`GrowData::near_plants` names models) and puts their rules in
+(`Near::plants`, what those keep near to themselves left out); `near_sites` asks each for its tries round the column,
+by its grid, chance and patches and, on generated ground, the climate and height over the sea it likes, in one call
+to the generator, and a try is kept within `within` metres of one. That needs no blocks, so near ground and far
+ground agree; it does not ask what block a tree would stand on or how steep, so a few plants keep near a tree that
+never grew. Near a block: `Tops`, a column's highest blocks, keeps beside the ground to grow on the highest block of
+all, leaves and vines too, and a try is kept within reach of one of the rule's blocks among them, the column's own
+alone. The ground to grow on looks through leaves and vines (`is_canopy`: a vine, or a block that is bushy, seen
+through or swaying), so plants stand under a tree of blocks and never on its crown.
+
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
 square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on

@@ -2383,6 +2383,148 @@ fn plants_and_what_is_dropped_find_the_ground_of_a_block_world() {
 }
 
 #[test]
+fn a_block_world_takes_every_starter_plant_at_once_and_the_starter_trees_of_blocks_from_its_add_plant_row() {
+    use voxear_engine::{blocks::BlockWorldAsset, scene_file::FoliageSource};
+    use voxear_render::StarterPlant;
+    use voxear_terrain::blocks::{BlockWorld, block::BlockDef, block::BlockShape, plant::PlantDef};
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    let offered = picker_rows(&editor.ui);
+    let place = |name: &str| offered.iter().position(|row| row == name);
+    // Both sets come first, before the starter plants one by one.
+    let first = [place("All Starter Plants"), place("Starter Trees of Blocks"), place("New Grass Tuft")];
+    assert_eq!(first, [Some(1), Some(2), Some(3)], "{offered:?}");
+    let all = picker_row(&editor.ui, "All Starter Plants").unwrap();
+    click(&mut editor.ui, all);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // Every starter plant is a model in the project and a Foliage under the world; the pebbles a second time.
+    let grown = |editor: &voxear_editor::Editor, name: &str| {
+        let world = &editor.game.engine.world;
+        let found = obj(editor, name);
+        assert_eq!(world.get::<voxear_scene::Parent>(found).map(|parent| parent.0), Some(field), "{name}");
+        world.get::<FoliageSource>(found).and_then(|source| source.0.grow.clone()).expect("where it grows")
+    };
+    for plant in StarterPlant::ALL {
+        assert!(dir.path().join(format!("Plants/{}.boxmodel", plant.name())).is_file(), "{}", plant.name());
+        grown(&editor, plant.name());
+    }
+    assert_eq!(grown(&editor, "Shore Pebbles").height, Some([-1.0, 2.5]));
+    // Sticks keep near the three trees and the leaves of the trees of blocks; pebbles near the two stones.
+    let sticks = grown(&editor, "Stick");
+    let trees = ["Plants/Tree.boxmodel", "Plants/Pine.boxmodel", "Plants/Birch.boxmodel"];
+    assert_eq!(sticks.near_plants, trees);
+    assert_eq!(sticks.near_blocks.len(), 3, "{:?}", sticks.near_blocks);
+    assert!(sticks.near_blocks[0].ends_with("Oak Leaves.block") && !sticks.aligned);
+    let pebbles = grown(&editor, "Pebbles");
+    assert_eq!((pebbles.near_plants.len(), pebbles.near_blocks.len(), pebbles.within), (2, 0, 5.0));
+    assert!(grown(&editor, "Grass Tuft").near_plants.is_empty());
+    // Its Grow tool shows what a stick keeps near to.
+    editor.select(Some(obj(&editor, "Stick")));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let strip = first_with(&editor.ui, editor.ui.root(), "foliage-tools").expect("the Foliage's tools");
+    let grow = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == "Grow").expect("Grow");
+    click(&mut editor.ui, grow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for row in ["Near plant", "Near block", "Within"] {
+        assert_eq!(prop_rows(&editor.ui, row).len(), 1, "{row}");
+    }
+    // One step to undo, and back again; picked a second time, there is nothing left to add.
+    let foliages = |editor: &voxear_editor::Editor| {
+        let world = &editor.game.engine.world;
+        let grown = world.query_ref::<(&FoliageSource, &Name)>().without::<voxear_scene::Destroying>().into_iter();
+        grown.filter(|(source, _)| source.0.grow.is_some()).count()
+    };
+    assert_eq!(foliages(&editor), StarterPlant::ALL.len() + 1);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(foliages(&editor), 0, "all of them gone in one step");
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(foliages(&editor), StarterPlant::ALL.len() + 1);
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    let all = picker_row(&editor.ui, "All Starter Plants").unwrap();
+    click(&mut editor.ui, all);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(foliages(&editor), StarterPlant::ALL.len() + 1);
+
+    // The starter trees of blocks: three plants, a structure each, and blocks for their wood, leaves and vines.
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    let trees = picker_row(&editor.ui, "Starter Trees of Blocks").unwrap();
+    click(&mut editor.ui, trees);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let read = |path: &str| std::fs::read_to_string(dir.path().join(path)).unwrap_or_else(|_| panic!("{path} was made"));
+    for tree in ["Oak", "Birch", "Pine"] {
+        let plant = PlantDef::parse(&read(&format!("Plants/{tree}.voxplant"))).unwrap();
+        assert!(plant.wood.is_some() && plant.leaves.is_some(), "{tree}");
+        assert_eq!(plant.vine.is_some(), plant.vines > 0.0, "{tree}");
+        assert!(read(&format!("Structures/{tree}.structure")).contains("plant = "), "{tree}");
+    }
+    let world_path = {
+        let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+        editor.game.content.db().get(asset.guid).unwrap().path.clone()
+    };
+    let blocks_folder = world_path.rsplit_once('/').map_or("Blocks".to_string(), |(folder, _)| folder.to_string());
+    let leaves = BlockDef::parse(&read(&format!("{blocks_folder}/Oak Leaves.block"))).unwrap();
+    assert!(leaves.shape == BlockShape::Bushy && leaves.sways);
+    assert_eq!(BlockDef::parse(&read(&format!("{blocks_folder}/Vine.block"))).unwrap().shape, BlockShape::Vine);
+    // The world lists the structures, numbers their blocks, and its ground is made again with trees on it:
+    // blocks of leaves, and their tufts among its chunks' faces.
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(3));
+    let oak = editor.game.content.parse(&format!("{blocks_folder}/Oak Leaves.block")).unwrap().guid().unwrap();
+    let birch = editor.game.content.parse(&format!("{blocks_folder}/Birch Leaves.block")).unwrap().guid().unwrap();
+    let numbers = [oak, birch].map(|guid| asset.drawn.number_of(guid));
+    assert!(numbers.iter().all(Option::is_some), "the world numbers the trees' leaves: {numbers:?}");
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let leafy = blocks.blocks.chunks().filter(|(_, chunk)| chunk.may_hold(|block| numbers.contains(&Some(block)))).count();
+    assert!(leafy > 0, "trees stand on its ground");
+    let tufts: u32 = blocks.meshes.values().map(|mesh| mesh.loose().1).sum();
+    assert!(tufts > 30, "{tufts} sheets of leaves and vines");
+    // Seen from a little over the ground, with the plants grown round the Scene view.
+    let top = (0..500).rev().find(|&y| blocks.blocks.get([24, y, 24]) != 0).expect("ground at 24, 24") as f32;
+    let corner = editor.game.engine.world.get::<voxear_scene::Transform>(field).unwrap().position;
+    let camera = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(Entity, &voxear_render::Camera, &voxear_scene::EditorOnly)>()
+        .into_iter()
+        .next()
+        .expect("the Scene view's camera")
+        .0;
+    let look = voxear_core::math::Quat::from_euler(voxear_core::math::EulerRot::YXZ, 0.8, 0.3, 0.0);
+    let over = corner + voxear_core::math::Vec3::new(24.0, top + 7.0, 24.0);
+    *editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap() =
+        voxear_scene::Transform::new(over, look, voxear_core::math::Vec3::ONE);
+    for _ in 0..90 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "block-world-starter-trees-and-plants.png");
+    // Picked again, nothing changes; undone, the world builds none.
+    editor.undo(&mut renderer);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(0));
+}
+
+#[test]
 fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_to_undo() {
     use voxear_engine::{grown_plants, scene_file::FoliageSource};
     let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
@@ -2470,6 +2612,8 @@ fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_t
     show_block_tool(&mut editor, &mut renderer, "Settings");
     reveal(&mut editor, &mut renderer, "Add plant");
     open_picker(&mut editor, &mut renderer, "Add plant");
+    editor.ui.text_input("Grass Tuft");
+    frame(&mut editor, &mut renderer);
     assert!(!picker_rows(&editor.ui).iter().any(|row| row == "New Grass Tuft"));
     let model = picker_row(&editor.ui, "Grass Tuft.boxmodel").expect("the model it made");
     click(&mut editor.ui, model);

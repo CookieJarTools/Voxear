@@ -499,8 +499,10 @@ impl PlantDef {
     /// long. Only where no block of the plant is.
     fn vines_on(&self, plant: &mut Growing, random: &mut Random) {
         const SIDES: [[i32; 2]; 4] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-        let trunk: Vec<[i32; 3]> =
+        let mut trunk: Vec<[i32; 3]> =
             plant.blocks.iter().filter(|(_, part)| **part == PlantPart::Trunk).map(|(at, _)| *at).collect();
+        // In a fixed order: the blocks are kept in no order of their own, and of two as far out the last is taken.
+        trunk.sort_unstable_by_key(|at| (at[1], at[2], at[0]));
         let top = trunk.iter().map(|at| at[1]).max().unwrap_or(0);
         let mut added: Vec<[i32; 3]> = Vec::new();
         if top >= 3 {

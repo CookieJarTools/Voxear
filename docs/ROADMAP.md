@@ -2490,6 +2490,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
   near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
   terrains.
+- ~~**Small details on a Block World:**~~ done: thirteen more starter plants of small cubes
+  (`voxear_render::StarterPlant`: Tall Grass, Daisy, Bluebell, Fern, Dry Bush, Mushroom, Birch, Dead Tree, Stump,
+  Log, Stick, Pebbles, Boulder), the Tree with limbs under its crown, each growing where it suits it by climate,
+  slope and patches (`grown_plants::starter_growth`); stumps, logs and boulders solid. A rule keeps **near**
+  something (`grow::Near`, `near_plants`, `near_blocks` and `within` in `[obj.foliage.grow]`; Near plant, Near
+  block and Within in the Grow tool): within so many metres of the plants another Foliage of the world grows,
+  taken as that rule tries them (grid, chance, patches, and on generated ground climate and height), or of a
+  place whose highest block is a given block. Sticks, logs, stumps and mushrooms keep near the trees, pebbles
+  near rocks and boulders and, as a second Foliage, along the shore. Plants grow under leaves: a column's highest
+  block to grow on looks through leaves and vines (`grow::Tops`), so a tree of blocks has grass beneath it and no
+  rock on its crown. Editor: **All Starter Plants** on a Block World's Add plant row adds every one the world
+  does not grow yet, one step to undo; **Starter Trees of Blocks** makes an oak, a birch and a pine as
+  `.voxplant`s with bushy leaves and vines, their blocks and a structure each, and lists the structures on the
+  world (`starter_trees`, `block_props::list_structures`); each block has a picture drawn there from whole-number
+  hashes, 16 squares a side, and a material for it: bark, or cut-out leaves. Tests: the rule (near another rule's plants, near and
+  far alike, near a tree of blocks, grass under a crown), every starter's model, a GPU picture of each starter
+  and of a world growing them all. Manual: Block Worlds, Foliage, Structures. Not done: far trees for trees of
+  blocks, a list of structures in the Block World's Inspector, near blocks across a chunk column's edge.
 - ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
   is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
   (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing

@@ -230,24 +230,46 @@ For a world of small coloured blocks to sculpt with, make **Block size** small b
 
 ## Plants a world grows
 
-A Block World can grow its own grass, flowers, bushes, rocks and trees. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
+A Block World can grow its own grass, flowers, bushes, rocks and trees, and what lies about among them: sticks, fallen logs, stumps and pebbles. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
 
-The row also offers six **starter plants**, each made of small cubes to sit well among blocks: **Grass Tuft**, **Flower**, **Bush**, **Rock**, **Tree** and **Pine**. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it:
+The row also offers the **starter plants**, each made of small cubes to sit well among blocks. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it. **All Starter Plants**, at the top of the list, adds every one the world does not grow yet, in one step:
 
 | Plant | Where it grows |
 | --- | --- |
 | Grass Tuft | On more than half the world's top blocks |
-| Flower | In patches about 14 m across |
+| Tall Grass | In patches about 9 m across, where it is not dry |
+| Flower, Daisy, Bluebell | In patches: red flowers anywhere, daisies where it is mild, bluebells where it is cool and wet |
+| Fern | In patches where it is wet |
+| Mushroom | Near trees, where it is cool and wet |
 | Bush | Here and there, about 7 m apart |
-| Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
+| Dry Bush | Where it is hot and dry, on any ground |
 | Tree | Where it is wet enough, on gentle ground, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+| Birch | Where it is mild, drawn and shown far off as the Tree is. Its trunk collides |
 | Pine | Where it is cool, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+| Dead Tree | Rarely, anywhere. Its trunk collides |
+| Stump, Log | Near trees. Both are solid: a stump is stepped onto and a log climbed over |
+| Stick | Near trees, lying any way round |
+| Pebbles | Near rocks and boulders, and as **Shore Pebbles** in patches along the sea |
+| Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
+| Boulder | Rarely, on any ground, three metres across and more. It is solid |
 
-The grass, flowers, bushes and trees bend in the [[Wind]] and away from whoever walks through them; the rock does neither.
+The grasses, flowers, ferns, bushes and trees bend in the [[Wind]] and away from whoever walks through them; stones, stumps, logs and sticks do neither.
+
+A starter plant that keeps to the world's top block also grows on the tops of the [[Biomes#Starter biomes|starter biomes]] that things grow on, where the project has them: Grass, Moss, Needles Floor, Jungle Floor and Dry Grass. So add the starter biomes first. Sand, snow and rock stay bare but for stones, dry bushes and dead trees.
+
+What grows near something keeps to it by its Foliage's **Near plant** and **Within** (see [[Foliage#Near other plants and blocks]]): the sticks, logs, stumps and mushrooms near the Tree, the Pine and the Birch, and near the leaves of the starter trees of blocks; the pebbles near the Rock and the Boulder. Take the trees away and those have nothing to grow near.
 
 A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
 
 A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn, and from there the far view shows them as woods of their **Far block**: for a starter tree, a block of its leaves' colour made beside its model. A map draws a plant in that block too, each where it grows (see [[Maps and Minimaps]]). A plant goes when the block under it is dug or built over.
+
+Plants grow under leaves: a tree of blocks has grass and flowers on the ground beneath its crown, and none on top of it.
+
+### Trees of blocks
+
+**Starter Trees of Blocks**, on the same row, gives a generated world trees built of its own blocks: an oak, a birch and a pine, each grown afresh at every place so no two are alike, with [[Blocks#Bushy leaves|bushy leaves]] that sway and, on some oaks and birches, [[Blocks#Vines|vines]]. They are [[Structures#Trees of blocks|structures]] the world's generator builds, so they are dug, stood on and built on as the ground is. Their logs and leaves are blocks made in the Blocks folder beside the world, each drawn with a small picture made with it, in a `Pictures` folder there: bark for a log, and cut-out leaves. Paint over a picture, or give a block a material of your own, and every tree of that kind changes with it.
+
+Trees of blocks stand only on the world's own blocks, out to its **View distance**, and the far view does not show them. The starter Tree, Birch and Pine are models, drawn far and shown as woods beyond: use either, or both.
 
 ## How blocks are drawn
 

@@ -96,6 +96,8 @@ How wide a world's warm and cold, wet and dry places are is its generator's **Cl
 
 All but the Desert have Stone deep down. Ground steeper than 45° is rock; snow lies on ground up to 58°.
 
+The wet ones have [[Blocks#Vines|vines]], of a **Vine** block made with the rest: thick in the Rainforest, some in the Forest, a few in the Taiga and the Grassland, hanging under ledges and cave roofs down to 40 m under the ground.
+
 A block of the same name anywhere in the project is used as it is, and a biome of the same name already in the folder is listed as it is, so nothing you made is written over and the button is safe to press twice.
 
 The Snow keeps to a height, since cooling alone puts snow only on very high ground: a world 12 °C at the sea freezes at 2000 m. So mountains have snow on their tops from 260 m, higher in a warm place, and low ground has none. For a cold world with snow on its low ground too, switch **Height** off on its Snow.

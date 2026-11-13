@@ -135,8 +135,8 @@ float sheetGrain(uint seed, int2 cell, uint salt)
 // or cut away (0). `word` is blockLooseWord's, `across` and `down` how `uv` changes to the next pixel, and `high`
 // how many blocks up from the world's corner the spot is.
 //
-// A sheet is cut into square cells, as many to a block as its picture has pixels (or the world's small cubes, or
-// 16 for leaves and 8 for a vine). A sheet of leaves is whole in its middle and thins out to its edge, cell by cell, so its outline is ragged
+// A sheet is cut into square cells, as many to a block as its picture has pixels up to 16 (or the world's small
+// cubes, or 16 for leaves and 8 for a vine). A sheet of leaves is whole in its middle and thins out to its edge, cell by cell, so its outline is ragged
 // and the block's cube shows no straight edge. With a picture that is cut out, the picture's own clear parts are
 // cut away too; with none, each cell is a leaf in one of four shades of the block's colour. A vine with no cut-out
 // picture is strands running down its whole length, each with leaves to either side, ending at different heights
@@ -156,7 +156,7 @@ float4 blockSheetLook(BlockWorld world, uint word, float2 uv, float2 across, flo
     float2 size = blockSheetSize(kind == 1 ? BLOCK_TUFT : BLOCK_VINE, sheet);
     // A vine's strands and leaves are twice as large as a tuft's leaves.
     float fine = kind == 1 ? 16.0 : 8.0;
-    float perBlock = pictured ? clamp(float(width), 4.0, 32.0) : (world.voxels >= 1.0 ? clamp(world.voxels, 4.0, 32.0) : fine);
+    float perBlock = pictured ? clamp(float(width), 4.0, 16.0) : (world.voxels >= 1.0 ? clamp(world.voxels, 4.0, 32.0) : fine);
     // Where it is on its sheet in blocks: leaves from the sheet's middle, a vine from its side and the world's foot.
     float2 at = kind == 1 ? (uv - 0.5) * size : float2(uv.x * size.x, high);
     float2 perPixel = max(abs(across), abs(down)) * size * perBlock;

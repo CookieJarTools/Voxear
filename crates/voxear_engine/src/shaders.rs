@@ -198,6 +198,8 @@ pub struct ParticleGraph {
     pub update: bool,
     pub look: bool,
     pub error: Option<String>,
+    /// The pictures its picture properties name, in their order.
+    pub pictures: [Option<AssetGuid>; 3],
 }
 
 impl ShaderRegistry {
@@ -232,7 +234,12 @@ impl ShaderRegistry {
                     Ok(compiled) => (compiled.source, None),
                     Err(error) => (String::new(), Some(error)),
                 };
-                ParticleGraph { guid, path, number, source, update, look, error }
+                let mut pictures = [None; 3];
+                let named = graph.properties.iter().filter(|p| p.kind == voxear_voxshade::PropertyKind::Picture);
+                for (slot, property) in pictures.iter_mut().zip(named) {
+                    *slot = property.picture;
+                }
+                ParticleGraph { guid, path, number, source, update, look, error, pictures }
             })
             .collect();
         let builtin = BuiltinShader::ALL.into_iter().map(|shader| {
@@ -264,8 +271,11 @@ impl ShaderRegistry {
     /// by their assets.
     pub fn particle_graph_numbers(&self) -> voxear_render::ParticleGraphs {
         let compiled = self.particle_graphs.iter().filter(|graph| graph.error.is_none());
-        let info =
-            |graph: &ParticleGraph| voxear_render::ParticleGraphInfo { number: graph.number, update: graph.update };
+        let info = |graph: &ParticleGraph| voxear_render::ParticleGraphInfo {
+            number: graph.number,
+            update: graph.update,
+            pictures: graph.pictures,
+        };
         voxear_render::ParticleGraphs(compiled.map(|graph| (graph.guid, info(graph))).collect())
     }
 

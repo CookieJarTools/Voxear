@@ -146,7 +146,7 @@ fn what_stops_a_graph_compiling_is_said_at_the_node() {
     let map = g.add_property("map", PropertyKind::Picture, [0.0; 4]);
     let read = g.add(NodeKind::Property { property: map }, [0.0, 0.0]);
     g.link(read, 0, SURFACE, ALPHA);
-    assert!(compile(&g).unwrap_err()[0].message.contains("Sample Picture"));
+    assert!(compile(&g).unwrap_err()[0].message.contains("wire it into a Sample"));
 
     let empty = Graph::new("Test");
     assert!(compile(&empty).unwrap_err()[0].message.contains("output"), "nothing to draw");
@@ -430,13 +430,79 @@ fn a_particle_graph_takes_only_particle_outputs_and_inputs() {
     let delta = step.add(NodeKind::Input { input: Input::DeltaTime }, [0.0; 2]);
     step.link(delta, 0, look, 2);
     assert!(compile(&step).unwrap_err()[0].message.contains("Look"));
-    // No pictures yet.
+    // A picture, read where its particles are drawn, from the system's room for three.
     let mut pictured = starters::particles("Swirl");
     let map = pictured.add_property("map", PropertyKind::Picture, [0.0; 4]);
-    let sample = pictured.add(NodeKind::SamplePicture { property: map }, [0.0; 2]);
-    let split = pictured.add(NodeKind::Split, [0.0; 2]);
-    pictured.link(sample, 0, split, 0);
-    pictured.link(split, 0, look, 2);
-    let wrong = &compile(&pictured).unwrap_err()[0].message;
-    assert!(wrong.contains("Sample Picture is not there in the Look stage"), "{wrong}");
+    let read = pictured.add(NodeKind::Property { property: map }, [0.0; 2]);
+    let sample = pictured.add(NodeKind::Sample, [0.0; 2]);
+    pictured.link(read, 0, sample, 0);
+    pictured.link(sample, 2, look, 2);
+    let source = compiled(&pictured).source;
+    assert!(source.contains("particleGraphPicture(input.pictures.x, float2(0.0, 0.0))"), "{source}");
+    for n in 0..3 {
+        pictured.add_property(&format!("more{n}"), PropertyKind::Picture, [0.0; 4]);
+    }
+    assert!(compile(&pictured).unwrap_err()[0].message.contains("3 picture properties at most"));
+}
+
+/// A sub-graph that reads the picture handed in at its input `pattern` at the UV handed in.
+fn read_pattern() -> Graph {
+    let mut sub = Graph::new_sub_graph("ReadPattern");
+    sub.outputs[0].ty = Ty::Float;
+    let pattern = sub.add_input("pattern", Ty::Float);
+    sub.inputs[0].picture = true;
+    let at = sub.add_input("at", Ty::Float2);
+    let picture = sub.add(NodeKind::SubGraphInput { input: pattern }, [0.0; 2]);
+    let uv = sub.add(NodeKind::SubGraphInput { input: at }, [0.0; 2]);
+    let sample = sub.add(NodeKind::Sample, [0.0; 2]);
+    sub.link(picture, 0, sample, 0);
+    sub.link(uv, 0, sample, 1);
+    let out = sub.nodes.iter().find(|n| n.kind == NodeKind::SubGraphOutput).unwrap().id;
+    sub.link(sample, 2, out, 0);
+    sub
+}
+
+#[test]
+fn a_picture_goes_by_wire_into_a_sample_and_into_a_sub_graph() {
+    // A picture property's node gives the picture, which a Sample reads.
+    let mut g = Graph::new("Test");
+    let map = g.add_property("map", PropertyKind::Picture, [0.0; 4]);
+    let read = g.add(NodeKind::Property { property: map }, [0.0; 2]);
+    let uv = g.add(NodeKind::Input { input: Input::Uv }, [0.0; 2]);
+    let sample = g.add(NodeKind::Sample, [0.0; 2]);
+    g.link(read, 0, sample, 0);
+    g.link(uv, 0, sample, 1);
+    g.link(sample, 2, SURFACE, ALPHA);
+    let source = compiled(&g).source;
+    assert!(source.contains("props.map.sample(input.uv)"), "{source}");
+    // Into a sub-graph and read there, as if read here.
+    let sub = read_pattern();
+    let library: HashMap<_, _> = [(guid(4), sub.clone())].into();
+    let mut using = Graph::new("Test");
+    let map = using.add_property("map", PropertyKind::Picture, [0.0; 4]);
+    let read = using.add(NodeKind::Property { property: map }, [0.0; 2]);
+    let uv = using.add(NodeKind::Input { input: Input::Uv }, [0.0; 2]);
+    let used = using.add(uses(&sub, guid(4)), [0.0; 2]);
+    using.link(read, 0, used, 0);
+    using.link(uv, 0, used, 1);
+    using.link(used, 0, SURFACE, ALPHA);
+    let options = Options { library: Some(&library), ..Options::default() };
+    let source = compile_with(&using, options).unwrap().source;
+    assert!(source.contains("props.map.sample(input.uv)"), "{source}");
+    assert_eq!(compile_with(&using, options).unwrap().stages, compiled(&g).stages, "the same work");
+    // Nothing wired into it, or numbers: said at the node.
+    let mut bare = using.clone();
+    bare.links.retain(|l| !(l.to == used && l.input == 0));
+    let wrong = &compile_with(&bare, options).unwrap_err()[0];
+    assert!(wrong.node == Some(used) && wrong.message.contains("wire a picture into its pattern"), "{wrong:?}");
+    let mut numbers = bare.clone();
+    numbers.link(uv, 0, used, 0);
+    assert!(compile_with(&numbers, options).unwrap_err()[0].message.contains("only a picture goes into its pattern"));
+    // On its own, a function of a picture.
+    let alone = compiled(&sub).source;
+    assert!(
+        alone.contains("Picture pattern, float2 at, out float result") && alone.contains("pattern.sample(at)"),
+        "{alone}"
+    );
+    assert_eq!(Graph::from_toml(&sub.to_toml()).unwrap(), sub);
 }

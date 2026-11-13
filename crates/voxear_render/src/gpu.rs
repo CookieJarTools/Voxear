@@ -1132,9 +1132,10 @@ pub struct GpuParticleSystem {
     pub mesh: u32,
     pub mesh_material: u32,
     /// The particle graph that moves and draws its particles, by its
-    /// number among the project's (`shaders/particle_custom.slang`), or 0.
+    /// number among the project's (`shaders/particle_custom.slang`), or 0;
+    /// and the pictures it reads, by their textures, `NO_TEXTURE` for none.
     pub graph: u32,
-    pub graph_pad: [u32; 3],
+    pub graph_pictures: [u32; 3],
 }
 
 /// A particle striking what the main view sees, as the step writes it for a

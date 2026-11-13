@@ -204,11 +204,21 @@ fn misplaced_outputs(graph: &Graph) -> Vec<CompileError> {
         .collect()
 }
 
+/// How many pictures a particle graph reads at most: a system hands them
+/// to its graph in the room of three numbers.
+pub const PARTICLE_PICTURES: usize = 3;
+
 /// A particle graph compiled: its Update stage as `particleUpdate`, which
 /// the simulation calls for each particle at each step, and its Look stage
 /// as `particleLook`, which drawing calls; either left out when it sets
 /// nothing. Its properties are its own settings, worked into it as numbers.
 fn compile_particles(graph: &Graph, options: Options) -> Result<Compiled, Vec<CompileError>> {
+    let pictures = graph.properties.iter().filter(|p| p.kind == PropertyKind::Picture).count();
+    if pictures > PARTICLE_PICTURES {
+        let message =
+            format!("a particle graph has {PARTICLE_PICTURES} picture properties at most; this one has {pictures}");
+        return Err(vec![CompileError { node: None, message }]);
+    }
     let mut programs = Vec::new();
     let mut errors = Vec::new();
     for stage in Stage::PARTICLES {
@@ -270,7 +280,10 @@ fn compile_sub_graph(graph: &Graph, options: Options) -> Result<Compiled, Vec<Co
             Stage::Update => "ParticleUpdateInput input",
             Stage::Look => "ParticleLookInput input",
         };
-        let inputs = graph.inputs.iter().map(|pin| format!("{} {}", pin.ty.slang(), pin.name));
+        let inputs = graph.inputs.iter().map(|pin| match pin.picture {
+            true => format!("Picture {}", pin.name),
+            false => format!("{} {}", pin.ty.slang(), pin.name),
+        });
         let outputs = graph.outputs.iter().map(|pin| format!("out {} {}", pin.ty.slang(), pin.name));
         let parameters: Vec<String> = std::iter::once(given.to_string()).chain(inputs).chain(outputs).collect();
         let mut source = format!(

@@ -48,7 +48,8 @@ Pick a node and its values show at the top of the side:
 | --- | --- |
 | Inputs | UV, Position, Normal, View Direction, Object Position, Level Position, Time, Thickness, and in the Light stage Light Direction, Light Color and Light View. **Surface** gives the surface as it stands: the material's own values, or in the Light stage what the Surface stage set |
 | Values | Number, Vector 2, Vector 3, Vector 4, and Color, picked as it looks on screen |
-| Properties | Each of the shader's properties, and **Sample** for each picture property |
+| Properties | Each of the shader's properties, and **Sample** for each picture property. A picture property's own node gives the picture, to wire into a Sample or a sub-graph |
+| Pictures | **Sample** reads the picture wired into it at the UV wired in |
 | Math | Add, Subtract, Multiply, Divide, Minimum, Maximum, Power, Negate, Absolute, Floor, Ceiling, Fraction, Sine, Cosine, Square Root, Exponential, Saturate, One Minus, Sign, Normalize, Length, Distance, Dot, Cross, Reflect, Step, Lerp, Clamp, Smoothstep |
 | Logic | **Compare** gives true or false; **Branch** gives one value or another as a condition holds |
 | Vectors | **Split** a vector into its numbers, **Combine** numbers into one, **Swizzle** its numbers into another order |
@@ -73,7 +74,7 @@ The shader declares the code once as a function, and calls it once for the same 
 
 ## Particle graphs
 
-A particle graph moves and draws a Particle System's particles where its settings leave off: its **Update Output** each step of the simulation, its **Look Output** where each particle is drawn. Its search offers a particle's inputs, Age, Life, Seed, Velocity, Delta Time, Particle Color and Particle Size, in place of a surface's, and its previews show a particle's life lived from left to right across the ball. Its properties are worked into it as the numbers they are set to. How a system picks one and what each output does is in [[Particle Systems]].
+A particle graph moves and draws a Particle System's particles where its settings leave off: its **Update Output** each step of the simulation, its **Look Output** where each particle is drawn. Its search offers a particle's inputs, Age, Life, Seed, Velocity, Delta Time, Particle Color and Particle Size, in place of a surface's, and its previews show a particle's life lived from left to right across the ball. Its properties are worked into it as the numbers they are set to. A picture property names its picture on its **Picture** row, as no material picks one for it; a particle graph reads three pictures at most, at their full size. How a system picks one and what each output does is in [[Particle Systems]].
 
 ## Sub-graphs
 
@@ -81,7 +82,7 @@ A sub-graph is nodes that other VoxShade graphs use as one node: a rim of light,
 
 In a sub-graph, **Inputs and Outputs** beside the canvas take the place of Properties. Each input has a name, a type and a **Default**, which it takes where a graph using it leaves it unwired; each output has a name and a type. The search's **Sub-graph** folder has a node for each input, and the **Sub-graph Output** takes a value for each output. A sub-graph has no properties of its own: bring values in through its inputs. Its previews show its inputs at their defaults.
 
-In another graph, the search's **Sub-graphs** folder adds one, or pick which on a Sub-graph node's **Sub-graph** row. Its inputs and outputs are the sub-graph's, and change as it changes. When a graph is compiled, each sub-graph it uses is worked into it, so what the sub-graph works out is folded, shared and left out with everything round it, and costs what the same nodes in the graph would. Its cost shows under the node that uses it. A sub-graph can use others, but not itself. Pictures cannot be passed into a sub-graph yet.
+In another graph, the search's **Sub-graphs** folder adds one, or pick which on a Sub-graph node's **Sub-graph** row. Its inputs and outputs are the sub-graph's, and change as it changes. When a graph is compiled, each sub-graph it uses is worked into it, so what the sub-graph works out is folded, shared and left out with everything round it, and costs what the same nodes in the graph would. Its cost shows under the node that uses it. A sub-graph can use others, but not itself. An input can be a **Picture**, the last of its Type's choices: wire a picture property's node into it where the sub-graph is used, and inside, its Input node into a **Sample**. It has no default, so it must be wired. A sub-graph's outputs are numbers.
 
 ## Properties
 

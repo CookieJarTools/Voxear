@@ -2724,6 +2724,9 @@ impl Editor {
                 (PickFor::ShaderPicture { material, property }, Chosen::Value(pick)) => {
                     self.pick_shader_picture(&material, &property, &pick, renderer);
                 }
+                (PickFor::VoxShadePicture { property }, Chosen::Value(pick)) => {
+                    self.pick_voxshade_picture(property, &pick);
+                }
                 (PickFor::NewShader { folder }, Chosen::Shader(start)) => self.make_shader(&folder, start, renderer),
                 (PickFor::NewEffect { folder }, Chosen::Effect(starter)) => self.make_effect(&folder, starter, renderer),
                 (PickFor::NewDataAsset { folder }, Chosen::Definition(definition)) => {

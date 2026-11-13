@@ -253,6 +253,7 @@ ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world
         given.time = frame->time;
         given.color = color;
         given.size = size;
+        given.pictures = system.graphPictures;
         ParticleLookOutput made;
         made.color = color.rgb;
         made.alpha = color.a;

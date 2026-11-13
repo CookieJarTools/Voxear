@@ -16,7 +16,7 @@ use voxear_assets::AssetGuid;
 
 use crate::{
     graph::{Graph, NodeId, PropertyKind, is_identifier},
-    ir::{Binary, Builder, CodeFunction, Given, Program, Ternary, Unary, ValueId},
+    ir::{Binary, Builder, CodeFunction, Given, Picture, Program, Ternary, Unary, ValueId},
     nodes::{MathOp, NodeKind, Pin, PortTy, SURFACE_OUTPUTS, Stage},
     types::Ty,
 };
@@ -72,6 +72,8 @@ struct Lowering<'g, 'b> {
 struct Within {
     owner: NodeId,
     arguments: Vec<ValueId>,
+    /// Each input's picture, for a picture input; by place, as `arguments`.
+    pictures: Vec<Option<Picture>>,
     inside: Vec<AssetGuid>,
 }
 
@@ -158,6 +160,9 @@ impl Lowering<'_, '_> {
     /// The value wired into input `index` of `node`, as `want`: what is
     /// wired in, or the numbers the node keeps, or the port's own.
     fn input(&mut self, node: NodeId, index: usize, want: PortTy, depth: usize) -> Result<ValueId, CompileError> {
+        if want == PortTy::Picture {
+            return Err(error(Some(node), "a picture is read with a Sample, not taken as numbers"));
+        }
         let value = match self.graph.link_into(node, index).copied() {
             Some(link) => {
                 let value = self.value(link.from, link.output, depth + 1)?;
@@ -172,7 +177,7 @@ impl Lowering<'_, '_> {
                 match want {
                     PortTy::Fixed(Ty::Bool) => self.build.constant(Ty::Bool, [f32::from(numbers[0] != 0.0); 4]),
                     PortTy::Fixed(ty) => self.build.constant(ty, numbers),
-                    PortTy::Any => self.build.number(numbers[0]),
+                    PortTy::Any | PortTy::Picture => self.build.number(numbers[0]),
                 }
             }
         };
@@ -184,7 +189,7 @@ impl Lowering<'_, '_> {
             PortTy::Fixed(Ty::Bool) => Ok(value),
             _ if is_truth => Err(error(Some(node), "numbers are wanted here; true or false was wired in")),
             PortTy::Fixed(ty) => Ok(self.build.convert(value, ty)),
-            PortTy::Any => Ok(value),
+            PortTy::Any | PortTy::Picture => Ok(value),
         }
     }
 
@@ -271,7 +276,7 @@ impl Lowering<'_, '_> {
                     return Err(error(Some(node), "it reads a property the graph no longer has"));
                 };
                 let Some(ty) = found.kind.ty() else {
-                    return Err(error(Some(node), format!("{} is a picture: read it with Sample Picture", found.name)));
+                    return Err(error(Some(node), format!("{} is a picture: wire it into a Sample", found.name)));
                 };
                 self.build.property(*property, ty)
             }
@@ -282,12 +287,15 @@ impl Lowering<'_, '_> {
                 }
                 let uv = self.input(node, 0, PortTy::Fixed(Ty::Float2), depth)?;
                 self.mark(node);
-                let rgba = self.build.sample(*property, uv);
-                match output {
-                    0 => rgba,
-                    1 => self.build.swizzle(rgba, vec![0, 1, 2]),
-                    n => self.build.extract(rgba, n - 2),
-                }
+                let rgba = self.build.sample(Picture::Property(*property), uv);
+                self.sampled(rgba, output)
+            }
+            NodeKind::Sample => {
+                let picture = self.picture(node, 0, depth)?;
+                let uv = self.input(node, 1, PortTy::Fixed(Ty::Float2), depth)?;
+                self.mark(node);
+                let rgba = self.build.sample(picture, uv);
+                self.sampled(rgba, output)
             }
             NodeKind::Math { op } => self.math(node, *op, depth)?,
             NodeKind::Compare { op } => {
@@ -350,6 +358,9 @@ impl Lowering<'_, '_> {
                 let Some((place, pin)) = self.graph.input(*input) else {
                     return Err(error(Some(node), "it reads an input the sub-graph no longer has"));
                 };
+                if pin.picture {
+                    return Err(error(Some(node), format!("{} is a picture: wire it into a Sample", pin.name)));
+                }
                 match &self.within {
                     Some(within) => within.arguments[place],
                     None => self.build.given(Given::Argument(place), pin.ty),
@@ -423,8 +434,15 @@ impl Lowering<'_, '_> {
         }
         inside.push(guid);
         let mut arguments = Vec::with_capacity(sub.inputs.len());
+        let mut pictures = Vec::with_capacity(sub.inputs.len());
         for (index, pin) in sub.inputs.iter().enumerate() {
-            arguments.push(self.input(node, index, PortTy::Fixed(pin.ty), depth)?);
+            if pin.picture {
+                pictures.push(Some(self.picture(node, index, depth)?));
+                arguments.push(self.build.number(0.0));
+            } else {
+                pictures.push(None);
+                arguments.push(self.input(node, index, PortTy::Fixed(pin.ty), depth)?);
+            }
         }
         let Some(out) = sub.nodes.iter().find(|n| n.kind == NodeKind::SubGraphOutput) else {
             return Err(error(Some(node), format!("{name} has no Sub-graph Output")));
@@ -435,13 +453,68 @@ impl Lowering<'_, '_> {
         let owner = self.within.as_ref().map_or(node, |within| within.owner);
         let library = self.library;
         let mut inner = Lowering::new(sub, &mut *self.build, library);
-        inner.within = Some(Within { owner, arguments, inside });
+        inner.within = Some(Within { owner, arguments, pictures, inside });
         inner.mark(out.id);
         let value = inner
             .input(out.id, output, PortTy::Fixed(pin.ty), depth + 1)
             .map_err(|wrong| error(Some(node), format!("in {name}: {}", wrong.message)))?;
         self.mark(node);
         Ok(value)
+    }
+
+    /// What a Sample gives at output `output`: the colour and alpha, the
+    /// colour, or one of the four.
+    fn sampled(&mut self, rgba: ValueId, output: usize) -> ValueId {
+        match output {
+            0 => rgba,
+            1 => self.build.swizzle(rgba, vec![0, 1, 2]),
+            n => self.build.extract(rgba, n - 2),
+        }
+    }
+
+    /// The picture wired into input `index` of `node`: a picture
+    /// property's, followed back through the sub-graphs it is handed into.
+    fn picture(&mut self, node: NodeId, index: usize, depth: usize) -> Result<Picture, CompileError> {
+        let name = self
+            .graph
+            .node(node)
+            .map(|n| self.graph.inputs_of(&n.kind))
+            .and_then(|ports| ports.get(index).map(|p| p.label.clone()));
+        let name = name.unwrap_or_else(|| "Picture".into());
+        let Some(link) = self.graph.link_into(node, index).copied() else {
+            return Err(error(Some(node), format!("wire a picture into its {name}")));
+        };
+        if depth > DEEPEST {
+            return Err(error(Some(node), "more nodes one after another than a shader can take, through this node"));
+        }
+        let from = self.graph.node(link.from).map(|n| n.kind.clone());
+        match from {
+            Some(NodeKind::Property { property })
+                if self.graph.property(property).is_some_and(|p| p.kind == PropertyKind::Picture) =>
+            {
+                if self.graph.sub_graph {
+                    return Err(error(
+                        Some(link.from),
+                        "a sub-graph has no properties: bring pictures in through its inputs",
+                    ));
+                }
+                Ok(Picture::Property(property))
+            }
+            Some(NodeKind::SubGraphInput { input }) => {
+                let Some((place, pin)) = self.graph.input(input).filter(|(_, pin)| pin.picture) else {
+                    return Err(error(Some(node), format!("only a picture goes into its {name}")));
+                };
+                match &self.within {
+                    Some(within) => within.pictures[place]
+                        .ok_or_else(|| error(Some(node), format!("{} is not a picture", pin.name))),
+                    None => Ok(Picture::Argument(place)),
+                }
+            }
+            _ => Err(error(
+                Some(node),
+                format!("only a picture goes into its {name}: a picture property, or a sub-graph's picture input"),
+            )),
+        }
     }
 
     fn math(&mut self, node: NodeId, op: MathOp, depth: usize) -> Result<ValueId, CompileError> {

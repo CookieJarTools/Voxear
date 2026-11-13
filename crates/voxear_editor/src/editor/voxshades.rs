@@ -86,6 +86,11 @@ impl Editor {
             match event {
                 VoxShadeEvent::Save(path, graph) => self.save_voxshade(&path, &graph, renderer),
                 VoxShadeEvent::Search(anchor) => self.search_shader_nodes(anchor),
+                VoxShadeEvent::PickPicture(anchor, property) => {
+                    let choices = self.asset_choices(AssetKind::Texture);
+                    let target = PickFor::VoxShadePicture { property: property.0 };
+                    self.picker.open(&mut self.ui, (target, anchor), "Select Texture", choices, "");
+                }
             }
         }
     }
@@ -122,6 +127,25 @@ impl Editor {
         if found != *self.voxshade.sub_graphs() {
             self.voxshade.set_sub_graphs(found);
         }
+        // The pictures' names, for a particle graph's picture properties to show.
+        let db = self.game.content.db();
+        let pictures = db.entries().filter(|entry| entry.kind == AssetKind::Texture).map(|entry| {
+            let name = entry.path.rsplit('/').next().unwrap_or(&entry.path).to_string();
+            (entry.guid, name)
+        });
+        self.voxshade.set_picture_names(pictures.collect());
+    }
+
+    /// The picture picked for a particle graph's picture property, by its number.
+    pub(super) fn pick_voxshade_picture(&mut self, property: u32, pick: &crate::fields::Pick) {
+        let picture = match pick {
+            crate::fields::Pick::Asset(Some(path)) => match self.game.content.db().guid_of(path) {
+                Some(guid) => Some(guid),
+                None => return,
+            },
+            _ => None,
+        };
+        self.voxshade.set_picture(voxear_voxshade::PropertyId(property), picture);
     }
 
     /// A VoxShade file was written outside the editor: the project's

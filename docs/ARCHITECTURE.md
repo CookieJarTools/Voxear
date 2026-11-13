@@ -3178,7 +3178,16 @@ the renderer as the `ParticleGraphs` resource, which also says which graphs have
 whether to keep its particles (`ParticleSystem::simulated_by`). A graph's Update reads the particle in the
 world, whatever its system's space, and its Seed is made from the same number in the step and in drawing, so
 the two stages see one particle. A particle graph's properties are folded in as constants for now: values set
-for each system wait on a store of them beside the system's own. On an RTX 3070, 300,000 particles stepped and
+for each system wait on a store of them beside the system's own. Its picture properties name their pictures in
+the graph; the engine loads them with the system's own pictures, and the system hands its graph up to three by
+their textures in the room left beside its graph's number, which `particleGraphPicture` reads at full size, as
+the step and the vertices have no pixels to choose a smaller one by.
+
+**Pictures on wires.** A picture is not a value the compiler's steps carry: a wire carrying one is followed back
+when a Sample is lowered, through the sub-graphs it is handed into, to the property it starts at
+(`ir::Picture`), so a sample inside a sub-graph is the shader's own sample of its own property, merged with any
+other read of the same picture at the same place. A sub-graph compiled on its own to be shown reads its picture
+inputs by name. On an RTX 3070, 300,000 particles stepped and
 drawn take 0.85 ms a frame with the starter's graph, against 0.77 ms without.
 
 **Effects** *(implemented)*. An effect is a list of emitters, each a name and a Particle System's settings, and a

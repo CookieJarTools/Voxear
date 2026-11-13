@@ -144,7 +144,7 @@ A particle graph has two outputs, each optional:
 
 An output's input left empty keeps what the settings give. The graph's nodes read the particle's **Age**, its **Life** lived from 0 to 1, a **Seed** of its own from 0 to 1, its **Velocity** and **Position**, the **Object Position** of the system's Obj, **Time**, and in the Update **Delta Time**, in the Look the **Particle Color** and **Particle Size** the settings give.
 
-A graph with an Update has its system simulated; one with only a Look leaves it worked out from its age. A graph's properties are its own settings, set in the graph and worked into it as numbers; it reads no pictures yet. The Look draws flat particles; meshes and trails are drawn as the settings say.
+A graph with an Update has its system simulated; one with only a Look leaves it worked out from its age. A graph's properties are its own settings, set in the graph and worked into it as numbers. It can read up to three pictures, each named on its picture property's **Picture** row, for colours or patterns along a particle's life. The Look draws flat particles; meshes and trails are drawn as the settings say.
 
 A graph's cost is small: 300,000 particles stepped with the starter's swirl and drawn take 0.85 ms a frame on a mid-range graphics card, against 0.77 ms moved by their settings alone.
 
@@ -292,4 +292,4 @@ A `ParticleHit` has the `Point` struck, the `Normal` of the surface there, the `
 
 ## What's coming
 
-Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and particle graphs that read pictures and take their properties from each system.
+Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and particle graphs that take their properties from each system.

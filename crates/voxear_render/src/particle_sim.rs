@@ -426,6 +426,7 @@ impl ParticleSim {
                 }
                 let fresh = if std::mem::take(&mut kept.fresh) { particles::FRESH } else { 0 };
                 let stepped = particles::gpu(system, model, time, Some(whole));
+                let graph = particles::graph_of(world, system.graph);
                 // Each tick gone by since the last step, a point for its particles' tails to keep.
                 let ticks = kept.trail_tick.replace(stepped.trail_tick).map_or(0, |last| stepped.trail_tick.saturating_sub(last));
                 let index = systems.len() as u32;
@@ -444,10 +445,8 @@ impl ParticleSim {
                     moved: (origin - kept.origin).to_array(),
                     shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },
                     trail_new: if delta_time > 0.0 { ticks.min(particles::TRAIL_POINTS) } else { 0 },
-                    graph: system
-                        .graph
-                        .and_then(|guid| graphs.and_then(|graphs| graphs.0.get(&guid)))
-                        .map_or(0, |graph| graph.number),
+                    graph: graph.0,
+                    graph_pictures: graph.1,
                     ..stepped
                 });
                 // Only its particles are stepped: their tails' points, kept after them, are written along with them.

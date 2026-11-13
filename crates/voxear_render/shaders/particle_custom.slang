@@ -6,7 +6,8 @@
 // A particle as a graph's Update sees it, each step of the simulation: its
 // age in seconds and as a share of its life, its number from 0 to 1, how
 // fast it goes, where it is and where its system's Obj is, in the world,
-// the particles' time and the step's length, in seconds.
+// the particles' time and the step's length, in seconds; and the pictures
+// its system hands its graph.
 struct ParticleUpdateInput
 {
     float age;
@@ -17,6 +18,8 @@ struct ParticleUpdateInput
     float3 objectPosition;
     float time;
     float deltaTime;
+    // The pictures its graph reads, by their textures (particleGraphPicture).
+    uint3 pictures;
 };
 
 // What the Update gives: a force on the particle, in metres a second each
@@ -41,6 +44,7 @@ struct ParticleLookInput
     float time;
     float4 color;
     float size;
+    uint3 pictures;
 };
 
 struct ParticleLookOutput
@@ -49,6 +53,17 @@ struct ParticleLookOutput
     float alpha;
     float size;
 };
+
+// A particle graph's picture `index` at `uv`, wrapping round, as linear light: white for none. Read at its full
+// size, as the step and the vertices have no pixels to judge a smaller one by.
+float4 particleGraphPicture(uint index, float2 uv)
+{
+    if (index == NO_TEXTURE)
+    {
+        return float4(1.0);
+    }
+    return textures[NonUniformResourceIndex(index)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0);
+}
 
 // A particle's number for its graph, from 0 to 1, from the first of the
 // random numbers it is drawn with, the same in the step and where it is drawn.

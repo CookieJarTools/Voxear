@@ -1117,9 +1117,10 @@ struct ParticleSystem
     // The mesh each particle is drawn as (PARTICLES_MESH), by its place among the meshes, and its material.
     uint mesh;
     uint meshMaterial;
-    // The particle graph that moves and draws its particles (particle_custom.slang), or 0 for none.
+    // The particle graph that moves and draws its particles (particle_custom.slang), or 0 for none, and the
+    // pictures it reads, NO_TEXTURE for one it has none for.
     uint graph;
-    uint3 graphPad;
+    uint3 graphPictures;
 };
 
 // A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in

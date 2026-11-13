@@ -370,6 +370,25 @@ pub struct ParticleGraphs(pub std::collections::HashMap<voxear_assets::AssetGuid
 pub struct ParticleGraphInfo {
     pub number: u32,
     pub update: bool,
+    /// The pictures its picture properties name, in their order, which a
+    /// system using it hands it.
+    pub pictures: [Option<voxear_assets::AssetGuid>; 3],
+}
+
+/// The particle graph `graph` names in `graphs`, and the textures of the
+/// pictures it reads, as the engine has loaded them (`ParticlePictures`):
+/// its number, 0 for none, and each picture's texture, `NO_TEXTURE` for
+/// one it has none for or not loaded yet.
+pub(crate) fn graph_of(world: &World, graph: Option<voxear_assets::AssetGuid>) -> (u32, [u32; 3]) {
+    let graphs = world.resource::<ParticleGraphs>();
+    let Some(found) = graph.and_then(|guid| graphs.and_then(|graphs| graphs.0.get(&guid))) else {
+        return (0, [crate::gpu::NO_TEXTURE; 3]);
+    };
+    let loaded = world.resource::<crate::effects::ParticlePictures>();
+    let texture = |picture: Option<voxear_assets::AssetGuid>| {
+        picture.and_then(|guid| loaded.and_then(|loaded| loaded.0.get(&guid))).map_or(crate::gpu::NO_TEXTURE, |id| id.0)
+    };
+    (found.number, found.pictures.map(texture))
 }
 
 /// How long a tail is and how wide a trail is, to begin with.
@@ -672,8 +691,7 @@ pub(crate) fn gather(
             let drawn = textured(gpu(system, model, time, playback.copied()), system, textures);
             let mut drawn = GpuParticleSystem { seed: seed_of(own, system, emitter), ..drawn };
             // Its particle graph, by its number; and kept or worked out where drawn, as the graph's Update says.
-            let graph = system.graph.and_then(|guid| graphs.and_then(|graphs| graphs.0.get(&guid)));
-            drawn.graph = graph.map_or(0, |graph| graph.number);
+            (drawn.graph, drawn.graph_pictures) = graph_of(world, system.graph);
             let simulated = system.is_simulated_with(graphs);
             drawn.flags = if simulated { drawn.flags | SIMULATED } else { drawn.flags & !SIMULATED };
             // Drawn as meshes: nothing until its model is loaded.

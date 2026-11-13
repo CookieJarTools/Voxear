@@ -33,6 +33,14 @@ pub enum Given {
     Argument(usize),
 }
 
+/// A picture a step reads: one of the shader's picture properties, or one
+/// of a sub-graph's picture inputs while it is compiled on its own to be shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Picture {
+    Property(PropertyId),
+    Argument(usize),
+}
+
 /// A Slang node's code, as a function the shader declares: its name, what
 /// it takes and what it sets, each a name and a type, and its body.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,8 +134,8 @@ pub enum Op {
     Const([f32; 4]),
     Given(Given),
     Property(PropertyId),
-    /// A picture property read at the place its one input says.
-    Sample(PropertyId),
+    /// A picture read at the place its one input says.
+    Sample(Picture),
     Unary(Unary),
     Binary(Binary),
     Ternary(Ternary),
@@ -358,8 +366,8 @@ impl Builder {
         self.push(Op::Property(property), Vec::new(), ty)
     }
 
-    pub fn sample(&mut self, property: PropertyId, uv: ValueId) -> ValueId {
-        self.push(Op::Sample(property), vec![uv], Ty::Float4)
+    pub fn sample(&mut self, picture: Picture, uv: ValueId) -> ValueId {
+        self.push(Op::Sample(picture), vec![uv], Ty::Float4)
     }
 
     pub fn unary(&mut self, op: Unary, a: ValueId) -> ValueId {

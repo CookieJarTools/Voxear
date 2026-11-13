@@ -2354,6 +2354,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     river rises from a spring's pool at its head, and one running into a hollow too shallow for a lake ends in a
     pond. No bank or rim is raised inside a lake. Tests: nothing raised under the sea and rivers meeting it; heads
     and inland ends that are pools; GPU renders of a mouth from above and from the sea, and of a spring.
+  - ~~**Biomes that shape their land:**~~ done: a biome's new **Land** (`generate::land`) is the generator's own
+    ground or its own Plains, Hills, Mountains (sharp peaks, bands of cliff, valleys), Tablelands or Pillars, with
+    overhangs, pillars of rock and natural bridges. A world of blocks adds them to a copy of its generator's graph
+    as Peaks, Plateaus, Noise, Gullies, Spires, Arches and Overhangs nodes, each kept to its biome by a Climate Mask
+    and blended from the widest biome to the narrowest, so the land matches the blocks; rivers run down the land so
+    shaped, and the engine hands the shaped generator to everything that asks about the ground. Spires and Arches
+    gain a Mask. A Block World's **Land from** keeps the generator's ground round its start. The starter and
+    showcase biomes come with land of their own. Tests: mountains rise where their biome is and the ground
+    elsewhere is left; pillars stand only in their biome; GPU renders of mountains, pillars and tablelands.
   - ~~**Biome tints:**~~ done: a block's new **Tint** (None, Grass, Grass Top, Foliage) has its colour take the
     biome it stands in, from each biome's new grass and foliage tints, fading from one biome's to the next: the
     generator's biomes on a lattice every 4 blocks, each point averaged with those 3 each way round it

@@ -430,6 +430,9 @@ pub enum BlockField {
     /// Whether its generated ground's top is laid in half blocks, slabs of
     /// its top blocks where it lies half a block higher.
     Slabs,
+    /// How far from its start its biomes' own land starts to rise: the
+    /// ground nearer is the generator's own.
+    LandFrom,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -527,7 +530,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
                     fields.extend([F::Rivers, F::Slabs]);
-                    fields.push(F::Biomes);
+                    fields.extend([F::Biomes, F::LandFrom]);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
@@ -568,6 +571,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Caves => "Caves",
         F::Rivers => "Rivers",
         F::Slabs => "Slabs",
+        F::LandFrom => "Land from",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -600,7 +604,9 @@ pub fn key(field: BlockField) -> &'static str {
 
 pub fn unit(field: BlockField) -> Option<&'static str> {
     match field {
-        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance => Some("m"),
+        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance | F::LandFrom => {
+            Some("m")
+        }
         F::Temperatures => Some("°C"),
         _ => None,
     }
@@ -803,6 +809,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
         F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
+        F::LandFrom => Value::Number(file()?.generate.as_ref()?.land_from),
         F::Slabs => Value::Toggle(file()?.generate.as_ref()?.slabs),
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
@@ -951,6 +958,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Rivers, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.rivers = *on;
+        }
+        (F::LandFrom, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.land_from = number(v).unwrap_or(generate.land_from).clamp(0.0, 100_000.0);
         }
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };

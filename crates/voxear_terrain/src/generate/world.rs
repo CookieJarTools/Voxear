@@ -30,6 +30,10 @@ pub struct WorldGen {
     /// The ground the graph editor's previews show: nothing that makes ground reads it.
     preview: PreviewArea,
     made: Arc<Made>,
+    /// Where its graph was shaped by a world's biomes' land (see
+    /// `land::add_land`), with a hash of those biomes: none for a graph as
+    /// its file has it.
+    land: Option<Arc<(u64, super::land::Shaped)>>,
 }
 
 /// The square of ground the graph editor's previews show: its middle, in
@@ -404,7 +408,21 @@ impl WorldGen {
             graph,
             preview: PreviewArea::default(),
             made: Arc::new(Made { compiled, hash, faults, previews: OnceLock::new() }),
+            land: None,
         }
+    }
+
+    /// The land of the biomes hashed `lands` already shaped into its graph,
+    /// where they have been, and where.
+    pub(crate) fn land(&self) -> Option<&(u64, super::land::Shaped)> {
+        self.land.as_deref()
+    }
+
+    /// Says its graph is shaped by the land of the biomes hashed `lands`,
+    /// as `shaped` says.
+    pub(crate) fn with_land(mut self, lands: u64, shaped: super::land::Shaped) -> Self {
+        self.land = Some(Arc::new((lands, shaped)));
+        self
     }
 
     pub fn seed(&self) -> u32 {

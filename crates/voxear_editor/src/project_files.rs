@@ -493,13 +493,25 @@ pub enum ShaderStart {
     /// One that draws the finished picture, for a look pack to name.
     Look,
     Copy(BuiltinShader),
+    /// A graph of nodes, edited in the Shader Graph panel.
+    Graph(GraphStart),
+}
+
+/// What a new shader graph starts as: a plain lit surface, or one of the
+/// built-in shaders made of nodes, to change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphStart {
+    Lit,
+    Hologram,
+    Sway,
 }
 
 impl ShaderStart {
     /// As New Shader offers them: the three to write first, then the built-in ones.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui, Self::Look];
+        let mut all = vec![Self::Graph(GraphStart::Lit), Self::Lit, Self::Unlit, Self::Ui, Self::Look];
         all.extend(BuiltinShader::ALL.map(Self::Copy));
+        all.extend([GraphStart::Hologram, GraphStart::Sway].map(Self::Graph));
         all
     }
 
@@ -510,7 +522,15 @@ impl ShaderStart {
             Self::Ui => "UI",
             Self::Look => "Look",
             Self::Copy(builtin) => builtin.title(),
+            Self::Graph(GraphStart::Lit) => "Graph",
+            Self::Graph(GraphStart::Hologram) => "Hologram Graph",
+            Self::Graph(GraphStart::Sway) => "Sway Graph",
         }
+    }
+
+    /// The icon New Shader shows beside it.
+    pub fn icon(self) -> &'static str {
+        if matches!(self, Self::Graph(_)) { "nodes" } else { "shader" }
     }
 
     /// What it starts as, beside its name.
@@ -518,6 +538,8 @@ impl ShaderStart {
         match self {
             Self::Lit | Self::Unlit | Self::Ui | Self::Look => "To write",
             Self::Copy(_) => "Built in, to change",
+            Self::Graph(GraphStart::Lit) => "Made of nodes",
+            Self::Graph(_) => "Built in as nodes, to change",
         }
     }
 }
@@ -531,7 +553,33 @@ pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &
         ShaderStart::Ui => create(root, folder, NewFile::UiShader, namespace),
         ShaderStart::Look => create(root, folder, NewFile::LookShader, namespace),
         ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
+        ShaderStart::Graph(start) => create_shader_graph(root, folder, start),
     }
+}
+
+/// Makes a new shader graph in `folder` (from the project's folder) as
+/// `start` says, and returns its path. Its properties struct is named for
+/// its file, as a new shader's is.
+fn create_shader_graph(root: &Path, folder: &str, start: GraphStart) -> Result<String> {
+    use voxear_shader_graph::starters;
+    let stem = match start {
+        GraphStart::Lit => "New Shader Graph",
+        GraphStart::Hologram => "Hologram",
+        GraphStart::Sway => "Sway",
+    };
+    let name = unique(&root.join(folder), stem, ".shadergraph");
+    let path = join(folder, &name);
+    let named = struct_name(&name[..name.len() - ".shadergraph".len()]);
+    let mut graph = match start {
+        GraphStart::Lit => starters::lit(&named),
+        GraphStart::Hologram => starters::hologram(),
+        GraphStart::Sway => starters::sway(),
+    };
+    graph.name = named;
+    let text = format!("{}{}", crate::editor::SHADER_GRAPH_HEADING, graph.to_toml());
+    let file = root.join(&path);
+    std::fs::write(&file, text).with_context(|| format!("making {}", file.display()))?;
+    Ok(path)
 }
 
 /// Makes a copy of a built-in shader in `folder` (from the project's
@@ -934,6 +982,24 @@ mod tests {
         let plain = voxear_render::PostProcess::default();
         let worn = pack.worn(voxear_render::Sky::default(), None, plain).unwrap();
         assert!(worn.post.bloom.intensity == 0.15 && worn.sun.is_some());
+    }
+
+    #[test]
+    fn a_new_shader_graph_is_named_for_its_file_and_compiles_as_a_shader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::Lit), "Game").unwrap();
+        assert_eq!(path, "New Shader Graph.shadergraph");
+        let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        let source = voxear_engine::shaders::graph_source(&text).unwrap();
+        let info = voxear_engine::shaders::read(&source).unwrap();
+        assert_eq!(info.name, "NewShaderGraph");
+        assert!(info.surface && !info.unlit);
+        // A built-in one made of nodes, to change, with the built-in one's properties.
+        let sway = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::Sway), "Game").unwrap();
+        let text = std::fs::read_to_string(dir.path().join(&sway)).unwrap();
+        let info = voxear_engine::shaders::read(&voxear_engine::shaders::graph_source(&text).unwrap()).unwrap();
+        assert!(info.vertex && info.max_offset > 2.0 && info.properties.len() == 5, "{info:?}");
+        assert!(ShaderStart::all().contains(&ShaderStart::Graph(GraphStart::Hologram)));
     }
 
     #[test]

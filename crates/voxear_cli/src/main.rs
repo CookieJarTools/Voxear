@@ -1255,6 +1255,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::LookPack => "look pack",
             AssetKind::TexturePack => "texture pack",
             AssetKind::Shader => "shader",
+            AssetKind::ShaderGraph => "shader graph",
             AssetKind::MotionSet => "motion set",
             AssetKind::GunHandling => "gun handling",
             AssetKind::Particles => "particles",

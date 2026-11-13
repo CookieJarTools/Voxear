@@ -269,7 +269,11 @@ impl Editor {
         let box_models: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".boxmodel")).map(|path| path.to_string()).collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
-        let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
+        let shaders = changed.iter().any(|path| {
+            path.ends_with(".shader") || path.ends_with(".shadergraph") || path.ends_with(".material")
+        });
+        let shader_graphs: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".shadergraph")).map(|path| path.to_string()).collect();
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         } else {
@@ -329,6 +333,10 @@ impl Editor {
             // compiles again when the shaders the materials pick are as they were.
             if shaders {
                 self.game.apply_custom_shaders(renderer);
+            }
+            // A shader graph edited outside the editor is read again by the Shader Graph panel it is open in.
+            for path in &shader_graphs {
+                self.shader_graph_file_changed(path);
             }
             // A look pack edited outside the editor is worn as it now is, where the scene is shown under it.
             if looks {

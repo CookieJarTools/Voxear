@@ -114,6 +114,28 @@ fn sine_hash(make: &mut Make, n: In) -> NodeId {
     make.math(MathOp::Fraction, &[Wire(spread)])
 }
 
+/// A surface lit as the standard one is, its colour a tint over a picture:
+/// the graph a new one starts as.
+pub fn lit(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    let tint = m.property("tint", PropertyKind::Color, [1.0, 1.0, 1.0, 0.0], None, "");
+    let picture = m.declare("picture", PropertyKind::Picture, [0.0; 4], None, "");
+    let uv = m.input(Input::Uv);
+    let read = m.node(NodeKind::SamplePicture { property: picture }, &[Wire(uv)]);
+    let color = m.math(MathOp::Multiply, &[Wire(tint), Out(read, 1)]);
+    let out = m.node(NodeKind::SurfaceOutput, &[Wire(color)]);
+    let mut graph = m.finish();
+    // The tint under the picture, so its wire runs clear of it.
+    for (node, at) in
+        [(uv, [0.0, 0.0]), (read, [220.0, 0.0]), (tint, [220.0, -120.0]), (color, [460.0, 60.0]), (out, [680.0, 40.0])]
+    {
+        if let Some(found) = graph.nodes.iter_mut().find(|n| n.id == node) {
+            found.at = at;
+        }
+    }
+    graph
+}
+
 /// A figure of light, brighter at its edges, with lines scrolling up it and a flicker, as the built-in Hologram.
 pub fn hologram() -> Graph {
     let mut m = Make::new("Hologram");

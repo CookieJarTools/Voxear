@@ -1330,8 +1330,8 @@ variants inherit from a parent and override only what differs.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(the compiler implemented in `voxear_shader_graph`; the editor, the asset, moving work to
-the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler, the `.shadergraph` asset and its panel implemented; previews, sub-graphs,
+moving work to the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1368,6 +1368,14 @@ sixteen behind one that changes from pixel to pixel), settled by placing again u
 values, what the function is given and properties are written where they are read; every other step is a local
 of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
 pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
+
+A `.shadergraph` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
+`.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream
+knows the difference, and a graph that does not compile is a shader with an error, named by node. The panel
+compiles the graph itself at every change, in well under a millisecond, for the costs and errors it draws; the
+renderer's compile follows each save on its own thread, as any shader's does. Chose a side column of the
+panel's own for a node's values over the Inspector the generator graphs use: a shader graph's nodes have few
+values, mostly the numbers an unwired input takes, and the properties belong beside the graph they are read in.
 
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.

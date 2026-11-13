@@ -868,7 +868,7 @@ impl Content {
         let found: Vec<(AssetGuid, String)> = self
             .db
             .entries()
-            .filter(|entry| entry.kind == AssetKind::Shader)
+            .filter(|entry| matches!(entry.kind, AssetKind::Shader | AssetKind::ShaderGraph))
             .map(|entry| (entry.guid, entry.path.clone()))
             .collect();
         let read = found.into_iter().filter_map(|(guid, path)| match self.read_text(&path) {

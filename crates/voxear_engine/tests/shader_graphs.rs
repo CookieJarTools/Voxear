@@ -99,7 +99,8 @@ fn the_graph_hologram_and_sway_draw_what_the_hand_written_ones_do_at_the_same_co
             let built_in = read(hand.source()).unwrap();
             assert_eq!(info.properties, built_in.properties, "{}: the same properties", graph.name);
             assert_eq!((info.unlit, info.max_offset), (built_in.unlit, built_in.max_offset));
-            (guid(n), format!("Shaders/{}.shadergraph", graph.name), compiled.source)
+            // As the project has it: the graph's file, which the registry compiles.
+            (guid(n), format!("Shaders/{}.shadergraph", graph.name), graph.to_toml())
         })
         .collect();
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

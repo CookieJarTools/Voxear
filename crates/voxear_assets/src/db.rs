@@ -106,6 +106,9 @@ pub enum AssetKind {
     /// A `.particles` file: a particle effect of several emitters, which a
     /// Particle System plays in place of its own settings.
     Particles,
+    /// A `.shadergraph` file: a custom shader made of nodes, compiled into
+    /// the Slang a `.shader` holds, which materials pick as they pick one.
+    ShaderGraph,
 }
 
 impl AssetKind {
@@ -142,6 +145,7 @@ impl AssetKind {
             "voxplant" => Self::Plant,
             "vox" => Self::VoxModel,
             "particles" => Self::Particles,
+            "shadergraph" => Self::ShaderGraph,
             _ => return None,
         })
     }

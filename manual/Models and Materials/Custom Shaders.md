@@ -58,6 +58,8 @@ void surface(Tinted shader, SurfaceInput input, inout SurfaceOutput surface)
 }
 ```
 
+To make a shader from nodes on a canvas rather than writing Slang, pick **Graph** instead: see [[Shader Graphs]].
+
 Select a shader in the Project panel to see what the Inspector makes of it: its properties, which functions it has, and any error, with the line it is on.
 
 Save the file and the editor compiles it into the engine's own shaders in the background. Everything keeps drawing as it was until the new shader is ready, a few seconds later; then every material using it changes at once. A shader with an error leaves the last one that worked drawing, and the error shows in the Console and in the shader's Inspector.

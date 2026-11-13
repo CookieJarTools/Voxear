@@ -63,6 +63,7 @@ pub const NAMES: &[&str] = &[
     "scene",
     "material",
     "shader",
+    "nodes",
     "texture",
     "eye",
     "transform",
@@ -237,6 +238,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
             "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM10 9.5l-2.5 2.5 2.5 2.5M14 9.5l2.5 2.5-2.5 2.5",
             STROKE,
         )],
+        // Two nodes and the wire between them: a graph of nodes.
+        "nodes" => &[("M3.5 4.5h6.5v5.5H3.5ZM14 14h6.5v5.5H14ZM10 7.25h1.5a2.5 2.5 0 0 1 2.5 2.5v6.5", STROKE)],
         "texture" => &[(
             "M4 5h16v14H4ZM4 15.5l4.5-4.5 4 4 2-2 5.5 5.5M14.5 9a1.25 1.25 0 1 0 2.5 0a1.25 1.25 0 1 0-2.5 0Z",
             STROKE,

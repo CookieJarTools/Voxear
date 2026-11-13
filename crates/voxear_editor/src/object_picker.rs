@@ -126,6 +126,8 @@ pub enum PickFor {
     InputPromptIcons,
     /// The graph open in the Generator panel, for a node to add to it.
     GraphNode,
+    /// The graph open in the Shader Graph panel, for a node to add to it.
+    ShaderNode,
 }
 
 /// What the picker is open for, and the field it opened from.
@@ -555,6 +557,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Paths) => "branch",
         Some(AssetKind::LightProfile) => "light",
         Some(AssetKind::Shader) => "shader",
+        Some(AssetKind::ShaderGraph) => "nodes",
         Some(AssetKind::MotionSet) => "play",
         Some(AssetKind::GunHandling) => "crosshair",
         Some(AssetKind::Particles) => "particles",

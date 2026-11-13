@@ -167,7 +167,8 @@ fn the_starters_compile_to_shaders_shaped_as_hand_written_ones() {
     assert!(sway.source.contains("float3 vertex(Sway props, VertexInput input)"), "{}", sway.source);
     assert_eq!(sway.source.matches("normalize(").count(), 2, "{}", sway.source);
     // Read back from their files as they were made.
-    for graph in [starters::hologram(), starters::sway()] {
+    assert!(compiled(&starters::lit("Plain")).source.contains("surface.color = "));
+    for graph in [starters::hologram(), starters::sway(), starters::lit("Plain")] {
         assert_eq!(Graph::from_toml(&graph.to_toml()).unwrap(), graph);
     }
 }

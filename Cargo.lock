@@ -4039,6 +4039,7 @@ dependencies = [
  "voxear_rhi",
  "voxear_scene",
  "voxear_scripting",
+ "voxear_shader_graph",
  "voxear_terrain",
  "voxear_ui",
  "wayland-backend",

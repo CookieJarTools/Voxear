@@ -3805,8 +3805,11 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
         float sunk = seaSunk(frame, middle, c, r);
         float stepHigh = frame->sea.step * world.blockSize;
         sunk = stepHigh > 0.0 ? round(sunk / stepHigh) * stepHigh : sunk;
-        // White water comes in patches along the crests, a few metres across, that drift with them.
-        float2 drifted = levelXZ(frame, middle, 4096.0) / 3.5 + frame->sea.drift;
+        // White water comes in streaks along the crests, long across the swell's way and thin along it, that drift
+        // with them.
+        float2 way = normalize(frame->sea.waves[0].xy + float2(1e-6, 0.0));
+        float2 placed = levelXZ(frame, middle, 4096.0);
+        float2 drifted = float2(dot(placed, way) / 1.7, dot(placed, float2(-way.y, way.x)) / 6.0) + frame->sea.drift;
         int2 patch = int2(floor(drifted));
         float2 within = drifted - floor(drifted);
         within = within * within * (3.0 - 2.0 * within);
@@ -3814,7 +3817,9 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
             lerp(seaGrain(patch + 4001), seaGrain(patch + int2(4002, 4001)), within.x),
             lerp(seaGrain(patch + int2(4001, 4002)), seaGrain(patch + 4002), within.x),
             within.y);
-        float breaks = 0.74 + 0.4 * (1.0 - r) + 0.3 * (patches - 0.5) + 0.08 * (seaGrain(cell) - 0.5);
+        // About half the sea can break at all, so even a wide crest is streaked, not white all over.
+        float patchy = smoothstep(0.38, 0.62, patches);
+        float breaks = 0.74 + 0.4 * (1.0 - r) + 0.45 * patchy + 0.08 * (seaGrain(cell) - 0.5);
         // Its troughs darker than its crests, so the swell reads from its tops alone.
         color *= lerp(1.0, lerp(1.15, 0.6, saturate(sunk / max(frame->sea.height * r, 0.01))), saturate(r * 2.0));
         float white = frame->sea.column > 0.0 ? step(breaks, c) : smoothstep(breaks - 0.03, breaks + 0.03, c);

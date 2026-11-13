@@ -35,10 +35,15 @@ public static class Storms
 
 	/// <summary>
 	/// Starts a storm over <paramref name="position"/> reaching <paramref name="radius"/> metres, blowing
-	/// <paramref name="strength"/> hard, from 0 to 1. It comes on over a minute and blows until it is stopped;
-	/// change what it gives back for anything else.
+	/// <paramref name="strength"/> hard, from 0 to 1. It comes on over <paramref name="comesOver"/> seconds, a
+	/// minute unless you say, and blows until it is stopped; change what it gives back for anything else.
 	/// </summary>
-	public static Storm Start(Vector3 position, float radius = 400f, float strength = 1f, StormKind kind = StormKind.ByTemperature)
+	public static Storm Start(
+		Vector3 position,
+		float radius = 400f,
+		float strength = 1f,
+		StormKind kind = StormKind.ByTemperature,
+		float comesOver = 60f)
 	{
 		Span<float> numbers = stackalloc float[StormCalls.Numbers];
 		numbers[0] = position.X;
@@ -47,6 +52,7 @@ public static class Storms
 		numbers[3] = radius;
 		numbers[4] = strength;
 		numbers[5] = (float)kind;
+		numbers[6] = comesOver;
 		var id = StormCalls.Call(StormCalls.Start, 0, numbers);
 		return id > 0 ? new Storm((uint)id) : Storm.None;
 	}

@@ -278,3 +278,46 @@ fn the_starter_plants_of_the_seas_bed_are_each_their_own_shape_and_colour() {
     assert!(pink > 800 && blue > 800 && green > 300, "{pink} pink, {blue} blue, {green} green");
     assert!(hues(&kelp).2 + hues(&kelp).0 > 0 || kelp.chunks_exact(4).any(|p| p[1] > p[2] + 20), "kelp in view");
 }
+
+#[test]
+fn a_rough_sea_costs_little_more_to_draw_than_a_flat_one_and_a_warm_one_glows_at_night() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    // Looking out over the roughest sea from low down, where every pixel of water is walked furthest.
+    let camera = (Vec3::new(middle - 7.5, top + 3.0, middle - 7.5), Vec3::new(middle - 40.0, top - 5.0, middle - 46.0));
+    seen(&mut renderer, &mut world, camera, 20.0);
+    // Every pass's time added up, the least of sixty frames, since the GPU is shared.
+    let mut spent = |renderer: &mut Renderer, world: &World| {
+        let frame = |renderer: &mut Renderer, at: u32| {
+            renderer.render(world, 21.0 + at as f32 / 60.0).expect("frame renders");
+            renderer.timings().iter().map(|(_, ms)| *ms).sum::<f32>()
+        };
+        (0..60).map(|at| frame(renderer, at)).fold(f32::MAX, f32::min)
+    };
+    let mut times = Vec::new();
+    for (look, name) in LOOKS {
+        world.insert_resource(RoughSea { look, everywhere: 1.0, heading: 0.6, time: 20.0, ..RoughSea::default() });
+        times.push((name, spent(&mut renderer, &world)));
+    }
+    eprintln!("a frame of the roughest sea, at {WIDTH}x{HEIGHT}: {times:?} ms");
+    let flat = times[0].1;
+    for (name, ms) in &times[1..] {
+        assert!(*ms < flat + 2.0, "{name}: {ms} ms against a flat sea's {flat}");
+    }
+    // At night, glowing: the water that breaks, and specks over the rest.
+    let night = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, 0.2, 0.5).normalize());
+    let suns: Vec<_> = world.query_ref::<(voxear_ecs::Entity, &Light)>().into_iter().map(|(e, _)| e).collect();
+    for sun in suns {
+        *world.get_mut::<Transform>(sun).unwrap() = Transform::new(Vec3::ZERO, night, Vec3::ONE);
+    }
+    world.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+    let glowing = |glow: f32| RoughSea { everywhere: 0.8, heading: 0.6, time: 20.0, glow, ..RoughSea::default() };
+    world.insert_resource(glowing(0.0));
+    let dark = seen(&mut renderer, &mut world, camera, 20.0);
+    world.insert_resource(glowing(1.0));
+    let lit = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea glowing at night.png", &lit);
+    let blue = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[2] > 90 && p[2] > p[0] + 40).count();
+    assert!(blue(&lit) > blue(&dark) + 300, "{} glowing pixels against {}", blue(&lit), blue(&dark));
+}

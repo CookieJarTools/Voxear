@@ -1053,8 +1053,45 @@ Done so far:
     files; the page's rows; a C# system turning the weather, reading it back and hearing it change; GPU pictures
     of overcast, storm and fog against clear, of rain and snow falling, of wet soil, first snow and lying snow,
     and of a strike.
-  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds, the same weather on every machine
-    of a networked game and in saves, weather by climate in generated worlds.
+  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds. Weather by climate, the same on
+    every machine and in saves, is Storms, below.
+- **Storms ✅:** weather with a place (`voxear_engine::storms`). A `Storm` lies over a round part of the level, with
+  a reach, a strength, a drift, an eye and a life; it comes on, blows and dies away. What falls at a point is the
+  storm's kind, which left to itself is what the open air's temperature there makes it (`heat::open_air`): rain
+  above 2 °C, with thunder once it blows hard, sleet round freezing, snow and blizzards below it, blown sand where
+  it is 28 °C or more and dry; a fog bank is a kind of its own.
+  - **Natural storms** are worked out from the world's seed and the storms' clock alone (`storms::natural`): one
+    try to a 4 km square every fifteen minutes, fewer where it is dry, fog banks where it is cool and wet, and great
+    standing storms round a calm eye at seeded places. Nothing of them is kept or sent.
+  - **Seen from afar:** each frame the nearest eight are the renderer's `WeatherPlaces`: the cloud layer filled in and
+    made heavy over each (`cloudWeather`), a curtain of what falls hanging under it and a wall of sand
+    (`weatherCurtain`, in the sky and with the fog), and what they add where the viewer stands laid over the
+    level's own weather (`Weather::set_here`). Weather has an eighth amount, **dust**, and two more kinds,
+    Blizzard and Sandstorm.
+  - **Rough seas:** a world of blocks' sea sinks under its faces by a swell of four long waves, as rough as the
+    weather over it (`voxear_render::sea`): drawn in the water's fragment shader by walking the view ray across
+    columns (`blockSwell`), as small cubes, block steps or smooth, with white water on the crests; no block
+    changes. `SeaSampler` is the same swell on the CPU, from sums and products alone, which `water::sample` and
+    Buoyancy follow. Only water at the generator's sea level is sea (`SeaLevel`).
+  - **Whirlpools:** a stepped funnel with turning arms whose water runs round, in and down: under strong storms
+    over deep water, standing at seeded places in a generated sea, and from scripts.
+  - **Life on the sea's bed:** a growing rule may be **Under water** (`GrowRule::under_water`), its height then a
+    depth; eight starter plants of small cubes, seagrass, kelp, branch, brain, table and fan coral, a tube sponge
+    and a clam, each with the depth and sea temperature it grows in. Weed sways with the water, more under a
+    storm. Warm seas glow at night where the water breaks.
+  - **Scripts:** `Storms.Start`, `Storms.At` (`WeatherAt`, `StormWeather`), `Storms.All`, `Storms.Arrived`,
+    `Storms.Left`, `Storm` (`Position`, `Radius`, `Strength`, `Kind`, `Velocity`, `MoveAlong`, `Eye`, `Lifetime`,
+    `Stop`), `Sea.Look`, `Sea.SwellHeight`, `Sea.AddWhirlpool`, `Sea.WhirlpoolAt`, `Sea.Swallowed`. A save of the
+    scene keeps the clock and the made storms; `Storms.CaptureState` and `ApplyState` give them as bytes for a
+    host to send. Editor: a **Storms** component, and **Under water** on a Foliage's Grow tool.
+  - Tests: a storm's kind by temperature, its life and its path; natural storms the same from the same seed and
+    clock; the swell flat when calm, the same wherever the world's middle is, and a whirlpool's pull; plants of
+    the bed by depth; an engine test of a storm crossing a sea without end, and of a reef and a kelp forest
+    grown; a C# system starting, changing, keeping and putting back a storm; GPU pictures of the three sea
+    looks, a whirlpool, a storm and a sandstorm far off, and the sea plants.
+  - Not done: the sea freezing where it is cold; the rough sea seen from under water; swell that calms in the
+    shallows and breaks on shores; wet ground and snow by place; storms sent between machines by the engine
+    itself (a game sends `CaptureState` in its own RPC); rain kept out from under roofs; sounds.
 - **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the
   `[sky]`, `[sun]` and `[post]` of a `.lighting` file, with `[blocks]` for every Block World's small cubes, laid
   over whatever lighting a level has rather than in place of it. The level's own sky, sun look and
@@ -1567,7 +1604,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   and `HeatZone`; native API 81. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
   Scene view's **Heat** shading, the ground round the camera tinted by temperature. Tests: a generated desert
   by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
-  in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads; what heat does to the weather;
+  in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads;
   a GPU tint over every surface in place of the Heat shading's squares.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.

@@ -627,7 +627,7 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
                 float3 mist = sun * (0.3 + 0.65 * exp(-0.7 * shade)) * 0.95 + sky * (0.45 + 0.55 * up);
                 // Heavy weather's clouds are dark.
                 float heavy = cloudWeather(frame, middle.xz + clouds.drift).y;
-                color += lerp(solid, mist, soft) * (1.0 - 0.6 * heavy) * added;
+                color += lerp(solid, mist, soft) * (1.0 - 0.72 * heavy) * added;
                 weight += added;
                 distance += t * added;
             }

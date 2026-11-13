@@ -854,7 +854,8 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
                 add(pool.middle, pool.radius, pool.depth);
             }
         }
-        if rules.whirlpools {
+        // Only where a generator knows how deep the sea is: a level built by hand has those scripts make.
+        if rules.whirlpools && storms.generator.is_some() {
             for storm in &storms.near {
                 if let Some(pool) = natural::storm_whirlpool(storm, clock, &deep) {
                     add(pool.middle, pool.radius, pool.depth);

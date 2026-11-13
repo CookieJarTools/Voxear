@@ -134,7 +134,12 @@ fn call(world: &mut World, what: i32, id: u32, v: &mut [f32; STORM_NUMBERS]) -> 
     match what {
         START => {
             let kind = StormKind::ALL.get(v[5].round().max(0.0) as usize).copied().unwrap_or_default();
-            super::start(world, Vec3::new(v[0], v[1], v[2]), v[3], v[4], kind) as i32
+            let id = super::start(world, Vec3::new(v[0], v[1], v[2]), v[3], v[4], kind);
+            // How long it takes to come on.
+            if let Some(storm) = world.resource_mut::<Storms>().and_then(|storms| storms.made_mut(id)) {
+                storm.grows = v[6].max(0.0);
+            }
+            id as i32
         }
         WEATHER_AT => {
             let at = super::weather_at(world, Vec3::new(v[0], v[1], v[2]));
@@ -284,9 +289,10 @@ mod tests {
         let mut world = World::new();
         world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 2.0, 0.0))));
         let mut v = [0.0; STORM_NUMBERS];
-        v[..6].copy_from_slice(&[100.0, 0.0, -50.0, 300.0, 0.9, StormKind::Blizzard.index() as f32]);
+        v[..7].copy_from_slice(&[100.0, 0.0, -50.0, 300.0, 0.9, StormKind::Blizzard.index() as f32, 45.0]);
         let id = call(&mut world, START, 0, &mut v) as u32;
         assert_eq!(id, 1);
+        assert_eq!(world.resource::<Storms>().unwrap().get(id).unwrap().grows, 45.0);
         assert_eq!(call(&mut world, GET, id, &mut v), 1);
         assert_eq!(v[..6], [100.0, 0.0, -50.0, 300.0, 0.9, 3.0]);
         assert_eq!((v[10], v[11]), (-1.0, 0.0), "without end, and made");

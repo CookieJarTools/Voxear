@@ -106,7 +106,8 @@ float weatherCurtain(Frame* frame, float3 direction, float distance, out float s
         float kept = exp(-thick.x - thick.y);
         float added = through * (1.0 - kept);
         sand += added * thick.y / max(thick.x + thick.y, 1e-6);
-        dark += added * sky.y;
+        // From inside it, what falls is the air's own colour: only a fall seen from outside is a dark curtain.
+        dark += added * sky.y * saturate(from / 300.0);
         hidden += added;
         through *= kept;
     }

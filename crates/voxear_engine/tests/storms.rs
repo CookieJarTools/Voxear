@@ -350,3 +350,97 @@ fn a_warm_shallow_sea_grows_a_reef_on_its_bed_and_a_cool_deep_one_a_forest_of_ke
     }
     assert!(count(&forest, "Clam") > 0 && count(&forest, "Tube Sponge") > 0, "{forest:?}");
 }
+
+/// Pictures of storms over the sea of a project of blocks named by `VOXEAR_STORMS_PROJECT`, kept in
+/// `VOXEAR_TEST_OUTPUT`: a storm coming over the sea from the shore, the same storm overhead, and a whirlpool.
+/// Not a test of anything: run by hand, to look at.
+#[test]
+#[ignore = "draws the project VOXEAR_STORMS_PROJECT names"]
+fn pictures_of_storms_over_a_projects_sea() {
+    use voxear_engine::{blocks::BlockWorldAsset, grown_plants};
+    use voxear_render::{Camera, Renderer, RendererSettings};
+    let (Ok(project), Ok(out)) = (std::env::var("VOXEAR_STORMS_PROJECT"), std::env::var("VOXEAR_TEST_OUTPUT")) else {
+        return eprintln!("skipping: needs VOXEAR_STORMS_PROJECT and VOXEAR_TEST_OUTPUT");
+    };
+    let mut renderer = Renderer::new_offscreen(1280, 720, &RendererSettings::default()).expect("a GPU");
+    let mut game = Game::new(Project::open(std::path::Path::new(&project)).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    game.tick(1.0 / 60.0, Some(&mut renderer));
+    // The world's generator, and where the level is in it.
+    let world = &game.engine.world;
+    let (blocks, asset) = world.query_ref::<(Entity, &BlockWorldAsset)>().into_iter().next().map(|(e, a)| (e, a.clone())).unwrap();
+    let corner = world.get::<Transform>(blocks).unwrap().position;
+    let position = asset.file.generate.as_ref().unwrap().position;
+    let generator = voxear_engine::blocks::generator(&mut game.content, &asset.file).expect("a generated world");
+    let depth = |x: f32, z: f32| generator.sea_level() - generator.height_at(x - corner.x + position[0], z - corner.z + position[1]);
+    let top = corner.y + game.engine.world.get::<SeaLevel>(blocks).expect("a sea").0;
+    // A place in shallow water near the level's middle, and the way out to the deepest water from it.
+    let ways: Vec<Vec3> = (0..16).map(|i| Vec3::new((i as f32 * 0.3927).cos(), 0.0, (i as f32 * 0.3927).sin())).collect();
+    let shore = (1..150)
+        .flat_map(|ring| ways.iter().map(move |way| *way * (ring as f32 * 20.0)))
+        .find(|at| (2.0..6.0).contains(&depth(at.x, at.z)) && ways.iter().any(|w| depth(at.x + w.x * 250.0, at.z + w.z * 250.0) > 15.0))
+        .expect("a shore within three kilometres");
+    let out_to_sea = *ways
+        .iter()
+        .max_by(|a, b| {
+            let far = |w: &Vec3| depth(shore.x + w.x * 250.0, shore.z + w.z * 250.0) + depth(shore.x + w.x * 600.0, shore.z + w.z * 600.0);
+            far(a).total_cmp(&far(b))
+        })
+        .unwrap();
+    let camera = game.engine.world.query_ref::<(Entity, &Camera)>().into_iter().next().unwrap().0;
+    game.engine.world.insert(camera, StormRules { natural: false, ..StormRules::default() });
+    let mut look = |game: &mut Game, eye: Vec3, at: Vec3| {
+        let towards = (at - eye).normalize();
+        let rotation = voxear_core::math::Quat::from_rotation_y(towards.x.atan2(towards.z))
+            * voxear_core::math::Quat::from_rotation_x(-towards.y.asin());
+        *game.engine.world.get_mut::<Transform>(camera).unwrap() = Transform::new(eye, rotation, Vec3::ONE);
+    };
+    let mut frames = 0u32;
+    let mut draw = |game: &mut Game, renderer: &mut Renderer, seconds: f32, name: Option<&str>| {
+        for _ in 0..(seconds * 60.0) as u32 {
+            game.tick(1.0 / 60.0, Some(renderer));
+            frames += 1;
+            renderer.render(&game.engine.world, frames as f32 / 60.0).unwrap();
+        }
+        let Some(name) = name else { return };
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    };
+    let settle = |game: &mut Game, renderer: &mut Renderer| {
+        for tick in 0..6000 {
+            game.tick(1.0 / 60.0, Some(renderer));
+            let made = voxear_engine::blocks::streamed(&game.engine.world) && grown_plants::settled(&game.engine.world);
+            if made && tick >= 3 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    };
+    // From the shore, a calm sea; then a storm three kilometres out, and the same storm come in over the viewer.
+    let eye = shore + Vec3::Y * (top + 4.0) - out_to_sea * 6.0;
+    look(&mut game, eye, eye + out_to_sea * 100.0 + Vec3::Y * 12.0);
+    settle(&mut game, &mut renderer);
+    draw(&mut game, &mut renderer, 1.5, Some("endless calm sea.png"));
+    let far_off = eye + out_to_sea * 3000.0;
+    let here = storms::weather_at(&game.engine.world, eye);
+    eprintln!("the open air at the shore: {:.1} °C, humidity {:.2}", here.celsius, here.humidity);
+    let id = storms::start(&mut game.engine.world, far_off, 900.0, 1.0, StormKind::Thunderstorm);
+    game.engine.world.resource_mut::<Storms>().unwrap().made_mut(id).unwrap().grows = 0.0;
+    draw(&mut game, &mut renderer, 2.0, Some("endless storm coming.png"));
+    let near = eye + out_to_sea * 250.0;
+    game.engine.world.resource_mut::<Storms>().unwrap().made_mut(id).unwrap().middle = [near.x as f64, near.z as f64];
+    draw(&mut game, &mut renderer, 6.0, Some("endless storm overhead.png"));
+    look(&mut game, eye + Vec3::Y * 2.0, eye + out_to_sea * 30.0 + Vec3::Y * -3.0);
+    draw(&mut game, &mut renderer, 1.0, Some("endless storm sea close.png"));
+    // The storm gone, a whirlpool in deeper water, seen from over its rim.
+    game.engine.world.resource_mut::<Storms>().unwrap().stop(id, 0.0);
+    let pool = shore + out_to_sea * 260.0;
+    storms::add_whirlpool(&mut game.engine.world, pool, 22.0, 8.0);
+    let over = pool + Vec3::Y * (top + 16.0) - out_to_sea * 34.0;
+    look(&mut game, over, pool + Vec3::Y * (top - 4.0));
+    settle(&mut game, &mut renderer);
+    draw(&mut game, &mut renderer, 2.0, Some("endless whirlpool.png"));
+}

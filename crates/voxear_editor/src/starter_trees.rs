@@ -67,7 +67,8 @@ const TREES: [StarterTree; 3] = [
     StarterTree {
         name: "Oak",
         plant: || PlantDef {
-            height: [7.0, 11.0],
+            // Its crown high enough for a camera behind a player under it to see past its leaves.
+            height: [9.0, 13.0],
             trunk: 1.2,
             taper: 0.6,
             branch: 0.375,
@@ -91,15 +92,15 @@ const TREES: [StarterTree; 3] = [
     StarterTree {
         name: "Birch",
         plant: || PlantDef {
-            height: [8.0, 12.0],
+            height: [9.5, 13.5],
             trunk: 1.0,
             taper: 0.5,
             branch: 0.25,
             bend: 0.1,
-            crown_width: [5.0, 7.0],
+            crown_width: [5.5, 7.5],
             crown_height: [6.0, 8.0],
             branches: 0.5,
-            leaf_size: 3.0,
+            leaf_size: 3.2,
             leaf_density: 0.9,
             roots: 0,
             ..PlantDef::default()
@@ -116,13 +117,13 @@ const TREES: [StarterTree; 3] = [
         name: "Pine",
         plant: || PlantDef {
             kind: PlantKind::Conifer,
-            height: [12.0, 18.0],
+            height: [13.0, 19.0],
             trunk: 1.2,
             taper: 0.7,
             branch: 0.25,
             bend: 0.0,
             crown_width: [6.0, 8.0],
-            crown_height: [9.0, 13.0],
+            crown_height: [9.0, 12.0],
             branches: 0.6,
             leaf_size: 2.4,
             leaf_density: 0.85,
@@ -144,7 +145,7 @@ const SHOWCASE_TREES: [StarterTree; 2] = [
     StarterTree {
         name: "Maple",
         plant: || PlantDef {
-            height: [8.0, 12.0],
+            height: [10.0, 14.0],
             trunk: 1.1,
             taper: 0.45,
             bend: 0.2,
@@ -167,7 +168,7 @@ const SHOWCASE_TREES: [StarterTree; 2] = [
     StarterTree {
         name: "Blossom",
         plant: || PlantDef {
-            height: [6.0, 9.0],
+            height: [8.0, 11.0],
             trunk: 1.0,
             taper: 0.5,
             bend: 0.4,
@@ -523,6 +524,20 @@ mod tests {
                 assert!((7..=22).contains(&high[1]), "{} stands {} blocks", tree.name, high[1]);
                 assert!(high[0] - low[0] <= 16 && high[2] - low[2] <= 16, "{}", tree.name);
             }
+            let lowest = (0..20)
+                .map(|seed| (tree.plant)().grow(seed).parts().filter(|(_, p)| *p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap())
+                .min()
+                .unwrap();
+            let least = if (tree.plant)().kind == PlantKind::Conifer { 2 } else { 4 };
+            assert!(lowest >= least, "{}: leaves from {lowest} blocks up", tree.name);
+            // Leaves high enough for a camera behind a player under it: a broadleaf's from four blocks up, a pine's
+            // skirt from two.
+            let lowest = (0..20)
+                .map(|seed| (tree.plant)().grow(seed).parts().filter(|(_, p)| *p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap())
+                .min()
+                .unwrap();
+            let least = if (tree.plant)().kind == PlantKind::Conifer { 2 } else { 4 };
+            assert!(lowest >= least, "{}: leaves from {lowest} blocks up", tree.name);
         }
         // The pine is the tallest and narrows upwards; the birch's trunk is the palest.
         let tall = |at: usize| (TREES[at].plant)().height[1];
@@ -573,6 +588,14 @@ mod tests {
                 assert!((5..=16).contains(&high[1]), "{} stands {} blocks", tree.name, high[1]);
                 assert!(high[0] - low[0] <= 16 && high[2] - low[2] <= 16, "{}", tree.name);
             }
+            // Leaves high enough for a camera behind a player under it: a broadleaf's from four blocks up, a pine's
+            // skirt from two.
+            let lowest = (0..20)
+                .map(|seed| (tree.plant)().grow(seed).parts().filter(|(_, p)| *p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap())
+                .min()
+                .unwrap();
+            let least = if (tree.plant)().kind == PlantKind::Conifer { 2 } else { 4 };
+            assert!(lowest >= least, "{}: leaves from {lowest} blocks up", tree.name);
         }
         // The maple's leaves red, the blossom's pink: redder than green and blue alike, the blossom's paler.
         let [maple, blossom] = SHOWCASE_TREES.map(|tree| tree.leaves.1);

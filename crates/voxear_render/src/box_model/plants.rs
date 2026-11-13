@@ -281,6 +281,17 @@ impl StarterPlant {
     }
 
     /// How many of its cubes make a metre, and how many it measures along
+    /// How many cubes higher a tree's crown stands than it was first drawn:
+    /// a metre and a half on the tree, a metre on the birch and the pine,
+    /// whose skirts start lower.
+    fn lift(self) -> i32 {
+        match self {
+            StarterPlant::Tree => 6,
+            StarterPlant::Pine | StarterPlant::Birch => 4,
+            _ => 0,
+        }
+    }
+
     /// X, Y and Z.
     fn grid(self) -> (f32, [u32; 3]) {
         match self {
@@ -288,15 +299,15 @@ impl StarterPlant {
             StarterPlant::Flower => (8.0, [3, 7, 3]),
             StarterPlant::Bush => (8.0, [10, 7, 10]),
             StarterPlant::Rock => (8.0, [13, 6, 10]),
-            StarterPlant::Tree => (4.0, [18, 26, 18]),
-            StarterPlant::Pine => (4.0, [14, 32, 14]),
+            StarterPlant::Tree => (4.0, [18, 26 + 6, 18]),
+            StarterPlant::Pine => (4.0, [14, 32 + 4, 14]),
             StarterPlant::TallGrass => (8.0, [7, 9, 7]),
             StarterPlant::Daisy => (8.0, [3, 4, 3]),
             StarterPlant::Bluebell => (8.0, [4, 6, 3]),
             StarterPlant::Fern => (8.0, [11, 4, 11]),
             StarterPlant::DryBush => (8.0, [9, 7, 9]),
             StarterPlant::Mushroom => (8.0, [5, 5, 5]),
-            StarterPlant::Birch => (4.0, [18, 34, 18]),
+            StarterPlant::Birch => (4.0, [18, 34 + 4, 18]),
             StarterPlant::DeadTree => (4.0, [14, 26, 14]),
             StarterPlant::Stump => (8.0, [8, 4, 8]),
             StarterPlant::Log => (8.0, [20, 6, 7]),
@@ -316,6 +327,12 @@ impl StarterPlant {
 
     /// The cube at `cell` of its box: its colour, or none for air.
     fn cube(self, cell: [i32; 3]) -> Option<Color> {
+        // A tree's crown stands higher than it was drawn, on a longer bare trunk, so a camera behind a player
+        // under it sees past its leaves: its cubes are those of the tree as drawn, that much lower.
+        let cell = match self {
+            StarterPlant::Tree | StarterPlant::Pine | StarterPlant::Birch => [cell[0], cell[1] - self.lift(), cell[2]],
+            _ => cell,
+        };
         let [x, y, z] = cell;
         match self {
             StarterPlant::Tuft => {
@@ -757,7 +774,7 @@ mod tests {
             let prepared = model.prepared("Plants/Test.boxmodel");
             assert_eq!(prepared.nodes.len(), 1);
             let tall = size[1] as f32 / model.pixels_per_block;
-            assert!((0.12..=8.5).contains(&tall), "{} is {tall} m tall", plant.name());
+            assert!((0.12..=9.5).contains(&tall), "{} is {tall} m tall", plant.name());
         }
         // Six grow on dry ground and eight on the sea's bed, the kelp the tallest of those.
         let sea: Vec<StarterPlant> = StarterPlant::ALL.into_iter().filter(|plant| plant.under_water()).collect();
@@ -778,7 +795,7 @@ mod tests {
         let white = StarterPlant::Birch.model().palette.iter().any(|color| color[..3].iter().all(|part| *part > 200));
         assert!(white, "the birch's bark");
         // The tree's limbs reach out from its trunk under its crown: wood where there was air.
-        let limb = StarterPlant::Tree.cube([12, 7, 9]);
+        let limb = StarterPlant::Tree.cube([12, 7 + 6, 9]);
         assert!(BARK.contains(&limb.expect("a limb")), "{limb:?}");
         // Names are all different, and every plant that is a tree says what a wood of it looks like far off.
         let names: std::collections::HashSet<&str> = StarterPlant::ALL.iter().map(|plant| plant.name()).collect();

@@ -1163,6 +1163,7 @@ fn restyle(game: &mut Game, entity: Entity) {
             fills_in: surface.fills_in,
             liquid: surface.liquid,
             glitter: surface.glitter,
+            mixed: false,
         });
     }
     look.surfaces = surfaces.into();

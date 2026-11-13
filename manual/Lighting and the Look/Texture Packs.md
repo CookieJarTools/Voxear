@@ -50,6 +50,7 @@ color_map = "Packs/Drawn/planks.png"
 | `[[block]]` | One block's pictures: `block`, the [[Blocks\|block]] by its path, then `all` for every face, or `sides`, `top` and `bottom` |
 | `[[material]]` | One [[Materials\|material]]'s pictures, wherever it is drawn: `material`, then any of `color_map`, `normal_map`, `metallic_map`, `emissive_map` and `height_map` |
 | `connected` | On a block or a material: its pictures here are five tiles, and faces drawn with them join (see [[Blocks#Faces that join]]) |
+| `overlap` | On a block: where it lies in the order of blocks that meet under this pack, in place of its own (see [[Blocks#Blocks that meet]]). An entry can hold this alone |
 | `[grain]` | A speckled picture, made of its colour, for every block of a plain colour the pack names no picture for: `pixels` a side, and `strength` from 0 to 1 |
 
 A face is one picture, its colour. For more, write the face as a table with the names a material uses:

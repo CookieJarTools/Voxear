@@ -108,8 +108,9 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
 // joined up and down; and joined all round with its inner corners showing. Each quarter of the face is that quarter
 // of the tile its own three neighbours make it: the one beside it, the one above or below it, and the one between
 // them. `joins` says which of the eight faces round it the face is joined to (voxear_terrain::blocks::mesh::JOINS),
-// along its picture as terrainSide lays it. Any other face's spot comes back as it is.
-TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 normal, uint joins)
+// along its picture as terrainSide lays it. A far ring's block, `level` times doubled, is one face still: a tile
+// lies over the whole of it. Any other face's spot comes back as it is.
+TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 normal, uint joins, uint level)
 {
     TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
     Material material = buffers()->materials[surface.material];
@@ -118,7 +119,8 @@ TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 n
         return spot;
     }
     uint side = abs(normal.y) > 0.5 ? 0 : (abs(normal.x) > 0.5 ? 1 : 2);
-    float2 within = frac(terrainSide(spot.place, side) * surface.uvScale);
+    float blocks = float(1u << level);
+    float2 within = frac(terrainSide(spot.place, side) * surface.uvScale / blocks);
     bool right = within.x >= 0.5;
     bool lower = within.y >= 0.5;
     bool beside = ((joins >> (right ? 1 : 0)) & 1) != 0;
@@ -132,6 +134,8 @@ TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 n
     float2 read = float2((tile + clamp(within.x, edge, 1.0 - edge)) / 5.0, within.y) / surface.uvScale;
     // Back to a place terrainSide reads there, and a fifth as fast along the tiles.
     TerrainSpot joined = spot;
+    joined.dx /= blocks;
+    joined.dy /= blocks;
     if (side == 0)
     {
         joined.place.x = read.x;
@@ -154,6 +158,116 @@ TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 n
         joined.dy.x *= 0.2;
     }
     return joined;
+}
+
+// A number from 0 to 1 for a whole-number place and a number of its own, from whole numbers alone.
+float blockFringeGrain(int2 place, uint salt)
+{
+    uint h = uint(place.x) * 0x9E3779B1u ^ uint(place.y) * 0x85EBCA77u ^ salt * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return float(h >> 8) / 16777216.0;
+}
+
+// How far in from an edge the block beside it creeps there, in pixels of a sixteen-pixel block: by the pixel `along`
+// the edge, so its fringe has teeth of uneven length, longer and shorter over a few pixels at a time and each a
+// little its own; for a smoothed picture, run smoothly from tooth to tooth.
+float blockFringeReach(float along, int row, uint salt, bool sharp)
+{
+    // A picture of sharp pixels creeps a whole pixel at a time: read at the pixel's middle.
+    float at = sharp ? floor(along) + 0.5 : along;
+    float low = floor(at - 0.5);
+    float t = at - 0.5 - low;
+    float own = lerp(blockFringeGrain(int2(int(low), row), salt), blockFringeGrain(int2(int(low) + 1, row), salt), t);
+    if (sharp)
+    {
+        own = blockFringeGrain(int2(int(floor(along)), row), salt);
+    }
+    // And over four pixels at a time.
+    float wide = at / 4.0;
+    float first = floor(wide - 0.5);
+    float s = wide - 0.5 - first;
+    s = s * s * (3.0 - 2.0 * s);
+    float swell = lerp(blockFringeGrain(int2(int(first), row), salt + 16), blockFringeGrain(int2(int(first) + 1, row), salt + 16), s);
+    // Spread out from the middle, where the two together would mostly lie: an edge that wanders, not a straight
+    // one with nicks in it.
+    float both = saturate((swell * 0.65 + own * 0.35 - 0.5) * 1.9 + 0.5);
+    return lerp(0.6, 5.4, both);
+}
+
+// How much of surface `over`, a block beside this face in its plane that lies higher in the order of blocks, shows
+// at the spot: its picture carried on a few ragged pixels over this face's edge, from each of the `edges` it lies
+// beside (left, right, up and down, a bit each, along the picture as terrainSide lays it), or, with none, from
+// each of the `corners` it touches (up left, up right, down left, down right). A picture drawn with sharp pixels, or a
+// block of a colour alone, creeps in whole pixels; a smoothed one over a soft edge. Far off, where its pixels are
+// smaller than the screen's, the stepped fringe gives way to the soft one, which does not shimmer.
+float blockFringe(BlockWorld world, uint over, TerrainSpot spot, float3 normal, uint edges, uint corners)
+{
+    TerrainSurface surface = world.surfaces[min(over, world.surfaceCount - 1)];
+    Material material = buffers()->materials[surface.material];
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    bool pictured = height > 2;
+    bool sharp = !pictured || (material.flags & MATERIAL_PIXELS) != 0;
+    float cells = sharp && pictured ? float(height) : 16.0;
+    // A pixel of a sixteen-pixel block, in the picture's own.
+    float unit = cells / 16.0;
+    uint side = abs(normal.y) > 0.5 ? 0 : (abs(normal.x) > 0.5 ? 1 : 2);
+    float2 uv = terrainSide(spot.place, side) * surface.uvScale;
+    int2 block = int2(floor(uv));
+    float2 flowing = frac(uv) * cells;
+    float2 stepped = floor(flowing) + 0.5;
+    // How many of the picture's pixels one of the screen's covers: past one, the steps cannot be told apart.
+    float2 slope = max(abs(terrainSide(spot.dx, side)), abs(terrainSide(spot.dy, side))) * surface.uvScale * cells;
+    float distant = sharp ? saturate(max(slope.x, slope.y) * 1.5 - 0.5) : 1.0;
+    float cover = 0.0;
+    for (uint turn = (distant >= 1.0 ? 1 : 0); turn < (distant <= 0.0 ? 1 : 2); turn++)
+    {
+        bool steps = turn == 0;
+        float2 at = steps ? stepped : flowing;
+        float soft = 0.75 * unit;
+        float most = 0.0;
+        if (edges == 0)
+        {
+            // From corners alone: a small rounded patch of each.
+            for (uint corner = 0; corner < 4; corner++)
+            {
+                if (((corners >> corner) & 1) == 0)
+                {
+                    continue;
+                }
+                float2 origin = float2((corner & 1) != 0 ? cells : 0.0, (corner & 2) != 0 ? cells : 0.0);
+                float reach = lerp(1.6, 3.6, blockFringeGrain(block, 5 + corner)) * unit;
+                float away = length(at - origin);
+                most = max(most, steps ? (away < reach ? 1.0 : 0.0) : smoothstep(reach + soft, reach - soft, away));
+            }
+        }
+        else
+        {
+            // Left, right, up, down: how far it is from that edge, and which pixel along it.
+            float4 away = float4(at.x, cells - at.x, at.y, cells - at.y);
+            float4 along = float4(at.y, at.y, at.x, at.x) / unit;
+            int4 row = int4(block.x, block.x + 1, block.y, block.y + 1);
+            int4 column = int4(block.y, block.y, block.x, block.x);
+            for (uint edge = 0; edge < 4; edge++)
+            {
+                if (((edges >> edge) & 1) == 0)
+                {
+                    continue;
+                }
+                // Each tooth by the pixel along the edge in the whole world, and by which edge of which block.
+                float place = along[edge] + float(column[edge]) * 16.0;
+                float reach = blockFringeReach(place, row[edge], edge / 2, steps) * unit;
+                float shown = steps ? (away[edge] < reach ? 1.0 : 0.0) : smoothstep(reach + soft, reach - soft, away[edge]);
+                most = max(most, shown);
+            }
+        }
+        cover += most * (steps ? 1.0 - distant : distant);
+    }
+    return cover;
 }
 
 // Surface `index` of a world, its pictures from the side the ground faces.
@@ -419,9 +533,35 @@ bool terrainShading(
         float3 facing;
         float sunk, grain, shown;
         bool cubes = blockCubes(world, input.lod, stands, normal, spot, facing, sunk, grain, shown);
+        // What the face keeps of the faces round it (cubePoint), and its chunk's level over that.
+        uint round = uint(input.uv.y + 0.5);
+        uint level = round >> 14;
+        TerrainSurface drawn = world.surfaces[min(input.lod, world.surfaceCount - 1)];
+        bool mixed = (drawn.flags & TERRAIN_SURFACE_MIXED) != 0;
         // A face that joins those beside it reads its pictures' tile for where on it this is.
-        spot = blockJoined(world, input.lod, spot, normal, uint(input.uv.y + 0.5));
+        if (!mixed)
+        {
+            spot = blockJoined(world, input.lod, spot, normal, round & 0xFF, level);
+        }
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+        // A block beside it that lies higher in the order creeps over its edge: among the world's own blocks, where
+        // a block is as large as its picture.
+        if (mixed)
+        {
+            uint over = round & 0xFF;
+            uint from = (round >> 10) & 15;
+            bool corners = ((round >> 9) & 1) != 0;
+            float cover = level == 0 ? blockFringe(world, over, spot, normal, corners ? 0 : from, corners ? from : 0) : 0.0;
+            // A quad more over a face drawn already (voxear_terrain::blocks::mesh) is there only where its fringe is.
+            if (((round >> 8) & 1) != 0 && cover <= 0.0)
+            {
+                discard;
+            }
+            if (cover > 0.0)
+            {
+                blendLayer(layer, blockLayer(world, over, spot, normal, input.tangent), cover);
+            }
+        }
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.
         float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
         if (cutoff > 0.0 && layer.base.a < cutoff)
@@ -472,7 +612,7 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
     o.place = stands - world.corner;
     o.normal = b.normal;
     // Over its surface, which of the faces round it a face that joins is joined to.
-    o.surface = b.surface | (b.joins << 24);
+    o.surface = b.surface | ((b.joins & 0xFF) << 24) | ((b.joins >> 14) << 20);
     o.world = push.level - 1;
     return o;
 }
@@ -498,7 +638,7 @@ void blockShadowFragment(BlockShadowOut input)
     spot.dy = ddy(spot.place);
     float3 normal = normalize(input.normal);
     float4 tangent = float4(normalizeOr(float3(normal.y, -normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
-    spot = blockJoined(world, surface, spot, normal, input.surface >> 24);
+    spot = blockJoined(world, surface, spot, normal, input.surface >> 24, (input.surface >> 20) & 7);
     if (blockLayer(world, surface, spot, normal, tangent).base.a < cutoff)
     {
         discard;

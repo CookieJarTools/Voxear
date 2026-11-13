@@ -1121,6 +1121,13 @@ five tiles, `resolved` works out from a block's materials (or the pack worn) whi
 each such face apart with the faces round it that it joins, and the block shader picks each quarter of the face from
 the tile those make it.
 
+**Blocks that meet** mix by an order, not by pairs: each block has an `overlap`, and the higher creeps over the
+lower. A quad has no room to say this beside its size, so a face that takes a fringe is drawn with its look's twin, a
+second entry of the same material 128 looks on, whose surface flag tells the vertex shader to read the quad's size
+and swaying bits as the look that creeps over it and from where. Twins are a fixed distance from their looks so that
+a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
+in the same place, later in the pool and discarded but for its fringe.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 

@@ -76,19 +76,28 @@ pub struct BlockFaces {
     /// of the faces round it it joins. With any, no face shows between two
     /// of it.
     pub connects: u8,
+    /// Which of its faces can take another block's picture over their
+    /// edge, a bit each as `connects` has them: such a face beside a block
+    /// with a higher `overlap` is a quad of its own, drawn with its look's
+    /// twin (see `mesh`).
+    pub mixes: u8,
+    /// How far up the order of blocks that meet it lies: its picture creeps
+    /// over the edge of a block beside it with a lower one.
+    pub overlap: u8,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false, see_through: false, sways: false, connects: 0, color: [0; 3] }
+        let (water, see_through, sways) = (false, false, false);
+        Self { top, sides, bottom, water, see_through, sways, connects: 0, mixes: 0, overlap: 0, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
         let (top, sides, bottom) = (surface, surface, surface);
-        Self { top, sides, bottom, water: true, see_through: false, sways: false, connects: 0, color: [0; 3] }
+        Self { water: true, ..Self::new(top, sides, bottom) }
     }
 }
 
@@ -480,7 +489,7 @@ impl BlockWorld {
     pub fn restyled(&self, faces: &[BlockFaces], smooth: bool) -> Self {
         // What a mesh keeps of a block's faces: its surfaces, and what it shows, moves and joins.
         let drawn = |faces: &BlockFaces| {
-            let shape = (faces.water, faces.see_through, faces.sways, faces.connects);
+            let shape = (faces.water, faces.see_through, faces.sways, faces.connects, faces.mixes, faces.overlap);
             (faces.top, faces.sides, faces.bottom, shape)
         };
         if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {

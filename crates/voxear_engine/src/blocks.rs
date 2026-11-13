@@ -703,6 +703,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             fills_in: 0.0,
             liquid: Default::default(),
             glitter: false,
+            mixed: face.mixed,
         });
     }
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };

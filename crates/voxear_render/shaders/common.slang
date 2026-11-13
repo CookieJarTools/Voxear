@@ -1261,6 +1261,8 @@ static const uint TERRAIN_SURFACE_WET = 2;
 static const uint TERRAIN_SURFACE_PUDDLES = 4;
 static const uint TERRAIN_SURFACE_LAVA = 8;
 static const uint TERRAIN_SURFACE_GLITTER = 16;
+// A world of blocks' look's twin: each of its faces one block, with the look that creeps over its edge (blocks.slang).
+static const uint TERRAIN_SURFACE_MIXED = 32;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

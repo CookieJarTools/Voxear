@@ -115,6 +115,10 @@ pub struct SurfaceLook {
     /// What lies on it or runs over it, and whether it sparkles in the sun.
     pub liquid: voxear_terrain::surfaces::Liquid,
     pub glitter: bool,
+    /// For a world of blocks: a look's twin, whose faces are each one block
+    /// and keep the look that creeps over their edge and from where (see
+    /// `voxear_terrain::blocks::mesh::mixing`).
+    pub mixed: bool,
 }
 
 /// A terrain as `shaders/terrain.slang` reads it.
@@ -188,6 +192,7 @@ const SURFACE_WET: u32 = 2;
 const SURFACE_PUDDLES: u32 = 4;
 const SURFACE_LAVA: u32 = 8;
 const SURFACE_GLITTER: u32 = 16;
+const SURFACE_MIXED: u32 = 32;
 
 /// A surface's flags for the shaders: drawn from the side, its liquid, and
 /// whether it glitters.
@@ -199,7 +204,8 @@ pub(crate) fn surface_flags(look: &SurfaceLook) -> u32 {
         Liquid::Puddles => SURFACE_PUDDLES,
         Liquid::Lava => SURFACE_LAVA,
     };
-    u32::from(look.triplanar) * SURFACE_TRIPLANAR | liquid | u32::from(look.glitter) * SURFACE_GLITTER
+    let flags = u32::from(look.triplanar) * SURFACE_TRIPLANAR | liquid | u32::from(look.glitter) * SURFACE_GLITTER;
+    flags | u32::from(look.mixed) * SURFACE_MIXED
 }
 
 /// A patch as the vertex shader reads it: its corner in the terrain's

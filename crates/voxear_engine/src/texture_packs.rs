@@ -207,6 +207,11 @@ pub struct BlockPictures {
     /// those of its kind beside them (see `MaterialData::connected`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub connected: bool,
+    /// How far up the order of blocks that meet it lies under this pack, in
+    /// place of its own (see `BlockDef::overlap`): its picture creeps over
+    /// the edge of a block beside it with a lower one. None for its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlap: Option<u8>,
 }
 
 /// What a face is drawn with: a picture of its colour, or a picture for
@@ -380,12 +385,14 @@ pub struct Pack {
     pub grain: Option<Grain>,
     blocks: HashMap<AssetGuid, HashMap<Part, Face>>,
     materials: HashMap<AssetGuid, Face>,
+    /// The blocks it gives another place in the order of blocks that meet.
+    overlaps: HashMap<AssetGuid, u8>,
 }
 
 impl Pack {
     /// Whether it changes nothing.
     pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty() && self.materials.is_empty() && self.grain.is_none()
+        self.blocks.is_empty() && self.materials.is_empty() && self.overlaps.is_empty() && self.grain.is_none()
     }
 
     /// The blocks it draws with pictures of its own.
@@ -411,6 +418,9 @@ impl Pack {
     pub fn dress(&self, guid: AssetGuid, kind: &mut BlockKind) {
         if kind.water {
             return;
+        }
+        if let Some(&overlap) = self.overlaps.get(&guid) {
+            kind.overlap = overlap;
         }
         let Some(parts) = self.blocks.get(&guid) else {
             let plain = kind.material.is_none() && kind.top.is_none() && kind.bottom.is_none();
@@ -539,6 +549,9 @@ fn found(content: &Content, reference: &str, file: &TexturePackFile, home: Home)
     };
     for entry in &file.blocks {
         let Some(guid) = asset(&entry.block, AssetKind::Block) else { continue };
+        if let Some(overlap) = entry.overlap {
+            pack.overlaps.insert(guid, overlap);
+        }
         let faces = [
             (Part::All, &entry.all),
             (Part::Sides, &entry.sides),
@@ -1041,6 +1054,10 @@ mod tests {
         assert!(joined.blocks[0].connected && joined.materials[0].connected && !file.blocks[0].connected);
         assert_eq!(TexturePackFile::parse(&joined.to_text()).unwrap(), joined);
         assert!(!file.to_text().contains("connected"), "what does not join does not say so");
+        // And a block's place in the order of blocks that meet, pictures or none.
+        let creeping = TexturePackFile::parse("[[block]]\nblock = \"Blocks/Grass.block\"\noverlap = 2\n").unwrap();
+        assert_eq!((creeping.blocks[0].overlap, file.blocks[0].overlap), (Some(2), None));
+        assert_eq!(TexturePackFile::parse(&creeping.to_text()).unwrap(), creeping);
         let wild = TexturePackFile::parse("[grain]\npixels = 9000\nstrength = 7.0").unwrap().grain.unwrap();
         assert_eq!((wild.pixels, wild.strength), (Grain::MOST, 1.0));
     }
@@ -1131,6 +1148,12 @@ mod tests {
         joining.dress(planks, &mut kind);
         // Its bottom has no material of its own, so it is drawn as its sides are.
         assert_eq!(kind.connected, JOINS_SIDES | JOINS_BOTTOM, "its top the pack's plain picture");
+        // A pack gives a block another place in the order of blocks that meet, pictures or none.
+        let mut ordered = Pack { grain: Some(Grain::default()), ..Pack::default() };
+        ordered.overlaps.insert(grass, 3);
+        let (_, mut kind) = entry(&mut content, "Blocks/Grass.block");
+        ordered.dress(grass, &mut kind);
+        assert!(kind.overlap == 3 && kind.material.is_some(), "and the grain as well: {kind:?}");
         // Grain: a block of a colour alone the pack has no picture for; water stays water.
         let (grass, mut kind) = entry(&mut content, "Blocks/Grass.block");
         Pack { grain: Some(Grain::default()), ..Pack::default() }.dress(grass, &mut kind);

@@ -34,6 +34,7 @@ Pick a block, and the Inspector shows:
 | Top | Its top's material |
 | Bottom | Its bottom's material |
 | Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
+| Overlap | Where it lies in the order of blocks that meet: its picture creeps over the edge of a block beside it with a lower Overlap. 0 keeps to itself (see [Blocks that meet](#blocks-that-meet)) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour, matt: it shines back nothing of the sky. For a block that shines, such as ice or polished stone, give it a material with a low **Roughness**. A liquid is drawn in its colour alone, so its materials go.
@@ -73,6 +74,19 @@ Draw the same inside in all five, and only the border differently. Each quarter 
 - A [[Texture Packs|texture pack]] can make a block join, or stop it joining, with the pictures it brings.
 - A joining face is drawn plain in a world of [[Block Worlds#Faces of small cubes|small cubes]].
 - A world drawn smooth joins nothing: give its blocks pictures of one tile.
+
+### Blocks that meet
+
+Where two different blocks lie side by side, the edge between them is a straight line unless one of them has an **Overlap**. The block with the higher Overlap creeps over the edge of the other: a ragged fringe of its own picture, a few pixels deep, with teeth of uneven length. Give grass 2, dirt 1 and rock 0, and grass grows over the edge of both, and dirt spills onto rock.
+
+- Nothing needs drawing: the fringe is the block's own picture carried on past its edge, so it suits any picture, and any [[Texture Packs|texture pack]] a player wears.
+- A picture drawn with **Sharp pixels**, and a block of a colour alone, creep a whole pixel at a time. A smoothed picture creeps over a soft, wavy edge.
+- Blocks meet in one plane: grass creeps over the rock level with it, not over a step up or down, and not over a block whose face is covered.
+- Every higher block beside a face creeps over it, each from its own side, the highest on top: rock with grass on one side and dirt on another takes a fringe of each.
+- Two blocks with the same Overlap keep a straight edge between them.
+- A liquid, a see-through block, one that sways and a face that joins take no fringe and give none.
+- Far off, past the world's own blocks, edges are straight. So are those of a world drawn smooth, which blends its ground its own way.
+- A world can mix its blocks while it draws 128 looks or fewer.
 
 ### Breaking
 

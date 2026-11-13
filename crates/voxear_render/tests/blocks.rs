@@ -86,6 +86,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -202,6 +203,7 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -278,6 +280,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -375,6 +378,7 @@ fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted(
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -452,6 +456,7 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -524,6 +529,7 @@ fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -676,6 +682,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -754,6 +761,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -881,6 +889,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1028,6 +1037,7 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1241,6 +1251,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1391,6 +1402,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1561,6 +1573,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1652,6 +1665,7 @@ fn generated_view(
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1829,6 +1843,7 @@ fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Ve
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();
@@ -1936,6 +1951,7 @@ fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                mixed: false,
             }
         })
         .collect();

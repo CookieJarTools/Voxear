@@ -3,7 +3,8 @@
 //! it up as it is worn and lets go of it as it is taken off, and it is
 //! drawn so: the game's pictures, a player's own files, and a grain made of
 //! each block's colour. And faces that join: panes of glass, by their
-//! material, and a block a pack gives joining tiles.
+//! material, and a block a pack gives joining tiles. And blocks that meet:
+//! grass creeping over the edge of dirt and stone beside it.
 
 use voxear_ecs::Entity;
 use voxear_engine::{Engine, Game, Project, blocks::BlockWorldAsset, texture_packs};
@@ -370,4 +371,104 @@ fn faces_that_join_are_drawn_as_one_sheet_with_a_border_round_the_whole() {
     texture_packs::wear(&mut game.content, "Packs/Joined/Joined.texturepack").unwrap();
     let worn = draw(&mut game, "joined glass and stone.png");
     assert!(unlike(&own, &worn) > 0.02, "the stone's tiles show: {}", unlike(&own, &worn));
+}
+
+/// The flat world of [`project`] with its blocks in an order: grass over dirt over stone. And a pack that has each
+/// keep to itself again.
+fn ordered_project() -> tempfile::TempDir {
+    let dir = project();
+    let block = |color: [f32; 3], overlap: u8| BlockDef { overlap, ..BlockDef::colored(color) }.to_text();
+    std::fs::write(dir.path().join("Blocks/Grass.block"), block([0.25, 0.55, 0.15], 2)).unwrap();
+    std::fs::write(dir.path().join("Blocks/Dirt.block"), block([0.42, 0.3, 0.2], 1)).unwrap();
+    let apart = "description = \"Each block to itself.\"\n\n[[block]]\nblock = \"Blocks/Grass.block\"\noverlap = 0\n\n\
+                 [[block]]\nblock = \"Blocks/Dirt.block\"\noverlap = 0\n";
+    std::fs::create_dir_all(dir.path().join("Packs/Apart")).unwrap();
+    std::fs::write(dir.path().join("Packs/Apart/Apart.texturepack"), apart).unwrap();
+    dir
+}
+
+/// Stone and dirt let into the grass in front of the camera, level with it: a floor of stone five by four with a
+/// block of grass in it, dirt beside the stone, and a step of stone up from the grass, whose top is another plane.
+fn build_ordered(game: &mut Game) {
+    let field = field(game);
+    let mut blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let stone = (10..14).flat_map(|z| (12..17).map(move |x| ([x, 5, z], 3u16)));
+    let dirt = (10..14).flat_map(|z| (17..20).map(move |x| ([x, 5, z], 2u16)));
+    let more = [([14, 5, 12], 1u16), ([21, 6, 13], 3u16), ([22, 6, 13], 1u16)];
+    blocks.set_blocks(stone.chain(dirt).chain(more));
+    game.engine.world.insert(field, blocks);
+}
+
+#[test]
+fn grass_creeps_over_the_edge_of_the_dirt_and_stone_beside_it_and_a_pack_can_keep_it_to_itself() {
+    use voxear_render::{Renderer, RendererSettings};
+    use voxear_terrain::blocks::{file::MIXED_LOOK, mesh};
+    let dir = ordered_project();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    build_ordered(&mut game);
+    game.tick(1.0 / 60.0, None);
+    let field = field(&game);
+    // Each block can take another's edge, and lies where its file says in their order; every look has its twin.
+    let faces = game.engine.world.get::<BlockWorld>(field).unwrap().faces.clone();
+    assert_eq!([faces[1].overlap, faces[2].overlap, faces[3].overlap], [2, 1, 0]);
+    assert!(faces[1..4].iter().all(|faces| faces.mixes == 7));
+    let drawn = game.engine.world.get::<BlockWorldAsset>(field).unwrap().drawn.clone();
+    let (looks, _) = drawn.faces();
+    assert_eq!((drawn.looks(), looks.len()), (4, usize::from(MIXED_LOOK) + 4), "its looks, and a twin of each");
+    assert!(looks[usize::from(MIXED_LOOK)].mixed && looks[usize::from(MIXED_LOOK)].color == looks[0].color);
+    // What creeps over each top that takes an edge: grass over stone and dirt, dirt over stone where no grass is.
+    let over = |game: &Game| -> Vec<(u8, u8)> {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        let quads =
+            blocks.meshes.values().flat_map(|chunk| chunk.quads[..chunk.buckets[mesh::FACINGS] as usize].to_vec());
+        let tops = quads.filter(|quad| (quad[0] >> 25) & 7 == 2 && quad[1] as u8 & MIXED_LOOK != 0);
+        tops.map(|quad| (quad[1] as u8 & !MIXED_LOOK, mesh::mixing(quad).look)).collect()
+    };
+    let mixed = over(&game);
+    let count = |under: u8, creeping: u8| mixed.iter().filter(|pair| **pair == (under, creeping)).count();
+    let (grass, dirt, stone) = (faces[1].top, faces[2].top, faces[3].top);
+    assert!(count(stone, grass) >= 12 && count(dirt, grass) >= 8 && count(stone, dirt) >= 2, "{mixed:?}");
+    assert_eq!(count(grass, stone) + count(grass, dirt) + count(dirt, stone), 0, "never the lower over the higher");
+    // A pack that has grass and dirt keep to themselves: no face takes an edge.
+    texture_packs::wear(&mut game.content, "Packs/Apart/Apart.texturepack").unwrap();
+    game.tick(1.0 / 60.0, None);
+    assert!(over(&game).is_empty());
+    texture_packs::wear(&mut game.content, "").unwrap();
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(over(&game).len(), mixed.len());
+
+    let Ok(mut renderer) = Renderer::new_offscreen(1280, 720, &RendererSettings::default()) else {
+        eprintln!("skipping the pictures: no usable GPU");
+        return;
+    };
+    let mut game = self::game(&dir);
+    game.start(Some(&mut renderer)).unwrap();
+    build_ordered(&mut game);
+    let mut draw = |game: &mut Game, name: &str| {
+        for _ in 0..40 {
+            game.tick(1.0 / 60.0, Some(&mut renderer));
+            renderer.render(&game.engine.world, 1.0).unwrap();
+        }
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+        pixels
+    };
+    let unlike = |a: &[u8], b: &[u8]| {
+        let pairs = a.chunks_exact(4).zip(b.chunks_exact(4));
+        pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 24)).count()
+    };
+    // In their own colours, then kept apart, then under the game's pack of pixel pictures.
+    let creeping = draw(&mut game, "mixed colours.png");
+    texture_packs::wear(&mut game.content, "Packs/Apart/Apart.texturepack").unwrap();
+    let apart = draw(&mut game, "mixed apart.png");
+    let fringe = unlike(&creeping, &apart);
+    assert!((1500..60_000).contains(&fringe), "a fringe along the edges, and no more: {fringe} pixels");
+    texture_packs::wear(&mut game.content, "Packs/Pixel/Pixel.texturepack").unwrap();
+    draw(&mut game, "mixed pixel.png");
 }

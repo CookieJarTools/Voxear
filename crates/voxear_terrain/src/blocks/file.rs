@@ -145,7 +145,17 @@ pub struct BlockKind {
     /// materials where the world is made, as `cutout` is.
     #[serde(skip)]
     pub connected: u8,
+    /// How far up the order of blocks that meet it lies (see
+    /// `block::BlockDef::overlap`). Never written: its block says, or the
+    /// texture pack worn.
+    #[serde(skip)]
+    pub overlap: u8,
 }
+
+/// Over a look's number, the look it is with another block's picture over
+/// its edge: a look and its twin are that far apart (see
+/// [`BlockFile::faces`]).
+pub const MIXED_LOOK: u8 = 0x80;
 
 /// The bits of a kind's faces that join: its material's, on its sides and
 /// wherever its top or bottom has none of its own; its top's; its bottom's.
@@ -243,6 +253,7 @@ impl Default for BlockKind {
             cutout: false,
             sways: false,
             connected: 0,
+            overlap: 0,
         }
     }
 }
@@ -313,14 +324,16 @@ impl Default for BlockFile {
     }
 }
 
-/// How one face is drawn: with a material, or else its colour; and whether
-/// its material's pictures are the five tiles of a face that joins those
-/// beside it (see `mesh`).
+/// How one face is drawn: with a material, or else its colour; whether its
+/// material's pictures are the five tiles of a face that joins those beside
+/// it; and whether it is a look's twin, drawn the same but for another
+/// block's picture over its edge (see `mesh`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceLook {
     pub material: Option<String>,
     pub color: [f32; 3],
     pub connected: bool,
+    pub mixed: bool,
 }
 
 /// A key a file's generated ground may still hold, from when ground could
@@ -432,11 +445,37 @@ impl BlockFile {
     /// place a block was taken out of has no look. Its entries naming
     /// blocks are drawn as they stand here, so fill them in first (see
     /// `block::BlockDef::fill`).
+    ///
+    /// Where a block of it creeps over those beside it (an `overlap` over
+    /// 0), every look has a twin [`MIXED_LOOK`] after it, drawn the same
+    /// but for another block's picture over its edge, and each block says
+    /// which of its faces can take one (`BlockFaces::mixes`). The looks
+    /// between are fillers no face names. A world of more looks than
+    /// `MIXED_LOOK` has no room for twins, and its blocks keep to
+    /// themselves.
     pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
+        let (mut looks, mut faces) = self.own_faces();
+        let twins = usize::from(MIXED_LOOK);
+        let creeps = self.blocks.iter().any(|kind| kind.is_live() && !kind.water && kind.overlap > 0);
+        if !creeps || looks.len() > twins {
+            faces.iter_mut().for_each(|faces| faces.mixes = 0);
+            return (looks, faces);
+        }
+        let own = looks.clone();
+        let filler = FaceLook { material: None, color: [0.6; 3], connected: false, mixed: false };
+        looks.resize(twins, filler);
+        looks.extend(own.into_iter().map(|look| FaceLook { mixed: true, ..look }));
+        (looks, faces)
+    }
+
+    /// Its looks without their twins, and each block's faces (see
+    /// [`faces`](Self::faces)).
+    fn own_faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
         let mut find = |material: &Option<String>, color: [f32; 3], connected: bool| {
             // A face with no picture has nothing to join with.
-            let look = FaceLook { material: material.clone(), color, connected: connected && material.is_some() };
+            let connected = connected && material.is_some();
+            let look = FaceLook { material: material.clone(), color, connected, mixed: false };
             let at = looks.iter().position(|kept| *kept == look).unwrap_or_else(|| {
                 looks.push(look);
                 looks.len() - 1
@@ -461,15 +500,22 @@ impl BlockFile {
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
             let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
             let connects = u8::from(joined[0]) * JOINS_TOP | u8::from(joined[1]) * JOINS_SIDES | u8::from(joined[2]) * JOINS_BOTTOM;
+            // A face takes another block's picture over its edge where it is plain ground: not seen through, not
+            // swaying, and not one that joins.
+            let plain = !kind.water && !see_through && !sways;
+            let takes = |joined: bool, bit: u8| if plain && !joined { bit } else { 0 };
+            let mixes = takes(joined[0], JOINS_TOP) | takes(joined[1], JOINS_SIDES) | takes(joined[2], JOINS_BOTTOM);
+            let overlap = if kind.water { 0 } else { kind.overlap };
             let drawn = BlockFaces::new(top, sides, bottom);
-            faces.push(BlockFaces { water: kind.water, see_through, sways, connects, color, ..drawn });
+            faces.push(BlockFaces { water: kind.water, see_through, sways, connects, mixes, overlap, color, ..drawn });
         }
         (looks, faces)
     }
 
-    /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can.
+    /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can,
+    /// their twins not counted.
     pub fn looks(&self) -> usize {
-        self.faces().0.len()
+        self.own_faces().0.len()
     }
 
     /// The blocks its ground starts as: made by `generator` where it is

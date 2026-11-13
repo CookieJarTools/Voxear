@@ -168,7 +168,7 @@ fn items_recipes_and_a_blocks_rules_are_edited_in_the_inspector_and_a_block_is_g
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     for label in
-        ["Color", "Material", "Liquid", "Hardness", "Unbreakable", "Tool", "Tier", "Break", "Place", "Step", "Data"]
+        ["Color", "Material", "Overlap", "Liquid", "Hardness", "Unbreakable", "Tool", "Tier", "Break", "Place", "Step", "Data"]
     {
         assert_eq!(prop_rows(&editor.ui, label).len(), 1, "a block's {label}");
     }

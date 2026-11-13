@@ -1124,6 +1124,24 @@ Done so far:
     merged top), the five tiles, the glass block's files, a world's faces and quads with glass and with a pack
     that makes stone join, and a GPU picture of both looked at enlarged.
   - Later: joining across different blocks, tiles for a face's four turns, a world drawn smooth.
+- **Blocks that meet:** a block's `overlap` (`BlockDef`, the Inspector's **Overlap**, or a texture pack's
+  `overlap` on a `[[block]]`) is its place in the order of blocks that meet: where a face lies beside a face of a
+  block with a higher one, in its plane, that block's picture creeps a ragged fringe over its edge. Where a world
+  has a block that creeps, `BlockFile::faces` gives every look a twin `MIXED_LOOK` (128) after it, so a world mixes
+  while it has 128 looks or fewer, and `looks()` counts them without their twins. The mesher makes a face that
+  takes a fringe a quad of its own drawn with its look's twin, which keeps where its size and swaying corners
+  would be the look that creeps over it and from which of its edges or its corners (`mesh::Mixing`). Each
+  further block that creeps over the same face, or the same block from a corner its edges do not reach, is a quad
+  more over that face, after it among its layer's quads, drawn only where its fringe is (the block passes test
+  depth for no less, so the later of two faces in one place shows).
+  `SurfaceLook::mixed` flags the twin (`TERRAIN_SURFACE_MIXED`); `blockFringe` in `blocks.slang` works out how
+  much of the other look shows from whole-number hashes, teeth by the pixel along the edge, stepped for sharp
+  pictures and colour-only blocks and soft for smoothed ones and far off, and the two looks are blended. Far rings
+  and worlds drawn smooth do not mix. A joining face in a far ring now lays one tile over its whole block.
+  - Tests: the mesher (a block of grass in a floor of stone, two blocks over one face, an edge and a corner
+    apart, a covered face, a step, sides, a block that takes none), a world's faces and twins, a pack that keeps blocks to themselves, and GPU pictures
+    in colours and under a pixel pack looked at enlarged.
+  - Later: a setting for how deep the fringe goes, a picture of a block's own for its fringe.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

@@ -83,6 +83,11 @@ pub struct Property {
     pub range: Option<[f32; 2]>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tooltip: String,
+    /// A picture property's picture, for a particle graph, which has no
+    /// material to pick one: one of the project's pictures, or none, which
+    /// reads as white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<voxear_assets::AssetGuid>,
 }
 
 fn is_zero(value: &[f32; 4]) -> bool {
@@ -211,6 +216,17 @@ impl Graph {
 
     /// The outputs `kind` has in this graph.
     pub fn outputs_of(&self, kind: &NodeKind) -> Vec<Port> {
+        // A picture property's node, and a sub-graph's picture input, give the picture.
+        let picture = match kind {
+            NodeKind::Property { property } => {
+                self.property(*property).is_some_and(|p| p.kind == PropertyKind::Picture)
+            }
+            NodeKind::SubGraphInput { input } => self.input(*input).is_some_and(|(_, pin)| pin.picture),
+            _ => false,
+        };
+        if picture {
+            return vec![Port { label: "Picture".into(), ty: crate::nodes::PortTy::Picture, default: [0.0; 4] }];
+        }
         kind.outputs(match kind {
             NodeKind::Property { property } => self.property_ty(*property),
             NodeKind::SubGraphInput { input } => self.input(*input).map(|(_, pin)| pin.ty),
@@ -297,7 +313,8 @@ impl Graph {
     /// Adds a property; its number.
     pub fn add_property(&mut self, name: &str, kind: PropertyKind, default: [f32; 4]) -> PropertyId {
         let id = PropertyId(self.properties.iter().map(|property| property.id.0).max().unwrap_or(0) + 1);
-        self.properties.push(Property { id, name: name.into(), kind, default, range: None, tooltip: String::new() });
+        let tooltip = String::new();
+        self.properties.push(Property { id, name: name.into(), kind, default, range: None, tooltip, picture: None });
         id
     }
 

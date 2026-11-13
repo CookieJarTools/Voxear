@@ -104,6 +104,8 @@ pub enum PickFor {
     MaterialShader { material: String },
     /// A picture property of the custom shader of the material at this path.
     ShaderPicture { material: String, property: String },
+    /// A picture property of the particle graph open in the VoxShade panel, by its number.
+    VoxShadePicture { property: u32 },
     /// What a new shader in this folder starts as.
     NewShader { folder: String },
     /// The starter a new particle effect in this folder is a copy of.

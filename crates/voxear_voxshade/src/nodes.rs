@@ -393,7 +393,7 @@ pub enum NodeKind {
     Property {
         property: PropertyId,
     },
-    /// A picture property read at a place.
+    /// A picture property read at a place, named on the node.
     SamplePicture {
         property: PropertyId,
     },
@@ -439,6 +439,9 @@ pub enum NodeKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         outputs: Vec<Pin>,
     },
+    /// The picture wired into it read at a place: a picture property's, or
+    /// a sub-graph's picture input.
+    Sample,
     /// One of a sub-graph's inputs, by its number.
     SubGraphInput {
         input: u32,
@@ -460,6 +463,9 @@ pub struct Pin {
     pub ty: Ty,
     #[serde(default, skip_serializing_if = "is_zero_value")]
     pub default: [f32; 4],
+    /// A picture rather than numbers: a sub-graph's input only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub picture: bool,
 }
 
 fn is_zero_id(id: &u32) -> bool {
@@ -472,12 +478,13 @@ fn is_zero_value(value: &[f32; 4]) -> bool {
 
 impl Pin {
     pub fn new(name: &str, ty: Ty) -> Self {
-        Self { id: 0, name: name.into(), ty, default: [0.0; 4] }
+        Self { id: 0, name: name.into(), ty, default: [0.0; 4], picture: false }
     }
 
     /// As a node's port.
     pub fn port(&self) -> Port {
-        Port { label: self.name.clone(), ty: PortTy::Fixed(self.ty), default: self.default }
+        let ty = if self.picture { PortTy::Picture } else { PortTy::Fixed(self.ty) };
+        Port { label: self.name.clone(), ty, default: self.default }
     }
 }
 
@@ -488,6 +495,9 @@ pub enum PortTy {
     Fixed(Ty),
     /// Numbers of any width: the node works on the widest wired into it.
     Any,
+    /// A picture, wired from a picture property or a sub-graph's picture
+    /// input to where it is read.
+    Picture,
 }
 
 impl PortTy {
@@ -495,6 +505,7 @@ impl PortTy {
         match self {
             Self::Fixed(ty) => ty.name(),
             Self::Any => "Numbers",
+            Self::Picture => "Picture",
         }
     }
 }
@@ -541,6 +552,7 @@ impl NodeKind {
             Self::Color { .. } => "Color".into(),
             Self::Property { .. } => "Property".into(),
             Self::SamplePicture { .. } => "Sample Picture".into(),
+            Self::Sample => "Sample".into(),
             Self::Math { op } => op.name().into(),
             Self::Compare { .. } => "Compare".into(),
             Self::Branch => "Branch".into(),
@@ -573,7 +585,7 @@ impl NodeKind {
         match self {
             Self::Input { input } => input.in_stage(stage),
             Self::Surface => matches!(stage, Stage::Surface | Stage::Light),
-            Self::SamplePicture { .. } => matches!(stage, Stage::Surface | Stage::Vertex),
+            Self::SamplePicture { .. } | Self::Sample => stage != Stage::Light,
             _ => true,
         }
     }
@@ -587,6 +599,7 @@ impl NodeKind {
             Self::UpdateOutput => UPDATE_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::LookOutput => LOOK_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::SamplePicture { .. } => vec![port("UV", Fixed(Ty::Float2), 0.0)],
+            Self::Sample => vec![port("Picture", PortTy::Picture, 0.0), port("UV", Fixed(Ty::Float2), 0.0)],
             Self::Math { op } => {
                 let ty = if *op == MathOp::Cross { Fixed(Ty::Float3) } else { Any };
                 op.inputs().iter().map(|&(label, default)| port(label, ty, default)).collect()
@@ -624,7 +637,7 @@ impl NodeKind {
             Self::Constant { ty, .. } => out("Out", Fixed(*ty)),
             Self::Color { .. } => vec![port("RGB", Fixed(Ty::Float3), 0.0), port("Alpha", Fixed(Ty::Float), 0.0)],
             Self::Property { .. } | Self::SubGraphInput { .. } => out("Out", Fixed(property.unwrap_or(Ty::Float))),
-            Self::SamplePicture { .. } => vec![
+            Self::SamplePicture { .. } | Self::Sample => vec![
                 port("RGBA", Fixed(Ty::Float4), 0.0),
                 port("RGB", Fixed(Ty::Float3), 0.0),
                 port("R", Fixed(Ty::Float), 0.0),

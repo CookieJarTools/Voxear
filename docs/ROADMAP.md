@@ -1813,8 +1813,16 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   Shader's Particle Graph starts as a swirl round the Obj that grows and fades. Tests: compiling, inputs and
   outputs kept to their graphs; on a GPU, particles coloured by a Look and sent up by an Update (a Look alone
   moves nothing), and 300,000 particles in 0.854 ms with the graph against 0.772 ms without (least of sixty).
-- VoxShade to come: pictures passed into sub-graphs and read by particle graphs, a particle graph's properties set
-  for each system, material variants, the graph from `vox`, and work moved
+- **Pictures on wires ✅.** A picture property's node gives its picture (`PortTy::Picture`) and the **Sample** node
+  reads whatever picture is wired in; a sub-graph's input can be a picture (`Pin::picture`), followed back through
+  the sub-graphs it is handed into to the property it is (`ir::Picture`), so its reads are the shader's own. A
+  particle graph's picture property names its picture (`Property::picture`); the engine loads it with the
+  system's, and the system hands its graph up to three in the room the graph number left
+  (`GpuParticleSystem::graph_pictures`), read at full size in the step and the vertices
+  (`particleGraphPicture`). The panel: Picture as an input's type, a picture pick, Sample in the search, picture
+  wires only between picture ports. Tests: wires, sub-graph pictures the same work as read in place, errors at the
+  node; on a GPU, particles coloured by their graph's picture, white before it is loaded.
+- VoxShade to come: a particle graph's properties set for each system, material variants, the graph from `vox`, and work moved
   to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
   every pass shares (mesh shaders included) would need values of the graph's own first (see
   [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).
@@ -1954,8 +1962,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
   - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
-  - particle graphs that read pictures, take their properties from each system, and say how particles are sent
-    out
+  - particle graphs that take their properties from each system and say how particles are sent out
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order
 

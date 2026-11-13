@@ -381,6 +381,7 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
             given.objectPosition = transform(system->model, float4(0.0, 0.0, 0.0, 1.0)).xyz;
             given.time = sim->time;
             given.deltaTime = step;
+            given.pictures = system->graphPictures;
             ParticleUpdateOutput made;
             made.force = 0.0;
             made.velocity = given.velocity;

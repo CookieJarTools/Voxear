@@ -324,15 +324,30 @@ pub fn resolve(world: &mut World, content: &mut crate::content::Content, rendere
     let mut effects = ParticleEffects::default();
     let mut wanted = std::collections::HashSet::new();
     let mut models = std::collections::HashSet::new();
+    // The pictures each particle graph reads, as its picture properties name them.
+    let graph_pictures: std::collections::HashMap<voxear_assets::AssetGuid, Vec<voxear_assets::AssetGuid>> = content
+        .shaders()
+        .particle_graphs
+        .iter()
+        .map(|graph| (graph.guid, graph.pictures.iter().flatten().copied().collect()))
+        .collect();
     for (system,) in world.query_ref::<(&ParticleSystem,)>() {
+        let graphs =
+            |system: &ParticleSystem| system.graph.and_then(|guid| graph_pictures.get(&guid)).cloned().unwrap_or_default();
         let (emitters, meshes): (Vec<ParticleTexture>, Vec<Option<ParticleMesh>>) = match system.effect {
-            None => (vec![system.texture, system.light_map], vec![system.mesh]),
+            None => {
+                let read = graphs(system).into_iter().map(ParticleTexture::Asset);
+                (vec![system.texture, system.light_map].into_iter().chain(read).collect(), vec![system.mesh])
+            }
             Some(EffectRef::Builtin(_)) => continue,
             Some(EffectRef::Asset(guid)) => {
                 let found = effects.0.get(&guid).cloned().or_else(|| content.particle_effect(guid));
                 let Some(effect) = found else { continue };
-                let both = |emitter: &voxear_render::Emitter| [emitter.system.texture, emitter.system.light_map];
-                let textures = effect.emitters.iter().flat_map(both).collect();
+                let all = |emitter: &voxear_render::Emitter| {
+                    let read = graphs(&emitter.system).into_iter().map(ParticleTexture::Asset);
+                    [emitter.system.texture, emitter.system.light_map].into_iter().chain(read).collect::<Vec<_>>()
+                };
+                let textures = effect.emitters.iter().flat_map(all).collect();
                 let meshes = effect.emitters.iter().map(|emitter| emitter.system.mesh).collect();
                 effects.0.insert(guid, effect);
                 (textures, meshes)

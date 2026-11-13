@@ -17,8 +17,8 @@ use std::fmt::Write;
 
 use crate::{
     cost,
-    graph::Graph,
-    ir::{Binary, Given, Op, Program, Rate, Step, Ternary, Unary, ValueId},
+    graph::{Graph, PropertyKind},
+    ir::{Binary, Given, Op, Picture, Program, Rate, Step, Ternary, Unary, ValueId},
     nodes::{Input, Stage},
     types::Ty,
 };
@@ -251,9 +251,19 @@ impl Writer<'_> {
         match &step.op {
             Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::CallOut(_) => unreachable!("written in place"),
             Op::Call(_) => unreachable!("written as a statement"),
-            Op::Sample(property) => {
+            Op::Sample(Picture::Property(property)) if self.stage.is_particles() => {
+                // A particle graph's picture, by its place among the graph's, from the system's.
+                let pictures = self.graph.properties.iter().filter(|p| p.kind == PropertyKind::Picture);
+                let place = pictures.take_while(|p| p.id != *property).count().min(2);
+                format!("particleGraphPicture(input.pictures.{}, {})", ['x', 'y', 'z'][place], a(0))
+            }
+            Op::Sample(Picture::Property(property)) => {
                 let name = self.graph.property(*property).map_or("missing", |p| p.name.as_str());
                 format!("props.{name}.sample({})", a(0))
+            }
+            Op::Sample(Picture::Argument(n)) => {
+                let name = self.graph.inputs.get(*n).map_or("missing", |pin| pin.name.as_str());
+                format!("{name}.sample({})", a(0))
             }
             Op::Unary(op) => match op {
                 Unary::Negate => format!("-{}", a(0)),

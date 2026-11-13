@@ -172,6 +172,8 @@ enum Field {
     PinDefault(u32),
     RemovePin(bool, u32),
     AddPin(bool),
+    /// The picture a particle graph's picture property names.
+    PropertyPicture(PropertyId),
 }
 
 /// The project's sub-graphs, each its file's GUID, path and graph.
@@ -208,6 +210,8 @@ pub enum VoxShadeEvent {
     Save(String, Graph),
     /// Open the search for a node to add, under this element.
     Search(NodeId),
+    /// Open the picker for the picture of this picture property, under this element.
+    PickPicture(NodeId, PropertyId),
 }
 
 /// A node the search offers: its label, its folder, and the node it adds.
@@ -237,6 +241,8 @@ pub struct VoxShadePanel {
     library: HashMap<AssetGuid, Graph>,
     /// The sub-graphs a Sub-graph node's choice lists, in order.
     sub_choosable: Vec<AssetGuid>,
+    /// The project's pictures' names, which a particle graph's picture properties show.
+    picture_names: HashMap<AssetGuid, String>,
     rows: Vec<(Field, Control)>,
     /// What the rows were built for, to build them again when that changes.
     shape: String,
@@ -306,6 +312,7 @@ impl VoxShadePanel {
             sub_graphs: Vec::new(),
             library: HashMap::new(),
             sub_choosable: Vec::new(),
+            picture_names: HashMap::new(),
             rows: Vec::new(),
             shape: String::new(),
             choosable: Vec::new(),
@@ -472,6 +479,22 @@ impl VoxShadePanel {
         if refresh_sub_graphs(&mut graph, &self.library) {
             self.change(graph);
         }
+    }
+
+    /// The names of the project's pictures, by their GUIDs.
+    pub fn set_picture_names(&mut self, names: HashMap<AssetGuid, String>) {
+        if names != self.picture_names {
+            self.picture_names = names;
+            self.shape.clear();
+        }
+    }
+
+    /// Sets the picture a particle graph's picture property names, as a step to undo.
+    pub fn set_picture(&mut self, property: PropertyId, picture: Option<AssetGuid>) {
+        let Some(mut graph) = self.graph().cloned() else { return };
+        let Some(found) = graph.properties.iter_mut().find(|p| p.id == property) else { return };
+        found.picture = picture;
+        self.change(graph);
     }
 
     /// The project's sub-graphs, as the panel has them.
@@ -659,6 +682,13 @@ impl VoxShadePanel {
             self.shape = shape;
             self.build_rows(ui, picked.as_ref());
         }
+        for (field, control) in &self.rows {
+            if let (Field::PropertyPicture(id), Control::Button(button)) = (field, control)
+                && ui.clicked(*button)
+            {
+                self.pending.push(VoxShadeEvent::PickPicture(*button, *id));
+            }
+        }
         if let Some((changed, field)) = self.read_rows(ui, &graph, picked.as_ref()) {
             let merges = !matches!(
                 field,
@@ -826,6 +856,8 @@ impl VoxShadePanel {
                     let width = match port.ty {
                         PortTy::Fixed(ty) => ty.width(),
                         PortTy::Any => 1,
+                        // A picture comes only by wire.
+                        PortTy::Picture => continue,
                     };
                     let fields = numbers_row(ui, rows, &port.label, width);
                     // An output's input with nothing set takes the material's own, or the particle system's.
@@ -872,6 +904,18 @@ impl VoxShadePanel {
             let row = prop(ui, rows, "Tooltip");
             let tooltip = ui.text_field(row, &property.tooltip);
             self.rows.push((Field::PropertyTooltip(property.id), Control::Text(tooltip)));
+            // A particle graph's picture is its own to name, as no material picks one for it.
+            if graph.particles && property.kind == PropertyKind::Picture {
+                let row = prop(ui, rows, "Picture");
+                let named = property
+                    .picture
+                    .map(|guid| self.picture_names.get(&guid).cloned().unwrap_or_else(|| guid.to_string()));
+                let shown = ui.add_label(row, named.as_deref().unwrap_or("None: reads as white"));
+                ui.add_class(shown, "value");
+                let pick = ui.icon_button(row, "texture");
+                ui.set_tooltip(pick, "Pick the picture", None);
+                self.rows.push((Field::PropertyPicture(property.id), Control::Button(pick)));
+            }
         }
         let add = ui.button(self.property_rows, "Add Property");
         ui.add_class(add, "add-component");
@@ -892,10 +936,19 @@ impl VoxShadePanel {
                 let name = ui.text_field(row, &pin.name);
                 self.rows.push((Field::PinName(out, pin.id), Control::Text(name)));
                 let row = prop(ui, rows, "Type");
-                let at = NUMBER_TYS.iter().position(|ty| *ty == pin.ty).unwrap_or(0);
-                let ty = ui.dropdown(row, &names, at);
-                self.rows.push((Field::PinTy(out, pin.id), Control::Choice(ty)));
+                // An input may be a picture, handed on to the Samples inside; an output gives numbers.
+                let at = if pin.picture {
+                    NUMBER_TYS.len()
+                } else {
+                    NUMBER_TYS.iter().position(|ty| *ty == pin.ty).unwrap_or(0)
+                };
+                let mut kinds = names.clone();
                 if !out {
+                    kinds.push("Picture");
+                }
+                let ty = ui.dropdown(row, &kinds, at);
+                self.rows.push((Field::PinTy(out, pin.id), Control::Choice(ty)));
+                if !out && !pin.picture {
                     let fields = numbers_row(ui, rows, "Default", pin.ty.width());
                     ui.set_tooltip(fields[0], "What it takes where nothing is wired into it", None);
                     self.rows.push((Field::PinDefault(pin.id), Control::Numbers(fields)));
@@ -1306,9 +1359,11 @@ fn shape(graph: &Graph, picked: Option<&Node>) -> String {
         format!("{} {kind} {wired:?}", node.id.0)
     });
     let properties: Vec<(u32, PropertyKind)> = graph.properties.iter().map(|p| (p.id.0, p.kind)).collect();
-    let pins: Vec<(u32, Ty)> = graph.inputs.iter().chain(&graph.outputs).map(|p| (p.id, p.ty)).collect();
+    let pins: Vec<(u32, Ty, bool)> =
+        graph.inputs.iter().chain(&graph.outputs).map(|p| (p.id, p.ty, p.picture)).collect();
+    let pictures: Vec<_> = graph.properties.iter().map(|p| p.picture).collect();
     let inputs: Vec<&str> = graph.inputs.iter().map(|p| p.name.as_str()).collect();
-    format!("{node:?} {properties:?} {} {pins:?} {inputs:?}", graph.sub_graph)
+    format!("{node:?} {properties:?} {} {pins:?} {inputs:?} {pictures:?}", graph.sub_graph)
 }
 
 /// What a numbers row shows now.
@@ -1402,6 +1457,9 @@ fn chosen(graph: &Graph, node: Option<&Node>, field: Field, choosable: &[Propert
     }
     if let Field::PinTy(out, id) = field {
         let pin = (if out { &graph.outputs } else { &graph.inputs }).iter().find(|p| p.id == id)?;
+        if pin.picture {
+            return Some(NUMBER_TYS.len());
+        }
         return NUMBER_TYS.iter().position(|ty| *ty == pin.ty);
     }
     match (field, &node?.kind) {
@@ -1436,6 +1494,8 @@ fn choose(graph: &mut Graph, node: Option<&mut Node>, field: Field, at: usize, c
     if let Field::PinTy(out, id) = field {
         let pins = if out { &mut graph.outputs } else { &mut graph.inputs };
         let Some(pin) = pins.iter_mut().find(|p| p.id == id) else { return false };
+        // Past the numbers' types, an input's last choice is Picture.
+        pin.picture = !out && at >= NUMBER_TYS.len();
         pin.ty = NUMBER_TYS[at.min(3)];
         return true;
     }
@@ -1483,7 +1543,7 @@ fn allows(graph: &Graph, from: (GraphNode, usize), to: (GraphNode, usize)) -> bo
     let taken = graph.inputs_of(&into.kind).get(to.1).map(|p| p.ty);
     let (Some(given), Some(taken)) = (given, taken) else { return false };
     let truth = |ty: PortTy| ty == PortTy::Fixed(Ty::Bool);
-    if truth(given) != truth(taken) {
+    if truth(given) != truth(taken) || (given == PortTy::Picture) != (taken == PortTy::Picture) {
         return false;
     }
     // A loop: the node fed already feeds, down its wires, the node it would be fed from.
@@ -1545,6 +1605,7 @@ fn port_color(ty: PortTy) -> Color {
         PortTy::Fixed(Ty::Float4) => 0xc58cff,
         PortTy::Fixed(Ty::Bool) => 0xff7a7a,
         PortTy::Any => 0xe2e2e2,
+        PortTy::Picture => 0x5ad1c8,
     })
 }
 
@@ -1687,12 +1748,15 @@ pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
     }
     for property in &graph.properties {
         match property.kind {
-            PropertyKind::Picture if graph.particles => {}
-            PropertyKind::Picture => offer(
-                format!("Sample {}", property.name),
-                "Properties",
-                NodeKind::SamplePicture { property: property.id },
-            ),
+            // A picture's node to wire on into a Sample or a sub-graph, and one that reads it there and then.
+            PropertyKind::Picture => {
+                offer(property.name.clone(), "Properties", NodeKind::Property { property: property.id });
+                offer(
+                    format!("Sample {}", property.name),
+                    "Properties",
+                    NodeKind::SamplePicture { property: property.id },
+                );
+            }
             _ => offer(property.name.clone(), "Properties", NodeKind::Property { property: property.id }),
         }
     }
@@ -1707,6 +1771,7 @@ pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
     }
     offer("Swizzle".into(), "Vectors", NodeKind::Swizzle { components: vec![Component::X, Component::Y] });
     offer("Random".into(), "Noise", NodeKind::Random);
+    offer("Sample".into(), "Pictures", NodeKind::Sample);
     offer("Slang".into(), "Custom", new_code_node());
     for (guid, _, sub) in sub_graphs {
         let kind = NodeKind::SubGraph {
@@ -1739,6 +1804,7 @@ pub fn folder_icon(folder: &str) -> &'static str {
         "Vectors" => "move",
         "Noise" => "grid",
         "Custom" => "code",
+        "Pictures" => "texture",
         "Sub-graphs" => "nodes",
         "Sub-graph" => "arrow-right",
         _ => "check",
@@ -1840,7 +1906,7 @@ mod tests {
     }
 
     #[test]
-    fn a_particle_graph_is_offered_particle_inputs_and_outputs_and_no_pictures() {
+    fn a_particle_graph_is_offered_particle_inputs_and_outputs_and_its_pictures() {
         let mut graph = starters::particles("Swirl");
         graph.add_property("map", PropertyKind::Picture, [0.0; 4]);
         let offered = offers(&graph, &Vec::new());
@@ -1848,11 +1914,39 @@ mod tests {
         assert!(has(NodeKind::Input { input: Input::Age }) && has(NodeKind::Input { input: Input::DeltaTime }));
         assert!(has(NodeKind::UpdateOutput) && has(NodeKind::LookOutput));
         assert!(!has(NodeKind::Input { input: Input::Uv }) && !has(NodeKind::SurfaceOutput) && !has(NodeKind::Surface));
-        assert!(!offered.iter().any(|offer| offer.label == "Sample map"));
+        assert!(offered.iter().any(|offer| offer.label == "Sample map"));
         // And a shader is offered none of a particle's.
         let shader = offers(&starters::lit("Plain"), &Vec::new());
         assert!(!shader.iter().any(|offer| offer.kind == NodeKind::Input { input: Input::Age }));
         assert!(!shader.iter().any(|offer| offer.kind == NodeKind::LookOutput));
+    }
+
+    #[test]
+    fn a_picture_wire_runs_only_from_a_picture_to_where_one_is_read() {
+        let mut graph = Graph::new("Test");
+        let map = graph.add_property("map", PropertyKind::Picture, [0.0; 4]);
+        let read = graph.add(NodeKind::Property { property: map }, [0.0; 2]);
+        let uv = graph.add(NodeKind::Input { input: Input::Uv }, [0.0; 2]);
+        let sample = graph.add(NodeKind::Sample, [0.0; 2]);
+        assert!(allows(&graph, (read, 0), (sample, 0)), "a picture into a Sample's picture");
+        assert!(!allows(&graph, (uv, 0), (sample, 0)), "numbers are no picture");
+        assert!(!allows(&graph, (read, 0), (sample, 1)), "nor a picture a UV");
+        assert!(!allows(&graph, (read, 0), (GraphNode(1), 0)), "nor a colour");
+        let offered = offers(&graph, &Vec::new());
+        assert!(offered.iter().any(|o| o.kind == NodeKind::Sample));
+        assert!(offered.iter().any(|o| o.kind == NodeKind::Property { property: map }));
+        // A sub-graph's input made a picture by its type's last choice, and back.
+        let mut sub = starters::sub_graph("Edges");
+        let power = sub.inputs[0].id;
+        assert!(choose(&mut sub, None, Field::PinTy(false, power), NUMBER_TYS.len(), &[]));
+        assert!(sub.inputs[0].picture);
+        assert_eq!(chosen(&sub, None, Field::PinTy(false, power), &[]), Some(NUMBER_TYS.len()));
+        assert!(choose(&mut sub, None, Field::PinTy(false, power), 1, &[]));
+        assert!(!sub.inputs[0].picture && sub.inputs[0].ty == Ty::Float2);
+        // An output gives numbers, whatever is picked.
+        let result = sub.outputs[0].id;
+        assert!(choose(&mut sub, None, Field::PinTy(true, result), NUMBER_TYS.len(), &[]));
+        assert!(!sub.outputs[0].picture);
     }
 
     #[test]

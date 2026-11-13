@@ -13,7 +13,7 @@ use crate::{
 pub struct Inputs<'a> {
     pub given: &'a dyn Fn(crate::ir::Given) -> [f32; 4],
     pub property: &'a dyn Fn(PropertyId) -> [f32; 4],
-    pub sample: &'a dyn Fn(PropertyId, [f32; 2]) -> [f32; 4],
+    pub sample: &'a dyn Fn(crate::ir::Picture, [f32; 2]) -> [f32; 4],
 }
 
 /// Runs every step of `program`, its values into `values`, a step each.

@@ -347,8 +347,21 @@ fn particles_with(
     graphs: &voxear_render::ParticleGraphs,
     graph: Option<AssetGuid>,
 ) -> (usize, f32, Vec<u8>) {
+    particles_seen(renderer, graphs, graph, None)
+}
+
+/// The same, with the pictures particles and their graphs read as loaded.
+fn particles_seen(
+    renderer: &mut Renderer,
+    graphs: &voxear_render::ParticleGraphs,
+    graph: Option<AssetGuid>,
+    pictures: Option<voxear_render::ParticlePictures>,
+) -> (usize, f32, Vec<u8>) {
     use voxear_render::{ParticleBlend, ParticlePlayback, ParticleSystem};
     let mut world = World::new();
+    if let Some(pictures) = pictures {
+        world.insert_resource(pictures);
+    }
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
     world.insert_resource(Sky { ambient: 0.05, ..Sky::default() });
     world.insert_resource(graphs.clone());
@@ -498,4 +511,69 @@ fn particles_timed(renderer: &mut Renderer, graphs: &voxear_render::ParticleGrap
         }
     }
     least
+}
+
+#[test]
+fn a_particle_graph_reads_the_picture_its_property_names() {
+    let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+    // A Look whose colour is read from its picture, a plain blue one.
+    let mut g = Graph { name: "Painted".into(), particles: true, ..Graph::default() };
+    let map = g.add_property("paint", PropertyKind::Picture, [0.0; 4]);
+    g.properties[0].picture = Some(guid(9));
+    let read = g.add(NodeKind::Property { property: map }, [0.0; 2]);
+    let sample = g.add(NodeKind::Sample, [0.0; 2]);
+    let look = g.add(NodeKind::LookOutput, [0.0; 2]);
+    g.link(read, 0, sample, 0);
+    g.set_literal(sample, 1, [0.5, 0.5, 0.0, 0.0]);
+    g.link(sample, 1, look, 0);
+    let registry =
+        ShaderRegistry::new(vec![(guid(1), "Effects/Painted.voxshade".into(), g.to_toml())], &BTreeSet::new());
+    let painted = &registry.particle_graphs[0];
+    assert!(painted.error.is_none() && painted.pictures[0] == Some(guid(9)), "{painted:?}");
+    let graphs = registry.particle_graph_numbers();
+    assert_eq!(graphs.0[&guid(1)].pictures, [Some(guid(9)), None, None]);
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let code = voxear_render::CustomCode {
+        materials: dispatch_code(&registry),
+        particles: voxear_engine::shaders::particle_dispatch_code(&registry),
+        ..Default::default()
+    };
+    renderer.set_custom_shaders(code);
+    let world = World::new();
+    for _ in 0..1200 {
+        let _ = renderer.render(&world, 0.0);
+        match renderer.custom_shaders() {
+            CustomShaderState::Compiling => std::thread::sleep(std::time::Duration::from_millis(50)),
+            CustomShaderState::Failed(error) => panic!("the particle shaders did not compile: {error}"),
+            _ => break,
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    let blue = [40u8, 80, 255, 255].repeat(16);
+    let source = voxear_render::TextureSource { name: "paint", width: 4, height: 4, rgba: &blue, srgb: true };
+    let texture = renderer.add_texture(&source).unwrap();
+    let loaded = voxear_render::ParticlePictures([(guid(9), texture)].into());
+    let blues =
+        |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| i32::from(p[2]) > i32::from(p[0]) + 60 && p[2] > 120).count();
+    let (_, _, before) = particles_seen(&mut renderer, &graphs, Some(guid(1)), None);
+    let (_, _, painted) = particles_seen(&mut renderer, &graphs, Some(guid(1)), Some(loaded));
+    keep_image("particles painted.png", &painted);
+    // Over the dark wall only, where the sky's blue is not.
+    let wall = |pixels: &[u8]| -> Vec<u8> {
+        pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(at, _)| {
+                let (x, y) = (*at as u32 % SIZE.0, *at as u32 / SIZE.0);
+                (250..390).contains(&x) && (200..290).contains(&y)
+            })
+            .flat_map(|(_, p)| p.to_vec())
+            .collect()
+    };
+    let (unloaded, loaded) = (blues(&wall(&before)), blues(&wall(&painted)));
+    println!("blue particle pixels: {unloaded} before the picture is loaded, {loaded} after");
+    assert!(unloaded < 20 && loaded > 200, "{unloaded} {loaded}");
 }

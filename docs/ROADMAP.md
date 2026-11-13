@@ -1826,7 +1826,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   Inspector's sub-graph. Tests: inlining, sharing, costs equal to plain nodes, errors at the node (missing, inside
   itself, properties), Slang declared once and called once, ports added and taken away with their wires; on a GPU,
   a rim made with a sub-graph and a Slang node against the same in plain nodes.
-- VoxShade to come: pictures passed into sub-graphs, material variants, the graph from `vox`, and work moved
+- **Particle graphs ✅.** A `.voxshade` with `particles` ends in an **Update Output** (Force, Velocity) and a
+  **Look Output** (Color, Alpha, Size), read from a particle's Age, Life, Seed, Velocity, Position, its Obj's
+  place, Time, Delta Time, and the colour and size its settings give; each compiles to `particleUpdate` and
+  `particleLook`, its properties folded in as numbers. The registry keeps particle graphs apart and numbers them;
+  their code goes into `project_particle_graphs.slang`, and the particles' step and drawing (`particle_sim`,
+  `particles`) are compiled with it as material shaders are, calling a system's graph by its number
+  (`shaders/particle_custom.slang`). A Particle System's **Graph** row picks one (`ParticleSystem::graph`, the
+  engine's `ParticleGraphs` resource); one with an Update has its system simulated, one with only a Look leaves it
+  stateless. The panel offers particle inputs and outputs, previews a particle's life across the ball; New
+  Shader's Particle Graph starts as a swirl round the Obj that grows and fades. Tests: compiling, inputs and
+  outputs kept to their graphs; on a GPU, particles coloured by a Look and sent up by an Update (a Look alone
+  moves nothing), and 300,000 particles in 0.854 ms with the graph against 0.772 ms without (least of sixty).
+- VoxShade to come: pictures passed into sub-graphs and read by particle graphs, a particle graph's properties set
+  for each system, material variants, the graph from `vox`, and work moved
   to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
   every pass shares (mesh shaders included) would need values of the graph's own first (see
   [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).
@@ -1966,7 +1979,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
   - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
-  - the graph compiler shared with VoxShade, graph mode, custom Slang modules, and each node's cost shown
+  - particle graphs that read pictures, take their properties from each system, and say how particles are sent
+    out
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order
 

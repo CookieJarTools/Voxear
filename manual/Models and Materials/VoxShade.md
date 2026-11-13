@@ -8,7 +8,7 @@ A VoxShade shader costs what the same shader written by hand costs. Before any S
 
 ## Making a VoxShade shader
 
-Right-click in the Project panel, choose **New Shader…**, and pick **VoxShade**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram (VoxShade)** and **Sway (VoxShade)** start as the built-in shaders made of nodes, to change. **Sub-graph** makes nodes for other VoxShade graphs to use as one (see [Sub-graphs](#sub-graphs)).
+Right-click in the Project panel, choose **New Shader…**, and pick **VoxShade**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram (VoxShade)** and **Sway (VoxShade)** start as the built-in shaders made of nodes, to change. **Sub-graph** makes nodes for other VoxShade graphs to use as one (see [Sub-graphs](#sub-graphs)), and **Particle Graph** a graph that moves and draws Particle Systems' particles (see [Particle graphs](#particle-graphs)).
 
 Double-click the `.voxshade` file, or press **Open** in its Inspector, to open it in the **VoxShade** panel.
 
@@ -55,7 +55,7 @@ Pick a node and its values show at the top of the side:
 | Noise | **Random**: a number from 0 to 1 that looks random and is the same for the same seed |
 | Custom | **Slang**: code of your own (see [Slang nodes](#slang-nodes)) |
 | Sub-graphs | Each of the project's sub-graphs |
-| Outputs | **Surface Output** sets the surface's colour, alpha, normal, metallic, roughness and emission. **Vertex Output** moves each vertex. **Light Output** replaces the standard lighting with your own |
+| Outputs | **Surface Output** sets the surface's colour, alpha, normal, metallic, roughness and emission. **Vertex Output** moves each vertex. **Light Output** replaces the standard lighting with your own. In a particle graph, **Update Output** and **Look Output** instead |
 
 Most Math nodes work on numbers of any width: wire a Vector 3 into an Add and it adds Vector 3s. A single number wired in beside a vector stands for that number in every place.
 
@@ -70,6 +70,10 @@ A **Slang** node runs code you write, for what the other nodes cannot do well, a
 - **Code**: Slang that sets every output from the inputs. For an input `edge` and an output `glow`, `glow = float3(edge, edge * 0.5, 0.0);`.
 
 The shader declares the code once as a function, and calls it once for the same inputs, however many nodes hold the same code. Its code runs on the graphics card only, so its preview, and those of the nodes after it, are striped, and nothing after it is worked out once a material on the CPU. Under it is a guess at what it costs, counted from its sums and calls; a loop counts once. A mistake in its code shows as the shader failing to compile: its Inspector's **State** says what is wrong and on which line of the Slang under **Code**.
+
+## Particle graphs
+
+A particle graph moves and draws a Particle System's particles where its settings leave off: its **Update Output** each step of the simulation, its **Look Output** where each particle is drawn. Its search offers a particle's inputs, Age, Life, Seed, Velocity, Delta Time, Particle Color and Particle Size, in place of a surface's, and its previews show a particle's life lived from left to right across the ball. Its properties are worked into it as the numbers they are set to. How a system picks one and what each output does is in [[Particle Systems]].
 
 ## Sub-graphs
 

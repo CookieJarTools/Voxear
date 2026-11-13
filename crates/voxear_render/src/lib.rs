@@ -147,7 +147,7 @@ pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleB
 pub use particle_meshes::{BuiltinMesh, ParticleMesh, ParticleMeshes};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_HITS as MAX_PARTICLE_HITS, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts, ParticleHit};
 pub use particles::{
-    MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
+    MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticleGraphInfo, ParticleGraphs, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
     ParticleHalfSize, ParticleTrails,
 };
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};

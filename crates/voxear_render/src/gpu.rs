@@ -1131,6 +1131,10 @@ pub struct GpuParticleSystem {
     /// and the material it is drawn with, for a system that draws meshes.
     pub mesh: u32,
     pub mesh_material: u32,
+    /// The particle graph that moves and draws its particles, by its
+    /// number among the project's (`shaders/particle_custom.slang`), or 0.
+    pub graph: u32,
+    pub graph_pad: [u32; 3],
 }
 
 /// A particle striking what the main view sees, as the step writes it for a
@@ -1367,7 +1371,7 @@ mod tests {
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 8);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 9);
         assert_eq!(size_of::<GpuParticle>(), 36);
         assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16 + 48 * crate::forces::MAX_FORCES);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

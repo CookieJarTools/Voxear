@@ -380,3 +380,63 @@ fn a_sub_graph_compiled_on_its_own_is_a_function_of_its_inputs() {
     assert!(out.source.contains("pow(") && out.source.contains("    result = v"), "{}", out.source);
     assert_eq!(out.stages[0].0, Stage::Surface);
 }
+
+#[test]
+fn a_particle_graph_compiles_to_an_update_and_a_look_with_its_properties_as_numbers() {
+    let out = compiled(&starters::particles("Swirl"));
+    let source = &out.source;
+    assert!(
+        source.contains("void particleUpdate(ParticleUpdateInput input, inout ParticleUpdateOutput output)"),
+        "{source}"
+    );
+    assert!(source.contains("void particleLook(ParticleLookInput input, inout ParticleLookOutput output)"), "{source}");
+    assert!(
+        source.contains("cross(") && source.contains("input.objectPosition") && source.contains("    output.force = ")
+    );
+    assert!(source.contains("input.life") && source.contains("output.alpha = ") && source.contains("output.size = "));
+    assert!(
+        !source.contains("output.velocity") && !source.contains("output.color"),
+        "unwired, kept as the system has them"
+    );
+    assert!(!source.contains("struct") && !source.contains("props."), "its swirl worked in as a number: {source}");
+    assert!(source.contains("2.0"), "{source}");
+    assert_eq!(out.stages.iter().map(|(stage, _)| *stage).collect::<Vec<_>>(), [Stage::Update, Stage::Look]);
+    let graph = starters::particles("Swirl");
+    assert_eq!(Graph::from_toml(&graph.to_toml()).unwrap(), graph);
+}
+
+#[test]
+fn a_particle_graph_takes_only_particle_outputs_and_inputs() {
+    // A Surface Output in a particle graph, and an Update Output in a shader's.
+    let mut particles = starters::particles("Swirl");
+    let surface = particles.add(NodeKind::SurfaceOutput, [0.0; 2]);
+    let errors = compile(&particles).unwrap_err();
+    assert_eq!(errors[0].node, Some(surface));
+    assert!(errors[0].message.contains("draws no surface"), "{}", errors[0].message);
+    let mut shader = Graph::new("Test");
+    let update = shader.add(NodeKind::UpdateOutput, [0.0; 2]);
+    assert_eq!(compile(&shader).unwrap_err()[0].node, Some(update));
+    // A material's inputs are not a particle's, nor a particle's in a shader.
+    let mut uv = starters::particles("Swirl");
+    let read = uv.add(NodeKind::Input { input: Input::Uv }, [0.0; 2]);
+    let look = uv.nodes.iter().find(|n| n.kind == NodeKind::LookOutput).unwrap().id;
+    uv.link(read, 0, look, 2);
+    assert!(compile(&uv).unwrap_err()[0].message.contains("not there in the Look stage"));
+    let (mut g, ids) = graph(vec![NodeKind::Input { input: Input::Age }]);
+    g.link(ids[0], 0, SURFACE, ALPHA);
+    assert!(compile(&g).unwrap_err()[0].message.contains("Surface stage"));
+    // Delta Time only where the particles are stepped.
+    let mut step = starters::particles("Swirl");
+    let delta = step.add(NodeKind::Input { input: Input::DeltaTime }, [0.0; 2]);
+    step.link(delta, 0, look, 2);
+    assert!(compile(&step).unwrap_err()[0].message.contains("Look"));
+    // No pictures yet.
+    let mut pictured = starters::particles("Swirl");
+    let map = pictured.add_property("map", PropertyKind::Picture, [0.0; 4]);
+    let sample = pictured.add(NodeKind::SamplePicture { property: map }, [0.0; 2]);
+    let split = pictured.add(NodeKind::Split, [0.0; 2]);
+    pictured.link(sample, 0, split, 0);
+    pictured.link(split, 0, look, 2);
+    let wrong = &compile(&pictured).unwrap_err()[0].message;
+    assert!(wrong.contains("Sample Picture is not there in the Look stage"), "{wrong}");
+}

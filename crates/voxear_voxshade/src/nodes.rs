@@ -20,17 +20,32 @@ pub enum Stage {
     Vertex,
     /// Once a pixel for each light: how much of the light the surface sends to the camera.
     Light,
+    /// A particle graph's, once a particle each step of the simulation: the
+    /// force on it, or how fast it goes.
+    Update,
+    /// A particle graph's, once a particle where it is drawn: its colour,
+    /// how opaque and how wide.
+    Look,
 }
 
 impl Stage {
+    /// A material shader's stages.
     pub const ALL: [Self; 3] = [Self::Surface, Self::Vertex, Self::Light];
+    /// A particle graph's.
+    pub const PARTICLES: [Self; 2] = [Self::Update, Self::Look];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Surface => "Surface",
             Self::Vertex => "Vertex",
             Self::Light => "Light",
+            Self::Update => "Update",
+            Self::Look => "Look",
         }
+    }
+
+    pub fn is_particles(self) -> bool {
+        matches!(self, Self::Update | Self::Look)
     }
 }
 
@@ -59,10 +74,23 @@ pub enum Input {
     LightDirection,
     LightColor,
     LightView,
+    /// A particle's age in seconds, how much of its life it has lived, from
+    /// 0 to 1, and a number of its own from 0 to 1, the same all its life.
+    Age,
+    Life,
+    Seed,
+    /// How fast and which way a particle goes, in metres a second, in the world.
+    Velocity,
+    /// How long the simulation's step is, in seconds.
+    DeltaTime,
+    /// A particle's colour and opacity, and how wide it is in metres, as its
+    /// system's own settings make them.
+    ParticleColor,
+    ParticleSize,
 }
 
 impl Input {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 18] = [
         Self::Uv,
         Self::Position,
         Self::Normal,
@@ -74,6 +102,13 @@ impl Input {
         Self::LightDirection,
         Self::LightColor,
         Self::LightView,
+        Self::Age,
+        Self::Life,
+        Self::Seed,
+        Self::Velocity,
+        Self::DeltaTime,
+        Self::ParticleColor,
+        Self::ParticleSize,
     ];
 
     pub fn name(self) -> &'static str {
@@ -89,13 +124,27 @@ impl Input {
             Self::LightDirection => "Light Direction",
             Self::LightColor => "Light Color",
             Self::LightView => "Light View",
+            Self::Age => "Age",
+            Self::Life => "Life",
+            Self::Seed => "Seed",
+            Self::Velocity => "Velocity",
+            Self::DeltaTime => "Delta Time",
+            Self::ParticleColor => "Particle Color",
+            Self::ParticleSize => "Particle Size",
         }
     }
 
     pub fn ty(self) -> Ty {
         match self {
             Self::Uv => Ty::Float2,
-            Self::Time | Self::Thickness => Ty::Float,
+            Self::Time
+            | Self::Thickness
+            | Self::Age
+            | Self::Life
+            | Self::Seed
+            | Self::DeltaTime
+            | Self::ParticleSize => Ty::Float,
+            Self::ParticleColor => Ty::Float4,
             _ => Ty::Float3,
         }
     }
@@ -103,17 +152,19 @@ impl Input {
     /// Whether `stage` is given it.
     pub fn in_stage(self, stage: Stage) -> bool {
         match self {
-            Self::Uv | Self::Position | Self::Normal | Self::ObjectPosition | Self::LevelPosition | Self::Time => {
-                stage != Stage::Light
-            }
+            Self::Position | Self::ObjectPosition | Self::Time => stage != Stage::Light,
+            Self::Uv | Self::Normal | Self::LevelPosition => matches!(stage, Stage::Surface | Stage::Vertex),
             Self::View | Self::Thickness => stage == Stage::Surface,
             Self::LightDirection | Self::LightColor | Self::LightView => stage == Stage::Light,
+            Self::Age | Self::Life | Self::Seed | Self::Velocity => stage.is_particles(),
+            Self::DeltaTime => stage == Stage::Update,
+            Self::ParticleColor | Self::ParticleSize => stage == Stage::Look,
         }
     }
 
     /// Whether it is the same all over a draw, rather than different from one place to the next.
     pub fn is_uniform(self) -> bool {
-        self == Self::Time
+        matches!(self, Self::Time | Self::DeltaTime)
     }
 }
 
@@ -316,6 +367,12 @@ pub enum NodeKind {
     /// How much of a light the surface sends to the camera, in place of the
     /// standard lighting.
     LightOutput,
+    /// A particle graph's step: a force on the particle, and how fast it
+    /// goes. Left unwired, its system's own settings move it.
+    UpdateOutput,
+    /// How a particle graph's particle is drawn: its colour, opacity and
+    /// width. Left unwired, its system's own settings say.
+    LookOutput,
     /// Something the shader is given where it runs.
     Input {
         input: Input,
@@ -455,6 +512,10 @@ fn port(label: &'static str, ty: PortTy, default: f32) -> Port {
     Port { label: label.into(), ty, default: [default; 4] }
 }
 
+/// What an Update Output's and a Look Output's inputs set, in order.
+pub const UPDATE_OUTPUTS: [(&str, Ty); 2] = [("Force", Ty::Float3), ("Velocity", Ty::Float3)];
+pub const LOOK_OUTPUTS: [(&str, Ty); 3] = [("Color", Ty::Float3), ("Alpha", Ty::Float), ("Size", Ty::Float)];
+
 /// What a surface output's inputs set, in order.
 pub const SURFACE_OUTPUTS: [(&str, Ty); 6] = [
     ("Color", Ty::Float3),
@@ -472,6 +533,8 @@ impl NodeKind {
             Self::SurfaceOutput => "Surface Output".into(),
             Self::VertexOutput => "Vertex Output".into(),
             Self::LightOutput => "Light Output".into(),
+            Self::UpdateOutput => "Update Output".into(),
+            Self::LookOutput => "Look Output".into(),
             Self::Input { input } => input.name().into(),
             Self::Surface => "Surface".into(),
             Self::Constant { ty, .. } => ty.name().into(),
@@ -498,6 +561,8 @@ impl NodeKind {
             Self::SurfaceOutput => Some(Stage::Surface),
             Self::VertexOutput => Some(Stage::Vertex),
             Self::LightOutput => Some(Stage::Light),
+            Self::UpdateOutput => Some(Stage::Update),
+            Self::LookOutput => Some(Stage::Look),
             _ => None,
         }
     }
@@ -507,8 +572,8 @@ impl NodeKind {
     pub fn in_stage(&self, stage: Stage) -> bool {
         match self {
             Self::Input { input } => input.in_stage(stage),
-            Self::Surface => stage != Stage::Vertex,
-            Self::SamplePicture { .. } => stage != Stage::Light,
+            Self::Surface => matches!(stage, Stage::Surface | Stage::Light),
+            Self::SamplePicture { .. } => matches!(stage, Stage::Surface | Stage::Vertex),
             _ => true,
         }
     }
@@ -519,6 +584,8 @@ impl NodeKind {
             Self::SurfaceOutput => SURFACE_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::VertexOutput => vec![port("Offset", Fixed(Ty::Float3), 0.0)],
             Self::LightOutput => vec![port("Light", Fixed(Ty::Float3), 0.0)],
+            Self::UpdateOutput => UPDATE_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
+            Self::LookOutput => LOOK_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::SamplePicture { .. } => vec![port("UV", Fixed(Ty::Float2), 0.0)],
             Self::Math { op } => {
                 let ty = if *op == MathOp::Cross { Fixed(Ty::Float3) } else { Any };
@@ -546,7 +613,12 @@ impl NodeKind {
         use PortTy::{Any, Fixed};
         let out = |label, ty| vec![port(label, ty, 0.0)];
         match self {
-            Self::SurfaceOutput | Self::VertexOutput | Self::LightOutput | Self::SubGraphOutput => Vec::new(),
+            Self::SurfaceOutput
+            | Self::VertexOutput
+            | Self::LightOutput
+            | Self::UpdateOutput
+            | Self::LookOutput
+            | Self::SubGraphOutput => Vec::new(),
             Self::Input { input } => out("Out", Fixed(input.ty())),
             Self::Surface => SURFACE_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::Constant { ty, .. } => out("Out", Fixed(*ty)),

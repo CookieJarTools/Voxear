@@ -325,3 +325,177 @@ fn a_graph_with_a_sub_graph_and_a_slang_node_draws_what_the_same_in_plain_nodes_
     // The rim glows orange: somewhere on the ball red is well over blue.
     assert!(nodes.chunks_exact(4).any(|p| i32::from(p[0]) > i32::from(p[2]) + 60), "the rim glows");
 }
+
+/// A particle graph: a Look that colours its particles green, and an
+/// Update that sends them straight up at two metres a second.
+fn rise(update: bool) -> Graph {
+    let mut g = Graph { name: if update { "Rise".into() } else { "Tint".into() }, particles: true, ..Graph::default() };
+    let look = g.add(NodeKind::LookOutput, [0.0; 2]);
+    g.set_literal(look, 0, [0.1, 1.0, 0.1, 0.0]);
+    if update {
+        let step = g.add(NodeKind::UpdateOutput, [0.0; 2]);
+        g.set_literal(step, 1, [0.0, 2.0, 0.0, 0.0]);
+    }
+    g
+}
+
+/// Bright particles thrown a little way up and falling back, drawn over a
+/// dark wall for a second and a half, with `graph`; how many pixels show
+/// green, and how high the bright ones are on average, in pixels from the top.
+fn particles_with(
+    renderer: &mut Renderer,
+    graphs: &voxear_render::ParticleGraphs,
+    graph: Option<AssetGuid>,
+) -> (usize, f32, Vec<u8>) {
+    use voxear_render::{ParticleBlend, ParticlePlayback, ParticleSystem};
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.05, ..Sky::default() });
+    world.insert_resource(graphs.clone());
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer
+        .add_material(&MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], ..MaterialDesc::default() })
+        .unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 8.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, dark), wall));
+    let system = ParticleSystem {
+        rate: 150.0,
+        lifetime: [1.4, 1.5],
+        speed: [0.8, 1.0],
+        size: [0.12, 0.15],
+        angle: 15.0,
+        gravity: 1.0,
+        color: [1.0, 0.7, 0.4, 1.0],
+        color_end: [1.0, 0.7, 0.4, 1.0],
+        intensity: 3.0,
+        blend: ParticleBlend::Additive,
+        lit: false,
+        graph,
+        ..ParticleSystem::default()
+    };
+    let mut time = 10.0;
+    world.spawn((system, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::ZERO)));
+    for _ in 0..90 {
+        renderer.render(&world, time).unwrap();
+        time += 1.0 / 60.0;
+    }
+    let pixels = renderer.read_pixels().unwrap().2;
+    let rgb = |p: &[u8]| (i32::from(p[0]), i32::from(p[1]), i32::from(p[2]));
+    let green = pixels
+        .chunks_exact(4)
+        .filter(|p| {
+            let (r, g, _) = rgb(p);
+            g > r + 60
+        })
+        .count();
+    // Only over the dark wall behind them, not the bright sky and floor round it.
+    let bright: Vec<f32> = pixels
+        .chunks_exact(4)
+        .enumerate()
+        .map(|(at, p)| (at as u32 % SIZE.0, at as u32 / SIZE.0, p))
+        .filter(|&(x, y, p)| {
+            (250..390).contains(&x) && (30..290).contains(&y) && {
+                let (r, g, b) = rgb(p);
+                r.max(g).max(b) > 80
+            }
+        })
+        .map(|(_, y, _)| y as f32)
+        .collect();
+    let height = bright.iter().sum::<f32>() / bright.len().max(1) as f32;
+    (green, height, pixels)
+}
+
+#[test]
+fn a_particle_graph_colours_particles_where_drawn_and_moves_them_each_step() {
+    let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+    let project = vec![
+        (guid(1), "Effects/Rise.voxshade".to_string(), rise(true).to_toml()),
+        (guid(2), "Effects/Tint.voxshade".to_string(), rise(false).to_toml()),
+    ];
+    let registry = ShaderRegistry::new(project, &BTreeSet::new());
+    assert!(registry.shaders.iter().all(|s| !s.path.starts_with("Effects/")), "particle graphs are no shaders");
+    let [rising, tint] = [&registry.particle_graphs[0], &registry.particle_graphs[1]];
+    assert!(rising.error.is_none() && rising.update && rising.look, "{rising:?}");
+    assert!(tint.error.is_none() && !tint.update && tint.look, "{tint:?}");
+    let graphs = registry.particle_graph_numbers();
+    // A graph without an Update leaves its system drawn without keeping its particles.
+    let tinted = voxear_render::ParticleSystem { graph: Some(guid(2)), ..Default::default() };
+    assert!(tinted.is_simulated() && !tinted.is_simulated_with(Some(&graphs)));
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let code = voxear_render::CustomCode {
+        materials: dispatch_code(&registry),
+        particles: voxear_engine::shaders::particle_dispatch_code(&registry),
+        ..Default::default()
+    };
+    renderer.set_custom_shaders(code);
+    let world = World::new();
+    for _ in 0..1200 {
+        let _ = renderer.render(&world, 0.0);
+        match renderer.custom_shaders() {
+            CustomShaderState::Compiling => std::thread::sleep(std::time::Duration::from_millis(50)),
+            CustomShaderState::Failed(error) => panic!("the particle shaders did not compile: {error}"),
+            _ => break,
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    // What the graph costs: 300,000 particles kept and stepped, with it and without, least of sixty frames each.
+    let (mut without, mut with) = (f32::INFINITY, f32::INFINITY);
+    for _ in 0..2 {
+        without = without.min(particles_timed(&mut renderer, &graphs, None));
+        with = with.min(particles_timed(&mut renderer, &graphs, Some(guid(1))));
+    }
+    println!("300,000 particles: {without:.3} ms by their settings, {with:.3} ms with the particle graph");
+    assert!(with <= without * 1.15 + 0.05, "{with} ms against {without} ms");
+    let (green_plain, plain_height, plain) = particles_with(&mut renderer, &graphs, None);
+    let (green_rising, rising_height, risen) = particles_with(&mut renderer, &graphs, Some(guid(1)));
+    let (green_tint, tint_height, tinted) = particles_with(&mut renderer, &graphs, Some(guid(2)));
+    keep_image("particles plain.png", &plain);
+    keep_image("particles rising.png", &risen);
+    keep_image("particles tinted.png", &tinted);
+    println!(
+        "green pixels {green_plain} {green_rising} {green_tint}; height {plain_height} {rising_height} {tint_height}"
+    );
+    assert_eq!(green_plain, 0, "orange without a graph");
+    assert!(green_rising > 200 && green_tint > 200, "green with one: {green_rising} {green_tint}");
+    // Sent up at two metres a second by the Update, they are drawn higher than those that fall back.
+    assert!(rising_height + 40.0 < plain_height, "{rising_height} against {plain_height}");
+    // The Look alone moves nothing: drawn where they fall, as without a graph.
+    assert!((tint_height - plain_height).abs() < 15.0, "{tint_height} against {plain_height}");
+}
+
+/// The least GPU time of sixty frames with 300,000 small particles kept and
+/// stepped (Forces has them simulated), moved by `graph` or by their settings.
+fn particles_timed(renderer: &mut Renderer, graphs: &voxear_render::ParticleGraphs, graph: Option<AssetGuid>) -> f32 {
+    use voxear_render::{ParticleBlend, ParticlePlayback, ParticleSystem};
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.05, ..Sky::default() });
+    world.insert_resource(graphs.clone());
+    let system = ParticleSystem {
+        rate: 200_000.0,
+        lifetime: [1.5, 1.5],
+        speed: [0.8, 1.0],
+        size: [0.01, 0.02],
+        angle: 30.0,
+        forces: 1.0,
+        intensity: 1.0,
+        blend: ParticleBlend::Additive,
+        lit: false,
+        graph,
+        ..ParticleSystem::default()
+    };
+    let mut time = 10.0;
+    world.spawn((system, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::ZERO)));
+    let mut least = f32::INFINITY;
+    for frame in 0..150 {
+        renderer.render(&world, time).unwrap();
+        time += 1.0 / 60.0;
+        if frame >= 90 {
+            least = least.min(renderer.gpu_frame_ms());
+        }
+    }
+    least
+}

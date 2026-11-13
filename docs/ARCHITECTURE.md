@@ -3102,7 +3102,7 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   hanging a bone elsewhere keeps them. The Model window keys them on a timeline (`model_timeline`) with the
   model drawn posed on the CPU (`clip_matrices`, `mesh_posed`), as its Motion mode draws it.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
+## Particles *(the stateless and simulated paths, particle graphs, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -3115,8 +3115,12 @@ next.
    world, collision, forces; later trails), the system's particles are kept on the GPU and stepped each frame
    by one compute pass for every system and every view (`voxear_render::particle_sim`,
    `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
-3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
-   the shared graph compiler (see Materials and VoxShade).
+3. **With a particle graph** *(implemented)*. A system can pick a VoxShade particle graph, which has its say
+   where the settings leave off: its Update in the step, after the settings' forces and before drag and
+   collision, its Look where the particle is drawn, after the settings' colour and size. The project's particle
+   graphs are compiled into the step and the drawing once, as its material shaders are into the material
+   passes, and a system calls its own by number, so there is still one pass for every system. A graph with an
+   Update has its system simulated; one with only a Look leaves it on the first path.
 
 **The simulated path.** Every simulated system shares one pool of particles, 36 bytes each (position, velocity,
 age, life and a seed; size, colour and spin are worked out from the seed and age where it is drawn, as on the
@@ -3161,6 +3165,21 @@ sorting).
   the stats: adding to host-visible memory cost nine times the whole step.
 - On an RTX 3070, 1,048,576 particles blown and stirred are stepped in 0.19 ms and drawn as 2 cm sparks in
   0.9 ms.
+
+**Particle graphs** *(implemented)*. Chose graphs that add to the fixed modules over graphs that replace them:
+the settings stay the easy way in and still do the sending out, the shape, gravity, wind, collision and
+trails; a graph is the full way, for what they cannot say. Chose one program a frame over a program per
+effect: the project's graphs go into `project_particle_graphs.slang`, a switch on the system's graph number
+(`GpuParticleSystem::graph`, 0 for none), compiled into the `particles` and `particle_sim` modules with the
+project's custom shaders, so stepping and drawing stay one dispatch and one pipeline for every system, and a
+system without a graph pays one branch on a number the same for its whole chunk. The registry keeps particle
+graphs apart from shaders and numbers them by path (`shaders::ParticleGraph`); the engine hands the numbers to
+the renderer as the `ParticleGraphs` resource, which also says which graphs have an Update, so a system knows
+whether to keep its particles (`ParticleSystem::simulated_by`). A graph's Update reads the particle in the
+world, whatever its system's space, and its Seed is made from the same number in the step and in drawing, so
+the two stages see one particle. A particle graph's properties are folded in as constants for now: values set
+for each system wait on a store of them beside the system's own. On an RTX 3070, 300,000 particles stepped and
+drawn take 0.85 ms a frame with the starter's graph, against 0.77 ms without.
 
 **Effects** *(implemented)*. An effect is a list of emitters, each a name and a Particle System's settings, and a
 Particle System's Effect plays one in place of its own (`voxear_render::effects`). To the renderer and the

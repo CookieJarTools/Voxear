@@ -102,11 +102,7 @@ impl Make {
             let x = column.get(&node.id).copied().unwrap_or(0);
             let y = tops.entry(x).or_insert(0.0f32);
             node.at = [x as f32 * 220.0, *y];
-            let ty = match &node.kind {
-                NodeKind::Property { property } => properties.property_ty(*property),
-                _ => None,
-            };
-            let rows = node.kind.inputs().len().max(node.kind.outputs(ty).len()) as f32;
+            let rows = properties.inputs_of(&node.kind).len().max(properties.outputs_of(&node.kind).len()) as f32;
             *y += HEADER + rows * ROW + PICTURE + GAP;
         }
         self.graph
@@ -148,6 +144,38 @@ pub fn lit(name: &str) -> Graph {
         }
     }
     graph
+}
+
+/// A particle graph a new one starts as: particles pulled round their
+/// system's Obj as they rise, and growing and fading over their lives.
+pub fn particles(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    m.graph.particles = true;
+    let swirl = m.property(
+        "swirl",
+        PropertyKind::Number,
+        [2.0; 4],
+        Some([0.0, 20.0]),
+        "How hard particles are pulled round the Obj, in metres a second each second",
+    );
+    let position = m.input(Input::Position);
+    let centre = m.input(Input::ObjectPosition);
+    let out = m.math(MathOp::Subtract, &[Wire(position), Wire(centre)]);
+    let round = m.math(MathOp::Cross, &[Vec3([0.0, 1.0, 0.0]), Wire(out)]);
+    let force = m.math(MathOp::Multiply, &[Wire(round), Wire(swirl)]);
+    m.node(NodeKind::UpdateOutput, &[Wire(force)]);
+    let life = m.input(Input::Life);
+    let size = m.input(Input::ParticleSize);
+    let grown = m.math(MathOp::Lerp, &[Num(1.0), Num(2.0), Wire(life)]);
+    let wide = m.math(MathOp::Multiply, &[Wire(size), Wire(grown)]);
+    let color = m.input(Input::ParticleColor);
+    let alpha = m.node(NodeKind::Split, &[Wire(color)]);
+    let fading = m.math(MathOp::OneMinus, &[Wire(life)]);
+    let faded = m.math(MathOp::Multiply, &[Out(alpha, 3), Wire(fading)]);
+    let look = m.graph.add(NodeKind::LookOutput, [0.0, 0.0]);
+    m.graph.link(faded, 0, look, 1);
+    m.graph.link(wide, 0, look, 2);
+    m.finish()
 }
 
 /// A sub-graph a new one starts as: how far a surface faces away from the

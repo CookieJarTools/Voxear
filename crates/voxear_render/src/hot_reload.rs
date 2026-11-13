@@ -102,11 +102,15 @@ pub struct CustomCode {
     /// `project_look_shaders.slang`, which defines `customLook` (see
     /// `shaders/look_custom.slang`). Empty compiles to none.
     pub look: String,
+    /// `project_particle_graphs.slang`, which defines
+    /// `customParticleUpdate` and `customParticleLook` (see
+    /// `shaders/particle_custom.slang`). Empty compiles to none.
+    pub particles: String,
 }
 
 impl From<String> for CustomCode {
     fn from(materials: String) -> Self {
-        Self { materials, ui: String::new(), look: String::new() }
+        Self { materials, ..Self::default() }
     }
 }
 
@@ -121,6 +125,17 @@ const NO_UI_SHADERS: &str = "float4 customUi(uint shader, uint first, UiInput in
 
 /// What a project without look shaders compiles in their place.
 const NO_LOOK_SHADERS: &str = "float3 customLook(uint shader, LookInput input)\n{\n    return input.color;\n}\n";
+
+/// What a project without particle graphs compiles in their place.
+const NO_PARTICLE_GRAPHS: &str = "\
+void customParticleUpdate(uint graph, ParticleUpdateInput input, inout ParticleUpdateOutput output)
+{
+}
+
+void customParticleLook(uint graph, ParticleLookInput input, inout ParticleLookOutput output)
+{
+}
+";
 
 /// A project's custom shaders compiling on a thread of their own, into the
 /// modules that draw materials and the UI.
@@ -159,6 +174,8 @@ pub fn compile_custom_shaders(code: impl Into<CustomCode>, dir: &Path) -> Result
     std::fs::write(dir.join("project_ui_shaders.slang"), ui)?;
     let look = if code.look.is_empty() { NO_LOOK_SHADERS } else { &code.look };
     std::fs::write(dir.join("project_look_shaders.slang"), look)?;
+    let particles = if code.particles.is_empty() { NO_PARTICLE_GRAPHS } else { &code.particles };
+    std::fs::write(dir.join("project_particle_graphs.slang"), particles)?;
     let compiled: Vec<Result<(String, Vec<u8>)>> = std::thread::scope(|scope| {
         let jobs: Vec<_> = CUSTOM_SHADER_MODULES
             .iter()

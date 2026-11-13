@@ -201,6 +201,13 @@ fn given(stage: Stage, given: Given) -> String {
                 Input::LightDirection => "direction",
                 Input::LightColor => "color",
                 Input::LightView => "view",
+                Input::Age => "age",
+                Input::Life => "life",
+                Input::Seed => "seed",
+                Input::Velocity => "velocity",
+                Input::DeltaTime => "deltaTime",
+                Input::ParticleColor => "color",
+                Input::ParticleSize => "size",
             };
             let from = if stage == Stage::Light { "light" } else { "input" };
             format!("{from}.{field}")
@@ -392,6 +399,8 @@ pub fn body(graph: &Graph, program: &Program, stage: Stage, plan: &Plan) -> Stri
         let _ = match stage {
             Stage::Surface => writeln!(writer.text, "    surface.{} = {value};", surface[slot]),
             Stage::Vertex | Stage::Light => writeln!(writer.text, "    return {value};"),
+            Stage::Update => writeln!(writer.text, "    output.{} = {value};", ["force", "velocity"][slot]),
+            Stage::Look => writeln!(writer.text, "    output.{} = {value};", ["color", "alpha", "size"][slot]),
         };
     }
     writer.text

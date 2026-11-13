@@ -84,6 +84,7 @@ mod inspector;
 mod layers_view;
 mod level_files;
 mod levels_panel;
+pub mod link;
 mod lighting_panel;
 pub mod localization_panel;
 mod localization_tables;
@@ -145,6 +146,83 @@ pub use profiler::{Profiler, Sample};
 pub use project_view::{ItemKind, ProjectItem};
 pub use settings::{PlayAs, SETTINGS, SettingInfo, SettingKind, SettingValue, Settings, TestNetwork};
 pub use window::run_editor;
+
+/// Runs the editor without a window, answering tools over its link, as
+/// `vox editor serve` does, until one asks it to close with `editor.quit`.
+/// It draws offscreen at `size`, so captures work as in a window.
+pub fn serve(project: Project, settings: &RendererSettings, log: LogCapture, (width, height): (u32, u32)) -> Result<()> {
+    let mut renderer = Renderer::new_offscreen(width, height, settings)?;
+    let mut editor = Editor::open_without_memory(project, &mut renderer, log)?;
+    editor.serve_link(true)?;
+    let frame = std::time::Duration::from_secs_f32(1.0 / 30.0);
+    let mut last = std::time::Instant::now();
+    while !editor.wants_to_quit() {
+        let started = std::time::Instant::now();
+        let delta = (started - last).as_secs_f32().min(0.1);
+        last = started;
+        editor.update(&mut renderer, (width, height), 1.0, delta)?;
+        if let Some(rest) = frame.checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
+    Ok(())
+}
+
+/// Opens the editor without a window for some calls, as `vox editor call
+/// --headless` does where no editor is open, makes them in order, and
+/// closes. Each call's answer comes back; nothing is saved unless a call
+/// saves.
+pub fn call_headless(
+    project: Project,
+    settings: &RendererSettings,
+    log: LogCapture,
+    (width, height): (u32, u32),
+    calls: &[(String, serde_json::Value)],
+) -> Result<Vec<voxear_engine::local_link::Answer>> {
+    let mut renderer = Renderer::new_offscreen(width, height, settings)?;
+    let mut editor = Editor::open_without_memory(project, &mut renderer, log)?;
+    // Laid out first, so the views have their places.
+    for _ in 0..2 {
+        editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+    }
+    let mut answers = Vec::new();
+    for (call, args) in calls {
+        let answer = editor.call(call, args.clone());
+        let answered = loop {
+            editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+            match answer.try_recv() {
+                Ok(answered) => break answered,
+                Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => anyhow::bail!("the editor dropped the call {call}"),
+            }
+        };
+        answers.push(answered);
+        if editor.wants_to_quit() {
+            break;
+        }
+    }
+    Ok(answers)
+}
+
+/// Asks a headless editor serving the project, as `vox mcp` starts one, to
+/// save and close, so the editor opening now has the project and its link.
+/// A windowed editor open on it already keeps its link; this one goes on
+/// without one.
+pub fn take_over_from_headless(root: &Path) -> Result<()> {
+    let folder = link::link_folder(root);
+    let Ok(mut other) = voxear_engine::local_link::LinkClient::connect(&folder, link::LINK_FILE) else { return Ok(()) };
+    if !other.about.headless {
+        return Ok(());
+    }
+    tracing::info!("taking the project over from the headless editor (process {})", other.about.pid);
+    other.call("editor.quit", serde_json::json!({ "save": true }))?.map_err(anyhow::Error::from)?;
+    let file = folder.join(link::LINK_FILE);
+    let asked = std::time::Instant::now();
+    while file.exists() && asked.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(())
+}
 
 /// Renders the editor offscreen after `frames` frames, with the first Obj
 /// that has a mesh selected, and writes it to `out` as a PNG. For checking the

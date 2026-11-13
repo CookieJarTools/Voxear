@@ -1756,9 +1756,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
-- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders: on the graph compiler
-  particles share, whose shaders must cost what hand-written ones do (see
-  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
+- **The shader graph compiler ✅** (`voxear_shader_graph`; no editor or asset for it yet). A graph of typed nodes
+  (inputs a stage is given, the surface as it stands, constants and colours, properties and picture reads, the
+  usual maths, Compare and Branch, Split, Combine, Swizzle and a whole-number Random) is lowered from its output
+  nodes into typed steps, which are folded, simplified and merged as they are made, with what no output reads
+  left out; each step knows whether it changes never, once a draw or from place to place. A Branch with a side
+  worth skipping becomes a real `if` holding only that side's work, the rest selects. It writes the same
+  properties struct and `surface`, `vertex` and `light` functions as a hand-written `.shader`, and counts each
+  node's instructions and picture reads once all that is done. Hologram and Sway made again as graphs
+  (`starters`) draw the same picture as the built-in ones and take the same GPU time (0.226 against 0.228 ms,
+  0.240 against 0.239 ms, least of sixty frames). Tests: folding, merging, leaving out, branches, errors at their
+  nodes, files read back; on a GPU, the two graphs against the hand-written shaders.
+- Shader Graph with previews and sub-graphs, plus material variants: `.shadergraph` assets compiled as project
+  shaders, the graph editor on the generator graphs' canvas with each node's cost, then work moved to the vertex
+  stage and properties' sums worked out on the CPU (see [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
   and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or
@@ -2783,7 +2794,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - pages read by someone new to Voxear following them step by step, and rewritten where they get stuck
   - Docs Health in the editor holding the line after: pages older than the code they describe, samples that no
     longer build, and APIs with no page
-- Editor RPC for `vox`, and the hook for AI tooling.
+- ~~**Editor RPC for `vox`, and the hook for AI tooling:**~~ done: a running editor answers calls from programs on the
+  same computer (`voxear_engine::local_link`): loopback only, a secret in `.voxear/Editor` only its user reads,
+  JSON-RPC 2.0 a line each. 52 calls (`voxear_editor::link::CALLS`): read the open level, Objs, components and
+  fields as JSON; make, change, copy, move and delete Objs; add, remove and switch components; set any field the
+  Inspector shows by its typed reference; undo, redo and `batch` as one step; select and frame; every command
+  palette command by id; save, open levels and scenes; the Project panel's files; Play, Pause, Step, Stop and the
+  played game's console; the Console's lines; a PNG of the Scene view, Game view or whole editor; script builds
+  with their errors by file and line; settings; the manual's pages. Each change is a step on the editor's undo
+  and a `[Tools]` line in the Console; **Let tools change the project** in Settings makes tools read only. Open
+  scenes and `voxear.toml` written on disk are read again, unless edits wait. `vox editor call` (JSON out, exit
+  codes, `--headless`, `--describe --json`), `vox editor serve` (a headless editor a windowed one takes over
+  from), and `vox mcp`, every call a tool for an AI assistant, with captures sent as pictures. Tests: the link
+  (order, a wrong secret, loopback and 0600, a second editor, a stale file), an editor driven over the socket
+  (make an Obj, set a field, undo, redo, save, capture, the Console), a batch as one step, refusals, scenes
+  changed on disk, every component's fields reached, `vox editor call` and `vox mcp` from outside. Manual: The
+  Command Line, Driving the Editor from a Terminal. Not done: brush tools, the generator graph and the Model
+  window by call rather than by file; pointer and key input; events pushed to tools.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

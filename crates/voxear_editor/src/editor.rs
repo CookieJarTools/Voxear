@@ -29,6 +29,7 @@ mod inspectors;
 mod languages;
 mod lighting;
 mod level_edits;
+mod link_calls;
 mod material_drops;
 mod material_shaders;
 mod model_clips;
@@ -464,6 +465,8 @@ pub struct Editor {
     /// The scripts build and are described again once no build is under
     /// way, whether or not a script changed, as after the packages change.
     rebuild_scripts: bool,
+    /// Tools reaching the editor through its link (see `link_calls`).
+    link: link_calls::Link,
 }
 
 impl Editor {
@@ -738,6 +741,7 @@ impl Editor {
             described_from: None,
             scripts_checked: None,
             rebuild_scripts: false,
+            link: Default::default(),
             layout_checked: Instant::now(),
         };
         editor.restore_layout();
@@ -947,6 +951,10 @@ impl Editor {
         self.update_material_drops(renderer);
         for command in std::mem::take(&mut self.commands) {
             self.run(command, renderer);
+        }
+        {
+            profile_scope!("Link");
+            self.update_link(renderer);
         }
         self.update_windows();
         self.update_layouts();
@@ -2183,6 +2191,7 @@ impl Editor {
                 }
                 Ok(Err(error)) => {
                     tracing::warn!("the scripts could not be described: {error:#}");
+                    self.link.scripts_failed = Some(format!("{error:#}"));
                     self.notify("The scripts failed to build; their fields show as they last built");
                     self.describing = None;
                 }
@@ -2276,7 +2285,9 @@ impl Editor {
             _ if self.is_playing() => {
                 self.notify("Stop playing to save or undo; edits while playing are not kept");
             }
-            Command::Save => self.save(),
+            Command::Save => {
+                self.save();
+            }
             Command::AlignWithView => self.align_with_view(),
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
@@ -2299,26 +2310,32 @@ impl Editor {
         }
     }
 
-    /// Writes the open level's scenes that changed back to their files.
-    pub fn save(&mut self) {
+    /// Writes the open level's scenes that changed back to their files, and
+    /// returns their paths.
+    pub fn save(&mut self) -> Vec<String> {
         let game = &mut self.game;
         let saved = game.levels.save(&game.engine, &mut game.content, &game.project.root);
-        match saved {
-            Ok(written) if written.is_empty() => self.notify("Nothing to save: the scenes are as they are on disk"),
+        let written = match saved {
+            Ok(written) if written.is_empty() => {
+                self.notify("Nothing to save: the scenes are as they are on disk");
+                written
+            }
             Ok(written) => {
                 self.prefab_saved();
                 tracing::info!("saved {}", written.join(", "));
                 let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
                 self.notify(&format!("Saved {}", names.join(", ")));
+                written
             }
             Err(error) => {
                 tracing::error!("could not save: {error:#}");
                 self.notify("Could not save; the Console says why");
-                return;
+                return Vec::new();
             }
-        }
+        };
         self.unsaved = false;
         self.discard_armed = None;
+        written
     }
 
     /// Takes back the last edit, as Ctrl+Z does.

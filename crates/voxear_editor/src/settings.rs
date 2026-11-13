@@ -54,7 +54,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 24] = [
+pub const SETTINGS: [SettingInfo; 25] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -137,6 +137,12 @@ pub const SETTINGS: [SettingInfo; 24] = [
         key: "prefab_parts",
         title: "Open out prefabs to their Objs",
         group: "Project panel",
+        kind: SettingKind::Toggle,
+    },
+    SettingInfo {
+        key: "tools_may_change",
+        title: "Let tools change the project",
+        group: "Tools",
         kind: SettingKind::Toggle,
     },
 ];
@@ -279,6 +285,9 @@ pub struct Settings {
     pub theme_base: u32,
     pub theme_accent: u32,
     pub theme_contrast: f32,
+    /// Programs reaching the editor through its link, as `vox editor call`
+    /// and `vox mcp` do, may change the project, not only read it.
+    pub tools_may_change: bool,
 }
 
 /// A Console filter saved by name, as Sifter keeps them: a search, and the
@@ -335,6 +344,7 @@ impl Default for Settings {
             theme_base: 0x0c0e10,
             theme_accent: 0x7988ff,
             theme_contrast: 50.0,
+            tools_may_change: true,
         }
     }
 }
@@ -366,6 +376,7 @@ impl Settings {
             "theme_base" => SettingValue::Color(self.theme_base),
             "theme_accent" => SettingValue::Color(self.theme_accent),
             "theme_contrast" => SettingValue::Number(self.theme_contrast),
+            "tools_may_change" => SettingValue::Toggle(self.tools_may_change),
             _ => return None,
         })
     }
@@ -385,6 +396,7 @@ impl Settings {
             ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
             ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(4),
             ("prefab_parts", SettingValue::Toggle(on)) => self.prefab_parts = on,
+            ("tools_may_change", SettingValue::Toggle(on)) => self.tools_may_change = on,
             ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
             ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
             ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,

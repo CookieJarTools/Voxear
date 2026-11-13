@@ -282,6 +282,11 @@ impl Console {
 
     /// Takes in lines logged since the last frame and follows the toolbar,
     /// the list, its menu and the trace pane.
+    /// Every line logged, as the Console reads them.
+    pub(crate) fn log(&self) -> &LogCapture {
+        &self.log
+    }
+
     pub fn update(&mut self, ui: &mut Ui, settings: &mut Settings) -> ConsoleUpdate {
         let mut update =
             ConsoleUpdate { errors: self.take_new_lines(settings.console_kept), ..ConsoleUpdate::default() };

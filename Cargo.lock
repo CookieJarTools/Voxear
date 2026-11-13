@@ -3945,6 +3945,7 @@ name = "voxear_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.13.1",
  "clap",
  "png",
  "semver",
@@ -4079,6 +4080,7 @@ dependencies = [
  "voxear_rhi",
  "voxear_scene",
  "voxear_scripting",
+ "voxear_shader_graph",
  "voxear_terrain",
  "voxear_ui",
  "winit",
@@ -4238,6 +4240,15 @@ dependencies = [
  "voxear_physics2d",
  "voxear_scene",
  "voxear_terrain",
+]
+
+[[package]]
+name = "voxear_shader_graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml",
 ]
 
 [[package]]

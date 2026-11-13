@@ -219,6 +219,10 @@ pub fn put(
     set::<crate::screen_ui::ScreenUi>(world, entity, obj.screen_ui);
     set::<crate::map::Map>(world, entity, obj.map);
     set::<crate::map::MapMarker>(world, entity, obj.map_marker);
+    set::<crate::heat::Climate>(world, entity, obj.climate);
+    set::<crate::heat::HeatSource>(world, entity, obj.heat_source);
+    set::<crate::heat::HeatZone>(world, entity, obj.heat_zone);
+    set::<crate::heat::HeatBody>(world, entity, obj.heat_body);
     let layer = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0);
     set::<Layer>(world, entity, layer);
     set::<Collider>(world, entity, obj.collider);

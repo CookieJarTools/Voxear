@@ -372,6 +372,18 @@ pub struct ObjData {
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
+    /// A Climate: the level's clock, and its climate where no generator gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub climate: Option<crate::heat::Climate>,
+    /// A Heat Source, warming or cooling what is near it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_source: Option<crate::heat::HeatSource>,
+    /// A Heat Zone, an area hotter or colder than round it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_zone: Option<crate::heat::HeatZone>,
+    /// A Heat Body, taking the temperature of where it is and changing with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_body: Option<crate::heat::HeatBody>,
     /// Bends foliage out of the Obj's way as it passes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_interaction: Option<FoliageInteraction>,
@@ -468,6 +480,10 @@ impl ObjData {
             stream: None,
             buoyancy: None,
             seasons: None,
+            climate: None,
+            heat_source: None,
+            heat_zone: None,
+            heat_body: None,
             foliage_interaction: None,
             track_maker: None,
             cave_shape: None,
@@ -1799,6 +1815,18 @@ fn capture_instance(
     if root.seasons.is_some() && root.seasons != prefab_root.seasons {
         instance.seasons = root.seasons;
     }
+    if root.climate.is_some() && root.climate != prefab_root.climate {
+        instance.climate = root.climate;
+    }
+    if root.heat_source.is_some() && root.heat_source != prefab_root.heat_source {
+        instance.heat_source = root.heat_source;
+    }
+    if root.heat_zone.is_some() && root.heat_zone != prefab_root.heat_zone {
+        instance.heat_zone = root.heat_zone;
+    }
+    if root.heat_body.is_some() && root.heat_body != prefab_root.heat_body {
+        instance.heat_body.clone_from(&root.heat_body);
+    }
     if root.foliage_interaction.is_some() && root.foliage_interaction != prefab_root.foliage_interaction {
         instance.foliage_interaction = root.foliage_interaction;
     }
@@ -2017,6 +2045,18 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
+    }
+    if let Some(climate) = actual.climate.filter(|c| Some(*c) != expected.climate) {
+        put("climate", whole(&climate, &crate::heat::Climate::default())?);
+    }
+    if let Some(source) = actual.heat_source.filter(|h| Some(*h) != expected.heat_source) {
+        put("heat_source", whole(&source, &crate::heat::HeatSource::default())?);
+    }
+    if let Some(zone) = actual.heat_zone.filter(|h| Some(*h) != expected.heat_zone) {
+        put("heat_zone", whole(&zone, &crate::heat::HeatZone::default())?);
+    }
+    if let Some(body) = actual.heat_body.as_ref().filter(|h| Some(*h) != expected.heat_body.as_ref()) {
+        put("heat_body", whole(body, &crate::heat::HeatBody::default())?);
     }
     if let Some(push) = actual.foliage_interaction.filter(|p| Some(*p) != expected.foliage_interaction) {
         put("foliage_interaction", whole(&push, &FoliageInteraction::default())?);
@@ -2304,6 +2344,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.stream = world.get::<Stream>(entity).copied();
     obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
+    obj.climate = world.get::<crate::heat::Climate>(entity).copied();
+    obj.heat_source = world.get::<crate::heat::HeatSource>(entity).copied();
+    obj.heat_zone = world.get::<crate::heat::HeatZone>(entity).copied();
+    obj.heat_body = world.get::<crate::heat::HeatBody>(entity).cloned();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
     obj.cave_shape = world.get::<CaveShape>(entity).copied();

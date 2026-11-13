@@ -111,6 +111,12 @@ pub enum Part {
     Map,
     /// A Map Marker: its Obj marked on every map.
     MapMarker,
+    /// The level's clock and climate, a Heat Source, a Heat Zone and a Heat
+    /// Body (see `heat_props`).
+    Climate,
+    HeatSource,
+    HeatZone,
+    HeatBody,
     NetObject,
     Animator,
     MobMotion,
@@ -178,6 +184,10 @@ impl Part {
             Part::ScreenUi => "screen_ui".into(),
             Part::Map => "map".into(),
             Part::MapMarker => "map_marker".into(),
+            Part::Climate => "climate".into(),
+            Part::HeatSource => "heat_source".into(),
+            Part::HeatZone => "heat_zone".into(),
+            Part::HeatBody => "heat_body".into(),
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MobMotion => "mob_motion".into(),
@@ -248,6 +258,10 @@ impl Part {
             Part::ScreenUi => "Screen UI",
             Part::Map => "Map",
             Part::MapMarker => "Map Marker",
+            Part::Climate => "Climate",
+            Part::HeatSource => "Heat Source",
+            Part::HeatZone => "Heat Zone",
+            Part::HeatBody => "Heat Body",
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MobMotion => "Mob Motion",
@@ -330,6 +344,9 @@ impl Part {
             Part::UiPanel | Part::ScreenUi => "panels",
             Part::Map => "globe",
             Part::MapMarker => "map-pin",
+            Part::Climate => "globe",
+            Part::HeatSource | Part::HeatBody => "sun",
+            Part::HeatZone => "box",
             Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MobMotion => "play",
@@ -735,6 +752,8 @@ pub enum Prop {
     BlockWorld(crate::block_props::BlockField),
     /// A Foliage's plants: their trunks, Cut prefab, and how they are painted (see `plants_props`).
     Plants(crate::plants_props::PlantsField),
+    /// A value of heat's components (see `heat_props`).
+    Heat(crate::heat_props::HeatField),
     FieldOfView,
     Near,
     Exposure,
@@ -859,6 +878,7 @@ impl Prop {
             Prop::Terrain(_) => Part::Terrain,
             Prop::BlockWorld(_) => Part::BlockWorld,
             Prop::Plants(_) => Part::Foliage,
+            Prop::Heat(field) => crate::heat_props::part(*field),
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -1209,6 +1229,7 @@ impl Prop {
             Prop::Terrain(field) => crate::terrain_props::key(*field),
             Prop::BlockWorld(field) => crate::block_props::key(*field),
             Prop::Plants(field) => crate::plants_props::key(*field),
+            Prop::Heat(field) => crate::heat_props::key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1656,6 +1677,7 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::map::MapMarker>(entity) {
         parts.push(Part::MapMarker);
     }
+    crate::heat_props::parts(world, entity, &mut parts);
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -1887,6 +1909,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         ],
         Part::MapMarker => {
             vec![Prop::MarkerIcon, Prop::MarkerLabel, Prop::MarkerColor, Prop::MarkerShows, Prop::MarkerEdge]
+        }
+        Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
+            crate::heat_props::props(world, entity, part)
         }
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
@@ -2262,6 +2287,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
 /// What a prop's row says.
 pub fn label(prop: &Prop) -> String {
     let label = match prop {
+        Prop::Heat(field) => return crate::heat_props::label(*field),
         Prop::Terrain(field) => crate::terrain_props::label(*field),
         Prop::BlockWorld(field) => crate::block_props::label(*field),
         Prop::Plants(field) => crate::plants_props::label(*field),
@@ -2665,6 +2691,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
         (Prop::BlockWorld(field), _) => crate::block_props::unit(*field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
+        (Prop::Heat(field), _) => crate::heat_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -2803,6 +2830,9 @@ pub fn add(
         Part::MapMarker => {
             world.insert(entity, voxear_engine::map::MapMarker::default());
         }
+        Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
+            crate::heat_props::add(world, entity, part);
+        }
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -2928,6 +2958,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::MapMarker => {
             world.remove::<voxear_engine::map::MapMarker>(entity);
         }
+        Part::Climate | Part::HeatSource | Part::HeatZone | Part::HeatBody => {
+            crate::heat_props::remove(world, entity, part);
+        }
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
         }
@@ -3031,6 +3064,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Terrain(field) => return crate::terrain_props::get(game, entity, *field),
         Prop::BlockWorld(field) => return crate::block_props::get(game, entity, *field),
         Prop::Plants(field) => return crate::plants_props::get(game, entity, *field),
+        Prop::Heat(field) => return crate::heat_props::get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -3705,6 +3739,11 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::plants_props::pick(game, entity, *field, &choice))
         }
         (Prop::Plants(field), value) => crate::plants_props::set(game, entity, *field, value),
+        (Prop::Heat(field), Value::Asset(label)) if crate::heat_props::is_picked(*field) => {
+            let choice = crate::heat_props::choices(game, *field).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::heat_props::pick(game, entity, *field, &choice))
+        }
+        (Prop::Heat(field), value) => crate::heat_props::set(game, entity, *field, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {
@@ -3749,6 +3788,9 @@ pub fn pick(
     }
     if let Prop::Plants(field) = prop {
         return crate::plants_props::pick(game, entity, *field, choice);
+    }
+    if let Prop::Heat(field) = prop {
+        return crate::heat_props::pick(game, entity, *field, choice);
     }
     match (prop, choice) {
         (Prop::Mesh, Pick::Asset(Some(reference))) => {
@@ -4129,6 +4171,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::Terrain(field) => return crate::terrain_props::choices(game, *field),
         Prop::BlockWorld(field) => return crate::block_props::choices(game, *field),
         Prop::Plants(field) => return crate::plants_props::choices(game, *field),
+        Prop::Heat(field) => return crate::heat_props::choices(game, *field),
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
             let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];
@@ -4294,6 +4337,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Plants(field) if crate::plants_props::is_picked(*field) => {
             crate::plants_props::takes_name(*field).into()
         }
+        Prop::Heat(field) if crate::heat_props::is_picked(*field) => crate::heat_props::takes_name(*field).into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),

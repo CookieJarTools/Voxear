@@ -251,6 +251,13 @@ internal static unsafe class EntryPoints
 		ParticleMessages.Dispatch(new ReadOnlySpan<ParticleHitData>(hits, count));
 	}
 
+	/// <summary>Tells scripts of Heat Bodies' changes and characters' feelings, as HeatBody.Changed and HeatBody.FeelsChanged.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void HeatEvents(HeatEventData* events, int count, byte* text, int length)
+	{
+		HeatMessages.Dispatch(new ReadOnlySpan<HeatEventData>(events, count), Encoding.UTF8.GetString(text, length));
+	}
+
 	/// <summary>Tells scripts the world's origin moved, moving their [WorldPosition] fields with every Obj.</summary>
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void OriginMoved(int* by)

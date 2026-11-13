@@ -2522,6 +2522,53 @@ fn a_block_world_takes_every_starter_plant_at_once_and_the_starter_trees_of_bloc
     }
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
     assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(0));
+
+    // The starter biomes hang vines where it is wet: blocks of the Vine under the world's ledges and cave roofs.
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
+    click(&mut editor.ui, starters);
+    for _ in 0..8 {
+        frame(&mut editor, &mut renderer);
+    }
+    let vine = editor.game.content.parse(&format!("{blocks_folder}/Vine.block")).unwrap().guid().unwrap();
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let vine = asset.drawn.number_of(vine).expect("the world numbers its biomes' vine");
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let mut vines: Vec<[i32; 3]> = Vec::new();
+    for (key, chunk) in blocks.blocks.chunks().filter(|(_, chunk)| chunk.may_hold(|block| block == vine)) {
+        for i in 0..32 * 32 * 32u32 {
+            let (x, y, z) = (i % 32, i / 1024, i / 32 % 32);
+            if chunk.get(x, y, z) == vine {
+                vines.push([key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32]);
+            }
+        }
+    }
+    assert!(vines.len() > 10, "{} blocks of vine hang in the world", vines.len());
+    let sheets: u32 = blocks.meshes.values().map(|mesh| mesh.loose().1).sum();
+    assert!(sheets as usize >= vines.len(), "each a sheet or two among its chunk's faces: {sheets}");
+    // Seen from a few blocks off through open air, where there is such a place to see one from.
+    let open = |at: [i32; 3]| [0, vine].contains(&blocks.blocks.get(at));
+    let ways = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+    let seen_from = vines.iter().find_map(|&[x, y, z]| {
+        ways.iter().find_map(|[dx, dz]| {
+            let clear = (1..=5).all(|out| (-1..=1).all(|up| open([x + dx * out, y + up, z + dz * out])));
+            clear.then_some(([x, y, z], [x + dx * 5, y, z + dz * 5]))
+        })
+    });
+    if let Some((hangs, from)) = seen_from {
+        let middle = |at: [i32; 3]| corner + voxear_core::math::Vec3::new(at[0] as f32 + 0.5, at[1] as f32 + 0.5, at[2] as f32 + 0.5);
+        let towards = (middle(hangs) - middle(from)).normalize();
+        let look = voxear_core::math::Quat::from_rotation_y(towards.x.atan2(towards.z));
+        *editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap() =
+            voxear_scene::Transform::new(middle(from), look, voxear_core::math::Vec3::ONE);
+        for _ in 0..30 {
+            frame(&mut editor, &mut renderer);
+        }
+        shot(&mut renderer, "block-world-vines.png");
+    }
 }
 
 #[test]

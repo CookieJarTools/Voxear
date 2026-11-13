@@ -39,7 +39,7 @@
 <circle cx="56" cy="352" r="7.5" fill="#ffffff" stroke="#5b6cf0" stroke-width="2"/><path d="M56 346.5 a5.5 5.5 0 0 1 0 11 z" fill="#5b6cf0"/>
 <text x="80" y="357" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M5</text>
 <text x="120" y="357" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328">Lighting</text>
-<text x="380" y="357" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Ray-traced probes, fog, soft shadows, clouds and weather, upscalers</text>
+<text x="380" y="357" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Ray-traced probes, fog, soft shadows, clouds, weather, look packs</text>
 <circle cx="56" cy="392" r="8" fill="#1a7f37"/><path d="M52.5 392 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="397" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e"></text>
 <text x="120" y="397" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Vegetation</text>
@@ -67,7 +67,7 @@
 <circle cx="56" cy="592" r="7.5" fill="#ffffff" stroke="#5b6cf0" stroke-width="2"/><path d="M56 586.5 a5.5 5.5 0 0 1 0 11 z" fill="#5b6cf0"/>
 <text x="80" y="597" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M8</text>
 <text x="120" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328">Terrain</text>
-<text x="380" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Heightmaps, digging, endless block worlds, biomes, towns, caves, maps</text>
+<text x="380" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Heightmaps, digging, block worlds, biomes, caves, maps, texture packs</text>
 <circle cx="56" cy="632" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
 <text x="80" y="637" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M9</text>
 <text x="120" y="637" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Navigation, cameras, Timeline</text>

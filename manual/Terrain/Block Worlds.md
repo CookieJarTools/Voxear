@@ -39,6 +39,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
+| Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 
 Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° is pushed a little, and ground steeper than about 45° by the whole amount. The bulges are about 14 m across, so the ground hangs over open air once Overhangs is 9 m or so; under that, cliffs lean and bulge. The far rings of a world without end, whose blocks are too large to hold a bulge, are left unpushed.
@@ -192,7 +193,7 @@ For a sea, pick a block of water as the **Sea block** of generated ground: the a
 
 ### Rivers and currents
 
-A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
+A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. A world whose generator has none, as one written before presets had rivers, gets them with its **Rivers** setting on. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
 
 A river's blocks are sources, so it never runs dry, and each keeps which way its river flows and how high its water stands in it, so its surface comes down in eighths of a block as water placed and running out does, not a block at a time. Its ripples drift the way it flows. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
 

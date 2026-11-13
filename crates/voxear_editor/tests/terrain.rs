@@ -1894,7 +1894,8 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_blo
     let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
     choose(&mut editor, &mut renderer, ground, 1);
     frame(&mut editor, &mut renderer);
-    for (label, shown) in [("Generator", 1), ("Offset", 1), ("Caves", 1), ("Overhangs", 1), ("Ground height", 0)] {
+    let rows = [("Generator", 1), ("Offset", 1), ("Caves", 1), ("Overhangs", 1), ("Rivers", 1), ("Ground height", 0)];
+    for (label, shown) in rows {
         assert_eq!(prop_rows(&editor.ui, label).len(), shown, "{label}");
     }
     let picker = first_with(&editor.ui, prop_rows(&editor.ui, "Generator")[0], "value-picker").expect("its picker");

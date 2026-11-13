@@ -180,6 +180,23 @@ impl Kind for Rivers {
     }
 }
 
+/// Runs rivers down `graph`'s ground: a Rivers node between what is wired
+/// into its Output's Height and the Output, its Water and Falls wired into
+/// the Output's. False, and nothing done, where it has no Output or no
+/// ground wired in.
+pub fn add_rivers(graph: &mut crate::generate::Graph) -> bool {
+    use crate::generate::{NodeKind, nodes::Output};
+    let Some(output) = graph.output().map(|node| (node.id, node.at)) else { return false };
+    let Some(link) = graph.link_into(output.0, Output::HEIGHT).copied() else { return false };
+    let rivers = graph.add(NodeKind::Rivers(Rivers::default()), [output.1[0] - 280.0, output.1[1] + 380.0]);
+    let wired = graph.connect(link.from, link.output, rivers, Rivers::GROUND)
+        && graph.connect(rivers, Rivers::HEIGHT, output.0, Output::HEIGHT)
+        && graph.connect(rivers, Rivers::WATER, output.0, Output::WATER)
+        && graph.connect(rivers, Rivers::FALLS, output.0, Output::FALLS);
+    debug_assert!(wired, "a world's rivers wire up");
+    wired
+}
+
 /// How many points a side a tile of them is, worked out at once.
 const TILE: i32 = 32;
 

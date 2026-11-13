@@ -50,6 +50,12 @@ pub struct BlockGenerate {
     pub bottom: i32,
     pub overhangs: f32,
     pub caves: f32,
+    /// Whether rivers run down its ground where its generator makes no
+    /// water of its own: a Rivers node over the generator's ground (see
+    /// `generate::nodes::Rivers`). Off for a world written before worlds
+    /// had them; a world given generated ground in the editor starts on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rivers: bool,
     /// The block the air below its generator's sea level is filled with, by
     /// its place in the list from 1: air for none.
     #[serde(skip_serializing_if = "is_air")]
@@ -87,6 +93,7 @@ impl Default for BlockGenerate {
             bottom: -16,
             overhangs: 0.0,
             caves: 0.3,
+            rivers: false,
             sea: AIR,
             endless: None,
             biomes: Vec::new(),
@@ -883,6 +890,42 @@ mod tests {
         }
         assert!(wet > 50 && flowing * 2 > wet, "{flowing} of {wet} blocks of the river flow");
         assert!(walls * 100 <= wet, "{walls} sides of water against air, of {wet} blocks");
+    }
+
+    #[test]
+    fn a_world_with_rivers_runs_them_down_a_generator_that_has_none_of_its_own() {
+        // A landmass, as generators written before graphs are, with no water but its sea.
+        let world = Preset::Archipelago.world();
+        let mut graph = world.graph().clone();
+        assert!(crate::generate::nodes::add_rivers(&mut graph));
+        let rivered = world.with_graph(graph);
+        // A river's water, well over the sea, somewhere.
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..300 * 300).map(|at| ((at % 300) as f32 * 8.0 - 1200.0, (at / 300) as f32 * 8.0 - 1200.0)).unzip();
+        let (water, _) = rivered.water(&xs, &zs).expect("rivers wired in");
+        let at = (0..xs.len()).find(|&at| water[at] > world.sea_level() + 4.0).expect("a river somewhere");
+        let made = |rivers: bool| {
+            let mut file = BlockFile {
+                ground: Ground { size: [32, 32], ..Ground::default() },
+                generate: Some(BlockGenerate {
+                    position: [xs[at] - 16.0, zs[at] - 16.0],
+                    bottom: -20,
+                    caves: 0.0,
+                    rivers,
+                    ..BlockGenerate::default()
+                }),
+                ..BlockFile::default()
+            };
+            file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+            file.generate.as_mut().unwrap().sea = file.blocks.len() as BlockId;
+            let water = file.blocks.len() as BlockId;
+            let map = file.make_ground(Some(&world));
+            let over_sea = (world.sea_level() + 1.0) as i32;
+            let places = (over_sea..300).flat_map(|y| (0..32).flat_map(move |z| (0..32).map(move |x| [x, y, z])));
+            places.filter(|&p| map.get(p) == water).count()
+        };
+        assert!(made(true) > 20, "{} blocks of river water over the sea", made(true));
+        assert_eq!(made(false), 0, "no river with the world's rivers off");
     }
 
     #[test]

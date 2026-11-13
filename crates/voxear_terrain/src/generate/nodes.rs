@@ -61,7 +61,7 @@ pub use blend::Blend;
 // The Cells node's values: `Cells` by itself is a row of places in space.
 pub use cells::Cellular;
 pub use chasms::{ChasmKind, Chasms};
-pub use rivers::{NO_WATER, Rivers};
+pub use rivers::{NO_WATER, Rivers, add_rivers};
 pub use clamp::Clamp;
 pub use climate_mask::ClimateMask;
 pub use constant::Constant;

@@ -37,15 +37,18 @@ pub(super) enum Source<'a> {
     /// The world's generator, whose graph has a Volume.
     Own(&'a WorldGen),
     /// The world's generator with the world's own overhangs and caves wired
-    /// into its graph.
+    /// into its graph, and rivers where the world has them.
     Moved(Arc<WorldGen>),
+    /// The world's generator, whose graph has a Volume, with rivers run down
+    /// its ground.
+    Rivered(Arc<WorldGen>),
 }
 
 impl Source<'_> {
     pub fn world(&self) -> &WorldGen {
         match self {
             Source::Own(world) => world,
-            Source::Moved(world) => world,
+            Source::Moved(world) | Source::Rivered(world) => world,
         }
     }
 
@@ -53,21 +56,26 @@ impl Source<'_> {
     /// in the generator's world. A world's own overhangs and caves are read
     /// from the world's corner, as they always were.
     pub fn own(&self) -> bool {
-        matches!(self, Source::Own(_))
+        matches!(self, Source::Own(_) | Source::Rivered(_))
     }
 }
 
 /// The generators made with worlds' own overhangs and caves wired in, by
 /// the generator's hash and the numbers' bits: the last few asked for, so
 /// each chunk made does not compile its own.
-type Moved = Vec<((u64, [u32; 3]), Arc<WorldGen>)>;
+type Moved = Vec<((u64, [u32; 3], bool), Arc<WorldGen>)>;
 static MOVED: Mutex<Moved> = Mutex::new(Vec::new());
 const MOVED_KEPT: usize = 16;
 
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.
 pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_size: f32) -> Source<'a> {
-    if world.volume().is_some() {
+    // Rivers run down the ground where the world has them and its generator makes no water of its own.
+    let graph = world.graph();
+    let watered = graph.output().is_some_and(|output| graph.link_into(output.id, Output::WATER).is_some());
+    let rivered = generate.rivers && !watered;
+    let voxels = world.volume().is_some();
+    if voxels && !rivered {
         return Source::Own(world);
     }
     let own = OwnVoxels {
@@ -75,22 +83,28 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         caves: generate.caves.clamp(0.0, 1.0),
         roof: CAVE_ROOF * block_size,
     };
-    let key = (world.hash(), [own.overhangs, own.caves, own.roof].map(f32::to_bits));
+    let key = (world.hash(), [own.overhangs, own.caves, own.roof].map(f32::to_bits), rivered);
+    let made = |found: Arc<WorldGen>| if voxels { Source::Rivered(found) } else { Source::Moved(found) };
     let mut moved = MOVED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some((_, found)) = moved.iter().find(|(kept, _)| *kept == key) {
-        return Source::Moved(found.clone());
+        return made(found.clone());
     }
-    let mut graph = world.graph().clone();
+    let mut graph = graph.clone();
     if graph.output().is_none() {
         graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
     }
-    graph.add_voxels(own, false);
-    let made = Arc::new(world.with_graph(graph));
+    if rivered {
+        crate::generate::nodes::add_rivers(&mut graph);
+    }
+    if !voxels {
+        graph.add_voxels(own, false);
+    }
+    let world = Arc::new(world.with_graph(graph));
     if moved.len() >= MOVED_KEPT {
         moved.remove(0);
     }
-    moved.push((key, made.clone()));
-    Source::Moved(made)
+    moved.push((key, world.clone()));
+    made(world)
 }
 
 /// How deep under the surface a block of ground is, in blocks, for its

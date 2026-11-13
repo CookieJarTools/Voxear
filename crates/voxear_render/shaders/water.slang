@@ -2212,6 +2212,18 @@ float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughne
     return 0.0;
 }
 
+// Where on the screen to look for what lies under the water at `seenAt`, bent by `shift` as light is going into
+// it: all of the bend well inside the screen, less and less of it nearer the edge it bends towards, and none at the
+// edge itself. Each axis keeps its bend while it has twice the room, and gives it up smoothly over that, so
+// neighbouring pixels still look at neighbouring places: pushed just inside the edge instead, a whole strip of them
+// looked at its last row, and showed the water stretched towards the edge.
+float2 bentOnScreen(float2 seenAt, float2 shift)
+{
+    float2 room = select(shift > 0.0, 1.0 - seenAt, seenAt);
+    float2 kept = smoothstep(0.0, 2.0 * abs(shift) + 1e-5, room);
+    return seenAt + shift * kept;
+}
+
 // The sea's surface: what lies under it, seen through it, bent by its
 // waves and lost a colour at a time with depth (push.texture the picture
 // behind it with mips, push.textures.y the depth behind it); the water's
@@ -2430,11 +2442,7 @@ FragmentOut waterFragment(WaterOut input)
         float4 clip = transform(frame->viewProj, float4(under, 1.0));
         if (clip.w > 0.0)
         {
-            // Bent less as it nears the screen's edge, never past it: bent ray by bent ray, those that would land off
-            // the screen showed what lies straight under the water instead, along a hard line near the edge.
-            float2 shift = clip.xy / clip.w * 0.5 + 0.5 - seenAt;
-            float2 room = select(shift > 0.0, 1.0 - seenAt, seenAt) * 0.98 / max(abs(shift), 1e-6);
-            float2 bent = seenAt + shift * saturate(min(room.x, room.y));
+            float2 bent = bentOnScreen(seenAt, clip.xy / clip.w * 0.5 + 0.5 - seenAt);
             float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
             seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
         }
@@ -3799,9 +3807,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
         float4 clip = transform(frame->viewProj, float4(under, 1.0));
         if (clip.w > 0.0)
         {
-            float2 shift = clip.xy / clip.w * 0.5 + 0.5 - seenAt;
-            float2 room = select(shift > 0.0, 1.0 - seenAt, seenAt) * 0.98 / max(abs(shift), 1e-6);
-            float2 bent = seenAt + shift * saturate(min(room.x, room.y));
+            float2 bent = bentOnScreen(seenAt, clip.xy / clip.w * 0.5 + 0.5 - seenAt);
             float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
             seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
         }

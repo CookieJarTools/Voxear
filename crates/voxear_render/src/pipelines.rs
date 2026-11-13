@@ -240,6 +240,8 @@ pub struct Pipelines {
     /// of a view through an opening laid over it.
     pub portal_depth: vk::Pipeline,
     pub portal_depth_over: vk::Pipeline,
+    /// Lays the water's and glass's depth, drawn after the far sides, over the depth the passes after read.
+    pub portal_depth_nearer: vk::Pipeline,
     /// A plant drawn into each picture of its impostor's atlas: its colour
     /// and its normals (see `impostors`).
     pub impostor_bake: vk::Pipeline,
@@ -891,6 +893,16 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Portal depth over", portal, c"portalDepthVertex", c"portalDepthOverFragment")
             })?,
+            portal_depth_nearer: graphics(&GraphicsPipelineDesc {
+                color_formats: &[PYRAMID_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new(
+                    "Portal depth nearer",
+                    portal,
+                    c"portalDepthVertex",
+                    c"portalDepthNearerFragment",
+                )
+            })?,
             mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
             ddgi_software: [
                 create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
@@ -1043,6 +1055,7 @@ impl Pipelines {
             self.portal_mist,
             self.portal_depth,
             self.portal_depth_over,
+            self.portal_depth_nearer,
             self.impostor_bake,
         ];
         let mesh =

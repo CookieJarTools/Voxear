@@ -7,7 +7,8 @@
 // - As mist over it (portalMistFragment), whole while it is closed or its far side is not made, thinning as it opens.
 //
 // And once the views through them are drawn, portalDepthFragment makes the depth the passes after read: each pixel's
-// own, or the far side's where an opening shows.
+// own, or the far side's where an opening shows; and once the view's own water and glass are drawn,
+// portalDepthNearerFragment lays theirs over that, where they came nearer.
 
 #include "common.slang"
 
@@ -131,4 +132,20 @@ float portalDepthOverFragment(FullOut input) : SV_Target0
         discard;
     }
     return far;
+}
+
+// The view's depth now, push.textures.x, where it is nearer than it was before its water and glass were drawn,
+// push.textures.y: their depth, over the far sides' too where they stand in front of an opening. Everywhere else the
+// depth the passes after read stays as it is. Reversed depth: nearer is greater.
+[shader("fragment")]
+float portalDepthNearerFragment(FullOut input) : SV_Target0
+{
+    int3 at = int3(int2(input.position.xy), 0);
+    float now = textures[NonUniformResourceIndex(push.textures.x)].Load(at).r;
+    float then = textures[NonUniformResourceIndex(push.textures.y)].Load(at).r;
+    if (now <= then)
+    {
+        discard;
+    }
+    return now;
 }

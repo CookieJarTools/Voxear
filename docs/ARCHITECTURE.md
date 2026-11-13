@@ -1194,7 +1194,10 @@ whose middle is the far Portal's place rounded to whole metres: every instance, 
 storm is moved into it while extracting (`scene::rebase`), so a far side 30 km off draws to the millimetre. Its
 frustum is the opening's rectangle on screen (`rect_in_view`) and the far Portal's plane, which `GpuFrame::cut`
 also gives every vertex shader as `SV_ClipDistance0` (`cutAt`), so nothing between the far Portal and its camera is
-drawn. `Portal depth over` lays its depth over a copy of the parent's, which the parent's fog and post read. A Portal
+drawn. `Portal depth over` lays its depth over a copy of the parent's, which the parent's fog and post read; the copy
+is taken before the parent's sky, water and glass, so once they are drawn `Depth before the water's` lays theirs
+over it wherever they came nearer (kept in `own depth before water`), or the fog went by the sea floor under the
+water whenever a Portal was in view. A Portal
 seen through a Portal is drawn the same way to `depth` levels deep (at most 2); every opening that does not draw
 its far side gets `Portal mist`, which also fades a far side in. Worlds of blocks seen from more than one place
 (`BlockWorld::places`) show each view the chunks kept round the place nearest its camera, so the detail kept round a

@@ -358,3 +358,71 @@ fn a_character_walks_through_to_ground_made_for_it_far_off_in_a_world_without_en
     let back = *game.engine.world.get::<PortalFar>(far).unwrap();
     assert!(back.ready, "the way back is open: {back:?}");
 }
+
+const GATES: &str = r#"format = 1
+
+[[obj]]
+id = 1
+name = "Gate"
+position = [0.0, 0.0, 5.0]
+rotation = [0.0, 180.0, 0.0]
+
+[obj.portal]
+to = 2
+
+[[obj]]
+id = 2
+name = "Far Gate"
+position = [900.0, 20.0, -300.0]
+
+[obj.portal]
+to = 1
+size = [3.0, 4.0]
+open = false
+passes = [0, 2]
+mist = [1.0, 0.5, 0.25]
+view_distance = 48.0
+
+[[obj]]
+id = 3
+name = "Eye"
+camera_follows = 4
+
+[obj.camera]
+fov = 60.0
+
+[[obj]]
+id = 4
+name = "Walker"
+character = {}
+"#;
+
+#[test]
+fn a_scene_file_keeps_its_portals_and_what_its_cameras_follow() {
+    use voxear_engine::{Content, scene_file};
+    use voxear_scene::Name;
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), &[("Scenes/Gates.scene", GATES.into())]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene = scene_file::read(&dir.path().join("Scenes/Gates.scene")).unwrap();
+    let mut engine = Engine::new();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let find = |name: &str| {
+        engine.world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).unwrap().0
+    };
+    let (gate, far, eye, walker) = (find("Gate"), find("Far Gate"), find("Eye"), find("Walker"));
+    let portal = *engine.world.get::<Portal>(gate).unwrap();
+    assert_eq!(portal, Portal::to(Vec2::new(2.0, 3.0), far), "one as it is made, but for where it leads");
+    let back = *engine.world.get::<Portal>(far).unwrap();
+    assert_eq!((back.to, back.size, back.open, back.passes), (Some(gate), Vec2::new(3.0, 4.0), false, 0b101));
+    assert_eq!((back.mist, back.view_distance), (Vec3::new(1.0, 0.5, 0.25), 48.0));
+    assert_eq!(engine.world.get::<CameraFollows>(eye), Some(&CameraFollows(walker)));
+    // Saved, it is the file it was read from.
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let text = toml::to_string(&saved).unwrap();
+    for line in ["to = 2", "to = 1", "size = [3.0, 4.0]", "open = false", "passes = [0, 2]", "camera_follows = 4"] {
+        assert!(text.contains(line), "{line} in:\n{text}");
+    }
+    assert_eq!(text.matches("view_distance").count(), 1, "what is as made is left out:\n{text}");
+}

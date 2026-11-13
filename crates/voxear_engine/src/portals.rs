@@ -450,3 +450,145 @@ pub(crate) fn tell_renderer(world: &mut World, renderer: Option<&mut Renderer>) 
     }
     renderer.carry_objs(&objs);
 }
+
+/// A Portal as a scene or prefab file writes it, the Portal it leads to
+/// named by its Obj's place in the same file, as a joint's connected Obj is:
+///
+/// ```toml
+/// [obj.portal]
+/// to = 3                    # the Obj of the Portal it leads to
+/// size = [2.0, 3.0]         # its opening's width and height, in metres
+/// open = false              # closed, it shows its mist and lets nothing through
+/// passes = [0, 4]           # the layers whose Objs go through; left out, all
+/// mist = [0.35, 0.55, 1.0]  # linear
+/// view_distance = 96.0      # how far off its far side still shows
+/// ```
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortalData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<crate::lod_groups::FileRef>,
+    #[serde(default = "default_size", skip_serializing_if = "is_default_size")]
+    pub size: [f32; 2],
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passes: Option<Vec<u8>>,
+    #[serde(default = "default_mist", skip_serializing_if = "is_default_mist")]
+    pub mist: [f32; 3],
+    #[serde(default = "default_view", skip_serializing_if = "is_default_view")]
+    pub view_distance: f32,
+}
+
+impl PortalData {
+    /// A Portal as a file saves it, the Portal it leads to where `path`
+    /// says its Obj is in that file. One that leads to an Obj not being
+    /// saved is saved leading nowhere, like a missing reference.
+    pub fn of(portal: &Portal, path: &dyn Fn(Entity) -> Option<crate::prefab::ObjPath>) -> Self {
+        let layers: Vec<u8> = (0..32).filter(|layer| portal.passes & (1 << layer) != 0).collect();
+        Self {
+            to: portal.to.and_then(path).map(|path| crate::lod_groups::FileRef::new(&path)),
+            size: portal.size.to_array(),
+            open: portal.open,
+            passes: (portal.passes != u32::MAX).then_some(layers),
+            mist: portal.mist.to_array(),
+            view_distance: portal.view_distance,
+        }
+    }
+
+    /// The component, the Portal it leads to found by `lookup`.
+    pub fn bind(&self, lookup: &dyn Fn(&crate::prefab::ObjPath) -> Option<Entity>) -> Portal {
+        let to = self.to.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
+        let passes = self.passes.as_ref().map_or(u32::MAX, |layers| layers.iter().fold(0, |mask, layer| mask | 1 << (layer & 31)));
+        Portal {
+            size: self.size.into(),
+            to,
+            open: self.open,
+            passes,
+            mist: self.mist.into(),
+            view_distance: self.view_distance,
+        }
+    }
+
+    /// The Obj it leads to, when it names one.
+    pub fn refs(&self) -> anyhow::Result<Vec<crate::prefab::ObjPath>> {
+        self.to.iter().map(crate::lod_groups::FileRef::path).collect()
+    }
+
+    /// Rewrites the Obj it leads to with `f`, as a prefab's Objs are named
+    /// from the instance in the file that places it.
+    pub fn map_refs(&mut self, f: &dyn Fn(&crate::prefab::ObjPath) -> crate::prefab::ObjPath) -> anyhow::Result<()> {
+        if let Some(obj) = &mut self.to {
+            *obj = crate::lod_groups::FileRef::new(&f(&obj.path()?));
+        }
+        Ok(())
+    }
+
+    /// The whole Portal as an override writes it: every value, since an
+    /// override merges into the prefab's and one left out would keep the
+    /// prefab's.
+    pub fn whole(&self) -> anyhow::Result<toml::Value> {
+        let mut table = toml::Table::try_from(self)?;
+        table.insert("size".into(), toml::Value::try_from(self.size)?);
+        table.insert("open".into(), toml::Value::Boolean(self.open));
+        table.insert("mist".into(), toml::Value::try_from(self.mist)?);
+        table.insert("view_distance".into(), toml::Value::try_from(self.view_distance)?);
+        Ok(toml::Value::Table(table))
+    }
+}
+
+fn default_size() -> [f32; 2] {
+    Portal::default().size.to_array()
+}
+
+fn is_default_size(size: &[f32; 2]) -> bool {
+    *size == default_size()
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(value: &bool) -> bool {
+    *value
+}
+
+fn default_mist() -> [f32; 3] {
+    Portal::default().mist.to_array()
+}
+
+fn is_default_mist(mist: &[f32; 3]) -> bool {
+    *mist == default_mist()
+}
+
+fn default_view() -> f32 {
+    Portal::default().view_distance
+}
+
+fn is_default_view(distance: &f32) -> bool {
+    *distance == default_view()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prefab::ObjPath;
+
+    #[test]
+    fn a_portal_names_the_one_it_leads_to_by_its_place_in_the_file() {
+        let text = "to = 3\nsize = [4.0, 5.0]\npasses = [0, 4]\n";
+        let data: PortalData = toml::from_str(text).unwrap();
+        assert!(data.open && data.view_distance == 96.0);
+        assert_eq!(data.refs().unwrap(), [ObjPath::new(3)]);
+        let (gate, other) = (Entity::from_bits(1 << 32 | 7), Entity::from_bits(1 << 32 | 8));
+        let portal = data.bind(&|path| (*path == ObjPath::new(3)).then_some(gate));
+        assert_eq!((portal.to, portal.passes), (Some(gate), 0b10001));
+        let saved = PortalData::of(&portal, &|entity| (entity == gate).then(|| ObjPath::new(3)));
+        assert_eq!(toml::to_string(&saved).unwrap(), text);
+        let nowhere = PortalData::of(&Portal { to: Some(other), ..portal }, &|_| None);
+        assert_eq!(nowhere.to, None, "an Obj not saved with it leaves it leading nowhere");
+        // One as it is made says nothing but where it leads.
+        let plain = PortalData::of(&Portal::to(Portal::default().size, gate), &|_| Some(ObjPath::new(9)));
+        assert_eq!(toml::to_string(&plain).unwrap(), "to = 9\n");
+    }
+}

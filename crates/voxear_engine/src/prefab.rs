@@ -287,6 +287,12 @@ pub(crate) fn map_obj_refs(data: &mut ObjData, f: &dyn Fn(&ObjPath) -> ObjPath) 
     if let Some(joint) = &mut data.joint {
         joint.map_refs(f)?;
     }
+    if let Some(portal) = &mut data.portal {
+        portal.map_refs(f)?;
+    }
+    if let Some(follows) = &mut data.camera_follows {
+        *follows = crate::lod_groups::FileRef::new(&f(&follows.path()?));
+    }
     match &mut data.lod_group {
         Some(lod) => lod.map_refs(f),
         None => Ok(()),
@@ -447,6 +453,12 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.joint.is_some() {
         root.joint = instance.joint.clone();
     }
+    if instance.portal.is_some() {
+        root.portal = instance.portal.clone();
+    }
+    if instance.camera_follows.is_some() {
+        root.camera_follows = instance.camera_follows.clone();
+    }
     root.collider2d = instance.collider2d.or(root.collider2d);
     root.rigidbody2d = instance.rigidbody2d.or(root.rigidbody2d);
     root.vehicle = instance.vehicle.or(root.vehicle);
@@ -531,6 +543,10 @@ pub struct TemplateObj {
     pub layer: Option<LayerRef>,
     /// Its connected Obj by path, bound to an entity when spawned.
     pub joint: Option<JointData>,
+    /// The Portal it leads to by path, and the Obj its camera films: bound
+    /// when spawned.
+    pub portal: Option<crate::portals::PortalData>,
+    pub camera_follows: Option<crate::lod_groups::FileRef>,
     pub collider2d: Option<Collider2D>,
     pub rigidbody2d: Option<Rigidbody2D>,
     pub vehicle: Option<Vehicle>,
@@ -830,6 +846,13 @@ impl Template {
             if let Some(joint) = &obj.joint {
                 world.insert(entity, joint.bind(&lookup));
             }
+            if let Some(portal) = &obj.portal {
+                world.insert(entity, portal.bind(&lookup));
+            }
+            let follows = obj.camera_follows.as_ref().and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
+            if let Some(follows) = follows {
+                world.insert(entity, voxear_render::CameraFollows(follows));
+            }
         }
         link_instances(world, &self.objs, &entities);
         entities
@@ -853,6 +876,15 @@ fn check_refs(obj: &FlatObj, index: &HashMap<&ObjPath, usize>) -> Result<()> {
     let connected = obj.data.joint.as_ref().map(JointData::refs).transpose()?.unwrap_or_default();
     if let Some(missing) = connected.iter().find(|r| !index.contains_key(r)) {
         bail!("its joint is held to Obj {missing}, which is not in the same file");
+    }
+    let leads = obj.data.portal.as_ref().map(crate::portals::PortalData::refs).transpose()?.unwrap_or_default();
+    if let Some(missing) = leads.iter().find(|r| !index.contains_key(r)) {
+        bail!("its Portal leads to Obj {missing}, which is not in the same file");
+    }
+    if let Some(follows) = &obj.data.camera_follows
+        && !index.contains_key(&follows.path()?)
+    {
+        bail!("its camera follows Obj {}, which is not in the same file", follows.path()?);
     }
     Ok(())
 }
@@ -1304,6 +1336,8 @@ pub(crate) fn resolve_obj(
         cave_exit: data.cave_exit,
         layer: data.layer.clone(),
         joint: data.joint.clone(),
+        portal: data.portal.clone(),
+        camera_follows: data.camera_follows.clone(),
         collider2d: data.collider2d,
         rigidbody2d: data.rigidbody2d,
         vehicle: data.vehicle,

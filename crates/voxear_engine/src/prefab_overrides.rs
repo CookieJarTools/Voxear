@@ -144,7 +144,7 @@ fn changed_paths(content: &Content, expected: &ObjData, actual: &ObjData) -> Res
                 }
             }
             // A component the prefab has too: by the values that differ.
-            (_, toml::Value::Table(now), Some(toml::Value::Table(was))) if key != "lod_group" && key != "joint" => {
+            (_, toml::Value::Table(now), Some(toml::Value::Table(was))) if key != "lod_group" && key != "joint" && key != "portal" => {
                 let differ = now.iter().filter(|(sub, value)| was.get(*sub) != Some(*value));
                 paths.extend(differ.map(|(sub, _)| ValuePath::new(&[key, sub])));
             }
@@ -230,6 +230,9 @@ pub fn put(
     set::<Wheel>(world, entity, obj.wheel);
     set::<LodGroup>(world, entity, obj.lod_group.map(|lod| lod.bind(&lookup)));
     set::<Joint>(world, entity, obj.joint.map(|joint| joint.bind(&lookup)));
+    set::<voxear_render::Portal>(world, entity, obj.portal.map(|portal| portal.bind(&lookup)));
+    let follows = obj.camera_follows.and_then(|obj| obj.path().ok()).and_then(|path| lookup(&path));
+    set::<voxear_render::CameraFollows>(world, entity, follows.map(voxear_render::CameraFollows));
     set(world, entity, (!behaviours.is_empty()).then_some(EditBehaviours(behaviours)));
     Ok(())
 }

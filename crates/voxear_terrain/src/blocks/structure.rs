@@ -419,7 +419,7 @@ impl StructureDef {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StructureBlocks {
     Model { size: [u32; 3], blocks: Vec<BlockId> },
-    Plant { plant: PlantDef, wood: BlockId, leaves: BlockId },
+    Plant { plant: PlantDef, wood: BlockId, leaves: BlockId, vine: BlockId },
     Town(Town),
     Dungeon(Dungeon),
 }
@@ -537,11 +537,15 @@ impl PlacedStructure {
     fn pieces(&self, site: &Site) -> Vec<Piece> {
         let raw: Vec<Piece> = match &self.blocks {
             StructureBlocks::Model { size, blocks } => model_pieces(*size, blocks),
-            StructureBlocks::Plant { plant, wood, leaves } => plant
+            StructureBlocks::Plant { plant, wood, leaves, vine } => plant
                 .grow(site.seed)
                 .blocks
                 .into_iter()
-                .map(|(at, part)| (at, if part == PlantPart::Leaf { *leaves } else { *wood }))
+                .map(|(at, part)| match part {
+                    PlantPart::Leaf => (at, *leaves),
+                    PlantPart::Vine => (at, *vine),
+                    _ => (at, *wood),
+                })
                 .filter(|(_, block)| *block != AIR)
                 .collect(),
             // A town's are its pieces', each built at its own place (see `town_layout`).
@@ -1739,12 +1743,16 @@ fn build_looking(
                     }
                     parts
                 }
-                _ => vec![Part {
-                    at: block,
-                    pieces: structure.pieces(&site),
-                    ground: structure.ground,
-                    sink: structure.sink,
-                }],
+                _ => {
+                    let mut pieces = structure.pieces(&site);
+                    // A plant's vines hang in the open air: none where the ground rises into them.
+                    if let StructureBlocks::Plant { vine, .. } = &structure.blocks {
+                        let base = ground.top(block[0], block[1]) + 1 - structure.sink;
+                        let buried = |at: &[i32; 3]| base + at[1] <= ground.top(block[0] + at[0], block[1] + at[2]);
+                        pieces.retain(|(at, piece)| *vine == AIR || piece != vine || !buried(at));
+                    }
+                    vec![Part { at: block, pieces, ground: structure.ground, sink: structure.sink }]
+                }
             };
             for part in parts {
                 let foot = ground.top(part.at[0], part.at[1]);
@@ -1971,7 +1979,7 @@ mod tests {
             },
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: 7, leaves: 8 },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: 7, leaves: 8, vine: 0 },
             biomes: Vec::new(),
         };
         WorldStructures { list: vec![hut, trees] }

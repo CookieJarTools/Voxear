@@ -1103,15 +1103,18 @@ pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
     if matches!(field, F::Block | F::NewBiome) {
         found.retain(|(_, pick)| *pick != Pick::Asset(None));
     }
-    // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked.
+    // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked. Before them,
+    // every starter plant at once, and the starter trees of blocks.
     if field == F::AddPlant {
         let has = |path: &str| found.iter().any(|(_, pick)| *pick == Pick::Asset(Some(path.to_string())));
-        let new: Vec<(String, Pick)> = voxear_render::StarterPlant::ALL
+        let sets = [("All Starter Plants", crate::objs::ALL_STARTER_PLANTS), ("Starter Trees of Blocks", crate::objs::STARTER_TREES)];
+        let sets = sets.into_iter().map(|(name, pick)| (name.to_string(), Pick::Asset(Some(pick.to_string()))));
+        let new = voxear_render::StarterPlant::ALL
             .into_iter()
             .map(|plant| (plant, crate::objs::starter_plant_path(plant)))
             .filter(|(_, path)| !has(path))
-            .map(|(plant, path)| (format!("New {}", plant.name()), Pick::Asset(Some(path))))
-            .collect();
+            .map(|(plant, path)| (format!("New {}", plant.name()), Pick::Asset(Some(path))));
+        let new: Vec<(String, Pick)> = sets.chain(new).collect();
         found.splice(1..1, new);
     }
     found
@@ -1296,6 +1299,31 @@ pub fn list_biomes(game: &mut Game, renderer: Option<&mut Renderer>, entity: Ent
             generate.biomes.push(guid.to_string());
         }
     }
+    change_file(game, renderer, entity, file)
+}
+
+/// Lists each of `structures` the world's generator does not build yet at
+/// the end of its structures, and makes its ground again once with them
+/// all. Nothing for a world whose ground is not generated.
+pub fn list_structures(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    structures: &[AssetGuid],
+) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let listed = |generate: &voxear_terrain::blocks::generate::BlockGenerate, guid: AssetGuid| {
+        let is = |reference: &String| game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+        generate.structures.iter().any(|reference| is(reference) == Some(guid))
+    };
+    for &guid in structures {
+        if !listed(generate, guid) {
+            generate.structures.push(guid.to_string());
+        }
+    }
+    // Its structures as it lists them now, the blocks they name numbered.
+    let file = voxear_engine::blocks::with_structures(&mut game.content, &file);
     change_file(game, renderer, entity, file)
 }
 

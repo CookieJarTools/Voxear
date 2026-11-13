@@ -6,17 +6,16 @@
 //! keeps to any. Its **Ground**: the block on top, the block under it and
 //! how deep that lies, the block deep down, the block of steep ground with
 //! the slope it starts at, and the block along the shore with how high
-//! over and under the sea that reaches. Each block is one of the
-//! project's, picked from them all, and a cross takes it out again: a
-//! block left out is the world's own there.
+//! over and under the sea that reaches. Its **Vines**: the block that hangs
+//! under its ledges and cave roofs, how many, how long and how deep under
+//! the ground. Each block is one of the project's, picked from them all,
+//! and a cross takes it out again: a block of the ground left out is the
+//! world's own there, and a biome with no vine block has no vines.
 //!
 //! Each change is saved as it is made, and every world listing the biome
 //! has its ground made again at once (see `editor::biomes`).
 
-use voxear_terrain::{
-    generate::{BiomeDef, BiomeGround},
-    surfaces::Biome,
-};
+use voxear_terrain::{generate::BiomeDef, surfaces::Biome};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -46,22 +45,30 @@ pub enum BiomeRef {
     Deep,
     Steep,
     Shore,
+    /// The block its vines are.
+    Vine,
 }
 
 impl BiomeRef {
-    /// The reference the field holds in `ground`.
-    fn of(self, ground: &BiomeGround) -> Option<&str> {
+    /// The reference the field holds in `biome`.
+    fn of(self, biome: &BiomeDef) -> Option<&str> {
+        let ground = &biome.ground;
         match self {
             BiomeRef::Top => ground.top.as_deref(),
             BiomeRef::Under => ground.under.as_deref(),
             BiomeRef::Deep => ground.deep.as_deref(),
             BiomeRef::Steep => ground.steep.as_deref(),
             BiomeRef::Shore => ground.shore.as_deref(),
+            BiomeRef::Vine => biome.vines.block.as_deref(),
         }
     }
 
     /// Puts `reference` in the field of `biome`.
     pub fn set(self, biome: &mut BiomeDef, reference: Option<String>) {
+        if self == BiomeRef::Vine {
+            biome.vines.block = reference;
+            return;
+        }
         let ground = &mut biome.ground;
         match self {
             BiomeRef::Top => ground.top = reference,
@@ -69,6 +76,7 @@ impl BiomeRef {
             BiomeRef::Deep => ground.deep = reference,
             BiomeRef::Steep => ground.steep = reference,
             BiomeRef::Shore => ground.shore = reference,
+            BiomeRef::Vine => {}
         }
     }
 }
@@ -114,6 +122,9 @@ pub struct BiomeFields {
     under_depth: NodeId,
     steep_slope: NodeId,
     shore_height: NodeId,
+    /// How many vines, how long from and to, and how deep: while it has a
+    /// block for them.
+    vines: Option<(NodeId, [NodeId; 2], NodeId)>,
     slots: Vec<BlockSlot>,
 }
 
@@ -145,26 +156,35 @@ impl BiomeFields {
 
         let rows = part(ui, root, "Ground", "block");
         let mut slots = Vec::new();
-        let mut block = |ui: &mut Ui, which: BiomeRef, label: &str| {
+        let mut block = |ui: &mut Ui, rows: NodeId, which: BiomeRef, label: &str| {
             let shown = slot(ui, rows, label, "block");
-            let path = which.of(&biome.ground).and_then(path_of);
+            let path = which.of(&biome).and_then(path_of);
             show_slot(ui, shown, path.as_deref(), "Block");
             // A cross beside it takes the block out again.
             let row = ui.parent(shown.field).expect("a slot is in its row");
             let clear = ui.icon_button(row, "close");
             ui.add_class(clear, "slot-clear");
             ui.set_tooltip(clear, "None", None);
-            ui.set_visible(clear, which.of(&biome.ground).is_some());
+            ui.set_visible(clear, which.of(&biome).is_some());
             slots.push(BlockSlot { which, slot: shown, path, clear });
         };
-        block(ui, BiomeRef::Top, "Top");
-        block(ui, BiomeRef::Under, "Under");
+        block(ui, rows, BiomeRef::Top, "Top");
+        block(ui, rows, BiomeRef::Under, "Under");
         let under_depth = number_row(ui, rows, "Under depth", "", biome.ground.under_depth as f32);
-        block(ui, BiomeRef::Deep, "Deep");
-        block(ui, BiomeRef::Steep, "Steep");
+        block(ui, rows, BiomeRef::Deep, "Deep");
+        block(ui, rows, BiomeRef::Steep, "Steep");
         let steep_slope = number_row(ui, rows, "Steep slope", "°", biome.ground.steep_slope);
-        block(ui, BiomeRef::Shore, "Shore");
+        block(ui, rows, BiomeRef::Shore, "Shore");
         let shore_height = number_row(ui, rows, "Shore height", "m", biome.ground.shore_height);
+
+        let rows = part(ui, root, "Vines", "sprout");
+        block(ui, rows, BiomeRef::Vine, "Block");
+        let vines = biome.vines.block.is_some().then(|| {
+            let amount = number_row(ui, rows, "Amount", "", biome.vines.amount);
+            let length = range_row(ui, rows, "Length", "", biome.vines.length.map(|blocks| blocks as f32));
+            let depth = number_row(ui, rows, "Depth", "m", biome.vines.depth);
+            (amount, length, depth)
+        });
 
         let fields = Self {
             biome,
@@ -178,6 +198,7 @@ impl BiomeFields {
             under_depth,
             steep_slope,
             shore_height,
+            vines,
             slots,
         };
         fields.show_swatch(ui);
@@ -244,6 +265,18 @@ impl BiomeFields {
         }
         if let Some(metres) = changed_number(ui, self.shore_height) {
             (biome.ground.shore_height, typed) = (metres.max(0.0), true);
+        }
+        if let Some((amount, length, depth)) = self.vines {
+            if let Some(share) = changed_number(ui, amount) {
+                (biome.vines.amount, typed) = (share.clamp(0.0, 1.0), true);
+            }
+            let now = biome.vines.length.map(|blocks| blocks as f32);
+            if let Some(range) = changed_range(ui, length, now) {
+                (biome.vines.length, typed) = (range.map(|blocks| blocks.round().clamp(1.0, 64.0) as u32), true);
+            }
+            if let Some(metres) = changed_number(ui, depth) {
+                (biome.vines.depth, typed) = (metres.max(0.0), true);
+            }
         }
         if !typed {
             return None;
@@ -336,6 +369,8 @@ fn changed_range(ui: &Ui, fields: [NodeId; 2], now: [f32; 2]) -> Option<[f32; 2]
 
 #[cfg(test)]
 mod tests {
+    use voxear_terrain::generate::BiomeGround;
+
     use super::*;
 
     #[test]
@@ -351,8 +386,14 @@ mod tests {
         assert_eq!(preset_of(&biome), None, "changed, it is Custom");
         // A block set and taken out again.
         BiomeRef::Steep.set(&mut biome, Some("Blocks/Stone.block".into()));
-        assert_eq!(BiomeRef::Steep.of(&biome.ground), Some("Blocks/Stone.block"));
+        assert_eq!(BiomeRef::Steep.of(&biome), Some("Blocks/Stone.block"));
         BiomeRef::Steep.set(&mut biome, None);
         assert_eq!(biome.ground, BiomeGround::default());
+        // Its vines' block is one of its blocks too, and no part of its ground.
+        BiomeRef::Vine.set(&mut biome, Some("Blocks/Vine.block".into()));
+        assert_eq!((BiomeRef::Vine.of(&biome), &biome.ground), (Some("Blocks/Vine.block"), &BiomeGround::default()));
+        assert!(biome.to_text().contains("[vines]\nblock = \"Blocks/Vine.block\""));
+        BiomeRef::Vine.set(&mut biome, None);
+        assert!(biome.vines.is_none() && !biome.to_text().contains("vines"));
     }
 }

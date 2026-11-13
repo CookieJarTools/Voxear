@@ -3406,7 +3406,29 @@ no still block touches (`mesh::swaying_corners`). `blockSway` moves those corner
 phase hashed from its whole-number place among the world's corners, so every face meeting at a corner moves it alike
 and held corners keep leaves on their wood: nothing parts. The depth and shadow passes move them too, last frame's
 place gives their motion, and a face's picture and bounced light are read where it stands (`VertexOut::moved`). A face
-drawn with its block's colour alone is matt (roughness 1). Further,
+drawn with its block's colour alone is matt (roughness 1). A block has a shape (`block::BlockShape`, **Shape** in its
+Inspector, `BlockFaces::shape`): a cube, a cube with tufts of leaves (bushy), or a vine. The mesher keeps a chunk's
+**loose quads** after its faces and before its water (`ChunkMesh::loose`, `buckets[FACINGS]`): for each bushy block
+that meets open air three sheets crossed through its middle (`mesh::TUFT_SHEETS`, two upright and one of four that
+lean, picked by a hash of the block's place), and for a vine a sheet against each block of ground beside it or two
+crossed sheets where it hangs free. A loose quad is two words as a face is, its facing 6 or 7 (`TUFT`, `VINE`), its
+sheet where a face has its size, and its four sway bits say which of its corners move: a tuft's with the cube corner
+nearest each, a hanging vine's but where ground holds its head or foot. They are no triangles, so physics and the
+GI's rays never meet them, and a vine is no ground at all (`is_ground`): it hides no face, shades no corner, and
+water shows its face towards it. `loosePoint` in `shaders/block_quads.slang` places a sheet's corners, turned the
+other way round where the camera is behind it, so one quad is seen from both sides with back faces culled, and
+shrinks a tuft away over the last quarter of `LOOSE_REACH` (160 blocks), past which a view leaves a chunk's loose
+quads out (`blocks::pick`). `blockSheetLook` in `shaders/blocks.slang` cuts a sheet into cells, as many to a block
+as its picture has pixels or 16: a tuft thins out from whole in its middle to nothing at its edge by a hash of each
+cell, a vine with no cut-out picture is strands by a hash of each column of cells with leaves beside them, and a
+cut-out picture cuts its own clear parts away; the shaded pass, the depth pass and the sun's shadows all ask it. A
+face of leaves with no picture (`SurfaceLook::leafy`, `TERRAIN_SURFACE_LEAFY`) is drawn as small leaves in three
+shades with dark gaps (`blockLeafShade`), the squares taken two, four and eight together as they shrink on screen.
+Vines are hung by the generator (`generate::columns::hang_vines`, a biome's `[vines]`, `BiomeBlocks::vine`): after a
+chunk column's ground is made and before its structures, a block of open air with ground over it starts one by a
+hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
+has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
+(`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
@@ -3555,6 +3577,17 @@ stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the r
 top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
 plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
 plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
+
+A rule may keep its plants near something (`grow::Near`). Near another Foliage's plants: the engine finds the
+world's other growing Foliages by the model each draws (`GrowData::near_plants` names models) and puts their rules in
+(`Near::plants`, what those keep near to themselves left out); `near_sites` asks each for its tries round the column,
+by its grid, chance and patches and, on generated ground, the climate and height over the sea it likes, in one call
+to the generator, and a try is kept within `within` metres of one. That needs no blocks, so near ground and far
+ground agree; it does not ask what block a tree would stand on or how steep, so a few plants keep near a tree that
+never grew. Near a block: `Tops`, a column's highest blocks, keeps beside the ground to grow on the highest block of
+all, leaves and vines too, and a try is kept within reach of one of the rule's blocks among them, the column's own
+alone. The ground to grow on looks through leaves and vines (`is_canopy`: a vine, or a block that is bushy, seen
+through or swaying), so plants stand under a tree of blocks and never on its crown.
 
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,

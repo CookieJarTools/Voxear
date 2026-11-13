@@ -1009,6 +1009,25 @@ pub struct GrowData {
     /// out for plants that do not show so far off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub far_block: Option<String>,
+    /// The plants its own keep near to: each the model another Foliage of
+    /// the same world grows, by GUID or project path. None, with no
+    /// `near_blocks` either, for plants that grow anywhere.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub near_plants: Vec<String>,
+    /// The blocks its plants keep near to, each a `.block` by GUID or
+    /// project path: where one is the highest block of its place.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub near_blocks: Vec<String>,
+    /// How near, in metres.
+    #[serde(skip_serializing_if = "is_usual_within")]
+    pub within: f32,
+}
+
+/// How near its plants keep to what they keep near to, unless a rule says.
+pub const USUAL_WITHIN: f32 = 6.0;
+
+fn is_usual_within(metres: &f32) -> bool {
+    *metres == USUAL_WITHIN
 }
 
 impl Default for GrowData {
@@ -1028,6 +1047,9 @@ impl Default for GrowData {
             scale: rule.scale,
             aligned: true,
             far_block: None,
+            near_plants: Vec::new(),
+            near_blocks: Vec::new(),
+            within: USUAL_WITHIN,
         }
     }
 }
@@ -1037,6 +1059,12 @@ impl GrowData {
     /// number there. A block the world does not hold is one nothing stands
     /// on.
     pub fn rule(&self, mut number: impl FnMut(&str) -> Option<u16>) -> voxear_terrain::blocks::grow::GrowRule {
+        // The blocks it keeps near to; the plants it keeps near to are other Foliages' rules, which whoever has
+        // the world's Foliages puts in (`near.plants`).
+        let near_blocks: Vec<u16> = self.near_blocks.iter().filter_map(|block| number(block)).collect();
+        let near = (!self.near_plants.is_empty() || !self.near_blocks.is_empty()).then(|| {
+            voxear_terrain::blocks::grow::Near { within: self.within.max(0.0), plants: Vec::new(), blocks: near_blocks }
+        });
         voxear_terrain::blocks::grow::GrowRule {
             on: self.on.iter().map(|block| number(block).unwrap_or(voxear_terrain::blocks::chunk::AIR)).collect(),
             temperature: self.temperature,
@@ -1050,6 +1078,7 @@ impl GrowData {
             seed: self.seed,
             scale: self.scale,
             aligned: self.aligned,
+            near,
         }
     }
 }
@@ -2945,7 +2974,8 @@ seed = 3
         assert_eq!(again, data);
         // What is as it starts is left out; a Foliage that grows nowhere says nothing of it.
         let plain = toml::to_string(&FoliageData { grow: Some(GrowData::default()), ..data.clone() }).unwrap();
-        for left_out in ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"] {
+        let left = ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"];
+        for left_out in left.into_iter().chain(["near_plants", "near_blocks", "within"]) {
             assert!(!plain.contains(&format!("\n{left_out} =")), "{left_out} in {plain}");
         }
         assert!(!toml::to_string(&FoliageData { grow: None, ..data }).unwrap().contains("grow"));
@@ -2958,5 +2988,19 @@ seed = 3
         });
         assert_eq!(rule.on, [1, 7, voxear_terrain::blocks::chunk::AIR]);
         assert_eq!((rule.humidity, rule.patches, rule.seed, rule.spacing), (Some([0.5, 1.0]), 20.0, 3, 6.0));
+        assert!(rule.near.is_none(), "it grows anywhere");
+        // What its plants keep near to: blocks by the world's numbers, those it has not left out; the plants are
+        // other Foliages' rules, for whoever has them to put in.
+        let near = "mesh = \"builtin:cube\"\n[grow]\nnear_plants = [\"Plants/Tree.boxmodel\"]\n\
+                    near_blocks = [\"Blocks/Moss.block\", \"Blocks/Lost.block\"]\nwithin = 4.5\n";
+        let data: FoliageData = toml::from_str(near).expect("foliage");
+        assert_eq!(toml::from_str::<FoliageData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        let rule = data.grow.as_ref().unwrap().rule(|block| (block == "Blocks/Moss.block").then_some(7));
+        let kept = rule.near.expect("what it keeps near to");
+        assert_eq!((kept.within, kept.blocks, kept.plants.len()), (4.5, vec![7], 0));
+        let only_plants = "mesh = \"builtin:cube\"\n[grow]\nnear_plants = [\"Plants/Tree.boxmodel\"]\n";
+        let data: FoliageData = toml::from_str(only_plants).unwrap();
+        let rule = data.grow.unwrap().rule(|_| None);
+        assert_eq!(rule.near.map(|near| near.within), Some(USUAL_WITHIN), "near nothing until the plants are put in");
     }
 }

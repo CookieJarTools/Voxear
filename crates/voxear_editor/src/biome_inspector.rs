@@ -15,11 +15,18 @@
 //! Its **Tints**: what its tinted blocks' colour is multiplied by, its
 //! grass's and its leaves', white for none (see `generate::BiomeTints`).
 //!
+//! Its **Land**: the lie of its country (see `generate::land`): the
+//! generator's own ground, or its own Plains, Hills, Mountains, Tablelands
+//! or Pillars, each picked with the heights and numbers it comes with, and
+//! those to change after: how high and how far apart, how deep its valleys,
+//! how far its cliffs hang out, and how many pillars and natural bridges
+//! stand on it.
+//!
 //! Each change is saved as it is made, and every world listing the biome
 //! has its ground made again at once (see `editor::biomes`).
 
 use voxear_terrain::{
-    generate::{BiomeDef, BiomeTints},
+    generate::{BiomeDef, BiomeLand, BiomeTints, Landform},
     surfaces::Biome,
 };
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
@@ -133,6 +140,11 @@ pub struct BiomeFields {
     vines: Option<(NodeId, [NodeId; 2], NodeId)>,
     /// Its grass tint's and its foliage tint's parts, and their swatches.
     tints: [([NodeId; 3], NodeId); 2],
+    /// The kind of country its land is, and its numbers while it has land of
+    /// its own: height, size, valleys, overhangs, pillars, pillar height and
+    /// bridges.
+    land: NodeId,
+    land_rows: Option<[NodeId; 7]>,
     slots: Vec<BlockSlot>,
 }
 
@@ -212,6 +224,25 @@ impl BiomeFields {
             }
         }
 
+        let rows = part(ui, root, "Land", "mountain");
+        let row = prop(ui, rows, "Form");
+        let names = Landform::ALL.map(Landform::name);
+        let picked = Landform::ALL.iter().position(|&form| form == biome.land.form).unwrap_or(0);
+        let land = ui.dropdown(row, &names, picked);
+        ui.add_class(land, "value-choice");
+        let shown = biome.land;
+        let land_rows = (shown.form != Landform::Keep).then(|| {
+            [
+                number_row(ui, rows, "Height", "m", shown.height),
+                number_row(ui, rows, "Size", "m", shown.size),
+                number_row(ui, rows, "Valleys", "", shown.valleys),
+                number_row(ui, rows, "Overhangs", "m", shown.overhangs),
+                number_row(ui, rows, "Pillars", "", shown.pillars),
+                number_row(ui, rows, "Pillar height", "m", shown.pillar_height),
+                number_row(ui, rows, "Bridges", "", shown.bridges),
+            ]
+        });
+
         let fields = Self {
             biome,
             color,
@@ -226,6 +257,8 @@ impl BiomeFields {
             shore_height,
             vines,
             tints,
+            land,
+            land_rows,
             slots,
         };
         fields.show_swatch(ui);
@@ -256,6 +289,14 @@ impl BiomeFields {
             && ranges(climate) != (biome.temperature, biome.humidity)
         {
             (biome.temperature, biome.humidity) = ranges(climate);
+            return Some(BiomeChange::Shape);
+        }
+        // A kind of country comes with its own numbers.
+        if ui.changed(self.land)
+            && let Some(&form) = Landform::ALL.get(ui.selected_option(self.land))
+            && form != biome.land.form
+        {
+            biome.land = BiomeLand::of(form);
             return Some(BiomeChange::Shape);
         }
         if ui.changed(self.height) {
@@ -303,6 +344,23 @@ impl BiomeFields {
             }
             if let Some(metres) = changed_number(ui, depth) {
                 (biome.vines.depth, typed) = (metres.max(0.0), true);
+            }
+        }
+        if let Some(rows) = self.land_rows {
+            let land = &mut biome.land;
+            let numbers: [(&mut f32, f32); 7] = [
+                (&mut land.height, 4000.0),
+                (&mut land.size, 20000.0),
+                (&mut land.valleys, 1.0),
+                (&mut land.overhangs, 60.0),
+                (&mut land.pillars, 1.0),
+                (&mut land.pillar_height, 1000.0),
+                (&mut land.bridges, 1.0),
+            ];
+            for ((value, most), field) in numbers.into_iter().zip(rows) {
+                if let Some(number) = changed_number(ui, field) {
+                    (*value, typed) = (number.clamp(0.0, most), true);
+                }
             }
         }
         for (at, (parts, _)) in self.tints.iter().enumerate() {

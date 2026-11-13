@@ -40,7 +40,8 @@ pub(super) enum Source<'a> {
     /// into its graph, and rivers where the world has them.
     Moved(Arc<WorldGen>),
     /// The world's generator, whose graph has a Volume, with rivers run down
-    /// its ground.
+    /// its ground; or one shaped by its biomes' land, with whatever it adds.
+    /// Its Volume is read where the world lies in the generator's world.
     Rivered(Arc<WorldGen>),
 }
 
@@ -63,7 +64,7 @@ impl Source<'_> {
 /// The generators made with worlds' own overhangs and caves wired in, by
 /// the generator's hash and the numbers' bits: the last few asked for, so
 /// each chunk made does not compile its own.
-type Moved = Vec<((u64, [u32; 3], bool), Arc<WorldGen>)>;
+type Moved = Vec<((u64, [u32; 3], bool, u64), Arc<WorldGen>)>;
 static MOVED: Mutex<Moved> = Mutex::new(Vec::new());
 const MOVED_KEPT: usize = 16;
 
@@ -75,16 +76,22 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let watered = graph.output().is_some_and(|output| graph.link_into(output.id, Output::WATER).is_some());
     let rivered = generate.rivers && !watered;
     let voxels = world.volume().is_some();
-    if voxels && !rivered {
+    // The biomes' own land: their hills, mountains, tables and pillars, where any has some.
+    let biomes = biomes_of(generate);
+    let landed = biomes.iter().any(|biome| !biome.land.is_keep());
+    if voxels && !rivered && !landed {
         return Source::Own(world);
     }
+    let lands = if landed { lands_hash(generate) } else { 0 };
     let own = OwnVoxels {
         overhangs: generate.overhangs.max(0.0),
         caves: generate.caves.clamp(0.0, 1.0),
         roof: CAVE_ROOF * block_size,
     };
-    let key = (world.hash(), [own.overhangs, own.caves, own.roof].map(f32::to_bits), rivered);
-    let made = |found: Arc<WorldGen>| if voxels { Source::Rivered(found) } else { Source::Moved(found) };
+    let key = (world.hash(), [own.overhangs, own.caves, own.roof].map(f32::to_bits), rivered, lands);
+    // Ground shaped by its biomes' land is new ground: all of it is read where the world lies, pillars and bridges
+    // with the rest.
+    let made = |found: Arc<WorldGen>| if voxels || landed { Source::Rivered(found) } else { Source::Moved(found) };
     let mut moved = MOVED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some((_, found)) = moved.iter().find(|(kept, _)| *kept == key) {
         return made(found.clone());
@@ -93,18 +100,86 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     if graph.output().is_none() {
         graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
     }
+    // Shaped by the land already where the generator came so (see `landed`).
+    let shaped = match world.land() {
+        Some((hash, shaped)) if *hash == lands => shaped.clone(),
+        _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate)),
+    };
     if rivered {
         crate::generate::nodes::add_rivers(&mut graph);
     }
     if !voxels {
         graph.add_voxels(own, false);
     }
+    crate::generate::land::add_land_volume(&mut graph, biomes, &shaped);
     let world = Arc::new(world.with_graph(graph));
     if moved.len() >= MOVED_KEPT {
         moved.remove(0);
     }
     moved.push((key, world.clone()));
     made(world)
+}
+
+/// The biomes `generate` lists, as read; none before they are.
+fn biomes_of(generate: &BlockGenerate) -> &[crate::generate::BiomeDef] {
+    generate.placed.as_ref().map(|placed| placed.biomes.list()).unwrap_or_default()
+}
+
+/// The generators shaped by their worlds' biomes' land, by the generator's
+/// hash and the biomes': the last few asked for.
+type Landed = Vec<((u64, u64), Arc<WorldGen>)>;
+static LANDED: Mutex<Landed> = Mutex::new(Vec::new());
+
+/// `world` with its ground shaped by the land of the biomes `generate`
+/// lists (see `generate::land`): the ground's height, climate and rivers as
+/// the world of blocks makes them, for whatever asks about its ground
+/// (where plants and structures stand, how warm it is, its tints). `world`
+/// itself where no biome has land of its own. The ground of blocks made
+/// from what it gives is the same as from `world`: its land is not shaped
+/// twice.
+pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> {
+    let biomes = biomes_of(generate);
+    if biomes.iter().all(|biome| biome.land.is_keep()) || world.land().is_some() {
+        return world.clone();
+    }
+    let lands = lands_hash(generate);
+    let key = (world.hash(), lands);
+    let mut landed = LANDED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, found)) = landed.iter().find(|(kept, _)| *kept == key) {
+        return found.clone();
+    }
+    let mut graph = world.graph().clone();
+    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate));
+    let made = Arc::new(world.with_graph(graph).with_land(lands, shaped));
+    if landed.len() >= MOVED_KEPT {
+        landed.remove(0);
+    }
+    landed.push((key, made.clone()));
+    made
+}
+
+/// The ground round where `generate`'s world lies that its biomes' land
+/// keeps clear of, where it keeps clear of any.
+fn clear_of(generate: &BlockGenerate) -> Option<crate::generate::land::Clear> {
+    let middle = generate.position;
+    (generate.land_from > 0.0).then_some(crate::generate::land::Clear { middle, radius: generate.land_from })
+}
+
+/// A hash of how `generate`'s biomes lie and the land each shapes, and of
+/// where it keeps clear, for knowing one
+/// world's shaped generator from another's.
+fn lands_hash(generate: &BlockGenerate) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let clear = clear_of(generate).map(|clear| [clear.middle[0], clear.middle[1], clear.radius].map(f32::to_bits));
+    clear.hash(&mut hasher);
+    for biome in biomes_of(generate) {
+        let land = biome.land;
+        let numbers = [land.height, land.size, land.valleys, land.overhangs, land.pillars, land.pillar_height];
+        (land.form as u8, numbers.map(f32::to_bits), land.bridges.to_bits()).hash(&mut hasher);
+        (biome.temperature.map(f32::to_bits), biome.humidity.map(f32::to_bits)).hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// How deep under the surface a block of ground is, in blocks, for its

@@ -3587,6 +3587,11 @@ struct BlockWaterOut
     nointerpolation uint2 water : WATER;
     // How it flows along x and z, in metres a second, its ripples carried with it.
     nointerpolation float2 flow : FLOW;
+    // Whether it is a side of falling water, and the sides of it, a still top, that a fall lands beside: a bit
+    // each, +x, -x, +z and -z.
+    nointerpolation float2 fall : FALL;
+    // How many blocks its water has fallen here, a side of falling water.
+    float fallen : FALLEN;
 };
 
 // How fast water running out sideways from what feeds it flows, and a river's current, in metres a second
@@ -3657,7 +3662,59 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     o.previousClip = transform(frame->prevViewProj, at);
     o.water = uint2(push.level - 1, b.surface & 0xFF);
     o.flow = smooth ? float2(0.0, 0.0) : blockWaterFlow(quad, up);
+    // A full block's quad has no shape to keep, so a side of falling water keeps there how far it has fallen at its
+    // top, and one, and a still top the sides a fall lands beside (voxear_terrain::blocks::mesh::water_fall,
+    // water_foam).
+    uint facing = (quad.x >> 25) & 7;
+    bool whole = !smooth && up == 7;
+    uint kept = (quad.y >> 12) & 15;
+    bool falling = whole && facing != 2 && facing != 3 && kept > 0;
+    o.fall = float2(falling ? 1.0 : 0.0, whole && facing == 2 ? float((quad.y >> 8) & 15) : 0.0);
+    o.fallen = 0.0;
+    if (falling)
+    {
+        // A block further at each block down the quad from its top.
+        float top = b.world.y;
+        for (uint corner = 0; corner < 6; corner++)
+        {
+            top = max(top, cubePoint(world, (vertexId / 6) * 6 + corner).world.y);
+        }
+        int4 chunk = world.origins[quad.y >> 16];
+        float blockSize = world.blockSize * float(1u << uint(chunk.w));
+        o.fallen = float(kept) - 1.0 + (top - b.world.y) / blockSize;
+    }
     return o;
+}
+
+// How fast the streaks of falling water run down its side, in metres a second, and how many blocks down it is as
+// broken up as it gets.
+static const float BLOCK_FALL_SPEED = 5.5;
+static const float BLOCK_FALL_BROKEN = 7.0;
+
+// Falling water at `at` on a side facing `face`, having fallen `fallen` blocks. In x, how white it is, from 0, clear
+// water, to 1: threads of white long down the fall and thin across it, running down it, few and fine at its top,
+// where it is still a sheet, and most of it lower down, where it has broken up, with flecks torn off it falling
+// faster. In y, how pale its body is with the air in it, more the further it has fallen.
+float2 blockFallWhite(Frame* frame, float3 at, float3 face, float fallen)
+{
+    // Across the fall: along the side, whichever way it faces. Read from the level's middle, so the streaks stay
+    // where they are as the world's middle moves.
+    float3 level = levelPosition(frame, at, 4096.0);
+    float across = abs(face.x) > 0.5 ? level.z : level.x;
+    float run = fmod(frame->time, BLOCK_DRIFT_PERIOD) * BLOCK_FALL_SPEED;
+    float broken = saturate(fallen / BLOCK_FALL_BROKEN);
+    broken = broken * broken * (3.0 - 2.0 * broken);
+    // Broad sheets that tear, threads within them, and a ragged edge to both.
+    float sheets = lavaNoise(float2(across * 2.3, (level.y + run) * 0.16));
+    float threads = lavaNoise(float2(across * 9.0 + 31.0, (level.y + run * 1.35) * 0.3));
+    float ragged = lavaNoise(float2(across * 4.5 + 7.0, (level.y + run * 0.8) * 1.1 + 13.0));
+    float streaks = sheets * 0.45 + threads * 0.4 + ragged * 0.15;
+    float cover = lerp(0.3, 0.68, broken);
+    float white = smoothstep(1.0 - cover, 1.0 - cover + 0.2, streaks);
+    // Flecks torn off where it has broken up, falling faster than the sheet.
+    float flecks = lavaNoise(float2(across * 17.0 + 3.0, (level.y + run * 2.2) * 1.6));
+    white = max(white, smoothstep(0.78, 0.9, flecks) * broken * 0.9);
+    return float2(white * lerp(0.7, 1.0, broken), 0.12 + 0.3 * broken);
 }
 
 // How far from the camera the view leaves a world of blocks' water: at each pixel, of its faces turned away from the
@@ -3817,19 +3874,46 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float3 glow = waterGlow(frame, medium, 0.0, bentView, 0.0, thickness, 0.0, shadow, ambient, sunLight);
     float3 under = behind * through + glow;
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
-    // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it.
-    if (face.y > 0.5 && oceanHas(frame, OCEAN_WET_EDGES))
+    // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it;
+    // and foam churned up beside where a fall lands, drifting and thinning out from it.
+    if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0))
     {
         float2 level = levelXZ(frame, at.xz, 4096.0);
         float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(level, float2(1.3, 0.7)));
-        float contact = saturate(1.0 - thickness / lapping);
-        float coverage = 0.65 * contact * contact;
-        float pattern = foamPatternAt(frame, level).x;
+        float contact = oceanHas(frame, OCEAN_WET_EDGES) ? saturate(1.0 - thickness / lapping) : 0.0;
+        // How near the fall's foot this is, across the block from each side it lands beside.
+        float churned = 0.0;
+        if (input.fall.y > 0.0)
+        {
+            uint sides = uint(input.fall.y);
+            float2 within = frac((at.xz - world.corner.xz) / world.blockSize);
+            float near = max(max((sides & 1) != 0 ? within.x : 0.0, (sides & 2) != 0 ? 1.0 - within.x : 0.0),
+                max((sides & 4) != 0 ? within.y : 0.0, (sides & 8) != 0 ? 1.0 - within.y : 0.0));
+            float surge = 0.85 + 0.15 * sin(frame->time * 3.3 + dot(level, float2(2.1, 1.7)));
+            churned = 0.6 * near * near * surge;
+        }
+        float coverage = max(0.65 * contact * contact, churned);
+        // Churned foam is pushed out from the foot and turned over as it goes.
+        float2 churning = float2(sin(frame->time * 0.9), cos(frame->time * 0.7)) * (churned > 0.0 ? 0.3 : 0.0);
+        float pattern = foamPatternAt(frame, level + churning).x;
         float from = max(1.0 - coverage * 1.8, 0.03);
         float foam = smoothstep(from, from + max(0.3, fwidth(pattern) * 1.5), pattern) * saturate(coverage * 4.0);
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
         float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, foam);
+    }
+    // Falling water: its body paler with the air in it, and white threads running down its side, more of them the
+    // further it has fallen.
+    float streaked = 0.0;
+    if (input.fall.x > 0.5)
+    {
+        float2 white = blockFallWhite(frame, at, face, input.fallen);
+        streaked = white.x;
+        float wrapped = saturate((dot(face, l) + 0.6) / 1.6);
+        float3 whiteLit = ambient + sunLight * shadow * wrapped / PI;
+        float3 pale = lerp(whiteLit, whiteLit * look.scatter / max(max(look.scatter.r, look.scatter.g), max(look.scatter.b, 1e-3)), 0.55);
+        color = lerp(color, pale, white.y);
+        color = lerp(color, whiteLit, white.x);
     }
     // A column's side is the water's own body, lit as a block's face is, so the columns read as blocks of water.
     if (swollen && !level)
@@ -3889,6 +3973,13 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
+    if (streaked > 0.35)
+    {
+        // Where it is mostly white, what the pixel shows is the streak, which was higher up the fall last frame: so
+        // the frames before are read from there, and its streaks stay sharp as they run.
+        float3 before = at + float3(0.0, BLOCK_FALL_SPEED * frame->deltaTime, 0.0);
+        o.velocity = motion(input.currentClip, transform(frame->prevViewProj, float4(before, 1.0)));
+    }
     return o;
 }
 

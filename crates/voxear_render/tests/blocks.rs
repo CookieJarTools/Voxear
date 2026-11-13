@@ -613,6 +613,148 @@ fn water_blocks_look_the_same_inside_the_stretch_of_them_round_the_camera_as_out
     assert!(mean < 6.0 && off * 200 < count, "apart by {mean:.1} a pixel, {off} of {count} by more than 40");
 }
 
+/// Grass 3 blocks up, 64 a side, a cliff of stone 10 blocks higher along its far side, a channel of water in the
+/// cliff's top, three blocks wide, falling down its face into a pool a block deep at its foot; and the look it is
+/// drawn with, the sun high in the west.
+fn waterfall(renderer: &mut Renderer) -> World {
+    use voxear_terrain::blocks::{chunk::BlockId, file::BlockKind, flow::Water};
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 3;
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+    let water = file.blocks.len() as BlockId;
+    let mut blocks = file.make_ground(None);
+    for z in 30..44 {
+        for x in 20..44 {
+            for y in 3..13 {
+                blocks.set([x, y, z], 3);
+            }
+        }
+    }
+    for x in 31..34 {
+        // The channel in the cliff's top, the fall down its face, and under it the pool.
+        for z in 30..36 {
+            blocks.set([x, 12, z], water);
+        }
+        for y in 3..13 {
+            blocks.set_cell([x, y, 29], water, Water::Falling.fill());
+        }
+    }
+    for z in 22..30 {
+        for x in 26..39 {
+            blocks.set([x, 2, z], water);
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            // Linear, as the engine makes a colour's material.
+            let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            let [r, g, b] = look.color.map(linear);
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+    };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    let towards_sun = Vec3::new(-60f32.to_radians().cos(), 60f32.to_radians().sin(), -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    world
+}
+
+#[test]
+fn falling_water_runs_down_its_side_whiter_lower_down_with_foam_on_the_pool_at_its_foot() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = waterfall(&mut renderer);
+    // From in front of the fall, a little above the pool, looking level at it.
+    let eye = Vec3::new(32.5, 7.5, 13.0);
+    world.spawn((Camera::default(), Transform::new(eye, Quat::IDENTITY, Vec3::ONE)));
+    // Where a point of the world is in the picture.
+    let seen = |at: Vec3| {
+        let half = 30f32.to_radians().tan();
+        let (x, y) = ((at.x - eye.x) / (at.z - eye.z) / half, (at.y - eye.y) / (at.z - eye.z) / half);
+        ((x * HEIGHT as f32 / WIDTH as f32 + 1.0) * 0.5 * WIDTH as f32, (1.0 - y) * 0.5 * HEIGHT as f32)
+    };
+    // How white the picture is round a point, a few pixels each way: its least colour, as water's own is no white.
+    let white = |pixels: &[u8], at: Vec3, reach: (i32, i32)| {
+        let (x, y) = seen(at);
+        let mut total = 0;
+        let mut count = 0;
+        for dy in -reach.1..=reach.1 {
+            for dx in -reach.0..=reach.0 {
+                let [r, g, b] = rgb_at(pixels, (x as i32 + dx) as u32, (y as i32 + dy) as u32);
+                total += r.min(g).min(b);
+                count += 1;
+            }
+        }
+        total as f32 / count as f32
+    };
+    let mut time = 0.0;
+    let mut frame = |renderer: &mut Renderer, frames: u32, name: &str| {
+        for _ in 0..frames {
+            time += 1.0 / 60.0;
+            renderer.render(&world, time).expect("frame renders");
+        }
+        let pixels = renderer.read_pixels().expect("pixels").2;
+        keep_image(name, &pixels);
+        pixels
+    };
+    let first = frame(&mut renderer, 30, "blocks waterfall a.png");
+    let later = frame(&mut renderer, 6, "blocks waterfall b.png");
+    // The fall's face, a block under its top and a block over its foot; the cliff beside it; the pool by its foot
+    // and four blocks out from it.
+    let (top, low) = (Vec3::new(32.5, 11.0, 29.0), Vec3::new(32.5, 4.5, 29.0));
+    let cliff = Vec3::new(26.0, 8.0, 30.0);
+    let (by_foot, out) = (Vec3::new(32.5, 3.0, 28.8), Vec3::new(32.5, 3.0, 24.5));
+    // Whiter a block over its foot than a block under its top, where it is still a sheet.
+    let (sheet, broken) = (white(&first, top, (20, 12)), white(&first, low, (20, 12)));
+    assert!(broken > sheet + 30.0, "whiter lower down: {sheet:.0} at its top, {broken:.0} over its foot");
+    // Foam on the pool by its foot, and none four blocks out.
+    let (churned, calm) = (white(&first, by_foot, (18, 1)), white(&first, out, (18, 3)));
+    assert!(churned > calm + 40.0, "foam by its foot: {churned:.0} there, {calm:.0} out on the pool");
+    // Its streaks run: a tenth of a second on its face has changed all down it, and the cliff beside it has not.
+    let moved = |at: Vec3| {
+        let (x, y) = seen(at);
+        let mut total = 0;
+        for dy in -12..=12 {
+            for dx in -20..=20 {
+                let (px, py) = ((x as i32 + dx) as u32, (y as i32 + dy) as u32);
+                let (a, b) = (rgb_at(&first, px, py), rgb_at(&later, px, py));
+                total += (0..3).map(|i| (a[i] - b[i]).abs()).sum::<i32>();
+            }
+        }
+        total as f32 / (25.0 * 41.0)
+    };
+    let (high, foot, still) = (moved(top), moved(low), moved(cliff));
+    assert!(high > 4.0 && foot > 8.0, "the fall's face changes as it runs: {high:.1} at its top, {foot:.1} lower");
+    assert!(still < 4.0 && foot > still * 3.0, "the cliff stands still: {still:.1}");
+}
+
 #[test]
 fn a_camera_just_under_water_blocks_sees_air_over_one_level_waterline_and_water_under_it() {
     let Some(mut renderer) = renderer() else { return };

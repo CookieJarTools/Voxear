@@ -67,7 +67,14 @@
 //! corners' shading how far its corners on its block's lower and upper side
 //! along the way up are moved, in sixteenths of a block, and in its first
 //! word that way (`water_shape`).
+//! A full block of water has no shape to keep there, so two more things are
+//! kept in its place: a side of falling water keeps how many blocks it has
+//! fallen at its top, counted as far as fourteen, so its streaks whiten
+//! down the fall (`water_fall`); and a still top keeps the sides a fall
+//! lands beside, for the foam there (`water_foam`). A chunk also keeps
+//! where its falls land (`ChunkMesh::falls`), for the splash at each foot.
 
+use super::flow::Water;
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
@@ -182,6 +189,11 @@ pub struct ChunkMesh {
     /// `None` where they face every way, or for a chunk of cubes, whose
     /// faces are kept by the way they face.
     pub cone: Option<[f32; 4]>,
+    /// Where falling water lands in it, a chunk of cubes: the lowest block of
+    /// each fall, in blocks from the chunk's corner, and how many blocks of
+    /// falling water stand in it and over it, as far as 255. Nothing draws
+    /// them; the splash at a fall's foot is thrown up from them.
+    pub falls: Vec<[u8; 4]>,
 }
 
 impl ChunkMesh {
@@ -611,7 +623,18 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         let open = |beyond: BlockId| {
             beyond == AIR || is_vine(faces, beyond) || is_part(faces, beyond) && covers(faces, beyond) == 0
         };
-        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| open(beyond) && made(at)));
+        // Falling water in the chunk or a chunk beside it: its sides keep how far it has fallen, the still water
+        // round where it lands that it is beside it, and the chunk where it lands.
+        let falling = super::flow::Water::Falling.fill();
+        let holds =
+            |key: [i32; 3]| map.chunk(key).and_then(|chunk| chunk.fills()).is_some_and(|f| f.contains(&falling));
+        let beside = |d: i32| (-1..=1).any(|dy| (-1..=1).any(|dz| holds([key[0] + d, key[1] + dy, key[2] + dz])));
+        let falls = (-1..=1).any(beside);
+        let fill = fills(map, key);
+        mesh.quads.extend(water_quads((&block, &fill), faces, |at, beyond| open(beyond) && made(at), falls));
+        if holds(key) {
+            mesh.falls = water_falls(map, key, faces);
+        }
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
@@ -975,21 +998,100 @@ pub fn water_current(quad: [u32; 2]) -> Option<[f32; 2]> {
     Some(way.map(|v| v * super::flow::RIVER_SPEED))
 }
 
+/// The most blocks a side of falling water keeps that it has fallen at its
+/// top: further down it is as broken up as it gets.
+pub const FALLEN_MOST: u8 = 14;
+
+/// How many blocks the water of a quad has fallen at the quad's top, where
+/// it is a side of falling water (see `water_quads`).
+pub fn water_fall(quad: [u32; 2]) -> Option<u8> {
+    let (up, facing) = ((quad[0] >> 28) & 7, (quad[0] >> 25) & 7);
+    let kept = ((quad[1] >> 12) & 15) as u8;
+    (up == 7 && ![2, 3].contains(&facing) && kept > 0).then(|| kept - 1)
+}
+
+/// The sides of a quad of still water's top a fall lands beside, on the
+/// water there: a bit each, +x, -x, +z and -z (see `water_quads`).
+pub fn water_foam(quad: [u32; 2]) -> u8 {
+    let (up, facing) = ((quad[0] >> 28) & 7, (quad[0] >> 25) & 7);
+    if up == 7 && facing == 2 { ((quad[1] >> 8) & 15) as u8 } else { 0 }
+}
+
+/// Where falling water lands in chunk `key` (see `ChunkMesh::falls`): each
+/// block of falling water with none under it, and how many stand in it and
+/// over it, looked for past the chunk's top too.
+fn water_falls(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> Vec<[u8; 4]> {
+    let Some(chunk) = map.chunk(key) else { return Vec::new() };
+    let corner = key.map(|v| v * CHUNK as i32);
+    let falling = |at: [i32; 3]| is_water(faces, map.get(at)) && Water::of(map.fill(at)) == Water::Falling;
+    let mut falls = Vec::new();
+    for y in 0..CHUNK {
+        for z in 0..CHUNK {
+            for x in 0..CHUNK {
+                if chunk.fill(x, y, z) != Water::Falling.fill() || !is_water(faces, chunk.get(x, y, z)) {
+                    continue;
+                }
+                let at = [corner[0] + x as i32, corner[1] + y as i32, corner[2] + z as i32];
+                if falling([at[0], at[1] - 1, at[2]]) {
+                    continue;
+                }
+                let high = (1..255).take_while(|&up| falling([at[0], at[1] + up, at[2]])).count() + 1;
+                falls.push([x as u8, y as u8, z as u8, high as u8]);
+            }
+        }
+    }
+    falls
+}
+
 /// A chunk's water's faces as quads, merged by surface and shape: one
 /// wherever a block of water meets a block `meets` picks, by where it is
 /// from the chunk's corner and which block, as high as it stands; and where
 /// it meets lower water across the way up, the strip of its side above that
 /// water's top. `blocks` gives each block, and how full it is, from one
 /// before the chunk's corner to one past its far side.
+///
+/// With `falls`, where falling water is in the chunk or beside it, two more
+/// things are kept where a full block's shape has nothing to say (see
+/// `water_fall` and `water_foam`): a side of falling water keeps how many
+/// blocks it has fallen at its top, and one, in place of how far its lower
+/// corners are raised; and a still top beside where a fall lands keeps the
+/// sides it lands on, in place of how far its upper corners are lowered.
 pub(super) fn water_quads(
     (block, fill): (&dyn Fn([i32; 3]) -> BlockId, &dyn Fn([i32; 3]) -> Fill),
     faces: &[BlockFaces],
     meets: impl Fn([i32; 3], BlockId) -> bool,
+    falls: bool,
 ) -> Vec<[u32; 2]> {
     let side = CHUNK as usize;
     let mut quads = Vec::new();
     let mut mask = vec![0u32; side * side];
     let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| super::flow::water_height(fill(p)));
+    let falling = |p: [i32; 3]| is_water(faces, block(p)) && Water::of(fill(p)) == Water::Falling;
+    // How many blocks of falling water stand over `p`, as far as FALLEN_MOST: a fall running on past the chunk's
+    // top is taken to be that long.
+    let fallen = |p: [i32; 3]| {
+        let mut over = 0;
+        while over < FALLEN_MOST {
+            let above = [p[0], p[1] + 1 + i32::from(over), p[2]];
+            if above[1] > side as i32 {
+                return FALLEN_MOST;
+            }
+            if !falling(above) {
+                break;
+            }
+            over += 1;
+        }
+        over
+    };
+    // The sides of a top at `p` a fall lands beside, on the water there: a bit each, +x, -x, +z and -z.
+    let lands = |p: [i32; 3], dx: i32, dz: i32| {
+        let on = [p[0] + dx, p[1], p[2] + dz];
+        water(on).is_some() && !falling(on) && falling([on[0], on[1] + 1, on[2]])
+    };
+    let foam = |p: [i32; 3]| {
+        let sides = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        (0..4).filter(|&side| lands(p, sides[side].0, sides[side].1)).fold(0u8, |all, side| all | 1 << side)
+    };
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         for layer in 0..side {
             for j in 0..side {
@@ -1025,6 +1127,13 @@ pub(super) fn water_quads(
                     let rise = match (facing, super::flow::current_parts(fill(p))) {
                         (2, Some((way, _))) => way as u8 + 1,
                         _ => rise,
+                    };
+                    // A full block's side or top has no shape to keep: falling, its side keeps how far it has fallen;
+                    // still, its top keeps the sides a fall lands beside.
+                    let (rise, drop) = match (up, facing) {
+                        (None, 0 | 1 | 4 | 5) if falls && falling(p) => (fallen(p) + 1, drop),
+                        (None, 2) if falls && drop == 0 && !falling(p) => (rise, foam(p)),
+                        _ => (rise, drop),
                     };
                     let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
                     mask[j * side + i] = (look | shaped | across << 19) + 1;
@@ -1572,6 +1681,74 @@ mod tests {
         // Its sides along z each a block high, their tops lowered as they stand.
         assert_eq!(shape(3, 4), (0, 2, Some(2)));
         assert_eq!(unpack(*water.iter().find(|&&q| unpack(q).0 == [3, 1, 1] && unpack(q).2 == 4).unwrap()).1, [1, 1]);
+    }
+
+    #[test]
+    fn falling_water_keeps_how_far_it_has_fallen_where_it_lands_and_the_pool_beside_its_foot() {
+        // A pool a block deep on a floor, and water falling into its middle from eight blocks up.
+        let mut map = BlockMap::default();
+        for z in 0..12 {
+            for x in 0..12 {
+                map.set([x, 0, z], 1);
+                map.set([x, 1, z], 2);
+            }
+        }
+        for y in 2..10 {
+            map.set_cell([5, y, 5], 2, Water::Falling.fill());
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        // It lands on the pool, eight blocks of it over where it does.
+        assert_eq!(mesh.falls, [[5, 2, 5, 8]]);
+        let (first, _) = mesh.water();
+        let water = &mesh.quads[first as usize..];
+        // Each side of it, block by block down, keeps how many blocks of the fall stand over it.
+        for facing in [0, 1, 4, 5] {
+            let mut sides: Vec<(u32, u8)> = water
+                .iter()
+                .filter(|&&q| unpack(q).2 == facing && unpack(q).0[1] >= 2)
+                .map(|&q| (unpack(q).0[1], water_fall(q).expect("a side of falling water")))
+                .collect();
+            sides.sort_unstable();
+            assert_eq!(sides, (2..10).map(|y| (y, (9 - y) as u8)).collect::<Vec<_>>(), "facing {facing}");
+        }
+        // The pool's top beside its foot keeps which side the fall lands on; a block further off, none.
+        let foam = |x: u32, z: u32| {
+            let top = water.iter().find(|&&q| {
+                let (at, size, facing, ..) = unpack(q);
+                let (wide, long) = (size[1], size[0]);
+                facing == 2 && at[1] == 1 && (at[0]..at[0] + wide).contains(&x) && (at[2]..at[2] + long).contains(&z)
+            });
+            water_foam(*top.unwrap_or_else(|| panic!("a top over {x}, {z}")))
+        };
+        assert_eq!([foam(4, 5), foam(6, 5), foam(5, 4), foam(5, 6)], [1, 2, 4, 8]);
+        assert_eq!([foam(3, 5), foam(4, 4), foam(8, 8)], [0, 0, 0]);
+        // Still water alone keeps neither: its quads are as they were.
+        for y in 2..10 {
+            map.set([5, y, 5], 0);
+        }
+        let still = mesh_chunk(&map, [0, 0, 0], &faces);
+        assert!(still.falls.is_empty());
+        let quads = &still.quads[still.water().0 as usize..];
+        assert!(quads.iter().all(|&q| water_fall(q).is_none() && water_foam(q) == 0));
+    }
+
+    #[test]
+    fn a_fall_longer_than_it_can_count_is_as_broken_as_it_gets_and_one_quad_from_there_down() {
+        let mut map = BlockMap::default();
+        map.set([5, 0, 5], 1);
+        for y in 1..30 {
+            map.set_cell([5, y, 5], 2, Water::Falling.fill());
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        assert_eq!(mesh.falls, [[5, 1, 5, 29]]);
+        let water = &mesh.quads[mesh.water().0 as usize..];
+        let sides: Vec<_> = water.iter().filter(|&&q| unpack(q).2 == 0).map(|&q| (unpack(q), water_fall(q))).collect();
+        // Fourteen blocks counted from its top, a quad each, and the rest in one.
+        assert_eq!(sides.len(), usize::from(FALLEN_MOST) + 1);
+        let long = sides.iter().find(|(_, fallen)| *fallen == Some(FALLEN_MOST)).expect("its long foot");
+        assert_eq!((long.0.0[1], long.0.1.iter().max()), (1, Some(&15)));
     }
 
     #[test]

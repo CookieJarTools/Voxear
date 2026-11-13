@@ -1466,6 +1466,72 @@ pub(crate) fn record_opaque(
     });
 }
 
+/// The foot of a fall of a world of cubes' water, where it lands (see
+/// `ChunkMesh::falls`): the middle of the foot, in the world; how far it
+/// reaches along x and z, falls landing side by side being one; and how
+/// high the fall stands over it, all in metres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FallFoot {
+    pub at: Vec3,
+    pub size: [f32; 2],
+    pub high: f32,
+}
+
+/// The most falls that throw up a splash in a frame, the nearest the camera,
+/// and how far from it one still does, in metres.
+const SPLASHING_FALLS: usize = 8;
+const SPLASH_REACH: f32 = 96.0;
+
+/// The feet of the falls nearest `camera`, the nearest first, among the
+/// worlds of cubes: the splash at each is thrown up by `particles::gather`.
+pub(crate) fn fall_feet(world: &World, camera: Vec3) -> Vec<FallFoot> {
+    use voxear_scene::{Destroying, Transform, WorldTransform};
+    let side = CHUNK as i32;
+    let mut feet: Vec<(f32, FallFoot)> = Vec::new();
+    let worlds = world.query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    for (blocks, local, placed) in worlds {
+        if blocks.smooth {
+            continue;
+        }
+        let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+        let size = blocks.block_size;
+        // Falls landing side by side at one height are one: each by its lowest and highest block, and its height.
+        let mut joined: Vec<([i32; 3], [i32; 3], u8)> = Vec::new();
+        for (key, mesh) in blocks.meshes.iter().filter(|(_, mesh)| !mesh.falls.is_empty()) {
+            let middle = corner + (Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) + 0.5) * (side as f32 * size);
+            if middle.distance(camera) > SPLASH_REACH + side as f32 * size {
+                continue;
+            }
+            for &[x, y, z, high] in &mesh.falls {
+                let at = [key[0] * side + i32::from(x), key[1] * side + i32::from(y), key[2] * side + i32::from(z)];
+                let beside = joined.iter_mut().find(|(low, top, _)| {
+                    low[1] == at[1] && (0..3).step_by(2).all(|i| at[i] >= low[i] - 1 && at[i] <= top[i] + 1)
+                });
+                match beside {
+                    Some((low, top, tallest)) => {
+                        (low[0], low[2]) = (low[0].min(at[0]), low[2].min(at[2]));
+                        (top[0], top[2]) = (top[0].max(at[0]), top[2].max(at[2]));
+                        *tallest = (*tallest).max(high);
+                    }
+                    None => joined.push((at, at, high)),
+                }
+            }
+        }
+        for (low, top, high) in joined {
+            let across = |i: usize| (top[i] - low[i] + 1) as f32 * size;
+            let middle = |i: usize| (low[i] + top[i] + 1) as f32 * 0.5 * size;
+            let at = corner + Vec3::new(middle(0), low[1] as f32 * size, middle(2));
+            let away = at.distance(camera);
+            if away <= SPLASH_REACH {
+                feet.push((away, FallFoot { at, size: [across(0), across(2)], high: f32::from(high) * size }));
+            }
+        }
+    }
+    feet.sort_by(|a, b| a.0.total_cmp(&b.0));
+    feet.truncate(SPLASHING_FALLS);
+    feet.into_iter().map(|(_, foot)| foot).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

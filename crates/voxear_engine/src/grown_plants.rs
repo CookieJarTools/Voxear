@@ -603,7 +603,15 @@ fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &Block
 pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Arc<dyn FarBuilt>> {
     let mut woods = on_maps(world, content, entity);
     woods.extend(structure_woods(world, entity));
-    woods.into_iter().filter(Woods::shows).map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect()
+    let mut built: Vec<Arc<dyn FarBuilt>> =
+        woods.into_iter().filter(Woods::shows).map(|woods| Arc::new(woods) as Arc<dyn FarBuilt>).collect();
+    // Nearer, its structures themselves, coarser (see `map::FarStructures`).
+    let structures = world.get::<BlockWorldAsset>(entity).and_then(|asset| asset.file.generate.as_ref()?.built.clone());
+    if let Some(structures) = structures.filter(|structures| !structures.list.is_empty()) {
+        let stamp = voxear_terrain::layers::stable_hash(format!("{:?}", structures.list).as_bytes());
+        built.push(Arc::new(voxear_terrain::blocks::map::FarStructures { stamp }));
+    }
+    built
 }
 
 /// The trees the structures of the Block World on `entity` grow, as woods
@@ -620,25 +628,35 @@ pub fn structure_woods(world: &World, entity: Entity) -> Vec<Woods> {
     let (Some(endless), Some(built)) = (generate.endless, generate.built.as_deref()) else { return Vec::new() };
     let middle = |[from, to]: [f32; 2]| (from + to) * 0.5;
     let size = asset.file.block_size.max(0.01);
+    // How much of the ground the structures before have taken: near, a later structure keeps clear of earlier
+    // ones, so far off it has only what they leave.
+    let mut taken = 0.0f32;
     built
         .list
         .iter()
         .filter_map(|structure| {
             let StructureBlocks::Plant { plant, leaves, .. } = &structure.blocks else { return None };
             let placement = &structure.placement;
+            let width = middle(plant.crown_width).max(plant.leaf_size) * size;
+            let spacing = placement.spacing.max(1.0);
+            let chance = placement.chance.clamp(0.0, 1.0) * (1.0 - taken).max(0.0);
+            // Only those in no biome of their own share the ground everywhere with what comes after them.
+            if structure.biomes.is_empty() {
+                taken = (taken + chance * std::f32::consts::FRAC_PI_4 * width * width / (spacing * spacing)).min(1.0);
+            }
             let rule = GrowRule {
                 height: placement.height,
                 slope: placement.slope,
                 spacing: placement.spacing,
                 separation: placement.separation,
-                chance: placement.chance,
+                chance,
                 seed: placement.salt ^ 0x7EE5,
                 ..GrowRule::default()
             };
-            let crown = middle(plant.crown_height);
-            let height = (middle(plant.height) + crown / 3.0 + plant.leaf_size * 0.25) * size;
-            let width = middle(plant.crown_width).max(plant.leaf_size) * size;
-            let from = Woods::first_past(endless.distance, endless.distance);
+            // As tall as its trunk at its middle size, and a little of its leaves over that.
+            let height = (middle(plant.height) + plant.leaf_size * 0.25) * size;
+            // Past the rings its structures are put into themselves.
+            let from = Woods::first_past(endless.distance, endless.distance).max(voxear_terrain::blocks::map::FAR_STRUCTURES_TO + 1);
             Some(Woods { rule, block: *leaves, height, width, from, biomes: structure.biomes.clone() })
         })
         .collect()

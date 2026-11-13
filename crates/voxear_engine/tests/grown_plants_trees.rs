@@ -96,7 +96,7 @@ fn trees_close_up_from_the_side_and_over_their_crowns_behind_a_player_and_far_of
         let raised = [
             ("Oak", [9.0, 13.0], None),
             ("Birch", [9.5, 13.5], None),
-            ("Pine", [13.0, 19.0], Some([9.0, 12.0])),
+            ("Pine", [14.0, 19.0], Some([8.0, 11.0])),
             ("Maple", [10.0, 14.0], None),
             ("Blossom", [8.0, 11.0], None),
         ];

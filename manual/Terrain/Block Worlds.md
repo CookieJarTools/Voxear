@@ -373,7 +373,9 @@ Plants grow under leaves: a tree of blocks has grass and flowers on the ground b
 
 Their logs are [[Blocks#Logs|logs]]: each trunk is whole logs at its foot, thinning to posts towards its top, and its branches are thin logs reaching out to its leaves. Each tree also has a [[Blocks#Saplings|sapling]], and an item in the project's **Items** folder for its log and one for its sapling: a felled log drops its item, and a sapling item put down or dropped takes root.
 
-Trees of blocks stand only on the world's own blocks, out to its **View distance**, and the far view does not show them. The starter Tree, Birch and Pine are models, drawn far and shown as woods beyond: use either, or both.
+Trees of blocks stand on the world's own blocks, out to its **View distance**, and go on into the far view: out to the third ring past it each is the same tree in the ring's larger blocks, and beyond that each kind is a wood of its own leaves, keeping to its structure's biomes, so a grove of blossom is pink far off and a wood of pines dark. The starter Tree, Birch and Pine are models, drawn far and shown as woods of their far block beyond: use either, or both.
+
+The starter trees stand on trunks long enough for a camera a few metres behind and over a player under them to see past their leaves: an oak's and a birch's lowest leaves are four blocks up or more, a pine's skirt two.
 
 ## Trees that come down
 

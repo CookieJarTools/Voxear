@@ -224,6 +224,71 @@ With the camera in the water, the view is the same as under a Pool: the water's 
 
 Not done yet: the ground under the water has no dappled light, as a Pool's bed has.
 
+### Rough seas
+
+The sea is flat in calm weather. Under a [[Storms|storm]], and under windy weather over the whole level, it rises and falls in a swell: long waves that run with the wind, higher the harder the storm blows, calm again beyond its edge. A crest stands at the sea's own height and a trough as far under it as **Swell Height**, three metres in the hardest storm unless you change it. Crests break into white water.
+
+Only the sea is rough: water that stands at the generator's sea level. Ponds, rivers and anything you build with water blocks stay calm. In a world with no generated ground, all still water is its sea.
+
+No block changes. The swell is in how the water is drawn and in what [[Floating Objects|floats]] on it, so nothing of it is saved or sent, and it is the same on every machine: it is worked out from the storms and their clock. A Rigidbody with **Buoyancy** rides it, `Water.HeightAt` gives its height and `Water.FlowAt` its water's movement, up and down and along with the waves.
+
+The level's **Storms** component (see [[Storms#Storms that come by themselves|Storms]]) says how the sea is drawn:
+
+| Setting | What it does |
+| --- | --- |
+| Sea Look | **Small Cubes**, the usual: quarter-block cubes that rise and fall. **Block Steps**: columns a block wide that stand half a block higher or lower. **Smooth**: a rolling surface. **Flat**: no swell, whatever the weather |
+| Swell Height | How far the deepest trough of the roughest sea lies under a crest, in metres |
+| Storm Whirlpools | Whether strong storms raise whirlpools over deep water |
+| Maelstroms | Whether great whirlpools stand at places of their own in a generated sea |
+| Night Glow | How much warm seas glow blue at night, where the water breaks and in specks that come and go. 0 for none |
+
+From scripts these are `Sea.Look`, `Sea.SwellHeight`, `Sea.StormWhirlpools`, `Sea.Maelstroms` and `Sea.Glow`.
+
+### Whirlpools
+
+A whirlpool draws the sea down into a funnel of steps with white arms that turn. Its water runs round its middle and in, fastest a little way out from it, and down at the middle itself, so what floats is carried round, drawn in and pulled under.
+
+| Whirlpool | Where |
+| --- | --- |
+| A storm's | Under a storm blowing at more than seven tenths of its strength, where the sea is ten metres deep or more. It drifts with its storm and goes as the storm weakens |
+| A maelstrom | At seeded places in a generated sea, where the water is fourteen metres deep or more all round: 22 to 38 m across, drawn 7 to 12 m down. The same for every player |
+| Your own | `Sea.AddWhirlpool(position, radius, depth)`, which gives a `Whirlpool` to `Remove()` later |
+
+```csharp
+namespace Game;
+
+public sealed class Swallower : Behaviour
+{
+	protected override void OnEnable()
+	{
+		Sea.Swallowed += Sink;
+	}
+
+	protected override void OnDisable()
+	{
+		Sea.Swallowed -= Sink;
+	}
+
+	protected override void Update()
+	{
+		// A swimmer in the middle of one goes under.
+		if (Sea.WhirlpoolAt(Transform.Position) > 0.9f)
+		{
+			Log.Info("Dragged under");
+		}
+	}
+
+	private void Sink(Obj boat)
+	{
+		boat.Destroy();
+	}
+}
+```
+
+`Sea.Swallowed` is raised once for each floating Rigidbody as it reaches a whirlpool's middle. `Sea.WhirlpoolAt` is how far into one a point is, from 0 at its rim to 1 at its middle, for what moves without a Rigidbody.
+
+Not done yet: from under the water its top looks flat in any weather; the swell does not calm in the shallows or break on a shore; and the sea does not freeze where the climate is cold.
+
 ## Building
 
 With **Build** showing, the brush works in the Scene view over the selected world's blocks, its outline round the blocks it would change.
@@ -251,7 +316,7 @@ For a world of small coloured blocks to sculpt with, make **Block size** small b
 
 A Block World can grow its own grass, flowers, bushes, rocks and trees, and what lies about among them: sticks, fallen logs, stumps and pebbles. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
 
-The row also offers the **starter plants**, each made of small cubes to sit well among blocks. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it. **All Starter Plants**, at the top of the list, adds every one the world does not grow yet, in one step:
+The row also offers the **starter plants**, each made of small cubes to sit well among blocks, eight of them for the sea's bed. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it. **All Starter Plants**, at the top of the list, adds every one the world does not grow yet, in one step:
 
 | Plant | Where it grows |
 | --- | --- |
@@ -271,8 +336,13 @@ The row also offers the **starter plants**, each made of small cubes to sit well
 | Pebbles | Near rocks and boulders, and as **Shore Pebbles** in patches along the sea |
 | Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
 | Boulder | Rarely, on any ground, three metres across and more. It is solid |
+| Seagrass | Under water one to twelve metres deep, in patches about 18 m across, wherever the sea is above freezing |
+| Kelp | In cool seas, 18 °C and under, in water nine metres deep or more: stalks eight metres tall in forests about 40 m across |
+| Branch Coral, Brain Coral, Table Coral, Fan Coral | In warm seas, 20 °C and over, two to fourteen metres down, all four in the same reefs about 30 m across |
+| Tube Sponge | Three to thirty metres down, where the sea is 8 °C or warmer |
+| Clam | Two to twenty metres down, here and there |
 
-The grasses, flowers, ferns, bushes and trees bend in the [[Wind]] and away from whoever walks through them; stones, stumps, logs and sticks do neither.
+The grasses, flowers, ferns, bushes and trees bend in the [[Wind]] and away from whoever walks through them; stones, stumps, logs and sticks do neither. Seagrass, kelp and the fan coral sway with the water, more under a storm; the other corals, the sponge and the clam stand still.
 
 A starter plant that keeps to the world's top block also grows on the tops of the [[Biomes#Starter biomes|starter biomes]] that things grow on, where the project has them: Grass, Moss, Needles Floor, Jungle Floor and Dry Grass. So add the starter biomes first. Sand, snow and rock stay bare but for stones, dry bushes and dead trees.
 

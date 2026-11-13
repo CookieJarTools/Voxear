@@ -151,6 +151,13 @@ pub fn surfaces(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, xs
     }
 }
 
+/// How high the top of `file`'s generated sea is over its world's corner, in
+/// metres; none for a world with no sea block.
+pub fn sea_top(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) -> Option<f32> {
+    let (sea, top) = columns::sea_of(file, generate, world, 0);
+    (sea != AIR).then(|| top * file.block_size.max(0.01))
+}
+
 /// The ground `generate` makes for `file` with generator `world`: its
 /// ground's size of chunk columns, each on every core.
 pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) -> BlockMap {

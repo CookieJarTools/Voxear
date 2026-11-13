@@ -638,6 +638,49 @@ struct Lighting
     Clouds clouds;
 };
 
+// How rough a world of blocks' sea is, and where (src/sea.rs's GpuSea; blockSwell in water.slang).
+static const uint SEA_FLAT = 0;
+static const uint SEA_STEPS = 1;
+static const uint SEA_SMALL_CUBES = 2;
+static const uint SEA_SMOOTH = 3;
+static const uint SEA_WAVES = 4;
+static const uint SEA_STORMS = 8;
+static const uint SEA_WHIRLPOOLS = 4;
+struct Sea
+{
+    uint look;
+    uint storms;
+    uint whirlpools;
+    // How rough it is everywhere, 0 to 1.
+    float everywhere;
+    // How deep the deepest trough is, in metres, and how wide a column is and how high a step, in blocks; a column
+    // of 0 is smooth.
+    float height;
+    float column;
+    float step;
+    // How much the water glows where it breaks, as warm seas do at night.
+    float glow;
+    // How far round a whirlpool's arms have turned, in radians, and how far white water's patches have drifted.
+    float spin;
+    float2 drift;
+    // How high the sea's top is, in the world; far below with no sea level.
+    float level;
+    // Each wave: radians a metre along x and z, how far on it is now, in radians, and its share of the swell.
+    float4 waves[SEA_WAVES];
+    // Each place of weather: its middle's x and z, its reach and its eye, a share of its reach.
+    float4 places[SEA_STORMS];
+    // What each adds to the sky: cloud, darkness, what falls from it, and blown sand.
+    float4 skies[SEA_STORMS];
+    // How rough each makes the sea.
+    float roughs[SEA_STORMS];
+    // Each whirlpool: its middle's x and z, its reach and its depth.
+    float4 pools[SEA_WHIRLPOOLS];
+};
+
+// How much of the weather over place `index` reaches `xz`, from 0 to 1 (WeatherPlace::share in src/weather.rs):
+// all of it to over half its reach, fading from there to its reach, and none in its eye.
+float weatherShare(Frame* frame, uint index, float2 xz);
+
 // The level's wind; mirrors GpuWind in src/gpu.rs. Strength 0 without a Wind Zone.
 struct Wind
 {
@@ -816,7 +859,16 @@ struct Frame
     // Where the world's middle is from the level's (src/gpu.rs's GpuFrame::origin): x, y and z wrapped every
     // ORIGIN_WRAP metres, exact, for levelPosition; and its height, whole, for the sky and fog.
     float4 origin;
+    Sea sea;
 };
+
+float weatherShare(Frame* frame, uint index, float2 xz)
+{
+    float4 place = frame->sea.places[index];
+    float far = length(xz - place.xy) / place.z;
+    float share = 1.0 - smoothstep(0.55, 1.0, far);
+    return place.w > 0.0 ? share * smoothstep(place.w * 0.75, place.w * 1.25, far) : share;
+}
 
 // Where `world` is from the level's real middle, wrapped every `period` metres, a power of two up to ORIGIN_WRAP
 // (65536), into half a period either side of it. A pattern read from it (noise, hashed cells, tiling) keeps its place
@@ -1203,6 +1255,10 @@ struct BlockWorld
     // most (blockCubes in blocks.slang).
     float voxels;
     float relief;
+    // How high its sea's top is over its corner, in metres: only water faces there are drawn rough (blockSwell in
+    // water.slang). Far below for a world whose water is all its sea.
+    float seaTop;
+    uint pad;
 };
 
 // A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).

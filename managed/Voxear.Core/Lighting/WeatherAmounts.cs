@@ -26,4 +26,7 @@ public struct WeatherAmounts
 
 	/// <summary>How often lightning strikes: at 1, every eight seconds or so.</summary>
 	public float Lightning;
+
+	/// <summary>How much blown sand is in the air.</summary>
+	public float Dust;
 }

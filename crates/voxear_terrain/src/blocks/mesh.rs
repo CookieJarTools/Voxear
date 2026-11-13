@@ -73,7 +73,6 @@ use super::{
     chunk::{AIR, BlockId, CHUNK, Fill},
     connects,
     file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP, MIXED_LOOK},
-    flow::Water,
     hides, is_bushy, is_ground, is_see_through, is_vine, is_water, sways,
 };
 

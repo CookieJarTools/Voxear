@@ -56,6 +56,10 @@ pub struct GrowRule {
     /// How high over the sea its ground is, in metres, from and to; none
     /// for any. Over the world's corner where its ground is not generated.
     pub height: Option<[f32; 2]>,
+    /// Whether it grows on the bed under water, as seaweed and coral do,
+    /// in place of dry ground: its height is then how far under the
+    /// water's top its bed lies, less than nothing.
+    pub under_water: bool,
     /// The steepest ground it stands on, in degrees.
     pub slope: f32,
     /// How far apart its tries are, in metres: one a square that size.
@@ -107,6 +111,7 @@ impl Default for GrowRule {
             temperature: None,
             humidity: None,
             height: None,
+            under_water: false,
             slope: 30.0,
             spacing: 4.0,
             separation: 2.0,
@@ -167,6 +172,9 @@ pub struct Grown {
     pub plant: Plant,
     pub ground: [i32; 3],
     pub block: BlockId,
+    /// The block over the one it stands on, as it grew: air, or the water
+    /// of a plant of the sea's bed.
+    pub above: BlockId,
 }
 
 impl Grown {
@@ -460,11 +468,43 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
     let (seed, sea) = world.map_or((0, 0.0), |world| (world.seed(), world.sea_level()));
     let mut taken: HashSet<[i32; 2]> = HashSet::new();
     let mut grown = Vec::new();
+    // The bed under the water at a place of the column: the highest block that is not water, with water over it.
+    let bed = |[x, z]: [i32; 2]| {
+        let inside = [x.rem_euclid(side) as u32, z.rem_euclid(side) as u32];
+        let (top, water, _) = blocks.top(inside).filter(|(_, block, _)| is_water(ground.faces, *block))?;
+        let mut y = top;
+        loop {
+            y -= 1;
+            match ground.blocks.get([x, y, z]) {
+                AIR => return None,
+                block if is_water(ground.faces, block) => continue,
+                block => return Some((y, block, top, water)),
+            }
+        }
+    };
     let near = rule.near.as_ref().map(|near| (near, near_sites(near, world, position, size, column)));
     for found in tries(rule, (seed, position), size, column) {
         let [bx, bz] = found.block;
         let inside = [bx.rem_euclid(side) as u32, bz.rem_euclid(side) as u32];
         if near.as_ref().is_some_and(|(near, sites)| !is_near(near, &found, sites, Some((blocks, size)))) {
+            continue;
+        }
+        if rule.under_water {
+            let Some((y, block, water_top, water)) = bed([bx, bz]) else { continue };
+            if !(rule.on.is_empty() || rule.on.contains(&block)) {
+                continue;
+            }
+            // How its bed rises to the beds beside it, those in the column alone.
+            let within = |v: i32, axis: usize| v.clamp(column[axis] * side, column[axis] * side + side - 1);
+            let beside = |x: i32, z: i32| bed([within(x, 0), within(z, 1)]).map_or(y, |(y, ..)| y) as f32;
+            let (dx, dz) = ((beside(bx + 1, bz) - beside(bx - 1, bz)) * 0.5, (beside(bx, bz + 1) - beside(bx, bz - 1)) * 0.5);
+            let top = (y + 1) as f32 * size;
+            let under = top - (water_top + 1) as f32 * size;
+            if !rule.stands_on(under, (dx * dx + dz * dz).sqrt()) || rule.aligned && !taken.insert([bx, bz]) {
+                continue;
+            }
+            let plant = plant_of(rule, &found, size, top);
+            grown.push((top, Grown { plant, ground: [bx, y, bz], block, above: water }));
             continue;
         }
         let Some((y, block, fill)) = blocks.top(inside) else { continue };
@@ -482,7 +522,7 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
         if rule.aligned && !taken.insert([bx, bz]) {
             continue;
         }
-        grown.push((top, Grown { plant: plant_of(rule, &found, size, top), ground: [bx, y, bz], block }));
+        grown.push((top, Grown { plant: plant_of(rule, &found, size, top), ground: [bx, y, bz], block, above: AIR }));
     }
     liked(rule, world, position, grown)
 }
@@ -548,8 +588,9 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
     for (at, found) in found.iter().enumerate() {
         let [bx, bz] = found.block;
         let (y, block) = (ground_top(at * 5), surfaces.tops[at * 5]);
-        // Under the sea, or no ground at all.
-        if sea_top.is_some_and(|sea| sea > y) || block == AIR {
+        // Under the sea, or no ground at all; a plant of the sea's bed, only under the sea.
+        let under_sea = sea_top.is_some_and(|sea| sea > y);
+        if under_sea != rule.under_water || block == AIR {
             continue;
         }
         if !(rule.on.is_empty() || rule.on.contains(&block)) {
@@ -557,6 +598,8 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
         }
         let inside = [bx.rem_euclid(side), bz.rem_euclid(side)];
         let last = side - 1;
+        // Under the sea, its bed's slope, not the flat sea's over it.
+        let top = |at: usize| if rule.under_water { ground_top(at) } else { top(at) };
         let along = |low: usize, high: usize, both: bool| (top(high) - top(low)) as f32 / if both { 2.0 } else { 1.0 };
         let dx = along(at * 5 + 1, at * 5 + 2, inside[0] > 0 && inside[0] < last);
         let dz = along(at * 5 + 3, at * 5 + 4, inside[1] > 0 && inside[1] < last);
@@ -571,7 +614,8 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
             continue;
         }
         let stood = if ground.file.smooth { feet } else { lowest[at] };
-        grown.push((feet, Grown { plant: plant_of(rule, found, size, stood), ground: [bx, y, bz], block }));
+        let above = if rule.under_water { ground.generate.sea } else { AIR };
+        grown.push((feet, Grown { plant: plant_of(rule, found, size, stood), ground: [bx, y, bz], block, above }));
     }
     liked(rule, Some(ground.world), position, grown)
 }
@@ -724,7 +768,7 @@ pub fn gone_far(grown: &[Grown], kept: &BlockEdits) -> PlantSet {
     }
     let stands = |plant: &Grown| {
         kept_change(kept, plant.ground).is_none_or(|block| block == plant.block)
-            && kept_change(kept, plant.over()).is_none_or(|block| block == AIR)
+            && kept_change(kept, plant.over()).is_none_or(|block| block == plant.above)
     };
     grown.iter().enumerate().filter(|(_, plant)| !stands(plant)).map(|(number, _)| number as u32).collect()
 }
@@ -732,7 +776,7 @@ pub fn gone_far(grown: &[Grown], kept: &BlockEdits) -> PlantSet {
 /// Which of `grown` are gone as `blocks` stand now, by their numbers: those
 /// whose block is no longer the one they grew on, or has a block over it.
 pub fn gone(grown: &[Grown], blocks: &BlockMap) -> PlantSet {
-    let stands = |plant: &Grown| blocks.get(plant.ground) == plant.block && blocks.get(plant.over()) == AIR;
+    let stands = |plant: &Grown| blocks.get(plant.ground) == plant.block && blocks.get(plant.over()) == plant.above;
     grown.iter().enumerate().filter(|(_, plant)| !stands(plant)).map(|(number, _)| number as u32).collect()
 }
 
@@ -792,6 +836,57 @@ mod tests {
     }
 
     const COLUMNS: [[i32; 2]; 9] = [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [2, 2]];
+
+    #[test]
+    fn plants_of_the_seas_bed_grow_under_water_as_deep_as_their_rule_says_and_go_with_their_bed_or_their_water() {
+        // Flat ground 12 blocks up with a pool in it, its bed stepping down from 1 block deep in the west to 8.
+        let mut file = BlockFile { ground: FlatGround { size: [32, 32], height: 12, ..FlatGround::default() }, ..BlockFile::default() };
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.1, 0.3, 0.6]) });
+        let water = file.blocks.len() as BlockId;
+        let mut map = file.make_ground(None);
+        for z in 4..28 {
+            for x in 4..28 {
+                let deep = 1 + (x - 4) / 3;
+                for y in (12 - deep)..12 {
+                    map.set([x, y, z], water);
+                }
+            }
+        }
+        let (_, faces) = file.faces();
+        let ground = Ground { blocks: &map, faces: &faces, block_size: 1.0, smooth: false, generated: None };
+        let kelp = GrowRule {
+            under_water: true,
+            height: Some([-20.0, -4.0]),
+            spacing: 1.0,
+            separation: 0.0,
+            chance: 1.0,
+            slope: 60.0,
+            ..GrowRule::default()
+        };
+        let grown = grow(&kelp, &ground, [0, 0]);
+        assert!(grown.len() > 100, "{} plants on the bed", grown.len());
+        for plant in &grown {
+            let [x, y, z] = plant.ground;
+            assert!((4..28).contains(&x) && (4..28).contains(&z), "in the pool: {x}, {z}");
+            assert!(12 - (y + 1) >= 4, "four blocks or more under the water's top: {}", 12 - (y + 1));
+            assert_eq!((plant.above, map.get(plant.over())), (water, water));
+            assert_eq!(plant.plant.position[1], (y + 1) as f32, "standing on its bed");
+            assert!(!is_water(&faces, plant.block) && plant.block != AIR);
+        }
+        assert_eq!(grown, grow(&kelp, &ground, [0, 0]), "the same every time");
+        // Plants of dry ground keep to it, and those of the bed grow on none of it.
+        let grass = GrowRule { under_water: false, ..kelp.clone() };
+        let dry = grow(&GrowRule { height: None, ..grass }, &ground, [0, 0]);
+        assert!(!dry.is_empty() && dry.iter().all(|plant| plant.above == AIR && map.get(plant.over()) == AIR));
+        assert!(dry.iter().all(|plant| !(4..28).contains(&plant.ground[0]) || !(4..28).contains(&plant.ground[2])));
+        // Its bed dug away, or its water gone from over it, and a plant is gone.
+        assert!(gone(&grown, &map).is_empty());
+        let (first, second) = (grown[0], grown[1]);
+        map.set(first.ground, AIR);
+        map.set(second.over(), AIR);
+        let lost: Vec<u32> = gone(&grown, &map).iter().collect();
+        assert_eq!(lost, vec![0, 1]);
+    }
 
     #[test]
     fn sticks_grow_only_near_the_trees_another_rule_grows_and_near_the_leaves_of_trees_of_blocks() {

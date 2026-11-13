@@ -2,7 +2,9 @@
 order: 2
 ---
 
-**Weather** is cloud, gloom, fog, wind, rain, snow and lightning laid over a level's lighting. The lighting stays as you made it: clear weather is the lighting as it is, and every other kind adds to it. So one set of lighting settings serves a level in sunshine and in a storm, and a script can turn the weather as the game runs.
+**Weather** is cloud, gloom, fog, wind, rain, snow, lightning and blown sand laid over a level's lighting. The lighting stays as you made it: clear weather is the lighting as it is, and every other kind adds to it. So one set of lighting settings serves a level in sunshine and in a storm, and a script can turn the weather as the game runs.
+
+This page is the weather of the whole level. Weather that lies over a part of it and drifts, raining in one valley while the next is dry, is a storm: see [[Storms]].
 
 ## The kinds of weather
 
@@ -15,11 +17,13 @@ order: 2
 | **Storm** | Heavy rain, a gale, lightning and a sky near black |
 | **Snow** | Snow falling from a pale, close sky |
 | **Fog** | Thick fog, the sky lost in it |
+| **Blizzard** | Driving snow in a gale, the air white with it |
+| **Sandstorm** | A gale full of blown sand under a dun sky |
 | **Custom** | Amounts of your own, below |
 
 ## What weather is made of
 
-Each kind is seven amounts, each from 0 for none to 1:
+Each kind is eight amounts, each from 0 for none to 1:
 
 | Amount | What it does |
 | --- | --- |
@@ -30,6 +34,7 @@ Each kind is seven amounts, each from 0 for none to 1:
 | **Rain** | Rain falling round the camera |
 | **Snow** | Snow falling round the camera |
 | **Lightning** | How often lightning strikes: at 1, every eight seconds or so. A strike lights the sky and the level under it for a moment, in two or three flickers |
+| **Dust** | Blown sand in the air: fog of the sand's own colour, a third thicker than fog, and a dun sky |
 
 Rain and snow are the starter Rain and Snow effects (see [[Particle Systems]]), the snow's flakes made bigger, falling from a box 24 metres wide that stays over the camera. They land on what the camera can see, and the wind blows them. In the editor they fall round the Scene view's camera.
 
@@ -44,7 +49,7 @@ A level that starts in rain or snow, from its lighting settings, starts already 
 
 ## Setting the weather
 
-On the **Lighting** page, the **Weather** tab picks the weather the level is in when lit by those settings: a kind, or Custom and its seven amounts. In the file it is `[weather]`:
+On the **Lighting** page, the **Weather** tab picks the weather the level is in when lit by those settings: a kind, or Custom and its eight amounts. In the file it is `[weather]`:
 
 ```toml
 [weather]
@@ -84,9 +89,9 @@ public sealed class StormFront : Behaviour
 | Member | What it is |
 | --- | --- |
 | `Weather.Set(kind, seconds)` | Turns the weather to a kind. Ten seconds unless you say; 0 for at once |
-| `Weather.Set(amounts, seconds)` | Turns it to amounts of your own, a `WeatherAmounts` with `Cloud`, `Darkness`, `Fog`, `Wind`, `Rain`, `Snow` and `Lightning` |
+| `Weather.Set(amounts, seconds)` | Turns it to amounts of your own, a `WeatherAmounts` with `Cloud`, `Darkness`, `Fog`, `Wind`, `Rain`, `Snow`, `Lightning` and `Dust` |
 | `Weather.Kind` | The kind it is, or is turning to. Setting it turns the weather at once |
-| `Weather.Amounts` | What it adds this moment: part way between two kinds while it turns |
+| `Weather.Amounts` | What it adds this moment where the viewer is: part way between two kinds while it turns, with whatever a storm overhead adds |
 | `Weather.IsTurning` | Whether it is still turning |
 | `Weather.Wetness` | How wet the rain has left the level, from 0 to 1 |
 | `Weather.SnowCover` | How much snow has settled, from 0 to 1 |
@@ -124,4 +129,4 @@ public sealed class Thunder : Behaviour
 ```
 
 > [!NOTE]
-> Nothing knows what is under a roof: rain and snow fall through roofs the camera cannot see the top of, and floors indoors get wet and snowed on with the rest. Lightning lights the whole sky, without a bolt. In a networked game each machine turns its own weather: set it on every machine at the same time.
+> Nothing knows what is under a roof: rain and snow fall through roofs the camera cannot see the top of, and floors indoors get wet and snowed on with the rest. Lightning lights the whole sky, without a bolt. In a networked game each machine turns its own weather: set it on every machine at the same time. [[Storms]] are the same on every machine by themselves.

@@ -3391,6 +3391,177 @@ FragmentOut wallFragment(WallOut input)
     return o;
 }
 
+// ---------------------------------------------------------------- Rough block seas
+
+// A number from 0 to 1 for a column of the sea, from whole numbers alone.
+float seaGrain(int2 cell)
+{
+    uint h = uint(cell.x) * 0x8DA6B343u ^ uint(cell.y) * 0xD8163841u;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return float(h >> 8) / 16777216.0;
+}
+
+// How rough a world of blocks' sea is at `xz`, from 0 for calm to 1: the level's own, or the strongest storm's that
+// reaches there, each fading from its middle out to its reach.
+float seaRough(Frame* frame, float2 xz)
+{
+    float rough = frame->sea.everywhere;
+    for (uint i = 0; i < frame->sea.storms; i++)
+    {
+        rough = max(rough, frame->sea.roughs[i] * weatherShare(frame, i, xz));
+    }
+    return rough;
+}
+
+// How far under its faces the sea stands at `xz`, in metres (src/sea.rs): nothing at a swell's crest, and in a
+// trough as much as the sea is rough there; drawn down into a whirlpool's funnel besides. `crest` is how near a
+// crest it is, from 0 to 1, and `rough` how rough the sea is there.
+float seaSunk(Frame* frame, float2 xz, out float crest, out float rough)
+{
+    rough = seaRough(frame, xz);
+    float2 at = levelXZ(frame, xz, 4096.0);
+    float swell = 0.0;
+    for (uint i = 0; i < SEA_WAVES; i++)
+    {
+        float4 wave = frame->sea.waves[i];
+        float phase = dot(at, wave.xy) - wave.z;
+        // Peaked at its crest and round in its trough, as a wave near breaking is.
+        swell += wave.w * lerp(0.5 + 0.5 * cos(phase), 1.0 - abs(sin(phase * 0.5)), 0.6);
+    }
+    crest = saturate((swell - 0.15) / 0.7);
+    float sunk = frame->sea.height * rough * (1.0 - crest);
+    for (uint j = 0; j < frame->sea.whirlpools; j++)
+    {
+        float4 pool = frame->sea.pools[j];
+        float2 from = xz - pool.xy;
+        float far = length(from) / pool.z;
+        if (far < 1.0)
+        {
+            float into = 1.0 - far;
+            // Arms that wind in to its middle, turning.
+            float arms = sin(atan2(from.y, from.x) * 3.0 + 7.0 * log(max(far, 0.02)) + frame->sea.spin);
+            float funnel = pool.w * into * into * (0.4 + 0.6 * into);
+            sunk = lerp(sunk, 0.0, smoothstep(0.0, 0.5, into)) + funnel + 0.1 * pool.w * into * (0.5 + 0.5 * arms) * smoothstep(0.0, 0.2, far);
+            // Its arms are white water.
+            crest = lerp(crest, smoothstep(0.2, 0.9, arms) * smoothstep(0.02, 0.15, far), smoothstep(0.0, 0.3, into));
+            rough = max(rough, smoothstep(0.0, 0.35, into));
+        }
+    }
+    return sunk;
+}
+
+// The most columns of a rough sea a ray is walked across, and the most steps of a smooth one.
+static const int SEA_COLUMNS = 40;
+static const int SEA_STEPS_SMOOTH = 28;
+
+// Where a ray going down into a world of blocks' sea from `from` on its faces, along `ray`, meets the water: the
+// sea is columns `sea.column` wide, in the world's own grid, each standing a whole number of `sea.step`s under the
+// faces, as sunk as its middle is; the ray is walked across them to the first one's top, or the side of the next.
+// Smooth, with no columns, it is marched down to the swell's own surface. Gives the place, the way the water faces
+// there, and how near a crest and how rough the sea is; false where the sea is calm and nothing moved.
+bool blockSwell(Frame* frame, BlockWorld world, float3 from, float3 ray, out float3 at, out float3 facing, out float crest, out float rough)
+{
+    at = from;
+    facing = float3(0.0, 1.0, 0.0);
+    float down = max(-ray.y, 1e-4);
+    float column = frame->sea.column * world.blockSize;
+    float stepHigh = frame->sea.step * world.blockSize;
+    if (column <= 0.0)
+    {
+        // Smooth: down along the ray until it is under the swell, then back to where it crossed.
+        float deepest = frame->sea.height;
+        for (uint j = 0; j < frame->sea.whirlpools; j++)
+        {
+            deepest = max(deepest, frame->sea.height + frame->sea.pools[j].w * 1.2);
+        }
+        float reach = min(deepest / down, 60.0);
+        float before = 0.0;
+        float t = 0.0;
+        bool under = false;
+        for (int i = 1; i <= SEA_STEPS_SMOOTH; i++)
+        {
+            t = reach * float(i) / float(SEA_STEPS_SMOOTH);
+            float3 p = from + ray * t;
+            if (down * t >= seaSunk(frame, p.xz, crest, rough))
+            {
+                under = true;
+                break;
+            }
+            before = t;
+        }
+        if (!under)
+        {
+            before = t;
+        }
+        for (int i = 0; i < 5 && under; i++)
+        {
+            float middle = 0.5 * (before + t);
+            float3 p = from + ray * middle;
+            if (down * middle >= seaSunk(frame, p.xz, crest, rough))
+            {
+                t = middle;
+            }
+            else
+            {
+                before = middle;
+            }
+        }
+        at = from + ray * t;
+        float e = 0.35;
+        float c, r;
+        float here = seaSunk(frame, at.xz, crest, rough);
+        float dx = seaSunk(frame, at.xz + float2(e, 0.0), c, r) - here;
+        float dz = seaSunk(frame, at.xz + float2(0.0, e), c, r) - here;
+        facing = normalize(float3(dx, e, dz));
+        return rough > 0.0 || here > 0.0;
+    }
+    float2 grid = (from.xz - world.corner.xz) / column;
+    int2 cell = int2(floor(grid));
+    int2 way = int2(ray.x > 0.0 ? 1 : -1, ray.z > 0.0 ? 1 : -1);
+    float2 along = float2(abs(ray.x) > 1e-6 ? ray.x : 1e-6, abs(ray.z) > 1e-6 ? ray.z : 1e-6);
+    float2 each = abs(column / along);
+    float2 next = (float2(cell + max(way, 0)) - grid) * column / along;
+    float entered = 0.0;
+    float3 side = facing;
+    for (int i = 0; i < SEA_COLUMNS; i++)
+    {
+        float2 middle = world.corner.xz + (float2(cell) + 0.5) * column;
+        float sunk = seaSunk(frame, middle, crest, rough);
+        sunk = round(sunk / stepHigh) * stepHigh;
+        if (down * entered > sunk + 1e-4)
+        {
+            // It came in under this column's top: it meets its side.
+            at = from + ray * entered;
+            facing = side;
+            return true;
+        }
+        float leaves = min(next.x, next.y);
+        if (down * leaves >= sunk || i == SEA_COLUMNS - 1)
+        {
+            at = from + ray * (sunk / down);
+            return sunk > 0.0 || rough > 0.0;
+        }
+        entered = leaves;
+        if (next.x < next.y)
+        {
+            cell.x += way.x;
+            next.x += each.x;
+            side = float3(-float(way.x), 0.0, 0.0);
+        }
+        else
+        {
+            cell.y += way.y;
+            next.y += each.y;
+            side = float3(0.0, 0.0, -float(way.y));
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- Water blocks
 
 // What water drawn from a world of blocks is to keptDry: no body of its own, kept out of Dry Areas as the sea is.
@@ -3537,6 +3708,16 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     BlockWaterLook look = blockWaterLook(world, input.water.y);
     float3 v = normalize(frame->cameraPosition - input.world);
     float3 face = normalize(input.normal);
+    // A rough sea stands under its top faces by as much as its swell has sunk it: where the view meets it.
+    float3 at = input.world;
+    float crest = 0.0;
+    float rough = 0.0;
+    bool swollen = false;
+    bool sea = abs(input.world.y - world.corner.y - world.seaTop) < 0.02 * world.blockSize || world.seaTop < -1.0e8;
+    if (face.y > 0.5 && v.y > 0.0 && sea && frame->sea.look != SEA_FLAT && (frame->sea.storms + frame->sea.whirlpools > 0 || frame->sea.everywhere > 0.0))
+    {
+        swollen = blockSwell(frame, world, input.world, -v, at, face, crest, rough);
+    }
     bool level = abs(face.y) > 0.5;
     // Ripples on its top and its underside, as a Pool's with none of the sea's swell, carried along as it flows;
     // its sides stand still.
@@ -3546,7 +3727,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float3 moved = 0.0;
     if (level)
     {
-        float2 drifted = input.world.xz - input.flow * fmod(frame->time, BLOCK_DRIFT_PERIOD);
+        float2 drifted = at.xz - input.flow * fmod(frame->time, BLOCK_DRIFT_PERIOD);
         addWaves(frame, drifted, 0.0, 1.0, slope, variance, folded, moved);
     }
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) * face.y + face);
@@ -3568,7 +3749,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    float shadow = sunShadow(frame, input.world, face);
+    float shadow = sunShadow(frame, at, face);
     float3 nx = ddx(n);
     float3 ny = ddy(n);
     float turning = min(2.0 * 0.159 * (dot(nx, nx) + dot(ny, ny)), 0.18);
@@ -3581,11 +3762,11 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     s.f0 = 0.02;
     float nv = saturate(dot(n, v));
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
-    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
-    float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
+    float3 ambient = ambientLight(frame, at, s, sunLight, atmosphere);
+    float3 reflected = surroundingsReflection(frame, at, n, reflect(-v, n), s.roughness, ambient, atmosphere);
     float2 pixel = input.position.xy;
     float mirroredAt;
-    float4 mirrored = waterScreenReflection(frame, input.world, reflect(-v, n), s.roughness, pixel, mirroredAt);
+    float4 mirrored = waterScreenReflection(frame, at, reflect(-v, n), s.roughness, pixel, mirroredAt);
     reflected = lerp(reflected, mirrored.rgb, mirrored.a);
     Surface sunSurface = s;
     sunSurface.roughness = max(s.roughness, 0.08);
@@ -3593,11 +3774,16 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
 
     // How far through the water the view goes: to what lies behind it, or where it leaves the water, if sooner.
     float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
-    float surfaceDepth = frame->near / max(input.position.z, 1e-7);
+    float surfaceDepth = swollen ? dot(at - frame->cameraPosition, frame->cameraForward) : frame->near / max(input.position.z, 1e-7);
     float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    if (swollen && sceneDepth < surfaceDepth - 0.01)
+    {
+        // What stands in a trough, in front of the water.
+        discard;
+    }
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
-    float here = length(input.world - frame->cameraPosition);
+    float here = length(at - frame->cameraPosition);
     float leaves = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(int2(pixel), 0)).r;
     if (leaves > here)
     {
@@ -3609,7 +3795,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float2 seenAt = pixel / float2(frame->viewport);
     if (oceanHas(frame, OCEAN_LIGHT_BENDING) && thickness < 1e3)
     {
-        float3 under = input.world + bentView * min(thickness, 10.0);
+        float3 under = at + bentView * min(thickness, 10.0);
         float4 clip = transform(frame->viewProj, float4(under, 1.0));
         if (clip.w > 0.0)
         {
@@ -3628,7 +3814,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it.
     if (face.y > 0.5 && oceanHas(frame, OCEAN_WET_EDGES))
     {
-        float2 level = levelXZ(frame, input.world.xz, 4096.0);
+        float2 level = levelXZ(frame, at.xz, 4096.0);
         float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(level, float2(1.3, 0.7)));
         float contact = saturate(1.0 - thickness / lapping);
         float coverage = 0.65 * contact * contact;
@@ -3638,6 +3824,54 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
         float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, foam);
+    }
+    // A column's side is the water's own body, lit as a block's face is, so the columns read as blocks of water.
+    if (swollen && !level)
+    {
+        float3 body = look.deep * (ambient + sunLight * shadow * (0.25 + 0.75 * saturate(dot(face, l))) / PI);
+        color = lerp(color, body, 0.7);
+    }
+    // White water: a crest's top breaks where the sea is rough, a column at a time where it is columns.
+    float broken = 0.0;
+    if (swollen && level)
+    {
+        float column = max(frame->sea.column, 0.25) * world.blockSize;
+        int2 cell = int2(floor((at.xz - world.corner.xz) / column));
+        float2 middle = frame->sea.column > 0.0 ? world.corner.xz + (float2(cell) + 0.5) * column : at.xz;
+        float c, r;
+        float sunk = seaSunk(frame, middle, c, r);
+        float stepHigh = frame->sea.step * world.blockSize;
+        sunk = stepHigh > 0.0 ? round(sunk / stepHigh) * stepHigh : sunk;
+        // White water comes in streaks along the crests, long across the swell's way and thin along it, that drift
+        // with them.
+        float2 way = normalize(frame->sea.waves[0].xy + float2(1e-6, 0.0));
+        float2 placed = levelXZ(frame, middle, 4096.0);
+        float2 drifted = float2(dot(placed, way) / 1.7, dot(placed, float2(-way.y, way.x)) / 6.0) + frame->sea.drift;
+        int2 patch = int2(floor(drifted));
+        float2 within = drifted - floor(drifted);
+        within = within * within * (3.0 - 2.0 * within);
+        float patches = lerp(
+            lerp(seaGrain(patch + 4001), seaGrain(patch + int2(4002, 4001)), within.x),
+            lerp(seaGrain(patch + int2(4001, 4002)), seaGrain(patch + 4002), within.x),
+            within.y);
+        // About half the sea can break at all, so even a wide crest is streaked, not white all over.
+        float patchy = smoothstep(0.38, 0.62, patches);
+        float breaks = 0.74 + 0.4 * (1.0 - r) + 0.45 * patchy + 0.08 * (seaGrain(cell) - 0.5);
+        // Its troughs darker than its crests, so the swell reads from its tops alone.
+        color *= lerp(1.0, lerp(1.15, 0.6, saturate(sunk / max(frame->sea.height * r, 0.01))), saturate(r * 2.0));
+        float white = frame->sea.column > 0.0 ? step(breaks, c) : smoothstep(breaks - 0.03, breaks + 0.03, c);
+        broken = white;
+        float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
+        float3 foamLit = 0.85 * (ambient + sunLight * shadow * wrapped / PI);
+        color = lerp(color, foamLit, white * (0.82 + 0.18 * seaGrain(cell + 77)));
+    }
+    // A warm sea glows at night where its water breaks, and in specks that come and go all over it.
+    if (frame->sea.glow > 0.0 && sea && level)
+    {
+        int2 speck = int2(floor(levelXZ(frame, at.xz, 4096.0) * 4.0));
+        int beat = int(floor(frame->sea.drift.x * 9.0));
+        float lit = step(0.992, seaGrain(speck + beat * int2(17, 31))) * 0.7 + broken * 1.6;
+        color += float3(0.06, 0.5, 0.8) * frame->sea.glow * lit;
     }
     // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));

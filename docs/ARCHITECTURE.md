@@ -1063,7 +1063,7 @@ reflections. The renderer adds up the drift along the Wind Zone's direction and 
 so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
 passes.
 
-**Weather** *(implemented; roofs, sound and networking planned)*. `voxear_render::weather::Weather`
+**Weather** *(implemented; roofs and sound planned)*. `voxear_render::weather::Weather`
 is a resource: a kind, the `WeatherAmounts` it is turning from and to, and how far through the turn it is. It
 changes no other state. `scene::extract` reads what it adds this moment and lays it over what it extracts:
 `WeatherAmounts::sky` on the `Sky` (cloud cover, density, thickness and shadows, haze, a gradient's colours),
@@ -1093,6 +1093,48 @@ in clear weather, whenever lighting settings are applied. Scripts reach it as th
 publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame. The C# side
 raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
 frame's.
+
+**Storms** *(implemented; frozen seas and the engine sending storms itself planned)*. `voxear_engine::storms` keeps
+the level's `Storms`, a resource: a clock in seconds that turns while the game plays, the storms and whirlpools
+scripts made, and each frame every storm near the viewer. A `Storm` is a middle in metres from the level's middle
+(so it keeps its place as the world's origin moves), a reach, a strength at its height, a drift or a path, an eye,
+and when it began and how long it comes on, lasts and dies away. Natural storms are not kept at all:
+`storms::natural::natural_storms(seed, rules, clock, around, reach)` hashes each 4096 m square and each 900 s
+stretch of the clock into at most one storm, with where and when it began and how it drifts, so finding the storms
+near a place is looking through the squares one could have come from. Hashing whole numbers, sums and products
+only: the same bits on every machine. The level's first `StormRules` component says whether there are any, how
+often and how large, and how the sea is drawn.
+
+`storms::update` runs each tick before the weather's. It moves the made storms, finds those within 9 km of the
+viewer, and gives the renderer three things. `WeatherPlaces` is each storm as a `WeatherPlace`: its middle in the
+world, its reach and eye, how rough it makes the sea, and the `WeatherAmounts` it adds at its middle, which
+`storms::amounts(kind, strength, celsius, humidity)` makes from the open air's temperature there
+(`heat::open_air`: the climate and the time of day, with no shelter or sources). `Weather::set_here` is what the
+storms add where the viewer stands, by the temperature there; `Weather::now` is then the more of the level's own
+weather and that, so rain, snow, fog, wind, wet ground and lightning follow the viewer into and out of a storm
+with nothing else changed. `RoughSea` is the sea: its look, swell height, heading, the storms' clock as its time,
+and the nearest whirlpools.
+
+The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and
+roughness, four waves, four whirlpools. `cloudWeather` in `clouds.slang` fills the cloud layer in and makes it
+heavier over each place, in the clouds' own march and in their shadow map, so a storm far off is a dark mass of
+cloud with its shadow under it. `weatherCurtain` integrates what falls along a view ray through each place's
+cylinder, under the clouds' undersides for rain and snow and a few hundred metres up for sand; the sky pass lays
+it over the sky and the fog pass over the scene, the fog switched on at no density where any place has a fall.
+
+The sea's swell is drawn without moving a vertex. A world of blocks' water is merged quads, flat at the sea's
+height, which is the height of a crest. `blockSwell` in `water.slang` walks each top face's view ray across
+columns of the world's own grid, each sunk a whole number of steps under the face by `seaSunk` at its middle
+(four waves, each a whole number of times round in 4096 m, their phases worked out on the CPU from the storms'
+clock; a whirlpool's funnel added), to the first column's top or the side of the next, as the block shader's small
+cubes are walked; smooth, it marches to the swell's own surface. The water is then shaded there: its depth for
+what stands in front of it, its normal, white water on crests by a drifting pattern of patches. Only faces at the
+world's `SeaLevel`, a component the engine gives a world with a generated sea, are walked. `sea::SeaSampler` is
+the same function on the CPU with a sine made of sums and products, and `water::sample` takes its `sunk`, slope
+and flow for a point in the sea, so Buoyancy and scripts follow what is drawn.
+
+Scripts reach storms through one native call, `storm_call(what, id, numbers)`, and `storm_state` for the bytes
+of `StormsSaved`; a save of the scene keeps those bytes beside the blocks' edits.
 
 **Look packs** (`voxear_engine::look_packs`) are the other thing laid over a level's lighting, and the player's to
 choose. A `.lookpack` is the `[sky]`, `[sun]` and `[post]` of lighting settings, partly written, with `[blocks]`. The

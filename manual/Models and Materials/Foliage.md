@@ -53,6 +53,7 @@ Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Gr
 | Setting | What it does |
 | --- | --- |
 | On block | The block the plants stand on. None for any ground |
+| Under water | Grows on the bed under water in place of dry ground, as seaweed and coral do. Height is then how far under the water's top the bed lies, less than nothing: -12 to -2 for water two to twelve metres deep |
 | Biome | Sets Temperature and Humidity to a climate at once: Forest, Desert, Snow and the rest. **Any** grows everywhere |
 | Temperature, Humidity | Tick one to grow only between two temperatures, in °C, or between two humidities, from 0 for dry to 1 for wet, as the world's generator gives them. A world with no generator has no climate, so these change nothing there |
 | Height | Tick to grow only between two heights over the sea, in metres |
@@ -69,7 +70,7 @@ Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Gr
 | Near block | Grows only near a block: where that block is the highest of its place, as a tree's leaves are |
 | Within | With either, how near, in metres |
 
-A plant stands on the highest block of its place, under the open sky, and only on ground the world made: nothing grows on what was built afterwards. Leaves and vines do not count as that highest block, so plants grow on the ground under a tree of blocks. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
+A plant stands on the highest block of its place, under the open sky, or with **Under water** on the highest block under the water there, and only on ground the world made: nothing grows on what was built afterwards. Leaves and vines do not count as that highest block, so plants grow on the ground under a tree of blocks. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
 
 Plants are grown only as far as they are drawn: a Foliage's grown plants reach its **Draw distance** from the camera. In the editor they grow round where the Scene view looks from.
 

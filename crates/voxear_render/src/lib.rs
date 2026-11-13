@@ -69,6 +69,7 @@ mod post_passes;
 mod post_volume;
 mod previews;
 mod scene;
+pub mod sea;
 mod seasons;
 mod shadows;
 mod texture_codec;

@@ -89,6 +89,8 @@ const WEATHER_KINDS: &[(&str, &str)] = &[
     ("Storm", "storm"),
     ("Snow", "snow"),
     ("Fog", "fog"),
+    ("Blizzard", "blizzard"),
+    ("Sandstorm", "sandstorm"),
     ("Custom", "custom"),
 ];
 const CUSTOM_WEATHER: When = &[(&["weather", "kind"], "custom")];
@@ -160,6 +162,8 @@ const SETTINGS: &[Info] = &[
         help: "How hard it snows round the camera. Snow settles on what faces up, and melts once it stops." },
     Info { path: &["weather", "lightning"], title: "Lightning", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
         help: "How often lightning strikes, lighting the sky and the level for a moment: at 1, every eight seconds or so." },
+    Info { path: &["weather", "dust"], title: "Dust", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How much blown sand is in the air: thick, dun and dim." },
     Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS,
         help: "The sun's colour as a temperature, in kelvin: about 2000 K is a candle-orange sunset, 5500 K is white noon light, above 7000 K is cool and blue." },
     Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
@@ -1265,7 +1269,7 @@ mod tests {
         let shown = effective(&read(&file)).unwrap();
         assert_eq!(find(&shown, &["weather", "kind"]).and_then(|v| v.as_str()), Some("clear"), "clear unless set");
         let amounts = SETTINGS.iter().filter(|info| info.group == "Weather" && info.path != ["weather", "kind"]);
-        assert!(amounts.clone().count() == 7 && amounts.clone().all(|info| !applies(&shown, info.when)));
+        assert!(amounts.clone().count() == 8 && amounts.clone().all(|info| !applies(&shown, info.when)));
         write_setting(&file, &["weather", "kind"], Some("storm".into())).unwrap();
         assert_eq!(read(&file).resolve().unwrap().weather.kind, WeatherKind::Storm);
         // Custom shows its amounts, and one written is the weather's.

@@ -84,6 +84,7 @@ impl Engine {
         crate::screen_ui::register();
         crate::map::register();
         crate::heat::scripts::register();
+        crate::storms::scripts::register();
         crate::first_person::register();
         crate::animation::bones::register();
         crate::animation::pose_ops::register();
@@ -521,6 +522,8 @@ impl Engine {
         if crate::modules::has(&self.world, crate::modules::Module::Water) {
             crate::water::update(&mut self.world, self.time.elapsed);
         }
+        // Storms drift, and bring their weather to wherever the viewer is under them.
+        crate::storms::update(&mut self.world, self.time.delta, !self.edit_mode);
         // The weather turns, and its rain and snow fall round the viewer.
         crate::weather::update(&mut self.world, self.time.delta);
         // Characters push through the plants they walk among.
@@ -541,9 +544,9 @@ impl Engine {
             scripts.publish_weather(voxear_scripting::WeatherState {
                 kind: weather.kind().index() as i32,
                 state: {
-                    let mut state = [0.0; 10];
-                    state[..7].copy_from_slice(&weather.now().to_array());
-                    state[7..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
+                    let mut state = [0.0; 11];
+                    state[..8].copy_from_slice(&weather.now().to_array());
+                    state[8..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
                     state
                 },
                 turning: !weather.settled(),

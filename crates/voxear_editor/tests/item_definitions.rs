@@ -77,6 +77,21 @@ fn with_class(ui: &Ui, node: NodeId, class: &str, found: &mut Vec<NodeId>) {
     }
 }
 
+/// Scrolls whatever holds `node` until it shows near the top, as a hand scrolls down to it.
+fn scroll_to(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let mut at = editor.ui.parent(node);
+    while let Some(parent) = at {
+        if editor.ui.scroll_max(parent)[1] > 0.0 {
+            let ([_, top, _, _], [_, y, _, _]) = (editor.ui.rect(parent), editor.ui.rect(node));
+            let [x, now] = editor.ui.scroll_offset(parent);
+            editor.ui.set_scroll(parent, [x, (now + y - top - 120.0).max(0.0)]);
+            frame(editor, renderer);
+            return;
+        }
+        at = editor.ui.parent(parent);
+    }
+}
+
 fn click(ui: &mut Ui, node: NodeId) {
     let [x, y, w, h] = ui.rect(node);
     ui.pointer_move(x + w / 2.0, y + h / 2.0);
@@ -199,7 +214,10 @@ fn items_recipes_and_a_blocks_rules_are_edited_in_the_inspector_and_a_block_is_g
         with_class(&editor.ui, editor.ui.root(), "collection-add", &mut buttons);
         buttons.into_iter().find(|&button| editor.ui.is_visible(button) && editor.ui.text(button) == text)
     };
+    // Far down a block's Inspector, under its look and its rules: scrolled to, as a hand would.
     let make = said(&editor, "Make Item").expect("Make Item, while no item places the block");
+    scroll_to(&mut editor, &mut renderer, make);
+    let make = said(&editor, "Make Item").expect("Make Item, scrolled to");
     click(&mut editor.ui, make);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);

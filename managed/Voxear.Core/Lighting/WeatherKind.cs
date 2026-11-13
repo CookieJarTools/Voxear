@@ -24,6 +24,12 @@ public enum WeatherKind
 	/// <summary>Thick fog, the sky lost in it.</summary>
 	Fog,
 
+	/// <summary>Driving snow in a gale, the air white with it.</summary>
+	Blizzard,
+
+	/// <summary>A gale full of blown sand under a dun sky.</summary>
+	Sandstorm,
+
 	/// <summary>Amounts of its own, as <see cref="Weather.Set(WeatherAmounts, float)"/> gives them.</summary>
 	Custom,
 }

@@ -220,6 +220,7 @@ pub fn put(
     set::<crate::map::Map>(world, entity, obj.map);
     set::<crate::map::MapMarker>(world, entity, obj.map_marker);
     set::<crate::heat::Climate>(world, entity, obj.climate);
+    set::<crate::storms::StormRules>(world, entity, obj.storms);
     set::<crate::heat::HeatSource>(world, entity, obj.heat_source);
     set::<crate::heat::HeatZone>(world, entity, obj.heat_zone);
     set::<crate::heat::HeatBody>(world, entity, obj.heat_body);

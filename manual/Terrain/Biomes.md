@@ -12,6 +12,7 @@ Select the world, pick **Settings**, and set **Ground** to **Generated**. Under 
 | --- | --- |
 | Add Biome | Lists one of the project's biomes, picked from them all. A `.biome` dragged onto the list from the Project panel is listed too |
 | Add Starter Biomes | Makes eight ready biomes and their blocks beside the world, and lists them (see [[Biomes#Starter biomes|Starter biomes]]) |
+| Add Showcase Biomes | Makes three more, with their blocks and their trees, and lists them (see [[Biomes#Showcase biomes|Showcase biomes]]) |
 | A biome's grip | Drags it to another place in the list |
 | A biome's cross | Takes it off the list |
 
@@ -103,6 +104,22 @@ A block of the same name anywhere in the project is used as it is, and a biome o
 The Snow keeps to a height, since cooling alone puts snow only on very high ground: a world 12 °C at the sea freezes at 2000 m. So mountains have snow on their tops from 260 m, higher in a warm place, and low ground has none. For a cold world with snow on its low ground too, switch **Height** off on its Snow.
 
 They are a start. Change their blocks, their ranges and their colours, or copy one and make another kind of country of it.
+
+## Showcase biomes
+
+A world gets three showcase biomes when it is first given a **Generator**, if it lists no biomes yet. They show off what a biome can be. **Add Showcase Biomes** lists them on a world that already has a generator.
+
+| Biome | Climate | Top, over | Steep | Shore | Trees |
+| --- | --- | --- | --- | --- | --- |
+| Autumn Woods | Up to 10 °C | Fallen Leaves, over Dirt | Stone | Gravel | Maple, red |
+| Blossom Grove | 10 to 16 °C | Spring Grass, over Dirt | Stone | Sand | Blossom, pink |
+| Volcanic Fields | From 16 °C | Ash, over Basalt | Magma Rock, from 50° | Obsidian | None |
+
+They keep to warmth alone, so a mild world has all three a short walk apart: in the Rolling Hills, each is within a few hundred metres of the middle. A cold world is mostly woods, and a warm one mostly fields.
+
+**Magma Rock** is hot, 220 °C out to 2 m (see [[Temperature#Hot and cold blocks|Hot and cold blocks]]), so food dropped on a volcanic slope cooks. The grove and the woods have a few vines.
+
+Their trees are made as the [[Block Worlds#Trees of blocks|starter trees]] are: a `.voxplant` in the Plants folder and a `.structure` in the Structures folder, listed under the world's generator, each kept to its own biome. Take the biomes off and their trees go with them. The biomes and blocks are made beside the world, and anything of the same name is used as it is, as with the starters.
 
 ## Biomes and covers
 

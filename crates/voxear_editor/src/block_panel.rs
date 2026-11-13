@@ -10,8 +10,9 @@
 //! another order by its grip and taken out by its cross. **Add Biome**
 //! picks one of the project's, as a `.biome` dragged onto the list from the
 //! Project panel does. **Add Starter Biomes** makes eight ready ones beside
-//! the world and lists them (see `starter_biomes`). Each change makes the
-//! ground again, and is one step to undo.
+//! the world and lists them, and **Add Showcase Biomes** three more with
+//! their trees (see `starter_biomes`). Each change makes the ground again,
+//! and is one step to undo.
 
 use std::hash::{Hash, Hasher};
 
@@ -26,12 +27,13 @@ use crate::{
     inspector::prop,
 };
 
-/// The list of the world's biomes: its collection, each row's cross, and
-/// Add Starter Biomes.
+/// The list of the world's biomes: its collection, each row's cross, Add
+/// Starter Biomes and Add Showcase Biomes.
 struct Biomes {
     list: Collection,
     removes: Vec<Option<NodeId>>,
     starters: Option<NodeId>,
+    showcase: Option<NodeId>,
 }
 
 /// The tools of the Block World the Inspector shows, and its biomes.
@@ -119,7 +121,13 @@ impl BlockPanel {
             ui.set_tooltip(button, "Makes eight biomes and their blocks beside the world, and lists them", None);
             button
         });
-        self.biomes = Some(Biomes { list, removes, starters });
+        let showcase = list.footer.map(|footer| {
+            let button = collection::footer_button(ui, footer, "Add Showcase Biomes");
+            let tip = "Makes Autumn Woods, Blossom Grove and Volcanic Fields, their blocks and trees, and lists them";
+            ui.set_tooltip(button, tip, None);
+            button
+        });
+        self.biomes = Some(Biomes { list, removes, starters, showcase });
     }
 
     /// Whether what it shows changed since it was built.
@@ -141,7 +149,7 @@ impl BlockPanel {
 
     /// Does what was clicked or dragged: a tool picked, the world's
     /// overhangs and caves moved into its generator, a biome moved or taken
-    /// out, or the starter biomes made. Whether anything changed.
+    /// out, or the starter or showcase biomes made. Whether anything changed.
     pub fn update(&self, ui: &Ui, game: &mut Game, mut renderer: Option<&mut Renderer>, entity: Entity) -> bool {
         let world = &mut game.engine.world;
         let tool = BlockTool::ALL[ui.segment(self.tools).min(BlockTool::ALL.len() - 1)];
@@ -158,6 +166,15 @@ impl BlockPanel {
                 Ok(listed) => listed,
                 Err(error) => {
                     tracing::error!("Could not make the starter biomes: {error:#}");
+                    false
+                }
+            };
+        }
+        if biomes.showcase.is_some_and(|button| ui.clicked(button)) {
+            return match crate::starter_biomes::add_showcase(game, renderer.as_deref_mut(), entity) {
+                Ok(listed) => listed,
+                Err(error) => {
+                    tracing::error!("Could not make the showcase biomes: {error:#}");
                     false
                 }
             };

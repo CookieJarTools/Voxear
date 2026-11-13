@@ -1158,8 +1158,21 @@ pub fn pick(
         F::Generator => {
             let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
             let Some(generate) = &mut file.generate else { return false };
+            // A world first given a generator, listing no biomes, starts with the showcase biomes and their trees.
+            let first = generate.world.is_none() && reference.is_some() && generate.biomes.is_empty();
             generate.world = reference.map(|r| r.to_string());
-            change_file(game, renderer, entity, file)
+            let mut renderer = renderer;
+            let changed = change_file(game, renderer.as_deref_mut(), entity, file);
+            if !first {
+                return changed;
+            }
+            match crate::starter_biomes::add_showcase(game, renderer, entity) {
+                Ok(listed) => changed || listed,
+                Err(error) => {
+                    tracing::error!("Could not make the showcase biomes: {error:#}");
+                    changed
+                }
+            }
         }
         F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => {
             let Some(mut file) = file_of(&game.engine.world, entity) else { return false };

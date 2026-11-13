@@ -61,7 +61,7 @@ vine = "Blocks/Vine.block"
 
 Give the leaves a block whose **Shape** is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. A tree's vines hang only in open air: none where a hillside rises into them.
 
-**Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga.
+**Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga. The [[Biomes#Showcase biomes|showcase biomes]] bring two more of their own, a maple in the Autumn Woods and a blossom tree in the Blossom Grove.
 
 ## How the ground meets a structure
 

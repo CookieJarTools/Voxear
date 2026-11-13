@@ -1144,9 +1144,15 @@ fn show_block_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, 
 }
 
 /// Picks the asset whose file is `name` for the Inspector row labelled
-/// `label`, as a user does: the row's picker opened, and its row clicked.
+/// `label`, as a user does: the row's picker opened, searched for it where
+/// it is not in sight, and its row clicked.
 fn pick_asset(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str, name: &str) {
     open_picker(editor, renderer, label);
+    if picker_row(&editor.ui, name).is_none() {
+        editor.ui.text_input(name.rsplit_once('.').map_or(name, |(stem, _)| stem));
+        frame(editor, renderer);
+        frame(editor, renderer);
+    }
     let row = picker_row(&editor.ui, name);
     let row = row.unwrap_or_else(|| panic!("{name} is offered: {:?}", picker_rows(&editor.ui)));
     click(&mut editor.ui, row);
@@ -1933,6 +1939,27 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_blo
     click(&mut editor.ui, row);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
+    // First given a generator, it lists the showcase biomes, made beside it with their blocks, and builds their
+    // trees.
+    assert_eq!(listed_biomes(&editor.ui), ["Autumn Woods", "Blossom Grove", "Volcanic Fields"]);
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(2));
+    let db = editor.game.content.db();
+    let has = |file: &str| db.entries().any(|entry| entry.path.ends_with(file));
+    for file in ["/Autumn Woods.biome", "/Magma Rock.block", "/Maple.voxplant", "/Blossom.structure"] {
+        assert!(has(file), "{file} is made");
+    }
+    assert!(!has("/Snow.biome"), "the starter biomes are not");
+    // Each taken out by its cross, its ground is the world's own layers again, with no trees in no biome.
+    for _ in 0..3 {
+        let list = first_with(&editor.ui, editor.ui.root(), "block-biomes").unwrap();
+        let mut crosses = Vec::new();
+        with_class(&editor.ui, list, "collection-remove", &mut crosses);
+        click(&mut editor.ui, crosses[0]);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(listed_biomes(&editor.ui).is_empty());
     let world = WorldGen::parse(&hills.to_text()).unwrap();
     let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
     let top =
@@ -1944,8 +1971,9 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_blo
     // A block that covers where it is below freezing, as Snow: everywhere in this cold world. The world numbers it
     // as it first covers.
     show_block_tool(&mut editor, &mut renderer, "Build");
+    let held = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.len();
     pick_asset(&mut editor, &mut renderer, "Block", "Snow.block");
-    assert_eq!(editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.len(), 3);
+    assert_eq!(editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.len(), held);
     let cover = first_with(&editor.ui, prop_rows(&editor.ui, "Cover")[0], "checkbox").expect("its cover");
     click(&mut editor.ui, cover);
     frame(&mut editor, &mut renderer);
@@ -1962,9 +1990,9 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_blo
     );
     frame(&mut editor, &mut renderer);
     let file = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
-    assert!(file.blocks[3].cover.is_some_and(|cover| cover.temperature.is_some()));
+    assert!(file.blocks[held].cover.is_some_and(|cover| cover.temperature.is_some()));
     let now = blocks(&editor);
-    assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]), 4, "snow on top");
+    assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]) as usize, held + 1, "snow on top");
 }
 
 /// A copy of Hello open in the editor, its field a Block World made by `Worlds/Steep.worldgen`, a
@@ -3189,6 +3217,18 @@ fn starter_biomes_on(
     fits: impl Fn(f32, f32) -> bool,
     picture: &str,
 ) -> Option<Vec<(f32, usize, usize)>> {
+    biomes_made_on("Add Starter Biomes", preset, (block, columns), |_, least, greatest| fits(least, greatest), picture)
+}
+
+/// What the button `button` of a world's biomes makes of a world as [`starter_biomes_on`] says, from where
+/// `fits` says its ground suits, given also the square's corner. No snow where it makes none.
+fn biomes_made_on(
+    button: &str,
+    preset: voxear_terrain::generate::Preset,
+    (block, columns): (f32, u32),
+    fits: impl Fn([f32; 2], f32, f32) -> bool,
+    picture: &str,
+) -> Option<Vec<(f32, usize, usize)>> {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::blocks::{
         BlockWorld,
@@ -3224,7 +3264,7 @@ fn starter_biomes_on(
         .map(|i| [(i % 80) as f32 * 500.0 - 20_000.0, (i / 80) as f32 * 500.0 - 20_000.0])
         .find(|&corner| {
             let (least, greatest) = heights(corner);
-            fits(least, greatest)
+            fits(corner, least, greatest)
         })
         .expect("ground that suits somewhere within 20 km");
     let (least, greatest) = heights(position);
@@ -3252,8 +3292,8 @@ fn starter_biomes_on(
     frame(&mut editor, &mut renderer);
     show_block_tool(&mut editor, &mut renderer, "Settings");
     let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
-    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
-    click(&mut editor.ui, starters);
+    let made = button_saying(&editor.ui, inspector, button).unwrap_or_else(|| panic!("{button}"));
+    click(&mut editor.ui, made);
     // A world this large is made again on other threads: until it is.
     let listed = |editor: &voxear_editor::Editor| {
         let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
@@ -3268,7 +3308,7 @@ fn starter_biomes_on(
     }
     assert!(listed(&editor), "its ground made again with its biomes");
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
-    let snow = asset.drawn.number_of(editor.game.content.db().guid_of("Blocks/Snow.block").unwrap()).expect("snow");
+    let snow = editor.game.content.db().guid_of("Blocks/Snow.block").and_then(|snow| asset.drawn.number_of(snow));
     let water = 4;
     // Each column's top block, by how high over the sea its ground is.
     let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
@@ -3285,7 +3325,7 @@ fn starter_biomes_on(
             }
             let band = bands.entry((above_sea / 50.0).floor() as i32).or_default();
             band.0 += 1;
-            band.1 += usize::from(blocks.blocks.get([x, top, z]) == snow);
+            band.1 += usize::from(Some(blocks.blocks.get([x, top, z])) == snow);
         }
     }
     if std::env::var("VOXEAR_TEST_OUTPUT").is_ok() {
@@ -3313,6 +3353,43 @@ fn starter_biomes_on(
         shot(&mut renderer, picture);
     }
     Some(bands.into_iter().map(|(band, (count, snowy))| (band as f32 * 50.0, count, snowy)).collect())
+}
+
+#[test]
+fn the_showcase_biomes_lie_side_by_side_on_a_world_of_hills_with_their_trees() {
+    use voxear_terrain::generate::{BiomeDef, Biomes, Preset, biomes::Place};
+    // Where the showcase biomes fall, as warm as each keeps to: a square of hills that has all three.
+    let world = Preset::RollingHills.world();
+    let kept = [[-60.0, 10.0], [10.0, 16.0], [16.0, 60.0]];
+    let listed = kept.map(|temperature| BiomeDef { temperature, humidity: [0.0, 1.0], ..BiomeDef::default() });
+    let placed = Biomes::new(listed.to_vec(), 15.0, 0.3, world.seed());
+    let side = 448.0;
+    let all_three = |corner: [f32; 2], least: f32, _: f32| {
+        if least < 2.0 {
+            return false;
+        }
+        let mut seen = [false; 3];
+        for i in 0..17 * 17 {
+            let (x, z) = (corner[0] + (i % 17) as f32 * side / 16.0, corner[1] + (i / 17) as f32 * side / 16.0);
+            let height = world.height_at(x, z);
+            let (temperature, humidity) = world.climate(x, z, height);
+            let place = Place { temperature, humidity, above_sea: height - world.sea_level(), sunk: 0.0 };
+            if let Some(biome) = placed.at(x, z, place) {
+                seen[biome] = true;
+            }
+        }
+        seen == [true; 3]
+    };
+    let made = biomes_made_on(
+        "Add Showcase Biomes",
+        Preset::RollingHills,
+        (1.0, side as u32),
+        all_three,
+        "showcase-biomes-hills-1m.png",
+    );
+    let Some(bands) = made else { return };
+    // No snow: none of the three is.
+    assert!(bands.iter().all(|(_, _, snowy)| *snowy == 0), "{bands:?}");
 }
 
 #[test]

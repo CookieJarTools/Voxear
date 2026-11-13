@@ -11,6 +11,10 @@
 //! of bark. The oak and the birch have vines on some of their trees, of the
 //! Vine block the starter biomes hang too.
 //!
+//! The showcase biomes have two trees of their own, made with them: a red
+//! maple in the Autumn Woods and a pink blossom tree, low and wide, in the
+//! Blossom Grove.
+//!
 //! Where the world has the starter biomes, each tree keeps to the ones
 //! that suit it: oaks in the Forest and the Rainforest, birches in the
 //! Forest, the Grassland and the Taiga, pines in the Taiga. A file of a
@@ -122,6 +126,56 @@ const TREES: [StarterTree; 3] = [
         spacing: 8.0,
         chance: 0.6,
         biomes: &["Taiga"],
+    },
+];
+
+/// The showcase biomes' trees.
+const SHOWCASE_TREES: [StarterTree; 2] = [
+    StarterTree {
+        name: "Maple",
+        plant: || PlantDef {
+            height: [8.0, 12.0],
+            trunk: 1.1,
+            taper: 0.45,
+            bend: 0.2,
+            crown_width: [7.0, 9.0],
+            crown_height: [6.0, 8.0],
+            branches: 0.6,
+            leaf_size: 3.4,
+            leaf_density: 0.9,
+            roots: 2,
+            ..PlantDef::default()
+        },
+        log: ("Maple Log", [0.35, 0.24, 0.18]),
+        leaves: ("Maple Leaves", [0.86, 0.3, 0.09]),
+        marks: None,
+        vines: 0.0,
+        spacing: 8.0,
+        chance: 0.6,
+        biomes: &["Autumn Woods"],
+    },
+    StarterTree {
+        name: "Blossom",
+        plant: || PlantDef {
+            height: [6.0, 9.0],
+            trunk: 1.0,
+            taper: 0.5,
+            bend: 0.4,
+            crown_width: [8.0, 11.0],
+            crown_height: [4.0, 6.0],
+            branches: 0.7,
+            leaf_size: 3.2,
+            leaf_density: 0.85,
+            roots: 2,
+            ..PlantDef::default()
+        },
+        log: ("Blossom Log", [0.3, 0.2, 0.18]),
+        leaves: ("Blossom Petals", [0.96, 0.62, 0.76]),
+        marks: None,
+        vines: 0.0,
+        spacing: 10.0,
+        chance: 0.5,
+        biomes: &["Blossom Grove"],
     },
 ];
 
@@ -262,6 +316,22 @@ fn write_new(game: &Game, path: &str, text: &str) -> Result<()> {
 /// the structures under the generator of the world of blocks on `entity`,
 /// its ground made again with them. Whether the world changed.
 pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
+    add_trees(game, renderer, entity, &TREES, 100)
+}
+
+/// Makes the showcase biomes' trees as [`add`] makes the starters'.
+pub fn add_showcase(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
+    add_trees(game, renderer, entity, &SHOWCASE_TREES, 200)
+}
+
+/// Makes `trees` as [`add`] says, their pictures drawn from `salt` on.
+fn add_trees(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    trees: &[StarterTree],
+    salt: u32,
+) -> Result<bool> {
     let world = block_props::world_path(game, entity).context("the world has no asset")?;
     let blocks_folder = block_props::blocks_beside(&world);
     let biomes_folder =
@@ -269,11 +339,11 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> 
     let reference = |game: &Game, path: &str| game.content.db().guid_of(path).map(|guid| guid.to_string());
     let vine = block_named(game, &blocks_folder, VINE, &starter_biomes::vine_block())?;
     let mut structures = Vec::new();
-    for (at, tree) in TREES.into_iter().enumerate() {
+    for (at, tree) in trees.iter().enumerate() {
         let named = |game: &Game, path: &str| reference(game, path).unwrap_or_else(|| path.to_string());
         // Each block with its picture, where the project has no block of its name: bark for the log, cut-out
         // leaves for the leaves.
-        let salt = 100 + at as u32 * 10;
+        let salt = salt + at as u32 * 10;
         let has =
             |game: &Game, name: &str| game.content.db().guid_of(&format!("{blocks_folder}/{name}.block")).is_some();
         let mut log_block = BlockDef::colored(tree.log.1);
@@ -385,5 +455,28 @@ mod tests {
             let dark = bark.chunks_exact(4).filter(|pixel| pixel[0] < 60).count();
             assert_eq!(dark > 0, tree.marks.is_some(), "{}: {dark} dark pixels of bark", tree.name);
         }
+    }
+
+    #[test]
+    fn the_showcase_trees_are_a_red_maple_and_a_pink_blossom_lower_and_wider_each_in_its_own_biome() {
+        let names: Vec<&str> = SHOWCASE_TREES.iter().map(|tree| tree.name).collect();
+        assert_eq!(names, ["Maple", "Blossom"]);
+        assert_eq!(SHOWCASE_TREES.map(|tree| tree.biomes), [&["Autumn Woods"][..], &["Blossom Grove"][..]]);
+        for tree in &SHOWCASE_TREES {
+            for seed in 0..4 {
+                let model = (tree.plant)().grow(seed);
+                let (low, high) = model.bounds().unwrap();
+                assert!(model.count(PlantPart::Trunk) >= 6 && model.count(PlantPart::Leaf) > 40, "{}", tree.name);
+                assert!((5..=16).contains(&high[1]), "{} stands {} blocks", tree.name, high[1]);
+                assert!(high[0] - low[0] <= 16 && high[2] - low[2] <= 16, "{}", tree.name);
+            }
+        }
+        // The maple's leaves red, the blossom's pink: redder than green and blue alike, the blossom's paler.
+        let [maple, blossom] = SHOWCASE_TREES.map(|tree| tree.leaves.1);
+        assert!(maple[0] > maple[1] * 2.0 && maple[0] > maple[2] * 2.0);
+        assert!(blossom[0] > blossom[1] && blossom[2] > blossom[1] && blossom[1] > maple[1] * 1.5);
+        // The blossom is lower and wider than the maple.
+        let [maple, blossom] = SHOWCASE_TREES.map(|tree| (tree.plant)());
+        assert!(blossom.height[1] < maple.height[1] && blossom.crown_width[1] > maple.crown_width[1]);
     }
 }

@@ -2413,7 +2413,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Humidity, Height and Heights; the ground's blocks as pickers with a cross), saved as it is edited; New Biome in
     the Project panel's menu and the command palette; **Add Starter Biomes** (`starter_biomes`): Snow, Tundra,
     Taiga, Grassland, Forest, Desert, Savanna and Rainforest in a Biomes folder beside the world with fifteen
-    colour blocks in its Blocks folder, a project's own blocks and biomes of those names used as they are. Tuned in
+    colour blocks in its Blocks folder, a project's own blocks and biomes of those names used as they are; three
+    showcase biomes, Autumn Woods, Blossom Grove and Volcanic Fields, split by warmth alone so a mild world has all
+    three within a few hundred metres, with a red maple and a pink blossom tree and hot Magma Rock on the volcanic
+    slopes, listed when a world is first given a generator and by **Add Showcase Biomes**. Tuned in
     renders of mountains and hills at 1 m and 8 m blocks: the Snow keeps to heights from 260 m in any but a warm
     place, since cooling 6.5 °C a kilometre alone leaves most peaks green, so mountains are white on top, rock on
     their steep faces, and low ground never snow. A block's Cover rows hide where a world lists biomes and work as

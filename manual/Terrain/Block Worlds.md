@@ -67,7 +67,7 @@ A biome can keep to ground that is sunk, by its **Sunk** range: how far under th
 
 ### Biomes
 
-A world's ground is one kind of country until it has [[Biomes|biomes]]. List some under **Biomes**, or press **Add Starter Biomes** there for eight ready ones, and each place takes the blocks of the biome its climate and height make it: snow on the heights, sand in the dry heat, moss in the wet. The world's own Top, Under and Base blocks are used wherever a biome names none.
+A world's ground is one kind of country until it has [[Biomes|biomes]]. A world first given a generator starts with three [[Biomes#Showcase biomes|showcase biomes]] and their trees. List others under **Biomes**, or press **Add Starter Biomes** there for eight ready ones, and each place takes the blocks of the biome its climate and height make it: snow on the heights, sand in the dry heat, moss in the wet. The world's own Top, Under and Base blocks are used wherever a biome names none.
 
 ### Covers
 

@@ -1330,7 +1330,8 @@ variants inherit from a parent and override only what differs.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler implemented in `voxear_shader_graph`; the editor, the asset, moving work to
+the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1353,6 +1354,20 @@ in five places, and each has its answer here:
 Values being dragged are kept as properties, so dragging never compiles; they are folded in when the graph is
 saved. A custom node is Slang read into the same form, so it does not stand in the way of any of this. The test:
 the built-in shaders made again as graphs draw the same picture in the same GPU time as the hand-written ones.
+
+How it is built so far. Lowering asks each output node for its inputs back through the wires (`lower`), so a node
+no output reaches is never lowered. Steps are made through one builder (`ir::Builder`) that does at once what a
+later pass would: a step whose inputs are all known is the number it comes to, one that changes nothing (adding
+nothing, times one, a vector taken apart and put back together) is its input, and one asked for again with the
+same inputs, either way round for those that commute, is the step already made, keyed by its numbers to the bit.
+What no output reads is dropped when the program is finished. Each step's rate is the highest of its inputs',
+properties and the time counting as once a draw. Writing Slang (`emit`) places every step in the innermost block
+all its readers are in, so the steps only one side of a real branch reads go inside it; a Branch is real when a
+side holds a picture read or work enough to skip (two instructions behind a condition the same all over a draw,
+sixteen behind one that changes from pixel to pixel), settled by placing again until nothing changes. Known
+values, what the function is given and properties are written where they are read; every other step is a local
+of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
+pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
 
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.

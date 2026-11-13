@@ -454,3 +454,117 @@ fn blocks_and_their_water_show_through_an_opening_as_they_stand_twenty_kilometre
     assert!(differ * 50 < all, "{differ} of {all} pixels in the opening differ from the far field");
     assert!(wet * 20 > all, "the far field's water shows in the opening: {wet} of {all} pixels");
 }
+
+/// Hills of blocks 256 a side with a wood of pillars, at the world's middle
+/// and again 20 km along x, the camera on the first looking along +z, at
+/// 1920 × 1080: the frame's cost with no Portal, with one whose opening
+/// covers a third of the picture and leads to the second hills, and with
+/// two in view.
+fn timing_world(renderer: &mut Renderer) -> (World, Entity) {
+    use std::sync::Arc;
+    use voxear_render::{BlockLook, Sky, SurfaceLook};
+    use voxear_terrain::blocks::{BlockMap, BlockWorld, file::BlockFile};
+    const FAR: i32 = 20_000;
+    let file = BlockFile::default();
+    let mut blocks = BlockMap::default();
+    for at in [0, FAR] {
+        for z in -128..128 {
+            for x in -128..128 {
+                let (fx, fz) = (x as f32, z as f32);
+                let top = (6.0 + (fx * 0.07).sin() * 3.0 + (fz * 0.05).cos() * 3.0 + (fx * 0.13 + fz * 0.11).sin()) as i32;
+                for y in 0..top {
+                    blocks.set([at + x, y, z], if y + 1 == top { 1 } else if y + 4 > top { 2 } else { 3 });
+                }
+                // A pillar every seven blocks each way, as tall as a tree.
+                if x.rem_euclid(7) == 3 && z.rem_euclid(7) == 3 && (x.abs() > 4 || z < 0) {
+                    for y in top..top + 6 {
+                        blocks.set([at + x, y, z], 2);
+                    }
+                }
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::from_position(Vec3::new(0.0, -10.0, 0.0))));
+    let eye = Vec3::new(0.0, 1.0, -4.0);
+    let camera = world.spawn((Camera::default(), Transform::new(eye, Quat::IDENTITY, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.75, -0.3).normalize();
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards_sun), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    (world, camera)
+}
+
+/// The least GPU time of `frames` frames after `settle` more, in milliseconds:
+/// on a GPU other programs use, the least is the frame's own.
+fn least_frame(renderer: &mut Renderer, world: &World, settle: u32, frames: u32) -> f32 {
+    let mut least = f32::MAX;
+    for frame in 0..settle + frames {
+        renderer.render(world, 1.0 + frame as f32 / 60.0).expect("frame renders");
+        if frame >= settle {
+            least = least.min(renderer.gpu_frame_ms());
+        }
+    }
+    least
+}
+
+/// What one Portal whose opening covers a third of the picture may add to a
+/// frame at 1080p, and two in view, in milliseconds.
+const ONE_PORTAL_MS: f32 = 1.5;
+const TWO_PORTALS_MS: f32 = 2.5;
+
+#[test]
+fn a_portal_over_a_third_of_the_picture_and_two_in_view_cost_no_more_than_their_budget() {
+    let renderer = Renderer::new_offscreen(1920, 1080, &RendererSettings::default());
+    let Ok(mut renderer) = renderer else { return eprintln!("skipping: no usable GPU") };
+    let (mut world, camera) = timing_world(&mut renderer);
+    let none = least_frame(&mut renderer, &world, 20, 60);
+
+    // The opening 3 m wide and 4 m high, 4 m in front of the camera: a third of the picture.
+    let half_turn = Quat::from_rotation_y(std::f32::consts::PI);
+    let size = Vec2::new(3.0, 4.0);
+    let place = |world: &mut World, near: Vec3, far: Vec3| {
+        let a = world.spawn((Portal::default(), Transform::new(near, half_turn, Vec3::ONE)));
+        let b = world.spawn((Portal::default(), Transform::new(far, Quat::IDENTITY, Vec3::ONE)));
+        *world.get_mut::<Portal>(a).unwrap() = Portal::to(size, b);
+        *world.get_mut::<Portal>(b).unwrap() = Portal::to(size, a);
+        [a, b]
+    };
+    let first = place(&mut world, Vec3::new(0.0, -1.0, 0.0), Vec3::new(20_000.0, -4.0, 10.0));
+    let pose = PortalPose::of_obj(&world, first[0]).unwrap();
+    let at = *world.get::<Transform>(camera).unwrap();
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_rotation_translation(at.rotation, at.position).inverse();
+    let projection = vulkan::perspective_infinite_reverse(60f32.to_radians(), 16.0 / 9.0, 0.1);
+    let [x0, y0, x1, y1] = voxear_render::portals::rect_in_view(pose.corners(size), projection * view).unwrap();
+    let cover = (x1 - x0) * (y1 - y0) * 0.25;
+    assert!((0.28..0.4).contains(&cover), "the opening covers {cover} of the picture");
+    let one = least_frame(&mut renderer, &world, 20, 60);
+    // Two in view: the first moved to the left and a second to the right, each a sixth of the picture.
+    world.get_mut::<Transform>(first[0]).unwrap().position = Vec3::new(-2.6, -1.0, 4.0);
+    place(&mut world, Vec3::new(2.6, -1.0, 4.0), Vec3::new(20_040.0, -4.0, -30.0));
+    let two = least_frame(&mut renderer, &world, 20, 60);
+    eprintln!("frame: {none:.2} ms with no Portal, {one:.2} with one over a third of the picture, {two:.2} with two");
+    assert!(one - none <= ONE_PORTAL_MS, "one Portal added {:.2} ms", one - none);
+    assert!(two - none <= TWO_PORTALS_MS, "two Portals added {:.2} ms", two - none);
+}

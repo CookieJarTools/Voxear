@@ -452,7 +452,7 @@ Blocks.Break(impact, 2f);
 | --- | --- |
 | `Blocks.All` | Every block of the project |
 | `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
-| `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is |
+| `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is. A [[Blocks#Blocks of parts|block of parts]] is met where its parts are: a slab lying low on its top, half a block down |
 | `Blocks.Set(position, block)` | Sets one block |
 | `Blocks.Fill(from, to, block)` | Sets every block in a box |
 | `Blocks.Ball(middle, radius, block)` | Sets every block in a ball |

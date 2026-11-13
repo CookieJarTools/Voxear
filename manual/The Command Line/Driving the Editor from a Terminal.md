@@ -61,6 +61,8 @@ vox editor call obj.create kind="Point Light" name=Lamp position=[0,3,0]
 { "obj": { "scene": "713a4d989c654c6ca23b1d63201e0090", "path": "7" } }
 ```
 
+`on_ground=true` stands what is made on the ground under its position, on `obj.create` and `obj.set` alike: on a mesh, a terrain or a Block World's top, and on a slab half a block down. Portals and a Car, made with no position, go on the ground in the middle of the Scene view.
+
 Look at what it has:
 
 ```bash

@@ -4,7 +4,9 @@
 //! brush opens it and undo shuts it again; and a block's Inspector offers
 //! every shape, with a door's motion's keys to change; and the Paint brush
 //! keeps a painted block's shape, generated ground's slabs and slabs and
-//! stairs put down by hand. Skips itself without a GPU.
+//! stairs put down by hand; and what is put on slab ground stands on the
+//! slab's top, half a block down: new Portals, an Obj stood on the ground,
+//! and a block built on a slab. Skips itself without a GPU.
 
 use voxear_core::logging::LogCapture;
 use voxear_ecs::Entity;
@@ -425,17 +427,25 @@ fn type_into(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label:
     frame(editor, renderer);
 }
 
-#[test]
-fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
-    use voxear_engine::blocks::{BlockWorldAsset, block_number_state};
+/// A copy of Hello with generated hills of grass, their top laid in half
+/// blocks, open in the editor with the hills selected and moved so a grass
+/// slab in their middle shows `down` of the way down the middle of the
+/// Scene view, 14 m off; Hello's own ground drawn no more.
+struct Hills {
+    dir: tempfile::TempDir,
+    editor: voxear_editor::Editor,
+    hills: Entity,
+    grass_slab: u16,
+    blocks: BlockWorld,
+    slab: [i32; 3],
+    point: [f32; 2],
+}
+
+fn on_hills(renderer: &mut Renderer, down: f32) -> Hills {
+    use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::blocks::{
-        block::BlockShape,
         file::{BlockFile, BlockKind},
         generate::BlockGenerate,
-    };
-    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
-        eprintln!("skipping: no usable GPU");
-        return;
     };
     // Generated hills of grass, their top laid in half blocks.
     let dir = hello_with_parts();
@@ -465,14 +475,14 @@ fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
     let end = scene[plane..].find("\n\n").map_or(scene.len(), |end| plane + end);
     std::fs::write(&environment, format!("{}{}", &scene[..plane], &scene[end..])).unwrap();
     let project = Project::open(dir.path()).unwrap();
-    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
-    frame(&mut editor, &mut renderer);
+    let mut editor = voxear_editor::Editor::open_without_memory(project, renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, renderer);
     let hills = obj(&editor, "Hills");
     editor.select(Some(hills));
-    frame(&mut editor, &mut renderer);
+    frame(&mut editor, renderer);
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(hills).expect("generated").clone();
     let grass_slab = asset.file.generate.as_ref().unwrap().halves.as_ref().expect("its slabs numbered")[1];
-    // The hills moved so a grass slab in their middle shows under the bottom middle of the view.
+    // The hills moved so a grass slab in their middle shows where the view is asked to show it.
     let blocks = editor.game.engine.world.get::<BlockWorld>(hills).unwrap().clone();
     let top = |x: i32, z: i32| (-8..120).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).map(|y| [x, y, z]);
     let mut slabs: Vec<[i32; 3]> = (8..40)
@@ -483,7 +493,7 @@ fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
     slabs.sort_by_key(|at| (at[0] - 24).pow(2) + (at[2] - 24).pow(2));
     let camera = editor.scene_camera().expect("the Scene view");
     let [x, y, w, h] = camera.rect;
-    let (origin, direction) = camera.ray([x + w / 2.0, y + h * 0.7]);
+    let (origin, direction) = camera.ray([x + w / 2.0, y + h * down]);
     let mut found = None;
     for &slab in &slabs {
         let middle = voxear_core::math::Vec3::new(slab[0] as f32 + 0.5, slab[1] as f32 + 0.5, slab[2] as f32 + 0.5);
@@ -495,6 +505,21 @@ fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
         }
     }
     let (slab, point) = found.expect("a grass slab in sight");
+    frame(&mut editor, renderer);
+    frame(&mut editor, renderer);
+    Hills { dir, editor, hills, grass_slab, blocks, slab, point }
+}
+
+#[test]
+fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
+    use voxear_engine::blocks::{BlockWorldAsset, block_number_state};
+    use voxear_terrain::blocks::block::BlockShape;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let Hills { dir: _dir, mut editor, hills, grass_slab, blocks, slab, point } = on_hills(&mut renderer, 0.7);
+    let top = |x: i32, z: i32| (-8..120).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).map(|y| [x, y, z]);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "paint-slabs-before.png");
@@ -586,4 +611,146 @@ fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
     assert_eq!((shape, guid, state_at(&editor, hills, upright_at).unwrap()), (BlockShape::Slab, Some(sand), east));
     assert_eq!(shape_of(&editor, stair_at).0, stair, "the stair is left as it was");
     shot(&mut renderer, "paint-slabs-by-hand.png");
+}
+
+/// A call over the editor's link, answered once frames have run it, as a tool makes it.
+fn link_call(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, call: &str, args: serde_json::Value) {
+    let answer = editor.call(call, args);
+    for _ in 0..30 {
+        frame(editor, renderer);
+        if let Ok(answered) = answer.try_recv() {
+            answered.unwrap_or_else(|error| panic!("{call}: {error}"));
+            return;
+        }
+    }
+    panic!("{call} was not answered");
+}
+
+/// Writes the part of what the renderer last drew round `middle`, `half` pixels each way, four times as large, to
+/// `name` in `VOXEAR_TEST_OUTPUT`, when set.
+fn close_up(renderer: &mut Renderer, name: &str, middle: [f32; 2], half: u32) {
+    let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let side = half * 2;
+    let left = (middle[0] as u32).saturating_sub(half).min(width - side);
+    let top = (middle[1] as u32).saturating_sub(half).min(height - side);
+    let mut out = Vec::with_capacity((side * side * 16 * 4) as usize);
+    for y in 0..side * 4 {
+        for x in 0..side * 4 {
+            let at = (((top + y / 4) * width + left + x / 4) * 4) as usize;
+            out.extend_from_slice(&pixels[at..at + 4]);
+        }
+    }
+    let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+    let mut encoder = png::Encoder::new(file, side * 4, side * 4);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().unwrap().write_image_data(&out).unwrap();
+}
+
+#[test]
+fn what_is_put_on_slab_ground_stands_on_the_slabs_top_half_a_block_down() {
+    use voxear_core::math::Vec3;
+    use voxear_terrain::blocks::ground_top;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let Hills { dir: _dir, mut editor, hills, grass_slab, blocks, slab, .. } = on_hills(&mut renderer, 0.5);
+    // Hello's own Objs, out of the middle of the view.
+    for name in ["Spinner A", "Spinner B", "Chrome Ball", "Lamp", "Glow", "Pyramid"] {
+        let entity = obj(&editor, name);
+        editor.game.engine.world.get_mut::<voxear_scene::Transform>(entity).unwrap().position.y -= 1000.0;
+    }
+    frame(&mut editor, &mut renderer);
+    let corner = editor.game.engine.world.get::<voxear_scene::Transform>(hills).unwrap().position;
+    let position = |editor: &voxear_editor::Editor, entity| {
+        voxear_scene::world_matrix(&editor.game.engine.world, entity).w_axis.truncate()
+    };
+    // The ground under a point of the world, in metres, as the hills' blocks have it.
+    let ground = |at: Vec3| {
+        let local = at - corner;
+        let cell = [local.x.floor() as i32, (local.y - 1e-3).floor() as i32, local.z.floor() as i32];
+        (ground_top(&blocks.blocks, &blocks.faces, cell, (local.x, local.z)).map(|top| corner.y + top), cell)
+    };
+    // New Portals, made where nothing says, stand on the ground in the middle of the view: on the slab there, half
+    // a block down.
+    link_call(&mut editor, &mut renderer, "obj.create", serde_json::json!({ "kind": "Portals" }));
+    let portals = obj(&editor, "Portals");
+    let at = position(&editor, portals);
+    let (under, cell) = ground(at);
+    assert_eq!(blocks.blocks.get(cell), grass_slab, "the Portals stand over the slab: {cell:?}, slab {slab:?}");
+    assert!(under.is_some_and(|under| (at.y - under).abs() < 1e-3), "on its top: {at} over {under:?}");
+    assert!((at.y - corner.y - cell[1] as f32 - 0.5).abs() < 1e-3, "half a block down: {at}");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let camera = editor.scene_camera().unwrap();
+    let base = camera.project(at + Vec3::new(1.5, 0.0, 0.0)).expect("the frame's foot on screen");
+    shot(&mut renderer, "slab-portals.png");
+    close_up(&mut renderer, "slab-portals-foot.png", base, 60);
+    link_call(&mut editor, &mut renderer, "undo", serde_json::json!({}));
+    // A cube made over the slab and stood on the ground stands on its top; moved over a whole block and stood
+    // again, on that block's.
+    let over = corner + Vec3::new(slab[0] as f32 + 0.5, slab[1] as f32 + 3.0, slab[2] as f32 + 0.5);
+    let args = serde_json::json!({ "kind": "Cube", "position": over.to_array(), "on_ground": true, "name": "Stood" });
+    link_call(&mut editor, &mut renderer, "obj.create", args);
+    let cube = obj(&editor, "Stood");
+    let at = position(&editor, cube);
+    assert!((at.y - (corner.y + slab[1] as f32 + 0.5)).abs() < 1e-3, "on the slab's top: {at}");
+    frame(&mut editor, &mut renderer);
+    let on_screen = editor.scene_camera().unwrap().project(at).expect("the cube on screen");
+    close_up(&mut renderer, "slab-cube.png", on_screen, 60);
+    let whole = (-3..=3)
+        .flat_map(|dx| (-3..=3).map(move |dz| [slab[0] + dx, slab[2] + dz]))
+        .filter_map(|[x, z]| (-8..120).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).map(|y| [x, y, z]))
+        .find(|&at| blocks.blocks.get(at) != grass_slab)
+        .expect("a whole block near");
+    let over = corner + Vec3::new(whole[0] as f32 + 0.5, whole[1] as f32 + 3.0, whole[2] as f32 + 0.5);
+    let set =
+        serde_json::json!({ "obj": { "entity": cube.to_bits() }, "position": over.to_array(), "on_ground": true });
+    link_call(&mut editor, &mut renderer, "obj.set", set);
+    let at = position(&editor, cube);
+    assert!((at.y - (corner.y + whole[1] as f32 + 1.0)).abs() < 1e-3, "on the whole block's top: {at}");
+    // A block built on a slab, clicked where its top shows through the empty half of its block, goes on top of
+    // it, not beside it.
+    let camera = editor.scene_camera().unwrap();
+    let eye = camera.position;
+    let target = (-6..=6)
+        .flat_map(|dx| (-6..=6).map(move |dz| [slab[0] + dx, slab[2] + dz]))
+        .filter_map(|[x, z]| (-8..120).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).map(|y| [x, y, z]))
+        .filter(|&at| blocks.blocks.get(at) == grass_slab)
+        .find_map(|at| {
+            let middle = corner + Vec3::new(at[0] as f32 + 0.5, at[1] as f32 + 0.5, at[2] as f32 + 0.5);
+            let away = Vec3::new(middle.x - eye.x, 0.0, middle.z - eye.z).normalize();
+            let point = camera.project(middle + away * 0.4)?;
+            let (origin, direction) = camera.ray(point);
+            let from = (origin - corner).to_array();
+            let cells = voxear_terrain::blocks::raycast(&blocks.blocks, from, direction.to_array(), 500.0)?;
+            let any = |block: u16| block != 0;
+            let shaped = voxear_terrain::blocks::raycast_shaped(
+                &blocks.blocks,
+                &blocks.faces,
+                from,
+                direction.to_array(),
+                500.0,
+                &any,
+            )?;
+            let sideways = cells.block == at && cells.normal[1] == 0;
+            (sideways && shaped.block == at && shaped.normal == [0, 1, 0]).then_some((at, point, cells.normal))
+        });
+    let (at, point, side) = target.expect("a slab whose top shows through its block's side");
+    editor.select(Some(hills));
+    frame(&mut editor, &mut renderer);
+    pick_asset(&mut editor, &mut renderer, "Block", "Plain.block");
+    click_scene(&mut editor, &mut renderer, point);
+    let world = editor.game.engine.world.get::<BlockWorld>(hills).unwrap();
+    let plain = editor.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(hills).unwrap().drawn.clone();
+    let id = world.blocks.get([at[0], at[1] + 1, at[2]]);
+    assert_eq!(plain.guid(id), editor.game.content.db().guid_of("Parts/Plain.block"), "on top of the slab");
+    let beside = [at[0] + side[0], at[1], at[2] + side[2]];
+    assert_eq!(world.blocks.get(beside), blocks.blocks.get(beside), "nothing put beside it");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let shown = corner + Vec3::new(at[0] as f32 + 0.5, at[1] as f32 + 1.0, at[2] as f32 + 0.5);
+    let on_screen = editor.scene_camera().unwrap().project(shown).expect("the block on screen");
+    close_up(&mut renderer, "slab-built.png", on_screen, 60);
 }

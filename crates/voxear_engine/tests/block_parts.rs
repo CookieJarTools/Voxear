@@ -3,7 +3,8 @@
 //! and the open door are saved beside the world and come back with it; and
 //! a generated world's structures put their doors down turned as each
 //! structure stands; and a block of parts painted keeps its shape and the
-//! way it stands, a generated slab becoming the painted block's slab.
+//! way it stands, a generated slab becoming the painted block's slab; and
+//! an item dropped on a slab rests on its top, half a block down.
 
 use voxear_engine::{Engine, Game, Project};
 use voxear_terrain::blocks::{
@@ -240,4 +241,33 @@ fn a_block_of_parts_painted_keeps_its_shape_and_the_way_it_stands() {
     assert_eq!(drawn.guid(steps_stair), Some(steps));
     assert_eq!(BlockState::from_byte(drawn.kind(steps_stair).unwrap().state), upper_west);
     assert_eq!(paint(&mut game, &mut file, stone, stair), None, "stone has no stairs");
+}
+
+#[test]
+fn an_item_dropped_on_a_slab_rests_on_its_top_half_a_block_down() {
+    use voxear_engine::item_drops::{SIZE, drop_item};
+    let mut file = BlockFile::default();
+    file.ground.size = [16, 16];
+    file.ground.height = 6;
+    let dir = project(&file);
+    std::fs::write(dir.path().join("Blocks/Slab.block"), "color = [0.6, 0.6, 0.6]\nshape = \"slab\"\n").unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let low = BlockState::default_for(voxear_terrain::blocks::block::BlockShape::Slab);
+    let high = BlockState { facing: BlockFacing::Up, ..BlockState::default() };
+    put(&mut game, [4, 6, 4], "Blocks/Slab.block", low);
+    put(&mut game, [8, 6, 4], "Blocks/Slab.block", high);
+    put(&mut game, [12, 6, 4], "Blocks/Planks.block", BlockState::default());
+    let at = |x: f32| voxear_core::math::Vec3::new(x, 9.0, 4.5);
+    let drops: Vec<_> = [4.5, 8.5, 12.5]
+        .map(|x| drop_item(&mut game.engine.world, "Items/Stone.item", 1, at(x), voxear_core::math::Vec3::ZERO))
+        .into();
+    for _ in 0..120 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let rests = |entity| game.engine.world.get::<voxear_scene::Transform>(entity).unwrap().position.y - SIZE * 0.5;
+    let [on_low, on_high, on_planks] = [rests(drops[0]), rests(drops[1]), rests(drops[2])];
+    assert!((on_low - 6.5).abs() < 1e-3, "on the low slab's top: {on_low}");
+    assert!((on_high - 7.0).abs() < 1e-3, "on the high slab's: {on_high}");
+    assert!((on_planks - 7.0).abs() < 1e-3, "on a whole block's: {on_planks}");
 }

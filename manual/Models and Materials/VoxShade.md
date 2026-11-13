@@ -8,7 +8,7 @@ A VoxShade shader costs what the same shader written by hand costs. Before any S
 
 ## Making a VoxShade shader
 
-Right-click in the Project panel, choose **New Shader…**, and pick **VoxShade**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram (VoxShade)** and **Sway (VoxShade)** start as the built-in shaders made of nodes, to change.
+Right-click in the Project panel, choose **New Shader…**, and pick **VoxShade**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram (VoxShade)** and **Sway (VoxShade)** start as the built-in shaders made of nodes, to change. **Sub-graph** makes nodes for other VoxShade graphs to use as one (see [Sub-graphs](#sub-graphs)).
 
 Double-click the `.voxshade` file, or press **Open** in its Inspector, to open it in the **VoxShade** panel.
 
@@ -53,11 +53,31 @@ Pick a node and its values show at the top of the side:
 | Logic | **Compare** gives true or false; **Branch** gives one value or another as a condition holds |
 | Vectors | **Split** a vector into its numbers, **Combine** numbers into one, **Swizzle** its numbers into another order |
 | Noise | **Random**: a number from 0 to 1 that looks random and is the same for the same seed |
+| Custom | **Slang**: code of your own (see [Slang nodes](#slang-nodes)) |
+| Sub-graphs | Each of the project's sub-graphs |
 | Outputs | **Surface Output** sets the surface's colour, alpha, normal, metallic, roughness and emission. **Vertex Output** moves each vertex. **Light Output** replaces the standard lighting with your own |
 
 Most Math nodes work on numbers of any width: wire a Vector 3 into an Add and it adds Vector 3s. A single number wired in beside a vector stands for that number in every place.
 
 A **Branch** worked out once a draw, as on a property, only runs the side it takes, when that side is worth skipping. One that changes from pixel to pixel runs both sides unless one reads a picture or does a lot of work, because pixels running together wait for each other either way.
+
+## Slang nodes
+
+A **Slang** node runs code you write, for what the other nodes cannot do well, as a loop. Pick it to set its values beside the canvas:
+
+- **Name**: what its function is called in the shader's Slang.
+- **Input** and **Output** rows: each a name, which the code reads or sets it by, and a type, Number or Vector 2, 3 or 4. **Add Input** and **Add Output** add one; the cross takes one away.
+- **Code**: Slang that sets every output from the inputs. For an input `edge` and an output `glow`, `glow = float3(edge, edge * 0.5, 0.0);`.
+
+The shader declares the code once as a function, and calls it once for the same inputs, however many nodes hold the same code. Its code runs on the graphics card only, so its preview, and those of the nodes after it, are striped, and nothing after it is worked out once a material on the CPU. Under it is a guess at what it costs, counted from its sums and calls; a loop counts once. A mistake in its code shows as the shader failing to compile: its Inspector's **State** says what is wrong and on which line of the Slang under **Code**.
+
+## Sub-graphs
+
+A sub-graph is nodes that other VoxShade graphs use as one node: a rim of light, a pattern, a way of blending. Make one with **New Shader… > Sub-graph**. It is a `.voxshade` file, but not a shader: materials do not offer it.
+
+In a sub-graph, **Inputs and Outputs** beside the canvas take the place of Properties. Each input has a name, a type and a **Default**, which it takes where a graph using it leaves it unwired; each output has a name and a type. The search's **Sub-graph** folder has a node for each input, and the **Sub-graph Output** takes a value for each output. A sub-graph has no properties of its own: bring values in through its inputs. Its previews show its inputs at their defaults.
+
+In another graph, the search's **Sub-graphs** folder adds one, or pick which on a Sub-graph node's **Sub-graph** row. Its inputs and outputs are the sub-graph's, and change as it changes. When a graph is compiled, each sub-graph it uses is worked into it, so what the sub-graph works out is folded, shared and left out with everything round it, and costs what the same nodes in the graph would. Its cost shows under the node that uses it. A sub-graph can use others, but not itself. Pictures cannot be passed into a sub-graph yet.
 
 ## Properties
 

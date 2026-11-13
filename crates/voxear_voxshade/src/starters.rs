@@ -150,6 +150,25 @@ pub fn lit(name: &str) -> Graph {
     graph
 }
 
+/// A sub-graph a new one starts as: how far a surface faces away from the
+/// camera, raised to a power, 0 facing it and 1 edge on.
+pub fn sub_graph(name: &str) -> Graph {
+    let mut m = Make::new(name);
+    m.graph.sub_graph = true;
+    let power = m.graph.add_input("power", Ty::Float);
+    m.graph.inputs[0].default = [2.0; 4];
+    m.graph.add_output("result", Ty::Float);
+    let normal = m.input(Input::Normal);
+    let view = m.input(Input::View);
+    let facing = m.math(MathOp::Dot, &[Wire(normal), Wire(view)]);
+    let side = m.math(MathOp::Absolute, &[Wire(facing)]);
+    let away = m.math(MathOp::OneMinus, &[Wire(side)]);
+    let power = m.node(NodeKind::SubGraphInput { input: power }, &[]);
+    let raised = m.math(MathOp::Power, &[Wire(away), Wire(power)]);
+    m.node(NodeKind::SubGraphOutput, &[Wire(raised)]);
+    m.finish()
+}
+
 /// A figure of light, brighter at its edges, with lines scrolling up it and a flicker, as the built-in Hologram.
 pub fn hologram() -> Graph {
     let mut m = Make::new("Hologram");

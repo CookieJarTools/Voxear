@@ -50,7 +50,7 @@ struct Placing {
 
 /// Whether a step is written where it is read rather than as a local.
 fn written_in_place(step: &Step) -> bool {
-    matches!(step.op, Op::Const(_) | Op::Given(_) | Op::Property(_))
+    matches!(step.op, Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::CallOut(_))
 }
 
 fn common_block(blocks: &[Block], mut a: usize, mut b: usize) -> usize {
@@ -187,6 +187,7 @@ fn given(stage: Stage, given: Given) -> String {
     let surface = ["color", "alpha", "normal", "metallic", "roughness", "emission"];
     match given {
         Given::Surface(slot) => format!("surface.{}", surface[slot]),
+        Given::Argument(n) => format!("arg{n}"),
         Given::Input(input) => {
             let field = match input {
                 Input::Uv => "uv",
@@ -224,10 +225,12 @@ impl Writer<'_> {
         }
         match &step.op {
             Op::Const(value) => constant(step.ty, *value),
+            Op::Given(Given::Argument(n)) => self.graph.inputs.get(*n).map_or("missing".into(), |pin| pin.name.clone()),
             Op::Given(what) => given(self.stage, *what),
             Op::Property(property) => {
                 format!("props.{}", self.graph.property(*property).map_or("missing", |p| p.name.as_str()))
             }
+            Op::CallOut(output) => format!("v{}_{output}", step.args[0].0),
             _ => format!("v{}", id.0),
         }
     }
@@ -239,7 +242,8 @@ impl Writer<'_> {
             format!("{name}({})", step.args.iter().map(|arg| self.read(*arg)).collect::<Vec<_>>().join(", "))
         };
         match &step.op {
-            Op::Const(_) | Op::Given(_) | Op::Property(_) => unreachable!("written in place"),
+            Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::CallOut(_) => unreachable!("written in place"),
+            Op::Call(_) => unreachable!("written as a statement"),
             Op::Sample(property) => {
                 let name = self.graph.property(*property).map_or("missing", |p| p.name.as_str());
                 format!("props.{name}.sample({})", a(0))
@@ -301,6 +305,20 @@ impl Writer<'_> {
                 continue;
             }
             let ty = step.ty.slang();
+            if let Op::Call(function) = &step.op {
+                // Its outputs declared, then set by the call.
+                let mut outputs = vec![format!("v{index}")];
+                for (n, (_, ty)) in function.outputs.iter().enumerate() {
+                    let name = if n == 0 { format!("v{index}") } else { format!("v{index}_{n}") };
+                    let _ = writeln!(self.text, "{pad}{} {name};", ty.slang());
+                    if n > 0 {
+                        outputs.push(name);
+                    }
+                }
+                let args = step.args.iter().map(|arg| self.read(*arg)).chain(outputs);
+                let _ = writeln!(self.text, "{pad}{}({});", function.slang_name(), args.collect::<Vec<_>>().join(", "));
+                continue;
+            }
             match self.plan.placing.sides[index] {
                 Some([yes, no]) => {
                     let _ = writeln!(self.text, "{pad}{ty} v{index};");
@@ -366,6 +384,11 @@ pub fn body(graph: &Graph, program: &Program, stage: Stage, plan: &Plan) -> Stri
     let surface = ["color", "alpha", "normal", "metallic", "roughness", "emission"];
     for &(slot, id) in &program.outputs {
         let value = writer.read(id);
+        if graph.sub_graph {
+            let name = graph.outputs.get(slot).map_or("missing", |pin| pin.name.as_str());
+            let _ = writeln!(writer.text, "    {name} = {value};");
+            continue;
+        }
         let _ = match stage {
             Stage::Surface => writeln!(writer.text, "    surface.{} = {value};", surface[slot]),
             Stage::Vertex | Stage::Light => writeln!(writer.text, "    return {value};"),

@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use voxear_assets::AssetGuid;
+
 use crate::{graph::PropertyId, types::Ty};
 
 /// Which of a shader's functions a graph's nodes run in.
@@ -360,6 +362,66 @@ pub enum NodeKind {
     },
     /// A number from 0 to 1 that looks random, the same for the same seed.
     Random,
+    /// Slang written by hand: a function of its inputs that sets its
+    /// outputs, called where the graph needs them.
+    Code {
+        name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inputs: Vec<Pin>,
+        outputs: Vec<Pin>,
+        code: String,
+    },
+    /// A sub-graph, another VoxShade file, worked into this graph where it
+    /// is used: its name, inputs and outputs as they were when it was last
+    /// read, which the editor keeps up to date.
+    SubGraph {
+        graph: AssetGuid,
+        name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inputs: Vec<Pin>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        outputs: Vec<Pin>,
+    },
+    /// One of a sub-graph's inputs, by its number.
+    SubGraphInput {
+        input: u32,
+    },
+    /// What a sub-graph gives: an input for each of its outputs.
+    SubGraphOutput,
+}
+
+/// A port of a Slang node, or an input or output of a sub-graph: its name,
+/// what it takes or gives, and for an input the numbers it has with
+/// nothing wired in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pin {
+    /// Its number among a sub-graph's inputs or outputs, which an Input
+    /// node reads it by; 0 on a Slang node's.
+    #[serde(default, skip_serializing_if = "is_zero_id")]
+    pub id: u32,
+    pub name: String,
+    pub ty: Ty,
+    #[serde(default, skip_serializing_if = "is_zero_value")]
+    pub default: [f32; 4],
+}
+
+fn is_zero_id(id: &u32) -> bool {
+    *id == 0
+}
+
+fn is_zero_value(value: &[f32; 4]) -> bool {
+    *value == [0.0; 4]
+}
+
+impl Pin {
+    pub fn new(name: &str, ty: Ty) -> Self {
+        Self { id: 0, name: name.into(), ty, default: [0.0; 4] }
+    }
+
+    /// As a node's port.
+    pub fn port(&self) -> Port {
+        Port { label: self.name.clone(), ty: PortTy::Fixed(self.ty), default: self.default }
+    }
 }
 
 /// What a port takes or gives.
@@ -384,13 +446,13 @@ impl PortTy {
 /// input, the numbers it has with nothing wired in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Port {
-    pub label: &'static str,
+    pub label: String,
     pub ty: PortTy,
     pub default: [f32; 4],
 }
 
 fn port(label: &'static str, ty: PortTy, default: f32) -> Port {
-    Port { label, ty, default: [default; 4] }
+    Port { label: label.into(), ty, default: [default; 4] }
 }
 
 /// What a surface output's inputs set, in order.
@@ -423,6 +485,10 @@ impl NodeKind {
             Self::Combine { .. } => "Combine".into(),
             Self::Swizzle { .. } => "Swizzle".into(),
             Self::Random => "Random".into(),
+            Self::Code { name, .. } if name.is_empty() => "Slang".into(),
+            Self::Code { name, .. } | Self::SubGraph { name, .. } => name.clone(),
+            Self::SubGraphInput { .. } => "Input".into(),
+            Self::SubGraphOutput => "Sub-graph Output".into(),
         }
     }
 
@@ -468,21 +534,24 @@ impl NodeKind {
             }
             Self::Swizzle { .. } => vec![port("In", Fixed(Ty::Float4), 0.0)],
             Self::Random => vec![port("Seed", Any, 0.0)],
+            Self::Code { inputs, .. } | Self::SubGraph { inputs, .. } => inputs.iter().map(Pin::port).collect(),
             _ => Vec::new(),
         }
     }
 
-    /// Its outputs; `properties` says what a Property node's is.
+    /// Its outputs; `property` says what a Property node's is, or a
+    /// sub-graph's Input node's. A Sub-graph Output's inputs and an Input's
+    /// output are the graph's to say: see `Graph::inputs_of`.
     pub fn outputs(&self, property: Option<Ty>) -> Vec<Port> {
         use PortTy::{Any, Fixed};
         let out = |label, ty| vec![port(label, ty, 0.0)];
         match self {
-            Self::SurfaceOutput | Self::VertexOutput | Self::LightOutput => Vec::new(),
+            Self::SurfaceOutput | Self::VertexOutput | Self::LightOutput | Self::SubGraphOutput => Vec::new(),
             Self::Input { input } => out("Out", Fixed(input.ty())),
             Self::Surface => SURFACE_OUTPUTS.iter().map(|&(label, ty)| port(label, Fixed(ty), 0.0)).collect(),
             Self::Constant { ty, .. } => out("Out", Fixed(*ty)),
             Self::Color { .. } => vec![port("RGB", Fixed(Ty::Float3), 0.0), port("Alpha", Fixed(Ty::Float), 0.0)],
-            Self::Property { .. } => out("Out", Fixed(property.unwrap_or(Ty::Float))),
+            Self::Property { .. } | Self::SubGraphInput { .. } => out("Out", Fixed(property.unwrap_or(Ty::Float))),
             Self::SamplePicture { .. } => vec![
                 port("RGBA", Fixed(Ty::Float4), 0.0),
                 port("RGB", Fixed(Ty::Float3), 0.0),
@@ -499,6 +568,7 @@ impl NodeKind {
             Self::Combine { ty } => out("Out", Fixed(*ty)),
             Self::Swizzle { components } => out("Out", Fixed(Ty::of_width(components.len()))),
             Self::Random => out("Out", Fixed(Ty::Float)),
+            Self::Code { outputs, .. } | Self::SubGraph { outputs, .. } => outputs.iter().map(Pin::port).collect(),
         }
     }
 }

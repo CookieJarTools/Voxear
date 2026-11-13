@@ -17,12 +17,16 @@
 //! and the file is saved once nothing is held, which compiles the shader
 //! into the renderer's again.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
+use voxear_assets::AssetGuid;
 use voxear_ui::{Color, NodeId, Style, Ui};
 use voxear_voxshade::{
-    CompareOp, Compiled, Component, Graph, Input, Link, MathOp, Node, NodeId as GraphNode, NodeKind, PortTy,
-    PropertyId, PropertyKind, Stage, Ty, compile,
+    CompareOp, Compiled, Component, Graph, Input, Link, MathOp, Node, NodeId as GraphNode, NodeKind, Options, Pin,
+    PortTy, PropertyId, PropertyKind, Stage, Ty, compile_with,
 };
 
 use crate::{
@@ -150,7 +154,28 @@ enum Field {
     Name,
     Unlit,
     MaxOffset,
+    /// A Slang node's name and code, and one of its inputs' or outputs'
+    /// (`true`) name and type, by place.
+    CodeName,
+    CodeText,
+    CodePinName(bool, usize),
+    CodePinTy(bool, usize),
+    RemoveCodePin(bool, usize),
+    AddCodePin(bool),
+    /// Which of the project's sub-graphs a Sub-graph node uses.
+    SubGraphPick,
+    /// Which of the sub-graph's inputs an Input node reads.
+    InputPick,
+    /// One of the open sub-graph's inputs or outputs (`true`), by number.
+    PinName(bool, u32),
+    PinTy(bool, u32),
+    PinDefault(u32),
+    RemovePin(bool, u32),
+    AddPin(bool),
 }
+
+/// The project's sub-graphs, each its file's GUID, path and graph.
+pub type SubGraphs = Vec<(AssetGuid, String, Graph)>;
 
 /// The control a row edits its field with.
 #[derive(Clone, Debug)]
@@ -205,7 +230,13 @@ pub struct VoxShadePanel {
     /// The side's three parts' rows, built again when what they show changes shape.
     node_rows: NodeId,
     property_rows: NodeId,
+    pin_rows: NodeId,
     shader_rows: NodeId,
+    /// The project's sub-graphs, which Sub-graph nodes use, and the same by GUID, which compiling reads.
+    sub_graphs: SubGraphs,
+    library: HashMap<AssetGuid, Graph>,
+    /// The sub-graphs a Sub-graph node's choice lists, in order.
+    sub_choosable: Vec<AssetGuid>,
     rows: Vec<(Field, Control)>,
     /// What the rows were built for, to build them again when that changes.
     shape: String,
@@ -256,6 +287,7 @@ impl VoxShadePanel {
         ui.add_class(side, "generator-side");
         let node_rows = part(ui, side, "Node", "nodes");
         let property_rows = part(ui, side, "Properties", "shader");
+        let pin_rows = part(ui, side, "Inputs and Outputs", "nodes");
         let shader_rows = part(ui, side, "Shader", "settings");
         ui.set_visible(body, false);
         Self {
@@ -269,7 +301,11 @@ impl VoxShadePanel {
             canvas,
             node_rows,
             property_rows,
+            pin_rows,
             shader_rows,
+            sub_graphs: Vec::new(),
+            library: HashMap::new(),
+            sub_choosable: Vec::new(),
             rows: Vec::new(),
             shape: String::new(),
             choosable: Vec::new(),
@@ -286,16 +322,18 @@ impl VoxShadePanel {
     }
 
     /// Opens the graph at `path`: all of it in view, nothing picked, nothing to undo.
-    pub fn open(&mut self, ui: &mut Ui, path: &str, graph: Graph) {
+    pub fn open(&mut self, ui: &mut Ui, path: &str, mut graph: Graph) {
         let file = path.rsplit('/').next().unwrap_or(path);
         ui.set_text(self.name, file.strip_suffix(".voxshade").unwrap_or(file));
         ui.set_tooltip(self.name, path, None);
-        let compiled = compile(&graph);
+        // Its Sub-graph nodes as their sub-graphs now are, saved so.
+        let refreshed = refresh_sub_graphs(&mut graph, &self.library);
+        let compiled = compile_in(&graph, &self.library);
         self.open = Some(Open {
             path: path.to_string(),
             graph,
             history: History::default(),
-            unsaved: false,
+            unsaved: refreshed,
             compiled,
             drawn: CanvasGraph::default(),
             stale: true,
@@ -416,8 +454,29 @@ impl VoxShadePanel {
 
     /// What the search offers to add to the open graph, kept for its pick to name by place.
     pub fn offers(&mut self) -> &[Offer] {
-        self.offered = self.open.as_ref().map(|open| offers(&open.graph)).unwrap_or_default();
+        let path = self.path().map(str::to_string);
+        let others: Vec<_> = self.sub_graphs.iter().filter(|(_, at, _)| Some(at) != path.as_ref()).cloned().collect();
+        self.offered = self.open.as_ref().map(|open| offers(&open.graph, &others)).unwrap_or_default();
         &self.offered
+    }
+
+    /// The project's sub-graphs as they now are. The open graph's
+    /// Sub-graph nodes take their names, inputs and outputs, wires to
+    /// ports gone dropped, and it is compiled with them.
+    pub fn set_sub_graphs(&mut self, sub_graphs: SubGraphs) {
+        self.library = sub_graphs.iter().map(|(guid, _, graph)| (*guid, graph.clone())).collect();
+        self.sub_graphs = sub_graphs;
+        let Some(open) = self.open.as_mut() else { return };
+        open.stale = true;
+        let mut graph = open.graph.clone();
+        if refresh_sub_graphs(&mut graph, &self.library) {
+            self.change(graph);
+        }
+    }
+
+    /// The project's sub-graphs, as the panel has them.
+    pub fn sub_graphs(&self) -> &SubGraphs {
+        &self.sub_graphs
     }
 
     /// Adds the node the search offered at `place`, where the search was
@@ -485,7 +544,7 @@ impl VoxShadePanel {
             // Each node's picture, made again as the graph or the time changes what it shows.
             let time = self.started.elapsed().as_secs_f32();
             if let Some(open) = self.open.as_mut()
-                && self.previews.update(renderer, &open.graph, time)
+                && self.previews.update(renderer, &open.graph, &self.library, time)
             {
                 open.stale = true;
             }
@@ -519,7 +578,7 @@ impl VoxShadePanel {
     fn update_canvas(&mut self, ui: &mut Ui, alt: bool, events: &mut Vec<VoxShadeEvent>) {
         let Some(open) = self.open.as_mut() else { return };
         if std::mem::take(&mut open.stale) {
-            open.compiled = compile(&open.graph);
+            open.compiled = compile_in(&open.graph, &self.library);
             open.drawn = describe(&open.graph, &open.compiled);
             for node in &mut open.drawn.nodes {
                 node.picture = self.previews.picture(GraphNode(node.id as u32));
@@ -594,13 +653,23 @@ impl VoxShadePanel {
             [node] => graph.node(GraphNode(*node as u32)).cloned(),
             _ => None,
         };
-        let shape = shape(&graph, picked.as_ref());
+        let listed: Vec<&AssetGuid> = self.sub_graphs.iter().map(|(guid, _, _)| guid).collect();
+        let shape = format!("{} {listed:?}", shape(&graph, picked.as_ref()));
         if shape != self.shape {
             self.shape = shape;
             self.build_rows(ui, picked.as_ref());
         }
         if let Some((changed, field)) = self.read_rows(ui, &graph, picked.as_ref()) {
-            let merges = !matches!(field, Field::AddProperty | Field::RemoveProperty(_));
+            let merges = !matches!(
+                field,
+                Field::AddProperty
+                    | Field::RemoveProperty(_)
+                    | Field::AddCodePin(_)
+                    | Field::RemoveCodePin(..)
+                    | Field::AddPin(_)
+                    | Field::RemovePin(..)
+                    | Field::SubGraphPick
+            );
             self.change_by(changed, merges.then_some(EditKey::Row(field)));
         }
         let Some(graph) = self.open.as_ref().map(|open| open.graph.clone()) else { return };
@@ -609,14 +678,20 @@ impl VoxShadePanel {
     }
 
     fn build_rows(&mut self, ui: &mut Ui, picked: Option<&Node>) {
-        for container in [self.node_rows, self.property_rows, self.shader_rows] {
+        for container in [self.node_rows, self.property_rows, self.pin_rows, self.shader_rows] {
             for child in ui.children(container) {
                 ui.remove(child);
             }
         }
         self.rows.clear();
         self.choosable.clear();
+        self.sub_choosable.clear();
         let Some(graph) = self.open.as_ref().map(|open| open.graph.clone()) else { return };
+        // A sub-graph has inputs and outputs where a shader has properties.
+        let sub = graph.sub_graph;
+        show_part(ui, self.property_rows, None, !sub);
+        show_part(ui, self.pin_rows, None, sub);
+        show_part(ui, self.shader_rows, Some(if sub { "Sub-graph" } else { "Shader" }), true);
         let rows = self.node_rows;
         let mut choosable = Vec::new();
         match picked {
@@ -669,6 +744,63 @@ impl VoxShadePanel {
                         let names = if names.is_empty() { vec!["None yet: add one below".to_string()] } else { names };
                         choice(ui, Field::PropertyPick, if pictures { "Picture" } else { "Property" }, names);
                     }
+                    NodeKind::Code { inputs, outputs, code, .. } => {
+                        let row = prop(ui, rows, "Name");
+                        let name = ui.text_field(row, "");
+                        ui.set_tooltip(name, "What its function is called in the Slang: letters, digits and _", None);
+                        self.rows.push((Field::CodeName, Control::Text(name)));
+                        let names: Vec<&str> = NUMBER_TYS.iter().map(|t| t.name()).collect();
+                        for (out, pins) in [(false, inputs), (true, outputs)] {
+                            for place in 0..pins.len() {
+                                let row = prop(ui, rows, if out { "Output" } else { "Input" });
+                                let name = ui.text_field(row, "");
+                                ui.add_class(name, "value-input");
+                                self.rows.push((Field::CodePinName(out, place), Control::Text(name)));
+                                let ty = ui.dropdown(row, &names, 0);
+                                self.rows.push((Field::CodePinTy(out, place), Control::Choice(ty)));
+                                let remove = ui.icon_button(row, "close");
+                                ui.set_tooltip(
+                                    remove,
+                                    if out { "Remove this output" } else { "Remove this input" },
+                                    None,
+                                );
+                                self.rows.push((Field::RemoveCodePin(out, place), Control::Button(remove)));
+                            }
+                        }
+                        let buttons = ui.panel(rows, Style::row());
+                        for (out, label) in [(false, "Add Input"), (true, "Add Output")] {
+                            let add = ui.button(buttons, label);
+                            ui.add_class(add, "add-component");
+                            self.rows.push((Field::AddCodePin(out), Control::Button(add)));
+                        }
+                        let row = prop(ui, rows, "Code");
+                        let field = ui.text_field(row, "");
+                        ui.set_multiline(field, true);
+                        ui.add_class(field, "value-input");
+                        ui.add_class(field, "attr-multiline");
+                        let lines = code.lines().count().clamp(6, 24);
+                        ui.set_inline_style(field, &format!("height: {}px", lines * 16 + 10));
+                        ui.set_tooltip(field, "Slang that sets every output from the inputs, by their names", None);
+                        self.rows.push((Field::CodeText, Control::Text(field)));
+                    }
+                    NodeKind::SubGraph { .. } => {
+                        let own = self.open.as_ref().map(|open| open.path.clone());
+                        let listed: Vec<&(AssetGuid, String, Graph)> =
+                            self.sub_graphs.iter().filter(|(_, path, _)| Some(path) != own.as_ref()).collect();
+                        self.sub_choosable = listed.iter().map(|(guid, _, _)| *guid).collect();
+                        let names: Vec<String> = listed.iter().map(|(_, _, graph)| graph.name.clone()).collect();
+                        let names = if names.is_empty() {
+                            vec!["None yet: make one with New Shader".to_string()]
+                        } else {
+                            names
+                        };
+                        choice(ui, Field::SubGraphPick, "Sub-graph", names);
+                    }
+                    NodeKind::SubGraphInput { .. } => {
+                        let names: Vec<String> = graph.inputs.iter().map(|pin| pin.name.clone()).collect();
+                        let names = if names.is_empty() { vec!["None yet: add one below".to_string()] } else { names };
+                        choice(ui, Field::InputPick, "Input", names);
+                    }
                     NodeKind::Swizzle { .. } => {
                         for slot in 0..4 {
                             let row = prop(ui, rows, ["First", "Second", "Third", "Fourth"][slot]);
@@ -680,7 +812,7 @@ impl VoxShadePanel {
                     _ => {}
                 }
                 // The numbers each input with no wire into it takes.
-                for (index, port) in node.kind.inputs().iter().enumerate() {
+                for (index, port) in graph.inputs_of(&node.kind).iter().enumerate() {
                     if graph.link_into(node.id, index).is_some() {
                         continue;
                     }
@@ -688,7 +820,7 @@ impl VoxShadePanel {
                         PortTy::Fixed(ty) => ty.width(),
                         PortTy::Any => 1,
                     };
-                    let fields = numbers_row(ui, rows, port.label, width);
+                    let fields = numbers_row(ui, rows, &port.label, width);
                     // An output's input with nothing set takes the material's own, which it says.
                     if node.kind.output_stage().is_some() {
                         for &field in &fields {
@@ -735,12 +867,52 @@ impl VoxShadePanel {
         let add = ui.button(self.property_rows, "Add Property");
         ui.add_class(add, "add-component");
         self.rows.push((Field::AddProperty, Control::Button(add)));
-        // The shader's own settings.
+        // A sub-graph's inputs, then its outputs, each a few rows under its name.
+        let names: Vec<&str> = NUMBER_TYS.iter().map(|t| t.name()).collect();
+        for (out, pins) in [(false, &graph.inputs), (true, &graph.outputs)] {
+            let rows = self.pin_rows;
+            for pin in pins.iter() {
+                let head = ui.panel(rows, Style::row());
+                ui.add_class(head, "prop");
+                let title = ui.add_label(head, &format!("{} {}", if out { "Output" } else { "Input" }, pin.name));
+                ui.add_class(title, "prop-label");
+                let remove = ui.icon_button(head, "close");
+                ui.set_tooltip(remove, if out { "Remove this output" } else { "Remove this input" }, None);
+                self.rows.push((Field::RemovePin(out, pin.id), Control::Button(remove)));
+                let row = prop(ui, rows, "Name");
+                let name = ui.text_field(row, &pin.name);
+                self.rows.push((Field::PinName(out, pin.id), Control::Text(name)));
+                let row = prop(ui, rows, "Type");
+                let at = NUMBER_TYS.iter().position(|ty| *ty == pin.ty).unwrap_or(0);
+                let ty = ui.dropdown(row, &names, at);
+                self.rows.push((Field::PinTy(out, pin.id), Control::Choice(ty)));
+                if !out {
+                    let fields = numbers_row(ui, rows, "Default", pin.ty.width());
+                    ui.set_tooltip(fields[0], "What it takes where nothing is wired into it", None);
+                    self.rows.push((Field::PinDefault(pin.id), Control::Numbers(fields)));
+                }
+            }
+        }
+        let buttons = ui.panel(self.pin_rows, Style::row());
+        for (out, label) in [(false, "Add Input"), (true, "Add Output")] {
+            let add = ui.button(buttons, label);
+            ui.add_class(add, "add-component");
+            self.rows.push((Field::AddPin(out), Control::Button(add)));
+        }
+        // The shader's own settings, or the sub-graph's name.
         let rows = self.shader_rows;
         let row = prop(ui, rows, "Name");
         let name = ui.text_field(row, &graph.name);
-        ui.set_tooltip(name, "The name its Slang gives its properties: letters, digits and _", None);
+        let named = if sub {
+            "The name its Slang function and the nodes using it have"
+        } else {
+            "The name its Slang gives its properties"
+        };
+        ui.set_tooltip(name, &format!("{named}: letters, digits and _"), None);
         self.rows.push((Field::Name, Control::Text(name)));
+        if sub {
+            return;
+        }
         let row = prop(ui, rows, "Unlit");
         let unlit = ui.toggle(row, "", graph.unlit);
         self.rows.push((Field::Unlit, Control::Toggle(unlit)));
@@ -766,7 +938,65 @@ impl VoxShadePanel {
                     changed.properties.retain(|p| p.id != *id);
                     true
                 }
+                (Field::AddCodePin(out), Control::Button(button)) if ui.clicked(*button) => match node.as_mut() {
+                    Some(Node { kind: NodeKind::Code { inputs, outputs, .. }, .. }) => {
+                        let taken: Vec<String> = inputs.iter().chain(outputs.iter()).map(|p| p.name.clone()).collect();
+                        let stem = if *out { "out" } else { "in" };
+                        let name = (1..).map(|n| format!("{stem}{n}")).find(|n| !taken.contains(n)).unwrap_or_default();
+                        if *out { outputs } else { inputs }.push(Pin::new(&name, Ty::Float3));
+                        true
+                    }
+                    _ => false,
+                },
+                (Field::RemoveCodePin(out, place), Control::Button(button)) if ui.clicked(*button) => {
+                    match node.as_mut() {
+                        Some(found @ Node { kind: NodeKind::Code { .. }, .. }) => {
+                            let NodeKind::Code { inputs, outputs, .. } = &mut found.kind else { unreachable!() };
+                            let pins = if *out { outputs } else { inputs };
+                            if *place < pins.len() {
+                                pins.remove(*place);
+                            }
+                            drop_port(&mut changed, found, *out, *place);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                (Field::AddPin(out), Control::Button(button)) if ui.clicked(*button) => {
+                    let pins = if *out { &changed.outputs } else { &changed.inputs };
+                    let stem = if *out { "result" } else { "value" };
+                    let taken = |name: &str| pins.iter().any(|p| p.name == name);
+                    let name = (1..).map(|n| format!("{stem}{n}")).find(|n| !taken(n)).unwrap_or_default();
+                    if *out {
+                        changed.add_output(&name, Ty::Float)
+                    } else {
+                        changed.add_input(&name, Ty::Float)
+                    };
+                    true
+                }
+                (Field::RemovePin(out, id), Control::Button(button)) if ui.clicked(*button) => {
+                    remove_pin(&mut changed, *out, *id);
+                    // The picked node may have gone with it.
+                    node = node.filter(|n| changed.node(n.id).is_some());
+                    true
+                }
                 (_, Control::Button(_)) => false,
+                (Field::SubGraphPick, Control::Choice(dropdown)) if ui.changed(*dropdown) => {
+                    let at = ui.selected_option(*dropdown);
+                    match (self.sub_choosable.get(at), node.as_mut()) {
+                        (Some(guid), Some(found)) if matches!(found.kind, NodeKind::SubGraph { .. }) => {
+                            let NodeKind::SubGraph { graph, .. } = &mut found.kind else { unreachable!() };
+                            *graph = *guid;
+                            if let Some(kept) = changed.nodes.iter_mut().find(|n| n.id == found.id) {
+                                kept.kind = found.kind.clone();
+                            }
+                            refresh_sub_graphs(&mut changed, &self.library);
+                            *found = changed.node(found.id).cloned().unwrap_or_else(|| found.clone());
+                            true
+                        }
+                        _ => false,
+                    }
+                }
                 (_, Control::Choice(dropdown)) if ui.changed(*dropdown) => {
                     let picked = ui.selected_option(*dropdown);
                     choose(&mut changed, node.as_mut(), *field, picked, &self.choosable)
@@ -779,7 +1009,44 @@ impl VoxShadePanel {
                 (_, Control::Toggle(_)) => false,
                 (_, Control::Text(text)) if ui.changed(*text) => {
                     let typed = ui.text(*text).trim().to_string();
+                    let identifier = voxear_voxshade::graph::is_identifier(&typed);
                     match field {
+                        Field::CodeName => match node.as_mut().map(|n| &mut n.kind) {
+                            Some(NodeKind::Code { name, .. }) if typed.is_empty() || identifier => {
+                                *name = typed;
+                                true
+                            }
+                            _ => false,
+                        },
+                        Field::CodeText => match node.as_mut().map(|n| &mut n.kind) {
+                            Some(NodeKind::Code { code, .. }) => {
+                                *code = ui.text(*text).to_string();
+                                true
+                            }
+                            _ => false,
+                        },
+                        Field::CodePinName(out, place) => match node.as_mut().map(|n| &mut n.kind) {
+                            Some(NodeKind::Code { inputs, outputs, .. }) => {
+                                let taken = inputs.iter().chain(outputs.iter()).any(|p| p.name == typed);
+                                let pins = if *out { outputs } else { inputs };
+                                match pins.get_mut(*place) {
+                                    Some(pin) if identifier && !taken => {
+                                        pin.name = typed;
+                                        true
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            _ => false,
+                        },
+                        Field::PinName(out, id) => {
+                            let pins = if *out { &mut changed.outputs } else { &mut changed.inputs };
+                            let free = identifier && !pins.iter().any(|p| p.name == typed && p.id != *id);
+                            if free && let Some(pin) = pins.iter_mut().find(|p| p.id == *id) {
+                                pin.name = typed;
+                            }
+                            free
+                        }
                         Field::Name => {
                             changed.name = typed;
                             voxear_voxshade::graph::is_identifier(&changed.name)
@@ -839,7 +1106,13 @@ impl VoxShadePanel {
                 Control::Numbers(_) if takes_materials(picked, *field) => {}
                 Control::Numbers(fields) => write_numbers(ui, fields, &numbers_of(graph, picked, *field)),
                 Control::Choice(dropdown) => {
-                    if let Some(at) = chosen(graph, picked, *field, &self.choosable)
+                    let sub_graph = match (field, picked.map(|n| &n.kind)) {
+                        (Field::SubGraphPick, Some(NodeKind::SubGraph { graph, .. })) => {
+                            self.sub_choosable.iter().position(|guid| guid == graph)
+                        }
+                        _ => None,
+                    };
+                    if let Some(at) = sub_graph.or_else(|| chosen(graph, picked, *field, &self.choosable))
                         && ui.selected_option(*dropdown) != at
                     {
                         ui.set_selected_option(*dropdown, at);
@@ -855,7 +1128,18 @@ impl VoxShadePanel {
                         Field::Name => Some(graph.name.clone()),
                         Field::PropertyName(id) => graph.property(*id).map(|p| p.name.clone()),
                         Field::PropertyTooltip(id) => graph.property(*id).map(|p| p.tooltip.clone()),
-                        _ => None,
+                        Field::PinName(out, id) => {
+                            let pins = if *out { &graph.outputs } else { &graph.inputs };
+                            pins.iter().find(|p| p.id == *id).map(|p| p.name.clone())
+                        }
+                        _ => match (field, picked.map(|n| &n.kind)) {
+                            (Field::CodeName, Some(NodeKind::Code { name, .. })) => Some(name.clone()),
+                            (Field::CodeText, Some(NodeKind::Code { code, .. })) => Some(code.clone()),
+                            (Field::CodePinName(out, place), Some(NodeKind::Code { inputs, outputs, .. })) => {
+                                (if *out { outputs } else { inputs }).get(*place).map(|p| p.name.clone())
+                            }
+                            _ => None,
+                        },
                     };
                     if let Some(shown) = shown.filter(|shown| ui.text(*text) != *shown) {
                         ui.set_text(*text, &shown);
@@ -883,6 +1167,73 @@ impl VoxShadePanel {
             Control::Choice(node) | Control::Text(node) | Control::Toggle(node) | Control::Button(node) => *node,
             Control::Numbers(fields) => fields[0],
         })
+    }
+}
+
+/// Takes away the wires into input `place` of `node` (an output, with
+/// `out`), and its kept numbers, and moves those of the ports after it
+/// down one: the port itself was just taken away.
+fn drop_port(graph: &mut Graph, node: &mut Node, out: bool, place: usize) {
+    let id = node.id;
+    graph.links.retain(|l| !(if out { l.from == id && l.output == place } else { l.to == id && l.input == place }));
+    for link in &mut graph.links {
+        if out && link.from == id && link.output > place {
+            link.output -= 1;
+        }
+        if !out && link.to == id && link.input > place {
+            link.input -= 1;
+        }
+    }
+    if !out {
+        node.literals.retain(|l| l.input != place);
+        for literal in &mut node.literals {
+            if literal.input > place {
+                literal.input -= 1;
+            }
+        }
+    }
+}
+
+/// Takes away one of a sub-graph's inputs, and the Input nodes reading it,
+/// or one of its outputs (`out`), and the wire into the Sub-graph Output for it.
+fn remove_pin(graph: &mut Graph, out: bool, id: u32) {
+    if out {
+        let Some(place) = graph.outputs.iter().position(|p| p.id == id) else { return };
+        graph.outputs.remove(place);
+        let outputs: Vec<GraphNode> =
+            graph.nodes.iter().filter(|n| n.kind == NodeKind::SubGraphOutput).map(|n| n.id).collect();
+        for at in outputs {
+            let mut node = graph.node(at).cloned().expect("listed");
+            drop_port(graph, &mut node, false, place);
+            if let Some(kept) = graph.nodes.iter_mut().find(|n| n.id == at) {
+                *kept = node;
+            }
+        }
+    } else {
+        graph.inputs.retain(|p| p.id != id);
+        let readers: Vec<GraphNode> =
+            graph.nodes.iter().filter(|n| n.kind == NodeKind::SubGraphInput { input: id }).map(|n| n.id).collect();
+        for reader in readers {
+            graph.remove(reader);
+        }
+    }
+}
+
+/// Shows or hides one of the side's parts, by its rows, retitled when `title` is given.
+fn show_part(ui: &mut Ui, rows: NodeId, title: Option<&str>, shown: bool) {
+    let Some(foldout) = ui.parent(rows) else { return };
+    if let Some(title) = title
+        && let Some(header) = ui.foldout_header(foldout)
+        && let Some(&label) = ui.children(header).get(2)
+    {
+        ui.set_text(label, title);
+    }
+    ui.set_visible(foldout, shown);
+    // The line drawn above it.
+    let Some(side) = ui.parent(foldout) else { return };
+    let siblings = ui.children(side);
+    if let Some(at) = siblings.iter().position(|&n| n == foldout).filter(|&at| at > 0) {
+        ui.set_visible(siblings[at - 1], shown);
     }
 }
 
@@ -930,15 +1281,23 @@ fn takes_materials(node: Option<&Node>, field: Field) -> bool {
 fn shape(graph: &Graph, picked: Option<&Node>) -> String {
     let node = picked.map(|node| {
         let wired: Vec<usize> = graph.links.iter().filter(|l| l.to == node.id).map(|l| l.input).collect();
+        let tys = |pins: &[Pin]| pins.iter().map(|p| p.ty).collect::<Vec<_>>();
         let kind = match &node.kind {
             NodeKind::Constant { ty, .. } => format!("constant {ty:?}"),
             NodeKind::Color { .. } => "color".into(),
+            // Not its names or code, typed into the rows themselves.
+            NodeKind::Code { inputs, outputs, .. } => format!("code {:?} {:?}", tys(inputs), tys(outputs)),
+            NodeKind::SubGraph { graph, inputs, outputs, .. } => {
+                format!("sub-graph {graph:?} {:?} {:?}", tys(inputs), tys(outputs))
+            }
             other => format!("{other:?}"),
         };
         format!("{} {kind} {wired:?}", node.id.0)
     });
     let properties: Vec<(u32, PropertyKind)> = graph.properties.iter().map(|p| (p.id.0, p.kind)).collect();
-    format!("{node:?} {properties:?}")
+    let pins: Vec<(u32, Ty)> = graph.inputs.iter().chain(&graph.outputs).map(|p| (p.id, p.ty)).collect();
+    let inputs: Vec<&str> = graph.inputs.iter().map(|p| p.name.as_str()).collect();
+    format!("{node:?} {properties:?} {} {pins:?} {inputs:?}", graph.sub_graph)
 }
 
 /// What a numbers row shows now.
@@ -955,7 +1314,7 @@ fn numbers_of(graph: &Graph, node: Option<&Node>, field: Field) -> Vec<f32> {
         },
         Field::Literal(input) => {
             let Some(node) = node else { return Vec::new() };
-            let port = node.kind.inputs().get(input).cloned();
+            let port = graph.inputs_of(&node.kind).get(input).cloned();
             let width = match port.as_ref().map(|p| p.ty) {
                 Some(PortTy::Fixed(ty)) => ty.width(),
                 _ => 1,
@@ -968,6 +1327,7 @@ fn numbers_of(graph: &Graph, node: Option<&Node>, field: Field) -> Vec<f32> {
         }
         Field::PropertyRange(id) => property(id).map_or(Vec::new(), |p| p.range.unwrap_or([0.0, 0.0]).to_vec()),
         Field::MaxOffset => vec![graph.max_offset],
+        Field::PinDefault(id) => graph.input(id).map_or(Vec::new(), |(_, pin)| pin.default[..pin.ty.width()].to_vec()),
         _ => Vec::new(),
     }
 }
@@ -1013,6 +1373,13 @@ fn set_numbers(graph: &mut Graph, node: Option<&mut Node>, field: Field, numbers
             graph.max_offset = numbers[0].max(0.0);
             true
         }
+        Field::PinDefault(id) => match graph.inputs.iter_mut().find(|p| p.id == id) {
+            Some(pin) => {
+                pin.default = fill(numbers);
+                true
+            }
+            None => false,
+        },
         _ => false,
     }
 }
@@ -1022,7 +1389,16 @@ fn chosen(graph: &Graph, node: Option<&Node>, field: Field, choosable: &[Propert
     if let Field::PropertyKind(id) = field {
         return PropertyKind::ALL.iter().position(|kind| Some(*kind) == graph.property(id).map(|p| p.kind));
     }
+    if let Field::PinTy(out, id) = field {
+        let pin = (if out { &graph.outputs } else { &graph.inputs }).iter().find(|p| p.id == id)?;
+        return NUMBER_TYS.iter().position(|ty| *ty == pin.ty);
+    }
     match (field, &node?.kind) {
+        (Field::InputPick, NodeKind::SubGraphInput { input }) => graph.input(*input).map(|(place, _)| place),
+        (Field::CodePinTy(out, place), NodeKind::Code { inputs, outputs, .. }) => {
+            let pin = (if out { outputs } else { inputs }).get(place)?;
+            NUMBER_TYS.iter().position(|ty| *ty == pin.ty)
+        }
         (Field::Input, NodeKind::Input { input }) => Input::ALL.iter().position(|i| i == input),
         (Field::Op, NodeKind::Math { op }) => MathOp::ALL.iter().position(|o| o == op),
         (Field::Compare, NodeKind::Compare { op }) => CompareOp::ALL.iter().position(|o| o == op),
@@ -1046,8 +1422,22 @@ fn choose(graph: &mut Graph, node: Option<&mut Node>, field: Field, at: usize, c
         property.kind = PropertyKind::ALL[at.min(PropertyKind::ALL.len() - 1)];
         return true;
     }
+    if let Field::PinTy(out, id) = field {
+        let pins = if out { &mut graph.outputs } else { &mut graph.inputs };
+        let Some(pin) = pins.iter_mut().find(|p| p.id == id) else { return false };
+        pin.ty = NUMBER_TYS[at.min(3)];
+        return true;
+    }
     let Some(node) = node else { return false };
     match (field, &mut node.kind) {
+        (Field::InputPick, NodeKind::SubGraphInput { input }) => {
+            let Some(pin) = graph.inputs.get(at) else { return false };
+            *input = pin.id;
+        }
+        (Field::CodePinTy(out, place), NodeKind::Code { inputs, outputs, .. }) => {
+            let Some(pin) = (if out { outputs } else { inputs }).get_mut(place) else { return false };
+            pin.ty = NUMBER_TYS[at.min(3)];
+        }
         (Field::Input, NodeKind::Input { input }) => *input = Input::ALL[at.min(Input::ALL.len() - 1)],
         (Field::Op, NodeKind::Math { op }) => *op = MathOp::ALL[at.min(MathOp::ALL.len() - 1)],
         (Field::Compare, NodeKind::Compare { op }) => *op = CompareOp::ALL[at.min(CompareOp::ALL.len() - 1)],
@@ -1078,8 +1468,8 @@ fn allows(graph: &Graph, from: (GraphNode, usize), to: (GraphNode, usize)) -> bo
     if from.0 == to.0 {
         return false;
     }
-    let given = out.kind.outputs(graph_property_ty(graph, &out.kind)).get(from.1).map(|p| p.ty);
-    let taken = into.kind.inputs().get(to.1).map(|p| p.ty);
+    let given = graph.outputs_of(&out.kind).get(from.1).map(|p| p.ty);
+    let taken = graph.inputs_of(&into.kind).get(to.1).map(|p| p.ty);
     let (Some(given), Some(taken)) = (given, taken) else { return false };
     let truth = |ty: PortTy| ty == PortTy::Fixed(Ty::Bool);
     if truth(given) != truth(taken) {
@@ -1103,11 +1493,36 @@ fn allows(graph: &Graph, from: (GraphNode, usize), to: (GraphNode, usize)) -> bo
     true
 }
 
-fn graph_property_ty(graph: &Graph, kind: &NodeKind) -> Option<Ty> {
-    match kind {
-        NodeKind::Property { property } => graph.property_ty(*property),
-        _ => None,
+/// A graph compiled with the project's sub-graphs.
+fn compile_in(
+    graph: &Graph,
+    library: &HashMap<AssetGuid, Graph>,
+) -> Result<Compiled, Vec<voxear_voxshade::CompileError>> {
+    compile_with(graph, Options { library: Some(library), ..Options::default() })
+}
+
+/// Gives each Sub-graph node in `graph` its sub-graph's name, inputs and
+/// outputs as `library` has them, dropping wires to ports it no longer
+/// has; whether anything changed.
+fn refresh_sub_graphs(graph: &mut Graph, library: &HashMap<AssetGuid, Graph>) -> bool {
+    let mut changed = false;
+    let mut counts = Vec::new();
+    for node in &mut graph.nodes {
+        let NodeKind::SubGraph { graph: guid, name, inputs, outputs } = &mut node.kind else { continue };
+        let Some(sub) = library.get(guid) else { continue };
+        if *name != sub.name || *inputs != sub.inputs || *outputs != sub.outputs {
+            (*name, *inputs, *outputs) = (sub.name.clone(), sub.inputs.clone(), sub.outputs.clone());
+            changed = true;
+        }
+        counts.push((node.id, inputs.len(), outputs.len()));
     }
+    let before = graph.links.len();
+    graph.links.retain(|link| {
+        counts
+            .iter()
+            .all(|&(id, ins, outs)| !(link.to == id && link.input >= ins || link.from == id && link.output >= outs))
+    });
+    changed || graph.links.len() != before
 }
 
 /// What a wire carrying each type is coloured.
@@ -1130,6 +1545,9 @@ fn title(graph: &Graph, kind: &NodeKind) -> String {
         NodeKind::SamplePicture { property } => format!("Sample {}", name(*property)),
         NodeKind::Combine { ty } => format!("Combine {}", ty.name()),
         NodeKind::Compare { op } => format!("Compare {}", op.slang()),
+        NodeKind::SubGraphInput { input } => {
+            graph.input(*input).map_or("Input".to_string(), |(_, pin)| pin.name.clone())
+        }
         other => other.title(),
     }
 }
@@ -1143,8 +1561,8 @@ fn describe_node(graph: &Graph, node: &Node) -> CanvasNode {
         id: u64::from(node.id.0),
         at: node.at,
         title: title(graph, &node.kind),
-        inputs: ports(node.kind.inputs()),
-        outputs: ports(node.kind.outputs(graph_property_ty(graph, &node.kind))),
+        inputs: ports(graph.inputs_of(&node.kind)),
+        outputs: ports(graph.outputs_of(&node.kind)),
         pictured: false,
         ..CanvasNode::default()
     }
@@ -1220,7 +1638,19 @@ fn summary(compiled: &Compiled) -> String {
 }
 
 /// Every node the search offers to add to `graph`, in its folder.
-pub fn offers(graph: &Graph) -> Vec<Offer> {
+/// What a new Slang node starts as: its input as its output.
+pub fn new_code_node() -> NodeKind {
+    NodeKind::Code {
+        name: "Custom".into(),
+        inputs: vec![Pin::new("value", Ty::Float3)],
+        outputs: vec![Pin::new("result", Ty::Float3)],
+        code: "result = value;".into(),
+    }
+}
+
+/// Every node the search offers to add to `graph`, in its folder; the
+/// project's other sub-graphs are `sub_graphs`.
+pub fn offers(graph: &Graph, sub_graphs: &SubGraphs) -> Vec<Offer> {
     let mut all = Vec::new();
     let mut offer = |label: String, folder: &'static str, kind: NodeKind| all.push(Offer { label, folder, kind });
     for input in Input::ALL {
@@ -1231,6 +1661,9 @@ pub fn offers(graph: &Graph) -> Vec<Offer> {
         offer(ty.name().into(), "Values", NodeKind::Constant { ty, value: [0.0; 4] });
     }
     offer("Color".into(), "Values", NodeKind::Color { value: [1.0; 4] });
+    for pin in &graph.inputs {
+        offer(pin.name.clone(), "Sub-graph", NodeKind::SubGraphInput { input: pin.id });
+    }
     for property in &graph.properties {
         match property.kind {
             PropertyKind::Picture => offer(
@@ -1252,9 +1685,21 @@ pub fn offers(graph: &Graph) -> Vec<Offer> {
     }
     offer("Swizzle".into(), "Vectors", NodeKind::Swizzle { components: vec![Component::X, Component::Y] });
     offer("Random".into(), "Noise", NodeKind::Random);
-    offer("Surface Output".into(), "Outputs", NodeKind::SurfaceOutput);
-    offer("Vertex Output".into(), "Outputs", NodeKind::VertexOutput);
-    offer("Light Output".into(), "Outputs", NodeKind::LightOutput);
+    offer("Slang".into(), "Custom", new_code_node());
+    for (guid, _, sub) in sub_graphs {
+        let kind = NodeKind::SubGraph {
+            graph: *guid,
+            name: sub.name.clone(),
+            inputs: sub.inputs.clone(),
+            outputs: sub.outputs.clone(),
+        };
+        offer(sub.name.clone(), "Sub-graphs", kind);
+    }
+    if !graph.sub_graph {
+        offer("Surface Output".into(), "Outputs", NodeKind::SurfaceOutput);
+        offer("Vertex Output".into(), "Outputs", NodeKind::VertexOutput);
+        offer("Light Output".into(), "Outputs", NodeKind::LightOutput);
+    }
     all
 }
 
@@ -1268,13 +1713,16 @@ pub fn folder_icon(folder: &str) -> &'static str {
         "Logic" => "branch",
         "Vectors" => "move",
         "Noise" => "grid",
+        "Custom" => "code",
+        "Sub-graphs" => "nodes",
+        "Sub-graph" => "arrow-right",
         _ => "check",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use voxear_voxshade::starters;
+    use voxear_voxshade::{compile, starters};
 
     use super::*;
 
@@ -1328,6 +1776,65 @@ mod tests {
     }
 
     #[test]
+    fn a_slang_nodes_ports_and_a_sub_graphs_inputs_come_and_go_with_their_wires() {
+        let mut graph = Graph::new("Test");
+        let uv = graph.add(NodeKind::Input { input: Input::Uv }, [0.0; 2]);
+        let code = graph.add(new_code_node(), [0.0; 2]);
+        let mut node = graph.node(code).cloned().unwrap();
+        if let NodeKind::Code { inputs, .. } = &mut node.kind {
+            inputs.push(Pin::new("second", Ty::Float2));
+        }
+        graph.nodes.retain(|n| n.id != code);
+        graph.nodes.push(node.clone());
+        graph.link(uv, 0, code, 1);
+        node.literals.push(voxear_voxshade::Literal { input: 1, value: [0.5; 4] });
+        // The first input taken away: the wire and numbers on the second move down with it.
+        if let NodeKind::Code { inputs, .. } = &mut node.kind {
+            inputs.remove(0);
+        }
+        drop_port(&mut graph, &mut node, false, 0);
+        assert_eq!(graph.link_into(code, 0).map(|l| l.from), Some(uv));
+        assert_eq!(node.literals[0].input, 0);
+        assert!(choose(&mut graph, Some(&mut node), Field::CodePinTy(false, 0), 2, &[]));
+        assert_eq!(chosen(&graph, Some(&node), Field::CodePinTy(false, 0), &[]), Some(2));
+        // A sub-graph's input taken away takes the Input nodes reading it.
+        let mut sub = starters::sub_graph("Edges");
+        let power = sub.inputs[0].id;
+        assert!(sub.nodes.iter().any(|n| n.kind == NodeKind::SubGraphInput { input: power }));
+        remove_pin(&mut sub, false, power);
+        assert!(sub.inputs.is_empty() && !sub.nodes.iter().any(|n| matches!(n.kind, NodeKind::SubGraphInput { .. })));
+        assert!(!set_numbers(&mut sub, None, Field::PinDefault(99), &[1.0]), "no such input");
+        // The search offers Slang, each sub-graph, and in a sub-graph its inputs but no shader outputs.
+        let guid: AssetGuid = format!("{:032x}", 3).parse().unwrap();
+        let listed = vec![(guid, "Edges.voxshade".to_string(), starters::sub_graph("Edges"))];
+        let shader: Vec<String> = offers(&Graph::new("Shader"), &listed).into_iter().map(|o| o.label).collect();
+        assert!(shader.contains(&"Slang".to_string()) && shader.contains(&"Edges".to_string()));
+        let inside = offers(&starters::sub_graph("Other"), &Vec::new());
+        assert!(inside.iter().any(|o| o.folder == "Sub-graph" && o.label == "power"));
+        assert!(!inside.iter().any(|o| o.kind == NodeKind::SurfaceOutput));
+    }
+
+    #[test]
+    fn a_sub_graph_node_takes_its_sub_graphs_ports_as_they_change() {
+        let guid: AssetGuid = format!("{:032x}", 3).parse().unwrap();
+        let mut sub = starters::sub_graph("Edges");
+        let mut graph = Graph::new("Test");
+        let kind = NodeKind::SubGraph { graph: guid, name: "Old".into(), inputs: Vec::new(), outputs: Vec::new() };
+        let used = graph.add(kind, [0.0; 2]);
+        let library: HashMap<_, _> = [(guid, sub.clone())].into();
+        assert!(refresh_sub_graphs(&mut graph, &library));
+        assert_eq!(graph.node(used).unwrap().kind.title(), "Edges");
+        assert_eq!(graph.inputs_of(&graph.node(used).unwrap().kind).len(), 1);
+        graph.link(used, 0, GraphNode(1), 1);
+        assert!(compile_in(&graph, &library).is_ok());
+        // Its output gone, the wire from it goes too.
+        sub.outputs.clear();
+        let library: HashMap<_, _> = [(guid, sub)].into();
+        assert!(refresh_sub_graphs(&mut graph, &library));
+        assert!(graph.links.is_empty());
+    }
+
+    #[test]
     fn a_compiled_graph_shows_each_nodes_cost_and_what_stops_it_on_its_node() {
         let graph = starters::hologram();
         let compiled = compile(&graph);
@@ -1347,7 +1854,7 @@ mod tests {
         let at = drawn.node(u64::from(light.0)).unwrap();
         assert!(at.fault.contains("Surface"), "{}", at.fault);
         // The search offers each property by its name, a picture as something to sample.
-        let offered: Vec<String> = offers(&graph).into_iter().map(|offer| offer.label).collect();
+        let offered: Vec<String> = offers(&graph, &Vec::new()).into_iter().map(|offer| offer.label).collect();
         assert!(offered.contains(&"tint".to_string()) && offered.contains(&"Sample pattern".to_string()));
     }
 }

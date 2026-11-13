@@ -4,7 +4,9 @@
 //! GPU. A number shows grey, two numbers red and green, three or four as
 //! colour; the Surface Output shows the ball lit by its colour and what it
 //! gives off. Pictures read as white, as a material that has not picked
-//! one draws them.
+//! one draws them, and a sub-graph's inputs as their defaults. Slang
+//! written by hand runs only on the GPU, so what a Slang node gives, and
+//! what is worked out from it, shows striped.
 //!
 //! Every node's picture is one cell of one texture, made again when the
 //! graph changes what it works out (not when nodes only move), and a few
@@ -16,7 +18,7 @@ use voxear_render::{Renderer, TextureSource};
 use voxear_rhi::TextureId;
 use voxear_ui::ImageRef;
 use voxear_voxshade::{
-    Graph, Input, NodeId, NodeKind, PropertyKind, Stage, Ty,
+    Graph, Input, Library, NodeId, NodeKind, PropertyKind, Stage, Ty,
     eval::{Inputs, run},
     ir::{Given, Op},
     lower::lower_all,
@@ -50,13 +52,13 @@ impl Previews {
     /// Makes the pictures again when `graph` works out other values than
     /// they show, or the time has moved on for a graph that reads it.
     /// Whether they changed.
-    pub fn update(&mut self, renderer: &mut Renderer, graph: &Graph, time: f32) -> bool {
-        let key = what_it_works_out(graph);
+    pub fn update(&mut self, renderer: &mut Renderer, graph: &Graph, library: &dyn Library, time: f32) -> bool {
+        let key = what_it_works_out(graph, library);
         let due = self.animated && time - self.made_at >= ANIMATE_EVERY;
         if key == self.made_for && !due {
             return false;
         }
-        let (pictures, animated) = draw(graph, time);
+        let (pictures, animated) = draw(graph, Some(library), time);
         (self.made_for, self.made_at, self.animated) = (key, time, animated);
         self.upload(renderer, &pictures);
         true
@@ -102,13 +104,21 @@ impl Previews {
 }
 
 /// Everything about a graph that changes what its nodes work out, which
-/// where its nodes stand does not.
-fn what_it_works_out(graph: &Graph) -> String {
+/// where its nodes stand does not, with the sub-graphs it uses.
+fn what_it_works_out(graph: &Graph, library: &dyn Library) -> String {
     let mut placed = graph.clone();
     for node in &mut placed.nodes {
         node.at = [0.0; 2];
     }
-    format!("{placed:?}")
+    let used: Vec<Option<&Graph>> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.kind {
+            NodeKind::SubGraph { graph, .. } => Some(library.sub_graph(*graph)),
+            _ => None,
+        })
+        .collect();
+    format!("{placed:?} {used:?}")
 }
 
 /// A point on the preview ball, at pixel (x, y): where it is, the way it
@@ -159,19 +169,20 @@ fn shown(ty: Ty, value: [f32; 4]) -> [f32; 3] {
 }
 
 /// Every node's picture, at `time`; and whether any reads the time, so would change with it.
-pub fn draw(graph: &Graph, time: f32) -> (Pictures, bool) {
+pub fn draw(graph: &Graph, library: Option<&dyn Library>, time: f32) -> (Pictures, bool) {
     // Each node in the first stage it can run in.
     let stages: Vec<(Stage, voxear_voxshade::ir::Program, HashMap<(NodeId, usize), voxear_voxshade::ir::ValueId>)> =
         [Stage::Surface, Stage::Light, Stage::Vertex]
             .into_iter()
             .map(|stage| {
-                let (program, found) = lower_all(graph, stage);
+                let (program, found) = lower_all(graph, stage, library);
                 (stage, program, found)
             })
             .collect();
     let mut shows: Vec<(NodeId, usize, Vec<usize>)> = Vec::new();
     for node in &graph.nodes {
-        let has_outputs = !node.kind.outputs(None).is_empty() || node.kind.output_stage().is_some();
+        let is_output = node.kind.output_stage().is_some() || node.kind == NodeKind::SubGraphOutput;
+        let has_outputs = !graph.outputs_of(&node.kind).is_empty() || is_output;
         if !has_outputs {
             continue;
         }
@@ -213,6 +224,7 @@ pub fn draw(graph: &Graph, time: f32) -> (Pictures, bool) {
                 Given::Surface(2) => three(normal),
                 Given::Surface(4) => [0.5; 4],
                 Given::Surface(_) => [0.0; 4],
+                Given::Argument(n) => graph.inputs.get(n).map_or([0.0; 4], |pin| pin.default),
             };
             let property = |id| property_value(graph, id);
             let inputs = Inputs { given: &given, property: &property, sample: &|_, _| [1.0; 4] };
@@ -227,7 +239,11 @@ pub fn draw(graph: &Graph, time: f32) -> (Pictures, bool) {
                 let read = |slot: usize| {
                     found.get(&(*node, slot)).map(|id| (program.step(*id).ty, values[*at][id.0 as usize]))
                 };
-                let color = if slots.len() > 1 {
+                // Not known on the CPU: stripes.
+                let unknown = slots.iter().any(|&slot| read(slot).is_some_and(|(_, v)| v.iter().any(|c| c.is_nan())));
+                let color = if unknown {
+                    [if (x + y) / 6 % 2 == 0 { 0.30 } else { 0.12 }; 3]
+                } else if slots.len() > 1 {
                     // The surface lit, as it would be drawn: its colour in the light, and what it gives off.
                     let base = read(0).map_or([0.8; 3], |(ty, v)| shown(ty, v));
                     let glow = read(5).map_or([0.0; 3], |(ty, v)| shown(ty, v));
@@ -259,7 +275,7 @@ mod tests {
     #[test]
     fn each_node_shows_its_value_on_a_ball_and_the_surface_output_the_ball_lit() {
         let graph = starters::lit("Glow");
-        let (pictures, animated) = draw(&graph, 0.0);
+        let (pictures, animated) = draw(&graph, None, 0.0);
         assert!(!animated, "nothing reads the time");
         let uv = graph.nodes.iter().find(|n| n.kind == NodeKind::Input { input: Input::Uv }).unwrap().id;
         // Off the ball nothing; on it, the UV as red and green: more green lower down.
@@ -276,8 +292,8 @@ mod tests {
         let time = moving.add(NodeKind::Input { input: Input::Time }, [0.0; 2]);
         let sine = moving.add(NodeKind::Math { op: MathOp::Sine }, [0.0; 2]);
         moving.link(time, 0, sine, 0);
-        let (at_zero, animated) = draw(&moving, 0.0);
-        let (later, _) = draw(&moving, 1.5);
+        let (at_zero, animated) = draw(&moving, None, 0.0);
+        let (later, _) = draw(&moving, None, 1.5);
         assert!(animated);
         assert!(pixel(&later, sine, SIDE / 2, SIDE / 2)[0] > pixel(&at_zero, sine, SIDE / 2, SIDE / 2)[0] + 100);
     }
@@ -285,10 +301,31 @@ mod tests {
     #[test]
     fn where_nodes_stand_does_not_change_what_their_pictures_show() {
         let mut graph = starters::lit("Glow");
-        let before = what_it_works_out(&graph);
+        let before = what_it_works_out(&graph, &HashMap::<voxear_assets::AssetGuid, Graph>::new());
         graph.nodes[0].at = [999.0, 1.0];
-        assert_eq!(what_it_works_out(&graph), before);
+        assert_eq!(what_it_works_out(&graph, &HashMap::<voxear_assets::AssetGuid, Graph>::new()), before);
         graph.set_literal(graph.nodes[0].id, 0, [0.5; 4]);
-        assert_ne!(what_it_works_out(&graph), before);
+        assert_ne!(what_it_works_out(&graph, &HashMap::<voxear_assets::AssetGuid, Graph>::new()), before);
+    }
+
+    #[test]
+    fn a_slang_nodes_picture_is_striped_and_a_sub_graph_shows_its_inputs_defaults() {
+        let mut graph = Graph::new("Test");
+        let code = graph.add(crate::voxshade_panel::new_code_node(), [0.0; 2]);
+        let normal = graph.add(NodeKind::Input { input: Input::Normal }, [0.0; 2]);
+        graph.link(normal, 0, code, 0);
+        let (pictures, _) = draw(&graph, None, 0.0);
+        let (a, b) = (pixel(&pictures, code, SIDE / 2, SIDE / 2), pixel(&pictures, code, SIDE / 2 + 6, SIDE / 2));
+        assert_ne!(a, b, "stripes, not a value");
+        assert_eq!(a[0], a[2], "grey");
+        // A sub-graph on its own: its input as its default, 2 here, so its power node shows a power of 2.
+        let sub = starters::sub_graph("Edges");
+        let input = sub.nodes.iter().find(|n| matches!(n.kind, NodeKind::SubGraphInput { .. })).unwrap().id;
+        let (pictures, _) = draw(&sub, None, 0.0);
+        let shown = pixel(&pictures, input, SIDE / 2, SIDE / 2);
+        assert_eq!(shown[0], 255, "2, shown as far past white: {shown:?}");
+        let out = sub.nodes.iter().find(|n| n.kind == NodeKind::SubGraphOutput).unwrap().id;
+        let (middle, edge) = (pixel(&pictures, out, SIDE / 2, SIDE / 2), pixel(&pictures, out, 3, SIDE / 2));
+        assert!(edge[0] > middle[0] + 60, "brighter edge on: {middle:?} {edge:?}");
     }
 }

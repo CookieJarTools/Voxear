@@ -40,6 +40,12 @@ pub fn roots(program: &Program, room: usize) -> Vec<ValueId> {
     for (_, id) in &program.outputs {
         read_at[id.0 as usize] = Some(Rate::Varying);
     }
+    // Whether the CPU can work a step out: not with Slang written by hand anywhere under it.
+    let mut on_cpu = vec![true; count];
+    for (index, step) in program.steps.iter().enumerate() {
+        on_cpu[index] =
+            !matches!(step.op, Op::Call(_) | Op::CallOut(_)) && step.args.iter().all(|arg| on_cpu[arg.0 as usize]);
+    }
     // What working each step out takes, with the material's work under it.
     let mut under = vec![0u32; count];
     for (index, step) in program.steps.iter().enumerate() {
@@ -62,6 +68,7 @@ pub fn roots(program: &Program, room: usize) -> Vec<ValueId> {
                 && !matches!(step.op, Op::Const(_) | Op::Property(_))
                 && read_at[*index].is_some_and(|rate| rate > Rate::Material)
                 && under[*index] > 0
+                && on_cpu[*index]
         })
         .map(|(index, _)| (under[index], ValueId(index as u32)))
         .collect();

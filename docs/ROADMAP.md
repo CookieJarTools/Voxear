@@ -1789,7 +1789,19 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   against 0.230 ms by hand; a graph with 200 sines on its properties draws the same in 0.226 ms against
   0.239 ms with them at every pixel (least of sixty frames). Tests: previews, hoisting and its values, a full
   material, the panel's costs; on a GPU, the heavy graph both ways.
-- VoxShade to come: sub-graphs and custom Slang nodes, material variants, the graph from `vox`, and work moved
+- **VoxShade sub-graphs and Slang nodes ✅.** A sub-graph is a `.voxshade` with `sub_graph`, inputs and outputs
+  (`Pin`s) in place of properties, Input nodes and a Sub-graph Output; the shader registry keeps them apart as a
+  `Library` by GUID, and a Sub-graph node (a typed reference, its ports kept up to date by the editor) is worked in
+  where it is used, through the same builder, so folding, merging and leaving out reach across it and its cost is
+  its nodes' (the same as the nodes put in by hand). A sub-graph on its own compiles to a Slang function to show.
+  A Slang node is a function the shader declares once (named from its code), called as one step with its other
+  outputs read from it, merged for the same inputs, never run on the CPU (previews striped, nothing after it
+  hoisted), its cost guessed from its code. The panel: rows for a Slang node's name, ports and code, a sub-graph
+  pick, a sub-graph's Inputs and Outputs; the search's Custom and Sub-graphs folders; New Shader's Sub-graph; the
+  Inspector's sub-graph. Tests: inlining, sharing, costs equal to plain nodes, errors at the node (missing, inside
+  itself, properties), Slang declared once and called once, ports added and taken away with their wires; on a GPU,
+  a rim made with a sub-graph and a Slang node against the same in plain nodes.
+- VoxShade to come: pictures passed into sub-graphs, material variants, the graph from `vox`, and work moved
   to the vertex stage: the shader interface hands nothing from `vertex` to `surface` yet, and the vertex output
   every pass shares (mesh shaders included) would need values of the graph's own first (see
   [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-voxshade)).

@@ -4,7 +4,8 @@
 //! two pictures compared, and the two shaders' cost on the GPU. Skips
 //! itself on machines without a usable Vulkan device. And a graph with
 //! long work on its properties alone, drawn with that work done once on the
-//! CPU and with it done at every pixel. With
+//! CPU and with it done at every pixel; and one using a sub-graph and a
+//! Slang node against the same work in plain nodes. With
 //! `VOXEAR_TEST_OUTPUT` set, the pictures are kept there.
 
 use std::collections::BTreeSet;
@@ -21,7 +22,9 @@ use voxear_render::{
     Primitive, Renderer, RendererSettings, Sky,
 };
 use voxear_scene::Transform;
-use voxear_voxshade::{Graph, Input, MathOp, NodeKind, Options, PropertyKind, compile, compile_with, starters};
+use voxear_voxshade::{
+    Graph, Input, MathOp, NodeKind, Options, Pin, PropertyKind, Ty, compile, compile_with, starters,
+};
 
 const SIZE: (u32, u32) = (640, 360);
 
@@ -189,7 +192,7 @@ fn property_heavy() -> Graph {
 fn work_on_a_graphs_properties_alone_done_once_on_the_cpu_draws_the_same_and_costs_the_gpu_less() {
     let graph = property_heavy();
     let hoisted = compile(&graph).unwrap_or_else(|errors| panic!("{errors:?}"));
-    let every_pixel = compile_with(&graph, Options { hoist: false }).unwrap();
+    let every_pixel = compile_with(&graph, Options { hoist: false, ..Options::default() }).unwrap();
     assert_eq!(hoisted.derived.types().len(), 1, "the chain's end, handed on: {}", hoisted.source);
     assert_eq!(hoisted.source.matches("sin(").count(), 0, "{}", hoisted.source);
     assert_eq!(every_pixel.source.matches("sin(").count(), 200);
@@ -233,4 +236,92 @@ fn work_on_a_graphs_properties_alone_done_once_on_the_cpu_draws_the_same_and_cos
     }
     println!("Heavy: {cpu:.3} ms with its property work done once, {gpu:.3} ms with it at every pixel");
     assert!(cpu < gpu, "worked out once: {cpu} ms against {gpu} ms");
+}
+
+/// A rim of glow: the starter sub-graph's edges, cubed, made a colour by a
+/// Slang node, or the same in plain nodes.
+fn rim(with_sub_graph: bool, edges: AssetGuid) -> Graph {
+    let mut g = starters::lit(if with_sub_graph { "RimNodes" } else { "RimPlain" });
+    let out = g.nodes.iter().find(|n| n.kind == NodeKind::SurfaceOutput).unwrap().id;
+    let math = |op| NodeKind::Math { op };
+    if with_sub_graph {
+        let sub = starters::sub_graph("Edges");
+        let kind =
+            NodeKind::SubGraph { graph: edges, name: sub.name.clone(), inputs: sub.inputs, outputs: sub.outputs };
+        let used = g.add(kind, [0.0; 2]);
+        g.set_literal(used, 0, [3.0; 4]);
+        let code = NodeKind::Code {
+            name: "Glow".into(),
+            inputs: vec![Pin::new("edge", Ty::Float)],
+            outputs: vec![Pin::new("glow", Ty::Float3)],
+            code: "glow = float3(edge, edge * 0.5, 0.0) * 2.0;".into(),
+        };
+        let glow = g.add(code, [0.0; 2]);
+        g.link(used, 0, glow, 0);
+        g.link(glow, 0, out, 5);
+    } else {
+        let normal = g.add(NodeKind::Input { input: Input::Normal }, [0.0; 2]);
+        let view = g.add(NodeKind::Input { input: Input::View }, [0.0; 2]);
+        let dot = g.add(math(MathOp::Dot), [0.0; 2]);
+        let abs = g.add(math(MathOp::Absolute), [0.0; 2]);
+        let away = g.add(math(MathOp::OneMinus), [0.0; 2]);
+        let power = g.add(math(MathOp::Power), [0.0; 2]);
+        let half = g.add(math(MathOp::Multiply), [0.0; 2]);
+        let combine = g.add(NodeKind::Combine { ty: Ty::Float3 }, [0.0; 2]);
+        let twice = g.add(math(MathOp::Multiply), [0.0; 2]);
+        g.link(normal, 0, dot, 0);
+        g.link(view, 0, dot, 1);
+        g.link(dot, 0, abs, 0);
+        g.link(abs, 0, away, 0);
+        g.link(away, 0, power, 0);
+        g.set_literal(power, 1, [3.0; 4]);
+        g.link(power, 0, half, 0);
+        g.set_literal(half, 1, [0.5; 4]);
+        g.link(power, 0, combine, 0);
+        g.link(half, 0, combine, 1);
+        g.link(combine, 0, twice, 0);
+        g.set_literal(twice, 1, [2.0; 4]);
+        g.link(twice, 0, out, 5);
+    }
+    g
+}
+
+#[test]
+fn a_graph_with_a_sub_graph_and_a_slang_node_draws_what_the_same_in_plain_nodes_does() {
+    let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+    let project = vec![
+        (guid(1), "Shaders/Edges.voxshade".to_string(), starters::sub_graph("Edges").to_toml()),
+        (guid(2), "Shaders/RimNodes.voxshade".to_string(), rim(true, guid(1)).to_toml()),
+        (guid(3), "Shaders/RimPlain.voxshade".to_string(), rim(false, guid(1)).to_toml()),
+    ];
+    let registry = ShaderRegistry::new(project, &BTreeSet::new());
+    for shader in registry.project_shaders() {
+        assert!(shader.info.is_ok(), "{}: {:?}", shader.path, shader.info);
+    }
+    assert_eq!(registry.project_shaders().count(), 2, "the sub-graph is no shader");
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    renderer.set_custom_shaders(dispatch_code(&registry));
+    let world = World::new();
+    for _ in 0..1200 {
+        let _ = renderer.render(&world, 0.0);
+        match renderer.custom_shaders() {
+            CustomShaderState::Compiling => std::thread::sleep(std::time::Duration::from_millis(50)),
+            CustomShaderState::Failed(error) => panic!("the shaders did not compile: {error}"),
+            _ => break,
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    let (nodes, _) = ball(&mut renderer, &registry, ShaderRef::Asset(guid(2)), 1.0, 2.4, false);
+    let (plain, _) = ball(&mut renderer, &registry, ShaderRef::Asset(guid(3)), 1.0, 2.4, false);
+    keep_image("rim nodes.png", &nodes);
+    keep_image("rim plain.png", &plain);
+    let all = (SIZE.0 * SIZE.1) as usize;
+    let (apart, far_apart) = (differing(&nodes, &plain, 2), differing(&nodes, &plain, 24));
+    assert!(apart * 100 < all, "{apart} pixels differ by more than 2 levels");
+    assert!(far_apart * 1000 < all, "{far_apart} pixels differ by more than 24 levels");
+    // The rim glows orange: somewhere on the ball red is well over blue.
+    assert!(nodes.chunks_exact(4).any(|p| i32::from(p[0]) > i32::from(p[2]) + 60), "the rim glows");
 }

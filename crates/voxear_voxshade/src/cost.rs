@@ -19,7 +19,8 @@ pub fn of(step: &Step, program: &Program) -> (u32, u32) {
     let width = |n: usize| program.step(step.args[n]).ty.width() as u32;
     let own = step.ty.width() as u32;
     let alu = match &step.op {
-        Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::Construct | Op::Swizzle(_) => 0,
+        Op::Const(_) | Op::Given(_) | Op::Property(_) | Op::Construct | Op::Swizzle(_) | Op::CallOut(_) => 0,
+        Op::Call(function) => code_cost(&function.code),
         Op::Sample(_) => return (2, 1),
         Op::Unary(op) => match op {
             Unary::Negate | Unary::Abs | Unary::Saturate => 0,
@@ -46,6 +47,24 @@ pub fn of(step: &Step, program: &Program) -> (u32, u32) {
         Op::Select { .. } => own,
     };
     (alu, 0)
+}
+
+/// A guess at what Slang written by hand costs: one for each sum,
+/// product or comparison in it, four for each call. It cannot know what a
+/// loop in it comes to.
+fn code_cost(code: &str) -> u32 {
+    let mut cost = 0;
+    let mut previous = ' ';
+    for c in code.chars() {
+        cost += match c {
+            '+' | '-' | '*' | '<' | '>' if previous != c => 1,
+            '/' if previous != '/' => 4,
+            '(' if previous.is_ascii_alphanumeric() => 4,
+            _ => 0,
+        };
+        previous = c;
+    }
+    cost
 }
 
 /// What a node costs once compiled: its instructions and picture reads in

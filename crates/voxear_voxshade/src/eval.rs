@@ -51,6 +51,8 @@ pub fn run(program: &Program, given: &Inputs<'_>, values: &mut Vec<[f32; 4]>) {
                 }
                 value
             }
+            // Slang written by hand is not run on the CPU: what it gives is not known here.
+            Op::Call(_) | Op::CallOut(_) => [f32::NAN; 4],
             Op::Swizzle(picks) => {
                 let from = arg(0);
                 let mut value = [0.0; 4];
@@ -91,7 +93,7 @@ mod tests {
         graph.link(sine, 0, add, 0);
         graph.link(time, 0, add, 1);
         graph.link(add, 0, graph.nodes[0].id, 1);
-        let (program, found) = lower_all(&graph, Stage::Surface);
+        let (program, found) = lower_all(&graph, Stage::Surface, None);
         let given = |what: Input| match what {
             Input::Input(Kind::Uv) => [0.5, 0.25, 0.0, 0.0],
             Input::Input(Kind::Time) => [2.0; 4],

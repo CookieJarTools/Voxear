@@ -497,19 +497,28 @@ pub enum ShaderStart {
     Graph(GraphStart),
 }
 
-/// What a new VoxShade shader starts as: a plain lit surface, or one of the
-/// built-in shaders made of nodes, to change.
+/// What a new VoxShade shader starts as: a plain lit surface, one of the
+/// built-in shaders made of nodes, to change, or a sub-graph for other
+/// graphs to use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphStart {
     Lit,
     Hologram,
     Sway,
+    SubGraph,
 }
 
 impl ShaderStart {
     /// As New Shader offers them: the three to write first, then the built-in ones.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Graph(GraphStart::Lit), Self::Lit, Self::Unlit, Self::Ui, Self::Look];
+        let mut all = vec![
+            Self::Graph(GraphStart::Lit),
+            Self::Graph(GraphStart::SubGraph),
+            Self::Lit,
+            Self::Unlit,
+            Self::Ui,
+            Self::Look,
+        ];
         all.extend(BuiltinShader::ALL.map(Self::Copy));
         all.extend([GraphStart::Hologram, GraphStart::Sway].map(Self::Graph));
         all
@@ -525,6 +534,7 @@ impl ShaderStart {
             Self::Graph(GraphStart::Lit) => "Graph",
             Self::Graph(GraphStart::Hologram) => "Hologram (VoxShade)",
             Self::Graph(GraphStart::Sway) => "Sway (VoxShade)",
+            Self::Graph(GraphStart::SubGraph) => "Sub-graph",
         }
     }
 
@@ -539,6 +549,7 @@ impl ShaderStart {
             Self::Lit | Self::Unlit | Self::Ui | Self::Look => "To write",
             Self::Copy(_) => "Built in, to change",
             Self::Graph(GraphStart::Lit) => "Made of nodes",
+            Self::Graph(GraphStart::SubGraph) => "Nodes other graphs use as one",
             Self::Graph(_) => "Built in as nodes, to change",
         }
     }
@@ -566,6 +577,7 @@ fn create_voxshade(root: &Path, folder: &str, start: GraphStart) -> Result<Strin
         GraphStart::Lit => "New VoxShade",
         GraphStart::Hologram => "Hologram",
         GraphStart::Sway => "Sway",
+        GraphStart::SubGraph => "New Sub-graph",
     };
     let name = unique(&root.join(folder), stem, ".voxshade");
     let path = join(folder, &name);
@@ -574,6 +586,7 @@ fn create_voxshade(root: &Path, folder: &str, start: GraphStart) -> Result<Strin
         GraphStart::Lit => starters::lit(&named),
         GraphStart::Hologram => starters::hologram(),
         GraphStart::Sway => starters::sway(),
+        GraphStart::SubGraph => starters::sub_graph(&named),
     };
     graph.name = named;
     let text = format!("{}{}", crate::editor::VOXSHADE_HEADING, graph.to_toml());
@@ -1000,6 +1013,11 @@ mod tests {
         let info = voxear_engine::shaders::read(&voxear_engine::shaders::graph_source(&text).unwrap()).unwrap();
         assert!(info.vertex && info.max_offset > 2.0 && info.properties.len() == 5, "{info:?}");
         assert!(ShaderStart::all().contains(&ShaderStart::Graph(GraphStart::Hologram)));
+        // A sub-graph, which is no shader of its own.
+        let sub = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::SubGraph), "Game").unwrap();
+        assert_eq!(sub, "New Sub-graph.voxshade");
+        let text = std::fs::read_to_string(dir.path().join(&sub)).unwrap();
+        assert!(voxear_engine::shaders::is_sub_graph(&text));
     }
 
     #[test]

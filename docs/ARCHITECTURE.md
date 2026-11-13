@@ -1330,8 +1330,8 @@ variants inherit from a parent and override only what differs.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(the compiler, the `.voxshade` asset and its panel, previews and work moved to the CPU
-implemented; sub-graphs and moving work to the vertex stage planned)*. One graph tool serves materials and particle effects, on the canvas generator
+**The graph compiler** *(the compiler, the `.voxshade` asset and its panel, previews, work moved to the CPU,
+sub-graphs and Slang nodes implemented; moving work to the vertex stage planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
 
@@ -1352,7 +1352,7 @@ in five places, and each has its answer here:
   off the stateless path says so.
 
 Values being dragged are kept as properties, so dragging never compiles; they are folded in when the graph is
-saved. A custom node is Slang read into the same form, so it does not stand in the way of any of this. The test:
+saved. A custom node is a call of its own Slang, which the compiler merges as any step but cannot see into, so it only stands in the way of work moved to the CPU after it. The test:
 the built-in shaders made again as graphs draw the same picture in the same GPU time as the hand-written ones.
 
 How it is built so far. Lowering asks each output node for its inputs back through the wires (`lower`), so a node
@@ -1383,6 +1383,18 @@ shares, mesh shaders included, has no room for a graph's own.
 Previews are worked out on the CPU, not drawn on the GPU: a node's value at each pixel of a 72-pixel ball,
 from the same steps lowered with every node's value kept (`lower_all`), so a preview is what the shader works
 out, and an edit needs no shader compiled to show it.
+
+A sub-graph is worked into each graph that uses it while that graph is lowered, not compiled on its own and
+called: its nodes are lowered through the same builder, with its Input nodes reading the values wired into the
+Sub-graph node, so every fold, merge and cut reaches across it, and two uses with the same inputs are one. Its
+steps count against the Sub-graph node, and its errors are said there. The shader registry keeps the project's
+sub-graphs apart from its shaders (`Library`, by GUID), so a reference is typed and survives a rename; the node
+keeps the sub-graph's ports as last read, for the canvas, and the editor brings them up to date. A Slang node is
+the one thing the compiler cannot see into: it is a call (`Op::Call`, its other outputs `Op::CallOut`) of a
+function declared once, its name made from everything about it, so it is merged as any step is, but never folded,
+run on the CPU, or hoisted out of the GPU's work; its cost is a guess from its code. Reading Slang into the
+compiler's own steps, as planned at first, would let it see into a custom node too, at the cost of a Slang reader
+of its own; the opaque call costs nothing a hand-written shader would not.
 
 A `.voxshade` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
 `.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream

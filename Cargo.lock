@@ -4281,6 +4281,7 @@ dependencies = [
  "anyhow",
  "serde",
  "toml",
+ "voxear_assets",
 ]
 
 [[package]]

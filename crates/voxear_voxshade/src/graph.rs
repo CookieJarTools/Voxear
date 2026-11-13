@@ -11,7 +11,10 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{nodes::NodeKind, types::Ty};
+use crate::{
+    nodes::{NodeKind, Pin, Port},
+    types::Ty,
+};
 
 /// A node's number in its graph.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -117,7 +120,8 @@ pub struct Link {
 }
 
 /// A shader made of nodes: what its properties struct is named, how it is
-/// drawn, its properties, nodes and wires.
+/// drawn, its properties, nodes and wires. Or a sub-graph: nodes other
+/// graphs use as one, with inputs and outputs in place of properties.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Graph {
@@ -130,6 +134,14 @@ pub struct Graph {
     /// culling allows for.
     #[serde(skip_serializing_if = "is_none")]
     pub max_offset: f32,
+    /// A sub-graph, for other graphs to use, not a shader of its own.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sub_graph: bool,
+    /// A sub-graph's inputs and outputs, in order.
+    #[serde(rename = "input", skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<Pin>,
+    #[serde(rename = "output", skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<Pin>,
     #[serde(rename = "property", skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<Property>,
     #[serde(rename = "node", skip_serializing_if = "Vec::is_empty")]
@@ -158,6 +170,50 @@ impl Graph {
         graph
     }
 
+    /// A sub-graph named `name`, with one output and its Sub-graph Output.
+    pub fn new_sub_graph(name: &str) -> Self {
+        let mut graph = Self { name: name.into(), sub_graph: true, ..Self::default() };
+        graph.add_output("result", Ty::Float3);
+        graph.add(NodeKind::SubGraphOutput, [400.0, 0.0]);
+        graph
+    }
+
+    /// Adds an input to a sub-graph; its number.
+    pub fn add_input(&mut self, name: &str, ty: Ty) -> u32 {
+        let id = self.inputs.iter().map(|pin| pin.id).max().unwrap_or(0) + 1;
+        self.inputs.push(Pin { id, ..Pin::new(name, ty) });
+        id
+    }
+
+    /// Adds an output to a sub-graph; its number.
+    pub fn add_output(&mut self, name: &str, ty: Ty) -> u32 {
+        let id = self.outputs.iter().map(|pin| pin.id).max().unwrap_or(0) + 1;
+        self.outputs.push(Pin { id, ..Pin::new(name, ty) });
+        id
+    }
+
+    /// A sub-graph's input by its number, and its place among them.
+    pub fn input(&self, id: u32) -> Option<(usize, &Pin)> {
+        self.inputs.iter().enumerate().find(|(_, pin)| pin.id == id)
+    }
+
+    /// The inputs `kind` has in this graph.
+    pub fn inputs_of(&self, kind: &NodeKind) -> Vec<Port> {
+        match kind {
+            NodeKind::SubGraphOutput => self.outputs.iter().map(Pin::port).collect(),
+            _ => kind.inputs(),
+        }
+    }
+
+    /// The outputs `kind` has in this graph.
+    pub fn outputs_of(&self, kind: &NodeKind) -> Vec<Port> {
+        kind.outputs(match kind {
+            NodeKind::Property { property } => self.property_ty(*property),
+            NodeKind::SubGraphInput { input } => self.input(*input).map(|(_, pin)| pin.ty),
+            _ => None,
+        })
+    }
+
     /// Reads a graph from its file's text.
     pub fn from_toml(text: &str) -> Result<Self> {
         let graph: Self = toml::from_str(text).context("reading a VoxShade shader")?;
@@ -182,6 +238,14 @@ impl Graph {
                 bail!("the property \"{}\" needs a name of its own, of letters, digits and _", property.name);
             }
         }
+        for (what, pins) in [("input", &self.inputs), ("output", &self.outputs)] {
+            let mut seen = std::collections::HashSet::new();
+            for pin in pins {
+                if !is_identifier(&pin.name) || !seen.insert(pin.name.clone()) || pin.ty == Ty::Bool {
+                    bail!("the {what} \"{}\" needs a name of its own, of letters, digits and _, and numbers", pin.name);
+                }
+            }
+        }
         let mut ids = std::collections::HashSet::new();
         for node in &self.nodes {
             if !ids.insert(node.id) {
@@ -193,11 +257,7 @@ impl Graph {
             let (Some(from), Some(to)) = (self.node(link.from), self.node(link.to)) else {
                 bail!("a wire runs to a node that is not there");
             };
-            let property = |kind: &NodeKind| match kind {
-                NodeKind::Property { property } => self.property(*property).and_then(|p| p.kind.ty()),
-                _ => None,
-            };
-            if link.output >= from.kind.outputs(property(&from.kind)).len() || link.input >= to.kind.inputs().len() {
+            if link.output >= self.outputs_of(&from.kind).len() || link.input >= self.inputs_of(&to.kind).len() {
                 bail!("a wire runs to a port {} or {} does not have", from.kind.title(), to.kind.title());
             }
             if !fed.insert((link.to, link.input)) {

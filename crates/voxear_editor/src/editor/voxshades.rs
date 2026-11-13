@@ -6,6 +6,7 @@
 //! held, and compiled into the renderer's shaders, so materials using it
 //! draw with it as it now is.
 
+use voxear_assets::AssetKind;
 use voxear_render::Renderer;
 use voxear_ui::NodeId;
 use voxear_voxshade::Graph;
@@ -14,7 +15,7 @@ use super::Editor;
 use crate::{
     graph_canvas::CanvasKey,
     object_picker::{Choice, Chosen, PickFor},
-    voxshade_panel::{VoxShadeEvent, VoxShadePanel, folder_icon},
+    voxshade_panel::{SubGraphs, VoxShadeEvent, VoxShadePanel, folder_icon},
 };
 
 /// What a VoxShade shader's file starts with, before the graph.
@@ -33,6 +34,7 @@ impl Editor {
             if let Some((open, graph)) = self.voxshade.take_unsaved() {
                 self.save_voxshade(&open, &graph, renderer);
             }
+            self.refresh_voxshade_sub_graphs();
             let file = self.game.content.db().file(path);
             let read = std::fs::read_to_string(file).map_err(anyhow::Error::from);
             match read.and_then(|text| Graph::from_toml(&text)) {
@@ -98,11 +100,34 @@ impl Editor {
             return self.notify(&format!("Could not save {path}: {error}"));
         }
         self.files_seen();
+        if graph.sub_graph {
+            self.refresh_voxshade_sub_graphs();
+        }
         self.game.apply_custom_shaders(renderer);
     }
 
-    /// A VoxShade shader's file was written outside the editor: the open graph reads it again.
+    /// Gives the VoxShade panel the project's sub-graphs as their files now are.
+    fn refresh_voxshade_sub_graphs(&mut self) {
+        let db = self.game.content.db();
+        let mut found: SubGraphs = db
+            .entries()
+            .filter(|entry| entry.kind == AssetKind::VoxShade)
+            .filter_map(|entry| {
+                let text = std::fs::read_to_string(db.file(&entry.path)).ok()?;
+                let graph = Graph::from_toml(&text).ok().filter(|graph| graph.sub_graph)?;
+                Some((entry.guid, entry.path.clone(), graph))
+            })
+            .collect();
+        found.sort_by(|a, b| a.2.name.cmp(&b.2.name).then_with(|| a.1.cmp(&b.1)));
+        if found != *self.voxshade.sub_graphs() {
+            self.voxshade.set_sub_graphs(found);
+        }
+    }
+
+    /// A VoxShade file was written outside the editor: the project's
+    /// sub-graphs are read again, and the open graph, when it is that file.
     pub(super) fn voxshade_file_changed(&mut self, path: &str) {
+        self.refresh_voxshade_sub_graphs();
         if self.voxshade.path() != Some(path) {
             return;
         }

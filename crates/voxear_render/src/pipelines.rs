@@ -199,6 +199,7 @@ pub struct Pipelines {
     /// pixel's view goes before it leaves the water, then its faces.
     pub block_water_exits: vk::Pipeline,
     pub block_water: vk::Pipeline,
+    pub block_sea_inside: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
     pub underwater: vk::Pipeline,
     pub lens_wetness: vk::Pipeline,
@@ -574,6 +575,20 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Water (blocks)", water, c"blockWaterVertex", c"blockWaterFragment")
+            })?,
+            // Over the whole view, at the depth where each pixel's view meets the swell.
+            block_sea_inside: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new(
+                    "Sea from in it (blocks)",
+                    water,
+                    c"underwaterVertex",
+                    c"blockSeaInsideFragment",
+                )
             })?,
             underwater: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -1034,6 +1049,7 @@ impl Pipelines {
             self.water_wall,
             self.block_water_exits,
             self.block_water,
+            self.block_sea_inside,
             self.underwater,
             self.lens_wetness,
             self.composite_ldr,

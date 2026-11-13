@@ -324,3 +324,77 @@ fn a_rough_sea_costs_little_more_to_draw_than_a_flat_one_and_a_warm_one_glows_at
     let blue = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[2] > 90 && p[2] > p[0] + 40).count();
     assert!(blue(&lit) > blue(&dark) + 300, "{} glowing pixels against {}", blue(&lit), blue(&dark));
 }
+
+/// The mean colour of the rows `rows` of a picture, across its middle half.
+fn mean(pixels: &[u8], rows: std::ops::Range<u32>) -> [i32; 3] {
+    let mut sum = [0i64; 3];
+    let mut count = 0i64;
+    for y in rows {
+        for x in WIDTH / 4..WIDTH * 3 / 4 {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            for (c, total) in sum.iter_mut().enumerate() {
+                *total += i64::from(pixels[i + c]);
+            }
+            count += 1;
+        }
+    }
+    sum.map(|total| (total / count.max(1)) as i32)
+}
+
+#[test]
+fn under_a_seas_faces_the_camera_is_under_water_only_under_its_swell() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    let centre = Vec2::new(middle + 2.0, middle - 44.0);
+    let pool = Whirlpool { middle: centre, radius: 16.0, depth: 7.0 };
+    let whirling = RoughSea { look: SeaLook::SmallCubes, time: 20.0, whirlpools: vec![pool], ..RoughSea::default() };
+    // The sky over the sea, from just over its faces, looking along them: what the top of each view is to show.
+    let sky_from = |at: Vec2| (Vec3::new(at.x, top + 1.5, at.y), Vec3::new(centre.x, top + 1.5, centre.y + 0.01));
+    world.insert_resource(RoughSea { time: 20.0, ..RoughSea::default() });
+    let rim = centre + Vec2::new(0.0, 6.0);
+    let sky = mean(&seen(&mut renderer, &mut world, sky_from(rim), 20.0), 0..HEIGHT / 6);
+    let near = |a: [i32; 3], b: [i32; 3], by: i32| a.iter().zip(b).all(|(a, b)| (a - b).abs() <= by);
+
+    // In the whirlpool's funnel, a metre under the faces and over its water: the sky over the rim, the water below.
+    world.insert_resource(whirling.clone());
+    let sunk = whirling.sampler(&[], [0.0; 2]).at(rim.x, rim.y).sunk;
+    assert!(sunk > 1.8, "the funnel is {sunk} m deep there");
+    let eye = Vec3::new(rim.x, top - 1.0, rim.y);
+    let across = seen(&mut renderer, &mut world, (eye, Vec3::new(centre.x, top - 1.0, centre.y + 0.01)), 20.0);
+    keep_image("sea in a whirlpool's funnel.png", &across);
+    let over = mean(&across, 0..HEIGHT / 6);
+    assert!(near(over, sky, 14), "the sky from the funnel {over:?}, from over the sea {sky:?}");
+    let down = seen(&mut renderer, &mut world, (eye, Vec3::new(centre.x, top - 7.0, centre.y)), 20.0);
+    keep_image("sea down a whirlpool's funnel.png", &down);
+    let [r, _, b] = mean(&down, HEIGHT * 2 / 5..HEIGHT * 3 / 5);
+    assert!(b > r + 10, "water down in the funnel, not its sand floor: red {r}, blue {b}");
+
+    // Under its water, deeper down the funnel: under water still, the sky nowhere to be seen as it is.
+    let deep = Vec3::new(centre.x, top - 6.5, centre.y + 2.0);
+    let sunk = whirling.sampler(&[], [0.0; 2]).at(deep.x, deep.z).sunk;
+    assert!(top - sunk > deep.y + 0.5, "{} m of water over the camera", top - sunk - deep.y);
+    let under = seen(&mut renderer, &mut world, (deep, Vec3::new(centre.x, top - 6.5, centre.y + 20.0)), 20.0);
+    keep_image("sea under a whirlpool's water.png", &under);
+    let up = mean(&under, 0..HEIGHT / 6);
+    assert!(!near(up, sky, 30), "from under the water {up:?}, the sky {sky:?}");
+
+    // In a trough of a rough sea, under the faces and over the water.
+    let rough =
+        RoughSea { look: SeaLook::SmallCubes, everywhere: 1.0, heading: 0.6, time: 20.0, ..RoughSea::default() };
+    let swell = rough.sampler(&[], [0.0; 2]);
+    let (trough, sunk) = (0..400)
+        .map(|i| Vec2::new(26.0 + (i % 20) as f32, 104.0 + (i / 20) as f32 * 1.5))
+        .map(|at| (at, swell.at(at.x, at.y).sunk))
+        .fold((Vec2::ZERO, 0.0), |deepest, (at, sunk)| if sunk > deepest.1 { (at, sunk) } else { deepest });
+    assert!(sunk > 2.0, "the deepest trough found is {sunk} m");
+    world.insert_resource(RoughSea { time: 20.0, ..RoughSea::default() });
+    let ahead = Vec2::new(trough.x - 30.0, trough.y + 10.0);
+    let level = |y: f32| (Vec3::new(trough.x, y, trough.y), Vec3::new(ahead.x, y + 3.0, ahead.y));
+    let calm = mean(&seen(&mut renderer, &mut world, level(top + 1.5), 20.0), 0..HEIGHT / 6);
+    world.insert_resource(rough);
+    let in_trough = seen(&mut renderer, &mut world, level(top - 0.7), 20.0);
+    keep_image("sea in a trough.png", &in_trough);
+    let over = mean(&in_trough, 0..HEIGHT / 6);
+    assert!(near(over, calm, 14), "the sky from the trough {over:?}, from over a calm sea {calm:?}");
+}

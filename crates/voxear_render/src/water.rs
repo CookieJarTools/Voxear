@@ -296,6 +296,9 @@ pub struct Water {
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
     /// Its waves and caustics are another view's, worked out there.
     shared: bool,
+    /// Whether the camera is under the top of a world of blocks' sea, whose
+    /// swell is then drawn from where it is (`blockSeaInsideFragment`).
+    inside: bool,
 }
 
 /// The waves and caustics a view worked out, for a view through a Portal
@@ -532,6 +535,8 @@ impl Water {
             dries: bodies.dries(),
             pool_draws: bodies.bodies[..bodies.pools as usize].iter().map(|pool| pool_draw(pool, camera)).collect(),
             spatter: (0u32..).zip(&bodies.bodies[..layered]).filter_map(|(body, lava)| spatter_draw(body, lava)).collect(),
+            inside: blocks.is_some()
+                && bodies.bodies[..bodies.pools as usize].first().is_some_and(|body| in_block_sea(body, camera)),
             blocks,
             shared: shared.is_some(),
         })
@@ -805,7 +810,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -929,7 +934,15 @@ pub fn record(
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
-    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), spatter: Vec::new(), walls: (first_dry, dries), blocks: None };
+    let draws = Draws {
+        sea,
+        pools: Vec::new(),
+        streams: Vec::new(),
+        spatter: Vec::new(),
+        walls: (first_dry, dries),
+        blocks: None,
+        inside: false,
+    };
     // With no sea and no Dry Area's walls it draws nothing, and its copy is wanted only under the water, or by lava,
     // which draws over it: a world of blocks' water alone needs none, and skips a copy of the whole picture.
     let empty = !sea && dries == 0 && !under && (second.is_some() || !layered);
@@ -943,7 +956,7 @@ pub fn record(
             record_block_exits(fg, (pipelines, push), view, (*exits, depth, size));
         }
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
-        let draws = Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), blocks };
+        let draws = Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), blocks, inside };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -963,6 +976,13 @@ pub fn record(
         sampled: layer.sampled,
     });
     (under, waves)
+}
+
+/// Whether `camera` is under the top of the blocks' water `body`, the
+/// camera's own (`water_bodies::block_water`), where that water is its
+/// world's sea.
+fn in_block_sea(body: &crate::gpu::GpuWaterBody, camera: Vec3) -> bool {
+    body.kind == crate::water_bodies::WATER_BLOCKS && body.lava[3] > 0.5 && camera.y < body.to_world[3][1]
 }
 
 /// The view under the water, the waterline and the wet lens, when the camera
@@ -1030,6 +1050,9 @@ struct Draws {
     spatter: Vec<(u32, u32, [u32; 2])>,
     walls: (u32, u32),
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
+    /// The swell of the blocks' sea the camera is under the top of, from
+    /// where it is.
+    inside: bool,
 }
 
 /// How far each pixel's view goes before it leaves the worlds of blocks'
@@ -1129,6 +1152,13 @@ fn record_layer(
         // Worlds of blocks' water, every face of it in view.
         if let Some((view, _)) = &draws.blocks {
             crate::blocks::draw_water(ctx, view, &push, pipelines.block_water);
+            // Under the top of a sea of blocks, its swell from the camera, in place of its faces' undersides: from
+            // a trough or a whirlpool's funnel the water lies below, and from under it its surface may be lower
+            // than those faces.
+            if draws.inside {
+                bind(ctx, pipelines.block_sea_inside, vk::PipelineBindPoint::GRAPHICS, &push);
+                unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+            }
         }
         // Walls of water: six faces of each body's box.
         let (first, count) = draws.walls;

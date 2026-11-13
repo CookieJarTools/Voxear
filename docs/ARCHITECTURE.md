@@ -1116,7 +1116,7 @@ with nothing else changed. `RoughSea` is the sea: its look, swell height, headin
 and the nearest whirlpools.
 
 The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and
-roughness, four waves, four whirlpools. `cloudWeather` in `clouds.slang` fills the cloud layer in and makes it
+roughness, eight waves, four whirlpools. `cloudWeather` in `clouds.slang` fills the cloud layer in and makes it
 heavier over each place, in the clouds' own march and in their shadow map, so a storm far off is a dark mass of
 cloud with its shadow under it. `weatherCurtain` integrates what falls along a view ray through each place's
 cylinder, under the clouds' undersides for rain and snow and a few hundred metres up for sand; the sky pass lays
@@ -1125,11 +1125,21 @@ it over the sky and the fog pass over the scene, the fog switched on at no densi
 The sea's swell is drawn without moving a vertex. A world of blocks' water is merged quads, flat at the sea's
 height, which is the height of a crest. `blockSwell` in `water.slang` walks each top face's view ray across
 columns of the world's own grid, each sunk a whole number of steps under the face by `seaSunk` at its middle
-(four waves, each a whole number of times round in 4096 m, their phases worked out on the CPU from the storms'
+(eight waves in pairs a little apart in length and way, so the swell runs in groups whose crests rise and die as
+they pass through, each a whole number of times round in 4096 m, their phases worked out on the CPU from the storms'
 clock; a whirlpool's funnel added), to the first column's top or the side of the next, as the block shader's small
 cubes are walked; smooth, it marches to the swell's own surface. The water is then shaded there: its depth for
-what stands in front of it, its normal, white water on crests by a drifting pattern of patches. Only faces at the
-world's `SeaLevel`, a component the engine gives a world with a generated sea, are walked. `sea::SeaSampler` is
+what stands in front of it, its normal, white water on crests by a drifting pattern of patches, bent about and
+gathered in wide clusters so it lies in no rows. Only faces at the world's `SeaLevel`, a component the engine gives a
+world with a generated sea, are walked.
+
+From under those faces, in a trough or a whirlpool's funnel, the faces are no help: the water may lie below the
+camera, where no face is. The camera's own stretch of blocks' water (`water_bodies::block_water`) carries its world's
+grid and whether it is the sea, and while the camera is under the sea's top the faces' undersides are not drawn;
+`blockSeaInsideFragment` draws the swell over the whole view instead, `seaCrossing` walking each pixel's view from the
+near plane to where it first crosses the swell, into the water from a trough or out of it from under the water, and
+writing that depth. `wavySurface` gives the sea's height there as drawn, so the waterline, the view under the water
+and the wet lens start where the swell's water does, not at the faces. `sea::SeaSampler` is
 the same function on the CPU with a sine made of sums and products, and `water::sample` takes its `sunk`, slope
 and flow for a point in the sea, so Buoyancy and scripts follow what is drawn.
 

@@ -78,7 +78,7 @@ pub const ANY_WATER: f32 = -1.0e9;
 pub const MAX_STORMS: usize = 8;
 pub const MAX_WHIRLPOOLS: usize = 4;
 /// How many waves the swell is made of.
-pub const WAVES: usize = 4;
+pub const WAVES: usize = 8;
 /// How far the swell's pattern goes before it repeats, in metres.
 pub const PERIOD: f32 = 4096.0;
 
@@ -164,8 +164,22 @@ pub struct GpuSea {
 }
 
 /// Each wave of the swell: how long it is, in metres, how far its way is
-/// turned from the swell's, in radians, and its share of the swell.
-const SWELL: [(f32, f32, f32); WAVES] = [(46.0, 0.0, 0.42), (27.0, 0.45, 0.28), (17.0, -0.6, 0.18), (11.0, 1.1, 0.12)];
+/// turned from the swell's, in radians, and its share of the swell. They
+/// come in pairs a little apart in length and way, so the swell runs in
+/// groups: a crest rises at the back of a group, grows through it at twice
+/// the group's speed and dies away at its front, and the water between
+/// groups lies calmer, as a sea's does, rather than every crest sliding on
+/// unchanged.
+const SWELL: [(f32, f32, f32); WAVES] = [
+    (46.0, 0.0, 0.24),
+    (40.0, 0.22, 0.18),
+    (27.0, 0.45, 0.15),
+    (23.5, 0.2, 0.13),
+    (17.0, -0.6, 0.1),
+    (14.8, -0.35, 0.08),
+    (11.0, 1.1, 0.07),
+    (9.6, 0.85, 0.05),
+];
 /// How fast a whirlpool's arms turn, in radians a second, and how fast the
 /// patches of white water drift, in patches a second.
 const SPIN: f64 = 1.6;
@@ -318,7 +332,9 @@ impl SeaSampler {
             let peaked = 1.0 - sine(phase * 0.5).abs();
             swell += wave.share * (round + (peaked - round) * 0.6) as f32;
         }
-        let crest = ((swell - 0.15) / 0.7).clamp(0.0, 1.0);
+        // The swell of paired waves seldom stands at its highest: its crests are where it is higher than all but a
+        // few hundredths of the sea.
+        let crest = ((swell - 0.12) / 0.65).clamp(0.0, 1.0);
         let mut sunk = self.height * rough * (1.0 - crest);
         for pool in &self.pools {
             let far = Vec2::new(x, z).distance(pool.middle) / pool.radius.max(1.0);

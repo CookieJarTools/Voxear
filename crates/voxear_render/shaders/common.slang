@@ -643,7 +643,7 @@ static const uint SEA_FLAT = 0;
 static const uint SEA_STEPS = 1;
 static const uint SEA_SMALL_CUBES = 2;
 static const uint SEA_SMOOTH = 3;
-static const uint SEA_WAVES = 4;
+static const uint SEA_WAVES = 8;
 static const uint SEA_STORMS = 8;
 static const uint SEA_WHIRLPOOLS = 4;
 struct Sea

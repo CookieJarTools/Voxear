@@ -1068,11 +1068,14 @@ Done so far:
     (`weatherCurtain`, in the sky and with the fog), and what they add where the viewer stands laid over the
     level's own weather (`Weather::set_here`). Weather has an eighth amount, **dust**, and two more kinds,
     Blizzard and Sandstorm.
-  - **Rough seas:** a world of blocks' sea sinks under its faces by a swell of four long waves, as rough as the
-    weather over it (`voxear_render::sea`): drawn in the water's fragment shader by walking the view ray across
+  - **Rough seas:** a world of blocks' sea sinks under its faces by a swell of eight long waves in pairs, which run
+    in groups whose crests rise and die away, as rough as the weather over it (`voxear_render::sea`): drawn in the water's fragment shader by walking the view ray across
     columns (`blockSwell`), as small cubes, block steps or smooth, with white water on the crests; no block
-    changes. `SeaSampler` is the same swell on the CPU, from sums and products alone, which `water::sample` and
-    Buoyancy follow. Only water at the generator's sea level is sea (`SeaLevel`).
+    changes. White water gathers in drifting clusters, in no rows. `SeaSampler` is the same swell on the CPU, from
+    sums and products alone, which `water::sample` and Buoyancy follow. Only water at the generator's sea level is
+    sea (`SeaLevel`). From under the faces, in a trough or a whirlpool's funnel, the swell is drawn from the camera
+    (`blockSeaInsideFragment`), and the view under water and the waterline start at the swell's water, not the
+    faces.
   - **Whirlpools:** a stepped funnel with turning arms whose water runs round, in and down: under strong storms
     over deep water, standing at seeded places in a generated sea, and from scripts.
   - **Life on the sea's bed:** a growing rule may be **Under water** (`GrowRule::under_water`), its height then a
@@ -1088,8 +1091,9 @@ Done so far:
     clock; the swell flat when calm, the same wherever the world's middle is, and a whirlpool's pull; plants of
     the bed by depth; an engine test of a storm crossing a sea without end, and of a reef and a kelp forest
     grown; a C# system starting, changing, keeping and putting back a storm; GPU pictures of the three sea
-    looks, a whirlpool, a storm and a sandstorm far off, and the sea plants.
-  - Not done: the sea freezing where it is cold; the rough sea seen from under water; swell that calms in the
+    looks, a whirlpool, a storm and a sandstorm far off, and the sea plants; the sky seen from a whirlpool's
+    funnel and a trough, and the view under water from under the funnel's water.
+  - Not done: the sea freezing where it is cold; swell that calms in the
     shallows and breaks on shores; wet ground and snow by place; storms sent between machines by the engine
     itself (a game sends `CaptureState` in its own RPC); rain kept out from under roofs; sounds.
 - **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the

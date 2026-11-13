@@ -698,12 +698,17 @@ const BLOCK_WATER_REACH: f32 = 96.0;
 /// column, as far along x and z as that top reaches from the column (so the
 /// ground beside a pond is not taken to be under it) and as deep as the
 /// water goes along those ways, in the colours its faces are drawn in
-/// (`blockWaterLook` in `shaders/water.slang`).
+/// (`blockWaterLook` in `shaders/water.slang`). In place of a lava's
+/// numbers it holds its world's corner along x and z, its blocks' size, and
+/// 1 where its top is the world's sea, which a rough sea sinks under it
+/// (see [`crate::sea`]), or 0.
 pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3, worn: [f32; 4]) -> Option<GpuWaterBody> {
     use voxear_scene::{Destroying, Transform, WorldTransform};
     use voxear_terrain::blocks::BlockWorld;
-    let worlds = world.query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
-    worlds.into_iter().find_map(|(blocks, local, placed)| {
+    let worlds = world
+        .query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>, Option<&crate::sea::SeaLevel>)>()
+        .without::<Destroying>();
+    worlds.into_iter().find_map(|(blocks, local, placed, sea)| {
         let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
         let at = camera - corner;
         let depth = blocks.water_depth(at.to_array(), NEAR_BLOCK_WATER)?;
@@ -736,6 +741,7 @@ pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3, worn: [f32; 4
         let most = color.iter().copied().fold(1e-3, f32::max);
         let middle = (low + high) * 0.5;
         let to_world = Mat4::from_translation(Vec3::new(middle.x, camera.y + depth, middle.z));
+        let is_sea = sea.is_none_or(|level| (camera.y + depth - corner.y - level.0).abs() < 0.02 * size);
         Some(GpuWaterBody {
             to_world: cols(to_world),
             to_local: cols(to_world.inverse()),
@@ -747,7 +753,7 @@ pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3, worn: [f32; 4
             waves: 0.0,
             absorb: color.map(|c| -(1.0 + (c / most - 1.0) * 0.55).ln() + 0.05),
             liquid: Liquid::Water as u32,
-            lava: [0.0; 4],
+            lava: [corner.x, corner.z, size, f32::from(u8::from(is_sea))],
         })
     })
 }

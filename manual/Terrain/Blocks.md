@@ -114,7 +114,10 @@ sways = true
 
 ### Vines
 
-A block whose **Shape** is **Vine** is a vine: no cube at all, but a thin sheet against each block of ground beside it, a little off its face. With no ground beside it, a vine hangs free as two crossed sheets, from a roof, from leaves or from the vine above it.
+A block whose **Shape** is **Vine** is a vine: no cube at all, but a thin sheet against each wall beside it, a little off its face. With no wall beside it, a vine hangs free as two crossed sheets, from a roof, from leaves or from the vine above it.
+
+- A vine climbs wood, stone and any other ground, but never leaves. One that hangs from leaves hangs crossed all the way down from them, whatever it passes, so it is seen to start at the leaves from every side.
+- Against a log thinner than a block, a vine lies on the bark, as wide as the log; it does not climb a side under three quarters of a block high, as a slab's or a lying branch's.
 
 - A vine is no ground. Characters walk through it, nothing stands on it, it hides no face behind it and shades no corner, and physics rays pass it by. `Blocks.Raycast` and the brush do meet a vine, so it is placed and broken as any block.
 - What a vine clings to is read from the blocks round it, so nothing more is saved for it, and it turns to the wall as soon as one is built beside it.

@@ -80,6 +80,25 @@ pub(crate) trait Kernel: fmt::Debug + Send + Sync {
     fn key(&self, key: &mut Key);
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]);
+
+    /// Where it is one input alone, to the bit, wherever a third is nothing
+    /// or less, and another alone wherever that third is 1 or more: the
+    /// three's places among its inputs. Where the third is nothing or less
+    /// at every place a program is run over, or 1 or more at every one, the
+    /// program makes the input it passes through and not the other, nor
+    /// anything only the other reads (see `Program::run`).
+    fn passes(&self) -> Option<Pass> {
+        None
+    }
+}
+
+/// How a kernel passes one of two inputs through, by a third: see
+/// [`Kernel::passes`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Pass {
+    pub low: usize,
+    pub high: usize,
+    pub by: usize,
 }
 
 /// What tells a kernel from every other, as bytes.

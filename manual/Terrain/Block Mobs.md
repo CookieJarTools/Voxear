@@ -81,6 +81,6 @@ public sealed class Pet : Behaviour
 ## Not done yet
 
 - Health, damage, drops, spawning and what a creature decides to do. A Block Mob walks where it is told; deciding is a game's own, or a package's.
-- Jumping gaps, climbing ladders and opening doors.
+- Jumping gaps, climbing ladders and opening doors. A Block Mob walks through a door that is open and stops at one that is shut.
 - Flying and swimming creatures that find ways through air or water.
 - Block Mobs over the network. A game can send where each one is and call `MobMotion.MoveAs` so it walks as it moves.

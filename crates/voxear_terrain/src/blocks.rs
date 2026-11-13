@@ -445,10 +445,8 @@ impl PartialEq for BlockWorld {
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
             && (Arc::ptr_eq(&self.flowing, &other.flowing) || self.flowing == other.flowing)
+            // What moves and its clock are the moment's, not what the world is.
             && self.links == other.links
-            && self.moving == other.moving
-            && self.pressed == other.pressed
-            && self.clock == other.clock
     }
 }
 

@@ -105,6 +105,20 @@ public sealed class OreRules : BlockRules
 
 `BreakTime`, `Drops`, `OnMined` and `OnPlaced` each start from the block's own answer, so override only what differs.
 
+For a block a player uses (see [[Blocks#Blocks you use|Blocks you use]]), `CanUse` says whether it may be used now, and `OnUsed` hears that it was. A door that opens only for whoever carries its key, `Keyring` being a behaviour of the game's own:
+
+```csharp
+[CreateAsset("Blocks/Locked Door")]
+public sealed class LockedDoor : BlockRules
+{
+    public Item? Key;
+
+    public override bool CanUse(BlockUse use) => Key == null || use.User.GetBehaviour<Keyring>()?.Holds(Key) == true;
+
+    public override void OnUsed(BlockUse use) => Log.Info($"{use.User.Name} opened the door: {use.Now}");
+}
+```
+
 ## Over the network
 
 Decide on the server: call `Blocks.Mine` and `Blocks.Place` there, and tell the others which `Block` or `Item` went where. A block's number in a world is that machine's own where the world first held the block in play, so it is never what to send.

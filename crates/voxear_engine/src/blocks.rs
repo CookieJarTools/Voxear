@@ -1226,11 +1226,12 @@ pub fn tick(world: &mut World, content: &mut Content, delta: f32) {
     let worlds: Vec<voxear_ecs::Entity> =
         world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
     for entity in worlds {
-        let Some(blocks) = world.get_mut::<BlockWorld>(entity) else { continue };
-        if blocks.moving.is_empty() && blocks.pressed.is_empty() {
-            blocks.clock += f64::from(delta.max(0.0));
+        // A world with nothing moving keeps its clock as it is: only how long since something started matters.
+        let idle = world.get::<BlockWorld>(entity).is_none_or(|blocks| blocks.moving.is_empty() && blocks.pressed.is_empty());
+        if idle {
             continue;
         }
+        let Some(blocks) = world.get_mut::<BlockWorld>(entity) else { continue };
         let up = blocks.tick(delta);
         for at in up {
             set_moved(world, content, entity, at, false, true);

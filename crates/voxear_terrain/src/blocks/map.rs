@@ -360,7 +360,7 @@ fn put(column: &mut Vec<Run>, from: i32, to: i32, block: BlockId) {
 
 /// Whether cell `y` of `column` holds ground: a block that is not water.
 fn holds(column: &[Run], y: i32, faces: &[BlockFaces]) -> bool {
-    column.iter().any(|run| run.from <= y && y < run.to && !is_water(faces, run.block))
+    column.iter().any(|run| run.from <= y && y < run.to && shows(faces, run.block))
 }
 
 /// Block `index` of a chunk, as `(x, y, z)`: kept along x, then z, then up.
@@ -542,9 +542,16 @@ fn stand_built(
     }
 }
 
-/// Where the ground of `column` ends: its highest block that is not water.
+/// Where the ground of `column` ends: its highest block that is not water,
+/// nor a block of parts too thin to see from over it, as a lever or a
+/// fence is (see `blocks::far_block`).
 fn ground_top(column: &[Run], faces: &[BlockFaces]) -> Option<i32> {
-    column.iter().rev().find(|run| !is_water(faces, run.block)).map(|run| run.to)
+    column.iter().rev().find(|run| shows(faces, run.block)).map(|run| run.to)
+}
+
+/// Whether block `block` is ground on a map: not water, nor too thin.
+fn shows(faces: &[BlockFaces], block: BlockId) -> bool {
+    !is_water(faces, block) && super::far_block(faces, block) != AIR
 }
 
 /// Stands each plant `making`'s world grows by `plants` on a far tile's

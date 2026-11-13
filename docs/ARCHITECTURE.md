@@ -3609,6 +3609,16 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**Blocks of parts.** A slab, a stair, a fence, a door is no new kind of storage: a placed block's state, a byte
+(`shape::BlockState`), is part of its number, as a world numbers each block and state it holds, so chunks, saved
+edits and network bytes stay as they were and using a door is one block changed. What joins (a fence's rails, a
+stair's corner) is read from the neighbours as the chunk is meshed, never kept. A part face is two quads' words
+in a bucket of its own, so it can say sixteenths, a hinge and a motion; the renderer's pool and draws are
+unchanged, and the second word of each pair draws a degenerate quad. Motion is the renderer's alone: the world
+keeps when each moving block started, by its own clock, and the shader poses its moving boxes by the motion's keys,
+so collision and saves hold only the state it ends in. Hanging blocks swing in the vertex shader from the wind
+and the foliage push, never in physics.
+
 **See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
 materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
 `BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block

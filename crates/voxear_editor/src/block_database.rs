@@ -6,7 +6,9 @@
 //! look and its rules. A double click has the Scene view's brush build
 //! with it. A block dragged from here goes wherever a block is taken, as
 //! onto a Block World's Block. **New Block** makes one in the project's
-//! Blocks folder, **Duplicate** copies the one picked, and **Delete** moves
+//! Blocks folder, **Starter Blocks** makes a set of slabs, stairs, fences,
+//! doors and more to start from (see `starter_blocks`), **Duplicate**
+//! copies the one picked, and **Delete** moves
 //! it to the project's trash: where worlds hold it, only once that is said
 //! and asked again, as its blocks in them are then missing.
 //!
@@ -33,6 +35,8 @@ pub enum BlocksEvent {
     /// A block was double clicked: the brush builds with it.
     BuildWith(String),
     New,
+    /// Starter Blocks: the starter blocks made.
+    Starters,
     Duplicate(String),
     /// Delete was asked for; and asked again, for a block worlds hold.
     Delete(String),
@@ -124,6 +128,7 @@ pub struct BlockDatabase {
     search: NodeId,
     count: NodeId,
     new: NodeId,
+    starters: NodeId,
     duplicate: NodeId,
     delete: NodeId,
     list: NodeId,
@@ -156,6 +161,8 @@ impl BlockDatabase {
             button
         };
         let new = button(ui, "New Block");
+        let starters = button(ui, "Starter Blocks");
+        ui.set_tooltip(starters, "Makes slabs, stairs, fences, doors, levers and more in the Blocks folder", None);
         let duplicate = button(ui, "Duplicate");
         let delete = button(ui, "Delete");
         let line = ui.panel(root, Style::default());
@@ -167,7 +174,8 @@ impl BlockDatabase {
         let empty = ui.add_label(root, "No blocks");
         ui.add_class(empty, "entities-hint");
         ui.set_visible(empty, false);
-        Self { search: field, count, new, duplicate, delete, list, empty, shown, typed: String::new(), deleting: None }
+        let typed = String::new();
+        Self { search: field, count, new, starters, duplicate, delete, list, empty, shown, typed, deleting: None }
     }
 
     /// Reads the project's blocks again where they are others than it
@@ -203,6 +211,9 @@ impl BlockDatabase {
         let mut events = Vec::new();
         if ui.clicked(self.new) {
             events.push(BlocksEvent::New);
+        }
+        if ui.clicked(self.starters) {
+            events.push(BlocksEvent::Starters);
         }
         if let Some(path) = selected.clone().filter(|_| ui.clicked(self.duplicate)) {
             events.push(BlocksEvent::Duplicate(path));

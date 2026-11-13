@@ -45,7 +45,7 @@ public abstract class BlockRules : Definition
 	/// <summary>
 	/// Whether the block may be used now, by <see cref="BlockUse.User"/>: false keeps a door shut, as a lock does.
 	/// <code>
-	/// public override bool CanUse(BlockUse use) =&gt; use.User.Get&lt;Keyring&gt;()?.Has(Key) == true;
+	/// public override bool CanUse(BlockUse use) =&gt; use.User.GetBehaviour&lt;Keyring&gt;()?.Holds(Key) == true;
 	/// </code>
 	/// </summary>
 	public virtual bool CanUse(BlockUse use)

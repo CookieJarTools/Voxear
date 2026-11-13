@@ -745,6 +745,12 @@ impl Editor {
     }
 
     /// Selects an Obj, as a click in the Hierarchy does, or nothing.
+    /// Turns the block the Build tool's brush puts down on, as R does over
+    /// a world of blocks.
+    pub fn turn_brush_block(&mut self) {
+        self.block_tools.turn();
+    }
+
     pub fn select(&mut self, entity: Option<Entity>) {
         self.selected_part = None;
         self.reselect(entity);
@@ -818,6 +824,10 @@ impl Editor {
             }
             if let Some(delta) = self.game_delta(delta) {
                 self.game.tick(delta, Some(renderer));
+            }
+            // Blocks used while editing move by their motions, as they do in play.
+            if !self.is_playing() {
+                voxear_engine::blocks::tick(&mut self.game.engine.world, &mut self.game.content, delta);
             }
         }
         let views = {
@@ -2490,6 +2500,18 @@ impl Editor {
             && key.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)
         {
             self.commands.push(Command::Delete);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && text.to_lowercase() == "r"
+            && self.block_tools.is_hovered()
+        {
+            // Over a world of blocks under its Build tool, R turns the block the brush puts down.
+            self.turn_brush_block();
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event

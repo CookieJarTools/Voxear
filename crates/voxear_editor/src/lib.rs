@@ -101,6 +101,7 @@ mod project_files;
 mod project_view;
 mod props;
 mod block_inspector;
+mod biome_inspector;
 pub mod block_database;
 mod block_panel;
 mod block_props;
@@ -120,6 +121,7 @@ mod shader_fields;
 mod motion_set_inspector;
 mod prompt_icons_inspector;
 mod world_gen_inspector;
+mod starter_biomes;
 mod strings_inspector;
 #[cfg(target_os = "linux")]
 mod wayland_drops;

@@ -233,6 +233,19 @@
     color: var(--vx-muted);
 }
 
+/* A look pack's settings: what the pack writes stands out from what it
+   leaves to the level, and a colour it writes has a button to give it back. */
+.setting.written > .prop-label {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.setting-reset {
+    flex-shrink: 0;
+    width: 20px;
+    padding: 0px;
+}
+
 /* The command palette, under the command bar. */
 .palette {
     position: absolute;
@@ -3343,6 +3356,21 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 }
 
 /* A number with its unit after its field. */
+/* Two numbers, from and to. */
+.vector.pair {
+    grid-template-columns: repeat(2, minmax(0px, 1fr));
+    flex-grow: 1;
+}
+
+/* The cross beside a field naming an asset, which takes what it names out again. */
+.slot-clear {
+    width: 18px;
+    height: 18px;
+    padding: 2px;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
 .value-with-unit {
     flex-direction: row;
     align-items: center;
@@ -4240,6 +4268,16 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 
 .terrain-layer-icon {
     color: var(--vx-muted);
+}
+
+/* A biome's colour, in a generated Block World's list of its biomes. */
+.biome-swatch {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-line);
 }
 
 .terrain-layer-name {

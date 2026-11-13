@@ -269,6 +269,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Plant) => "sprout",
                 FileKind::Asset(AssetKind::VoxModel) => "blocks",
                 FileKind::Asset(AssetKind::Lighting) => "light",
+                FileKind::Asset(AssetKind::LookPack) => "eye",
                 FileKind::Asset(AssetKind::Data) => "file",
             },
         }
@@ -1007,12 +1008,12 @@ impl ProjectView {
         for kind in NewFile::ALL {
             match kind {
                 NewFile::Shader => add(MenuItem::new("New Shader…").enabled(open_to_new), Some(MenuAction::NewShader)),
-                NewFile::UnlitShader | NewFile::UiShader => {}
+                NewFile::UnlitShader | NewFile::UiShader | NewFile::LookShader => {}
                 _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }
             // Particle effects, after the shaders, as one item offering each starter to copy.
-            if kind == NewFile::UiShader {
+            if kind == NewFile::LookShader {
                 add(MenuItem::new("New Particle Effect…").enabled(open_to_new), Some(MenuAction::NewEffect));
             }
             // Data assets, after the scripts that describe them, as one item offering each Definition.

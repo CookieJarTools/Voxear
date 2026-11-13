@@ -5,7 +5,8 @@
 // corners, so its shading runs smoothly across it.
 //
 // Its faces are shaded by shading.slang's fragment shaders, as the terrain's are: each face with its surface's
-// material, its pictures repeated each block, darker at the corners blocks close in.
+// material, its pictures repeated each block, darker at the corners blocks close in. A face whose material is cut
+// out is drawn only where its picture is solid, in the depth pass as in the shaded one, and casts a shadow only there.
 //
 // A world drawn smooth (voxear_terrain::blocks::smooth) holds triangles' corners in place of quads, two pairs of words
 // each, a vertex each: where it is in its chunk and the chunk's number, then the way the ground faces there and the
@@ -16,12 +17,57 @@
 #include "shading.slang"
 #include "block_quads.slang"
 
+// How far a swaying corner moves at wind strength 1, as a share of a block, and the furthest it ever does.
+static const float BLOCK_SWAY = 0.07;
+static const float BLOCK_SWAY_MOST = 0.22;
+
+// A number from 0 to 1 for a corner of the world's blocks, from whole numbers alone.
+float blockCornerPhase(int3 corner)
+{
+    uint h = uint(corner.x) * 0x9E3779B1u ^ uint(corner.y) * 0x85EBCA77u ^ uint(corner.z) * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return float(h >> 8) / 16777216.0;
+}
+
+// How far the wind moves a corner of a block that sways, as leaves do, at `time`: downwind as hard as the wind and
+// the gust over it blow, to and fro, across and up and down at a pace of the corner's own, so a crown of leaves
+// stirs all over while a gust still crosses it whole. Every face that meets at the corner moves it alike, and a
+// corner a still block touches does not sway (voxear_terrain::blocks::mesh), so nothing parts.
+float3 blockSway(Frame* frame, BlockWorld world, BlockPoint b, float time)
+{
+    Wind wind = frame->wind;
+    if (!b.sways || wind.strength <= 0.0)
+    {
+        return 0.0;
+    }
+    float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
+    float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
+    float push = max(windPush(wind, levelPosition(frame, b.world, 4096.0).xz, time), 0.0);
+    float phase = blockCornerPhase(b.corner) * 6.2831853;
+    float stir = 0.4 + 0.6 * saturate(wind.turbulence);
+    float to = sin(time * 2.1 + phase) * 0.6 + sin(time * 3.7 + phase * 1.7) * 0.4;
+    float side = sin(time * 2.9 + phase * 2.3);
+    float bob = sin(time * 3.3 + phase * 1.3);
+    float reach = min(BLOCK_SWAY * push, BLOCK_SWAY_MOST) * world.blockSize;
+    float3 swayed = along * (0.5 + 0.5 * to * stir) + across * (side * 0.45 * stir);
+    swayed.y += bob * 0.3 * stir;
+    return swayed * reach;
+}
+
 [shader("vertex")]
 VertexOut blockVertex(uint vertexId : SV_VertexID)
 {
     Frame* frame = push.frame;
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    // Leaves sway, now and as they were a frame ago, for their motion.
+    float3 swayed = blockSway(frame, world, b, frame->time);
+    float3 before = b.world + blockSway(frame, world, b, frame->time - frame->deltaTime);
+    b.world += swayed;
     float4 at = float4(b.world, 1.0);
     VertexOut o;
     o.position = transform(frame->viewProj, at);
@@ -50,8 +96,9 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
         o.uv = float2(vertexId % 3 == 0 ? 1.0 : 0.0, vertexId % 3 == 1 ? 1.0 : 0.0);
     }
     o.currentClip = transform(frame->unjitteredViewProj, at);
-    o.previousClip = transform(frame->prevViewProj, at);
-    o.moved = 0.0;
+    o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
+    // Bounced light is read where the block stands.
+    o.moved = swayed;
     o.hidden = 0.0;
     return o;
 }
@@ -95,6 +142,162 @@ TerrainLayer smoothLayer(BlockWorld world, uint3 surfaces, TerrainSpot spot, flo
     return layer;
 }
 
+// A number from 0 to 1 for a small cube, from whole numbers alone.
+float blockGrain(int3 cube)
+{
+    uint h = uint(cube.x) * 0x8DA6B343u ^ uint(cube.y) * 0xD8163841u ^ uint(cube.z) * 0xCB1AB31Fu;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return float(h >> 8) / 16777216.0;
+}
+
+// The most small cubes deep a face is cut, and the most of them a ray is walked across.
+static const int BLOCK_RELIEF_DEEPEST = 4;
+static const int BLOCK_CUBE_STEPS = 12;
+
+// A cube's face drawn as made of small cubes (src/blocks.rs, BlockVoxels): `world.voxels` of them along a block's
+// side, in a grid over the whole world, so faces side by side and round a corner agree. Each small cube is one
+// colour, the face's picture's there, and stands a whole number of small cubes below the face: deeper the darker
+// its part of the picture is than the picture is all over, or for a face with no picture, here and there. The ray
+// from the camera is walked across the grid from where it meets the face until it meets a small cube's top or the
+// side of the next, which gives the face's look its place to read the pictures at (`spot`, with a small cube's
+// width for the pixel's, so the picture is read one colour a small cube), the way the small cube's own face looks
+// (`facing`), how many small cubes down it is (`sunk`) and a number of its own (`grain`). Nothing is cut out and no
+// depth is written: the small cubes are in the shading alone. `shown` is how much of this the pixel takes, less
+// as the small cubes get too small on screen to tell apart, where the plain face takes over.
+bool blockCubes(
+    BlockWorld world,
+    uint index,
+    float3 at,
+    float3 normal,
+    inout TerrainSpot spot,
+    out float3 facing,
+    out float sunk,
+    out float grain,
+    out float shown)
+{
+    facing = normal;
+    sunk = 0.0;
+    grain = 0.5;
+    shown = 0.0;
+    if (world.voxels < 1.0)
+    {
+        return false;
+    }
+    float cube = world.blockSize / world.voxels;
+    shown = 1.0 - smoothstep(0.4, 0.8, max(length(spot.dx), length(spot.dy)) / cube);
+    if (shown <= 0.0)
+    {
+        return false;
+    }
+    // The face's own axis, and the two it lies along.
+    uint axis = abs(normal.x) > 0.5 ? 0 : (abs(normal.y) > 0.5 ? 1 : 2);
+    uint u = (axis + 1) % 3;
+    uint v = (axis + 2) % 3;
+    uint side = axis == 1 ? 0 : (axis == 0 ? 1 : 2);
+    float3 alongU = float3(0.0);
+    float3 alongV = float3(0.0);
+    alongU[u] = 1.0;
+    alongV[v] = 1.0;
+    float3 grid = spot.place / cube;
+    // The layer of small cubes just under the face.
+    int layer = int(round(grid[axis])) - (normal[axis] > 0.0 ? 1 : 0);
+    float3 ray = normalize(at - push.frame->cameraPosition);
+    float2 across = float2(ray[u], ray[v]);
+    // How fast the ray goes down into the face: never so slowly that it runs along it for ever.
+    float down = max(-dot(ray, normal), 0.05);
+
+    TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
+    Material material = buffers()->materials[surface.material];
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    bool pictured = width > 2;
+    int deepest = clamp(int(round(world.relief)), 0, BLOCK_RELIEF_DEEPEST);
+    // The picture's brightness over a whole block, which each small cube's is set against.
+    TerrainSpot whole = spot;
+    whole.dx = alongU * world.blockSize;
+    whole.dy = alongV * world.blockSize;
+    float3 weights = float3(0.2126, 0.7152, 0.0722);
+    float3 all = pictured ? terrainPicture(material.baseColorTexture, whole, side, surface.uvScale).rgb : float3(0.0);
+    float usual = dot(all, weights);
+
+    TerrainSpot small;
+    small.place = spot.place;
+    small.dx = alongU * cube;
+    small.dy = alongV * cube;
+    float2 from = float2(grid[u], grid[v]);
+    int2 here = int2(floor(from));
+    int2 toward = int2(across.x >= 0.0 ? 1 : -1, across.y >= 0.0 ? 1 : -1);
+    float2 span = 1.0 / max(abs(across), 1e-6);
+    float2 next = (float2(here + max(toward, int2(0, 0))) - from) * float2(toward) * span;
+    float travelled = 0.0;
+    for (int i = 0; i < BLOCK_CUBE_STEPS; i++)
+    {
+        // How far down this small cube's top is.
+        int3 key = int3(0, 0, 0);
+        key[u] = here.x;
+        key[v] = here.y;
+        key[axis] = layer;
+        float own = blockGrain(key + int3(int(index) * 7919, 0, 0));
+        small.place[u] = (float(here.x) + 0.5) * cube;
+        small.place[v] = (float(here.y) + 0.5) * cube;
+        float low;
+        if (pictured)
+        {
+            float bright = dot(terrainPicture(material.baseColorTexture, small, side, surface.uvScale).rgb, weights);
+            low = saturate((usual - bright) / max(usual, 0.04) * 2.5);
+        }
+        else
+        {
+            // Without a picture, about a fifth of the small cubes are sunk, some deeper than others, more of them
+            // together in some places than others: each small cube's own number and that of the three by three
+            // it is one of.
+            int3 patch = int3(floor(float3(key) / 3.0));
+            float rough = own * 0.55 + blockGrain(patch + int3(int(index) * 7919, 31, 0)) * 0.45;
+            low = saturate((rough - 0.62) * 4.0);
+        }
+        float top = floor(low * float(deepest) + 0.5);
+        if (i > 0 && travelled * down > top)
+        {
+            // The ray came in below this small cube's top: it meets its side. `facing` was set as it stepped.
+            sunk = travelled * down;
+            grain = own;
+            break;
+        }
+        float leaves = min(next.x, next.y);
+        if (top <= leaves * down || i == BLOCK_CUBE_STEPS - 1)
+        {
+            // It reaches this small cube's top before it leaves it.
+            facing = normal;
+            sunk = top;
+            grain = own;
+            break;
+        }
+        travelled = leaves;
+        if (next.x < next.y)
+        {
+            here.x += toward.x;
+            next.x += span.x;
+            facing = -alongU * float(toward.x);
+        }
+        else
+        {
+            here.y += toward.y;
+            next.y += span.y;
+            facing = -alongV * float(toward.y);
+        }
+    }
+    // The pictures are read at the small cube's middle, a small cube wide; the plain face's place and width as
+    // the small cubes give way to it.
+    spot.place = lerp(spot.place, small.place, shown);
+    spot.dx = lerp(spot.dx, small.dx, shown);
+    spot.dy = lerp(spot.dy, small.dy, shown);
+    return true;
+}
+
 // A face's own surface in place of the world's material: its pictures from the side it faces, each block's own,
 // darker where blocks close its corners in. Drawn smooth, each of its triangle's corners' kinds of ground as much as
 // the fragment is that corner's, a little sharpened, so sand meets grass over a soft edge rather than along the
@@ -111,8 +314,10 @@ bool terrainShading(
         base.rgb *= shade;
         return false;
     }
+    // Where the face stands, not where the wind has swayed it to: its picture moves with it.
+    float3 stands = input.worldPosition - input.moved;
     TerrainSpot spot;
-    spot.place = input.worldPosition - world.corner;
+    spot.place = stands - world.corner;
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
     TerrainLayer layer;
@@ -153,7 +358,27 @@ bool terrainShading(
     }
     else
     {
+        float3 facing;
+        float sunk, grain, shown;
+        bool cubes = blockCubes(world, input.lod, stands, normal, spot, facing, sunk, grain, shown);
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+        // A face whose material is cut out, as leaves are, is not there where its picture is clear.
+        float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
+        if (cutoff > 0.0 && layer.base.a < cutoff)
+        {
+            discard;
+        }
+        if (cubes)
+        {
+            // A small cube's own face in place of the picture's bumps, turned only a little from the face it is
+            // cut into: lit as a wall would be, a side away from the sun is black beside the face, where light
+            // finds its way into so shallow a pit. Its shade says the rest: darker the deeper a top lies, a side
+            // darker than the face, least towards the sun, and each small cube a shade of its own.
+            layer.normal = lerp(layer.normal, normalize(lerp(normal, facing, 0.25)), shown);
+            bool side = dot(facing, normal) < 0.5;
+            float lit = side ? lerp(0.55, 0.88, saturate(dot(facing, -push.frame->sunDirection) * 0.5 + 0.5)) : 1.0;
+            layer.base.rgb *= lerp(1.0, (1.0 - 0.18 * sunk) * lit * (0.94 + 0.12 * grain), shown);
+        }
     }
     base = layer.base;
     base.rgb *= shade;
@@ -163,10 +388,56 @@ bool terrainShading(
     return true;
 }
 
+struct BlockShadowOut
+{
+    float4 position : SV_Position;
+    // Where it is from its world's corner, and the way its face looks, for its surface's picture.
+    float3 place : TEXCOORD0;
+    float3 normal : NORMAL;
+    nointerpolation uint surface : SURFACE;
+    nointerpolation uint world : WORLD;
+};
+
 // A vertex in a sun cascade's view (push.list), placed as the camera's view places it.
 [shader("vertex")]
-float4 blockShadowVertex(uint vertexId : SV_VertexID) : SV_Position
+BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
 {
     BlockPoint b = blockPoint(vertexId);
-    return transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
+    BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    // Its picture stays on its face as the face sways.
+    float3 stands = b.world;
+    b.world += blockSway(push.frame, world, b, push.frame->time);
+    BlockShadowOut o;
+    o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
+    o.place = stands - world.corner;
+    o.normal = b.normal;
+    o.surface = b.surface;
+    o.world = push.level - 1;
+    return o;
+}
+
+// A face whose material is cut out, as leaves are, casts its picture's shadow: the sun passes where it is clear.
+[shader("fragment")]
+void blockShadowFragment(BlockShadowOut input)
+{
+    BlockWorld world = buffers()->blockWorlds[input.world];
+    if (world.surfaceCount == 0 || (world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        return;
+    }
+    float cutoff = buffers()->materials[world.surfaces[min(input.surface, world.surfaceCount - 1)].material].alphaCutoff;
+    if (cutoff <= 0.0)
+    {
+        return;
+    }
+    TerrainSpot spot;
+    spot.place = input.place;
+    spot.dx = ddx(spot.place);
+    spot.dy = ddy(spot.place);
+    float3 normal = normalize(input.normal);
+    float4 tangent = float4(normalizeOr(float3(normal.y, -normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
+    if (blockLayer(world, input.surface, spot, normal, tangent).base.a < cutoff)
+    {
+        discard;
+    }
 }

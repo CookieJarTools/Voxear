@@ -113,7 +113,7 @@ Gullies make mountains look worn by weather rather than stretched noise, and can
 
 ## Climate
 
-A generator's world has a climate: how warm and wet each place is, which its terrains' surfaces can cover by (see [[Surfaces#Biomes|Biomes]]), so deserts, forests and snowfields fall where the world puts them and follow the ground as it changes. Each preset has a climate to suit it: Canyons hot and dry, Archipelago warm and wet, Alpine cool.
+A generator's world has a climate: how warm and wet each place is, which its terrains' surfaces can cover by (see [[Surfaces#Biomes|Biomes]]), so deserts, forests and snowfields fall where the world puts them and follow the ground as it changes. A world of blocks takes its ground's blocks by it too, from the [[Biomes|biomes]] it lists. Each preset has a climate to suit it: Canyons hot and dry, Archipelago warm and wet, Alpine cool.
 
 The climate is the **Climate** node of the generator's graph. Its Temperature and Humidity are rows of the generator; pick the node in the graph for the rest, under **Advanced**:
 

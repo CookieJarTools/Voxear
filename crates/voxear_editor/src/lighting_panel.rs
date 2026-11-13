@@ -37,6 +37,12 @@ enum Kind {
     },
     /// An sRGB colour, picked from its swatch.
     Color,
+    /// A whole number from 0 to `max`.
+    Whole {
+        max: u32,
+    },
+    /// A line of text.
+    Text,
 }
 
 /// One setting: where it is in a `.lighting` file, its name, its group, and
@@ -75,6 +81,19 @@ const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
     Kind::Number { min, max, unit }
 }
 
+const WEATHER_KINDS: &[(&str, &str)] = &[
+    ("Clear", "clear"),
+    ("Cloudy", "cloudy"),
+    ("Overcast", "overcast"),
+    ("Rain", "rain"),
+    ("Storm", "storm"),
+    ("Snow", "snow"),
+    ("Fog", "fog"),
+    ("Custom", "custom"),
+];
+const CUSTOM_WEATHER: When = &[(&["weather", "kind"], "custom")];
+const CLOUD_KINDS: &[(&str, &str)] = &[("Soft", "soft"), ("Blocks", "blocks")];
+const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
@@ -105,6 +124,42 @@ const SETTINGS: &[Info] = &[
         help: "How big the sun's disc looks in the sky, in degrees." },
     Info { path: &["sky", "stars"], title: "Stars", group: "Sky", kind: number(0.0, 4.0, ""), when: ALWAYS,
         help: "How bright the stars are at night. 0 hides them." },
+    Info { path: &["sky", "clouds", "kind"], title: "Kind", group: "Clouds", kind: Kind::Choice(CLOUD_KINDS), when: ALWAYS,
+        help: "Soft clouds have billowing edges. Blocks builds the same clouds out of cubes, flat-sided, for a world of blocks." },
+    Info { path: &["sky", "clouds", "block"], title: "Block size", group: "Clouds", kind: number(1.0, 2000.0, "m"), when: BLOCK_CLOUDS,
+        help: "How wide one cube of the clouds is." },
+    Info { path: &["sky", "clouds", "softness"], title: "Softness", group: "Clouds", kind: number(0.0, 1.0, ""), when: BLOCK_CLOUDS,
+        help: "How soft the cubes are: 0 for solid cubes, 1 for cubes of mist, faint at a cloud's edges where the sky shows through." },
+    Info { path: &["sky", "clouds", "cover"], title: "Cover", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How much of the sky the clouds fill: 0 for none, 0.4 for a fair day, 1 for overcast." },
+    Info { path: &["sky", "clouds", "height"], title: "Height", group: "Clouds", kind: number(0.0, 10000.0, "m"), when: ALWAYS,
+        help: "How high the clouds' undersides are above the level's ground." },
+    Info { path: &["sky", "clouds", "thickness"], title: "Thickness", group: "Clouds", kind: number(10.0, 5000.0, "m"), when: ALWAYS,
+        help: "How tall the clouds are, from their undersides to their tops." },
+    Info { path: &["sky", "clouds", "size"], title: "Size", group: "Clouds", kind: number(10.0, 10000.0, "m"), when: ALWAYS,
+        help: "How far across one cloud is." },
+    Info { path: &["sky", "clouds", "density"], title: "Density", group: "Clouds", kind: number(0.0, 4.0, ""), when: ALWAYS,
+        help: "How thick the clouds are. Lower lets more light through them; higher makes them heavy and dark underneath." },
+    Info { path: &["sky", "clouds", "drift"], title: "Drift", group: "Clouds", kind: number(0.0, 200.0, "m/s"), when: ALWAYS,
+        help: "How fast the clouds move. They go the way the level's Wind Zone blows." },
+    Info { path: &["sky", "clouds", "shadows"], title: "Shadows", group: "Clouds", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How dark the clouds' shadows on the world are. 0 turns them off." },
+    Info { path: &["weather", "kind"], title: "Weather", group: "Weather", kind: Kind::Choice(WEATHER_KINDS), when: ALWAYS,
+        help: "The weather the level is in when lit by these settings. Clear leaves the lighting as it is; the others add cloud, gloom, fog, wind, rain or snow over it." },
+    Info { path: &["weather", "cloud"], title: "Cloud", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How far the sky's clouds are filled in: 1 is overcast whatever the Clouds tab's Cover." },
+    Info { path: &["weather", "darkness"], title: "Darkness", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How heavy and dark the clouds are, and how much of the sun's light they take." },
+    Info { path: &["weather", "fog"], title: "Fog", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How much fog and haze the weather adds to the air." },
+    Info { path: &["weather", "wind"], title: "Wind", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How much harder the level's Wind Zone blows: plants, the sea, the clouds and the rain all feel it." },
+    Info { path: &["weather", "rain"], title: "Rain", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How hard it rains round the camera. Rain soaks every surface, which dries once it stops." },
+    Info { path: &["weather", "snow"], title: "Snow", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How hard it snows round the camera. Snow settles on what faces up, and melts once it stops." },
+    Info { path: &["weather", "lightning"], title: "Lightning", group: "Weather", kind: number(0.0, 1.0, ""), when: CUSTOM_WEATHER,
+        help: "How often lightning strikes, lighting the sky and the level for a moment: at 1, every eight seconds or so." },
     Info { path: &["sun", "temperature"], title: "Temperature", group: "Sun", kind: number(1000.0, 20000.0, "K"), when: ALWAYS,
         help: "The sun's colour as a temperature, in kelvin: about 2000 K is a candle-orange sunset, 5500 K is white noon light, above 7000 K is cool and blue." },
     Info { path: &["sun", "tint"], title: "Tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
@@ -203,18 +258,66 @@ const SETTINGS: &[Info] = &[
         help: "How much moving things blur." },
 ];
 
+/// What a look pack has that lighting settings have not: a line saying
+/// what it looks like, shown first, and how Block Worlds' faces are drawn,
+/// shown last.
+#[rustfmt::skip]
+const PACK_SETTINGS: &[Info] = &[
+    Info { path: &["description"], title: "Description", group: "Pack", kind: Kind::Text, when: ALWAYS,
+        help: "A line saying what the pack looks like, for the menu a player picks it from." },
+    Info { path: &["water", "deep"], title: "Deep", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "The water's own colour, which it fades into where it is deep: the sea's, every Pool's and the water of Block Worlds." },
+    Info { path: &["water", "scatter"], title: "Scatter", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "The colour light takes through the thin tops of waves and ripples, on the sea and Pools." },
+    Info { path: &["water", "clarity"], title: "Clarity", group: "Water", kind: Kind::Color, when: ALWAYS,
+        help: "What a metre of water lets through, by colour, in the sea and Pools. Nearer white is clearer water." },
+    Info { path: &["water", "murk"], title: "Murk", group: "Water", kind: number(0.0, 20.0, ""), when: ALWAYS,
+        help: "How murky the sea and Pools are: 1 as Clarity says, more to see less far into them." },
+    Info { path: &["water", "foam"], title: "Foam", group: "Water", kind: number(0.0, 8.0, ""), when: ALWAYS,
+        help: "How much foam the sea's breaking crests have. 0 for none." },
+    Info { path: &["blocks", "voxels"], title: "Voxels", group: "Blocks", kind: Kind::Whole { max: 64 }, when: ALWAYS,
+        help: "How many small cubes every Block World's faces are cut into along a block's side. 0 for plain faces, whatever a world's own setting. Empty leaves each world as it is." },
+    Info { path: &["blocks", "relief"], title: "Relief", group: "Blocks", kind: number(0.0, 4.0, ""), when: ALWAYS,
+        help: "How many small cubes deep the darkest parts of a block's picture sink." },
+];
+
+/// What a pack's menus say for a setting it leaves to the level.
+const LEVELS_OWN: &str = "Level's own";
+
 #[derive(Clone, Copy)]
 enum Control {
     Toggle(NodeId),
     Choice(NodeId),
     Number(NodeId),
     Color(NodeId),
+    /// A pack's toggle: the level's own, on or off.
+    Tri(NodeId),
+    Text(NodeId),
+}
+
+impl Control {
+    fn node(self) -> NodeId {
+        match self {
+            Self::Toggle(node)
+            | Self::Choice(node)
+            | Self::Number(node)
+            | Self::Color(node)
+            | Self::Tri(node)
+            | Self::Text(node) => node,
+        }
+    }
 }
 
 struct Row {
     info: &'static Info,
     row: NodeId,
+    label: NodeId,
     control: Control,
+    /// In a pack, a colour's button that gives the setting back to the level.
+    reset: Option<NodeId>,
+    /// Whether it is a look pack's row: its menus start with the level's
+    /// own, and it shows nothing where the pack writes nothing.
+    pack: bool,
 }
 
 /// What a change on the page asks of the editor.
@@ -228,6 +331,9 @@ pub enum LightingAction {
     /// New lighting settings are made, a copy of those shown, and named in
     /// the active scene.
     Copy,
+    /// The scene is shown under a look pack, as a player who picked it
+    /// would see it, or under none. Nothing of it is saved.
+    Wear(Option<String>),
 }
 
 /// Two changes are the same when they write the same text: the file's values
@@ -241,6 +347,7 @@ impl PartialEq for LightingAction {
                 file == f && path == p && text(value) == text(v)
             }
             (Self::Copy, Self::Copy) => true,
+            (Self::Wear(a), Self::Wear(b)) => a == b,
             _ => false,
         }
     }
@@ -253,6 +360,10 @@ pub struct LightingPanel {
     choices: Vec<Option<String>>,
     note: NodeId,
     copy: NodeId,
+    /// The look pack the scene is shown under, and what each of its
+    /// menu's entries names.
+    look: NodeId,
+    looks: Vec<Option<String>>,
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
@@ -272,8 +383,17 @@ impl LightingPanel {
         ui.add_class(note, "lighting-note");
         let copy = ui.button(top, "Make a Copy");
         ui.add_class(copy, "lighting-copy");
+        let row = ui.panel(top, Style::default());
+        ui.add_class(row, "prop");
+        let label = ui.add_label(row, "Look pack");
+        ui.add_class(label, "prop-label");
+        let tip = "Shows the scene under a look pack, as a player who picked it would see it. It is not saved with \
+                   the scene: players pick their own";
+        ui.set_tooltip(label, tip, None);
+        let look = ui.dropdown(row, &["None"], 0);
+        ui.add_class(look, "value-choice");
         let fields = LightingFields::new(ui, tab_bar, view);
-        Self { scene, choices: vec![None], note, copy, fields, shown: None }
+        Self { scene, choices: vec![None], note, copy, look, looks: vec![None], fields, shown: None }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -283,6 +403,33 @@ impl LightingPanel {
         let current = game.levels.scene_lighting().map(str::to_string);
         let own = world_own(game);
         self.show_scene(ui, game, current, own);
+        self.show_looks(ui, game);
+    }
+
+    /// Lists the look packs there are, the engine's and the project's, with
+    /// the one the scene is shown under picked.
+    fn show_looks(&mut self, ui: &mut Ui, game: &mut Game) {
+        let worn = voxear_engine::look_packs::worn(&game.engine.world).map(str::to_string);
+        let packs = voxear_engine::look_packs::list(&mut game.content, None);
+        let mut labels = vec!["None".to_string()];
+        let mut looks = vec![None];
+        for pack in packs {
+            labels.push(pack.name);
+            looks.push(Some(pack.reference));
+        }
+        let index = match looks.iter().position(|look| *look == worn) {
+            Some(index) => index,
+            // One worn that is not listed, as a player's own file a script wore.
+            None => {
+                labels.push(worn.clone().unwrap_or_default());
+                looks.push(worn);
+                looks.len() - 1
+            }
+        };
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        ui.set_options(self.look, &labels);
+        ui.set_selected_option(self.look, index);
+        self.looks = looks;
     }
 
     /// Shows a scene's lighting: `current`, the lighting settings it names,
@@ -351,7 +498,16 @@ impl LightingPanel {
         if ui.clicked(self.copy) {
             return Some(LightingAction::Copy);
         }
+        if ui.changed(self.look) {
+            let chosen = self.looks.get(ui.selected_option(self.look)).cloned().flatten();
+            return Some(LightingAction::Wear(chosen));
+        }
         self.fields.update(ui)
+    }
+
+    /// The menu the look pack the scene is shown under is picked from.
+    pub fn look_menu(&self) -> NodeId {
+        self.look
     }
 
     /// The colour setting whose swatch was clicked this frame.
@@ -389,19 +545,39 @@ pub struct LightingFields {
     rows: Vec<Row>,
     /// The file shown, when it is the project's to change.
     file: Option<PathBuf>,
-    /// Every setting as it is in effect.
+    /// Every setting as it is in effect; for a look pack, only what the
+    /// pack writes.
     values: toml::Table,
+    /// Whether these are a look pack's settings: a row is empty where the
+    /// pack leaves a setting to the level.
+    pack: bool,
 }
 
 impl LightingFields {
     /// A tab for each group into `tab_bar` and every setting into `view`.
     pub fn new(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
+        Self::build(ui, tab_bar, view, false)
+    }
+
+    /// A look pack's settings: its description, the settings lighting has
+    /// but for the weather, which is the level's, and how blocks are drawn.
+    pub fn for_pack(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
+        Self::build(ui, tab_bar, view, true)
+    }
+
+    fn build(ui: &mut Ui, tab_bar: NodeId, view: NodeId, pack: bool) -> Self {
+        let (first, last) = PACK_SETTINGS.split_at(1);
+        let lighting = SETTINGS.iter().filter(|info| !pack || info.group != "Weather");
+        let infos: Vec<&'static Info> = match pack {
+            true => first.iter().chain(lighting).chain(last).collect(),
+            false => lighting.collect(),
+        };
         let mut tabs: Vec<(&'static str, NodeId)> = Vec::new();
         let body = ui.panel(view, Style::column());
         ui.add_class(body, "settings-body");
         let mut headings: Vec<(&'static str, NodeId)> = Vec::new();
         let mut rows = Vec::new();
-        for info in SETTINGS {
+        for info in infos {
             if !tabs.iter().any(|(group, _)| *group == info.group) {
                 let tab = ui.button(tab_bar, info.group);
                 ui.add_class(tab, "settings-tab");
@@ -418,11 +594,18 @@ impl LightingFields {
             ui.add_class(label, "prop-label");
             ui.add_class(label, "scrub");
             ui.set_tooltip(label, info.help, None);
-            let control = control(ui, row, info.kind);
-            rows.push(Row { info, row, control });
+            let control = control(ui, row, info.kind, pack);
+            // A colour has no empty state to pick, so a pack's has a button that gives it back to the level.
+            let reset = (pack && matches!(info.kind, Kind::Color)).then(|| {
+                let reset = ui.button(row, "×");
+                ui.add_class(reset, "setting-reset");
+                ui.set_tooltip(reset, "Give this colour back to the level", None);
+                reset
+            });
+            rows.push(Row { info, row, label, control, reset, pack });
         }
-        let group = SETTINGS[0].group;
-        let mut fields = Self { tabs, headings, group, rows, file: None, values: toml::Table::new() };
+        let group = rows[0].info.group;
+        let mut fields = Self { tabs, headings, group, rows, file: None, values: toml::Table::new(), pack };
         fields.show_group(ui);
         fields
     }
@@ -434,17 +617,46 @@ impl LightingFields {
         self.values = values;
         let editable = self.file.is_some();
         for row in &self.rows {
-            let node = match row.control {
-                Control::Toggle(node) | Control::Choice(node) | Control::Number(node) | Control::Color(node) => node,
-            };
-            ui.set_enabled(node, editable);
-            show(ui, row, find(&self.values, row.info.path));
+            ui.set_enabled(row.control.node(), editable);
+            let value = find(&self.values, row.info.path);
+            show(ui, row, value);
+            if !row.pack {
+                continue;
+            }
+            // What the pack writes stands out from what it leaves to the level.
+            match value.is_some() {
+                true => ui.add_class(row.row, "written"),
+                false => ui.remove_class(row.row, "written"),
+            }
+            if let Some(reset) = row.reset {
+                ui.set_visible(reset, value.is_some() && editable);
+            }
         }
         self.show_group(ui);
     }
 
-    /// Shows the project's `.lighting` file at `file`.
+    /// Shows the project's `.lookpack` file at `file`: only what it writes,
+    /// every other row empty, as the level's own.
+    fn show_pack_file(&mut self, ui: &mut Ui, file: &Path) {
+        let read = std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display())).and_then(|text| {
+            voxear_engine::look_packs::LookPackFile::parse(&text).with_context(|| format!("reading {}", file.display()))?;
+            toml::from_str::<toml::Table>(&text).with_context(|| format!("reading {}", file.display()))
+        });
+        match read {
+            Ok(written) => self.show(ui, Some(file.to_path_buf()), written),
+            Err(error) => {
+                tracing::error!("{error:#}");
+                self.show(ui, None, toml::Table::new());
+            }
+        }
+    }
+
+    /// Shows the project's `.lighting` file at `file`, or for a look pack's
+    /// settings, its `.lookpack` file.
     pub fn show_file(&mut self, ui: &mut Ui, file: &Path) {
+        if self.pack {
+            return self.show_pack_file(ui, file);
+        }
         let read = std::fs::read_to_string(file)
             .with_context(|| format!("reading {}", file.display()))
             .and_then(|text| toml::from_str::<LightingFile>(&text).with_context(|| format!("reading {}", file.display())));
@@ -465,7 +677,8 @@ impl LightingFields {
         }
         let file = self.file.clone()?;
         self.rows.iter().find_map(|row| {
-            let value = read_control(ui, row)?;
+            let reset = row.reset.is_some_and(|reset| ui.clicked(reset));
+            let value = if reset { None } else { read_control(ui, row)? };
             Some(LightingAction::Set { file: file.clone(), path: row.info.path, value })
         })
     }
@@ -494,8 +707,10 @@ impl LightingFields {
         for (group, heading) in &self.headings {
             ui.set_visible(*heading, *group == self.group);
         }
+        // A pack shows every setting: it may write one that does nothing until the level turns its part on.
         for row in &self.rows {
-            ui.set_visible(row.row, row.info.group == self.group && applies(&self.values, row.info.when));
+            let does = self.pack || applies(&self.values, row.info.when);
+            ui.set_visible(row.row, row.info.group == self.group && does);
         }
     }
 }
@@ -504,6 +719,8 @@ impl LightingFields {
 fn group_help(group: &str) -> &'static str {
     match group {
         "Sky" => "The sky, and the light it gives everything from all round.",
+        "Clouds" => "The clouds in the sky, and the shadows they cast as they drift.",
+        "Weather" => "The weather laid over this lighting: a kind, or amounts of your own. Scripts can turn it too.",
         "Sun" => "How the sun looks: its colour, brightness and shadows. Where it shines from is the sun Obj's rotation.",
         "Exposure" => "How bright the picture is, and how the camera adjusts to light and dark, as an eye does.",
         "Colour" => "The colour grade: contrast, saturation, warmth and lens effects over the finished picture.",
@@ -511,6 +728,9 @@ fn group_help(group: &str) -> &'static str {
         "Fog" => "Mist and dust in the air, and the light shafts that show in it.",
         "Shading" => "How light settles in the scene: bounced light, shade in corners, small shadows and reflections.",
         "Lens" => "Camera effects: focus blur and motion blur.",
+        "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",
+        "Blocks" => "How every Block World's faces are drawn under the pack.",
+        "Water" => "How water looks under the pack, wherever it is: the sea, Pools and the water of Block Worlds.",
         _ => "",
     }
 }
@@ -565,6 +785,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
         ("haze_glow", toml::Value::Float(f64::from(sky.haze_glow))),
         ("distance_haze", toml::Value::Float(f64::from(sky.distance_haze))),
         ("sun_size", toml::Value::Float(f64::from(sky.sun_size))),
+        ("clouds", toml::Value::try_from(sky.clouds)?),
         (
             "mode",
             toml::Value::String(if sky.mode == SkyModeData::Atmosphere { "atmosphere" } else { "gradient" }.into()),
@@ -587,6 +808,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
     table.insert("post".into(), toml::Value::Table(toml::Table::try_from(post)?));
+    table.insert("weather".into(), toml::Value::try_from(lighting.weather)?);
     Ok(table)
 }
 
@@ -671,21 +893,28 @@ fn color_value(srgb: [f32; 3]) -> toml_edit::Value {
     toml_edit::Value::Array(rounded.into_iter().collect())
 }
 
-fn control(ui: &mut Ui, row: NodeId, kind: Kind) -> Control {
+fn control(ui: &mut Ui, row: NodeId, kind: Kind, pack: bool) -> Control {
     match kind {
+        Kind::Toggle if pack => {
+            let dropdown = ui.dropdown(row, &[LEVELS_OWN, "On", "Off"], 0);
+            ui.add_class(dropdown, "value-choice");
+            Control::Tri(dropdown)
+        }
         Kind::Toggle => {
             let toggle = ui.toggle(row, "", false);
             ui.add_class(toggle, "checkbox");
             Control::Toggle(toggle)
         }
         Kind::Choice(options) => {
-            let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
+            let own = pack.then_some(LEVELS_OWN);
+            let labels: Vec<&str> = own.into_iter().chain(options.iter().map(|(label, _)| *label)).collect();
             let dropdown = ui.dropdown(row, &labels, 0);
             ui.add_class(dropdown, "value-choice");
             Control::Choice(dropdown)
         }
         Kind::Look => {
-            let labels: Vec<&str> = std::iter::once("None").chain(LookName::ALL.iter().map(|(.., title)| *title)).collect();
+            let none = if pack { LEVELS_OWN } else { "None" };
+            let labels: Vec<&str> = std::iter::once(none).chain(LookName::ALL.iter().map(|(.., title)| *title)).collect();
             let dropdown = ui.dropdown(row, &labels, 0);
             ui.add_class(dropdown, "value-choice");
             Control::Choice(dropdown)
@@ -705,6 +934,17 @@ fn control(ui: &mut Ui, row: NodeId, kind: Kind) -> Control {
             ui.add_class(swatch, "swatch");
             Control::Color(swatch)
         }
+        Kind::Whole { .. } => {
+            let field = ui.text_field(row, "");
+            ui.add_class(field, "value-input");
+            ui.add_class(field, "number-input");
+            Control::Number(field)
+        }
+        Kind::Text => {
+            let field = ui.text_field(row, "");
+            ui.add_class(field, "value-input");
+            Control::Text(field)
+        }
     }
 }
 
@@ -713,9 +953,31 @@ fn control(ui: &mut Ui, row: NodeId, kind: Kind) -> Control {
 fn read_control(ui: &Ui, row: &Row) -> Option<Option<toml_edit::Value>> {
     match (row.control, row.info.kind) {
         (Control::Toggle(toggle), _) if ui.changed(toggle) => Some(Some(ui.is_checked(toggle).into())),
+        // A pack's menus start with the level's own, which takes the setting out of the file.
+        (Control::Tri(dropdown), _) if ui.changed(dropdown) => match ui.selected_option(dropdown) {
+            0 => Some(None),
+            index => Some(Some((index == 1).into())),
+        },
         (Control::Choice(dropdown), Kind::Choice(options)) if ui.changed(dropdown) => {
-            let (_, value) = options.get(ui.selected_option(dropdown))?;
+            let Some(index) = ui.selected_option(dropdown).checked_sub(usize::from(row.pack)) else {
+                return Some(None);
+            };
+            let (_, value) = options.get(index)?;
             Some((!value.is_empty()).then(|| (*value).into()))
+        }
+        (Control::Number(field), Kind::Whole { max }) if ui.changed(field) => {
+            let text = ui.text(field);
+            let text = text.trim();
+            if text.is_empty() {
+                return Some(None);
+            }
+            let whole = text.parse::<f64>().ok()?.round().clamp(0.0, f64::from(max)) as i64;
+            Some(Some(whole.into()))
+        }
+        (Control::Text(field), _) if ui.changed(field) => {
+            let text = ui.text(field);
+            let text = text.trim();
+            Some((!text.is_empty()).then(|| text.into()))
         }
         // None, the first, takes the look out of the file.
         (Control::Choice(dropdown), Kind::Look) if ui.changed(dropdown) => match ui.selected_option(dropdown) {
@@ -744,9 +1006,30 @@ fn show(ui: &mut Ui, row: &Row, value: Option<&toml::Value>) {
                 ui.set_checked(toggle, on);
             }
         }
+        (Control::Tri(dropdown), _) => {
+            let index = match value.and_then(toml::Value::as_bool) {
+                None => 0,
+                Some(true) => 1,
+                Some(false) => 2,
+            };
+            if ui.selected_option(dropdown) != index {
+                ui.set_selected_option(dropdown, index);
+            }
+        }
+        (Control::Text(field), _) => {
+            let text = value.and_then(toml::Value::as_str).unwrap_or("");
+            if ui.focused() != Some(field) && ui.text(field) != text {
+                ui.set_text(field, text);
+            }
+        }
         (Control::Choice(dropdown), Kind::Choice(options)) => {
             let written = value.and_then(toml::Value::as_str).unwrap_or("");
-            let index = options.iter().position(|(_, v)| *v == written).unwrap_or(0);
+            let listed = options.iter().position(|(_, v)| *v == written);
+            // A pack's menu starts with the level's own, for a setting it does not write.
+            let index = match row.pack {
+                true => listed.filter(|_| value.is_some()).map_or(0, |at| at + 1),
+                false => listed.unwrap_or(0),
+            };
             if ui.selected_option(dropdown) != index {
                 ui.set_selected_option(dropdown, index);
             }
@@ -797,11 +1080,27 @@ pub fn write_setting(file: &Path, path: &[&str], value: Option<toml_edit::Value>
         });
         table = entry.as_table_mut().with_context(|| format!("`{key}` in {} is not a table", file.display()))?;
     }
+    let emptied = value.is_none();
     match value {
         Some(value) => drop(table.insert(last, toml_edit::Item::Value(value))),
         None => drop(table.remove(last)),
     }
+    // A table left with nothing in it goes too: an empty `[blocks]` would say something of its own.
+    if emptied {
+        prune(document.as_table_mut(), tables);
+    }
     std::fs::write(file, document.to_string()).with_context(|| format!("writing {}", file.display()))
+}
+
+/// Takes the table at `path` under `table` out if nothing is left in it,
+/// and then each table over it that leaves empty.
+fn prune(table: &mut toml_edit::Table, path: &[&str]) {
+    let Some((first, rest)) = path.split_first() else { return };
+    let Some(inner) = table.get_mut(first).and_then(toml_edit::Item::as_table_mut) else { return };
+    prune(inner, rest);
+    if inner.is_empty() {
+        table.remove(first);
+    }
 }
 
 /// Text for a copy of lighting settings: a built-in's look, or the file's
@@ -838,6 +1137,91 @@ mod tests {
         write_setting(&file, &["sky", "haze"], None).unwrap();
         let read: LightingFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(read.sky.unwrap().get("haze").is_none(), "back to the look's");
+    }
+
+    #[test]
+    fn a_table_left_empty_goes_with_its_last_setting_and_others_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Cosy.lookpack");
+        std::fs::write(&file, "# Cosy\ndescription = \"Warm.\"\n\n[post.bloom]\nintensity = 0.3\n").unwrap();
+        write_setting(&file, &["blocks", "voxels"], Some(8.into())).unwrap();
+        write_setting(&file, &["post", "vignette", "intensity"], Some(0.2.into())).unwrap();
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(pack.blocks.map(|blocks| blocks.voxels), Some(8));
+        // Voxels emptied: no [blocks] is left to say plain faces, and the pack leaves blocks to each world.
+        write_setting(&file, &["blocks", "voxels"], None).unwrap();
+        write_setting(&file, &["post", "vignette", "intensity"], None).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("blocks") && !text.contains("vignette"), "{text}");
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&text).unwrap();
+        assert!(pack.blocks.is_none() && pack.description == "Warm.");
+        assert_eq!(pack.post.as_ref().unwrap()["bloom"]["intensity"].as_float(), Some(0.3), "{text}");
+        assert!(text.starts_with("# Cosy\n"), "comments stay: {text}");
+        // The last of them all: the pack changes nothing, and still reads.
+        write_setting(&file, &["post", "bloom", "intensity"], None).unwrap();
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(pack.post.is_none());
+    }
+
+    #[test]
+    fn a_look_packs_rows_are_lightings_without_the_weather_with_its_own_and_each_says_what_it_does() {
+        assert!(PACK_SETTINGS.iter().all(|info| info.help.len() > 20 && !group_help(info.group).is_empty()));
+        assert_eq!(PACK_SETTINGS[0].path, ["description"], "its description comes first");
+        // What packs most often write has a row: the sun's shade, the glow, the clouds' kind, and the pack's own.
+        let rows = || SETTINGS.iter().filter(|info| info.group != "Weather").chain(PACK_SETTINGS);
+        let wanted: [&[&str]; 5] = [
+            &["sun", "shadow_tint"],
+            &["post", "bloom", "intensity"],
+            &["sky", "clouds", "kind"],
+            &["blocks", "voxels"],
+            &["water", "deep"],
+        ];
+        for path in wanted {
+            assert!(rows().any(|info| info.path == path), "no row for {path:?}");
+        }
+        // The weather is the level's: a pack's file refuses it, so it has no rows for it.
+        assert!(rows().all(|info| info.path[0] != "weather"));
+        assert!(voxear_engine::look_packs::LookPackFile::parse("[weather]\nkind = \"rain\"").is_err());
+    }
+
+    #[test]
+    fn a_clouds_setting_is_written_under_the_skys_clouds_and_changes_only_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Summer.lighting");
+        std::fs::write(&file, "format = 1\nlook = \"highland_summer\"\n").unwrap();
+        write_setting(&file, &["sky", "clouds", "cover"], Some(0.75.into())).unwrap();
+        let read: LightingFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let clouds = read.resolve().unwrap().sky.clouds;
+        let look = LightingFile::builtin("highland_summer").unwrap().resolve().unwrap().sky.clouds;
+        assert_eq!((clouds.cover, clouds.height, clouds.drift), (0.75, look.height, look.drift));
+        let shown = effective(&read).unwrap();
+        assert_eq!(find(&shown, &["sky", "clouds", "cover"]).and_then(|v| v.as_float()), Some(0.75));
+        // A look without clouds still shows every setting of theirs, at none.
+        let indoors = effective(&LightingFile::builtin("candlelit_castle").unwrap()).unwrap();
+        assert_eq!(find(&indoors, &["sky", "clouds", "cover"]).and_then(|v| v.as_float()), Some(0.0));
+        assert!(find(&indoors, &["sky", "clouds", "height"]).is_some());
+    }
+
+    #[test]
+    fn the_weather_is_written_as_a_kind_and_its_own_amounts_show_only_for_custom() {
+        use voxear_engine::weather::WeatherKind;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Moor.lighting");
+        std::fs::write(&file, "format = 1\nlook = \"highland_summer\"\n").unwrap();
+        let read = |file: &Path| toml::from_str::<LightingFile>(&std::fs::read_to_string(file).unwrap()).unwrap();
+        let shown = effective(&read(&file)).unwrap();
+        assert_eq!(find(&shown, &["weather", "kind"]).and_then(|v| v.as_str()), Some("clear"), "clear unless set");
+        let amounts = SETTINGS.iter().filter(|info| info.group == "Weather" && info.path != ["weather", "kind"]);
+        assert!(amounts.clone().count() == 7 && amounts.clone().all(|info| !applies(&shown, info.when)));
+        write_setting(&file, &["weather", "kind"], Some("storm".into())).unwrap();
+        assert_eq!(read(&file).resolve().unwrap().weather.kind, WeatherKind::Storm);
+        // Custom shows its amounts, and one written is the weather's.
+        write_setting(&file, &["weather", "kind"], Some("custom".into())).unwrap();
+        write_setting(&file, &["weather", "snow"], Some(0.4.into())).unwrap();
+        let lighting = read(&file);
+        assert_eq!(lighting.resolve().unwrap().weather.weather().now().snow, 0.4);
+        let shown = effective(&lighting).unwrap();
+        assert!(amounts.clone().all(|info| applies(&shown, info.when) && find(&shown, info.path).is_some()));
     }
 
     #[test]

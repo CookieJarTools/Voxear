@@ -85,6 +85,8 @@ pub enum PaletteAction {
     CreateFrom(usize),
     /// Bring a docked panel to the front, by its id.
     ShowPanel(&'static str),
+    /// Make a biome in the project's Biomes folder.
+    NewBiome,
     Select(Entity),
     OpenLevel(String),
     /// Show an asset or script in the Project, by its path.
@@ -444,6 +446,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Plant => ("Plant", "sprout"),
                 AssetKind::VoxModel => ("Block Model", "blocks"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
+                AssetKind::LookPack => ("Look pack", "eye"),
                 AssetKind::Data => ("Data asset", "file"),
             };
             let (action, key) = match kind {
@@ -501,6 +504,10 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
             PaletteAction::Create(kind),
             format!("new:{label}"),
         ));
+    }
+    // A biome is made as a file is, and goes on a generated world's list.
+    if modules.has(voxear_engine::modules::Module::Terrain) {
+        commands.push(command("New Biome", "", "plus", PaletteAction::NewBiome, "new:Biome".into()));
     }
     for (title, id) in PANELS {
         commands.push(command(

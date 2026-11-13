@@ -2,6 +2,7 @@
 //! view, which looks through the editor's own camera, and the Game view,
 //! which looks through the level's. Play mode is in [`play`].
 
+mod biomes;
 mod color_popup;
 mod component_clipboard;
 mod blocks;
@@ -18,6 +19,7 @@ mod gun_handlings;
 mod world_gens;
 mod generators;
 mod models;
+mod grown_plants;
 mod river_water;
 mod hierarchies;
 mod importing;
@@ -1324,6 +1326,9 @@ impl Editor {
             AssetAction::BrowseBlockRef { block, field, anchor } => self.browse_block_ref(&block, field, anchor),
             AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
             AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
+            AssetAction::SaveBiome { path, biome, rebuild } => self.save_biome(&path, &biome, rebuild),
+            AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
+            AssetAction::DropBiomeRef { biome, field, source } => self.drop_biome_ref(&biome, field, &source),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -1469,6 +1474,7 @@ impl Editor {
             fly.set_speed(self.memory.settings.fly_speed);
         }
         self.fly_speed = self.scene.fly.speed();
+        self.scene.fly.set_speeds_up(self.memory.settings.fly_speeds_up);
         if changed {
             self.memory.save();
         }
@@ -1511,6 +1517,7 @@ impl Editor {
                 self.obj_action(ObjAction::CreateFrom { entry, parent: None, scene: None }, renderer)
             }
             PaletteAction::ShowPanel(id) => self.show_panel(id),
+            PaletteAction::NewBiome => self.new_biome(renderer),
             PaletteAction::Select(entity) => {
                 self.show_panel("hierarchy");
                 self.select(Some(entity));
@@ -1906,6 +1913,20 @@ impl Editor {
             let choices = self.inspector.component_choices(self.is_playing(), &self.game.project.modules());
             let target = (PickFor::AddComponent(entity), anchor);
             return self.picker.open(&mut self.ui, target, "Add Component", choices, "");
+        }
+        // A model picked for a Block World to grow, or dropped on that row, is made a plant of its own.
+        let add_plant = Prop::BlockWorld(crate::block_props::BlockField::AddPlant);
+        match &action {
+            RowAction::Pick(prop, Pick::Asset(Some(path))) if *prop == add_plant => {
+                return self.add_grown_plant(entity, &path.clone(), renderer);
+            }
+            RowAction::Dropped(prop, source) if *prop == add_plant => {
+                return match self.dragged_asset(source) {
+                    Some(path) => self.add_grown_plant(entity, &path, renderer),
+                    None => self.notify("Only a model grows as a plant"),
+                };
+            }
+            _ => {}
         }
         match &action {
             RowAction::ApplyOverrides(paths) => return self.apply_overrides(&[(entity, paths.clone())], renderer),
@@ -2615,6 +2636,7 @@ impl Editor {
                     self.pick_gun_handling_clip(&handling, field, &pick);
                 }
                 (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
+                (PickFor::BiomeRef { biome, field }, Chosen::Value(pick)) => self.pick_biome_ref(&biome, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {

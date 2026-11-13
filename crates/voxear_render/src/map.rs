@@ -110,7 +110,7 @@ impl GpuMapColumn {
             highest: column.highest(),
             layers: pair(column.blocks[0], column.blocks[1]),
             deep: pair(column.blocks[2], column.water_block),
-            depths: u32::from(column.depths[0]) | u32::from(column.depths[1]) << 8,
+            depths: u32::from(column.depths[0]) | u32::from(column.depths[1]) << 8 | u32::from(column.layered) << 16,
             piece0: span(first),
             piece0_blocks: pair(first.top, first.side),
             piece1: span(second),
@@ -574,10 +574,14 @@ mod tests {
             water: 12,
             water_block: 4,
             pieces: [MapPiece { from: 14, to: 17, top: 6, side: 5 }, MapPiece::NONE],
+            layered: false,
         };
         let packed = GpuMapColumn::of(&column);
         assert_eq!((packed.top, packed.water, packed.highest), (10, 12, 17));
         assert_eq!((packed.layers, packed.deep, packed.depths), (3 | 2 << 16, 1 | 4 << 16, 1 | 3 << 8));
+        // Something built says so over its depths, for its sides to show its layers as they are.
+        let built = GpuMapColumn::of(&MapColumn { layered: true, ..column });
+        assert_eq!(built.depths, 1 | 3 << 8 | 1 << 16);
         assert_eq!((packed.piece0, packed.piece0_blocks, packed.piece1), (4 | 7 << 16, 6 | 5 << 16, 0));
         assert_eq!(GpuMapColumn::of(&MapColumn::NONE), GpuMapColumn::NONE);
         // Unknown ground is one block all the way down; news of a place is a colour and how strongly it shows.

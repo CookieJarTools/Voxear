@@ -51,6 +51,42 @@ use crate::{
 pub struct BlockLook {
     pub material: MaterialHandle,
     pub surfaces: Arc<[SurfaceLook]>,
+    /// The small cubes its cubes' faces are cut into; none by default.
+    pub voxels: BlockVoxels,
+}
+
+/// The small cubes a world of cubes' faces are drawn as made of: each face
+/// cut into `count` of them along a block's side, each one colour, its
+/// block's picture's there, and sunk into the face up to `relief` of them
+/// deep where the picture is dark, or here and there on a face with no
+/// picture. Worked out as the face is shaded (`blockCubes` in
+/// `shaders/blocks.slang`), so the world's mesh is the same; they give way
+/// to the plain face where they are too small on screen to tell apart. A
+/// world drawn smooth has none.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockVoxels {
+    /// How many small cubes lie along a block's side; 0 for none.
+    pub count: u32,
+    /// How many small cubes deep the deepest of them are sunk, from 0 for
+    /// a flat face of squares to 4.
+    pub relief: f32,
+}
+
+impl Default for BlockVoxels {
+    fn default() -> Self {
+        Self { count: 0, relief: 2.0 }
+    }
+}
+
+impl BlockVoxels {
+    /// The most small cubes along a block's side, and the deepest they sink.
+    pub const MOST: u32 = 64;
+    pub const DEEPEST: f32 = 4.0;
+
+    /// `count` small cubes to a block's side, sunk as deep as by default.
+    pub fn of(count: u32) -> Self {
+        Self { count, ..Self::default() }
+    }
 }
 
 impl Component for BlockLook {}
@@ -88,6 +124,10 @@ pub struct GpuBlockWorld {
     pub anchor: u32,
     /// `BLOCKS_SMOOTH` where it is drawn smooth.
     pub flags: u32,
+    /// How many small cubes its faces are cut into along a block's side, 0
+    /// for none, and how many deep they sink at most (see [`BlockVoxels`]).
+    pub voxels: f32,
+    pub relief: f32,
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
@@ -641,7 +681,11 @@ impl BlockWorlds {
             let look = world
                 .get::<BlockLook>(entity)
                 .cloned()
-                .unwrap_or_else(|| BlockLook { material: assets.default_material, surfaces: Arc::from([]) });
+                .unwrap_or_else(|| BlockLook {
+                    material: assets.default_material,
+                    surfaces: Arc::from([]),
+                    voxels: BlockVoxels::default(),
+                });
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {
                 let pool = self.resident.remove(&entity).expect("held");
@@ -906,14 +950,13 @@ pub struct BlockCounts {
 /// anchor among its meshes for rays.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
-    frame: &crate::gpu::GpuFrame,
-    entities: &[Owner],
-    has_sun: bool,
+    extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
     }
+    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun);
     voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
@@ -939,6 +982,8 @@ pub(crate) fn gather(
             };
         }
         let surfaces_at = (SURFACES_AT + number * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+        // A look pack the player wears says how every world's faces are cut into small cubes.
+        let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
         records.push(GpuBlockWorld {
             corner: blocks.corner.into(),
             block_size: blocks.block_size,
@@ -949,6 +994,8 @@ pub(crate) fn gather(
             material: blocks.look.material.0,
             anchor: anchors.get(&blocks.entity).copied().unwrap_or(0),
             flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 },
+            voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
+            relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
         });
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];

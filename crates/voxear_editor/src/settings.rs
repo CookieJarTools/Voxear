@@ -54,7 +54,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 23] = [
+pub const SETTINGS: [SettingInfo; 24] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -79,6 +79,7 @@ pub const SETTINGS: [SettingInfo; 23] = [
         group: "Scene view",
         kind: SettingKind::Number { min: 0.25, max: 250.0, unit: "m/s" },
     },
+    SettingInfo { key: "fly_speeds_up", title: "Speed up while flying", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_stats", title: "Show stats", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_axis_gizmo", title: "Show axis gizmo", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_gizmos", title: "Show gizmos", group: "Scene view", kind: SettingKind::Toggle },
@@ -208,6 +209,9 @@ pub struct Settings {
     /// How fast the Scene view's camera flies, in metres a second; the wheel
     /// changes it while flying.
     pub fly_speed: f32,
+    /// The Scene view's camera flies faster the longer it flies without a
+    /// stop.
+    pub fly_speeds_up: bool,
     pub show_stats: bool,
     pub show_axis_gizmo: bool,
     /// Lights and cameras are drawn in the Scene view, and what the selected
@@ -296,6 +300,7 @@ impl Default for Settings {
             centred: false,
             local: false,
             fly_speed: 6.0,
+            fly_speeds_up: true,
             show_stats: true,
             show_axis_gizmo: true,
             show_gizmos: true,
@@ -341,6 +346,7 @@ impl Settings {
             "handle_position" => SettingValue::Choice(usize::from(self.centred)),
             "handle_space" => SettingValue::Choice(usize::from(self.local)),
             "fly_speed" => SettingValue::Number(self.fly_speed),
+            "fly_speeds_up" => SettingValue::Toggle(self.fly_speeds_up),
             "show_stats" => SettingValue::Toggle(self.show_stats),
             "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
             "show_gizmos" => SettingValue::Toggle(self.show_gizmos),
@@ -373,6 +379,7 @@ impl Settings {
             ("handle_position", SettingValue::Choice(i)) => self.centred = i == 1,
             ("handle_space", SettingValue::Choice(i)) => self.local = i == 1,
             ("fly_speed", SettingValue::Number(n)) => self.fly_speed = n.clamp(0.25, 250.0),
+            ("fly_speeds_up", SettingValue::Toggle(on)) => self.fly_speeds_up = on,
             ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
             ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
             ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,

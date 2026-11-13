@@ -22,7 +22,8 @@ struct MapColumn
     uint layers;
     // The block under those, and its water's block in the high half.
     uint deep;
-    // How thick the top block is, and the one under it, a byte each.
+    // How thick the top block is, and the one under it, a byte each; then bit 16, set where its sides show its
+    // layers as they are: something built, a house's walls under its roof.
     uint depths;
     // Each piece: where it starts and ends over the ground's top, 16 bits each (none where they are the same);
     // then its top block and its sides' block.
@@ -356,9 +357,10 @@ MapHit trace(MapView* view, float3 origin, float3 direction)
             {
                 float depth = top - yIn;
                 // A step in the ground keeps its top block's colour a few blocks down, so a slope reads as one
-                // surface; the slab's cut shows the layers as they are.
+                // surface; the slab's cut shows the layers as they are, and so does what was built.
                 float topDepth = float(column.depths & 0xff);
-                topDepth = atCut ? topDepth : max(topDepth, 3.0);
+                bool layered = atCut || (column.depths & 0x10000u) != 0;
+                topDepth = layered ? topDepth : max(topDepth, 3.0);
                 float underDepth = float((column.depths >> 8) & 0xff);
                 hit.kind = HIT_SIDE;
                 hit.block = depth < topDepth ? (column.layers & 0xffff)

@@ -15,6 +15,7 @@ mod atmosphere;
 mod box_model;
 mod bvh;
 mod capture;
+mod clouds;
 mod cooked;
 mod cooked_picture;
 mod debug_pass;
@@ -76,6 +77,7 @@ mod ui_panels;
 mod volumetric;
 mod water;
 pub mod water_bodies;
+pub mod weather;
 mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
@@ -92,7 +94,8 @@ pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use box_model::{
     BoneRole, BoxBone, BoxClip, BoxHit, BoxKey, BoxLayer, BoxModel, BoxSkin, BoxTrack, Ease, Face, FaceRect, KEY_STEP,
-    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, ModelBox, Sheet, Voxels, is_box_model, on_step,
+    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, MOST_WIND_BEND, ModelBox, Sheet, StarterPlant, Voxels, is_box_model,
+    on_step,
 };
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
@@ -126,10 +129,10 @@ pub use previews::{
 };
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
-pub use looks::{Look, LookName, SunLook};
+pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, scatter};
+pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
@@ -148,13 +151,14 @@ pub use particles::{
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
-pub use blocks::{BlockCounts, BlockLook};
+pub use blocks::{BlockCounts, BlockLook, BlockVoxels};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
-    Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode, ViewOptions,
+    Camera, CloudKind, Clouds, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode,
+    ViewOptions,
     temperature_color,
 };
 pub use voxear_rhi::TextureId;
@@ -1627,6 +1631,11 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
+    /// The size of the picture last frame drew clouds for, where it drew
+    /// any, for this one's to build on, and how far the clouds have
+    /// drifted, in metres along x and z.
+    cloud_history: Option<vk::Extent2D>,
+    cloud_drift: [f64; 2],
     /// The sea's spectrum and FFT rows (see `water`).
     ocean: water::OceanBuffers,
     /// The ray-traced GI's origins last frame, its spacing, and how many
@@ -1728,6 +1737,8 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
+            cloud_history: None,
+            cloud_drift: [0.0; 2],
             ocean: water::OceanBuffers::new(gpu, &named, FRAMES_IN_FLIGHT)?,
             ddgi_history: None,
             warned_meshlets: false,
@@ -1973,6 +1984,7 @@ impl View {
         self.ao_history = None;
         self.atmosphere_tables = None;
         self.fog_history = false;
+        self.cloud_history = None;
         self.ddgi_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
@@ -2110,7 +2122,7 @@ impl View {
             terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let view_blocks =
-            blocks::gather(&setup.blocks, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.blocks);
+            blocks::gather(&setup.blocks, &extracted, &buffers.blocks);
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let gathered = grass::gather(&setup.terrains, &extracted.frame, extracted.origin, &buffers.grass);
@@ -2310,6 +2322,8 @@ impl View {
         if let Some(water) = &water {
             frame_data.ocean = water.frame;
         }
+        // A look pack's colour for the water of worlds of blocks, in place of each block's own.
+        frame_data.ocean.block_water = extracted.block_water;
         let glass = match panes.is_empty() {
             true => None,
             false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),
@@ -2341,6 +2355,32 @@ impl View {
             frame_data.lighting.sky_view = fg.texture(tables.sky_view).0;
             frame_data.lighting.aerial_perspective = fg.texture(tables.aerial_perspective).0;
         }
+        // The clouds drift the way the wind blows, or along x where there is none, and their pictures are this
+        // frame's.
+        let cloudy = frame_data.lighting.clouds.cover > 0.0 && !wireframe;
+        let cloud_images = match cloudy {
+            true => Some(clouds::CloudImages::new(fg, (gpu, bindless), extent, history)?),
+            false => None,
+        };
+        if let Some(images) = cloud_images {
+            let wind = frame_data.wind.direction;
+            let blows = if wind[0].hypot(wind[1]) > 1e-3 { wind } else { [1.0, 0.0] };
+            let moved = frame_data.lighting.clouds.speed * setup.delta_time;
+            self.cloud_drift = [0, 1].map(|axis| self.cloud_drift[axis] + f64::from(blows[axis] * moved));
+            let camera = frame_data.camera_position;
+            // From where the pattern is in the level, so it keeps its place as the world's middle moves.
+            let middle = [extracted.origin.x, extracted.origin.z];
+            let seen = &mut frame_data.lighting.clouds;
+            seen.drift = [0, 1].map(|axis| (self.cloud_drift[axis] - middle[axis] as f64) as f32);
+            seen.view = fg.texture(images.current).0;
+            seen.shadow_map = fg.texture(images.shadows).0;
+            seen.noise = assets.smoke_noise.0;
+            seen.shadow_reach = clouds::SHADOW_REACH;
+            seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]], seen.drift);
+            // A picture of another size has nothing of last frame's in it.
+            seen.reset = u32::from(self.cloud_history != Some(extent));
+        }
+        self.cloud_history = cloudy.then_some(extent);
         frame_data.instance_count = opaque_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;
@@ -2534,6 +2574,7 @@ impl View {
             surface,
             reflections,
             atmosphere,
+            clouds: cloud_images,
             volume,
             water,
             glass,
@@ -2845,12 +2886,18 @@ struct CustomShaders {
     compiling: Option<CustomCompile>,
     waiting: Option<CustomCode>,
     state: CustomShaderState,
+    /// Which of the process's renderers this is, for a folder of its own.
+    number: std::sync::OnceLock<u32>,
 }
 
 impl CustomShaders {
     /// Where the project's `project_shaders.slang` and its modules are
-    /// written, for this run.
+    /// written, for this run: a folder of this renderer's own, so two
+    /// renderers of one process compiling at once do not write over each
+    /// other's.
     fn dir(&self) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("voxear-custom-shaders-{}", std::process::id()))
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let number = self.number.get_or_init(|| NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        std::env::temp_dir().join(format!("voxear-custom-shaders-{}-{number}", std::process::id()))
     }
 }

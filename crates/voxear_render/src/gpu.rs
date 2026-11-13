@@ -471,6 +471,9 @@ pub struct GpuOcean {
     /// (see `voxear_scene::WorldOrigin`), so the sea is the same when it
     /// moves.
     pub phases: [[f32; 2]; crate::ocean::CASCADES],
+    /// The colour worlds of blocks' water is drawn in, linear, with 1
+    /// after it, where a look pack sets one; all 0 for each block's own.
+    pub block_water: [f32; 4],
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -559,7 +562,10 @@ pub struct GpuSeasons {
     pub enabled: u32,
     /// How much of the snow and wetness reach what is not a plant.
     pub ground: f32,
-    pub _pad: [u32; 2],
+    /// What the weather has left on every surface, from 0 to 1: how wet the
+    /// rain has made it, and how much snow has settled (see `weather`).
+    pub weather_wet: f32,
+    pub weather_snow: f32,
 }
 
 /// The level's wind, as shaders read it (`Wind` in `shaders/common.slang`;
@@ -659,6 +665,50 @@ pub struct GpuLighting {
     pub sun_shadow_tint: [f32; 3],
     /// 1 when the sky's light is the moon: its disc, and a night sky.
     pub moon: u32,
+    pub clouds: GpuClouds,
+}
+
+/// The sky's clouds as the shaders read them (see `clouds`). Mirrors
+/// `Clouds` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuClouds {
+    /// How much of the sky they cover; 0 for none, and nothing else read.
+    pub cover: f32,
+    /// Their undersides' height over the level's ground and how tall they
+    /// are, in metres.
+    pub base: f32,
+    pub thickness: f32,
+    /// How far across a cloud is, in metres.
+    pub size: f32,
+    pub density: f32,
+    /// How dark their shadows are, 0 to 1.
+    pub shadows: f32,
+    /// How far they have drifted, in metres along x and z.
+    pub drift: [f32; 2],
+    /// The picture of them the sky is drawn with, the sun let through them
+    /// over the ground round the camera, and the noise they are shaped
+    /// from: textures, or `NO_TEXTURE`.
+    pub view: u32,
+    pub shadow_map: u32,
+    pub noise: u32,
+    /// How far the shadow map reaches from its middle, in metres.
+    pub shadow_reach: f32,
+    /// Its middle, in the world along x and z.
+    pub shadow_middle: [f32; 2],
+    /// 1 when last frame's picture cannot be built on.
+    pub reset: u32,
+    /// How fast they drift, in metres a second.
+    pub speed: f32,
+    /// 0 for soft clouds, 1 for clouds built of cubes, each `block` metres
+    /// wide.
+    pub kind: u32,
+    pub block: f32,
+    /// How soft the cubes are, 0 solid to 1 mist.
+    pub softness: f32,
+    /// How much light lightning adds to the sky's this moment, against a
+    /// sun of 1.
+    pub flash: f32,
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's
@@ -786,6 +836,11 @@ pub struct GpuPost {
     /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)
     /// to 1 (as the eye sees them).
     pub exposure_night: f32,
+    /// The look shader the finished picture is drawn with, by its number,
+    /// 0 for none, and its properties' values (`looks::LookShader`).
+    pub look_shader: u32,
+    pub _look_pad: [u32; 3],
+    pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 
 /// Device addresses of every buffer shaders use, written once per frame and
@@ -1267,9 +1322,10 @@ mod tests {
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
-        let post = 16 * 20;
+        let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
-        let lighting = 16 * 4 + 16 * 6 + 16;
+        let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>();
+        assert_eq!(size_of::<GpuClouds>(), 80);
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;
@@ -1282,9 +1338,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16
         );
-        assert_eq!(size_of::<GpuOcean>(), 336);
+        assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
@@ -1292,8 +1348,8 @@ mod tests {
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 66 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
-        // Its corner and block size, three addresses, then four words.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
+        // Its corner and block size, three addresses, four words, then its small cubes' count and depth.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

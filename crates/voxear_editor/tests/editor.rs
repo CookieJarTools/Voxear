@@ -6803,6 +6803,9 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
     let dusk = dir.path().join("Lighting/Dusk.lighting");
     std::fs::write(&dusk, "# Dusk, for the yard\nformat = 1\nlook = \"golden_hour\"\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("Looks")).unwrap();
+    let cosy = dir.path().join("Looks/Cosy.lookpack");
+    std::fs::write(&cosy, "# Cosy\ndescription = \"Warm.\"\n\n[post.bloom]\nintensity = 0.3\n").unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
@@ -6812,6 +6815,26 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Lighting));
     assert_eq!(editor.lighting_shown(), None, "Hello's scenes set their own sky");
+
+    // Look pack shows the scene under a pack, as a player who picked it would see it: the first after None is
+    // the engine's Sunlit. The scene's own sky stays as it is, and None takes the pack off again.
+    let own = editor.game.engine.world.resource::<voxear_render::Sky>().map(|sky| sky.haze);
+    let look = editor.lighting_look_menu();
+    editor.ui.focus(look);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxear_engine::look_packs::worn(&editor.game.engine.world), Some("builtin:sunlit"));
+    let worn = editor.game.engine.world.resource::<voxear_render::WornLook>().copied().expect("worn in the Scene view");
+    assert!(worn.sun.is_some_and(|sun| sun.shadow_tint.z > sun.shadow_tint.x), "its blue shade");
+    assert_eq!(editor.game.engine.world.resource::<voxear_render::Sky>().map(|sky| sky.haze), own);
+    assert_eq!(editor.ui.selected_option(look), 1, "the menu shows the pack worn");
+    editor.ui.focus(look);
+    editor.ui.key_down(Key::Up);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(voxear_engine::look_packs::worn(&editor.game.engine.world).is_none());
+    assert!(editor.game.engine.world.resource::<voxear_render::WornLook>().is_none());
 
     // New lighting settings made from a scene without any carry its own sky over, and the scene names them.
     let top = editor.ui.find(editor.ui.root(), "lighting-scene").unwrap();
@@ -6886,7 +6909,9 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     let row = |editor: &voxear_editor::Editor, title: &str| {
         let mut rows = Vec::new();
         with_class(&editor.ui, inspector, "setting", &mut rows);
-        rows.into_iter().find(|&row| editor.ui.children(row).first().is_some_and(|&l| editor.ui.text(l) == title))
+        // The one on the tab shown: the clouds have a density too.
+        let named = |row: &NodeId| editor.ui.children(*row).first().is_some_and(|&l| editor.ui.text(l) == title);
+        rows.into_iter().filter(named).find(|&row| editor.ui.is_visible(row))
     };
     let density = row(&editor, "Density").expect("the fog's density");
     assert!(editor.ui.is_visible(density), "shown while there is fog");
@@ -6904,6 +6929,82 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     assert_eq!(checked, ["Fog"], "only the tab shown is picked");
     assert!(!editor.ui.is_checked(fog), "the fog's toggle shows it off");
     shot(&mut renderer, "lighting-inspector.png");
+
+    // A look pack selected shows the same tabs, but for the weather, which is the level's, with its own Pack and
+    // Blocks. A row is empty until the pack writes it, and what it writes stands out.
+    assert!(editor.inspect_path("Looks/Cosy.lookpack"));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut tabs = Vec::new();
+    with_class(&editor.ui, inspector, "settings-tab", &mut tabs);
+    let named: Vec<String> = tabs.iter().map(|&tab| editor.ui.text(tab)).collect();
+    assert_eq!(named.first().map(String::as_str), Some("Pack"), "{named:?}");
+    assert!(named.iter().any(|tab| tab == "Blocks") && !named.iter().any(|tab| tab == "Weather"), "{named:?}");
+    let description = first_with(&editor.ui, row(&editor, "Description").unwrap(), "value-input").unwrap();
+    assert_eq!(editor.ui.text(description), "Warm.");
+    let tab = |editor: &voxear_editor::Editor, name: &str| {
+        let mut tabs = Vec::new();
+        with_class(&editor.ui, inspector, "settings-tab", &mut tabs);
+        tabs.into_iter().find(|&tab| editor.ui.text(tab) == name).unwrap()
+    };
+    let bloom = tab(&editor, "Bloom");
+    click(&mut editor.ui, bloom);
+    frame(&mut editor, &mut renderer);
+    let field = |editor: &voxear_editor::Editor, title: &str| {
+        first_with(&editor.ui, row(editor, title).expect("its row"), "number-input").expect("its field")
+    };
+    let written = |editor: &voxear_editor::Editor, title: &str| editor.ui.has_class(row(editor, title).unwrap(), "written");
+    assert_eq!(editor.ui.text(field(&editor, "Intensity")), "0.3");
+    assert!(written(&editor, "Intensity") && !written(&editor, "Scatter"), "only what the pack writes stands out");
+    assert_eq!(editor.ui.text(field(&editor, "Scatter")), "", "the level's own, so empty, though bloom is not on here");
+    // Typed, a setting is the pack's, written into its file with the rest as it was.
+    let scatter = field(&editor, "Scatter");
+    type_into(&mut editor.ui, scatter, "0.8");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&cosy).unwrap();
+    assert!(text.contains("scatter = 0.8") && text.contains("intensity = 0.3") && text.starts_with("# Cosy"), "{text}");
+    assert!(written(&editor, "Scatter"));
+    // A toggle is a menu in a pack: the level's own, on or off.
+    let on = first_with(&editor.ui, row(&editor, "Bloom").unwrap(), "value-choice").unwrap();
+    assert_eq!(editor.ui.selected_option(on), 0, "the level's own");
+    editor.ui.focus(on);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&cosy).unwrap().contains("enabled = true"));
+    // Emptied, a setting goes back to the level, and out of the file.
+    let scatter = field(&editor, "Scatter");
+    type_into(&mut editor.ui, scatter, "");
+    editor.ui.key_down(Key::Backspace);
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&cosy).unwrap();
+    assert!(!text.contains("scatter") && text.contains("intensity = 0.3"), "{text}");
+    assert!(!written(&editor, "Scatter"));
+    // Blocks: small cubes for every world, and none of the section left once emptied.
+    let blocks = tab(&editor, "Blocks");
+    click(&mut editor.ui, blocks);
+    frame(&mut editor, &mut renderer);
+    let voxels = field(&editor, "Voxels");
+    type_into(&mut editor.ui, voxels, "8");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&cosy).unwrap();
+    assert!(text.contains("[blocks]") && text.contains("voxels = 8"), "{text}");
+    let voxels = field(&editor, "Voxels");
+    type_into(&mut editor.ui, voxels, "");
+    editor.ui.key_down(Key::Backspace);
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&cosy).unwrap();
+    assert!(!text.contains("blocks"), "{text}");
+    voxear_engine::look_packs::LookPackFile::parse(&text).expect("the pack still reads");
+    shot(&mut renderer, "look-pack-inspector.png");
 }
 
 #[test]

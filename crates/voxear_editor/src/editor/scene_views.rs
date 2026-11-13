@@ -205,6 +205,7 @@ impl Editor {
         let camera = world.spawn((Name("Scene Camera".into()), place, lens, EditorOnly));
         let mut view = SceneView::build(&mut self.ui, content, panel, camera);
         view.fly.set_speed(self.scene.fly.speed());
+        view.fly.set_speeds_up(self.scene.fly.speeds_up());
         (view.shading, view.show_gizmos) = (shading, show_gizmos);
         if let Some(open) = self.open_prefab_path() {
             let name = open.rsplit('/').next().unwrap_or(open).to_string();

@@ -934,6 +934,8 @@ impl ModelPanel {
             (BoxPartEdit::KeyEase(ease), part) => {
                 return self.key_with(model, part.bone(), Some(key), |made| made.ease = ease);
             }
+            // The model's own, whichever part shows it.
+            (BoxPartEdit::WindBend(bend), _) => model.wind_bend = bend,
             // No two bones of a name, and its keys go with it.
             (BoxPartEdit::Name(name), Picked::Bone(at)) => model.rename_bone(at, &name),
             (BoxPartEdit::Pivot(pivot), Picked::Bone(at)) => match self.pivot_alone {

@@ -122,6 +122,9 @@ pub struct Frame {
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
+    /// The sky's clouds, where it has any: drawn after the tables, and
+    /// sampled by the sky and by everything the sun lights.
+    pub clouds: Option<crate::clouds::CloudImages>,
     /// The volumetric fog's volumes, filled once the opaque passes are done.
     pub volume: Option<volumetric::Volume>,
     /// The sea, drawn after the sky and before glass.
@@ -350,7 +353,12 @@ pub fn record(
         crate::water::record_dry_mask(fg, (pipelines, push), water, draws.index_buffer);
         crate::water::record_waves(fg, (pipelines, push), water);
     }
-    let tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
+    let mut tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
+    if let Some(clouds) = frame.clouds {
+        crate::clouds::record(fg, (pipelines, push), clouds, &tables);
+        // Read with the tables from here on: wherever the sun's light is read, and by the sky.
+        tables.extend(clouds.sampled());
+    }
     let shading = |color: ImageAccess| {
         let mut images =
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];

@@ -36,6 +36,8 @@ Hold the **right mouse button** over the Scene view to fly:
 
 Move the mouse while you hold the button to look around. Let go to stop flying.
 
+The camera flies faster the longer you keep moving, up to 32 times its speed after about six seconds, so a tap is a nudge and a held key crosses a large level. It starts from its own speed again when you let go of the keys. **Speed up while flying** in the Settings turns this off.
+
 To find an Obj, select it and press **F**, or double-click it in the Hierarchy. The camera glides to show it whole, looking the same way it did. **Ctrl+Shift+F** does the opposite, as in Unity: it moves the selected Objs to where the camera is, facing the way it looks, which is handy for placing a camera or a light just where you are looking from.
 
 ## Selecting and moving Objs

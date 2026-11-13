@@ -253,6 +253,7 @@ impl Editor {
         let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
+        let looks = changed.iter().any(|path| path.ends_with(".lookpack"));
         let documents = changed.iter().any(|path| path.ends_with(".vui") || path.ends_with(".vss"));
         let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
         let world_gens: Vec<String> =
@@ -261,6 +262,7 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".prefab")).map(|path| path.to_string()).collect();
         let blocks: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".block")).map(|path| path.to_string()).collect();
+        let biomes = changed.iter().any(|path| path.ends_with(".biome"));
         let effects: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
         let box_models: Vec<String> =
@@ -318,10 +320,19 @@ impl Editor {
                 self.game.content.forget_blocks();
                 self.blocks_saved.extend(blocks);
             }
+            // Biomes edited outside the editor are read again, and the worlds listing them made again from them.
+            if biomes {
+                self.game.content.forget_biomes();
+            }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.
             if shaders {
                 self.game.apply_custom_shaders(renderer);
+            }
+            // A look pack edited outside the editor is worn as it now is, where the scene is shown under it.
+            if looks {
+                self.look_pack_changed();
+                self.refresh_lighting_page();
             }
             // Lighting settings edited outside the editor light the open scene as they now are.
             if lighting {

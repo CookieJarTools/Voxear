@@ -41,6 +41,7 @@ pub use interop::{
     set_motion_matcher_values, set_net_calls, set_net_fields, set_net_object_values, set_net_raycast, set_net_rpcs,
     set_kind_texts, set_kind_values, set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler, set_water_splasher,
     PoseOps, set_pose_ops,
+    WeatherRequest, WeatherState,
 };
 pub use physics::{ParticleHitData, PhysicsEventData};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
@@ -51,7 +52,9 @@ pub use runtime::{
     ConsoleName, CreatedBehaviour, ManagedMemory, PACKAGE_ASSEMBLIES, Reloaded, ScriptHost, ScriptRuntime,
     package_assemblies,
 };
-pub use saves::{SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language};
+pub use saves::{
+    SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language, saves_folder,
+};
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,

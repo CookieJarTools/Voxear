@@ -91,7 +91,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     // Straight down onto its middle from 40 m over the grass, +z up the screen.
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -133,7 +133,7 @@ fn a_world_too_large_to_upload_in_a_frame_comes_over_several_the_old_one_drawn_t
     file.ground.height = 4;
     let (_, faces) = file.faces();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material, surfaces: Arc::from([]) };
+    let look = BlockLook { material, surfaces: Arc::from([]), voxels: Default::default() };
     let mut world = World::new();
     let field = world.spawn((BlockWorld::new(file.make_ground(None), &faces, 1.0), look, Transform::default()));
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -207,7 +207,8 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    world.spawn((world_blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((world_blocks, look, Transform::default()));
     // Straight down from 90 m over (64, ·, 16): +x to the right.
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     world.spawn((Camera::default(), Transform::new(Vec3::new(64.0, 91.0, 16.0), down, Vec3::ONE)));
@@ -282,7 +283,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     world.spawn((BlockWorld::made(blocks, &faces, 1.0, true), look, Transform::default()));
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
@@ -378,7 +379,7 @@ fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted(
         })
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     let mut draw = |blocks: BlockMap, name: &str| {
         let mut world = World::new();
         world.spawn((BlockWorld::new(blocks, &faces, 1.0), look.clone(), Transform::default()));
@@ -456,7 +457,8 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    world.spawn((blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((blocks, look, Transform::default()));
     // From in front, level with the water, looking along +z: +x to the right.
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(6.0, 1.5, -6.0))));
     let towards_sun = Vec3::new(-0.3, 0.8, -0.5).normalize();
@@ -526,7 +528,7 @@ fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
         })
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     let towards_sun = Vec3::new(-60f32.to_radians().cos(), 60f32.to_radians().sin(), 0.2).normalize();
@@ -645,7 +647,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
     let file = BlockFile { generate: Some(generate.clone()), smooth: true, ..BlockFile::default() };
     let (looks, faces) = file.faces();
     let hills = Arc::new(Preset::RollingHills.world());
-    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into(), far_folder: None };
+    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into(), far_folder: None, far_built: Vec::new() };
     let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, true);
     let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
     let mut streamer = BlockStreamer::default();
@@ -679,7 +681,8 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    world.spawn((blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((blocks, look, Transform::default()));
     // From 40 m over the ground at the middle, looking along +x and a little down, the sun low from one side so
     // any groove or wall across the ground shows.
     let ground = hills.height_at(0.0, 0.0);
@@ -721,7 +724,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
     let file = BlockFile { generate: Some(generate.clone()), ..BlockFile::default() };
     let (looks, faces) = file.faces();
     let alps = Arc::new(Preset::Alpine.world());
-    let making = BlockMaking { file, generate, world: alps.clone(), faces: faces.clone().into(), far_folder: None };
+    let making = BlockMaking { file, generate, world: alps.clone(), faces: faces.clone().into(), far_folder: None, far_built: Vec::new() };
     let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, false);
     let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
     let mut streamer = BlockStreamer::default();
@@ -756,7 +759,8 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    world.spawn((blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((blocks, look, Transform::default()));
     // From 150 m over the ground at the middle, looking along +x at the horizon, the sun low from one side.
     let ground = alps.height_at(2000.0, 3000.0);
     let look = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.06);
@@ -882,7 +886,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 8.0, false);
     assert!(made.meshes.len() > 40, "{} chunks drawn", made.meshes.len());
     scene.spawn((made, look, Transform::default()));
@@ -1044,7 +1048,7 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
     let (huts, oaks, pines) = (count(roof), count(oak_log), count(pine_log));
     assert!(huts > 50 && oaks > 100 && pines > 100, "roof {huts}, oak {oaks}, pine {pines}");
     let ground_at = |x: f32, z: f32| world.height_at(x, z);
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     scene.spawn((made, look, Transform::default()));
     // From over one corner of the hills, 30 m up, looking across them and a little down.
     // Cameras look along +z; turned to look back towards the world's corner.
@@ -1257,7 +1261,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
     assert!(roofs > 300 && paths > 150, "roof {roofs}, paths {paths}");
     let middle_height = world.height_at(site.at[0], site.at[1]);
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     scene.spawn((made, look, Transform::default()));
     // From 70 m over the village's south-west, looking at its middle; cameras look along +z.
     let turn = Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.75);
@@ -1402,7 +1406,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
     }
     assert!(roads > 300, "{roads} blocks of road");
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     scene.spawn((made, look, Transform::default()));
     // From high over the middle of the 800 m square, looking down at it; cameras look along +z.
     let turn = Quat::from_rotation_y(0.0) * Quat::from_rotation_x(1.2);
@@ -1563,7 +1567,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     scene.spawn((BlockWorld::made(map.clone(), &faces, 1.0, false), look, Transform::default()));
     // Straight down over the middle of its floor, high enough to hold all of it; cameras look along +z.
     let (mut low, mut high) = ([i32::MAX; 2], [i32::MIN; 2]);
@@ -1654,7 +1658,7 @@ fn generated_view(
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
     let made = BlockWorld::made(file.make_ground(Some(world)), &faces, size, false);
     let chunks = made.meshes.len();
     scene.spawn((made, look, Transform::default()));
@@ -1872,4 +1876,259 @@ fn a_great_cave_mouth_opens_in_the_hillside_into_a_hall() {
         "blocks cave mouth inside.png",
     );
     assert!(sky_pixels(&inside) > 100, "sky through the mouth: {}", sky_pixels(&inside));
+}
+
+/// A picture of bricks, 16 pixels a side: three courses with dark mortar between, each brick a shade of its own.
+fn bricks(renderer: &mut Renderer) -> voxear_render::TextureId {
+    let size = 16u32;
+    let rgba: Vec<u8> = (0..size * size)
+        .flat_map(|i| {
+            let (x, y) = (i % size, i / size);
+            let course = y / 5;
+            let along = (x + course * 4) % 8;
+            let mortar = y % 5 == 4 || along == 7;
+            let shade = 150 + ((course * 3 + (x + course * 4) / 8) % 3) * 22;
+            let [r, g, b] = if mortar { [58, 54, 52] } else { [shade, shade * 3 / 5, shade / 2] };
+            [r as u8, g as u8, b as u8, 255]
+        })
+        .collect();
+    let source = voxear_render::TextureSource { name: "bricks", width: size, height: size, rgba: &rgba, srgb: true };
+    renderer.add_texture(&source).unwrap()
+}
+
+/// A field of grass with a wall of bricks across it, its faces cut into `voxels`, seen from `eye` looking along
+/// `towards`; and how long the frame's GPU work took at its least over a few frames, in milliseconds.
+fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, f32)> {
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 4;
+    let mut blocks = file.make_ground(None);
+    for x in 8..24 {
+        for y in 4..9 {
+            blocks.set([x, y, 18], 3);
+        }
+    }
+    let picture = bricks(&mut renderer);
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            // Stone is the wall's: bricks. Grass and dirt have no picture, only their colours.
+            let stone = (r - g).abs() < 0.05;
+            let desc = match stone {
+                true => MaterialDesc { base_color_texture: Some(picture), roughness: 1.0, ..MaterialDesc::default() },
+                false => MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() },
+            };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    let towards = towards.normalize();
+    let facing = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+    world.spawn((Camera::default(), Transform::new(eye, facing, Vec3::ONE)));
+    // The sun from behind the camera's left shoulder, high enough to light the ground and the wall.
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let mut time = 0.0;
+    let mut least = f32::INFINITY;
+    for _ in 0..40 {
+        time += 1.0 / 60.0;
+        renderer.render(&world, time).expect("frame renders");
+        let spent: f32 = renderer.timings().iter().map(|(_, ms)| *ms).sum();
+        if spent > 0.0 {
+            least = least.min(spent);
+        }
+    }
+    Some((renderer.read_pixels().expect("pixels").2, least))
+}
+
+#[test]
+fn a_worlds_faces_are_cut_into_small_cubes_near_the_camera_and_plain_far_off() {
+    use voxear_render::BlockVoxels;
+    // Standing on the grass, looking a little down at the wall six metres off.
+    let (eye, towards) = (Vec3::new(16.0, 5.7, 11.5), Vec3::new(0.15, -0.2, 1.0));
+    let near = |voxels: BlockVoxels| small_cubes_render(voxels, eye, towards);
+    let Some((plain, plain_ms)) = near(BlockVoxels::default()) else { return };
+    let (cubes, cubes_ms) = near(BlockVoxels::of(8)).unwrap();
+    let (flat, _) = near(BlockVoxels { count: 8, relief: 0.0 }).unwrap();
+    let (fine, _) = near(BlockVoxels::of(16)).unwrap();
+    keep_image("blocks plain faces.png", &plain);
+    keep_image("blocks small cubes 8.png", &cubes);
+    keep_image("blocks small cubes 8 flat.png", &flat);
+    keep_image("blocks small cubes 16.png", &fine);
+    eprintln!("a frame's passes: {plain_ms:.2} ms plain, {cubes_ms:.2} ms with small cubes");
+    let unlike = |a: &[u8], b: &[u8]| {
+        let pairs = a.chunks_exact(4).zip(b.chunks_exact(4));
+        pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 6)).count() as f32 / (WIDTH * HEIGHT) as f32
+    };
+    assert!(unlike(&cubes, &plain) > 0.2, "small cubes show over the faces: {}", unlike(&cubes, &plain));
+    assert!(unlike(&cubes, &flat) > 0.05, "sunk into them, not only squares: {}", unlike(&cubes, &flat));
+    assert!(unlike(&fine, &cubes) > 0.1, "twice as many are finer: {}", unlike(&fine, &cubes));
+    // The faces keep their colours: grass still green and about as bright all told.
+    let mean = |pixels: &[u8]| {
+        let sum = |c: usize| pixels.chunks_exact(4).map(|p| u64::from(p[c])).sum::<u64>() / u64::from(WIDTH * HEIGHT);
+        [sum(0), sum(1), sum(2)]
+    };
+    let (was, now) = (mean(&plain), mean(&cubes));
+    assert!((0..3).all(|c| now[c] * 100 > was[c] * 75 && now[c] <= was[c] + 6), "{now:?} against {was:?}");
+    // The same picture twice.
+    assert!(near(BlockVoxels::of(8)).unwrap().0 == cubes, "the same small cubes each time");
+
+    // From high above, the small cubes are too small to tell apart, and the faces are as they are without.
+    let (above, down) = (Vec3::new(16.0, 70.0, 16.0), Vec3::new(0.0, -1.0, 0.02));
+    let (far_plain, _) = small_cubes_render(BlockVoxels::default(), above, down).unwrap();
+    let (far_cubes, _) = small_cubes_render(BlockVoxels::of(8), above, down).unwrap();
+    keep_image("blocks small cubes far.png", &far_cubes);
+    assert!(unlike(&far_cubes, &far_plain) < 0.01, "plain far off: {}", unlike(&far_cubes, &far_plain));
+}
+
+/// A tree of blocks on a field of grass, a trunk with a crown of leaves over it, seen from in front: its leaves
+/// swaying or not, in a Wind Zone of `wind` or none, as it is after one second and after a second and a half.
+fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
+    use voxear_render::WindZone;
+    use voxear_terrain::blocks::file::BlockKind;
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { sways, ..BlockKind::colored("Leaves", [0.16, 0.42, 0.12]) });
+    let leaves = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for y in 7..11 {
+        for z in 14..19 {
+            for x in 14..19 {
+                blocks.set([x, y, z], leaves);
+            }
+        }
+    }
+    for y in 4..9 {
+        blocks.set([16, y, 16], 3);
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(16.5, 7.5, 4.0))));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = wind {
+        world.spawn((WindZone { strength, ..WindZone::default() }, Transform::default()));
+    }
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let mut time = 0.0;
+    let mut after = |frames: u32| {
+        for _ in 0..frames {
+            time += 1.0 / 60.0;
+            renderer.render(&world, time).expect("frame renders");
+        }
+        renderer.read_pixels().expect("pixels").2
+    };
+    Some([after(60), after(30)])
+}
+
+#[test]
+fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves() {
+    let Some([calm, calm_later]) = leaves_render(true, None) else { return };
+    let [windy, windy_later] = leaves_render(true, Some(2.0)).unwrap();
+    let [stiff, stiff_later] = leaves_render(false, Some(2.0)).unwrap();
+    keep_image("leaves calm.png", &calm);
+    keep_image("leaves in the wind.png", &windy);
+    keep_image("leaves in the wind later.png", &windy_later);
+    let unlike = |a: &[u8], b: &[u8], rows: std::ops::Range<u32>| {
+        let differs = |x: u32, y: u32| (0..3).any(|c| rgb_at(a, x, y)[c].abs_diff(rgb_at(b, x, y)[c]) > 6);
+        let count = rows.clone().flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| differs(x, y)).count();
+        count as f32 / (rows.len() as u32 * WIDTH) as f32
+    };
+    let all = 0..HEIGHT;
+    assert!(unlike(&calm, &calm_later, all.clone()) < 0.001, "with no wind nothing moves");
+    assert!(unlike(&stiff, &stiff_later, all.clone()) < 0.001, "nor do leaves that do not sway");
+    assert!(unlike(&stiff, &calm, all.clone()) < 0.001, "which are as leaves in no wind");
+    let moved = unlike(&windy, &windy_later, all.clone());
+    assert!(moved > 0.004, "leaves that sway stir from moment to moment: {moved}");
+    assert!(unlike(&windy, &calm, all.clone()) > 0.004, "and stand apart from where they are in a calm");
+    // The grass at the camera's feet is as still as ever, past the crown's shadow.
+    let ground = HEIGHT * 5 / 6..HEIGHT;
+    assert!(unlike(&windy, &windy_later, ground.clone()) < 0.001, "the ground does not move");
+    assert!(unlike(&windy, &calm, ground) < 0.001, "nor did the wind change it");
+    // The trunk stands where it stood: its dark column is in the same place.
+    let trunk = |pixels: &[u8]| {
+        let dark: Vec<u32> = (0..WIDTH).filter(|&x| rgb_at(pixels, x, 225).iter().sum::<i32>() < 200).collect();
+        (dark.first().copied(), dark.last().copied())
+    };
+    let (stood, stands) = (trunk(&calm), trunk(&windy));
+    assert!(stood.0.is_some() && stands == stood, "{stands:?} against {stood:?}");
+}
+
+#[test]
+fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
+    use voxear_render::{WaterLook, WornLook};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond(&mut renderer, &[]);
+    // Straight down on the pond from above its middle: water in the middle of the picture, grass round it.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+    let own = render(&mut renderer, &world, 8);
+    // The level's own lighting, with a pack's water over it: as red as wine.
+    let worn = WornLook {
+        sky: *world.resource::<Sky>().unwrap(),
+        sun: None,
+        post: *world.resource::<PostProcess>().unwrap(),
+        voxels: None,
+        water: WaterLook { deep: Some([0.7, 0.05, 0.1]), ..WaterLook::default() },
+        shader: None,
+    };
+    world.insert_resource(worn);
+    let wine = render(&mut renderer, &world, 8);
+    keep_image("block water own.png", &own);
+    keep_image("block water of a pack.png", &wine);
+    let (middle, corner) = ((WIDTH / 2, HEIGHT / 2), (20, 20));
+    let (was, now) = (rgb_at(&own, middle.0, middle.1), rgb_at(&wine, middle.0, middle.1));
+    assert!(was[1] > was[0] + 10, "the pond is its block's green to begin with: {was:?}");
+    assert!(now[0] > now[1] + 20 && now[0] > was[0] + 20, "and the pack's red under it: {now:?} against {was:?}");
+    let (grass, still) = (rgb_at(&own, corner.0, corner.1), rgb_at(&wine, corner.0, corner.1));
+    assert!((0..3).all(|c| (grass[c] - still[c]).abs() <= 2), "the grass is as it was: {still:?} against {grass:?}");
+    // A pack that sets no water leaves each block's own.
+    world.insert_resource(WornLook { water: WaterLook::default(), ..worn });
+    let back = render(&mut renderer, &world, 8);
+    let again = rgb_at(&back, middle.0, middle.1);
+    assert!((0..3).all(|c| (again[c] - was[c]).abs() <= 3), "its own again: {again:?} against {was:?}");
 }

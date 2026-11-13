@@ -305,6 +305,122 @@ fn a_generated_block_worlds_biomes_put_their_blocks_on_its_ground_numbered_as_it
 }
 
 #[test]
+fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_it_is() {
+    use voxear_core::math::Vec3;
+    use voxear_engine::blocks::{BlockWorldAsset, biome_at, biome_json};
+    use voxear_terrain::{blocks::generate::BlockGenerate, generate::Preset};
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    let write = |path: &str, text: &str| {
+        std::fs::create_dir_all(dir.path().join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.path().join(path), text).unwrap();
+    };
+    write("Worlds/Hills.worldgen", &hills.to_text());
+    write("Blocks/Moss.block", "color = [0.2, 0.5, 0.2]\n");
+    write("Blocks/Sand.block", "color = [0.9, 0.8, 0.5]\n");
+    write("Blocks/Clay.block", "color = [0.6, 0.4, 0.3]\n");
+    // Two biomes that between them take in every climate, split at how warm the world's middle is.
+    let split = hills.climate(16.0, 16.0, hills.height_at(16.0, 16.0)).0;
+    let cool = |top: &str| {
+        let lies = format!("color = [0.1, 0.2, 0.3]\ntemperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n");
+        format!("{lies}\n[ground]\ntop = \"{top}\"\n")
+    };
+    let warm =
+        format!("temperature = [{split}, 60.0]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Sand.block\"\n");
+    write("Biomes/Cool.biome", &cool("Blocks/Moss.block"));
+    write("Biomes/Warm.biome", &warm);
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        biomes: vec!["Biomes/Cool.biome".into(), "Biomes/Warm.biome".into()],
+        ..BlockGenerate::default()
+    });
+    let held = file.blocks.len() as u16;
+    write("Blocks/Field.blockworld", &file.to_text());
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = game.engine.world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    let (moss, sand, clay) = (held + 1, held + 2, held + 3);
+    let tops = |game: &Game| {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        let top = |x: i32, z: i32| (-8..200).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0);
+        let mut counts = std::collections::BTreeMap::new();
+        for (x, z) in (0..32).flat_map(|z| (0..32).map(move |x| (x, z))) {
+            *counts.entry(top(x, z).unwrap()).or_insert(0usize) += 1;
+        }
+        counts
+    };
+    let before = tops(&game);
+    assert!(before[&moss] > 30 && before[&sand] > 30 && before.len() == 2, "{before:?}");
+
+    // A place says which biome it is: by its ground, however high over it the place is, in metres in the level.
+    // The world's Obj is at (-16, 0, -16).
+    let cool_guid = game.content.db().guid_of("Biomes/Cool.biome").unwrap();
+    let warm_guid = game.content.db().guid_of("Biomes/Warm.biome").unwrap();
+    let at = |game: &mut Game, x: i32, z: i32, y: f32| {
+        biome_at(&game.engine.world, &mut game.content, Vec3::new(x as f32 - 15.5, y, z as f32 - 15.5))
+    };
+    let blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let top = |x: i32, z: i32| (-8..200).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0).unwrap();
+    let (mut cool_places, mut warm_places) = (0, 0);
+    for (x, z) in (0..32).step_by(3).flat_map(|z| (0..32).step_by(3).map(move |x| (x, z))) {
+        let said = at(&mut game, x, z, 500.0).expect("a biome everywhere on its ground");
+        assert_eq!(said, if top(x, z) == moss { cool_guid } else { warm_guid }, "column ({x}, {z})");
+        assert_eq!(at(&mut game, x, z, -3.0), Some(said), "and deep under it the same");
+        cool_places += usize::from(said == cool_guid);
+        warm_places += usize::from(said == warm_guid);
+    }
+    assert!(cool_places > 3 && warm_places > 3);
+    assert_eq!(at(&mut game, 40, 5, 10.0), None, "past the world's edge, none");
+    // What a biome says, for scripts: which it is, its name and its colour.
+    let said = biome_json(&mut game.content, "Biomes/Cool.biome").unwrap();
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert_eq!((said["name"].as_str(), said["guid"].as_str()), (Some("Cool"), Some(cool_guid.to_string().as_str())));
+    assert!((said["color"][2].as_f64().unwrap() - 0.3).abs() < 1e-6);
+    assert!(biome_json(&mut game.content, "Biomes/Gone.biome").is_err());
+
+    // Something built in its lowest blocks, then the cool biome saved with clay on top: the world listing it is
+    // made again in the next frame, clay where moss was, the sand as it was, and what was built kept.
+    let built = [5, -8, 5];
+    game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks([(built, 1)]);
+    write("Biomes/Cool.biome", &cool("Blocks/Clay.block"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    let after = tops(&game);
+    assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get(built), 1, "what was built is kept");
+    assert_eq!((after.get(&clay), after.get(&sand)), (before.get(&moss), before.get(&sand)), "{after:?}");
+    assert_eq!(after.len(), 2, "{after:?}");
+    // The world numbered clay as it first held it; moss keeps its number, though no ground is moss now.
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert_eq!(asset.file.blocks.len(), usize::from(clay));
+    assert_eq!(asset.drawn.number_of(game.content.db().guid_of("Blocks/Moss.block").unwrap()), Some(moss));
+    // Its colour changed alone makes no ground again: the world's blocks are the very ones they were.
+    let made = game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    write("Biomes/Cool.biome", &cool("Blocks/Clay.block").replace("0.1, 0.2, 0.3", "0.9, 0.2, 0.3"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    assert!(std::sync::Arc::ptr_eq(&made, &game.engine.world.get::<BlockWorld>(field).unwrap().blocks));
+    let said = biome_json(&mut game.content, "Biomes/Cool.biome").unwrap();
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert!((said["color"][0].as_f64().unwrap() - 0.9).abs() < 1e-6, "and its colour is read again");
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    // A level loaded again takes the biome as it is now from what was kept, with no file read again.
+    let again = game.content.block_world(asset.guid).expect("the world as kept");
+    assert_eq!(again.file.generate, asset.file.generate);
+    let top_again = (-8..200).rev().map(|y| again.world.blocks.get([0, y, 0])).find(|&block| block != 0).unwrap();
+    assert!(top_again == clay || top_again == sand);
+    // A biome with no blocks named leaves the ground the world's own: grass, the first block.
+    write("Biomes/Cool.biome", &format!("temperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    let own = tops(&game);
+    assert_eq!((own.get(&1), own.get(&sand), own.len()), (before.get(&moss), before.get(&sand), 2), "{own:?}");
+}
+
+#[test]
 fn a_generated_block_world_builds_its_structures_trees_grown_from_a_plant_and_huts_from_a_model() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{
@@ -516,4 +632,156 @@ fn a_block_worlds_colours_stay_loaded_while_its_look_draws_with_them() {
     assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept as the level loaded");
     game.release_unused(Some(&mut renderer));
     assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept after");
+}
+
+/// A project as [`project`]'s whose world holds leaves, a block drawn with a material cut out of a picture
+/// with holes in it (or, not `cut_out`, drawn whole), and a tree of them on its ground: a trunk of stone three
+/// high and a crown five by five by three round its top, seen from the side against the sky.
+fn tree_project(cut_out: bool) -> (tempfile::TempDir, Game) {
+    use voxear_terrain::blocks::{block::BlockDef, file::BlockKind};
+    let dir = project();
+    // Leaves: green where the picture is solid, clear in a third of it.
+    let mut pixels = Vec::new();
+    for y in 0..16u32 {
+        for x in 0..16u32 {
+            let clear = (x / 2 + y / 2) % 3 == 0;
+            pixels.extend([40, 140 + (x * 5) as u8, 50, if clear { 0 } else { 255 }]);
+        }
+    }
+    std::fs::create_dir_all(dir.path().join("Textures")).unwrap();
+    let file = std::fs::File::create(dir.path().join("Textures/Leaves.png")).unwrap();
+    let mut encoder = png::Encoder::new(file, 16, 16);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+    let leaves = BlockDef { material: Some("Materials/Leaves.material".into()), ..BlockDef::colored([0.2, 0.6, 0.2]) };
+    std::fs::write(dir.path().join("Blocks/Leaves.block"), leaves.to_text()).unwrap();
+    let mut file = BlockFile::default();
+    (file.ground.size, file.ground.height) = ([32, 32], 6);
+    file.blocks.push(BlockKind::of("Blocks/Leaves.block"));
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let scene = format!(
+        "{FIELD}\n[[obj]]\nid = 3\nname = \"Eye\"\nposition = [0.0, 8.5, -11.0]\nrotation = [-4.0, 0.0, 0.0]\n\
+         [obj.camera]\nfov = 50.0\n\n[[obj]]\nid = 4\nname = \"Sun\"\nrotation = [50.0, 30.0, 0.0]\n\
+         [obj.light]\ntype = \"directional\"\n"
+    );
+    std::fs::write(dir.path().join("Scenes/Field.scene"), scene.replace("position = [0.0, 20.0, 0.0]", "position = [9.0, 20.0, 9.0]"))
+        .unwrap();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    // The picture's GUID is its project's to give: the material is written once the project knows it.
+    std::fs::write(dir.path().join("Materials/Leaves.material"), "color = [1.0, 1.0, 1.0]\n").unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    let picture = game.content.parse("Textures/Leaves.png").unwrap().guid().expect("the picture is an asset");
+    let cutout = if cut_out { "cutout = 0.5\n" } else { "" };
+    let material = format!("color = [1.0, 1.0, 1.0]\nroughness = 1.0\ncolor_map = \"{picture}\"\n{cutout}");
+    std::fs::write(dir.path().join("Materials/Leaves.material"), material).unwrap();
+    game.content.rescan().unwrap();
+    (dir, game)
+}
+
+/// Builds the tree of [`tree_project`] on the world of blocks on `field`: its corner at (-16, 0, -16), so the
+/// tree stands over the world's middle.
+fn build_tree(game: &mut Game, field: voxear_ecs::Entity) {
+    let mut blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let trunk = (6..9).map(|y| ([16, y, 16], 3u16));
+    let crown = (8..11).flat_map(|y| (14..19).flat_map(move |z| (14..19).map(move |x| ([x, y, z], 4u16))));
+    blocks.set_blocks(crown.chain(trunk));
+    game.engine.world.insert(field, blocks);
+}
+
+#[test]
+fn a_block_drawn_with_a_cut_out_material_is_seen_through_and_hides_no_face() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    let field_of = |game: &Game| {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+    };
+    let quads = |game: &Game, field| {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        blocks.meshes.values().map(|mesh| mesh.quads.len()).sum::<usize>()
+    };
+    // Cut out: the world knows its leaves are seen through, from their material, with no renderer too.
+    let (_dir, mut game) = tree_project(true);
+    game.start(None).unwrap();
+    let field = field_of(&game);
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert!(asset.drawn.blocks[3].cutout && !asset.drawn.blocks[0].cutout);
+    assert!(!asset.file.blocks[3].cutout && !asset.file.to_text().contains("cutout"), "nothing its file says");
+    let faces = game.engine.world.get::<BlockWorld>(field).unwrap().faces.clone();
+    assert!(faces[4].see_through && !faces[1].see_through && !faces[3].see_through);
+    build_tree(&mut game, field);
+    let seen_through = quads(&game, field);
+    // Drawn whole, the same tree has only its crown's outside.
+    let (_dir, mut whole) = tree_project(false);
+    whole.start(None).unwrap();
+    let field = field_of(&whole);
+    assert!(!whole.engine.world.get::<BlockWorld>(field).unwrap().faces[4].see_through);
+    build_tree(&mut whole, field);
+    assert!(seen_through > quads(&whole, field), "{seen_through} quads with every leaf's faces");
+    // The ball still comes to rest on the grass beside the tree, and one dropped on the crown, on its leaves.
+    for _ in 0..180 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let ball = {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Ball").unwrap().0
+    };
+    let at = game.engine.world.get::<voxear_scene::Transform>(ball).unwrap().position;
+    assert!((at.y - 6.5).abs() < 0.05, "on the grass: {at}");
+    game.engine.world.get_mut::<voxear_scene::Transform>(ball).unwrap().position = voxear_core::math::Vec3::new(0.5, 20.0, 0.5);
+    for _ in 0..240 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let at = game.engine.world.get::<voxear_scene::Transform>(ball).unwrap().position;
+    assert!((at.y - 11.5).abs() < 0.05, "on the leaves, which are stood on: {at}");
+}
+
+#[test]
+fn leaves_cut_out_of_their_picture_show_the_sky_and_the_trunk_through_them() {
+    use voxear_render::{Renderer, RendererSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(640, 480, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let mut drawn = |cut_out: bool, name: &str| -> Vec<u8> {
+        let (_dir, mut game) = tree_project(cut_out);
+        game.start(Some(&mut renderer)).unwrap();
+        let field = {
+            let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+            named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+        };
+        build_tree(&mut game, field);
+        for _ in 0..30 {
+            game.tick(1.0 / 60.0, Some(&mut renderer));
+            renderer.render(&game.engine.world, 1.0).unwrap();
+        }
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+        pixels
+    };
+    let (holes, whole) = (drawn(true, "leaf-blocks.png"), drawn(false, "leaf-blocks-whole.png"));
+    // The crown's place on screen, found where the tree drawn whole is green: there, cut out, a good part of the
+    // picture is no longer leaves, and none of it where the crown was not.
+    let green = |p: &[u8]| p[1] > p[0].saturating_add(30) && p[1] > p[2].saturating_add(30);
+    let pairs = || whole.chunks_exact(4).zip(holes.chunks_exact(4));
+    let crown = pairs().filter(|(w, _)| green(w)).count();
+    let through = pairs().filter(|(w, h)| green(w) && !green(h)).count();
+    assert!(crown > 5000, "{crown} pixels of crown");
+    let share = through as f32 / crown as f32;
+    assert!((0.03..0.6).contains(&share), "{:.0}% of the crown is seen through", share * 100.0);
+    // The sun passes the leaves where their picture is clear: the tree's shadow on the grass, a whole block's
+    // dark where they are drawn whole, has lit ground in it where they are cut out.
+    let light = |p: &[u8]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    let grass = |p: &[u8]| p[1] > p[0] && p[1] > p[2];
+    let shaded: Vec<usize> = (0..whole.len() / 4)
+        .filter(|at| at / 640 > 300 && grass(&whole[at * 4..at * 4 + 4]) && light(&whole[at * 4..at * 4 + 4]) < 150)
+        .collect();
+    assert!(shaded.len() > 1500, "{} pixels of the whole tree's shadow", shaded.len());
+    let lit = shaded.iter().filter(|&&at| light(&holes[at * 4..at * 4 + 4]) > light(&whole[at * 4..at * 4 + 4]) + 30);
+    let share = lit.count() as f32 / shaded.len() as f32;
+    assert!(share > 0.1, "{:.0}% of the shadow is lit through the leaves", share * 100.0);
 }

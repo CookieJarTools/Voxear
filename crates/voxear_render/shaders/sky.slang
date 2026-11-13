@@ -197,6 +197,13 @@ SkyFragmentOut skyFragment(SkyOut input)
         float3 seen = saturate((stars - color * STAR_CONTRAST) / max(stars, 1e-9));
         color += stars / STAR_BRIGHTNESS * seen * STARS_ON_SCREEN / exposureScale(frame) * frame->stars;
     }
+    Clouds clouds = frame->lighting.clouds;
+    if (clouds.cover > 0.0 && clouds.view != NO_TEXTURE)
+    {
+        // The clouds in front of all of it: what they add, and how much of the sky behind shows through.
+        float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.ndc * 0.5 + 0.5, 0.0);
+        color = color * seen.a + seen.rgb;
+    }
     o.color = float4(color, 1.0);
     o.velocity = skyMotion(frame, direction);
     return o;
@@ -332,5 +339,393 @@ void skyLightMain()
     Frame* frame = push.frame;
     SkyLight* light = buffers()->skyLight;
     light->sun = float4(sunThroughAtmosphereNow(frame), 0.0);
-    light->sky = float4(skyAroundNow(frame), 0.0);
+    // Under clouds the sky's light is greyer, the more of it they cover: as bright, less blue, and under a sky
+    // all cloud not blue at all.
+    float3 sky = skyAroundNow(frame);
+    float cover = frame->lighting.clouds.cover;
+    float grey = dot(sky, float3(0.2126, 0.7152, 0.0722));
+    sky = lerp(sky, grey, cover * cover);
+    // Lightning, for as long as it flickers.
+    sky += float3(0.75, 0.83, 1.0) * frame->lighting.clouds.flash;
+    light->sky = float4(sky, 0.0);
+}
+
+// ---------------------------------------------------------------- Clouds
+
+// How far the clouds are marched from the camera, in metres, fading out over the last third; how many steps through
+// them, and towards the sun from each.
+static const float CLOUD_REACH = 36000.0;
+static const uint CLOUD_STEPS = 40;
+static const uint CLOUD_SUN_STEPS = 4;
+// How much of last frame's picture this frame's keeps.
+static const float CLOUD_KEPT = 0.9;
+// The Earth's radius, in metres.
+static const float CLOUD_EARTH = 6360000.0;
+
+// The two distances along a ray from a camera `camera` metres over the ground, climbing `climb` a metre, to
+// `height` over the ground round the Earth; false where it never reaches it. Worked out from the heights' difference,
+// which stays exact where the radii's squares would not.
+bool cloudShell(float camera, float climb, float height, out float near, out float far)
+{
+    float b = (CLOUD_EARTH + camera) * climb;
+    float c = (camera - height) * (2.0 * CLOUD_EARTH + camera + height);
+    float discriminant = b * b - c;
+    near = 0.0;
+    far = 0.0;
+    if (discriminant < 0.0)
+    {
+        return false;
+    }
+    float root = sqrt(discriminant);
+    if (b >= 0.0)
+    {
+        near = -(b + root);
+        far = near != 0.0 ? c / near : 0.0;
+    }
+    else
+    {
+        far = root - b;
+        far = max(far, 1e-6);
+        near = c / far;
+    }
+    return true;
+}
+
+// The sun's light on the clouds and the sky's, as the frame has them.
+void cloudLight(Frame* frame, out float3 sun, out float3 sky)
+{
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        sun = sunThroughAtmosphere(frame);
+        SkyLight* light = buffers()->skyLight;
+        sky = light != nullptr ? light->sky.rgb : skyAroundNow(frame);
+        return;
+    }
+    sun = frame->sunColor;
+    sky = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
+}
+
+// The sun's light let through the clouds to the middle of their layer over each place round the camera, looking
+// down: red alone is read. Each texel's samples lie along the way to the sun, so a shadow falls where that way
+// meets the ground, not straight under its cloud.
+[shader("fragment")]
+float4 cloudShadowsFragment(LutOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    Clouds clouds = frame->lighting.clouds;
+    float2 middle = clouds.shadowMiddle + (input.uv - 0.5) * 2.0 * clouds.shadowReach;
+    float3 toSun = towardsSun(frame);
+    float2 slant = toSun.xz / max(toSun.y, 0.12) * clouds.thickness;
+    const uint SAMPLES = 6;
+    float through = 0.0;
+    for (uint i = 0; i < SAMPLES; i++)
+    {
+        float height = (float(i) + 0.5) / float(SAMPLES);
+        through += cloudDensityAt(frame, middle + slant * (height - 0.5), height, false);
+    }
+    // A slanting sun has further to go through them.
+    through *= clouds.thickness / float(SAMPLES) / max(toSun.y, 0.3);
+    return float4(exp(-through), 0.0, 0.0, 1.0);
+}
+
+// Soft clouds along a ray from a camera `camera` metres over the ground: what they add in colour, in alpha how much
+// of the sky behind shows through, and in `distance` how far off they are, in metres. The layer is marched from a
+// start that moves each frame.
+float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera, float3 sun, float3 sky, out float distance)
+{
+    Clouds clouds = frame->lighting.clouds;
+    float top = clouds.base + clouds.thickness;
+    distance = 0.0;
+
+    // The stretch of the ray inside the layer: within its tops' height, outside its undersides'.
+    float4 nothing = float4(0.0, 0.0, 0.0, 1.0);
+    float topNear, topFar, baseNear, baseFar, groundNear, groundFar;
+    if (!cloudShell(camera, direction.y, top, topNear, topFar) || topFar <= 0.0)
+    {
+        return nothing;
+    }
+    float from = max(topNear, 0.0);
+    float to = topFar;
+    if (cloudShell(camera, direction.y, clouds.base, baseNear, baseFar))
+    {
+        if (baseNear > from)
+        {
+            to = min(to, baseNear);
+        }
+        else
+        {
+            from = max(from, baseFar);
+        }
+    }
+    // Not through the ground.
+    if (cloudShell(camera, direction.y, 0.0, groundNear, groundFar) && groundNear > 0.0 && groundNear < from)
+    {
+        return nothing;
+    }
+    to = min(to, CLOUD_REACH);
+    if (to <= from)
+    {
+        return nothing;
+    }
+    // At a low angle the way through is long: the steps stay short enough to find a cloud in.
+    to = min(to, from + clouds.thickness * 12.0);
+
+    float3 toSun = towardsSun(frame);
+    float toward = dot(direction, toSun);
+    // Brightest looking towards the sun through a thin edge, the silver lining.
+    float lining = min(miePhase(0.75, toward) * 4.0 * PI, 6.0);
+
+    float jitter = frac(52.9829189 * frac(dot(pixel + 5.588238 * float(frame->frameIndex % 64), float2(0.06711056, 0.00583715))));
+    // Another for the steps towards the sun, so the light's edge inside a cloud is not a line.
+    float sunJitter = frac(jitter * 7.31 + 0.37);
+    float step = (to - from) / float(CLOUD_STEPS);
+    float flat = 1.0 - direction.y * direction.y;
+    float3 color = 0.0;
+    float through = 1.0;
+    float weight = 0.0;
+    for (uint i = 0; i < CLOUD_STEPS; i++)
+    {
+        float t = from + (float(i) + jitter) * step;
+        // How high the ray is here, over ground that curves away under it.
+        float up = camera + direction.y * t + t * t * flat / (2.0 * CLOUD_EARTH);
+        float height = (up - clouds.base) / clouds.thickness;
+        float2 xz = frame->cameraPosition.xz + direction.xz * t;
+        float density = cloudDensityAt(frame, xz, height, true);
+        if (density <= 0.0)
+        {
+            continue;
+        }
+        // How much cloud lies between here and the sun: steps that double, so the near ones find the cloud's own
+        // edge and the far ones the clouds over it.
+        float shade = 0.0;
+        float reach = clouds.thickness * 0.04;
+        float along = 0.0;
+        for (uint j = 0; j < CLOUD_SUN_STEPS; j++)
+        {
+            float middle = along + reach * (0.25 + 0.5 * sunJitter);
+            shade += cloudDensityAt(frame, xz + toSun.xz * middle, height + toSun.y * middle / clouds.thickness, false) * reach;
+            along += reach;
+            reach *= 2.0;
+        }
+        // The sun straight through, and the light scattered round inside the cloud, which reaches far deeper: it
+        // thins with the cloud in its way rather than dying out, so the underside of a heavy sky is grey, not black.
+        float direct = exp(-shade);
+        float scattered = 1.0 / (1.0 + 0.35 * shade);
+        float lit = (0.3 * direct + 0.7 * scattered) * 0.95 + direct * lining * 0.15;
+        // The sky lights their tops more than their undersides, which get the ground's.
+        float3 light = sun * lit + sky * (0.3 + 0.7 * saturate(height));
+        float kept = exp(-density * step);
+        float added = through * (1.0 - kept);
+        color += light * added;
+        weight += added;
+        distance += t * added;
+        through *= kept;
+        if (through < 0.01)
+        {
+            through = 0.0;
+            break;
+        }
+    }
+    if (weight <= 0.0)
+    {
+        return nothing;
+    }
+    distance /= weight;
+    return float4(color, through);
+}
+
+// How far clouds built of cubes are drawn, in metres, fading out over the last third, and how many cubes a ray is
+// walked through at most.
+static const float CLOUD_BLOCK_REACH = 16000.0;
+static const uint CLOUD_BLOCK_STEPS = 128;
+
+// Clouds built of cubes along a ray, as cloudsMarched gives soft ones: the cubes are walked one at a time. A solid
+// cube ends the walk, its face lit all one colour by where it faces and by the cubes between it and the sun. A soft
+// one takes out some of the light, by how much of it is cloud and how far the ray goes through it, is lit as mist
+// is, and the walk goes on. Their layer is flat: they are not drawn far enough off for the Earth's curve to show.
+float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun, float3 sky, out float distance)
+{
+    Clouds clouds = frame->lighting.clouds;
+    float4 nothing = float4(0.0, 0.0, 0.0, 1.0);
+    distance = 0.0;
+    float block = max(clouds.block, 1.0);
+    // The stretch of the ray between the layer's underside and its top.
+    float low = clouds.base - camera;
+    float high = low + clouds.thickness;
+    float from = 0.0;
+    float to = CLOUD_BLOCK_REACH;
+    if (abs(direction.y) > 1e-5)
+    {
+        float a = low / direction.y;
+        float b = high / direction.y;
+        from = max(min(a, b), 0.0);
+        to = min(max(a, b), to);
+    }
+    else if (low > 0.0 || high < 0.0)
+    {
+        return nothing;
+    }
+    if (to <= from)
+    {
+        return nothing;
+    }
+    // In cubes: across the clouds' own pattern, and up from the layer's underside.
+    float3 origin = float3(frame->cameraPosition.x - clouds.drift.x, -low, frame->cameraPosition.z - clouds.drift.y) / block;
+    float3 rate = direction / block;
+    float3 toward = float3(direction.x >= 0.0 ? 1.0 : -1.0, direction.y >= 0.0 ? 1.0 : -1.0, direction.z >= 0.0 ? 1.0 : -1.0);
+    float3 cell = floor(origin + rate * (from + 0.001 * block));
+    // How far along the ray each axis's next wall is, and how far apart its walls are.
+    float3 span = 1.0 / max(abs(rate), 1e-9);
+    float3 next = (cell + max(toward, 0.0) - origin) * toward * span;
+    // The face the ray comes in by: the layer's own, or none for a camera inside it.
+    float3 normal = from > 0.0 ? float3(0.0, -toward.y, 0.0) : float3(0.0);
+    float3 toSun = towardsSun(frame);
+    float soft = clouds.softness;
+    // How much of the light a whole cube takes out for each metre through it: all of it at once when solid, and
+    // from nearly all to a little over half of it across its width as mist gets softer.
+    float thick = soft > 0.0 ? lerp(6.0, 0.9, soft) / block : 1e9;
+    float t = from;
+    float3 color = 0.0;
+    float through = 1.0;
+    float weight = 0.0;
+    for (uint i = 0; i < CLOUD_BLOCK_STEPS; i++)
+    {
+        float3 middle = (cell + 0.5) * block;
+        float whole = cloudCubeAt(frame, middle.xz, middle.y / clouds.thickness);
+        if (whole > 0.0)
+        {
+            float leave = min(min(min(next.x, next.y), next.z), to);
+            float kept = exp(-whole * thick * max(leave - t, 0.0));
+            float added = through * (1.0 - kept);
+            if (added > 0.004)
+            {
+                // The cubes between here and the sun: from the open cube a solid face looks into, or from a soft
+                // cube's own middle.
+                float3 open = (cell + 0.5 + normal * (1.0 - soft)) * block;
+                float shade = 0.0;
+                for (uint j = 1; j <= CLOUD_SUN_STEPS; j++)
+                {
+                    float3 p = open + toSun * (block * 1.2 * float(j));
+                    shade += cloudCubeAt(frame, p.xz, p.y / clouds.thickness);
+                }
+                float facing = saturate(dot(normal, toSun)) * lerp(1.0, 0.3, saturate(shade * 0.5));
+                // Some of the sun gets through a cloud to every face, most to its top and least to its underside,
+                // and the sky lights them in the same order: so each way a face can look has a shade of its own.
+                float3 solid = sun * (0.4 + 0.14 * normal.y + 0.5 * facing) * 0.95 + sky * (0.7 + 0.3 * normal.y);
+                // Mist is lit through: bright where little cloud is between it and the sun, whichever way the ray
+                // came into it, with the sky lighting the layer's top more than its underside.
+                float up = saturate(middle.y / clouds.thickness);
+                float3 mist = sun * (0.3 + 0.65 * exp(-0.7 * shade)) * 0.95 + sky * (0.45 + 0.55 * up);
+                color += lerp(solid, mist, soft) * added;
+                weight += added;
+                distance += t * added;
+            }
+            through *= kept;
+            if (through < 0.02)
+            {
+                through = 0.0;
+                break;
+            }
+        }
+        if (next.x < next.y && next.x < next.z)
+        {
+            t = next.x;
+            next.x += span.x;
+            cell.x += toward.x;
+            normal = float3(-toward.x, 0.0, 0.0);
+        }
+        else if (next.y < next.z)
+        {
+            t = next.y;
+            next.y += span.y;
+            cell.y += toward.y;
+            normal = float3(0.0, -toward.y, 0.0);
+        }
+        else
+        {
+            t = next.z;
+            next.z += span.z;
+            cell.z += toward.z;
+            normal = float3(0.0, 0.0, -toward.z);
+        }
+        if (t >= to)
+        {
+            break;
+        }
+    }
+    if (weight <= 0.0)
+    {
+        return nothing;
+    }
+    distance /= weight;
+    return float4(color, through);
+}
+
+// The clouds as the camera sees them, at half the picture's size: what they add in colour, and in alpha how much of
+// the sky behind them shows through. The result is blended with last frame's where the same part of the sky was then
+// (push.textures.x), which evens out the soft clouds' jittered march and smooths the cubes' edges.
+[shader("fragment")]
+float4 cloudsFragment(LutOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    Clouds clouds = frame->lighting.clouds;
+    float4 near = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
+    float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
+    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float3 sun, sky;
+    cloudLight(frame, sun, sky);
+
+    bool blocks = clouds.kind == CLOUDS_BLOCKS;
+    float4 seen;
+    float distance;
+    float reach = blocks ? CLOUD_BLOCK_REACH : CLOUD_REACH;
+    if (blocks)
+    {
+        // A place within the pixel that moves each frame, so the frames together smooth the cubes' edges.
+        float index = float(frame->frameIndex % 16) + 1.0;
+        float2 within = frac(index * float2(0.7548776662, 0.5698402910)) - 0.5;
+        float2 uv = input.uv + within * float2(ddx(input.uv.x), ddy(input.uv.y));
+        float4 through = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, 1.0, 1.0));
+        seen = cloudBlocksSeen(frame, normalize(through.xyz / through.w - frame->cameraPosition), camera, sun, sky, distance);
+    }
+    else
+    {
+        seen = cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance);
+    }
+    float covered = 1.0 - seen.a;
+    if (covered > 0.0)
+    {
+        float3 color = seen.rgb;
+        if (frame->lighting.sky == SKY_ATMOSPHERE)
+        {
+            // The air between: counted a third as hazy as the ground's, which is far nearer.
+            float4 haze = aerialPerspectiveAt(frame, input.uv, distance * 0.3);
+            color = color * haze.a + haze.rgb * skyLook(frame) * covered;
+        }
+        else
+        {
+            color = lerp(color, frame->skyHorizon * covered, smoothstep(0.2, 1.0, distance / CLOUD_REACH));
+        }
+        // Gone into the distance before the march's end.
+        float far = 1.0 - smoothstep(0.65, 1.0, distance / reach);
+        seen = float4(color * far, 1.0 - covered * far);
+    }
+    if (clouds.reset != 0)
+    {
+        return seen;
+    }
+    // Last frame's, where this part of the sky was on screen then: the clouds are far off, so only the camera's
+    // turning moves them.
+    float4 before = transform(frame->prevViewProj, float4(direction, 0.0));
+    if (before.w <= 0.0)
+    {
+        return seen;
+    }
+    float2 was = before.xy / before.w * 0.5 + 0.5;
+    if (any(was < 0.0) || any(was > 1.0))
+    {
+        return seen;
+    }
+    float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], was, 0.0);
+    return lerp(seen, kept, CLOUD_KEPT);
 }

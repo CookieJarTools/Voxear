@@ -17,6 +17,7 @@ mod dev_console;
 mod engine;
 mod fly_camera;
 mod game;
+pub mod grown_plants;
 pub mod guns;
 pub mod game_ui;
 pub mod joints;
@@ -26,6 +27,7 @@ pub mod map;
 mod levels;
 pub mod mesh_boxes;
 pub mod lighting;
+pub mod look_packs;
 mod lights;
 mod loading;
 pub mod memory;
@@ -64,7 +66,9 @@ pub mod blocks;
 pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;
+pub mod walkers;
 pub mod water;
+pub mod weather;
 mod windowed;
 
 pub use content::{

@@ -33,9 +33,22 @@ Pick a block, and the Inspector shows:
 | Material | The material every face is drawn with, but its top and bottom where they have their own |
 | Top | Its top's material |
 | Bottom | Its bottom's material |
+| Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
-A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour. A liquid is drawn in its colour alone, so its materials go.
+A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour, matt: it shines back nothing of the sky. For a block that shines, such as ice or polished stone, give it a material with a low **Roughness**. A liquid is drawn in its colour alone, so its materials go.
+
+### Leaves and other see-through blocks
+
+A block drawn with a material that is **cut out** is see-through: leaves, a grating, a web. Give the material a colour map with clear parts and a `cutout` (see [[Materials]]), and use it on the block. Nothing else needs setting.
+
+- Its faces are drawn only where the picture is solid, and what is behind shows through the rest.
+- Blocks beside it keep their faces towards it, so a trunk shows through its leaves.
+- It keeps its own faces towards other see-through blocks, its own kind too, so a crown of leaves is leaves all the way in, darker inside.
+- The sun passes where the picture is clear, so its shadow is its picture's: dappled under a crown of leaves.
+- It is a block in every other way: stood on, built on, dug, and it shades the corners of the blocks round it.
+
+If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Far off, in the coarser rings, it is drawn like any block. Bounced light takes it as solid, and a see-through block is lit as any block is: light does not glow through a leaf from behind.
 
 ### Breaking
 

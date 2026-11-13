@@ -265,6 +265,12 @@ pub struct ExtractedFrame {
     /// What each instance was made from, for tracking motion between frames.
     pub entities: Vec<Owner>,
     pub post: PostProcess,
+    /// The small cubes every world of blocks' faces are drawn as, where a
+    /// look pack the player wears says (`WornLook::voxels`).
+    pub block_voxels: Option<crate::blocks::BlockVoxels>,
+    /// The colour worlds of blocks' water is drawn in, where the pack says
+    /// (`WaterLook::block_water`).
+    pub block_water: [f32; 4],
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
@@ -375,6 +381,88 @@ pub struct Sky {
     pub distance_haze: f32,
     /// The sun's disc across the sky, in degrees: half a degree as on Earth.
     pub sun_size: f32,
+    /// The clouds in it; none by default.
+    pub clouds: Clouds,
+}
+
+/// Clouds in the sky: a layer of them between two heights, drifting with the
+/// wind, lit by the sun and the sky, and shading the ground under them (see
+/// `clouds`). With no cover there are none, and they cost nothing.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clouds {
+    /// How much of the sky they cover, from 0 for a clear sky to 1 for
+    /// overcast.
+    pub cover: f32,
+    /// How high their undersides are over the level's ground, in metres.
+    pub height: f32,
+    /// How tall they are from their undersides to their tops, in metres.
+    pub thickness: f32,
+    /// How far across a cloud is, in metres.
+    pub size: f32,
+    /// How thick they are to look through: 1 for fair-weather clouds, less
+    /// for thin ones the sky shows through, more for heavy ones.
+    pub density: f32,
+    /// How fast they drift, in metres a second, the way the level's wind
+    /// blows.
+    pub drift: f32,
+    /// How dark their shadows on the ground are, from 0 for none to 1.
+    pub shadows: f32,
+    /// Soft clouds, or clouds built of cubes.
+    pub kind: CloudKind,
+    /// How wide one cube of a cloud built of them is, in metres.
+    pub block: f32,
+    /// How soft a cloud built of cubes is, from 0 for solid cubes to 1 for
+    /// cubes of mist: faint at a cloud's edges, where the sky shows through
+    /// them, and lit as mist is rather than a face at a time.
+    pub softness: f32,
+}
+
+/// What a sky's clouds are made of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudKind {
+    /// Heaped clouds with soft, billowing edges.
+    #[default]
+    Soft,
+    /// The same clouds built of cubes, each flat-sided and one colour a
+    /// face, for a world of blocks.
+    Blocks,
+}
+
+impl Default for Clouds {
+    fn default() -> Self {
+        Self {
+            cover: 0.0,
+            height: 1200.0,
+            thickness: 700.0,
+            size: 900.0,
+            density: 1.0,
+            drift: 8.0,
+            shadows: 0.8,
+            kind: CloudKind::Soft,
+            block: 100.0,
+            softness: 0.0,
+        }
+    }
+}
+
+impl Clouds {
+    /// Clouds covering `cover` of the sky, the rest as they are by default.
+    pub fn covering(cover: f32) -> Self {
+        Self { cover, ..Self::default() }
+    }
+
+    /// Clouds built of cubes covering `cover` of the sky, the rest as they
+    /// are by default.
+    pub fn blocks(cover: f32) -> Self {
+        Self { cover, kind: CloudKind::Blocks, ..Self::default() }
+    }
+
+    /// Whether there are none.
+    pub fn is_none(&self) -> bool {
+        self.cover <= 0.0
+    }
 }
 
 /// What the sky is drawn as.
@@ -403,6 +491,7 @@ impl Default for Sky {
             haze_glow: 0.8,
             distance_haze: 10.0,
             sun_size: 0.5357,
+            clouds: Clouds::default(),
         }
     }
 }
@@ -434,7 +523,18 @@ pub fn extract(
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
-    let sky = world.resource::<Sky>().copied().unwrap_or_default();
+    // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
+    let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
+    let weather = weathered.now();
+    // A look pack the player wears is laid over the level's lighting first: the engine has worked that out.
+    let worn = world.resource::<crate::looks::WornLook>().copied();
+    let own_sky = worn.map(|worn| worn.sky).or_else(|| world.resource::<Sky>().copied()).unwrap_or_default();
+    let mut sky = weather.sky(own_sky);
+    // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
+    // sky light as it is worked out.
+    let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
+    sky.zenith += crate::weather::FLASH_COLOUR * flash;
+    sky.horizon += crate::weather::FLASH_COLOUR * flash;
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
@@ -443,11 +543,15 @@ pub fn extract(
     let unjittered = projection * view;
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
-    let scene_post = options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default();
+    let own_post = worn.map(|worn| worn.post).or_else(|| world.resource::<PostProcess>().copied());
+    let scene_post = options.post_override.or(own_post).unwrap_or_default();
     // Post volumes blend in where the camera is, unless a view sets its own settings.
     let scene_post = match options.post_override {
         Some(_) => scene_post,
-        None => crate::post_volume::blend_volumes(world, scene_post, position),
+        None => {
+            let blended = crate::post_volume::blend_volumes(world, scene_post, position);
+            PostProcess { fog: weather.fog(blended.fog), ..blended }
+        }
     };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
@@ -482,6 +586,10 @@ pub fn extract(
     let view_proj = jittered_projection * view;
 
     let mut gpu_post = post.to_gpu(sky.horizon);
+    // A look pack's own shader, unless a view sets its own settings, as a debug view does.
+    if let Some(shader) = worn.and_then(|worn| worn.shader).filter(|_| options.post_override.is_none()) {
+        (gpu_post.look_shader, gpu_post.look_values) = (shader.number, shader.values);
+    }
     gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
     // The fog's base is measured from the level's ground, wherever the world's middle has moved to.
     let origin = voxear_scene::WorldOrigin::of(world).0;
@@ -525,6 +633,7 @@ pub fn extract(
                 SkyMode::Atmosphere => SKY_ATMOSPHERE,
             },
             atmosphere: crate::atmosphere::of_sky(&sky),
+            clouds: crate::clouds::gpu(&sky.clouds),
             sun_cookie: NO_TEXTURE,
             transmittance: NO_TEXTURE,
             multi_scattering: NO_TEXTURE,
@@ -543,7 +652,10 @@ pub fn extract(
     let mut shadowed = Vec::new();
     let mut sun_found = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
-    let sun_look = world.resource::<crate::looks::SunLook>().copied();
+    let sun_look = match worn {
+        Some(worn) => worn.sun,
+        None => world.resource::<crate::looks::SunLook>().copied(),
+    };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
     for (_, light, transform) in lit {
         // A look changes the sun's colour and strength, and gives what the light leaves at its default.
@@ -568,7 +680,7 @@ pub fn extract(
             LightKind::Directional if !sun_found => {
                 sun_found = true;
                 frame.sun_direction = vec3(forward);
-                frame.sun_color = vec3(radiance);
+                frame.sun_color = vec3(radiance * weather.sun());
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
@@ -593,11 +705,13 @@ pub fn extract(
     let local_shadows = local_shadows(&mut frame, &mut lights, shadowed);
     // What pushes through foliage, the nearest the camera first.
     let pushing = world.query_ref::<(Entity, &crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
+    let walkers = world.resource::<crate::Walkers>().map(|walkers| walkers.0.as_slice()).unwrap_or_default();
     let pushers = pushing
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, ..)| on(*entity, Switch::FoliageInteraction))
         .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
+        .chain(walkers.iter().copied())
         .collect();
     frame.pushes = crate::foliage::pushes(position, pushers);
     // What presses tracks into the ground, each with how high it is above the ground under it.
@@ -617,21 +731,24 @@ pub fn extract(
     let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
         zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
     };
-    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (*zone, transform.rotation));
+    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (weather.wind(*zone), transform.rotation));
+    // With none, the weather's own wind blows.
+    let zone = zone.or_else(|| weather.wind_alone());
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
+    let water_look = worn.map(|worn| worn.water).unwrap_or_default();
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();
     let ocean = seas.into_iter().next().map(|(ocean, transform, at, now)| {
         let (_, rotation, position) = at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| {
             w.0.to_scale_rotation_translation()
         });
         let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
-        (*ocean, position.y, now.map_or_else(blown, |now| now.0))
+        (water_look.over_ocean(*ocean), position.y, now.map_or_else(blown, |now| now.0))
     });
-    let water_bodies = water_bodies(world, position);
+    let water_bodies = water_bodies(world, position, water_look);
     // Lava lights what is round it.
     lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
     // And Particle Systems that cast a light: a fire's flicker, an explosion's flash.
@@ -642,6 +759,10 @@ pub fn extract(
     if let Some((_, seasons)) = seasons.into_iter().find(|(entity, _)| on(*entity, Switch::Seasons)) {
         frame.seasons = seasons.gpu();
     }
+    // What the weather has left lying on everything, Seasons or none.
+    frame.seasons.weather_wet = weathered.ground().wet;
+    frame.seasons.weather_snow = weathered.ground().snow;
+    frame.lighting.clouds.flash = flash;
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near, origin };
@@ -720,6 +841,8 @@ pub fn extract(
     frame.instance_count = instances.len() as u32;
 
     ExtractedFrame {
+        block_voxels: worn.and_then(|worn| worn.voxels),
+        block_water: water_look.block_water(),
         frame,
         instances,
         lights,
@@ -916,7 +1039,7 @@ mod tests {
 
 /// The Pools, the Streams and then the Dry Areas nearest `camera`, as many
 /// as a frame draws, and the points along the Streams.
-fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
+fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> crate::water::WaterBodies {
     use crate::water_bodies::{DryArea, MAX_STREAM_POINTS, MAX_WATER_BODIES, Pool, Stream};
     let placed = |transform: &Transform, at: Option<&WorldTransform>| {
         at.map_or((transform.position, transform.rotation), |w| {
@@ -930,7 +1053,7 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         .into_iter()
         .map(|(pool, transform, at)| {
             let (position, rotation) = placed(transform, at);
-            (position.distance_squared(camera), pool.gpu(position, rotation))
+            (position.distance_squared(camera), look.over_pool(*pool).gpu(position, rotation))
         })
         .collect();
     // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
@@ -1013,7 +1136,7 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
     }
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
     // The blocks' water the camera is in, first: a Pool over the same place is found after it, and is the one seen.
-    if let Some(body) = crate::water_bodies::block_water(world, camera) {
+    if let Some(body) = crate::water_bodies::block_water(world, camera, look.block_water()) {
         pools.insert(0, (0.0, body));
     }
     streams.sort_by(|a, b| a.0.total_cmp(&b.0));

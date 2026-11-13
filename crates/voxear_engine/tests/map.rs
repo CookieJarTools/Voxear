@@ -115,10 +115,11 @@ fn a_map_puts_a_minimap_and_a_map_on_the_screen_that_show_the_world_as_it_is() {
     // It shows the world of blocks round the camera, two blocks to a cell, the camera at its middle.
     let shown = *game.maps.shown(mini).expect("the minimap shows the world");
     assert_eq!((shown.world, shown.cell), (blocks, 2.0));
-    let (at, inside) = shown.point(Vec3::new(40.0, 40.0, 40.0)).unwrap();
-    // Across, exactly; up and down, by as much as the camera stands over or under the ground the map looks at.
+    // What it looks at is the ground the camera is over or under, so that is at its middle.
+    let ground = shown.ground.expect("the ground at the camera is made");
+    let (at, inside) = shown.point(Vec3::new(40.0, ground, 40.0)).unwrap();
     let off = at - shown.size * 0.5;
-    assert!(inside && off.x.abs() < 1.5 && off.y.abs() < 12.0, "what it follows is at its middle: {at:?}");
+    assert!(inside && off.length() < 1.5, "the ground under what it follows is at its middle: {at:?}");
     assert!(game.maps.shown(large).is_none(), "a map that is shut shows nothing");
 
     // Its ground is the world's: a column's top on the map is the highest block there.
@@ -400,6 +401,64 @@ fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it()
     assert!(!game.engine.world.get::<Map>(hud).unwrap().open);
     assert!(game.ui.ui().is_visible(mini) && !game.ui.ui().is_visible(large));
     assert!(!game.display.cursor_visible && game.input.map_enabled("Player"));
+}
+
+#[test]
+fn a_minimap_has_ground_in_every_corner_of_its_window_however_high_over_the_ground_it_is_seen_from() {
+    use voxear_core::math::Quat;
+    let settings = voxear_render::RendererSettings::default();
+    let Ok(mut renderer) = voxear_render::Renderer::new_offscreen(1280, 720, &settings) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    // The camera flies high over the hills, turned an eighth round: the minimap turns with it.
+    let eye = find(&game, "Eye");
+    let high = Vec3::new(-28.0, 150.0, -28.0);
+    let flying = game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap();
+    (flying.position, flying.rotation) = (high, Quat::from_rotation_y(std::f32::consts::FRAC_PI_4));
+    for _ in 0..5 {
+        settle(&mut game, Some(&mut renderer));
+    }
+    let hud = find(&game, "Hud");
+    let mini = view(&mut game, MapViewKind::Minimap);
+    let number = game.engine.world.get::<Map>(hud).unwrap().views.expect("on the screen")[0];
+    let window = {
+        let ui = game.ui.ui();
+        ui.rect(ui.map_view_parts(mini).unwrap().picture)
+    };
+    // The map looks at the ground under the camera, not at the camera up in the air: so the ground there is
+    // at the window's middle, and the arrow lies on it.
+    let shown = *game.maps.shown(mini).unwrap();
+    let ground = shown.ground.expect("the ground under the camera is made");
+    assert!(ground < 110.0 && ground > 0.0, "the hills' ground, far under the camera: {ground}");
+    let (under, _) = shown.point(Vec3::new(high.x, ground, high.z)).unwrap();
+    assert!((under.x - window[2] * 0.5).abs() < 2.0 && (under.y - window[3] * 0.5).abs() < 2.0, "{under:?}");
+
+    // At every zoom, each corner of the window is ground: not the panel the window is in, as it is beside it.
+    for zoom in [2, 1, 8, 32] {
+        wish_of(&mut game, number).settings.push(format!("zoom={zoom}"));
+        for _ in 0..5 {
+            settle(&mut game, Some(&mut renderer));
+        }
+        // The ground under the camera is as high whatever size the map's cells are, to a cell.
+        let stands = game.maps.shown(mini).unwrap().ground.unwrap();
+        assert!((stands - ground).abs() <= zoom as f32, "at 1:{zoom} the ground stands {stands}, at 1:2 {ground}");
+        let picture = renderer.read_pixels().unwrap();
+        let at = |x: f32, y: f32| {
+            let i = ((y.round() as u32 * 1280 + x.round() as u32) * 4) as usize;
+            [picture.2[i], picture.2[i + 1], picture.2[i + 2]].map(i32::from)
+        };
+        let (left, top, right, bottom) = (window[0], window[1], window[0] + window[2], window[1] + window[3]);
+        let panel = at(left - 2.0, top + window[3] * 0.5);
+        for (x, y) in [(left + 4.0, top + 4.0), (right - 4.0, top + 4.0), (left + 4.0, bottom - 4.0)] {
+            let corner = at(x, y);
+            let apart: i32 = (0..3).map(|c| (corner[c] - panel[c]).abs()).sum();
+            assert!(apart > 40, "at 1:{zoom}, the window's corner at {x} {y} is {corner:?}, the panel {panel:?}");
+        }
+        keep(&format!("minimap-from-high-{zoom}.png"), picture);
+    }
 }
 
 /// What scripts ask of the map view they hold by `number`, to change.

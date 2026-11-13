@@ -212,6 +212,7 @@ impl Game {
             let code = voxear_render::CustomCode {
                 materials: crate::shaders::dispatch_code(registry),
                 ui: crate::shaders::ui_dispatch_code(registry),
+                look: crate::shaders::look_dispatch_code(registry),
             };
             if !renderer.set_custom_shaders(code) {
                 return;
@@ -308,6 +309,19 @@ impl Game {
         }
     }
 
+    /// Wears the look pack the player chose last time, kept beside the
+    /// saves, as a game starts. One that is no longer there is forgotten.
+    pub fn wear_remembered_look(&mut self) {
+        let Some(reference) = crate::look_packs::remembered() else { return };
+        match crate::look_packs::wear(&mut self.engine.world, &mut self.content, &reference) {
+            Ok(()) => tracing::info!("wearing the look pack chosen last time, {reference}"),
+            Err(error) => {
+                tracing::warn!("the look pack chosen last time is left off: {error:#}");
+                crate::look_packs::remember("");
+            }
+        }
+    }
+
     pub fn start(&mut self, mut renderer: Option<&mut Renderer>) -> Result<()> {
         self.audio.start_game();
         // For scripts that start networked play.
@@ -323,6 +337,7 @@ impl Game {
         {
             localization.set_language(&saved);
         }
+        self.wear_remembered_look();
         self.models = ModelWork::for_renderer(renderer.as_deref());
         let level = self
             .project
@@ -633,6 +648,7 @@ impl Game {
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
+        crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
         if let Some(renderer) = renderer.as_deref() {
             crate::mesh_boxes::refresh(&mut self.engine.world, renderer);
@@ -739,6 +755,17 @@ impl Game {
             && let Err(error) = self.levels.apply_lighting(&mut self.engine, &mut self.content, &reference)
         {
             tracing::error!(target: "script", "could not apply lighting {reference}: {error:#}");
+        }
+        let look_pack = self.engine.scripts_mut().and_then(|scripts| scripts.take_look_pack_requests().pop());
+        if let Some((reference, remember)) = look_pack {
+            match crate::look_packs::wear(&mut self.engine.world, &mut self.content, &reference) {
+                // The choice goes with the player to the game's next run.
+                Ok(()) if remember => {
+                    crate::look_packs::remember(crate::look_packs::worn(&self.engine.world).unwrap_or_default());
+                }
+                Ok(()) => {}
+                Err(error) => tracing::error!(target: "script", "{error:#}"),
+            }
         }
         if let Some(renderer) = renderer.as_deref_mut() {
             self.previews.finish_saves(renderer);
@@ -926,6 +953,19 @@ impl ScriptServices for GameServices<'_> {
 
     fn block_guids(&mut self) -> Vec<String> {
         crate::blocks::every_block(self.content)
+    }
+
+    fn biome_json(&mut self, reference: &str) -> Result<String> {
+        crate::blocks::biome_json(self.content, reference)
+    }
+
+    fn look_packs_json(&mut self, world: &World) -> Result<String> {
+        let folder = voxear_scripting::saves_folder().and_then(|saves| crate::look_packs::player_folder(&saves));
+        Ok(crate::look_packs::json(self.content, world, folder.as_deref()))
+    }
+
+    fn biome_at(&mut self, world: &World, at: [f32; 3]) -> Option<String> {
+        crate::blocks::biome_at(world, self.content, at.into()).map(|guid| guid.to_string())
     }
 
     fn caves_json(&mut self, world: &World, obj: u64, what: i32, at: [f32; 4]) -> Result<String> {

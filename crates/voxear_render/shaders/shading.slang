@@ -388,10 +388,12 @@ ShadowLookup shadowLookup(Frame* frame, float3 position, float3 normal)
 // sun's shadow with a hard edge, as the volumetric fog takes it.
 float sunShadowHard(Frame* frame, float3 position, float3 normal)
 {
+    // Under the clouds' shadow too, wherever the point is.
+    float clouds = cloudShadowAt(frame, position);
     ShadowLookup lookup = shadowLookup(frame, position, normal);
     if (!lookup.found)
     {
-        return 1.0;
+        return clouds;
     }
     float texel = 0.5 / float(push.size.x);
     float lit = 0.0;
@@ -403,7 +405,7 @@ float sunShadowHard(Frame* frame, float3 position, float3 normal)
             lit += textures[frame->shadowTexture].SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
         }
     }
-    return lit / 9.0;
+    return lit / 9.0 * clouds;
 }
 
 // Points on a disc spread evenly by the golden angle, turned by `angle`.
@@ -435,10 +437,11 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     {
         return sunShadowHard(frame, position, normal);
     }
+    float clouds = cloudShadowAt(frame, position);
     ShadowLookup lookup = shadowLookup(frame, position, normal);
     if (!lookup.found)
     {
-        return 1.0;
+        return clouds;
     }
     float texelUv = 0.5 / float(push.size.x);
     float worldTexel = frame->cascadeTexel[lookup.cascade];
@@ -465,7 +468,7 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     // Nothing round it is above it, or everything is: wholly lit or wholly shaded, with no edge to soften.
     if (blockers == 0.0)
     {
-        return 1.0;
+        return clouds;
     }
     if (blockers == float(PCSS_BLOCKER_TAPS))
     {
@@ -479,7 +482,7 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
         float2 atlasUv = clamp(lookup.uv + vogelDisc(i, PCSS_FILTER_TAPS, angle) * filterTexels * texelUv * 2.0, lookup.low, lookup.high);
         lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
     }
-    return lit / float(PCSS_FILTER_TAPS);
+    return lit / float(PCSS_FILTER_TAPS) * clouds;
 }
 
 // The shadow atlas's cascades, each this many texels across (src/shadows.rs).
@@ -785,6 +788,32 @@ float wetNoise(float2 p)
     return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
 }
 
+// What the weather has left on a surface at `world`, facing `normal` (src/weather.rs): wet from the rain, darker
+// and glossier, what faces up most; and snow settled on what faces up, in patches while there is little of it.
+// It lies under roofs too: nothing here knows what is over a surface.
+void weatherSurface(Frame* frame, float3 world, float3 normal, inout float3 albedo, inout float roughness)
+{
+    float wet = frame->seasons.weatherWet;
+    float snow = frame->seasons.weatherSnow;
+    if (wet <= 0.0 && snow <= 0.0)
+    {
+        return;
+    }
+    float up = saturate(normal.y * 0.5 + 0.5);
+    wet *= 0.5 + 0.5 * up;
+    albedo *= 1.0 - 0.42 * wet;
+    roughness *= 1.0 - 0.6 * wet;
+    if (snow > 0.0)
+    {
+        // Patches a few metres across take it first, then the rest; hashed on whole numbers (clouds.slang).
+        float2 at = levelPosition(frame, world, 4096.0).xz;
+        float patches = cloudPatches(at * 0.31) * 0.65 + cloudPatches(at * 1.9 + 17.0) * 0.35;
+        float lying = saturate((snow * 1.6 - patches) / 0.25) * smoothstep(0.35, 0.75, normal.y);
+        albedo = lerp(albedo, float3(0.85, 0.87, 0.9), lying);
+        roughness = lerp(roughness, 0.6, lying);
+    }
+}
+
 // Wet where the water washes over a surface at `world`, facing `normal`:
 // from the waterline up as high as the waves reach, its top uneven, with a
 // few drips run down a wall from higher; darker and glossier, `albedo` and
@@ -1058,6 +1087,7 @@ FragmentOut fragmentMain(VertexOut input)
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
     waterWetSurface(frame, input.worldPosition, shapeNormal(input, material), base.rgb, roughness);
+    weatherSurface(frame, input.worldPosition, shapeNormal(input, material), base.rgb, roughness);
     float3 emission =
         material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     float3 normal = surfaceNormal(input, material);

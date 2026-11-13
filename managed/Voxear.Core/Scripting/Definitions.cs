@@ -61,6 +61,7 @@ internal static class Definitions
 		Items.Refresh();
 		Recipes.Reset();
 		BlockInfos.Clear();
+		BiomeInfos.Clear();
 	}
 
 	/// <summary>

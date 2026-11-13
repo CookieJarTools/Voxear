@@ -1154,8 +1154,25 @@ fn pick_asset(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label
     frame(editor, renderer);
 }
 
-/// Opens the object picker of the Inspector row labelled `label`.
+/// Scrolls whatever holds `node` until it shows near the top, as a hand scrolls down to it.
+fn scroll_to(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let mut at = editor.ui.parent(node);
+    while let Some(parent) = at {
+        if editor.ui.scroll_max(parent)[1] > 0.0 {
+            let ([_, top, _, _], [_, y, _, _]) = (editor.ui.rect(parent), editor.ui.rect(node));
+            let [x, now] = editor.ui.scroll_offset(parent);
+            editor.ui.set_scroll(parent, [x, (now + y - top - 120.0).max(0.0)]);
+            frame(editor, renderer);
+            return;
+        }
+        at = editor.ui.parent(parent);
+    }
+}
+
+/// Opens the object picker of the Inspector row labelled `label`, scrolled to where it shows.
 fn open_picker(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str) {
+    let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
+    scroll_to(editor, renderer, row);
     let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
     let picker = first_with(&editor.ui, row, "value-picker").unwrap_or_else(|| panic!("{label} has a picker"));
     let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
@@ -1168,8 +1185,11 @@ fn open_picker(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, labe
 fn picker_rows(ui: &Ui) -> Vec<String> {
     let list = ui.find(ui.root(), "picker-list");
     let rows = list.map_or(Vec::new(), |list| ui.children(list));
-    let shown = rows.into_iter().filter(|&row| ui.has_class(row, "list-row") && ui.is_visible(row));
-    shown.map(|row| ui.text(ui.children(row)[1])).collect()
+    // From the top: a list's rows are used again as it is filled, so they are not in the order they were made.
+    let mut shown: Vec<NodeId> =
+        rows.into_iter().filter(|&row| ui.has_class(row, "list-row") && ui.is_visible(row)).collect();
+    shown.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    shown.into_iter().map(|row| ui.text(ui.children(row)[1])).collect()
 }
 
 /// The button saying `text` in `panel`, where it has one showing.
@@ -2313,12 +2333,29 @@ fn a_voxel_terrain_is_added_drawn_smooth_and_built_on_in_balls_whose_edges_lie_b
     assert_eq!((blocks(&editor).blocks.get(middle), blocks(&editor).blocks.fill(above)), (AIR, 0), "undone");
     // Smooth off: a Block World of cubes again, its quads facing six ways.
     show_block_tool(&mut editor, &mut renderer, "Settings");
+    assert!(prop_rows(&editor.ui, "Voxels").is_empty(), "a smooth surface has no faces to cut into small cubes");
     let smooth = first_with(&editor.ui, prop_rows(&editor.ui, "Smooth")[0], "checkbox").expect("its Smooth");
     click(&mut editor.ui, smooth);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(!blocks(&editor).smooth);
     assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() * 3 != mesh.indices.len() * 2));
+    // Its cubes' faces cut into small cubes: Voxels to a block's side, and then how deep they sink.
+    let voxels = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<voxear_render::BlockLook>(field).expect("its look").voxels
+    };
+    assert_eq!(voxels(&editor).count, 0, "none to begin with");
+    assert!(prop_rows(&editor.ui, "Relief").is_empty(), "nothing to sink until there are some");
+    let quads: usize = blocks(&editor).meshes.values().map(|mesh| mesh.quads.len()).sum();
+    type_number(&mut editor, &mut renderer, "Voxels", "8");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxels(&editor).count, 8);
+    type_number(&mut editor, &mut renderer, "Relief", "3");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxels(&editor), voxear_render::BlockVoxels { count: 8, relief: 3.0 });
+    let after: usize = blocks(&editor).meshes.values().map(|mesh| mesh.quads.len()).sum();
+    assert_eq!(after, quads, "the small cubes are drawn on the faces it has, not built");
+    shot(&mut renderer, "block-world-small-cubes.png");
 }
 
 #[test]
@@ -2344,4 +2381,773 @@ fn plants_and_what_is_dropped_find_the_ground_of_a_block_world() {
     let (at, facing_up) = voxear_editor::scene_tools::ground_below(world, &renderer, over, &[]).expect("its blocks");
     assert!((at.y - (corner.y + 8.0)).abs() < 1e-3, "on top of its blocks: {at}");
     assert!(facing_up.y > 0.99, "flat ground faces up: {facing_up}");
+}
+
+#[test]
+fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_to_undo() {
+    use voxear_engine::{grown_plants, scene_file::FoliageSource};
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
+    // Its Add plant row, the last of its settings, offers the starter plants, new to the project, before the
+    // project's models.
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    let offered = picker_rows(&editor.ui);
+    let has = |name: &str| offered.iter().any(|row| row == name);
+    assert!(has("New Grass Tuft") && has("New Tree"), "{offered:?}");
+    let tuft = picker_row(&editor.ui, "New Grass Tuft").expect("a tuft of grass to start from");
+    click(&mut editor.ui, tuft);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // The plant is a model in the project's Plants folder, and a Foliage under the world that grows it.
+    assert!(dir.path().join("Plants/Grass Tuft.boxmodel").is_file());
+    let grass = obj(&editor, "Grass Tuft");
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<voxear_scene::Parent>(grass).map(|parent| parent.0), Some(field));
+    let grow = world.get::<FoliageSource>(grass).and_then(|source| source.0.grow.clone()).expect("where it grows");
+    assert_eq!((grow.spacing, grow.on.len()), (1.0, 1), "thick, on the world's top block");
+    assert!(world.get::<voxear_render::Foliage>(grass).is_some(), "drawn with the model's mesh");
+    assert_eq!(editor.selected(), Some(grass));
+    // Its plants grow only as near as they are drawn: none while the Scene view looks from far off.
+    let standing = |editor: &voxear_editor::Editor| grown_plants::standing(&editor.game.engine.world, grass).len();
+    for _ in 0..10 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), 0, "the world is 300 m from the Scene view");
+    // The Scene view over the world's ground: they grow over the next ticks, a hidden Obj a chunk column.
+    let blocks = editor.game.engine.world.get::<voxear_terrain::blocks::BlockWorld>(field).unwrap().clone();
+    let top = (0..500).rev().find(|&y| blocks.blocks.get([20, y, 20]) != 0).expect("ground at 20, 20") as f32;
+    let corner = editor.game.engine.world.get::<voxear_scene::Transform>(field).unwrap().position;
+    let camera = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(Entity, &voxear_render::Camera, &voxear_scene::EditorOnly)>()
+        .into_iter()
+        .next()
+        .expect("the Scene view's camera")
+        .0;
+    let look = voxear_core::math::Quat::from_euler(voxear_core::math::EulerRot::YXZ, 0.8, 0.45, 0.0);
+    let over = corner + voxear_core::math::Vec3::new(20.0, top + 8.0, 20.0);
+    *editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap() =
+        voxear_scene::Transform::new(over, look, voxear_core::math::Vec3::ONE);
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+    }
+    let grown = standing(&editor);
+    assert!(grown > 300, "{grown} tufts on 64 by 64 blocks");
+    assert!(grown_plants::settled(&editor.game.engine.world));
+    assert!(obj_named(&editor, "Grass Tuft") == 1, "the columns' Objs have no names to show in the Hierarchy");
+    shot(&mut renderer, "block-world-grown-tufts.png");
+    // A click on a grown plant picks its Foliage, never the Obj that holds its column; between plants, the world.
+    let view = editor.scene_camera().expect("the Scene view's camera");
+    let [left, top_edge, wide, tall] = view.rect;
+    let points = (1..12).flat_map(|row| (1..20).map(move |column| (column as f32 / 20.0, row as f32 / 12.0)));
+    let picked: Vec<Entity> = points
+        .filter_map(|(across, down)| {
+            let point = [left + wide * across, top_edge + tall * down];
+            let markers = voxear_editor::scene_tools::Markers::NONE;
+            voxear_editor::scene_tools::pick(&editor.game.engine.world, &renderer, &view, point, markers)
+        })
+        .collect();
+    assert!(picked.iter().filter(|&&obj| obj == grass).count() > 10, "clicks on tufts pick the Foliage");
+    assert!(picked.iter().any(|&obj| obj == field), "and between them, the world");
+    assert!(picked.iter().all(|obj| editor.game.engine.world.has::<Name>(*obj)), "never a column's own Obj");
+    // Its Inspector opens on Grow, where it grows: no chance, none; undone, as many as before.
+    assert_eq!(prop_rows(&editor.ui, "Chance").len(), 1, "the Grow tool's rows");
+    type_number(&mut editor, &mut renderer, "Chance", "0");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), 0);
+    editor.undo(&mut renderer);
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(standing(&editor), grown, "the same plants again");
+    // Picked again, the tuft is one of the project's models now, and grows a second Foliage; undone, gone with
+    // its plants.
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    reveal(&mut editor, &mut renderer, "Add plant");
+    open_picker(&mut editor, &mut renderer, "Add plant");
+    assert!(!picker_rows(&editor.ui).iter().any(|row| row == "New Grass Tuft"));
+    let model = picker_row(&editor.ui, "Grass Tuft.boxmodel").expect("the model it made");
+    click(&mut editor.ui, model);
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let holders = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.query_ref::<&grown_plants::GrownColumn>().into_iter().count()
+    };
+    let (both, with_both) = (obj_named(&editor, "Grass Tuft") + obj_named(&editor, "Grass Tuft (1)"), holders(&editor));
+    assert_eq!(both, 2, "a second Foliage");
+    editor.undo(&mut renderer);
+    for _ in 0..5 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(holders(&editor) < with_both && holders(&editor) > 0, "the second's plants went with it");
+}
+
+/// Scrolls the Inspector until its row labelled `label` shows, as the wheel would.
+fn reveal(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str) {
+    let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
+    let mut at = editor.ui.parent(row);
+    while let Some(node) = at {
+        let most = editor.ui.scroll_max(node)[1];
+        if most > 0.0 {
+            let ([_, top, _, tall], [_, row_top, _, row_tall]) = (editor.ui.rect(node), editor.ui.rect(row));
+            let below = (row_top + row_tall) - (top + tall) + 8.0;
+            let now = editor.ui.scroll_offset(node);
+            editor.ui.set_scroll(node, [now[0], (now[1] + below.max(0.0)).min(most)]);
+            frame(editor, renderer);
+            frame(editor, renderer);
+        }
+        at = editor.ui.parent(node);
+    }
+}
+
+/// How many Objs are named `name`.
+fn obj_named(editor: &voxear_editor::Editor, name: &str) -> usize {
+    let world = &editor.game.engine.world;
+    let objs = world.query_ref::<(Entity, &Name)>().without::<voxear_scene::Destroying>();
+    objs.into_iter().filter(|(_, n)| n.0 == name).count()
+}
+
+/// A copy of Hello whose field is a world of blocks 48 blocks a side, generated by rolling hills, with moss and
+/// sand among its blocks and two biomes that between them take in every climate: Cool, of moss, and Warm, of sand.
+/// The world lists `listed` of them. Open in the editor, its Obj selected and its Settings showing.
+fn editor_with_a_generated_world(
+    listed: &[&str],
+) -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor, Entity)> {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockFile, BlockKind},
+            generate::BlockGenerate,
+        },
+        generate::Preset,
+    };
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return None;
+    };
+    let dir = hello_with_a_field();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let hills = Preset::RollingHills.world();
+    write("Worlds/Hills.worldgen", &hills.to_text());
+    for (name, color) in [("Grass", "0.33, 0.52, 0.2"), ("Dirt", "0.45, 0.32, 0.2"), ("Stone", "0.5, 0.5, 0.52")] {
+        write(&format!("Blocks/{name}.block"), &format!("color = [{color}]\n"));
+    }
+    write("Blocks/Moss.block", "color = [0.2, 0.5, 0.2]\n");
+    write("Blocks/Sand.block", "color = [0.9, 0.8, 0.5]\n");
+    // As warm as the middle of the world is the border between them.
+    let split = hills.climate(24.0, 24.0, hills.height_at(24.0, 24.0)).0;
+    let cool =
+        format!("temperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Moss.block\"\n");
+    let warm =
+        format!("temperature = [{split}, 60.0]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Sand.block\"\n");
+    write("Biomes/Cool.biome", &cool);
+    write("Biomes/Warm.biome", &warm);
+    let mut file = BlockFile::default();
+    file.blocks = ["Grass", "Dirt", "Stone"].map(|name| BlockKind::of(&format!("Blocks/{name}.block"))).to_vec();
+    file.ground.size = [48, 48];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        biomes: listed.iter().map(|name| format!("Biomes/{name}.biome")).collect(),
+        ..BlockGenerate::default()
+    });
+    write("Blocks/Field.blockworld", &file.to_text());
+    let day = dir.path().join("Scenes/Day.scene");
+    let scene = std::fs::read_to_string(&day).unwrap();
+    std::fs::write(&day, scene + "[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    Some((dir, renderer, editor, field))
+}
+
+/// Writes a picture of the editor with its Inspector scrolled `down`, and puts it back.
+fn shot_scrolled(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str, down: f32) {
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    editor.ui.set_scroll(inspector, [0.0, down]);
+    frame(editor, renderer);
+    frame(editor, renderer);
+    shot(renderer, name);
+    editor.ui.set_scroll(inspector, [0.0, 0.0]);
+    frame(editor, renderer);
+}
+
+/// The names its list of biomes shows, in its order.
+fn listed_biomes(ui: &Ui) -> Vec<String> {
+    let Some(list) = first_with(ui, ui.root(), "block-biomes") else { return Vec::new() };
+    let mut names = Vec::new();
+    with_class(ui, list, "terrain-layer-name", &mut names);
+    names.into_iter().filter(|&name| ui.is_visible(name)).map(|name| ui.text(name)).collect()
+}
+
+/// How many of the 48 by 48 columns of `field`'s world have each block on top, by the block's number.
+fn tops(editor: &voxear_editor::Editor, field: Entity) -> std::collections::BTreeMap<u16, usize> {
+    let blocks = editor.game.engine.world.get::<voxear_terrain::blocks::BlockWorld>(field).unwrap();
+    let mut tops = std::collections::BTreeMap::new();
+    for z in 0..48 {
+        for x in 0..48 {
+            let top = (-8..300).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0).unwrap_or(0);
+            *tops.entry(top).or_default() += 1;
+        }
+    }
+    tops
+}
+
+/// Types `words` into the command palette and runs what it finds first.
+fn run_command(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, words: &str) {
+    let field = editor.ui.find(editor.ui.root(), "command").unwrap();
+    editor.ui.focus(field);
+    editor.ui.text_input(words);
+    frame(editor, renderer);
+    editor.palette_key(voxear_editor::PaletteKey::Enter);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+#[test]
+fn a_generated_worlds_biomes_are_listed_added_moved_and_taken_out_each_making_its_ground_again() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_generated_world(&[]) else { return };
+    let file = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone()
+    };
+    let number = |editor: &voxear_editor::Editor, path: &str| {
+        let guid = editor.game.content.db().guid_of(path).unwrap();
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().drawn.number_of(guid)
+    };
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    // Under its generator's rows, the biomes its ground has: none yet, so its own grass everywhere.
+    assert_eq!(prop_rows(&editor.ui, "Biomes").len(), 1);
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Biomes")[0]).contains('0'));
+    let labels: Vec<String> = {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, inspector, "prop", &mut rows);
+        let shown = rows.into_iter().filter(|&row| editor.ui.is_visible(row));
+        shown.filter_map(|row| editor.ui.children(row).first().map(|&label| editor.ui.text(label))).collect()
+    };
+    let at = |label: &str| labels.iter().position(|shown| shown == label).unwrap_or_else(|| panic!("{labels:?}"));
+    assert!(at("Generator") < at("Biomes") && at("Biomes") < at("Top block"), "{labels:?}");
+    assert!(listed_biomes(&editor.ui).is_empty());
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [1]);
+    for button in ["Add Biome", "Add Starter Biomes"] {
+        assert!(button_saying(&editor.ui, inspector, button).is_some(), "{button}");
+    }
+
+    // Add Biome offers the project's biomes and nothing else. One picked is listed, and the ground made again from
+    // it: with one biome every place is that one, so moss everywhere, numbered as the world first holds it.
+    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(picker_rows(&editor.ui), ["Cool.biome", "Warm.biome"]);
+    let row = picker_row(&editor.ui, "Cool.biome").unwrap();
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool"]);
+    assert_eq!(file(&editor).generate.unwrap().biomes.len(), 1);
+    let moss = number(&editor, "Blocks/Moss.block").expect("the world holds moss now");
+    assert_eq!((moss, file(&editor).blocks.len()), (4, 4));
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [moss]);
+    // A second: the warm places are sand, the cool ones moss still.
+    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = picker_row(&editor.ui, "Warm.biome").unwrap();
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool", "Warm"]);
+    let sand = number(&editor, "Blocks/Sand.block").expect("and sand");
+    let both = tops(&editor, field);
+    assert!(both[&moss] > 100 && both[&sand] > 100 && both.len() == 2, "{both:?}");
+    shot_scrolled(&mut editor, &mut renderer, "biomes-list.png", 420.0);
+    // One listed already is not listed twice.
+    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = picker_row(&editor.ui, "Warm.biome").unwrap();
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool", "Warm"]);
+
+    // Each change is one step: undone, the warm biome is off the list and the ground all moss again.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool"]);
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [moss]);
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool", "Warm"]);
+    assert_eq!(tops(&editor, field), both);
+
+    // A world that lists biomes takes its ground's blocks from them: Build shows no Cover to set for its block.
+    show_block_tool(&mut editor, &mut renderer, "Build");
+    pick_asset(&mut editor, &mut renderer, "Block", "Sand.block");
+    assert!(prop_rows(&editor.ui, "Block").len() == 1 && prop_rows(&editor.ui, "Cover").is_empty());
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+
+    // Dragged by its grip above the first, the second goes first; the ground is what it was, as no place is as
+    // much within both.
+    let list = first_with(&editor.ui, editor.ui.root(), "block-biomes").unwrap();
+    let items = first_with(&editor.ui, list, "collection-items").unwrap();
+    let rows = editor.ui.children(items);
+    let grip = first_with(&editor.ui, rows[1], "collection-grip").unwrap();
+    let [x, y, w, h] = editor.ui.rect(grip);
+    let (from, top) = ([x + w / 2.0, y + h / 2.0], editor.ui.rect(rows[0])[1]);
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from[0], from[1] + (top - from[1]) * step as f32 / 4.0);
+        frame(&mut editor, &mut renderer);
+    }
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Warm", "Cool"]);
+    assert_eq!(tops(&editor, field), both);
+
+    // Saved, its file lists them by reference, in its order, and keeps the numbers it gave their blocks.
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join("Blocks/Field.blockworld")).unwrap();
+    let read = voxear_terrain::blocks::file::BlockFile::parse(&text).unwrap();
+    let guid = |path: &str| editor.game.content.db().guid_of(path).unwrap().to_string();
+    assert_eq!(read.generate.unwrap().biomes, [guid("Biomes/Warm.biome"), guid("Biomes/Cool.biome")], "{text}");
+    assert_eq!(read.blocks.len(), 5);
+
+    // Its cross takes a biome out: with the cool one alone, moss everywhere again. The last out, its own grass.
+    let cross = |editor: &voxear_editor::Editor, at: usize| {
+        let list = first_with(&editor.ui, editor.ui.root(), "block-biomes").unwrap();
+        let mut crosses = Vec::new();
+        with_class(&editor.ui, list, "collection-remove", &mut crosses);
+        crosses[at]
+    };
+    let warm = cross(&editor, 0);
+    click(&mut editor.ui, warm);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(listed_biomes(&editor.ui), ["Cool"]);
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [moss]);
+    let cool = cross(&editor, 0);
+    click(&mut editor.ui, cool);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(listed_biomes(&editor.ui).is_empty());
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [1]);
+    assert_eq!(file(&editor).blocks.len(), 5, "the blocks they brought keep their numbers");
+    // With none listed, a block's Cover is the world's to set again.
+    show_block_tool(&mut editor, &mut renderer, "Build");
+    assert_eq!(prop_rows(&editor.ui, "Cover").len(), 1);
+}
+
+#[test]
+fn a_biome_in_the_inspector_is_saved_as_it_is_edited_and_every_world_listing_it_is_made_again() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::generate::BiomeDef;
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_generated_world(&["Cool"]) else { return };
+    let read = || BiomeDef::parse(&std::fs::read_to_string(dir.path().join("Biomes/Cool.biome")).unwrap()).unwrap();
+    let number = |editor: &voxear_editor::Editor, path: &str| {
+        let guid = editor.game.content.db().guid_of(path).unwrap();
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().drawn.number_of(guid)
+    };
+    // The world lists Cool as it loads: moss everywhere, its fourth block.
+    let moss = number(&editor, "Blocks/Moss.block").expect("moss, numbered as the world loaded");
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [moss]);
+    // Something built in it, to be kept as its ground is made again: grass at its lowest block, deep in its stone.
+    let built = [3, -8, 3];
+    editor.game.engine.world.get_mut::<voxear_terrain::blocks::BlockWorld>(field).unwrap().set_blocks([(built, 1)]);
+
+    // The biome picked in the Project panel shows in the Inspector: its colour, its climate and its ground.
+    assert!(editor.inspect_path("Biomes/Cool.biome"));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let labels = ["Color", "Preset", "Temperature", "Humidity", "Height"];
+    let ground = ["Top", "Under", "Under depth", "Deep", "Steep", "Steep slope", "Shore", "Shore height"];
+    for label in labels.into_iter().chain(ground) {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "a biome's {label}");
+    }
+    assert!(prop_rows(&editor.ui, "Heights").is_empty(), "it keeps to no height yet");
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Top")[0]).contains("Moss"));
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Under")[0]).contains("None (Block)"));
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]).contains("Custom"));
+    shot(&mut renderer, "biome-inspector.png");
+
+    // Top picks from the project's blocks. Sand picked, the file names it, and the world listing the biome is made
+    // again at once: sand everywhere, with what was built on it kept.
+    open_picker(&mut editor, &mut renderer, "Top");
+    let offered = picker_rows(&editor.ui);
+    assert_eq!(offered[0], "None");
+    assert!(offered.iter().any(|row| row == "Sand.block") && !offered.iter().any(|row| row.ends_with(".biome")));
+    let row = picker_row(&editor.ui, "Sand.block").unwrap();
+    click(&mut editor.ui, row);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let sand_guid = editor.game.content.db().guid_of("Blocks/Sand.block").unwrap().to_string();
+    assert_eq!(read().ground.top.as_deref(), Some(sand_guid.as_str()));
+    let sand = number(&editor, "Blocks/Sand.block").expect("the world holds sand now");
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [sand]);
+    let blocks = editor.game.engine.world.get::<voxear_terrain::blocks::BlockWorld>(field).unwrap();
+    assert_eq!(blocks.blocks.get(built), 1, "what was built is kept");
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Top")[0]).contains("Sand"));
+
+    // The cross beside a block takes it out: the top is the world's own grass again.
+    let clear = first_with(&editor.ui, prop_rows(&editor.ui, "Top")[0], "slot-clear").expect("its cross");
+    assert!(editor.ui.is_visible(clear));
+    click(&mut editor.ui, clear);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(read().ground.top, None);
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [1]);
+    let clear = first_with(&editor.ui, prop_rows(&editor.ui, "Top")[0], "slot-clear").expect("its cross");
+    assert!(!editor.ui.is_visible(clear), "nothing to take out");
+
+    // A preset sets how warm and how wet at once; a number typed after is its own, and the Preset says Custom.
+    let preset = first_with(&editor.ui, prop_rows(&editor.ui, "Preset")[0], "value-choice").expect("its presets");
+    choose(&mut editor, &mut renderer, preset, 5);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!((read().temperature, read().humidity), ([18.0, 60.0], [0.0, 0.25]), "the Desert's");
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]).contains("Desert"));
+    let fields = |editor: &voxear_editor::Editor, label: &str| {
+        let mut fields = Vec::new();
+        with_class(&editor.ui, prop_rows(&editor.ui, label)[0], "value-input", &mut fields);
+        fields
+    };
+    let type_into = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, field: NodeId, text: &str| {
+        editor.ui.focus(field);
+        editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+        editor.ui.key_down(Key::Char('a'));
+        editor.ui.set_modifiers(Modifiers::default());
+        editor.ui.text_input(text);
+        frame(editor, renderer);
+        editor.ui.blur();
+        frame(editor, renderer);
+        frame(editor, renderer);
+    };
+    let warmest = fields(&editor, "Temperature")[1];
+    type_into(&mut editor, &mut renderer, warmest, "40");
+    assert_eq!(read().temperature, [18.0, 40.0]);
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]).contains("Custom"));
+    // Height switched on, it keeps to heights, which are typed in metres.
+    let height = first_with(&editor.ui, prop_rows(&editor.ui, "Height")[0], "checkbox").expect("its switch");
+    click(&mut editor.ui, height);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(read().height, Some([200.0, 10_000.0]));
+    let lowest = fields(&editor, "Heights")[0];
+    type_into(&mut editor, &mut renderer, lowest, "350");
+    assert_eq!(read().height, Some([350.0, 10_000.0]));
+    let depth = fields(&editor, "Under depth")[0];
+    type_into(&mut editor, &mut renderer, depth, "5");
+    let slope = fields(&editor, "Steep slope")[0];
+    type_into(&mut editor, &mut renderer, slope, "55");
+    assert_eq!((read().ground.under_depth, read().ground.steep_slope), (5, 55.0));
+    // Its colour typed is its colour in the world's list of biomes.
+    let red = first_with(&editor.ui, prop_rows(&editor.ui, "Color")[0], "axis-input").expect("its red");
+    type_into(&mut editor, &mut renderer, red, "0.25");
+    assert_eq!(read().color[0], 0.25);
+    shot(&mut renderer, "biome-inspector-edited.png");
+    shot_scrolled(&mut editor, &mut renderer, "biome-inspector-ground.png", 400.0);
+
+    // New Biome in the Project panel's menu makes one in the folder it shows, as new as any: no blocks.
+    editor.ping_asset("Biomes/Cool.biome");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut tiles = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "tile", &mut tiles);
+    let named = |tile: NodeId| editor.ui.children(tile).get(1).map(|&name| editor.ui.text(name)).unwrap_or_default();
+    let cool = tiles.into_iter().find(|&tile| editor.ui.is_visible(tile) && named(tile) == "Cool.biome");
+    let cool = cool.expect("the Project panel shows the Biomes folder");
+    context_click(&mut editor.ui, cool);
+    frame(&mut editor, &mut renderer);
+    // The menu has more to make than a small window has room for: scrolled to, as the wheel does.
+    let new = menu_item(&editor.ui, "New Biome").expect("the menu makes biomes");
+    scroll_to(&mut editor, &mut renderer, new);
+    let new = menu_item(&editor.ui, "New Biome").expect("the menu makes biomes");
+    click(&mut editor.ui, new);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let made = std::fs::read_to_string(dir.path().join("Biomes/New Biome.biome")).expect("a new biome");
+    assert_eq!(BiomeDef::parse(&made).unwrap(), BiomeDef::default());
+    // Its name let be. New Biome from the command palette makes another, in the project's Biomes folder, and
+    // shows it.
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    run_command(&mut editor, &mut renderer, "new biome");
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Biomes/New Biome 1.biome").is_file());
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Biomes/New Biome 1.biome"));
+}
+
+#[test]
+fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed_on_it() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{blocks::block::BlockDef, generate::BiomeDef};
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_generated_world(&[]) else { return };
+    // A block of a starter's name elsewhere in the project, of a colour of the project's own.
+    std::fs::create_dir_all(dir.path().join("Mine")).unwrap();
+    std::fs::write(dir.path().join("Mine/Gravel.block"), "color = [0.1, 0.2, 0.3]\n").unwrap();
+    editor.game.content.rescan().unwrap();
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
+    click(&mut editor.ui, starters);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    // Eight biomes, in a Biomes folder beside the world's Blocks folder, listed on the world.
+    let names = ["Snow", "Tundra", "Taiga", "Grassland", "Forest", "Desert", "Savanna", "Rainforest"];
+    assert_eq!(listed_biomes(&editor.ui), names);
+    let biome = |name: &str| {
+        let text = std::fs::read_to_string(dir.path().join(format!("Biomes/{name}.biome")));
+        BiomeDef::parse(&text.unwrap_or_else(|_| panic!("{name}'s file"))).unwrap()
+    };
+    // Each names its ground's blocks, with rock on steep ground and something along its shore; the heights are
+    // the Snow's.
+    let db = editor.game.content.db();
+    let path_of = |reference: &Option<String>| {
+        let guid = editor.game.content.parse(reference.as_deref().expect("a block")).unwrap().guid().unwrap();
+        db.get(guid).expect("a block of the project").path.clone()
+    };
+    for name in names {
+        let ground = biome(name).ground;
+        let named = [&ground.top, &ground.under, &ground.deep, &ground.steep, &ground.shore].map(path_of);
+        assert!(named.iter().all(|path| path.ends_with(".block")), "{name}: {named:?}");
+        assert!(["Stone.block", "Sandstone.block"].iter().any(|rock| named[3].ends_with(rock)), "{name}: {named:?}");
+        assert!(["Sand.block", "Gravel.block"].iter().any(|shore| named[4].ends_with(shore)), "{name}: {named:?}");
+    }
+    assert!(biome("Snow").height.is_some() && biome("Grassland").height.is_none());
+    assert_eq!(path_of(&biome("Desert").ground.top), "Blocks/Sand.block");
+    // Their blocks are beside the world, each a colour. The world's own grass, dirt and stone are theirs too, the
+    // sand the project had there is used as it was, and the gravel it had elsewhere is used where it is.
+    let block = |path: &str| BlockDef::parse(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap();
+    assert_eq!(block("Blocks/Snow.block").color, [0.95, 0.96, 0.98]);
+    assert_eq!(block("Blocks/Sand.block").color, [0.9, 0.8, 0.5], "the project's own sand");
+    assert!(!dir.path().join("Blocks/Gravel.block").exists());
+    assert_eq!(path_of(&biome("Tundra").ground.shore), "Mine/Gravel.block");
+    let made = std::fs::read_dir(dir.path().join("Blocks")).unwrap().flatten();
+    let blocks = made.filter(|entry| entry.file_name().to_string_lossy().ends_with(".block")).count();
+    assert_eq!(blocks, 14, "the fifteen they need but the gravel, which the project has elsewhere");
+    // The ground is made again from them: rolling hills in a mild climate, so more than one kind of country and
+    // none of it snow.
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    assert_eq!(asset.file.generate.as_ref().unwrap().biomes.len(), 8);
+    let snow = asset.drawn.number_of(db.guid_of("Blocks/Snow.block").unwrap()).expect("snow is numbered");
+    let now = tops(&editor, field);
+    assert!(!now.contains_key(&snow) && !now.contains_key(&1), "{now:?}");
+    shot_scrolled(&mut editor, &mut renderer, "biomes-starters.png", 420.0);
+    // Asked for again, nothing is made twice or listed twice.
+    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").unwrap();
+    click(&mut editor.ui, starters);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(listed_biomes(&editor.ui), names);
+    assert!(!dir.path().join("Biomes/Snow 1.biome").exists());
+    // One step to undo: the list is empty again and the ground the world's own; the files stay.
+    editor.undo(&mut renderer);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(listed_biomes(&editor.ui).is_empty());
+    assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [1]);
+    assert!(dir.path().join("Biomes/Snow.biome").is_file());
+}
+
+fn context_click(ui: &mut Ui, node: NodeId) {
+    let [x, y, w, h] = ui.rect(node);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_secondary(true);
+    ui.pointer_secondary(false);
+}
+
+/// What Add Starter Biomes makes of a world of blocks `columns` blocks a side, each `block` metres, generated by
+/// `preset` from where `fits` says its ground suits (given the least and greatest heights over the sea of a
+/// square that large): for each 50 m of height over the sea, how many columns are there and how many of them have
+/// snow on top. Clicked in the editor as a user does; with `VOXEAR_TEST_OUTPUT` set, a picture of it from above
+/// one corner goes there as `picture`.
+fn starter_biomes_on(
+    preset: voxear_terrain::generate::Preset,
+    (block, columns): (f32, u32),
+    fits: impl Fn(f32, f32) -> bool,
+    picture: &str,
+) -> Option<Vec<(f32, usize, usize)>> {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        file::{BlockFile, BlockKind},
+        generate::BlockGenerate,
+    };
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return None;
+    };
+    let dir = hello_with_a_field();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let world = preset.world();
+    write("Worlds/World.worldgen", &world.to_text());
+    for (name, color) in [("Grass", "0.33, 0.52, 0.2"), ("Dirt", "0.45, 0.32, 0.2"), ("Stone", "0.5, 0.5, 0.52")] {
+        write(&format!("Blocks/{name}.block"), &format!("color = [{color}]\n"));
+    }
+    write("Blocks/Water.block", "color = [0.05, 0.3, 0.45]\nliquid = \"water\"\n");
+    // The first place, looked for half a kilometre at a time, whose ground suits.
+    let (side, sea) = (block * columns as f32, world.sea_level());
+    let heights = |corner: [f32; 2]| {
+        let step = side / 8.0;
+        let at = |i: usize| world.height_at(corner[0] + (i % 9) as f32 * step, corner[1] + (i / 9) as f32 * step);
+        let heights: Vec<f32> = (0..81).map(at).collect();
+        let least = heights.iter().copied().fold(f32::MAX, f32::min);
+        (least - sea, heights.iter().copied().fold(f32::MIN, f32::max) - sea)
+    };
+    let position = (0..6400)
+        .map(|i| [(i % 80) as f32 * 500.0 - 20_000.0, (i / 80) as f32 * 500.0 - 20_000.0])
+        .find(|&corner| {
+            let (least, greatest) = heights(corner);
+            fits(least, greatest)
+        })
+        .expect("ground that suits somewhere within 20 km");
+    let (least, greatest) = heights(position);
+    let mut file = BlockFile { block_size: block, ..BlockFile::default() };
+    let held = ["Grass", "Dirt", "Stone", "Water"];
+    file.blocks = held.map(|name| BlockKind::of(&format!("Blocks/{name}.block"))).to_vec();
+    file.ground.size = [columns, columns];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/World.worldgen".into()),
+        bottom: ((least + sea) / block).floor() as i32 - 24,
+        caves: 0.0,
+        position,
+        sea: 4,
+        ..BlockGenerate::default()
+    });
+    write("Blocks/Field.blockworld", &file.to_text());
+    let day = dir.path().join("Scenes/Day.scene");
+    let scene = std::fs::read_to_string(&day).unwrap();
+    std::fs::write(&day, scene + "[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
+    click(&mut editor.ui, starters);
+    // A world this large is made again on other threads: until it is.
+    let listed = |editor: &voxear_editor::Editor| {
+        let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+        asset.file.generate.as_ref().is_some_and(|generate| generate.placed.is_some())
+    };
+    for _ in 0..3000 {
+        frame(&mut editor, &mut renderer);
+        if listed(&editor) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(listed(&editor), "its ground made again with its biomes");
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let snow = asset.drawn.number_of(editor.game.content.db().guid_of("Blocks/Snow.block").unwrap()).expect("snow");
+    let water = 4;
+    // Each column's top block, by how high over the sea its ground is.
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let bottom = asset.file.generate.as_ref().unwrap().bottom;
+    let mut bands: std::collections::BTreeMap<i32, (usize, usize)> = Default::default();
+    let step = (columns / 96).max(1) as usize;
+    for z in (0..columns as i32).step_by(step) {
+        for x in (0..columns as i32).step_by(step) {
+            let top = (bottom..bottom + 2000).rev().find(|&y| !matches!(blocks.blocks.get([x, y, z]), 0 | 4));
+            let Some(top) = top else { continue };
+            let above_sea = (top + 1) as f32 * block - sea;
+            if above_sea < 0.0 || blocks.blocks.get([x, top + 1, z]) == water {
+                continue;
+            }
+            let band = bands.entry((above_sea / 50.0).floor() as i32).or_default();
+            band.0 += 1;
+            band.1 += usize::from(blocks.blocks.get([x, top, z]) == snow);
+        }
+    }
+    if std::env::var("VOXEAR_TEST_OUTPUT").is_ok() {
+        // Looked at from high over its corner, across it and down, with nothing selected and the view to itself.
+        editor.select(None);
+        let tab = dock_tab(&editor.ui, "Scene").expect("the Scene view's tab");
+        context_click(&mut editor.ui, tab);
+        frame(&mut editor, &mut renderer);
+        let maximize = menu_item(&editor.ui, "Maximize").expect("Maximize");
+        click(&mut editor.ui, maximize);
+        frame(&mut editor, &mut renderer);
+        let camera = editor.scene_view_cameras()[0].1;
+        let corner = voxear_core::math::Vec3::new(-256.0, 0.5, -256.0);
+        let (low, high) = (least.max(0.0) + sea, greatest + sea);
+        let from = corner + voxear_core::math::Vec3::new(-side * 0.12, high + side * 0.32, -side * 0.12);
+        let towards = corner + voxear_core::math::Vec3::new(side * 0.5, (low + high) * 0.5, side * 0.5) - from;
+        let (yaw, pitch) = (towards.x.atan2(towards.z), (-towards.y).atan2(towards.x.hypot(towards.z)));
+        let turn = voxear_core::math::Quat::from_rotation_y(yaw) * voxear_core::math::Quat::from_rotation_x(pitch);
+        let view = editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap();
+        (view.position, view.rotation) = (from, turn);
+        // A world this large comes to the GPU over many frames.
+        for _ in 0..240 {
+            frame(&mut editor, &mut renderer);
+        }
+        shot(&mut renderer, picture);
+    }
+    Some(bands.into_iter().map(|(band, (count, snowy))| (band as f32 * 50.0, count, snowy)).collect())
+}
+
+#[test]
+fn the_starter_biomes_put_snow_on_a_world_of_mountains_heights_and_none_on_its_low_ground() {
+    use voxear_terrain::generate::Preset;
+    // Mountains 2 km a side in blocks of 8 m, from the sea to well over the snow line.
+    let alps = |least: f32, greatest: f32| least < 30.0 && greatest > 620.0;
+    let Some(bands) = starter_biomes_on(Preset::Alpine, (8.0, 256), alps, "starter-biomes-alpine-8m.png") else {
+        return;
+    };
+    let said: Vec<String> = bands.iter().map(|(from, count, snowy)| format!("{from} m: {snowy} of {count}")).collect();
+    println!("{said:#?}");
+    let share = |from: f32, to: f32| {
+        let within = bands.iter().filter(|(band, ..)| (from..to).contains(band));
+        let (count, snowy) = within.fold((0, 0), |(count, snowy), (_, c, s)| (count + c, snowy + s));
+        (count, snowy as f32 / count.max(1) as f32)
+    };
+    let (low, low_snow) = share(0.0, 200.0);
+    let (high, high_snow) = share(350.0, 10_000.0);
+    assert!(low > 100 && high > 100, "{said:?}");
+    assert_eq!(low_snow, 0.0, "no snow on its low ground: {said:?}");
+    // Its heights are snow but where they are steep, which is rock.
+    assert!(high_snow > 0.3, "snow on its heights: {high_snow} of them, {said:?}");
+    // The other worlds this was tuned by, for their pictures alone.
+    if std::env::var("VOXEAR_TEST_OUTPUT").is_err() {
+        return;
+    }
+    let slope = |least: f32, greatest: f32| least < 190.0 && greatest > 400.0 && least > 60.0;
+    starter_biomes_on(Preset::Alpine, (1.0, 448), slope, "starter-biomes-alpine-1m.png");
+    let anywhere = |_: f32, _: f32| true;
+    starter_biomes_on(Preset::RollingHills, (8.0, 256), anywhere, "starter-biomes-hills-8m.png");
+    starter_biomes_on(Preset::RollingHills, (1.0, 448), anywhere, "starter-biomes-hills-1m.png");
 }

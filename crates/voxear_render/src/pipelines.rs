@@ -79,6 +79,9 @@ pub struct Pipelines {
     pub multi_scattering: vk::Pipeline,
     pub sky_view: vk::Pipeline,
     pub aerial_perspective: vk::Pipeline,
+    /// The sky's clouds and their shadows (see `clouds`).
+    pub clouds: vk::Pipeline,
+    pub cloud_shadows: vk::Pipeline,
     /// Volumetric fog's passes: the volume, its integration, and laying it
     /// over the scene.
     pub volume_scatter: vk::Pipeline,
@@ -417,6 +420,8 @@ impl Pipelines {
             multi_scattering: table("Multiple scattering", c"multiScatteringFragment")?,
             sky_view: table("Sky view", c"skyViewFragment")?,
             aerial_perspective: table("Aerial perspective", c"aerialPerspectiveFragment")?,
+            clouds: table("Clouds", c"cloudsFragment")?,
+            cloud_shadows: table("Cloud shadows", c"cloudShadowsFragment")?,
             gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,
             ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
@@ -712,6 +717,8 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 depth_clamp: true,
+                // Its fragment shader cuts leaves and other cut-out faces from their pictures.
+                fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
             grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,
@@ -882,6 +889,8 @@ impl Pipelines {
             self.multi_scattering,
             self.sky_view,
             self.aerial_perspective,
+            self.clouds,
+            self.cloud_shadows,
             self.gtao,
             self.ao_denoise,
             self.ao_temporal,

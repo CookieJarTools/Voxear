@@ -147,6 +147,23 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
             }
         }
     }
+    // A block drawn with a material that is cut out is seen through, as leaves are: every face against it shows.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        let mut cut_out = |material: &Option<String>| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            guid.and_then(|guid| content.material_data(guid).ok())
+                .is_some_and(|data| data.cutout.is_some_and(|c| c > 0.0))
+        };
+        kind.cutout = cut_out(&kind.material) || cut_out(&kind.top) || cut_out(&kind.bottom);
+    }
+    // And one drawn with a material that bends in the wind, as a foliage material does, sways as leaves do.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        let mut bends = |material: &Option<String>| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            guid.and_then(|guid| content.material_data(guid).ok()).is_some_and(|data| data.wind_bend() > 0.0)
+        };
+        kind.sways |= bends(&kind.material) || bends(&kind.top) || bends(&kind.bottom);
+    }
     Resolved { file, guids }
 }
 
@@ -169,13 +186,17 @@ pub fn with_block(content: &mut Content, file: &BlockFile, guid: AssetGuid) -> O
 /// not hold yet numbered after those it has, in the order the biomes name
 /// them, so the same file gives the same numbers on every machine. A biome
 /// or a block that cannot be found is left out, with a warning; a file
-/// that lists no biomes comes back as it was.
+/// that lists no biomes comes back with none read.
 pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::generate::{BiomeBlocks, Biomes, WorldBiomes};
-    let Some(generate) = file.generate.as_ref().filter(|generate| !generate.biomes.is_empty()) else {
-        return file.clone();
-    };
     let mut file = file.clone();
+    let Some(generate) = file.generate.clone().filter(|generate| !generate.biomes.is_empty()) else {
+        // None listed, or none any more: its ground is the world's own layers.
+        if let Some(generate) = file.generate.as_mut() {
+            generate.placed = None;
+        }
+        return file;
+    };
     let seed = generator(content, &file).map_or(0, |world| world.seed());
     let (mut list, mut blocks) = (Vec::new(), Vec::new());
     for reference in &generate.biomes {
@@ -495,10 +516,12 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
     Ok(said.to_string())
 }
 
-/// Takes up the blocks as they are now in every world of blocks made
-/// before one of them was last saved: its look, and its faces made again
-/// where they are not as they were. A world without end is made anew by
-/// its streamer instead (see [`stream`]).
+/// Takes up the blocks and biomes as they are now in every world of blocks
+/// made before one of them was last saved: its look, its faces made again
+/// where they are not as they were, and, where a biome it lists lies
+/// elsewhere or names other blocks now, its ground made again from it with
+/// what was built on it kept. A world without end is made anew by its
+/// streamer instead (see [`stream`]).
 pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&mut Renderer>) {
     let version = content.blocks_version();
     let stale: Vec<(voxear_ecs::Entity, BlockWorldAsset)> = world
@@ -508,14 +531,26 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
         .filter(|(_, asset)| asset.derived != version)
         .map(|(entity, asset)| (entity, asset.clone()))
         .collect();
-    for (entity, asset) in stale {
+    for (entity, mut asset) in stale {
+        // Its biomes as their files have them now, the blocks they name numbered.
+        let placed = with_biomes(content, &asset.file);
+        let regrown = regrown(&asset.file, &placed);
+        asset.file = placed;
         let file = Arc::new(resolved(content, &asset.file));
         let endless = file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
         let (_, faces) = file.faces();
-        let remade = world
-            .get::<BlockWorld>(entity)
-            .filter(|blocks| !endless && *blocks.faces != faces[..])
-            .map(|blocks| blocks.restyled(&faces, file.smooth));
+        let remade = match world.get::<BlockWorld>(entity) {
+            Some(blocks) if regrown && !endless => {
+                let ground = Arc::new(ground(content, &asset.file));
+                let changes = BlockEdits::between(&asset.base, &blocks.blocks);
+                let mut made = make(&file, &ground, Some(&changes));
+                made.cast_shadows = blocks.cast_shadows;
+                asset.base = ground;
+                Some(made)
+            }
+            Some(blocks) if !endless && *blocks.faces != faces[..] => Some(blocks.restyled(&faces, file.smooth)),
+            _ => None,
+        };
         if let Some(remade) = remade {
             world.insert(entity, remade);
         }
@@ -529,6 +564,72 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
     }
 }
 
+/// Whether `placed`, a file with its biomes read again, makes other ground
+/// than `was`: its biomes lie elsewhere or name other blocks. A biome's
+/// colour changed makes none.
+pub(crate) fn regrown(was: &BlockFile, placed: &BlockFile) -> bool {
+    let of = |file: &BlockFile| file.generate.as_ref().and_then(|generate| generate.placed.clone());
+    match (of(was), of(placed)) {
+        (None, None) => false,
+        (Some(was), Some(placed)) => !was.same_ground(&placed),
+        _ => true,
+    }
+}
+
+/// The biomes `file`'s generated ground has, by GUID, in the order its
+/// biomes as read are in (see [`with_biomes`]): those it lists that are in
+/// the project.
+pub fn listed_biomes(content: &mut Content, file: &BlockFile) -> Vec<AssetGuid> {
+    let listed = file.generate.as_ref().map(|generate| generate.biomes.clone()).unwrap_or_default();
+    listed.iter().filter_map(|reference| Some(content.biome(reference)?.0)).collect()
+}
+
+/// The biome the place at `position` is, in the first world of blocks whose
+/// generated ground has biomes and reaches there: its GUID. A place's biome
+/// is its ground's, however high over it or deep under it the place is.
+pub fn biome_at(world: &World, content: &mut Content, position: voxear_core::math::Vec3) -> Option<AssetGuid> {
+    use voxear_scene::{Transform, WorldTransform};
+    let mut worlds: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
+        .query_ref::<(voxear_ecs::Entity, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(_, asset, ..)| asset.file.generate.as_ref().is_some_and(|generate| generate.placed.is_some()))
+        .map(|(entity, asset, local, placed)| (entity, asset.clone(), voxear_terrain::corner(local, placed)))
+        .collect();
+    worlds.sort_by_key(|(entity, ..)| entity.to_bits());
+    for (_, asset, corner) in worlds {
+        let Some(generate) = asset.file.generate.as_ref() else { continue };
+        let Some(placed) = generate.placed.as_deref() else { continue };
+        // In metres from the world's corner; one of a set size reaches only so far.
+        let (x, z) = (position.x - corner.x, position.z - corner.z);
+        let size = asset.file.ground.size.map(|blocks| blocks as f32 * asset.file.block_size);
+        let within = (0.0..size[0]).contains(&x) && (0.0..size[1]).contains(&z);
+        if generate.endless.is_none() && !within {
+            continue;
+        }
+        let Some(generator) = generator(content, &asset.file) else { continue };
+        let (x, z) = (x + generate.position[0], z + generate.position[1]);
+        let height = generator.height_at(x, z);
+        let (temperature, humidity) = generator.climate(x, z, height);
+        let above_sea = height - generator.sea_level();
+        // How far the ground there is sunk under the land round about, where a biome keeps to sunk ground.
+        let sunk = if placed.any_sunk() { generator.sunk(&[x], &[z], &[height]) } else { None };
+        let sunk = sunk.map_or(0.0, |sunk| sunk[0]);
+        let place = voxear_terrain::generate::biomes::Place { temperature, humidity, above_sea, sunk };
+        let Some(biome) = placed.biomes.at(x, z, place) else { continue };
+        return listed_biomes(content, &asset.file).get(biome).copied();
+    }
+    None
+}
+
+/// What the biome `reference` names says, for scripts, as JSON: its GUID,
+/// its name and its colour.
+pub fn biome_json(content: &mut Content, reference: &str) -> Result<String> {
+    let (guid, biome) = content.biome(reference).with_context(|| format!("the project has no biome {reference}"))?;
+    let name = content.biome_name(guid).unwrap_or_default();
+    Ok(serde_json::json!({ "guid": guid.to_string(), "name": name, "color": biome.color }).to_string())
+}
+
 /// The world of blocks made on `base`, `file`'s ground, with `edits` made
 /// to it, each chunk's faces worked out on every core.
 pub fn make(file: &Resolved, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -> BlockWorld {
@@ -540,10 +641,17 @@ pub fn make(file: &Resolved, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -
     BlockWorld::made(blocks, &faces, file.block_size, file.smooth)
 }
 
+/// A face drawn with its block's colour alone: matt, as earth and stone
+/// are, so it shines back nothing of the sky. A block that should shine
+/// names a material.
+fn colored(color: [f32; 3]) -> MaterialData {
+    MaterialData { color, roughness: 1.0, ..default_material() }
+}
+
 /// How a world of blocks looks: each way its faces are drawn, with its
 /// material where it names one and else its colour, a picture a block.
 pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> Result<BlockLook> {
-    let fallback = content.material(renderer, &MaterialSource::Inline(default_material()))?;
+    let fallback = content.material(renderer, &MaterialSource::Inline(colored(default_material().color)))?;
     let (looks, _) = file.faces();
     let mut surfaces = Vec::with_capacity(looks.len());
     for face in looks {
@@ -554,8 +662,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
         let material = match named {
             Some(material) => material,
             None => {
-                let colored = MaterialData { color: face.color, ..default_material() };
-                content.material(renderer, &MaterialSource::Inline(colored))?
+                content.material(renderer, &MaterialSource::Inline(colored(face.color)))?
             }
         };
         surfaces.push(voxear_render::SurfaceLook {
@@ -569,7 +676,8 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             glitter: false,
         });
     }
-    Ok(BlockLook { material: fallback, surfaces: surfaces.into() })
+    let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
+    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels })
 }
 
 /// Keeps every world of blocks' file and blocks in `content` as its
@@ -622,6 +730,8 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
         world: generator,
         faces: faces.into(),
         far_folder,
+        // Nothing built over its ground: who streams it adds what it grows.
+        far_built: Vec::new(),
     })
 }
 
@@ -652,7 +762,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
-        let Some(making) = making(content, &asset) else { continue };
+        let Some(mut making) = making(content, &asset) else { continue };
+        // Woods of the plants it grows, where they are thick enough to show so far off.
+        making.far_built = crate::grown_plants::far_built(world, content, entity);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();
@@ -717,6 +829,12 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn a_face_of_its_blocks_colour_alone_is_matt() {
+        let face = colored([0.2, 0.6, 0.1]);
+        assert_eq!((face.color, face.roughness, face.metallic), ([0.2, 0.6, 0.1], 1.0, 0.0));
+    }
 
     #[test]
     fn water_placed_flows_as_the_game_ticks_the_same_however_its_frames_fall() {

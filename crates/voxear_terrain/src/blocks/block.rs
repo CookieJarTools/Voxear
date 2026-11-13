@@ -55,6 +55,10 @@ pub struct BlockDef {
     /// Which liquid it is, where it is one.
     #[serde(skip_serializing_if = "Liquid::is_none")]
     pub liquid: Liquid,
+    /// Whether it sways in the wind, as leaves do: its corners that touch
+    /// no still block move a little with the level's wind.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sways: bool,
     /// How many seconds it takes to break by hand.
     pub hardness: f32,
     /// Whether nothing breaks it.
@@ -145,6 +149,7 @@ impl Default for BlockDef {
             top: None,
             bottom: None,
             liquid: Liquid::None,
+            sways: false,
             hardness: 1.0,
             unbreakable: false,
             tool: None,
@@ -202,6 +207,7 @@ impl BlockDef {
         kind.top = self.top.clone();
         kind.bottom = self.bottom.clone();
         kind.water = self.liquid == Liquid::Water;
+        kind.sways = self.sways;
     }
 }
 

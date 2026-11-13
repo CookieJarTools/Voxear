@@ -1,0 +1,28 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "Rich colour and soft shapes, as in a picture book: teal shade, golden light and a glow round bright things."
+
+[sun]
+shadow_tint = [0.05, 0.12, 0.14]
+
+[post.tonemap]
+mapper = "agx"
+contrast = 1.1
+saturation = 1.35
+
+[post.grading]
+saturation = 1.15
+lift = [0.0, 0.008, 0.01]
+gain = [1.05, 1.0, 0.92]
+
+[post.bloom]
+enabled = true
+intensity = 0.2
+scatter = 0.9
+tint = [1.0, 0.95, 0.85]
+
+[post.ambient_occlusion]
+tint = [0.05, 0.12, 0.14]
+
+[post.vignette]
+intensity = 0.25

@@ -89,6 +89,33 @@ look = \"golden_hour\"
 [post]
 ";
 
+/// A new look pack: laid over a level's lighting, it changes only what is
+/// written in it, so it starts with a little of each part.
+const NEW_LOOK_PACK: &str = "# A Voxear look pack: a few lighting settings laid over whatever lighting a level has.
+# Whoever plays the game picks one, with LookPacks.Use or the ready-made LookPackScreen.
+# Only what is written here changes; the level keeps its time of day, its weather and the rest.
+format = 1
+
+# A line for the menu the pack is picked from.
+description = \"Warmer light and a little more glow.\"
+
+# How the sun looks: temperature (kelvin), tint, strength, softness, shadow_tint.
+[sun]
+tint = [1.0, 0.95, 0.88]
+
+# The sky, as a scene's [sky] writes it. [sky.clouds] kind = \"blocks\" builds the level's clouds of cubes.
+[sky]
+
+# Post-processing, as a scene's [post] writes it: [post.bloom], [post.grading], [post.fog], [post.tonemap] and more.
+[post.bloom]
+intensity = 0.15
+
+# How every Block World's faces are drawn: voxels, the small cubes along a block's side (0 for plain faces), and
+# relief, how many deep the deepest sink. Take the # off to use it.
+# [blocks]
+# voxels = 8
+";
+
 /// Something the Project panel makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewFile {
@@ -97,18 +124,25 @@ pub enum NewFile {
     Level,
     Material,
     Lighting,
+    /// A look pack, which whoever plays the game picks.
+    LookPack,
     Shader,
     UnlitShader,
     /// A shader a UI element's background is drawn with.
     UiShader,
+    /// A shader that has the last word on the finished picture, which a
+    /// look pack names.
+    LookShader,
     Script,
     MotionSet,
     GunHandling,
     Terrain,
     /// A world generator, which a terrain's Generate layer picks.
     WorldGen,
-    /// A block, which worlds of blocks list.
+    /// A block, which any world of blocks can hold.
     Block,
+    /// A biome, which a generated world of blocks lists for its ground.
+    Biome,
     /// Pictures prompts show for controls, picked on the Input page.
     PromptIcons,
     /// A model built of boxes under bones, with its own pixels.
@@ -116,21 +150,24 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 16] = [
+    pub const ALL: [NewFile; 19] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
         NewFile::Material,
         NewFile::Lighting,
+        NewFile::LookPack,
         NewFile::Shader,
         NewFile::UnlitShader,
         NewFile::UiShader,
+        NewFile::LookShader,
         NewFile::Script,
         NewFile::MotionSet,
         NewFile::GunHandling,
         NewFile::Terrain,
         NewFile::WorldGen,
         NewFile::Block,
+        NewFile::Biome,
         NewFile::PromptIcons,
         NewFile::BoxModel,
     ];
@@ -139,7 +176,9 @@ impl NewFile {
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
         match self {
             NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
-            NewFile::Terrain | NewFile::WorldGen | NewFile::Block => Some(voxear_engine::modules::Module::Terrain),
+            NewFile::Terrain | NewFile::WorldGen | NewFile::Block | NewFile::Biome => {
+                Some(voxear_engine::modules::Module::Terrain)
+            }
             _ => None,
         }
     }
@@ -152,15 +191,18 @@ impl NewFile {
             NewFile::Level => "New Level",
             NewFile::Material => "New Material",
             NewFile::Lighting => "New Lighting Settings",
+            NewFile::LookPack => "New Look Pack",
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::UiShader => "New UI Shader",
+            NewFile::LookShader => "New Look Shader",
             NewFile::Script => "New C# Script",
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
             NewFile::Terrain => "New Terrain",
             NewFile::WorldGen => "New World Generator",
             NewFile::Block => "New Block",
+            NewFile::Biome => "New Biome",
             NewFile::PromptIcons => "New Prompt Icons",
             NewFile::BoxModel => "New Box Model",
         }
@@ -175,15 +217,18 @@ impl NewFile {
             NewFile::Level => ("New Level", ".level"),
             NewFile::Material => ("New Material", ".material"),
             NewFile::Lighting => ("New Lighting", ".lighting"),
+            NewFile::LookPack => ("New Look Pack", ".lookpack"),
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::UiShader => ("New UI Shader", ".shader"),
+            NewFile::LookShader => ("New Look Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
             NewFile::Terrain => ("New Terrain", ".terrain"),
             NewFile::WorldGen => ("New World Generator", ".worldgen"),
             NewFile::Block => ("New Block", ".block"),
+            NewFile::Biome => ("New Biome", ".biome"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
             NewFile::BoxModel => ("New Box Model", ".boxmodel"),
         }
@@ -203,15 +248,18 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Level => std::fs::write(&file, "# Voxear level: list its scenes as [[scene]] tables.\nformat = 1\n"),
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
+        NewFile::LookPack => std::fs::write(&file, NEW_LOOK_PACK),
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UiShader => std::fs::write(&file, shader(NEW_UI_SHADER, &name[..name.len() - extension.len()])),
+        NewFile::LookShader => std::fs::write(&file, shader(NEW_LOOK_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
         NewFile::WorldGen => std::fs::write(&file, new_world_gen()),
         NewFile::Block => std::fs::write(&file, block_text(&Default::default())),
+        NewFile::Biome => std::fs::write(&file, biome_text(&Default::default())),
         NewFile::PromptIcons => {
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
             std::fs::write(&file, icons.to_text()?)
@@ -293,6 +341,14 @@ const NEW_BLOCK: &str = "# Voxear block: how it looks, which the worlds of block
 /// A block's file as text: its heading, then what it is.
 pub(crate) fn block_text(block: &voxear_terrain::blocks::block::BlockDef) -> String {
     NEW_BLOCK.to_string() + &block.to_text()
+}
+
+/// What a biome's file starts with, before its settings.
+const NEW_BIOME: &str = "# Voxear biome: where it lies by climate and height, and the blocks its ground is made of.\n";
+
+/// A biome's file as text: its heading, then what it is.
+pub(crate) fn biome_text(biome: &voxear_terrain::generate::BiomeDef) -> String {
+    NEW_BIOME.to_string() + &biome.to_text()
 }
 
 /// A name a file can have, from `name`: without what a path cannot hold,
@@ -386,13 +442,15 @@ pub enum ShaderStart {
     Lit,
     Unlit,
     Ui,
+    /// One that draws the finished picture, for a look pack to name.
+    Look,
     Copy(BuiltinShader),
 }
 
 impl ShaderStart {
     /// As New Shader offers them: the three to write first, then the built-in ones.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui];
+        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui, Self::Look];
         all.extend(BuiltinShader::ALL.map(Self::Copy));
         all
     }
@@ -402,6 +460,7 @@ impl ShaderStart {
             Self::Lit => "Lit",
             Self::Unlit => "Unlit",
             Self::Ui => "UI",
+            Self::Look => "Look",
             Self::Copy(builtin) => builtin.title(),
         }
     }
@@ -409,7 +468,7 @@ impl ShaderStart {
     /// What it starts as, beside its name.
     pub fn detail(self) -> &'static str {
         match self {
-            Self::Lit | Self::Unlit | Self::Ui => "To write",
+            Self::Lit | Self::Unlit | Self::Ui | Self::Look => "To write",
             Self::Copy(_) => "Built in, to change",
         }
     }
@@ -422,6 +481,7 @@ pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &
         ShaderStart::Lit => create(root, folder, NewFile::Shader, namespace),
         ShaderStart::Unlit => create(root, folder, NewFile::UnlitShader, namespace),
         ShaderStart::Ui => create(root, folder, NewFile::UiShader, namespace),
+        ShaderStart::Look => create(root, folder, NewFile::LookShader, namespace),
         ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
     }
 }
@@ -529,6 +589,30 @@ float4 ui(NAME shader, UiInput input)
     float band = saturate(1.0 - abs(input.uv.x - at) / 0.3);
     float4 light = shader.glow * band * band;
     return light + input.background * (1.0 - light.a);
+}
+"#;
+
+/// What a new look shader starts as: the picture drawn in a few flat steps
+/// of colour, as a print is.
+const NEW_LOOK_SHADER: &str = r#"// A look shader. It has the last word on the finished picture where a look pack names it:
+//     [shader]
+//     shader = "Shaders/NAME.shader"
+//     steps = 5
+// Its properties are set in the pack by their names. The Manual's Look Packs page says what it is given.
+
+struct NAME
+{
+    [Property, Range(2, 16), Tooltip("How many steps of brightness the picture is drawn in")] float steps = 6.0;
+    [Property, Range(0, 1), Tooltip("How much of the effect shows")] float strength = 1.0;
+}
+
+// The colour one pixel of the picture is shown in. input.color is the pixel as the level's lighting left it,
+// from 0 to 1; input.uv is where it is, from 0 to 1 across and down, and input.pixel the same in pixels of the
+// input.size the picture has; input.time is in seconds.
+float3 look(NAME shader, LookInput input)
+{
+    float3 stepped = floor(input.color * shader.steps + 0.5) / shader.steps;
+    return lerp(input.color, stepped, shader.strength);
 }
 "#;
 
@@ -759,6 +843,30 @@ mod tests {
         let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
         assert_eq!(file.look.as_deref(), Some("golden_hour"));
         file.resolve().unwrap();
+    }
+
+    #[test]
+    fn a_new_look_pack_reads_back_and_changes_a_little_of_a_levels_lighting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create(dir.path(), "", NewFile::LookPack, "Game").unwrap();
+        assert_eq!(path, "New Look Pack.lookpack");
+        let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&text).unwrap();
+        assert!(!pack.description.is_empty() && pack.sun.is_some() && pack.blocks.is_none());
+        let plain = voxear_render::PostProcess::default();
+        let worn = pack.worn(voxear_render::Sky::default(), None, plain).unwrap();
+        assert!(worn.post.bloom.intensity == 0.15 && worn.sun.is_some());
+    }
+
+    #[test]
+    fn a_new_look_shader_draws_the_picture_alone_with_two_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create_shader(dir.path(), "", ShaderStart::Look, "Game").unwrap();
+        assert_eq!(path, "New Look Shader.shader");
+        let info = voxear_engine::shaders::read(&std::fs::read_to_string(dir.path().join(&path)).unwrap()).unwrap();
+        assert!(info.look && !info.ui && !info.surface, "a look shader, which neither materials nor UI can pick");
+        let names: Vec<&str> = info.properties.iter().map(|property| property.name.as_str()).collect();
+        assert_eq!(names, ["steps", "strength"]);
     }
 
     #[test]

@@ -3515,6 +3515,83 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
     assert!(lean(&after).abs() < 2.0, "and springs back once it has gone: {}", lean(&after));
 }
 
+/// A starter plant standing at the level's middle against the sky, seen from `eye`, in a Wind Zone of `wind`
+/// blowing to the camera's right or none, with something walking at `walker` or nothing.
+fn starter_plant_render(
+    plant: voxear_render::StarterPlant,
+    eye: Vec3,
+    wind: Option<f32>,
+    walker: Option<Vec3>,
+) -> Option<Vec<u8>> {
+    use voxear_render::{FoliageInteraction, Sky, Walkers, WindZone};
+    let mut renderer = renderer()?;
+    let text = plant.model().to_text();
+    let model = voxear_render::prepare_model("Plant.boxmodel", &mut |file| match file {
+        "Plant.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let imported = renderer.upload_model(&model).unwrap();
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(eye)));
+    world.spawn((MeshRenderer::new(imported.nodes[0].mesh, imported.nodes[0].material), Transform::default()));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = wind {
+        // Steady, so the plant leans as far every frame.
+        let wind = WindZone { strength, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+        world.spawn((wind, Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    }
+    if let Some(at) = walker {
+        world.insert_resource(Walkers(vec![(at, FoliageInteraction { radius: 1.2, strength: 1.0 })]));
+    }
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How far right of its foot a green plant's top is, in pixels: the middle of its green across its highest rows
+/// against its lowest.
+fn green_lean(pixels: &[u8]) -> f32 {
+    let green = |x: u32, y: u32| {
+        let [r, g, b] = rgb_at(pixels, (x, y));
+        g > r + 8 && g > b + 8
+    };
+    let rows: Vec<u32> = (0..360).filter(|&y| (0..640).any(|x| green(x, y))).collect();
+    assert!(rows.len() > 20, "the plant is in view: {} rows of it", rows.len());
+    let middle = |rows: &[u32]| {
+        let across: Vec<u32> = rows.iter().flat_map(|&y| (0..640).filter(move |&x| green(x, y))).collect();
+        across.iter().sum::<u32>() as f32 / across.len() as f32
+    };
+    let band = (rows.len() / 6).max(2);
+    middle(&rows[..band]) - middle(&rows[rows.len() - band..])
+}
+
+#[test]
+fn a_plant_of_cubes_leans_in_the_wind_and_away_from_what_walks_through_it() {
+    use voxear_render::StarterPlant;
+    // A pine, eight metres tall, from far enough to see all of it.
+    let pine = |wind| starter_plant_render(StarterPlant::Pine, Vec3::new(0.0, 4.0, -13.0), wind, None);
+    let Some(still) = pine(None) else { return };
+    let windy = pine(Some(3.0)).unwrap();
+    keep_image("pine still.png", &still);
+    keep_image("pine in the wind.png", &windy);
+    let (stood, leant) = (green_lean(&still), green_lean(&windy));
+    assert!(leant - stood > 5.0, "its top leans downwind: {leant} against {stood}");
+    // A rock in the same wind is as it is without.
+    let rock = |wind| starter_plant_render(StarterPlant::Rock, Vec3::new(0.0, 0.6, -3.0), wind, None).unwrap();
+    assert!(rock(None) == rock(Some(3.0)), "a rock does not bend");
+
+    // A tuft of grass, from close by, with someone standing just left of it and no wind at all.
+    let tuft = |walker| starter_plant_render(StarterPlant::Tuft, Vec3::new(0.0, 0.35, -1.6), None, walker);
+    let (alone, pushed) = (tuft(None).unwrap(), tuft(Some(Vec3::new(-0.5, 0.0, 0.0))).unwrap());
+    keep_image("tuft alone.png", &alone);
+    keep_image("tuft pushed.png", &pushed);
+    let (stood, leant) = (green_lean(&alone), green_lean(&pushed));
+    assert!(leant - stood > 12.0, "its blades lean away from who stands beside it: {leant} against {stood}");
+}
+
 #[test]
 fn a_pulsing_glow_rises_and_falls_and_a_steady_one_stays() {
     use voxear_render::{Glow, Sky};
@@ -6650,6 +6727,88 @@ fn ui_backgrounds_draw_with_built_in_effects_in_the_window_and_the_game() {
     assert!((17..=21).contains(&game_swings), "the game's UI striped alike: {game_swings}");
 }
 
+/// A project's look shader, compiled into the post-processing's shader: the
+/// finished picture as the level left it until it compiles and while no
+/// pack names it, and its negative, tinted by its property, once one does.
+#[test]
+fn a_look_packs_shader_has_the_last_word_on_the_picture() {
+    use voxear_render::{CustomCode, CustomShaderState, LOOK_VALUES, LookShader, Sky, WaterLook, WornLook};
+    const LOOK_SHADERS: &str = r#"
+namespace look_shader_7
+{
+struct Negative { float3 tint; };
+float3 look(Negative negative, LookInput input) { return (1.0 - input.color) * negative.tint; }
+}
+look_shader_7::Negative look_shader_7_properties()
+{
+    float4 values[LOOK_VALUES] = push.frame->post.lookValues;
+    look_shader_7::Negative properties;
+    properties.tint = values[0].xyz;
+    return properties;
+}
+float3 customLook(uint shader, LookInput input)
+{
+    switch (shader)
+    {
+    case 7:
+        return look_shader_7::look(look_shader_7_properties(), input);
+    default:
+        return input.color;
+    }
+}
+"#;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -5.0))));
+    let sky = Sky::default();
+    world.insert_resource(sky);
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let own = renderer.read_pixels().unwrap().2;
+    let at = |pixels: &[u8]| rgb_at(pixels, (320, 60));
+    let sky_blue = at(&own);
+    assert!(sky_blue[2] > sky_blue[0] + 10, "a blue sky to begin with: {sky_blue:?}");
+    // A pack names shader 7 before it is compiled: the picture is as it was.
+    let mut values = [[0.0; 4]; LOOK_VALUES];
+    values[0] = [1.0, 1.0, 0.0, 1.0];
+    let worn = WornLook {
+        sky,
+        sun: None,
+        post: steady_post(),
+        voxels: None,
+        water: WaterLook::default(),
+        shader: Some(LookShader { number: 7, values }),
+    };
+    world.insert_resource(worn);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue, "no shader 7 yet");
+    renderer.set_custom_shaders(CustomCode {
+        materials: CUSTOM_SHADERS.to_string(),
+        ui: String::new(),
+        look: LOOK_SHADERS.to_string(),
+    });
+    for _ in 0..600 {
+        run(&mut renderer, &world, &mut 0.0, 1);
+        match renderer.custom_shaders() {
+            CustomShaderState::Ready => break,
+            CustomShaderState::Failed(error) => panic!("the look shader did not compile: {error}"),
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let negative = renderer.read_pixels().unwrap().2;
+    keep_image("look shader negative.png", &negative);
+    let seen = at(&negative);
+    // The sky's negative, with no blue left by the tint: most red where it was least red.
+    assert!(seen[2] <= 2, "its property takes the blue out: {seen:?}");
+    assert!(seen[0] > seen[1] && seen[1] > 100, "the negative of a sky bluer than it is red: {seen:?} of {sky_blue:?}");
+    // Taken off, the picture is the level's own again.
+    world.remove_resource::<WornLook>();
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue);
+}
+
 /// A project's UI shader, compiled into the UI's shader as material shaders
 /// are into the scene's: a background it colours green, drawn as its own red
 /// background until it compiles.
@@ -6703,7 +6862,7 @@ float4 customUi(uint shader, uint first, UiInput input)
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [255, 0, 0], "its own background until the shader compiles");
 
-    renderer.set_custom_shaders(CustomCode { materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
+    renderer.set_custom_shaders(CustomCode { look: String::new(), materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
     for _ in 0..600 {
         run(&mut renderer, &world, &mut 0.0, 1);
         match renderer.custom_shaders() {
@@ -6821,4 +6980,387 @@ fn a_box_model_draws_its_pixels_sharp_and_its_boxes_follow_their_bones() {
     assert!(red(at(&turned, -0.75, 1.25)), "{:?}", at(&turned, -0.75, 1.25));
     assert!(green(at(&turned, -0.75, 0.75)), "{:?}", at(&turned, -0.75, 0.75));
     assert!(red(at(&turned, 0.25, 0.75)), "the body stays");
+}
+
+/// The rotation of a camera looking along `direction`, level from side to side.
+fn looking_along(direction: Vec3) -> Quat {
+    let direction = direction.normalize();
+    Quat::from_rotation_y(direction.x.atan2(direction.z)) * Quat::from_rotation_x(-direction.y.asin())
+}
+
+/// A sky's worth of settings for the cloud tests: a sun `elevation` degrees up, straight ahead along +Z.
+struct CloudView {
+    clouds: voxear_render::Clouds,
+    elevation: f32,
+    looking: Vec3,
+    /// How high the camera is.
+    from: f32,
+    /// Whether a wide ground lies under it.
+    ground: bool,
+    /// How many seconds pass before the picture is taken.
+    wait: f32,
+    size: (u32, u32),
+    /// A sky of its own colours rather than the atmosphere.
+    gradient: bool,
+    /// The moon for a light, and a camera that gets used to the dark.
+    moon: bool,
+    /// The weather laid over it all.
+    weather: voxear_render::weather::Weather,
+    /// A ground as dark as soil rather than a pale one.
+    soil: bool,
+}
+
+impl CloudView {
+    fn of(clouds: voxear_render::Clouds) -> Self {
+        Self {
+            clouds,
+            elevation: 50.0,
+            looking: bearing(40.0, 60.0),
+            from: 1.7,
+            ground: false,
+            wait: 0.0,
+            size: (640, 360),
+            gradient: false,
+            moon: false,
+            weather: voxear_render::weather::Weather::default(),
+            soil: false,
+        }
+    }
+}
+
+/// The view's picture, and the least the passes named "Cloud…" took together over sixty frames, in milliseconds.
+fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky, SkyMode};
+    let Ok(mut renderer) = Renderer::new_offscreen(view.size.0, view.size.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return None;
+    };
+    let mut world = World::new();
+    let eye = Transform::new(Vec3::new(0.0, view.from, 0.0), looking_along(view.looking), Vec3::ONE);
+    world.spawn((Camera::default(), eye));
+    let sun = looking_along(-bearing(view.elevation, 0.0));
+    let light = match view.moon {
+        true => Light { body: voxear_render::SkyBody::Moon, ..Light::directional(Vec3::new(0.6, 0.7, 1.0), 0.15) },
+        false => Light::directional(Vec3::ONE, 1.0),
+    };
+    world.spawn((light, Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if view.ground {
+        let plane = renderer.primitive(Primitive::Plane).unwrap();
+        let color = if view.soil { [0.22, 0.17, 0.12, 1.0] } else { MaterialDesc::default().base_color };
+        let desc = MaterialDesc { roughness: 1.0, base_color: color, ..MaterialDesc::default() };
+        let material = renderer.add_material(&desc).unwrap();
+        let wide = Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30000.0));
+        world.spawn((MeshRenderer::new(plane, material), wide));
+    }
+    let mode = if view.gradient { SkyMode::Gradient } else { SkyMode::Atmosphere };
+    world.insert_resource(Sky { mode, clouds: view.clouds, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let post = if view.moon { PostProcess::default() } else { PostProcess::neutral() };
+    world.insert_resource(PostProcess { anti_aliasing, ..post });
+    world.insert_resource(view.weather);
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 2);
+    // A frame is never taken for longer than a quarter of a second.
+    for _ in 0..(view.wait * 4.0) as u32 {
+        time += 0.25;
+        renderer.render(&world, time).expect("frame renders");
+    }
+    // Long enough for the clouds' picture to settle from its first frame's.
+    let mut least = f32::INFINITY;
+    for _ in 0..60 {
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+        let cloud = |(name, _): &&(String, f32)| name.starts_with("Cloud");
+        let spent: f32 = renderer.timings().iter().filter(cloud).map(|(_, ms)| *ms).sum();
+        if spent > 0.0 {
+            least = least.min(spent);
+        }
+    }
+    Some((renderer.read_pixels().unwrap().2, least))
+}
+
+/// Keeps an image `size` across as `name` when `VOXEAR_TEST_OUTPUT` names a folder.
+fn keep_sized(name: &str, pixels: &[u8], size: (u32, u32)) {
+    if let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") {
+        let file = std::fs::File::create(std::path::Path::new(&dir).join(name)).unwrap();
+        let mut encoder = png::Encoder::new(file, size.0, size.1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+    }
+}
+
+/// How much of a sky is cloud: the share of its pixels unlike the same sky's with none.
+fn cloud_share(pixels: &[u8], clear: &[u8]) -> f32 {
+    let unlike = |(a, b): &(&[u8], &[u8])| (0..3).any(|c| a[c].abs_diff(b[c]) > 24);
+    pixels.chunks_exact(4).zip(clear.chunks_exact(4)).filter(unlike).count() as f32 / (pixels.len() / 4) as f32
+}
+
+#[test]
+fn clouds_fill_as_much_of_the_sky_as_their_cover() {
+    use voxear_render::Clouds;
+    let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };
+    let (some, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    let (overcast, _) = cloud_render(&CloudView::of(Clouds::covering(1.0))).unwrap();
+    keep_image("clouds none.png", &clear);
+    keep_image("clouds half.png", &some);
+    keep_image("clouds overcast.png", &overcast);
+    let shares = [&some, &overcast].map(|pixels| cloud_share(pixels, &clear));
+    assert!(shares[0] > 0.15 && shares[0] < 0.85, "half cover leaves blue between the clouds: {shares:?}");
+    assert!(shares[1] > 0.95, "full cover leaves none: {shares:?}");
+    // Lit by the sun, a cloud is brighter than the sky behind it.
+    let brightness = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[0]) + u64::from(p[1])).sum::<u64>();
+    assert!(brightness(&some) > brightness(&clear), "clouds are bright against the sky");
+    // The same clouds each run.
+    let (again, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    assert!(some == again, "the same sky twice");
+}
+
+#[test]
+fn clouds_show_in_a_sky_of_its_own_colours_and_under_the_moon() {
+    use voxear_render::Clouds;
+    let gradient =
+        |clouds: Clouds| cloud_render(&CloudView { gradient: true, ..CloudView::of(clouds) }).map(|(p, _)| p);
+    let Some(clear) = gradient(Clouds::default()) else { return };
+    let cloudy = gradient(Clouds::covering(0.5)).unwrap();
+    keep_image("clouds gradient sky.png", &cloudy);
+    // A pale sky is nearly as bright as the clouds in it, so a smaller difference counts here.
+    let unlike = |(a, b): &(&[u8], &[u8])| (0..3).any(|c| a[c].abs_diff(b[c]) > 8);
+    let share = cloudy.chunks_exact(4).zip(clear.chunks_exact(4)).filter(unlike).count() as f32 / (640.0 * 360.0);
+    assert!(share > 0.15 && share < 0.85, "half cover in a sky of its own colours: {share}");
+    // By night the moon lights them: paler than the dark sky between them, and not day-bright.
+    let night = |clouds: Clouds| cloud_render(&CloudView { moon: true, ..CloudView::of(clouds) }).map(|(p, _)| p);
+    let (dark, moonlit) = (night(Clouds::default()).unwrap(), night(Clouds::covering(0.5)).unwrap());
+    keep_image("clouds under the moon.png", &moonlit);
+    let brightness = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 360);
+    let (without, with) = (brightness(&dark), brightness(&moonlit));
+    assert!(with > without + 4, "moonlit clouds stand out from the night sky: {with} against {without}");
+    assert!(with < 140, "and stay a night's: {with}");
+}
+
+#[test]
+fn weather_fills_the_sky_dims_the_day_and_hides_the_distance_in_fog() {
+    use voxear_render::{
+        Clouds,
+        weather::{Weather, WeatherKind},
+    };
+    // Over a wide ground, looking a little above the horizon, under a few clouds.
+    let under = |weather: WeatherKind| {
+        let (looking, weather) = (bearing(12.0, 60.0), Weather::of(weather));
+        let view = CloudView { looking, ground: true, weather, ..CloudView::of(Clouds::covering(0.25)) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(clear) = under(WeatherKind::Clear) else { return };
+    let (overcast, storm, fog) =
+        (under(WeatherKind::Overcast).unwrap(), under(WeatherKind::Storm).unwrap(), under(WeatherKind::Fog).unwrap());
+    keep_image("weather clear.png", &clear);
+    keep_image("weather overcast.png", &overcast);
+    keep_image("weather storm.png", &storm);
+    keep_image("weather fog.png", &fog);
+    // The sky is the picture's top half; blue shows where a pixel is far bluer than it is red.
+    let blue = |pixels: &[u8]| {
+        let sky = &pixels[..640 * 150 * 4];
+        sky.chunks_exact(4).filter(|p| u32::from(p[2]) > u32::from(p[0]) * 3 / 2 + 8).count() as f32 / (640.0 * 150.0)
+    };
+    assert!(blue(&clear) > 0.3, "blue sky between a few clouds: {}", blue(&clear));
+    assert!(blue(&overcast) < 0.03, "none under overcast: {}", blue(&overcast));
+    // The ground is its bottom rows: lit by the sun when clear, dull under overcast, darker still in a storm.
+    let ground = |pixels: &[u8]| {
+        let rows = &pixels[640 * 320 * 4..];
+        rows.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 40)
+    };
+    let lit = [&clear, &overcast, &storm].map(|pixels| ground(pixels));
+    assert!(lit[0] > lit[1] + 15 && lit[1] > lit[2] + 10, "dimmer with the weather: {lit:?}");
+    // Fog takes the line between ground and sky: the rows either side of the horizon are nearly alike.
+    let step = |pixels: &[u8]| {
+        let row = |y: usize| (0..640).map(|x| i64::from(pixels[(y * 640 + x) * 4 + 1])).sum::<i64>() / 640;
+        (150..300).map(|y| (row(y) - row(y + 6)).abs()).max().unwrap()
+    };
+    assert!(step(&clear) > step(&fog) * 2, "the horizon is lost in fog: {} against {}", step(&clear), step(&fog));
+}
+
+#[test]
+fn rain_darkens_the_ground_snow_whitens_it_and_lightning_lights_it() {
+    use voxear_render::{
+        Clouds,
+        weather::{Weather, WeatherAmounts, WeatherGround, WeatherKind},
+    };
+    // Looking down at soil under a half-clouded sky, the same every time but for what has fallen.
+    let dull = WeatherAmounts { cloud: 0.5, ..WeatherAmounts::default() };
+    let on = |weather: Weather| {
+        let looking = bearing(-35.0, 60.0);
+        let view = CloudView { looking, ground: true, soil: true, weather, ..CloudView::of(Clouds::covering(0.25)) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let ground = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u64::from(p[1])).sum::<u64>() / (640 * 360);
+    let Some(dry) = on(Weather::custom(dull)) else { return };
+    // Rain that has been falling: the ground is soaked.
+    let rained = Weather::custom(WeatherAmounts { rain: 0.6, ..dull });
+    assert_eq!(rained.ground(), WeatherGround { wet: 1.0, snow: 0.0 });
+    let wet = on(rained).unwrap();
+    // Snow that has been falling: it lies, in patches when it has only begun.
+    let snowed = Weather::custom(WeatherAmounts { snow: 0.8, ..dull });
+    let mut beginning = Weather::custom(dull);
+    beginning.set_amounts(WeatherAmounts { snow: 0.8, ..dull }, 0.0);
+    beginning.advance(35.0);
+    let (white, patchy) = (on(snowed).unwrap(), on(beginning).unwrap());
+    keep_image("weather ground dry.png", &dry);
+    keep_image("weather ground wet.png", &wet);
+    keep_image("weather ground snow.png", &white);
+    keep_image("weather ground first snow.png", &patchy);
+    let lit = [&dry, &wet, &white, &patchy].map(|pixels| ground(pixels));
+    assert!(lit[1] + 4 < lit[0], "wet soil is darker: {lit:?}");
+    assert!(lit[2] > lit[0] * 2, "snow lies white on it: {lit:?}");
+    assert!(lit[3] > lit[0] + 4 && lit[3] + 8 < lit[2], "less of it when it has only begun: {lit:?}");
+    // First snow is in patches: far more of its picture is neither soil nor snow than is of either.
+    let spread = |pixels: &[u8]| {
+        let mut green: Vec<u8> = pixels.chunks_exact(4).map(|p| p[1]).collect();
+        green.sort_unstable();
+        i32::from(green[green.len() * 9 / 10]) - i32::from(green[green.len() / 10])
+    };
+    assert!(spread(&patchy) > spread(&white) + 10, "patches: {} against {}", spread(&patchy), spread(&white));
+
+    // A storm, at a moment its lightning is bright and at one it is dark.
+    let mut storm = Weather::of(WeatherKind::Storm);
+    while storm.flash() < 0.8 {
+        storm.advance(1.0 / 240.0);
+    }
+    let struck = on(storm).unwrap();
+    while storm.flash() > 0.0 {
+        storm.advance(1.0 / 240.0);
+    }
+    let dark = on(storm).unwrap();
+    keep_image("weather lightning.png", &struck);
+    assert!(ground(&struck) > ground(&dark) * 2, "lightning lights it: {} against {}", ground(&struck), ground(&dark));
+}
+
+#[test]
+fn clouds_drift_and_their_shadows_cross_the_ground() {
+    use voxear_render::Clouds;
+    // Looking down on the ground from high up, under the clouds.
+    let down = |clouds: Clouds, wait: f32| {
+        let looking = bearing(-60.0, 60.0);
+        let view = CloudView { looking, from: 800.0, ground: true, wait, ..CloudView::of(clouds) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(open) = down(Clouds::default(), 0.0) else { return };
+    let shaded = down(Clouds::covering(0.5), 0.0).unwrap();
+    let unshaded = down(Clouds { shadows: 0.0, ..Clouds::covering(0.5) }, 0.0).unwrap();
+    let later = down(Clouds { drift: 40.0, ..Clouds::covering(0.5) }, 20.0).unwrap();
+    keep_image("cloud shadows none.png", &open);
+    keep_image("cloud shadows.png", &shaded);
+    keep_image("cloud shadows later.png", &later);
+    // How far apart the ground's darkest and brightest are, but for a fiftieth of it at each end.
+    let spread = |pixels: &[u8]| {
+        let mut green: Vec<u8> = pixels.chunks_exact(4).map(|p| p[1]).collect();
+        green.sort_unstable();
+        i32::from(green[green.len() * 49 / 50]) - i32::from(green[green.len() / 50])
+    };
+    let spreads = [&open, &shaded, &unshaded].map(|pixels| spread(pixels));
+    assert!(spreads[1] > spreads[0] + 40, "clouds put the ground in light and shade: {spreads:?}");
+    assert!(spreads[2] < spreads[0] + 12, "none with their shadows off: {spreads:?}");
+    let moved = shaded.chunks_exact(4).zip(later.chunks_exact(4)).filter(|(a, b)| a[1].abs_diff(b[1]) > 30).count();
+    assert!(moved * 20 > shaded.len() / 4, "the shadows have moved on: {moved} pixels");
+}
+
+#[test]
+fn cloud_shadows_glide_over_the_ground_and_do_not_jump() {
+    use voxear_render::Clouds;
+    // The ground from high up under drifting clouds built of cubes, whose edges are sharp, at moments a quarter of
+    // a second apart: ten metres of drift each, a fifth of one of the shadow map's texels.
+    let down = |wait: f32| {
+        let clouds = Clouds { drift: 40.0, ..Clouds::blocks(0.5) };
+        let looking = bearing(-60.0, 60.0);
+        let view = CloudView { looking, from: 800.0, ground: true, wait, ..CloudView::of(clouds) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(first) = down(10.0) else { return };
+    let mut moments = vec![first];
+    moments.extend((1..9).map(|step| down(10.0 + step as f32 * 0.25).unwrap()));
+    // Where a shadow's edge passed, a pixel went from light to dark or back. Gliding, it took several moments over
+    // it, a part of the way in each; jumping, it went most of the way in one.
+    let green = |pixels: &[u8], i: usize| i32::from(pixels[i * 4 + 1]);
+    let (mut crossed, mut at_once) = (0u32, 0.0f32);
+    for i in 0..640 * 360 {
+        let seen: Vec<i32> = moments.iter().map(|pixels| green(pixels, i)).collect();
+        let range = seen.iter().max().unwrap() - seen.iter().min().unwrap();
+        if range < 40 {
+            continue;
+        }
+        let largest = seen.windows(2).map(|pair| (pair[1] - pair[0]).abs()).max().unwrap();
+        crossed += 1;
+        at_once += largest as f32 / range as f32;
+    }
+    let share = at_once / crossed.max(1) as f32;
+    eprintln!("cloud shadows: {crossed} pixels crossed, {share} of the way in their largest step");
+    assert!(crossed > 2000, "the shadows move: {crossed} pixels crossed");
+    assert!(share < 0.45, "and glide: {share} of the way in one step");
+}
+
+#[test]
+fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
+    use voxear_render::Clouds;
+    let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };
+    let (soft, _) = cloud_render(&CloudView::of(Clouds::covering(0.5))).unwrap();
+    let (cubes, _) = cloud_render(&CloudView::of(Clouds::blocks(0.5))).unwrap();
+    keep_image("clouds of cubes.png", &cubes);
+    let share = cloud_share(&cubes, &clear);
+    assert!(share > 0.15 && share < 0.85, "half cover of cubes leaves blue between them: {share}");
+    // A soft cloud shades from one pixel to the next all over; a cube's face is one colour, with a step at its
+    // edges. So more of the neighbouring pixels within the cubes' clouds are alike.
+    let flat = |pixels: &[u8]| {
+        let cloud = |i: usize| (0..3).any(|c| pixels[i * 4 + c].abs_diff(clear[i * 4 + c]) > 24);
+        let pairs = (0..640 * 360 - 1).filter(|&i| i % 640 != 639 && cloud(i) && cloud(i + 1));
+        let (mut alike, mut all) = (0.0, 0.0);
+        for i in pairs {
+            all += 1.0;
+            alike += f32::from(u8::from(pixels[i * 4 + 1].abs_diff(pixels[i * 4 + 5]) <= 1));
+        }
+        alike / all
+    };
+    let (in_soft, in_cubes) = (flat(&soft), flat(&cubes));
+    assert!(in_cubes > 0.62 && in_cubes > in_soft + 0.12, "flat faces: {in_cubes} of cubes' pixels, {in_soft} of soft");
+    // Soft cubes are mist the sky shows through: far more of the picture is part sky and part cloud, its colour
+    // somewhere between the two, than solid cubes' edges alone.
+    let (misty, _) = cloud_render(&CloudView::of(Clouds { softness: 1.0, ..Clouds::blocks(0.5) })).unwrap();
+    keep_image("clouds of soft cubes.png", &misty);
+    let between = |pixels: &[u8]| {
+        let partly = |(a, b): &(&[u8], &[u8])| (10..70).contains(&a[1].abs_diff(b[1]));
+        pixels.chunks_exact(4).zip(clear.chunks_exact(4)).filter(partly).count()
+    };
+    let (in_solid, in_misty) = (between(&cubes), between(&misty));
+    assert!(cloud_share(&misty, &clear) > 0.15, "soft cubes are still clouds");
+    assert!(in_misty * 10 > in_solid * 12, "the sky shows through soft cubes: {in_misty} pixels against {in_solid}");
+    // Their shadows on the ground are cubes' too.
+    let looking = bearing(-60.0, 60.0);
+    let view = CloudView { looking, from: 800.0, ground: true, ..CloudView::of(Clouds::blocks(0.5)) };
+    let (shadows, _) = cloud_render(&view).unwrap();
+    keep_image("cloud shadows of cubes.png", &shadows);
+    let mut green: Vec<u8> = shadows.chunks_exact(4).map(|p| p[1]).collect();
+    green.sort_unstable();
+    let spread = i32::from(green[green.len() * 49 / 50]) - i32::from(green[green.len() / 50]);
+    assert!(spread > 40, "cubes shade the ground: {spread}");
+}
+
+#[test]
+fn clouds_cost_little_at_full_hd() {
+    use voxear_render::Clouds;
+    let size = (1920, 1080);
+    let soft_cubes = |cover: f32| Clouds { softness: 0.7, ..Clouds::blocks(cover) };
+    for (name, clouds, elevation, looking) in [
+        ("clouds fair.png", Clouds::covering(0.45), 50.0, bearing(18.0, 70.0)),
+        ("clouds towards the sun.png", Clouds::covering(0.55), 25.0, bearing(20.0, 10.0)),
+        ("clouds sunset.png", Clouds::covering(0.5), 4.0, bearing(14.0, 25.0)),
+        ("clouds heavy.png", Clouds::covering(0.9), 50.0, bearing(25.0, 120.0)),
+        ("clouds of cubes fair.png", Clouds::blocks(0.45), 50.0, bearing(18.0, 70.0)),
+        ("clouds of cubes low.png", Clouds::blocks(0.3), 30.0, bearing(6.0, 200.0)),
+        ("clouds of soft cubes low.png", soft_cubes(0.3), 30.0, bearing(6.0, 200.0)),
+        ("clouds of soft cubes fair.png", soft_cubes(0.45), 50.0, bearing(18.0, 70.0)),
+    ] {
+        let view = CloudView { elevation, looking, ground: true, size, ..CloudView::of(clouds) };
+        let Some((pixels, least)) = cloud_render(&view) else { return };
+        keep_sized(name, &pixels, size);
+        eprintln!("{name}: the cloud passes took {least:.2} ms at 1920x1080");
+        // Twice the 1.5 ms they are meant to stay within, for a GPU other tests are sharing.
+        assert!(least < 3.0, "{name}: {least} ms");
+    }
 }

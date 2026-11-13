@@ -41,6 +41,8 @@ pub enum BoxPartEdit {
     KeyEase(Ease),
     /// Whether the box is sculpted from cubes.
     Voxels(bool),
+    /// How much the whole model bends in the wind, as a plant.
+    WindBend(f32),
 }
 
 impl BoxPartEdit {
@@ -63,6 +65,7 @@ impl BoxPartEdit {
             BoxPartEdit::KeyScale(_) => 12,
             BoxPartEdit::KeyEase(_) => 13,
             BoxPartEdit::Voxels(_) => 14,
+            BoxPartEdit::WindBend(_) => 15,
         }
     }
 }
@@ -104,6 +107,8 @@ pub struct BoxPartView {
     part: Picked,
     title: NodeId,
     rows: Rows,
+    /// The model's own Wind bend, shown under every part of it.
+    wind_bend: NodeId,
 }
 
 impl BoxPartView {
@@ -213,7 +218,15 @@ impl BoxPartView {
                 Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height, voxels }
             }
         };
-        let view = Self { path: path.to_string(), part, title, rows };
+        let model_rows = part_rows(ui, root, "Model", "wind");
+        let row = prop(ui, model_rows, "Wind bend");
+        let tip = "How far the whole model bends in the wind and away from what walks through it. 1 to 2 for \
+                   grass, less for a tree, 0 for anything that is not a plant";
+        ui.set_tooltip(row, tip, None);
+        let wind_bend = ui.text_field(row, "");
+        ui.add_class(wind_bend, "value-input");
+        ui.add_class(wind_bend, "number-input");
+        let view = Self { path: path.to_string(), part, title, rows, wind_bend };
         view.follow(ui, model, None);
         Some(view)
     }
@@ -262,6 +275,10 @@ impl BoxPartView {
             let read = Vec3::new(read[0], read[1], read[2]);
             (read != now && read.is_finite()).then_some(read)
         };
+        let bend = read_numbers(ui, &[self.wind_bend], &[model.wind_bend])[0];
+        if bend != model.wind_bend && bend.is_finite() {
+            return Some(BoxPartEdit::WindBend(bend.clamp(0.0, voxear_render::MOST_WIND_BEND)));
+        }
         match (&self.rows, self.part) {
             (Rows::Bone { name, role, pivot, rotation, key: rows }, _) => {
                 if let Some(key) = key {
@@ -346,6 +363,7 @@ impl BoxPartView {
         if ui.text(self.title) != title {
             ui.set_text(self.title, &title);
         }
+        write_numbers(ui, &[self.wind_bend], &[model.wind_bend]);
         match (&self.rows, self.part) {
             (Rows::Bone { name, role, pivot, rotation, key: rows }, _) => {
                 for node in rows.section {
@@ -415,6 +433,11 @@ impl BoxPartView {
             Rows::Bone { key, .. } => [key.rotation, key.offset, key.scale].get(row).copied(),
             Rows::Box { .. } => None,
         }
+    }
+
+    /// The field the model's Wind bend is typed in.
+    pub fn wind_bend_field(&self) -> NodeId {
+        self.wind_bend
     }
 
     /// The field a bone's name is typed in.

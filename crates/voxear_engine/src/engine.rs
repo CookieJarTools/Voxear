@@ -339,6 +339,7 @@ impl Engine {
         scripts.take_obj_destroys();
         scripts.take_level_requests();
         scripts.take_lighting_requests();
+        scripts.take_look_pack_requests();
         Some(scripts)
     }
 
@@ -518,14 +519,31 @@ impl Engine {
         if crate::modules::has(&self.world, crate::modules::Module::Water) {
             crate::water::update(&mut self.world, self.time.elapsed);
         }
+        // The weather turns, and its rain and snow fall round the viewer.
+        crate::weather::update(&mut self.world, self.time.delta);
+        // Characters push through the plants they walk among.
+        crate::walkers::update(&mut self.world);
+        // The look pack worn is laid over the level's lighting as it is now.
+        crate::look_packs::update(&mut self.world);
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);
         let year = self.first_seasons().and_then(|entity| self.world.get::<Seasons>(entity)).map(|s| s.time_of_year);
         let features = self.world.query_ref::<&voxear_render::Ocean>().into_iter().next().map(|ocean| ocean.features());
+        let weather = self.world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
         if let Some(scripts) = self.scripts.as_mut() {
             scripts.publish_time_of_year(year);
             scripts.publish_water_features(features);
+            scripts.publish_weather(voxear_scripting::WeatherState {
+                kind: weather.kind().index() as i32,
+                state: {
+                    let mut state = [0.0; 10];
+                    state[..7].copy_from_slice(&weather.now().to_array());
+                    state[7..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
+                    state
+                },
+                turning: !weather.settled(),
+            });
         }
         if let Some(scripts) = self.scripts.as_mut() {
             profile_scope!("Script Continuations");
@@ -617,6 +635,17 @@ impl Engine {
             self.world.despawn(entity);
         }
         self.run_stage("Last");
+        // The weather scripts turned turns, from what it is now.
+        if let Some(asked) = self.scripts.as_mut().and_then(ScriptRuntime::take_weather) {
+            use crate::weather::{Weather, WeatherAmounts, WeatherKind};
+            let mut weather = self.world.resource::<Weather>().copied().unwrap_or_default();
+            let kind = WeatherKind::ALL.get(asked.kind.max(0) as usize).copied().unwrap_or_default();
+            match asked.amounts {
+                Some(amounts) => weather.set_amounts(WeatherAmounts::from_array(amounts), asked.seconds),
+                None => weather.set(kind, asked.seconds),
+            }
+            self.world.insert_resource(weather);
+        }
         // The year scripts turned turns the level's first Seasons.
         if let Some(time) = self.scripts.as_mut().and_then(ScriptRuntime::take_time_of_year)
             && let Some(seasons) = self.first_seasons().and_then(|entity| self.world.get_mut::<Seasons>(entity))

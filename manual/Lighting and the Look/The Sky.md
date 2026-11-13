@@ -71,6 +71,71 @@ haze_glow = 0.85
 distance_haze = 16.0
 ```
 
+## Clouds
+
+A sky can have clouds: heaped clouds in a layer over the level, which drift with the wind. The sun lights them, bright where it reaches them and grey underneath, gold and red as it sets, and the moon lights them at night. Their shadows cross the ground, the water and everything else the sun lights, and where the level has fog with light shafts, the shafts fall between them.
+
+The weather fills the clouds in and darkens them as it turns; see [[Weather]].
+
+Clouds are part of the sky, under `clouds`. Only `cover` is needed:
+
+```toml
+[sky.clouds]
+cover = 0.4
+```
+
+| Setting | What it does |
+| --- | --- |
+| `cover = 0.0` | How much of the sky the clouds fill, from 0 to 1: 0 for none, 0.4 for a fair day, 0.7 for broken cloud, 1 for overcast |
+| `height = 1200.0` | How high the clouds' undersides are above the level's ground, in metres |
+| `thickness = 700.0` | How tall the clouds are, in metres, from their undersides to their tops |
+| `size = 900.0` | How far across one cloud is, in metres |
+| `density = 1.0` | How thick the clouds are: lower lets more light through them, higher makes them heavy and dark underneath |
+| `drift = 8.0` | How fast the clouds move, in metres a second. They go the way the level's Wind Zone blows (see [[Wind]]), or along x where the level has none |
+| `shadows = 0.8` | How dark the clouds' shadows on the level are, from 0 to 1: 0 turns the shadows off |
+| `kind = "soft"` | What the clouds are made of: `"soft"` for billowing clouds, `"blocks"` for clouds built of cubes |
+| `block = 100.0` | How wide one cube is, in metres, when `kind` is `"blocks"` |
+| `softness = 0.0` | How soft the cubes are, when `kind` is `"blocks"`: 0 for solid cubes, up to 1 for cubes of mist |
+
+Clouds work with both kinds of sky. Under the atmosphere they also grey the sky's ambient light, the more of the sky they cover, as a cloudy day's light is greyer than a clear one's.
+
+A low, thick layer with full cover makes a storm's ceiling:
+
+```toml
+[sky.clouds]
+cover = 1.0
+height = 800.0
+thickness = 1500.0
+density = 2.0
+```
+
+### Clouds built of cubes
+
+For a world of blocks, set the clouds' `kind` to `"blocks"`. The clouds keep their places, heights and drift, but each is built of cubes: flat white tops, lighter sides towards the sun and greyer ones away from it, pale undersides, and shadows on the ground with square corners.
+
+```toml
+[sky.clouds]
+cover = 0.4
+kind = "blocks"
+block = 100.0
+```
+
+`softness` turns the solid cubes to mist. A little, 0.3 or so, softens how the faces are lit; towards 1 the cubes at a cloud's edges grow faint and the sky shows through them, while the cloud keeps its cube shapes:
+
+```toml
+[sky.clouds]
+cover = 0.4
+kind = "blocks"
+softness = 0.7
+```
+
+`block` is the width of one cube. Big cubes, 100 metres or more, give a few chunky clouds; smaller ones show more of each cloud's shape. For flat slabs of cloud one cube deep, set `thickness` to the same as `block`. Clouds built of cubes are drawn out to 16 kilometres, and fade into the sky before that.
+
+The clouds are the same every time the level loads, and with no cover they cost nothing.
+
+> [!NOTE]
+> Clouds are drawn behind everything in the level, so a mountain taller than their undersides is not hidden in them, and a camera that flies up into them sees them only against the sky. They do not show in reflections yet.
+
 ## Night: the moon and the stars
 
 For a night scene, make the level's directional light the **moon**: set its **Sky body** to Moon in the Inspector, or `body = "moon"` in the scene file. The sky then draws the moon's disc where the light comes from, with its darker seas, and darkens to a night sky, so the stars show. Give the moon a cool colour and a low intensity, enough to see the scene by:

@@ -156,6 +156,13 @@ pub struct SkyData {
     /// The sun's disc across the sky, in degrees.
     #[serde(default = "default_sun_size", skip_serializing_if = "is_default_sun_size")]
     pub sun_size: f32,
+    /// The sky's clouds, left out where they are as a new sky's: none.
+    #[serde(default, skip_serializing_if = "no_clouds_set")]
+    pub clouds: voxear_render::Clouds,
+}
+
+fn no_clouds_set(clouds: &voxear_render::Clouds) -> bool {
+    *clouds == voxear_render::Clouds::default()
 }
 
 fn default_haze_glow() -> f32 {
@@ -796,6 +803,17 @@ impl LightData {
 ///
 /// A plant leaning with the ground it was painted on has two numbers more,
 /// the x and z of the way its up points.
+///
+/// A Foliage under a Block World can grow by itself, on the world's ground
+/// as it is made (see [`GrowData`]):
+///
+/// ```toml
+/// [obj.foliage.grow]
+/// on = ["Blocks/Grass.block"]   # the blocks its plants stand on
+/// humidity = [0.5, 1.0]         # where it is wet enough
+/// spacing = 6.0                 # metres between tries
+/// chance = 0.6                  # how many tries grow
+/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FoliageData {
@@ -843,6 +861,10 @@ pub struct FoliageData {
     /// How the Scene view's brush paints its plants.
     #[serde(default, skip_serializing_if = "PaintData::is_default")]
     pub paint: PaintData,
+    /// Where it grows by itself on the Block World it is under; none for a
+    /// Foliage of placed and scattered plants alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<GrowData>,
 }
 
 /// One placed plant as written: x, y, z, a turn in degrees and a size, and
@@ -939,6 +961,101 @@ pub struct ScatterData {
     /// The smallest and largest size.
     #[serde(default = "plain_scale")]
     pub scale: [f32; 2],
+}
+
+/// Where a Foliage grows by itself on the Block World it is under (see
+/// `voxear_terrain::blocks::grow`): the blocks its plants stand on, the
+/// climate and heights they like, the steepest ground, and how thickly.
+/// The same world grows the same plants every time; another `seed` grows
+/// them in other places.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GrowData {
+    /// The blocks its plants stand on, each a `.block` by GUID or project
+    /// path; none for any ground.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub on: Vec<String>,
+    /// How warm, in °C, from and to; left out for any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<[f32; 2]>,
+    /// How wet, from 0 for dry to 1; left out for any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub humidity: Option<[f32; 2]>,
+    /// How high over the sea, in metres, from and to; left out for any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<[f32; 2]>,
+    /// The steepest ground they stand on, in degrees.
+    pub slope: f32,
+    /// How far apart its tries are, in metres: one a square that size.
+    pub spacing: f32,
+    /// The least between two plants, in metres.
+    pub separation: f32,
+    /// How many of its tries grow, from 0 for none to 1 for all.
+    pub chance: f32,
+    /// How many metres across the patches it grows in are; left out for
+    /// everywhere.
+    #[serde(skip_serializing_if = "is_no_bias")]
+    pub patches: f32,
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub seed: u32,
+    /// The smallest and largest size.
+    pub scale: [f32; 2],
+    /// Whether a plant stands on the middle of its block, turned by quarter
+    /// turns, as the blocks are.
+    #[serde(skip_serializing_if = "is_true")]
+    pub aligned: bool,
+    /// The block its plants show as in a world's far view, where they are
+    /// thick enough to be a wood: a `.block` by GUID or project path; left
+    /// out for plants that do not show so far off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub far_block: Option<String>,
+}
+
+impl Default for GrowData {
+    fn default() -> Self {
+        let rule = voxear_terrain::blocks::grow::GrowRule::default();
+        Self {
+            on: Vec::new(),
+            temperature: None,
+            humidity: None,
+            height: None,
+            slope: rule.slope,
+            spacing: rule.spacing,
+            separation: rule.separation,
+            chance: rule.chance,
+            patches: 0.0,
+            seed: 0,
+            scale: rule.scale,
+            aligned: true,
+            far_block: None,
+        }
+    }
+}
+
+impl GrowData {
+    /// The rule it is in a world, `number` giving each block it names its
+    /// number there. A block the world does not hold is one nothing stands
+    /// on.
+    pub fn rule(&self, mut number: impl FnMut(&str) -> Option<u16>) -> voxear_terrain::blocks::grow::GrowRule {
+        voxear_terrain::blocks::grow::GrowRule {
+            on: self.on.iter().map(|block| number(block).unwrap_or(voxear_terrain::blocks::chunk::AIR)).collect(),
+            temperature: self.temperature,
+            humidity: self.humidity,
+            height: self.height,
+            slope: self.slope,
+            spacing: self.spacing,
+            separation: self.separation,
+            chance: self.chance,
+            patches: self.patches,
+            seed: self.seed,
+            scale: self.scale,
+            aligned: self.aligned,
+        }
+    }
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
 }
 
 fn default_draw_distance() -> f32 {
@@ -1314,6 +1431,8 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
         Some((reference, lit)) => {
             engine.world.insert_resource(SceneLighting(reference.to_string()));
             engine.world.insert_resource(LightingPost(lit.post.clone()));
+            // Lighting settings are the level's lighting whole, its weather too: their own, or clear.
+            engine.world.insert_resource(lit.weather.weather());
         }
         None if post.is_some() => {
             engine.world.remove_resource::<SceneLighting>();
@@ -1360,6 +1479,7 @@ pub fn sky_data(sky: &Sky) -> SkyData {
         haze_glow: sky.haze_glow,
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
+        clouds: sky.clouds,
     }
 }
 
@@ -1380,6 +1500,7 @@ pub fn sky_from_data(sky: &SkyData) -> Sky {
         haze_glow: sky.haze_glow,
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
+        clouds: sky.clouds,
     }
 }
 
@@ -2679,6 +2800,22 @@ mod tests {
     }
 
     #[test]
+    fn the_skys_clouds_read_and_write_back_and_are_left_out_unset() {
+        let colours = "zenith = [0.3, 0.5, 0.9]\nhorizon = [0.7, 0.8, 0.9]\nground = [0.4, 0.4, 0.4]";
+        let clear: SkyData = toml::from_str(colours).unwrap();
+        assert!(sky_from_data(&clear).clouds.is_none(), "no clouds unless the sky says so");
+        assert!(!toml::to_string(&clear).unwrap().contains("clouds"));
+        // Only what is written changes: the rest are a new sky's.
+        let cloudy: SkyData = toml::from_str(&format!("{colours}\n[clouds]\ncover = 0.6\nheight = 2000.0")).unwrap();
+        let clouds = sky_from_data(&cloudy).clouds;
+        let fresh = voxear_render::Clouds::default();
+        assert_eq!((clouds.cover, clouds.height, clouds.size), (0.6, 2000.0, fresh.size));
+        assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&cloudy).unwrap()).unwrap(), cloudy);
+        assert_eq!(sky_data(&sky_from_data(&cloudy)).clouds, cloudy.clouds);
+        assert!(toml::from_str::<SkyData>(&format!("{colours}\n[clouds]\ncovr = 0.6")).is_err(), "a misspelt setting");
+    }
+
+    #[test]
     fn a_lights_temperature_reads_and_writes_back_and_is_left_out_unset() {
         let candle: LightData = toml::from_str("type = \"point\"\ntemperature = 1900.0").unwrap();
         assert_eq!(light_component(&candle).temperature, Some(1900.0));
@@ -2775,9 +2912,51 @@ paint = { density = 25.0, spacing = 2.0 }
         assert_eq!((data.paint.density, data.paint.spacing, data.paint.lean), (25.0, 2.0, PaintData::default().lean));
         let again: FoliageData = toml::from_str(&toml::to_string(&data).unwrap()).unwrap();
         assert_eq!(again, data);
+        // A plant solid all through, as a rock is, collides as a box, and is written back as one.
+        let rocks: FoliageData = toml::from_str("mesh = \"builtin:cube\"\ntrunk = { box = [1.4, 0.7, 1.1] }").unwrap();
+        assert_eq!(rocks.grown().trunk, Some(voxear_scene::Trunk::solid([1.4, 0.7, 1.1])));
+        let written = toml::to_string(&rocks).unwrap();
+        assert!(written.contains("box = [1.4"), "{written}");
+        assert_eq!(toml::from_str::<FoliageData>(&written).unwrap(), rocks);
+        assert!(!toml::to_string(&data).unwrap().contains("box"), "a trunk writes no box");
         // Written to a millimetre and a tenth of a degree, upright plants with five numbers.
         let plant = Plant { position: [1.23456, 0.0, -2.0], yaw: 1.0, scale: 1.0, lean: [0.0; 2] };
         assert_eq!(PlantRow::of(&plant), PlantRow::Upright([1.235, 0.0, -2.0, 57.3, 1.0]));
         assert!(!toml::to_string(&FoliageData { paint: PaintData::default(), ..data }).unwrap().contains("paint"));
+    }
+
+    #[test]
+    fn where_a_foliage_grows_by_itself_reads_writes_back_small_and_names_its_blocks_by_number() {
+        let text = r#"
+mesh = "builtin:cube"
+[grow]
+on = ["Blocks/Grass.block", "Blocks/Moss.block", "Blocks/Lost.block"]
+humidity = [0.5, 1.0]
+spacing = 6.0
+patches = 20.0
+seed = 3
+"#;
+        let data: FoliageData = toml::from_str(text).expect("foliage");
+        let grow = data.grow.clone().expect("where it grows");
+        let (spacing, separation, chance) = (grow.spacing, grow.separation, grow.chance);
+        assert_eq!((spacing, separation, chance), (6.0, GrowData::default().separation, GrowData::default().chance));
+        assert!(grow.aligned && grow.temperature.is_none() && grow.height.is_none());
+        let again: FoliageData = toml::from_str(&toml::to_string(&data).unwrap()).unwrap();
+        assert_eq!(again, data);
+        // What is as it starts is left out; a Foliage that grows nowhere says nothing of it.
+        let plain = toml::to_string(&FoliageData { grow: Some(GrowData::default()), ..data.clone() }).unwrap();
+        for left_out in ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"] {
+            assert!(!plain.contains(&format!("\n{left_out} =")), "{left_out} in {plain}");
+        }
+        assert!(!toml::to_string(&FoliageData { grow: None, ..data }).unwrap().contains("grow"));
+        assert!(toml::from_str::<FoliageData>("mesh = \"builtin:cube\"\n[grow]\nspacng = 2.0\n").is_err());
+        // In a world, each block it names is that world's number for it; one the world has not is no ground.
+        let rule = grow.rule(|block| match block {
+            "Blocks/Grass.block" => Some(1),
+            "Blocks/Moss.block" => Some(7),
+            _ => None,
+        });
+        assert_eq!(rule.on, [1, 7, voxear_terrain::blocks::chunk::AIR]);
+        assert_eq!((rule.humidity, rule.patches, rule.seed, rule.spacing), (Some([0.5, 1.0]), 20.0, 3, 6.0));
     }
 }

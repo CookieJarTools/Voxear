@@ -1029,6 +1029,87 @@ point, area or tube light a cube's six, the nearest eight lights a frame.
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.
 
+**Clouds** *(implemented; weather planned)*. A sky's `clouds` (`voxear_render::Clouds`, `[sky.clouds]`) are a layer
+between two heights over the level's ground (`src/clouds.rs`, `shaders/clouds.slang`, the passes in
+`shaders/sky.slang`). `cloudDensityAt` shapes them from the smoke's baked noise atlas, so they need no texture of
+their own: round puffs make the bodies, a noise over the plane hashed on whole numbers puts more cloud here and less
+there, smaller puffs and swirls are bitten out of the edges, and below a quarter of the layer's height a cloud keeps
+its outline, so all stand on one flat underside. With any cover, two passes run after the atmosphere's tables:
+
+1. **Cloud shadows** draws a 256² map of how much sun the layer lets through, 6 km each way round the camera,
+   snapped to its texels on a grid that drifts with the clouds (`shadow_middle`): each texel keeps its place in the
+   clouds' pattern, so the shadows glide with the drift and never step from texel to texel. `cloudShadowAt` reads it where the way from a point to the sun crosses the layer's middle,
+   and `sunShadow` and `sunShadowHard` multiply by it, so everything the sun lights is under the clouds' shadows
+   without knowing of them: opaque shading, blocks, plants, water, particles, smoke and the fog's froxels.
+2. **Clouds** marches the layer for each pixel at half the picture's size: the ray's stretch between the two
+   heights round a curved Earth (worked out from the heights' difference, which stays exact in metres), 40 steps
+   from a start jittered by pixel and frame, 4 doubling steps towards the sun from each. It is blended nine parts
+   in ten with last frame's picture, one of two history images, found by the pixel's direction through last
+   frame's view. The result is colour to add and, in alpha, how much of the sky shows through.
+
+Clouds of the **Blocks** kind (`CloudKind::Blocks`, `[sky.clouds] kind = "blocks"`) are the same field built of
+cubes `block` metres wide: `cloudDensityIn` snaps a place to its cube's middle, so a cube is cloud or not as a
+whole, and the shadow map needs no path of its own. The Clouds pass walks the cubes along the ray instead of
+marching (`cloudBlocksSeen`: up to 128 cubes, out to 16 km, in a flat layer), stops at the first cube that is cloud,
+and lights the face it came in by all one colour, from the way it faces and four cubes' worth of the way to the sun.
+The ray's place within its pixel moves each frame, which the history blend turns into smooth edges.
+
+With any `softness`, cubes are mist: `cloudCubeAt` gives each cube a share of cloud, less near its cloud's edge,
+the walk takes out light by that share and the length of the ray inside the cube and goes on, and each cube is lit
+through, by the cubes between its middle and the sun, blended with the face's shade by the softness.
+
+The sky pass lays that picture over the sky it draws. Clouds are therefore behind everything drawn, and are not in
+reflections. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
+so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
+passes.
+
+**Weather** *(implemented; roofs, sound and networking planned)*. `voxear_render::weather::Weather`
+is a resource: a kind, the `WeatherAmounts` it is turning from and to, and how far through the turn it is. It
+changes no other state. `scene::extract` reads what it adds this moment and lays it over what it extracts:
+`WeatherAmounts::sky` on the `Sky` (cloud cover, density, thickness and shadows, haze, a gradient's colours),
+`sun` on the sun's radiance, which under the atmosphere dims the sky too, `fog` on the post-processing's fog after
+post volumes are blended, and `wind` on the first Global Wind Zone, which the particle simulation and the engine's
+sea read through the same call. So the editor, a saved scene and a script reading a component all see the level's
+lighting as its maker left it, and weather needs no undoing.
+
+The resource also keeps what has fallen (`WeatherGround`: wet and snow, each moving towards what the weather now
+would leave, at its own speed up and down) and a clock of its own. `extract` writes the ground into the frame beside
+the seasons, and `weatherSurface` in the shared fragment shader darkens and smooths every surface by the wet and
+lays snow on what faces up, by a noise over the level hashed on whole numbers while there is little: meshes,
+terrain and blocks all pass through it. Lightning is a pure function of the clock and the lightning amount
+(`flash_at`): time is cut into three-second stretches, a hash of each stretch's number says whether it holds a
+strike and when, and a strike is two or three decaying flickers. Its brightness goes into the frame's cloud data,
+where the Sky light pass adds it to the sky's light, and onto a gradient sky's colours.
+
+The engine's `weather::update`, early in each tick, advances the resource by the tick's time and keeps rain and
+snow falling: for each, four Particle Systems made from the starter effect, widened to a 24 m box, in the world's
+space, on `EditorOnly` Objs moved to stay over the viewer (`terrain::viewer`: the Scene view's camera in the
+editor, else the game's). Layers are turned on and off whole, because a simulated system whose rate changes is
+given new room and starts afresh; a layer stopped keeps its `PlayedEffect` mark, so the particles' own clean-up
+takes its Obj away once its last drops have fallen.
+
+Lighting settings carry `[weather]` (`lighting::WeatherData`), and `apply_environment` puts the level in it, or
+in clear weather, whenever lighting settings are applied. Scripts reach it as the seasons are reached: the engine
+publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame. The C# side
+raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
+frame's.
+
+**Look packs** (`voxear_engine::look_packs`) are the other thing laid over a level's lighting, and the player's to
+choose. A `.lookpack` is the `[sky]`, `[sun]` and `[post]` of lighting settings, partly written, with `[blocks]`. The
+pack worn is the world's `Wearing`; the level's own `Sky`, `SunLook` and `PostProcess` are never changed by it. Each
+tick `look_packs::update` merges the pack's tables over those three as they are (the same `merge` lighting settings
+use over a look) and leaves the result in the world as `voxear_render::WornLook`, and `extract` draws the frame with
+that in their place and passes its small cubes on to every world of blocks (`ExtractedFrame::block_voxels`). It is
+worked out again only when the level's lighting or the pack has changed, so wearing one costs a comparison a tick.
+Weather goes over the worn look as it goes over the level's own. Packs are the engine's (`BUILTIN`), the project's
+assets, or files in the player's `Looks` folder beside the saves; the reference of the one chosen is kept in
+`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts. A pack's `[water]` is laid over the sea
+and each Pool of water as they are extracted (`WaterLook`), and over the water of worlds of blocks as one colour in
+the ocean's record. A pack's `[shader]` names a look shader, a `.shader` with a `look` function: the engine writes
+every such shader into `project_look_shaders.slang` behind `customLook` (as it writes UI shaders behind `customUi`),
+the `post` module is compiled with it, and Composite calls it last with the pixel's colour, by the number and the
+values the frame's post settings carry.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 
@@ -1784,7 +1865,8 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   command finds none; while playing, a command runs against the game. Rust code built on the editor adds commands
   with `Editor::add_command(PaletteCommand { id, title, keys, icon, run })`, `run` getting the editor.
 - **Settings** (`settings`): the Scene view's snap distance, handle position (pivot or center) and space (global or
-  local), fly speed, and whether the stats chip and axis gizmo show; whether Play starts paused, saves first, clears
+  local), fly speed and whether flying speeds up, and whether the stats chip and axis gizmo show; whether Play
+  starts paused, saves first, clears
   the Console, pauses on an error, and reloads changed scripts while playing; the Scene view's shading and gizmos;
   and the Console's Collapse and trace toggles, and which code editor opens files. They are kept per project in
   `.voxear/Editor.toml` with the palette's recent items and the layouts, the saved ones, each one's arrangement
@@ -3299,7 +3381,8 @@ come. GPU culling of patches against last frame's depth, and horizon culling ove
 culling below.
 
 **Plants.** Placed plants (trees, rocks) are a Foliage's `Plants` (`voxear_scene`), numbered by their place, kept
-with or without a renderer, so trunks collide on servers too; one cut down is only marked gone, so nothing is built
+with or without a renderer, so trunks collide on servers too, as capsules, or as boxes for plants solid all through
+such as rocks (`Trunk::solid`, a Foliage's Collider row); one cut down is only marked gone, so nothing is built
 again and saves name it by its number. Grass and details are densities a byte a kind a sample, scattered on the GPU
 each frame round each view's camera on a grid fixed to the world, into runs of blades per kind and ring of
 distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`).
@@ -3321,7 +3404,20 @@ blocks in it and indices in as few bits as it needs; faces where a block meets a
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
-and each sun cascade only their faces turned towards the sun;
+and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
+(`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a
+grid of small cubes over the whole world from where it meets the face, each small cube standing a whole number of
+them below the face by how dark its part of the picture is, or by a hash of its place on a face with no picture,
+until the ray meets a top or a side; the face's pictures are then read at that small cube's middle, one small cube
+wide, and its normal is the small cube's own face. Nothing is cut out and no depth is written, so the mesh, the
+shadows, the depth pass and collision are the plain world's, and the pixel takes less of it as the small cubes
+shrink on screen. A block that sways (`BlockFaces::sways`: its `.block`'s **Sways in wind**, or a material that bends
+in the wind) keeps a quad to each of its faces, and four spare bits of the quad's first word say which of its corners
+no still block touches (`mesh::swaying_corners`). `blockSway` moves those corners with the gust over them, each at a
+phase hashed from its whole-number place among the world's corners, so every face meeting at a corner moves it alike
+and held corners keep leaves on their wood: nothing parts. The depth and shadow passes move them too, last frame's
+place gives their motion, and a face's picture and bounced light are read where it stands (`VertexOut::moved`). A face
+drawn with its block's colour alone is matt (roughness 1). Further,
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
@@ -3371,7 +3467,16 @@ colour or material a face is drawn with: a quad names its look in eight bits, an
 renderer's buffer of surfaces. Past that a block gets no number, and the Console is told once (`say_full`). A world
 written while worlds kept all their kinds themselves still reads and draws as it did; in the editor its kinds made
 by hand become blocks beside it as it opens (`block_props::make_kinds_blocks`). The editor's Blocks panel
-(`block_database`) is the project's blocks as a grid of tiles made a row at a time. Items, tool kinds, stations and recipes
+(`block_database`) is the project's blocks as a grid of tiles made a row at a time. Generated ground takes its
+blocks from biomes: `.biome` assets (`generate::biomes`), each the climate and heights it lies in and its ground's
+blocks by reference, which a world lists in its `[generate]`. The engine reads them with the world
+(`blocks::with_biomes`), numbering the blocks they name in its palette, and gives generation the result
+(`BlockGenerate::placed`), which is no part of the file. Each column is the biome its climate and height are within
+or nearest (`Biomes::at`) and takes that biome's top, under, deep, steep and shore blocks, the world's own where the
+biome names none. A biome saved counts as a block saved does: `blocks::refresh` places every stale world's biomes
+again and, where they are others, makes its ground again with its changes kept, the same in the editor and in play;
+the editor's `change_file` places them again before anything else, so a list of biomes changed is ground made again
+as one edit. Items, tool kinds, stations and recipes
 are C# Definitions of Voxear.Core's own, so games derive from them; `Blocks.Mine`, `Place`, `Scoop` and
 `Recipes.Match` apply the rules, and what holds items is a package's. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
@@ -3417,6 +3522,51 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
+materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
+`BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block
+where it asked one: whether it is ground (`is_ground`: it closes corners, is stood on, is triangles) and whether it
+hides what is behind it (`hides`: ground not seen through). A face is made wherever ground meets a block that
+does not hide it, so leaves keep their faces against leaves and a trunk keeps its faces under them; `buried` and
+the sights between a chunk's sides use `hides` too. Drawing needs no second pass or pipeline: `blocks.slang` reads
+the face's surface's material and discards under its cutoff inside `terrainShading`, which the depth pass and the
+shaded pass both call, so the two agree. The shadow pass has a fragment stage of its own for it
+(`blockShadowFragment`), which returns at once for a face that is not cut out and else samples the same picture.
+
+**Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
+the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
+(blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared
+placement grid (`generate::structures::Placement`, one try a cell, whole-number hashes) for the tries in one chunk
+column, and keeps those whose highest block under the open sky is ground the rule likes. A column is read alone,
+its slope from its own blocks, so it grows what it grows among its neighbours, and the plants are the same on every
+machine. They are grown from the ground as made (`BlockWorldAsset::base`), never from what was built. The engine
+(`grown_plants`) keeps each column's plants on an Obj of its own under the world, unnamed and in no scene
+(`GrownColumn`), carrying the Foliage's mesh, distances, trunks and layer: the renderer and physics build a Foliage's
+plants whole whenever its list changes, so a list a column keeps them from building anything again as columns come
+and go. Only columns within the Foliage's draw distance of the viewer have plants, eight made a tick, nearest
+first, a column's highest blocks read once for every Foliage that grows on it. Where the draw distance passes the
+world's own blocks, a column under a coarser ring that shows (`BlockWorld::far`) is grown from the generator's
+heights instead (`grow_far`, `generate::surfaces`): the same tries, the same tests on the tops its blocks would
+have, so the same plants wherever the ground is a plain height, each stood no higher than the ground of the ring
+showing and the next out, and grown again from its blocks once they are made. Each plant remembers its block; when the faces of that block's chunk are made again, the column's
+plants are checked against the blocks and those whose ground changed are marked gone, a bit each, and unmarked when
+it is put back. So nothing of them is saved or sent: whoever has the blocks has the plants. A plant a script takes
+away shows as a bit the engine did not set; it is kept on the Foliage's Obj by column and number (`CutPlants`), put
+on again whenever that column's plants are made, and written after the blocks' changes (`VXCP`) that saves and
+joining players carry. The starter plants
+(`voxear_render::StarterPlant`) are box models of cubes made by code, written into a project as it picks them.
+Past where plants are drawn they show as blocks. The streamer has one hook for anything a generator builds
+beyond the near chunks (`stream::FarBuilt`, a list on `BlockMaking`): each says a stamp, the first ring it is
+built into, and builds into a far tile with `FarTile::add`. Tiles are cached on disk bare and built into as they
+are read, so the cache never depends on what is built; rings below the far view's first are real chunks, so
+there the bare tile and the built one are made from heights and their difference is put into the chunks. The
+list is no part of `BlockMaking::same`: when its stamps change, every coarse column from the first ring built
+into is marked stale and made again while the old shows, and a column that comes back made under an older stamp
+stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the rule's tests on the tile's own
+top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
+plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
+plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
+
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
 square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on
@@ -3445,7 +3595,19 @@ as a minimap on the HUD or a map opened over the game.
   level, at)` makes one on any thread from a `MapGround`: `Made`, a world without end, whose tile is the far view's
   (`far_tile_kept`, so levels 3 and up share `.voxear/FarView`) with every change put in, exact at level 0 and by
   shares coarser (built from an eighth, dug past a half); or `Held`, a world whose chunks are all held, read from
-  its blocks. `MapColumn::of_runs` is the one place runs become a column.
+  its blocks. `MapColumn::of_runs` is the one place runs become a column. Before the changes go in, a `Made`
+  tile takes what stands on its ground: the generator's structures, built over the tile's chunk columns at once
+  into a list of blocks (`structure::build_over`, the builder the chunks use, so a map and the world agree), out to
+  level 3. Past level 0 they are stood as they look from above (`stand_built`): a cell is built up where three
+  eighths of its columns of blocks are built on, to their mean height, their top block as deep as it lies on
+  them and their walls' block under it, and such a column is `layered`, which the shader reads from bit 16 of
+  its depths to draw its sides as its layers are rather than in its top block's colour. And the plants the world grows (`MapGround::growing`, a `Woods` a kind), each stood where `grow_far`
+  puts it while it is a cell across, as the far view's woods past that.
+- **Structures' sites** (`structure::looks`): building a chunk column, or a map tile, looks for each structure's
+  sites only as far as they can matter there: its own reach, and for each structure listed after it, as far as
+  that one is looked for and then as near as the two may stand. Trees, listed last, are looked for a crown's
+  width off rather than as far as a dungeon reaches under the ground, which is most of what a column with
+  structures costs to make.
 - **Drawing** (`voxear_render::map`, `shaders/map.slang`): a map keeps a window of columns, a power of two cells a
   side, each at its place modulo the side, in a buffer on the GPU alone, written through a staging buffer as tiles
   come (`write_map_tile`); beside them, the highest block of each 8 by 8 cells and of each tile. The fragment shader
@@ -3458,8 +3620,15 @@ as a minimap on the HUD or a map opened over the game.
 - **The game's maps** (`voxear_engine::map`, `Maps`): each frame, for every map view in the screen's UI
   (`voxear_ui::map_view`, the `Minimap` and `Map` elements), it keeps what the world's tiles are made from, marks
   the tiles a change lies in to be made again, asks for the tiles the view's window needs on the terrain's threads,
-  nearest first, writes those that came, and asks the renderer to draw. A map opened large hears the pointer: a
-  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two.
+  nearest first, writes those that came, and asks the renderer to draw. A tile that comes made from older ground
+  is kept as it is unless a change lies in it (`KeptGround::changed_since`): a world streaming round the camera is
+  another ground every frame, and none of that changes a map. A map opened large hears the pointer: a
+  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two. A view
+  looks at the ground under what it follows (`ShownMap::ground`), not at how high that is, so the ground is where
+  the arrow is though the camera flies. A view its ground covers (`cover`, a minimap) draws all its window's
+  ground, 110 cells to each side, and shows the middle 46 of it at its fill: the rest is there for the corners of
+  the view, which look further off the lower the ground lies. Where even that does not reach, `covers()` brings
+  the camera nearer.
 - **Components** (`map::parts`): `Map` puts a minimap and a map on the screen in a document of its own and opens
   the map by an input action, freeing the mouse and leaving on only that action's input map; `MapMarker` marks its
   Obj. Both are saved in scenes and prefabs as `[obj.map]` and `[obj.map_marker]`, and shown in the Inspector.

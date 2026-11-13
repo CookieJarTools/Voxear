@@ -1000,6 +1000,103 @@ Done so far:
   grid round the sky, each show where it outshines a few hundredths of the sky behind it, so none by day and the
   brightest first at dusk. The moon and the stars are drawn as the dark-adapted eye sees them, whatever the
   exposure. `[sky] stars` scales them. GPU test: stars and the moon under the moon, none in a day sky.
+- **Clouds:** `[sky.clouds]` (`Sky::clouds`): cover, height, thickness, size, density, drift and shadows, with a
+  Clouds tab on the Lighting page, and clouds to suit in every built-in look but Candlelit Castle. A layer between
+  two heights over the level's ground, shaped from the smoke's baked tiling noise: round puffs for the bodies,
+  smaller puffs and swirls bitten out of their edges, more cloud here and less there from a noise hashed on whole
+  numbers, and one flat underside for them all.
+  - **Clouds** pass: the layer marched along each pixel's ray at half size, 40 steps from a start jittered each
+    frame and 4 towards the sun from each, blended with last frame's picture where that part of the sky was then.
+    Lit by the sun through the air and by the sky, hazed with distance, laid over the sky by the sky pass with the
+    sun, moon and stars behind.
+  - **Cloud shadows** pass: a 256² map of the sun let through, 6 km each way round the camera, read wherever the
+    sun's shadow is (`sunShadow`, `sunShadowHard`), so cloud shadows cross ground, blocks, plants, water, smoke and
+    particles, and the fog's shafts fall between clouds. Under the atmosphere the sky's light greys with cover.
+    The map's texels, 47 m wide, are on a grid that drifts with the clouds (`clouds::shadow_middle`), so a shadow
+    glides over the ground; on a grid fixed to the ground it crossed it a texel at a time, in jumps.
+  - **Clouds built of cubes:** `kind = "blocks"` (`CloudKind::Blocks`) with `block`, a cube's width. A cube is
+    cloud or not as its middle is, so the shadow map's shadows are square too; the Clouds pass walks the cubes
+    along each ray, 128 at most, out to 16 km, to the first one's face, and lights the face all one colour by
+    where it faces and the cubes between it and the sun. The ray's place within its pixel moves each frame, so the
+    blend with last frame's picture smooths the cubes' edges. `softness` turns the cubes to mist: each takes out
+    only some of the light, less the nearer its cloud's edge, the walk goes on through them, and they are lit
+    through rather than a face at a time.
+  - The clouds drift along the Wind Zone's direction, and keep their place as the world's middle moves.
+  - At 1080p on an RTX 3070, both passes together: 0.7 to 0.85 ms for soft clouds, 0.5 ms for solid cubes and
+    0.7 ms for soft ones; nothing with no cover. GPU tests: cover fills the sky by its amount and is the same each run, clouds show in a gradient
+    sky and under the moon, shadows put the ground in light and shade and move on as the clouds drift, cubes have
+    flat faces and shade the ground, and the cost at 1080p. Editor and file tests: the Clouds tab's settings are
+    written under `[sky.clouds]` one at a time over the look's.
+  - Later: clouds in front of far ground and round a camera inside them, clouds in reflections.
+- **Weather:** a `Weather` resource (`voxear_render::weather`) laid over the level's lighting as each frame is
+  drawn, so the lighting is never changed and clear weather is the lighting as it is. Six amounts from 0 to 1:
+  cloud fills the sky's clouds towards overcast; darkness thickens them, darkens their shadows and takes the sun's
+  light; fog thickens the fog (turning it on) and the haze; wind strengthens the Wind Zone for plants, particles,
+  the clouds' drift and a sea that follows it; rain and snow fall round the viewer; lightning strikes.
+  - **Kinds:** Clear, Cloudy, Overcast, Rain, Storm, Snow, Fog, each a set of amounts, and Custom. Setting one
+    with a time eases every amount from what it is now, by time passed.
+  - **Rain and snow** (`voxear_engine::weather`): the starter effects over a box 24 m wide that stays over the
+    viewer, in the world's space, as four Particle Systems each on Objs of the engine's own. As many are on as the
+    amount reaches into; one stopped lets its drops finish and is taken away as a played effect is.
+  - **What stays:** rain soaks every surface in 25 s and it dries over three minutes; snow settles on what
+    faces up in 90 s, in patches first, and melts in four minutes, or in 40 s of heavy rain
+    (`WeatherGround`, `weatherSurface` in `shading.slang`, for meshes, terrain and blocks alike). Weather a level
+    starts in has already settled.
+  - **Lightning:** strikes at times worked out from the weather's own clock, so the same weather has the same
+    lightning; each two or three flickers that light the sky's light, the clouds and a gradient sky's colours.
+  - **Lighting settings:** `[weather]` with a `kind`, or `custom` and amounts; applying lighting sets the weather
+    to it, or to clear. A Weather tab on the Lighting page, the amounts shown for Custom.
+  - **Scripts:** `Weather.Set(kind, seconds)`, `Weather.Set(amounts, seconds)`, `Weather.Kind`, `Weather.Amounts`,
+    `Weather.IsTurning`, `Weather.Wetness`, `Weather.SnowCover`, `Weather.Flash`, and the events
+    `Weather.Changed` and `Weather.Struck`; `WeatherKind` and `WeatherAmounts`. The script API is version 79.
+  - Tests: easing and what each amount does; soaking, drying, settling and melting; lightning's times; lighting
+    files; the page's rows; a C# system turning the weather, reading it back and hearing it change; GPU pictures
+    of overcast, storm and fog against clear, of rain and snow falling, of wet soil, first snow and lying snow,
+    and of a strike.
+  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds, the same weather on every machine
+    of a networked game and in saves, weather by climate in generated worlds.
+- **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the
+  `[sky]`, `[sun]` and `[post]` of a `.lighting` file, with `[blocks]` for every Block World's small cubes, laid
+  over whatever lighting a level has rather than in place of it. The level's own sky, sun look and
+  post-processing stay in the world; each tick `look_packs::update` lays the pack worn (`Wearing`) over them as
+  they are then and leaves the result as the renderer's `WornLook`, which a frame is drawn with, worked out again
+  only when either changed. A pack that names a `look` starts from that built-in look instead. The weather is the
+  level's: a pack cannot set it.
+  - **Where packs come from:** six built in (`builtin:sunlit`, `cube_clouds`, `little_cubes`, `painted`,
+    `old_film`, `plain`), the project's assets, all of which ship in a build, and a player's own files in `Looks`
+    beside the game's saves (`file:` and a path). `look_packs::list` gives them all.
+  - **The choice is kept** beside the saves (`look.txt`, as the language is) and worn as a game starts, in a build
+    and when the editor plays.
+  - **Scripts:** `LookPacks.All`, `Current`, `Use(pack, remember)`, `UseNone`, `Folder`, `Changed`; `LookPack`
+    with its `Name`, `Description` and `Source`, the built-in ones by name, and as a field picked in the
+    Inspector; `LookPackScreen.Open()`, a ready-made menu down the screen's left. The script API is version 81.
+  - **Editor:** New Look Pack in the Project panel; the Inspector's description and what a pack changes over its
+    text; **Look pack** on the Lighting page, which shows the scene under a pack and saves nothing; a pack saved
+    from a text editor is worn again at once.
+  - Tests: laying packs over looks (what changes, what stays, a level with no sun look, a pack's own look,
+    settings there are not), every built-in pack, the worn look following the level's lighting, a player's
+    folder; a C# system listing, wearing, trying and taking off packs, and the game starting in the one kept; a
+    GPU picture of a Block World under each built-in pack with the level's own lighting unchanged.
+  - **Water:** `[water]` (`WaterData`, the renderer's `WaterLook`): deep, scatter, clarity, murk and foam over
+    the sea and every Pool of water as a frame is extracted; Block Worlds' water takes `deep` through
+    `GpuOcean::block_water`, which `blockWaterLook` puts in the block's colour's place.
+  - **A look shader:** a third kind of `.shader`, one with a `look` function (`ShaderInfo::look`), given each
+    pixel of the finished picture at the end of Composite (`LookInput`, `shaders/look_custom.slang`,
+    `look_dispatch_code`, the `post` module among those compiled with a project's shaders, in the editor and into
+    a build). A pack names one with `[shader]` and its properties by name; `look_packs::wear` finds its number
+    and values (`shaders::look_shader`) and they travel in `GpuPost::look_shader` and `look_values`, up to 8.
+    New Shader offers Look. A renderer compiles its custom shaders in a folder of its own, so two in one
+    process do not write over each other's.
+  - **The Inspector:** a pack shows as lighting settings do (`LightingFields::for_pack`): the same tabs but
+    for the weather, with Pack, Water and Blocks; a row empty, or its menu on Level's own, where the pack writes
+    nothing; a toggle as a menu of three; a colour with a button to give it back; what the pack writes in bold.
+    A table emptied of its last setting leaves the file (`prune`).
+  - Tests added with these: the ready-made screen opened, its rows' layout and picking; the Inspector's rows
+    typed in, emptied and written; a pack's water over a sea, a Pool and lava, and a GPU picture of a pond of
+    blocks in a pack's colour; a look shader read, dispatched and given a pack's values, a GPU picture of one
+    turning the sky to its negative, and a project's pack wearing its shader and refusing others.
+  - Later: texture packs for a pack's own pictures; a look shader reading the pixels round it and the depth; a
+    picker for a pack's shader in the Inspector.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests
@@ -1176,6 +1273,33 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   strongest push outwards from each pusher. `wind.slang` reads it at each vertex, blended over four cells, and
   bends the plant away from the ground up, on an arc, with or without wind. GPU test: a pole leans from a pusher
   beside it and stands again once it has gone.
+- ~~**Plants of cubes, leaves of blocks, and characters:**~~ done.
+  - A box model has a `wind_bend` (the Model window's Inspector, under Model; `MaterialDesc::wind_bend` on its
+    material): it bends in the wind and from pushes as any plant, with no flutter, which would part its cubes'
+    faces, and masks of its own (`sway_masks`) that sway what reaches out from over its foot. The starter plants
+    have theirs: a tuft 2, a flower 1.5, a bush 0.8, trees 0.25 to 0.35, a rock 0.
+  - A block **sways** where its `.block` says so or one of its materials bends in the wind (`BlockKind::sways`,
+    read where the world is resolved, as `cutout` is). The mesher keeps such a block's faces a block each and
+    marks, in four spare bits of a quad's first word, which corners no still block touches
+    (`mesh::swaying_corners`); `blockSway` in `shaders/blocks.slang` moves those, by the gust over them and at a
+    phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
+    frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
+    world's first level sways. The face's picture and its bounced light are read where it stands.
+  - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
+    in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
+  - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds
+    drift there, for plants and particles alike.
+  - **Solid plants:** a Foliage's **Collider** is None, Trunk or Box (`Trunk::solid`, `box = [x, y, z]` in a
+    scene's `[obj.foliage.trunk]`): a box standing on the ground, sized, turned and leaning with each plant, for
+    rocks, stumps and crates. Picking Box fits it to the plant's model. The starter rock has one.
+  - A cooked model keeps its materials' wind bend and flutter (`COOKED_VERSION` 13), so a built game's plants of
+    cubes bend too.
+  - A block's face drawn with its colour alone is matt (roughness 1, where it was the default 0.5 and shone).
+  - Tests: the mesher's free and held corners; GPU pictures of a pine leaning in a wind, a tuft pushed over by a
+    walker, a rock that does neither, and a tree of blocks whose leaves stir while its trunk and ground stay
+    still; a ray meeting a rock's box, turned and sized; the Model window's Wind bend typed, saved and undone.
+  - Later: a breeze on a clear day with no Wind Zone, block leaves pushed aside, a collider of a plant's own
+    cubes rather than a box, plants of an earlier project given their bend by `vox upgrade`.
 - ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
   (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `snow`), `variation`,
   `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
@@ -2009,7 +2133,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (`ClimateSource`), or from height alone without one; Cover's Rules renamed from Height and Slope. Grass on
   surfaces follows. Tests: climate fields and cooling, snow where cold and desert where hot and dry, the editor (a
   Snow surface nowhere in a mild world, everywhere once its temperatures widen). Manual: Surfaces, Generating
-  Terrain. Not done: trees scattered by rules (a Foliage's plants by surface or biome).
+  Terrain. Not done: trees scattered by rules on a heightmap terrain (a Foliage's plants by surface or biome); a
+  Block World grows its own (see Block worlds, Plants a world grows).
 - ~~**Endless worlds:**~~ done: a terrain's Endless setting (`[endless]` in its file: view distance and spacing,
   0.25 to 4 m) keeps a window of tiles round the camera (`voxear_terrain::endless`), up to 33 a side, its heights
   starting at `Terrain::origin`. Each tile is made alone on the terrain's background threads from the layers that
@@ -2025,7 +2150,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   saving, the editor's Endless setting, the GPU drawing the same ground after a move. Manual: Endless Worlds. Not
   done: coarser far tiles, rivers along valleys without end.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
-  - trees and other plants scattered by surface and biome
+  - trees and other plants scattered by surface and biome (done for Block Worlds, which grow their own; heightmap
+    terrains to come, with the same rule)
   - stream-power erosion for ranges
   - far tiles of endless worlds made and kept coarser
 - **Block worlds**, in parts: blocks you can see and stand on; generation from world generators, with caves;
@@ -2195,6 +2321,30 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     block once and full at 256 looks said once, the brush numbering what it builds with as one step to undo, the
     picker's order, the Blocks panel's grid, search, copies and deletes, an older world made blocks and drawn as it
     was, every block in a build, `Blocks.All` in a game.
+  - ~~**Biomes for worlds of blocks:**~~ done: a biome is an asset (`.biome`, `generate::biomes::BiomeDef`): its
+    colour, the temperatures, humidities and, where it keeps to any, heights it lies in, and its ground's blocks by
+    reference: top, under and how deep, deep, steep with its slope, shore with its height. A generated world lists
+    its biomes in its `[generate]` (`BlockGenerate::biomes`). The engine reads them with the world
+    (`blocks::with_biomes`), numbering the blocks they name in its palette, and gives generation the result
+    (`BlockGenerate::placed`, no part of the file); `columns_at` gives each column the blocks of the biome its
+    climate and height make it (`Biomes::at`: within its ranges or the nearest, one that keeps to a height first,
+    then the narrowest, borders wandering by noise), for near chunks and the far view alike, the world's own
+    blocks wherever a biome names none. A biome saved is read again, and every world listing it has its biomes
+    placed again and its ground made again with its changes kept (`blocks::refresh`, and `Content::block_world`
+    for one kept), in the editor and in play. Editor: a **Biomes** list under a generated world's generator rows
+    (`block_panel`, `BlockField::Biomes`), with Add Biome from the picker or a drop, a grip and a cross, each one
+    step to undo; a biome's Inspector (`biome_inspector`: Color; Preset of the eight climates, Temperature,
+    Humidity, Height and Heights; the ground's blocks as pickers with a cross), saved as it is edited; New Biome in
+    the Project panel's menu and the command palette; **Add Starter Biomes** (`starter_biomes`): Snow, Tundra,
+    Taiga, Grassland, Forest, Desert, Savanna and Rainforest in a Biomes folder beside the world with fifteen
+    colour blocks in its Blocks folder, a project's own blocks and biomes of those names used as they are. Tuned in
+    renders of mountains and hills at 1 m and 8 m blocks: the Snow keeps to heights from 260 m in any but a warm
+    place, since cooling 6.5 °C a kilometre alone leaves most peaks green, so mountains are white on top, rock on
+    their steep faces, and low ground never snow. A block's Cover rows hide where a world lists biomes and work as
+    they did where it lists none. Scripts: `Biome`, `Biomes.At(position)` (native API 78). Tests: generated ground
+    by biome, biomes numbered as a world loads, a saved biome making worlds again, a place's biome, the list added
+    to, moved, taken from and undone, the Inspector's fields saved, the starters made once and listed, snow by
+    height through the editor, scripts asking a place's biome.
 - **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
   origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -2255,6 +2405,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     scene after a 3 km move matching the picture before it, and 131 km out matching it near; cascades' texels kept.
     Not done: a server exact for players far from the level's middle; GI probe spacings other than powers of two
     placed again on a move.
+- ~~**Faces of small cubes:**~~ done: a Block World's **Voxels** (how many small cubes along a block's side) and
+  **Relief** (how many deep the deepest sink), `voxels` and `relief` in its file, `BlockVoxels` on its look. The
+  cubes' faces are shaded as a grid of small cubes over the whole world (`blockCubes` in `blocks.slang`): one
+  colour each, the picture's there; sunk where the picture is darker than it is all over, or by a hash of their
+  place where a face has only a colour; the ray walked across the grid to a top or a side, twelve small cubes at
+  most. The mesh, shadows, depth and collision are unchanged, and the faces go plain where a small cube is under
+  a pixel. About 0.1 ms a frame at 640×360 with faces near. GPU test: small cubes near, finer with more, flat
+  without relief, the same each time, and plain from far above; file and editor tests of the two rows.
+  - Later: a block's own relief, small cubes that stand out from a face and change its outline, their shadows,
+    small cubes on a Voxel Terrain.
 - ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
   (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
   shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and
@@ -2324,6 +2484,48 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   it; zooming keeps a map its size on the screen. Not done: heightmap Terrain as ground; trees and structures,
   which show once the far view carries them; turning the map with a gamepad without a script; a map keeping the
   ground as it was last seen.
+- ~~**Plants a world grows:**~~ done: a Foliage under a Block World grows by itself on the world's ground
+  (`[obj.foliage.grow]`, `scene_file::GrowData`): the blocks it stands on, temperature, humidity and height ranges
+  (a Biome sets the climate at once), steepest ground, spacing, least apart, chance, patch size, sizes, aligned to
+  blocks or free, and a seed. `voxear_terrain::blocks::grow` works a chunk column's plants out from that column's
+  generated blocks alone, on the placement grid structures share, so a column made alone agrees with its neighbours
+  and the same world grows the same plants on every machine. The engine (`grown_plants`) keeps each column's plants
+  on a hidden Obj of its own under the world, drawn and collided as the Foliage's, made as the column's blocks are
+  and dropped as it goes, within the Foliage's draw distance, eight columns a tick. A plant is gone while its block is
+  dug, changed or built over, and back when the ground is: worked out from the blocks, so nothing is saved or sent.
+  Past the world's own blocks, a column under a coarser ring that shows has the same plants from the generator's
+  heights (`grow::grow_far`, tested plant for plant against the blocks), each kept clear of the ring's coarser
+  ground, so trees drawn to 500 m stand on far hills and are the same trees once near. A plant a script takes away
+  is kept on its Foliage by column and number (`voxear_scene::CutPlants`), stays gone as its column comes and goes,
+  and travels with the blocks' changes in saves and to joining players.
+  Six starter plants made of small cubes (`voxear_render::StarterPlant`: Grass Tuft, Flower, Bush, Rock, Tree,
+  Pine), each a box model written into the project's Plants folder when picked. Editor: a Foliage's **Grow** tool,
+  and **Add plant** on a Block World's Settings, which takes any model or a starter and makes the Foliage, one step
+  to undo; a click on a grown plant picks its Foliage. Tests: the rule (same every time, a column alone, by block, climate, height and slope, separation,
+  patches, gone and back), the engine on a world without end (two rules, the camera moved and back, digging and
+  building, a second run the same), a GPU picture of all six starters, the editor (a starter picked, grown,
+  changed, undone). Manual: Foliage, Block Worlds, Box Models. Woods in the far view: a Foliage's `far_block` shows
+  its plants past where they are drawn as a wood of that block (`grow::Woods`), over the ground as high as they
+  stand on as many of a ring's columns as would hold a plant, or as the top block's colour in rings of far taller
+  blocks; from the first ring the plants do not reach (`Woods::first_past`), where the plants themselves stop.
+  The streamer takes it through a hook any generated thing can use (`stream::FarBuilt`: a stamp, the first ring,
+  and a tile to build into): far tiles are kept on disk without what is built into them, a nearer ring made in
+  full takes it block for block from the tile its ground would be, and a change builds those rings again and no
+  ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
+  near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
+  terrains.
+- ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
+  is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
+  (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing
+  (`blocks::mesh`, `blocks::hides`): a face shows against a see-through block as against air, a see-through block
+  keeps its faces against its own kind, corners are still closed in by it, its faces are triangles to stand on,
+  and a chunk of it through and through still has faces and is seen through by the cave culling. The block shader
+  drops a face's fragments under its material's cutoff, in the depth pass, the shaded one and the sun's shadow
+  pass (`blockShadowFragment`), so a crown's shadow is dappled. Tests: the faces of a tree of leaves against the
+  same tree of solid blocks, the engine (read from the material, stood on), a GPU picture with the sky through a
+  crown and lit ground in its shadow. Manual: Blocks. Not done: the same for a world drawn smooth, rays for
+  bounced light, which take it as solid, and light through a leaf from behind (a material's foliage lighting is
+  not read for block faces).
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

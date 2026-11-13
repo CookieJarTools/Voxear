@@ -228,6 +228,18 @@ fn a_box_model_is_opened_built_on_picked_moved_and_undone_in_the_model_window() 
     assert!(texts_in(&editor.ui, tree).contains(&"Hat".to_string()));
     assert_eq!(saved(&dir).bones[2].name, "Hat");
 
+    // The model's own Wind bend, the last of the rows under any part of it: typed, it is the model's, saved with
+    // it, and a step to undo.
+    let mut values = Vec::new();
+    with_class(&editor.ui, inspector, "value-input", &mut values);
+    type_into(&mut editor.ui, *values.last().unwrap(), "0.5");
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().model().unwrap().wind_bend, 0.5);
+    assert_eq!(saved(&dir).wind_bend, 0.5);
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().model().unwrap().wind_bend, 0.0);
+
     // A click off the model picks nothing, and the Inspector shows the model itself.
     // The view's corner, where nothing of the model is.
     let [left, top, ..] = editor.ui.rect(editor.model_window().view().frame_node());

@@ -3,13 +3,13 @@
 
 /// Shader files that are only included by others, never compiled alone.
 pub const SHADER_MODULES: &[&str] =
-    &["atmosphere", "block_quads", "common", "culling", "custom", "ddgi_sample", "glow", "impostor", "lava", "lights", "occlusion", "particle_motion", "particle_shared", "seasons", "shading", "terrain_ground", "trace_software", "ui_custom", "ui_effects", "volume", "wind"];
+    &["atmosphere", "block_quads", "clouds", "common", "culling", "custom", "ddgi_sample", "glow", "impostor", "lava", "lights", "occlusion", "particle_motion", "particle_shared", "seasons", "shading", "look_custom", "terrain_ground", "trace_software", "ui_custom", "ui_effects", "volume", "wind"];
 
 /// Shader files that draw materials, and so call a material's custom
 /// shader, and the UI's, which calls a project's UI shaders: compiled again
 /// with a project's custom shaders.
 #[allow(dead_code)]
-pub const CUSTOM_SHADER_MODULES: &[&str] = &["forward", "meshlets", "shadow", "meshlet_shadow", "preview", "glass", "ui"];
+pub const CUSTOM_SHADER_MODULES: &[&str] = &["forward", "meshlets", "shadow", "meshlet_shadow", "preview", "glass", "ui", "post"];
 
 /// `slangc` arguments besides the input file, include path and output.
 pub const SLANG_ARGS: &[&str] = &[

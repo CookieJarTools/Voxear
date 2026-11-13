@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 78;
+pub(crate) const API_VERSION: u32 = 81;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -519,6 +519,24 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Block Mob, as
     /// `light_value` does an Obj's Light.
     pub block_mob_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Biome`: what a `.biome` says, by project path or GUID, as JSON; its
+    /// length, written when it fits, or -1.
+    pub biome_info: unsafe extern "C" fn(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `Biomes.At`: the GUID of the biome a place is; its length, or 0 where
+    /// no world of blocks with biomes reaches.
+    pub biome_at: unsafe extern "C" fn(at: *const [f32; 3], buffer: *mut u8, capacity: i32) -> i32,
+    /// `Weather`: the kind the level's weather is or is turning to, with ten numbers written to `state`: what it
+    /// adds this moment (cloud, darkness, fog, wind, rain, snow, lightning), how wet the ground is, how much snow
+    /// has settled, and how bright its lightning is; and whether it is still turning to `turning`. And turning it
+    /// over `seconds` to a kind, or with `amounts`, the first seven of those, to them.
+    pub weather_state: unsafe extern "C" fn(state: *mut [f32; 10], turning: *mut i32) -> i32,
+    pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 7], seconds: f32),
+    /// `LookPacks.Use`: wears the look pack a reference names from the next frame, or with none, takes off the
+    /// one worn; and, with `remember`, keeps the choice beside the saves for the game's next run.
+    pub look_pack_wear: unsafe extern "C" fn(reference: *const u8, len: i32, remember: i32),
+    /// `LookPacks`: every look pack there is to wear, which is worn and where a player keeps their own, as JSON;
+    /// its length, or -1 when there is none.
+    pub look_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1163,11 +1181,17 @@ thread_local! {
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static LOOK_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
     /// The level's time of year, as `Seasons.TimeOfYear` reads it: NaN
     /// without Seasons. Scripts setting it change it here at once, and the
     /// engine takes what they set after the frame.
     static TIME_OF_YEAR: Cell<f32> = const { Cell::new(f32::NAN) };
     static TIME_OF_YEAR_SET: Cell<Option<f32>> = const { Cell::new(None) };
+    /// The level's weather as `Weather` reads it: its kind, what it adds this moment and whether it is turning.
+    /// Scripts turning it change the kind here at once, and the engine takes what they asked after the frame.
+    static WEATHER: Cell<WeatherState> =
+        const { Cell::new(WeatherState { kind: 0, state: [0.0; 10], turning: false }) };
+    static WEATHER_SET: Cell<Option<WeatherRequest>> = const { Cell::new(None) };
     /// Which of the sea's costlier looks are on, as `Water.Features` reads
     /// them: none without an Ocean. Scripts setting them change them here at
     /// once, and the engine takes what they set after the frame.
@@ -1220,6 +1244,54 @@ pub(crate) fn take_level_requests() -> Vec<String> {
 
 pub(crate) fn take_lighting_requests() -> Vec<String> {
     LIGHTING_REQUESTS.take()
+}
+
+pub(crate) fn take_look_pack_requests() -> Vec<(String, bool)> {
+    LOOK_PACK_REQUESTS.take()
+}
+
+/// The level's weather as scripts read it: its kind, by its place among the kinds; what it adds this moment
+/// (cloud, darkness, fog, wind, rain, snow, lightning), then how wet the ground is, how much snow has settled and
+/// how bright its lightning is; and whether it is still turning.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeatherState {
+    pub kind: i32,
+    pub state: [f32; 10],
+    pub turning: bool,
+}
+
+/// What a script asked of the weather: to turn over `seconds` to a kind, or with `amounts` to those.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeatherRequest {
+    pub kind: i32,
+    pub amounts: Option<[f32; 7]>,
+    pub seconds: f32,
+}
+
+pub(crate) fn publish_weather(state: WeatherState) {
+    WEATHER.set(state);
+}
+
+pub(crate) fn take_weather() -> Option<WeatherRequest> {
+    WEATHER_SET.take()
+}
+
+unsafe extern "C" fn weather_state(written: *mut [f32; 10], turning: *mut i32) -> i32 {
+    let state = WEATHER.get();
+    if !written.is_null() {
+        unsafe { *written = state.state };
+    }
+    if !turning.is_null() {
+        unsafe { *turning = i32::from(state.turning) };
+    }
+    state.kind
+}
+
+unsafe extern "C" fn weather_set(kind: i32, amounts: *const [f32; 7], seconds: f32) {
+    let amounts = (!amounts.is_null()).then(|| unsafe { *amounts });
+    WEATHER.set(WeatherState { kind, turning: seconds > 0.0, ..WEATHER.get() });
+    let seconds = if seconds.is_finite() { seconds.max(0.0) } else { 0.0 };
+    WEATHER_SET.set(Some(WeatherRequest { kind, amounts, seconds }));
 }
 
 pub(crate) fn publish_time_of_year(time: Option<f32>) {
@@ -1458,6 +1530,11 @@ unsafe extern "C" fn level_load(level: *const u8, len: i32) {
 unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
     let reference = unsafe { utf8(reference, len) }.into_owned();
     LIGHTING_REQUESTS.with_borrow_mut(|r| r.push(reference));
+}
+
+unsafe extern "C" fn look_pack_wear(reference: *const u8, len: i32, remember: i32) {
+    let reference = unsafe { utf8(reference, len) }.into_owned();
+    LOOK_PACK_REQUESTS.with_borrow_mut(|r| r.push((reference, remember != 0)));
 }
 
 unsafe extern "C" fn seasons_time() -> f32 {
@@ -2032,6 +2109,12 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         set_world_budget: crate::blocks::set_world_budget,
         mob_motion_value,
         block_mob_value,
+        biome_info: crate::services::biome_info,
+        biome_at: crate::services::biome_at,
+        weather_state,
+        weather_set,
+        look_pack_wear,
+        look_packs_info: crate::services::look_packs_info,
     }
 }
 

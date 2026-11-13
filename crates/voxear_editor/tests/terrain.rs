@@ -3139,7 +3139,11 @@ fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed
     assert_eq!(path_of(&biome("Tundra").ground.shore), "Mine/Gravel.block");
     let made = std::fs::read_dir(dir.path().join("Blocks")).unwrap().flatten();
     let blocks = made.filter(|entry| entry.file_name().to_string_lossy().ends_with(".block")).count();
-    assert_eq!(blocks, 14, "the fifteen they need but the gravel, which the project has elsewhere");
+    assert_eq!(blocks, 15, "the fifteen of their ground and the vine, but the gravel, which the project has elsewhere");
+    // The wet ones hang vines of that block; the dry and the frozen none.
+    assert_eq!(block("Blocks/Vine.block").shape, voxear_terrain::blocks::block::BlockShape::Vine);
+    assert_eq!(path_of(&biome("Rainforest").vines.block), "Blocks/Vine.block");
+    assert!(biome("Rainforest").vines.amount > biome("Forest").vines.amount && biome("Desert").vines.is_none());
     // The ground is made again from them: rolling hills in a mild climate, so more than one kind of country and
     // none of it snow.
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();

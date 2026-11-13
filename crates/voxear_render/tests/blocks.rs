@@ -1965,7 +1965,7 @@ fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Ve
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut world = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels, motions: Arc::from([]) };
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     let towards = towards.normalize();
     let facing = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());

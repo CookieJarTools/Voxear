@@ -280,6 +280,19 @@ fn ask(requests: &Sender<Request>, call: String, args: Value) -> Answer {
     answer.recv().map_err(|_| gone())?
 }
 
+/// Whether the program that wrote the link file `folder`/`name` is still
+/// running: `Some(false)` when it is gone or there is no file, `None` where
+/// the system cannot say without asking it. Cheap, so a program waiting for
+/// the link can look often without waiting on another that is closing.
+pub fn holder_running(folder: &Path, name: &str) -> Option<bool> {
+    let Ok(text) = std::fs::read_to_string(folder.join(name)) else { return Some(false) };
+    let Ok(about) = serde_json::from_str::<About>(&text) else { return Some(false) };
+    if cfg!(target_os = "linux") {
+        return Some(Path::new(&format!("/proc/{}", about.pid)).exists());
+    }
+    None
+}
+
 /// Why no link could be reached.
 #[derive(Debug)]
 pub enum Unreachable {

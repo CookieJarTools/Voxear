@@ -61,6 +61,14 @@ pub fn ui(world: &World) -> FoliageUi {
     world.resource::<FoliageUi>().copied().unwrap_or_default()
 }
 
+/// The editor's plant tools, to change.
+pub fn ui_mut(world: &mut World) -> &mut FoliageUi {
+    if world.resource::<FoliageUi>().is_none() {
+        world.insert_resource(FoliageUi::default());
+    }
+    world.resource_mut::<FoliageUi>().expect("put in above")
+}
+
 pub fn show_tool(world: &mut World, tool: FoliageTool) {
     match world.resource_mut::<FoliageUi>() {
         Some(ui) => ui.tool = tool,

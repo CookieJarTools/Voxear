@@ -6,6 +6,7 @@ namespace Voxear;
 /// that the player can move, such as a crate to push. Objs scripts make from prefabs need none: a save of the scene
 /// keeps where each one is by itself.
 /// </summary>
+[AddComponentMenu("Saving/Saved Transform")]
 public sealed class SavedTransform : Behaviour
 {
 	[Saved]

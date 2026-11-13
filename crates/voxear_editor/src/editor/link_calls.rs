@@ -35,6 +35,8 @@ use crate::{
     settings::{self, SettingKind, SettingValue},
 };
 
+/// How often an editor waiting for the link asks for it again.
+const LINK_RETRY: Duration = Duration::from_secs(2);
 /// How often the open scenes' files and `voxear.toml` are looked at.
 const WATCH: Duration = Duration::from_millis(500);
 /// Frames a view is given to show before it is captured.
@@ -65,6 +67,13 @@ pub(super) struct Link {
     told: Vec<PathBuf>,
     /// The scripts' last build failed with this, for `scripts.build`.
     pub(super) scripts_failed: Option<String>,
+    /// The link this editor wants while another editor of the project
+    /// still has it, and when it last asked: it takes the link once that
+    /// one has closed.
+    wanted: Option<Instant>,
+    /// A script command may have given a world of blocks a block it did not
+    /// hold, whose look is taken up in the next frame.
+    pub(super) refresh_blocks: bool,
 }
 
 /// A call that answers once frames have gone by.
@@ -102,16 +111,49 @@ fn done(value: Json) -> Called {
 impl Editor {
     /// Opens the editor's link, so `vox editor call` and `vox mcp` reach it;
     /// `headless` says it has no window, so a windowed editor may take over.
+    /// While another editor of the project has the link, this one asks
+    /// again every few seconds and takes it once that one has closed.
     pub fn serve_link(&mut self, headless: bool) -> anyhow::Result<()> {
-        let folder = link::link_folder(&self.game.project.root);
-        let server = LinkServer::listen(&folder, link::LINK_FILE, "editor", headless)?;
-        tracing::info!(
-            "[Tools] tools can reach this editor: vox editor call --project {}",
-            self.game.project.root.display()
-        );
-        self.link.server = Some(server);
         self.link.headless = headless;
-        Ok(())
+        let folder = link::link_folder(&self.game.project.root);
+        match LinkServer::listen(&folder, link::LINK_FILE, "editor", headless) {
+            Ok(server) => {
+                tracing::info!(
+                    "[Tools] tools can reach this editor: vox editor call --project {}",
+                    self.game.project.root.display()
+                );
+                self.link.server = Some(server);
+                self.link.wanted = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.link.wanted = Some(Instant::now());
+                Err(error.context("tools reach this editor once the other one closes"))
+            }
+        }
+    }
+
+    /// Whether tools can reach this editor now.
+    pub fn has_link(&self) -> bool {
+        self.link.server.is_some()
+    }
+
+    /// Asks for the link again, while another editor had it.
+    fn ask_for_link(&mut self) {
+        if self.link.wanted.is_none_or(|asked| asked.elapsed() < LINK_RETRY) {
+            return;
+        }
+        self.link.wanted = Some(Instant::now());
+        let folder = link::link_folder(&self.game.project.root);
+        // An editor still closing is waited for without asking it, which could keep this one's frame waiting.
+        if voxear_engine::local_link::holder_running(&folder, link::LINK_FILE) == Some(true) {
+            return;
+        }
+        if let Ok(server) = LinkServer::listen(&folder, link::LINK_FILE, "editor", self.link.headless) {
+            tracing::info!("[Tools] the other editor closed: tools reach this one now");
+            self.link.server = Some(server);
+            self.link.wanted = None;
+        }
     }
 
     /// Makes a call from this program, as a test or `vox editor call
@@ -129,6 +171,10 @@ impl Editor {
 
     /// The calls since the last frame, and those waiting on frames.
     pub(super) fn update_link(&mut self, renderer: &mut Renderer) {
+        self.ask_for_link();
+        if std::mem::take(&mut self.link.refresh_blocks) {
+            voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
+        }
         self.watch_files(renderer);
         let mut requests = std::mem::take(&mut self.link.local);
         if let Some(server) = &self.link.server {
@@ -226,6 +272,10 @@ impl Editor {
                 self.frame(&objs, renderer);
                 done(json!({}))
             }
+            "view.get" => done(self.view_json()),
+            "view.set" => self.view_set(args),
+            "blocks.get" => self.blocks_get(args),
+            "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -503,15 +553,20 @@ impl Editor {
         done(json!({ "objs": found }))
     }
 
-    fn obj_get(&self, args: &Json) -> Called {
+    fn obj_get(&mut self, args: &Json) -> Called {
         let entity = self.obj_arg(args)?;
-        let (game, types) = (&self.game, self.inspector.types());
+        let types = self.inspector.types().clone();
+        let parts = props::parts(&self.game.engine.world, entity);
+        let named: Vec<Vec<(String, props::Prop)>> =
+            parts.iter().map(|part| link::named_props(&mut self.game, &types, entity, part)).collect();
+        let (game, types) = (&self.game, &types);
         let world = &game.engine.world;
         let state = ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
-        let components: Vec<Json> = props::parts(world, entity)
+        let components: Vec<Json> = parts
             .iter()
-            .map(|part| {
-                let fields: Vec<Json> = link::named_props(game, types, entity, part)
+            .zip(&named)
+            .map(|(part, named)| {
+                let fields: Vec<Json> = named
                     .iter()
                     .map(|(name, prop)| link::field_json(game, types, entity, name, prop))
                     .collect();
@@ -765,7 +820,7 @@ impl Editor {
         let entity = self.obj_arg(args)?;
         let part = link::part_on(&self.game, entity, need_text(args, "component")?)?;
         let types = self.inspector.types().clone();
-        let prop = link::resolve_prop(&self.game, &types, entity, &part, need_text(args, "field")?)?;
+        let prop = link::resolve_prop(&mut self.game, &types, entity, &part, need_text(args, "field")?)?;
         let before = ObjState::of(&self.game.engine.world, entity)
             .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         change(&mut self.game, &types, entity, &prop);
@@ -778,11 +833,25 @@ impl Editor {
         let part = link::part_on(&self.game, entity, need_text(args, "component")?)?;
         let field = need_text(args, "field")?;
         let types = self.inspector.types().clone();
-        let prop = link::resolve_prop(&self.game, &types, entity, &part, field)?;
+        let prop = link::resolve_prop(&mut self.game, &types, entity, &part, field)?;
         let now = props::get(&self.game, &types, entity, &prop)
             .ok_or_else(|| refuse(ErrorKind::NoSuchField, format!("`{field}` has no value to set")))?;
-        let setting =
-            link::read_value(&self.game, &now, need(args, "value").or_else(|_| Ok::<_, LinkError>(&Json::Null))?)?;
+        let given = args.get("value").unwrap_or(&Json::Null);
+        // A reference is first looked for in the field's menu, by the value `field.choices` gives or its label: so
+        // one set by a key, as an input action, is set as it is listed.
+        let offered = match now {
+            // None as the menu has it, which for a field set by a key is not an Obj's or a file's none.
+            Value::Obj(_) | Value::Asset(_) if given.is_null() => props::choices(&self.game, &types, entity, &prop)
+                .into_iter()
+                .map(|(_, pick)| pick)
+                .find(|pick| link::pick_json(&self.game, pick).is_none()),
+            Value::Obj(_) | Value::Asset(_) => link::offered_pick(&self.game, &types, entity, &prop, given),
+            _ => None,
+        };
+        let setting = match offered {
+            Some(pick) => Setting::Pick(pick),
+            None => link::read_value(&self.game, &now, given)?,
+        };
         let before = ObjState::of(&self.game.engine.world, entity)
             .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         match setting {
@@ -823,26 +892,19 @@ impl Editor {
         Ok(())
     }
 
-    fn field_choices(&self, args: &Json) -> Called {
+    fn field_choices(&mut self, args: &Json) -> Called {
         let entity = self.obj_arg(args)?;
         let part = link::part_on(&self.game, entity, need_text(args, "component")?)?;
-        let types = self.inspector.types();
-        let prop = link::resolve_prop(&self.game, types, entity, &part, need_text(args, "field")?)?;
+        let types = self.inspector.types().clone();
+        let prop = link::resolve_prop(&mut self.game, &types, entity, &part, need_text(args, "field")?)?;
+        let types = &types;
         if let Some(Value::Choice(_, options)) = props::get(&self.game, types, entity, &prop) {
             let choices: Vec<Json> = options.iter().map(|option| json!({ "label": option, "value": option })).collect();
             return done(json!({ "choices": choices }));
         }
         let choices: Vec<Json> = props::choices(&self.game, types, entity, &prop)
             .into_iter()
-            .map(|(label, pick)| {
-                let value = match pick {
-                    Pick::Obj(Some(target)) => obj_ref(&self.game, target),
-                    Pick::Asset(Some(path)) => link::asset_ref(&self.game, &path),
-                    Pick::Key(Some(key)) => json!({ "key": key }),
-                    Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) => Json::Null,
-                };
-                json!({ "label": label, "value": value })
-            })
+            .map(|(label, pick)| json!({ "label": label, "value": link::pick_json(&self.game, &pick) }))
             .collect();
         done(json!({ "choices": choices }))
     }
@@ -1127,6 +1189,136 @@ impl Editor {
             .save(&path)
             .map_err(|error| refuse(ErrorKind::Failed, format!("writing {}: {error}", path.display())))?;
         done(json!({ "path": path.display().to_string(), "width": image.width, "height": image.height }))
+    }
+
+    fn view_json(&self) -> Json {
+        let Some(camera) = self.game.engine.world.get::<voxear_scene::Transform>(self.scene.camera) else {
+            return json!({});
+        };
+        let (y, x, z) = camera.rotation.to_euler(EulerRot::YXZ);
+        json!({
+            "position": camera.position.to_array(),
+            "rotation": [x.to_degrees(), y.to_degrees(), z.to_degrees()],
+            "forward": (camera.rotation * Vec3::Z).to_array(),
+        })
+    }
+
+    fn view_set(&mut self, args: &Json) -> Called {
+        let (position, rotation, look_at) =
+            (opt_vector(args, "position")?, opt_vector(args, "rotation")?, opt_vector(args, "look_at")?);
+        if rotation.is_some() && look_at.is_some() {
+            return Err(bad("give `rotation` or `look_at`, not both"));
+        }
+        self.glide = None;
+        let camera = self.scene.camera;
+        let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(camera) else {
+            return Err(refuse(ErrorKind::Failed, "the Scene view has no camera"));
+        };
+        if let Some(at) = position {
+            transform.position = Vec3::from_array(at);
+        }
+        if let Some([x, y, z]) = rotation {
+            transform.rotation = Quat::from_euler(EulerRot::YXZ, y.to_radians(), x.to_radians(), z.to_radians());
+        }
+        // The camera looks along its +Z: turned about Y to face the point, then tipped up or down to it.
+        let towards = look_at.map(|at| (Vec3::from_array(at) - transform.position).normalize_or_zero());
+        if let Some(towards) = towards.filter(|towards| *towards != Vec3::ZERO) {
+            let (yaw, pitch) = (towards.x.atan2(towards.z), -towards.y.clamp(-1.0, 1.0).asin());
+            transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        }
+        done(self.view_json())
+    }
+
+    /// The Block Worlds a blocks call works in, each with its corner and
+    /// its blocks' size: `obj`'s, or every one.
+    fn block_worlds(&self, args: &Json) -> Result<Vec<(Entity, Vec3, f32)>, LinkError> {
+        use voxear_terrain::blocks::BlockWorld;
+        let world = &self.game.engine.world;
+        // From the hierarchy as it is now: while editing, world transforms are not kept up.
+        let corner = |entity| voxear_scene::world_matrix(world, entity).w_axis.truncate();
+        match args.get("obj").filter(|obj| !obj.is_null()) {
+            Some(obj) => {
+                let entity = link::resolve_obj(&self.game, obj)?;
+                let blocks = world
+                    .get::<BlockWorld>(entity)
+                    .ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Block World"))?;
+                Ok(vec![(entity, corner(entity), blocks.block_size)])
+            }
+            None => Ok(world
+                .query_ref::<(Entity, &BlockWorld)>()
+                .without::<EditorOnly>()
+                .into_iter()
+                .map(|(entity, blocks)| (entity, corner(entity), blocks.block_size))
+                .collect()),
+        }
+    }
+
+    fn blocks_get(&self, args: &Json) -> Called {
+        use voxear_terrain::blocks::{BlockWorld, chunk::AIR};
+        let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+        let given = args.get("obj").is_some_and(|obj| !obj.is_null());
+        for (entity, corner, size) in self.block_worlds(args)? {
+            let Some(blocks) = self.game.engine.world.get::<BlockWorld>(entity) else { continue };
+            let cell = ((at - corner) / size).floor().as_ivec3().to_array();
+            let block = blocks.blocks.get(cell);
+            if block == AIR && !given {
+                continue;
+            }
+            let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
+            let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
+            let block = path.map(|entry| link::asset_ref(&self.game, &entry.path));
+            return done(json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": block }));
+        }
+        done(json!({ "obj": null, "cell": null, "block": null }))
+    }
+
+    fn blocks_set(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {
+        use voxear_terrain::blocks::{BlockWorld, chunk::AIR};
+        /// The most blocks one call changes, as a script's Blocks.Fill.
+        const MOST: i64 = 4_000_000;
+        let block = match args.get("block") {
+            None => return Err(bad("`block` is missing: a .block, or null for air")),
+            Some(Json::Null) => None,
+            Some(block) => Some(link::resolve_asset(&self.game, block)?),
+        };
+        let (from, to) = match call {
+            "blocks.fill" => (opt_vector(args, "from")?, opt_vector(args, "to")?),
+            _ => (opt_vector(args, "at")?, opt_vector(args, "at")?),
+        };
+        let (Some(from), Some(to)) = (from, to) else { return Err(bad("the points are missing")) };
+        let (from, to) = (Vec3::from_array(from), Vec3::from_array(to));
+        let mut changed = 0;
+        for (entity, corner, size) in self.block_worlds(args)? {
+            let cell = |p: Vec3| ((p - corner) / size).floor().as_ivec3();
+            let (low, high) = (cell(from.min(to)), cell(from.max(to)));
+            let count = (high - low + 1).as_i64vec3().element_product().max(0);
+            if count > MOST {
+                return Err(bad(format!("{count} blocks are too many at once; the most is {MOST}")));
+            }
+            let number = match &block {
+                None => AIR,
+                Some(path) => {
+                    let game = &mut self.game;
+                    voxear_engine::blocks::block_number(&mut game.engine.world, &mut game.content, entity, path, true)
+                        .ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{path} is not a block this world can hold")))?
+                }
+            };
+            let cells: Vec<([i32; 3], u16)> = (low.z..=high.z)
+                .flat_map(|z| (low.y..=high.y).flat_map(move |y| (low.x..=high.x).map(move |x| ([x, y, z], number))))
+                .collect();
+            let world = &mut self.game.engine.world;
+            let Some(before) = ObjState::of(world, entity) else { continue };
+            let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
+            let count = blocks.set_blocks(cells);
+            if count > 0 {
+                world.insert(entity, blocks);
+                changed += count;
+                self.record_change(entity, before);
+            }
+        }
+        // A block a world did not hold is drawn as its file says from this frame.
+        voxear_engine::blocks::refresh(&mut self.game.engine.world, &mut self.game.content, Some(renderer));
+        done(json!({ "changed": changed }))
     }
 
     fn settings_json(&self) -> Json {

@@ -546,6 +546,29 @@ impl Game {
         Ok(())
     }
 
+    /// Runs `run` on the game's world with the game's services lent to
+    /// scripts, as while ticking: content, blocks, prefabs, UI and sound.
+    /// For scripts run apart from the game's own runtime, as the editor runs
+    /// a `[Command]` on the edited level.
+    pub fn with_services<R>(&mut self, renderer: Option<&mut Renderer>, run: impl FnOnce(&mut World) -> R) -> R {
+        let models = self.models;
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer,
+            models,
+            unload_requested: &mut self.unload_requested,
+            previews: &mut self.previews,
+            ui: &mut self.ui,
+            display: &mut self.display,
+            audio: &mut self.audio,
+            input: &mut self.input,
+        };
+        let _scope = ServicesScope::enter(&mut services);
+        run(&mut self.engine.world)
+    }
+
     /// Changes the running scripts' loaded instance of the data asset
     /// `guid`, as the Inspector changed its file while the game plays (see
     /// [`Engine::refill_data_asset`]), with the content at hand for a data

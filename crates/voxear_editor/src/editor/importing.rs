@@ -268,6 +268,19 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
         let box_models: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".boxmodel")).map(|path| path.to_string()).collect();
+        // A world of blocks whose file or changes a tool wrote, by either file.
+        let block_worlds: Vec<voxear_assets::AssetGuid> = self
+            .game
+            .content
+            .db()
+            .entries()
+            .filter(|entry| entry.kind == voxear_assets::AssetKind::BlockWorld)
+            .filter(|entry| {
+                let changes = voxear_terrain::blocks::edits::blocks_file(&entry.path);
+                changed.iter().any(|path| **path == entry.path || **path == changes)
+            })
+            .map(|entry| entry.guid)
+            .collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| {
             path.ends_with(".shader") || path.ends_with(".voxshade") || path.ends_with(".material")
@@ -363,6 +376,25 @@ impl Editor {
         }
         for model in models {
             self.reimport_model(&model, renderer);
+        }
+        for guid in block_worlds {
+            self.block_world_file_changed(guid, renderer);
+        }
+    }
+
+    /// A world of blocks changed on disk: each Block World drawing it reads
+    /// it again, unless it has changes not saved, which are kept until saved
+    /// or undone.
+    fn block_world_file_changed(&mut self, guid: voxear_assets::AssetGuid, renderer: &mut Renderer) {
+        let path = self.game.content.db().get(guid).map(|entry| entry.path.clone()).unwrap_or_default();
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+        if self.is_playing() || self.game.content.block_world_unsaved(guid) {
+            tracing::warn!("{name} changed on disk under changes not saved; saving keeps yours");
+            return self.notify(&format!("{name} changed on disk; save keeps your changes"));
+        }
+        if crate::block_props::read_again(&mut self.game, Some(renderer), guid) > 0 {
+            tracing::info!("read {name} again, changed on disk");
+            self.notify(&format!("Read {name} again, changed on disk"));
         }
     }
 

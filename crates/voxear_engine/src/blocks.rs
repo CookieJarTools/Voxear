@@ -304,6 +304,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     loops: dungeon.loops,
                     floors: dungeon.floors,
                     floor_gap: dungeon.floor_gap,
+                    caves: dungeon.caves,
                     depth: dungeon.depth,
                     wall,
                     floor,

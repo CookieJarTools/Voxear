@@ -1486,6 +1486,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
         floors: [1, 1],
         floor_gap: 14,
         depth: [26, 30],
+        caves: 0,
         wall: bricks,
         floor: flagstones,
         corridor_width: 3,

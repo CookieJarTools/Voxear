@@ -1974,6 +1974,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     left loose in the air, followed into the columns beside where it reaches past the sides. A river's surface
     steps down in eighths of a block. Tests: halls, wide tunnels and mouths with a level way out; hollows whole
     where regions meet; no loose ground left; a GPU render from inside a mouth.
+  - ~~**Dungeons break into caves:**~~ done: a dungeon's room nearest a cave room of the world's generator, within its
+    new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
+    caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
+    dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

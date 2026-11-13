@@ -259,6 +259,7 @@ impl Default for TownDef {
 /// floors = [1, 3]             # floors, one under the next, from and to
 /// floor_gap = 14              # blocks from one floor down to the next
 /// depth = [12, 20]            # the first floor's blocks under the surface, from and to
+/// caves = 48                  # how far a room breaks through to a cave of the world's, in blocks; 0 never
 /// wall = "Blocks/Stone Bricks.block"
 /// floor = "Blocks/Cobblestone.block"
 /// corridor_width = 3
@@ -292,6 +293,7 @@ pub struct DungeonDef {
     pub floors: [u32; 2],
     pub floor_gap: u32,
     pub depth: [u32; 2],
+    pub caves: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wall: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,6 +319,7 @@ impl Default for DungeonDef {
             floors: [1, 3],
             floor_gap: 14,
             depth: [12, 20],
+            caves: 48,
             wall: None,
             floor: None,
             corridor_width: 3,
@@ -440,6 +443,9 @@ pub struct Dungeon {
     pub floors: [u32; 2],
     pub floor_gap: u32,
     pub depth: [u32; 2],
+    /// How far one of its rooms breaks through to a cave of the world's, in
+    /// blocks: the nearest within this of any room. None at 0.
+    pub caves: u32,
     pub wall: BlockId,
     pub floor: BlockId,
     pub corridor_width: u32,
@@ -1004,7 +1010,8 @@ impl Dungeon {
         let step = (self.room_half() * 2) as f32 + self.corridor[0].max(self.corridor[1]) as f32 + 2.0;
         // Rooms are placed outwards along a main path and branches, so few lie in a line; half of them is far.
         // Each floor starts where the one over it ends.
-        (rooms * 0.5 + 2.0) * step * self.floors[0].max(self.floors[1]).max(1) as f32
+        // And as far again as a way broken through to a cave runs.
+        (rooms * 0.5 + 2.0) * step * self.floors[0].max(self.floors[1]).max(1) as f32 + self.caves as f32
     }
 
     /// How large a plain room of `place` is, a little more or less by `draws`.
@@ -1250,11 +1257,18 @@ impl Dungeon {
         // The stair down from over the ground, its walls stopping at the ground.
         stair(&mut out, site, (level, surface + 3, surface), (wall, floor_block));
         let mut origin = site;
+        // Each room's middle, over its floor, and how far it reaches either way, on every floor.
+        let mut rooms: Vec<([i32; 3], [i32; 3])> = Vec::new();
         for floor in 0..floors {
             let last = floor + 1 == floors;
             let mut floor_draws = Draws(seed ^ 0x0D06_E0A5 ^ (floor + 1).wrapping_mul(0x9E37_79B9));
             let plan = self.plan(&mut floor_draws, last);
             self.floor_blocks(&mut out, &plan, origin, level, (wall, floor_block));
+            for (&(middle, _, half, _), role) in plan.rooms.iter().zip(&plan.roles) {
+                if *role != Spot::Stair {
+                    rooms.push(([origin[0] + middle[0], level + 1, origin[1] + middle[1]], half));
+                }
+            }
             if last {
                 break;
             }
@@ -1273,7 +1287,66 @@ impl Dungeon {
             stair(&mut out, origin, (next, level, level), (wall, floor_block));
             level = next;
         }
+        out.extend(self.into_caves(seed, &rooms, ground));
         out
+    }
+
+    /// A way broken through from the room of `rooms` nearest a cave of the
+    /// world's generator to that cave's nearest room, where one lies within
+    /// `caves` blocks of it and the way climbs or falls no steeper than it
+    /// runs along: a rough tunnel of air from the room's middle, over its
+    /// floor, to the cave room's floor, so the dungeon and the caves are
+    /// one. Nothing where none does.
+    fn into_caves(&self, seed: u32, rooms: &[([i32; 3], [i32; 3])], ground: &Ground) -> Vec<([i32; 3], BlockId)> {
+        let (Some(caves), Some(&(first, _))) = (ground.world.caves().filter(|_| self.caves > 0), rooms.first())
+        else {
+            return Vec::new();
+        };
+        let (size, [px, pz]) = (ground.size, ground.position);
+        let metres =
+            |[x, y, z]: [i32; 3]| [px + (x as f32 + 0.5) * size, y as f32 * size, pz + (z as f32 + 0.5) * size];
+        let block = |[x, y, z]: [f32; 3]| {
+            [((x - px) / size).floor() as i32, (y / size).floor() as i32, ((z - pz) / size).floor() as i32]
+        };
+        let near = caves.rooms_near(metres(first), (self.caves as f32 + self.reach()) * size);
+        // The room and the cave room nearest each other, their way no steeper than it runs.
+        let mut best: Option<(f32, [i32; 3], [i32; 3])> = None;
+        for (middle, half) in rooms {
+            for cave in &near {
+                let floor = block(cave.floor);
+                let end = [floor[0], floor[1] + 1, floor[2]];
+                let (dx, dy, dz) = (end[0] - middle[0], end[1] - middle[1], end[2] - middle[2]);
+                let along = ((dx * dx + dz * dz) as f32).sqrt();
+                let past = along - half[0].max(half[2]) as f32;
+                if past > self.caves as f32 || dy.abs() as f32 > along {
+                    continue;
+                }
+                if best.is_none_or(|(least, ..)| past < least) {
+                    best = Some((past, *middle, end));
+                }
+            }
+        }
+        let Some((_, from, to)) = best else { return Vec::new() };
+        // Cut along the way, two blocks either side and four high, wider here and there, rounded at its corners.
+        let mut draws = Draws(seed ^ 0xCA7E_0A11);
+        let steps = (0..3).map(|axis| (from[axis] - to[axis]).abs()).max().unwrap_or(0).max(1) * 2;
+        let mut cut = std::collections::BTreeSet::new();
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let at = |axis: usize| (from[axis] as f32 + (to[axis] - from[axis]) as f32 * t).round() as i32;
+            let wide = 2 + i32::from(draws.next() % 4 == 0);
+            for dz in -wide..=wide {
+                for dx in -wide..=wide {
+                    if dx.abs() + dz.abs() > wide + 1 {
+                        continue;
+                    }
+                    for dy in 0..=3 {
+                        cut.insert([at(0) + dx, at(1) + dy, at(2) + dz]);
+                    }
+                }
+            }
+        }
+        cut.into_iter().map(|at| (at, AIR)).collect()
     }
 
     /// One floor's rooms and corridors, its stair's foot at block `origin`
@@ -2368,6 +2441,7 @@ mod tests {
             floors: [1, 1],
             floor_gap: 14,
             depth: [24, 30],
+            caves: 0,
             wall: 30,
             floor: 31,
             corridor_width: 3,
@@ -2465,6 +2539,37 @@ mod tests {
             assert_eq!(joins, 1, "seed {seed}: the stair down a dead end");
             assert!(!at(Spot::Loot).is_empty(), "seed {seed}: no loot on the floor");
         }
+    }
+
+    #[test]
+    fn a_dungeon_breaks_through_into_the_nearest_cave_and_with_no_reach_into_none() {
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Caves").unwrap().world(1, 1.0);
+        let caves = world.caves().expect("its caves");
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let dungeon = Dungeon { depth: [30, 30], caves: 48, ..crypt() };
+        // Of a few sites, the dungeons that find a cave near enough.
+        let mut broken = 0;
+        for site in [[40, -30], [-120, 60], [200, 200], [-260, -180], [90, 330]] {
+            let way = dungeon.blocks(5, site, &ground, 2);
+            let none = Dungeon { caves: 0, ..dungeon.clone() }.blocks(5, site, &ground, 2);
+            let cut: Vec<[i32; 3]> = way[none.len()..].iter().map(|(at, _)| *at).collect();
+            assert!(way[none.len()..].iter().all(|(_, block)| *block == AIR), "the way through is air");
+            if cut.is_empty() {
+                continue;
+            }
+            broken += 1;
+            // It ends on a cave room's floor, within reach of the dungeon's rooms.
+            let near = caves.rooms_near([site[0] as f32, 0.0, site[1] as f32], 400.0);
+            let on_floor = near.iter().any(|room| {
+                let floor = room.floor.map(|v| v.floor() as i32);
+                let over = |at: &&[i32; 3]| (at[0] - floor[0]).abs() <= 1 && (at[2] - floor[2]).abs() <= 1;
+                cut.iter().filter(over).any(|at| at[1] == floor[1] + 1)
+            });
+            assert!(on_floor, "the way from {site:?} reaches no cave room's floor");
+            // Never steeper than it runs: four high all along, so it can be walked.
+            assert!(cut.len() > 40, "{} blocks cut", cut.len());
+        }
+        assert!(broken >= 1, "no dungeon of five broke into a cave");
     }
 
     #[test]

@@ -111,11 +111,14 @@ Each kind also has the rules a town's houses have: **Weight** against the others
 | Corridor | How long its corridors are, in blocks, from and to |
 | Loops | How many of the joins between near rooms are made, from 0 to 1 |
 | Depth | How far under the ground its first floor is, in blocks, from and to |
+| Caves | How far one of its rooms breaks through to a cave of the world's, in blocks. 48 by default; 0 for never |
 | Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
 | Corridor width, Corridor height | How wide and high its corridors are |
 | Room size, Hall size, Loot size, Boss size | The sizes of its plain rooms of each role, in blocks along x, up and along z |
 
 A room's doors are in the middles of its sides, a block over its floor: the corridors open its walls there. The stair winds round a pillar, a block up for every block along.
+
+A dungeon in a world with [[Caves|caves]] breaks into them. The room of any floor nearest a cave room, within **Caves** blocks of it, has a rough tunnel cut from its middle to that room's floor, four blocks high and as wide as five or so, never steeper than it runs along. So a dungeon can be found from a cave, and a cave from a dungeon, and the way down from the surface may be either.
 
 ## Not yet
 

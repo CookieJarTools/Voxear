@@ -78,6 +78,10 @@ pub struct CloudImages {
     pub current: ImageId,
     /// The sun let through, over the ground round the camera.
     pub shadows: ImageId,
+    /// The only part of the picture marched, where only part of it shows,
+    /// as through a Portal's opening: its lowest and highest x and y, from
+    /// -1 to 1.
+    pub within: Option<[f32; 4]>,
 }
 
 impl CloudImages {
@@ -97,6 +101,7 @@ impl CloudImages {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], half)?,
             current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], half)?,
             shadows: fg.create_image(gpu, bindless, "cloud shadows", shadows)?,
+            within: None,
         })
     }
 
@@ -120,14 +125,44 @@ pub fn shadow_middle(camera: [f32; 2], drift: [f32; 2]) -> [f32; 2] {
 /// Records the two passes. `tables` are the atmosphere's, where the sky is
 /// the atmosphere, which light the clouds and haze them.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clouds: CloudImages, tables: &[ImageId]) {
-    let CloudImages { previous, current, shadows } = clouds;
+    let CloudImages { previous, current, shadows, within } = clouds;
     fg.add_pass("Cloud shadows", &[(shadows, ImageAccess::ColorAttachment)], &[], move |ctx| {
         draw(ctx, pipelines.cloud_shadows, &push, shadows);
     });
     let march = Push { textures: [fg.texture(previous).0, 0, 0, 0], ..push };
     let mut images = vec![(previous, ImageAccess::Sampled), (current, ImageAccess::ColorAttachment)];
     images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
-    fg.add_pass("Clouds", &images, &[], move |ctx| draw(ctx, pipelines.clouds, &march, current));
+    fg.add_pass("Clouds", &images, &[], move |ctx| match within {
+        None => draw(ctx, pipelines.clouds, &march, current),
+        Some(rect) => draw_within(ctx, pipelines.clouds, &march, current, rect),
+    });
+}
+
+/// A pass that writes the texels of `target` within `rect` of it (lowest
+/// and highest x and y, from -1 to 1) and a margin round it, for what moves
+/// into view next frame to have a history; the rest keep what they held.
+fn draw_within(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId, [x0, y0, x1, y1]: [f32; 4]) {
+    let extent = ctx.extent(target);
+    let color = [vk::RenderingAttachmentInfo::default()
+        .image_view(ctx.view(target))
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)];
+    begin_rendering(ctx, extent, &color, None);
+    let (wide, high) = (extent.width as f32, extent.height as f32);
+    let margin = 0.08;
+    let pixel = |v: f32, size: f32| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * size) as i32;
+    let (left, top) = (pixel(x0 - margin, wide), pixel(y0 - margin, high));
+    let (right, bottom) = (pixel(x1 + margin, wide) + 1, pixel(y1 + margin, high) + 1);
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D { x: left, y: top },
+        extent: vk::Extent2D {
+            width: (right - left).clamp(1, extent.width as i32 - left) as u32,
+            height: (bottom - top).clamp(1, extent.height as i32 - top) as u32,
+        },
+    };
+    unsafe { ctx.gpu.device.cmd_set_scissor(ctx.cmd, 0, &[scissor]) };
+    fullscreen(ctx, pipeline, push);
 }
 
 /// A fullscreen pass that writes every texel of `target`.

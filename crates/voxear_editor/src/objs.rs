@@ -28,7 +28,7 @@ use crate::project_view::AssetPart;
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
 /// says, the new Obj's name, the rest of its scene file entry, and the
 /// module it needs, without which the menus leave it out.
-pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 22] = [
+pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 23] = [
     ("Empty", "Obj", "", None),
     ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\"", None),
     ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\"", None),
@@ -54,9 +54,217 @@ pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 22] = [
     ("UI Panel", "UI Panel", "position = [0.0, 1.5, 0.0]\n[obj.ui_panel]", None),
     ("Screen UI", "Screen UI", "[obj.screen_ui]", None),
     ("Map", "Map", "[obj.map]", None),
+    ("Portals", "Portals", PORTALS, None),
     ("Car", "Car", CAR, None),
     ("Rifle", "Rifle", RIFLE, Some(Module::Guns)),
 ];
+
+/// Two Portals that lead to each other, 8 m apart and face to face, each in
+/// a frame of metre blocks round an opening 2 m wide and 3 m high, and each
+/// marked on every map. Move one wherever the other should lead.
+const PORTALS: &str = r#"
+[[obj]]
+id = 2
+name = "Portal"
+parent = 1
+[obj.portal]
+to = 3
+[obj.map_marker]
+icon = "star"
+label = "Portal"
+
+[[obj]]
+id = 3
+name = "Far Portal"
+parent = 1
+position = [0.0, 0.0, 8.0]
+rotation = [0.0, 180.0, 0.0]
+[obj.portal]
+to = 2
+[obj.map_marker]
+icon = "star"
+label = "Portal"
+
+[[obj]]
+id = 4
+name = "Frame Block"
+parent = 2
+position = [-1.5, 0.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 5
+name = "Frame Block"
+parent = 2
+position = [-1.5, 1.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 6
+name = "Frame Block"
+parent = 2
+position = [-1.5, 2.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 7
+name = "Frame Block"
+parent = 2
+position = [1.5, 0.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 8
+name = "Frame Block"
+parent = 2
+position = [1.5, 1.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 9
+name = "Frame Block"
+parent = 2
+position = [1.5, 2.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 10
+name = "Frame Block"
+parent = 2
+position = [-1.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 11
+name = "Frame Block"
+parent = 2
+position = [-0.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 12
+name = "Frame Block"
+parent = 2
+position = [0.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 13
+name = "Frame Block"
+parent = 2
+position = [1.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 14
+name = "Frame Block"
+parent = 3
+position = [-1.5, 0.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 15
+name = "Frame Block"
+parent = 3
+position = [-1.5, 1.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 16
+name = "Frame Block"
+parent = 3
+position = [-1.5, 2.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 17
+name = "Frame Block"
+parent = 3
+position = [1.5, 0.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 18
+name = "Frame Block"
+parent = 3
+position = [1.5, 1.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 19
+name = "Frame Block"
+parent = 3
+position = [1.5, 2.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 20
+name = "Frame Block"
+parent = 3
+position = [-1.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 21
+name = "Frame Block"
+parent = 3
+position = [-0.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 22
+name = "Frame Block"
+parent = 3
+position = [0.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+
+[[obj]]
+id = 23
+name = "Frame Block"
+parent = 3
+position = [1.5, 3.5, 0.0]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.42, 0.42, 0.46], roughness = 0.85 }
+"#;
 
 /// A car ready to drive: a body that physics moves, with a Vehicle, and
 /// four wheels under it, the front two steering and the back two driven,

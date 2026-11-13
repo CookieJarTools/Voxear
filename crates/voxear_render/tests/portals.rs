@@ -280,6 +280,10 @@ fn only_the_opening_changes_and_what_stands_in_front_of_it_stays() {
     let (far, mist) = (pixel(&open, foot.0, foot.1), pixel(&closed, foot.0, foot.1));
     assert!(far[1] > far[0] + 20 && far[1] > far[2] + 20, "the far ground: {far:?}");
     assert!(mist[2] > mist[0] && mist[2] >= mist[1], "the mist: {mist:?}");
+    // The mist is its Portal's own blue all over the opening, not what stands behind it.
+    let middle = on_screen(&places.world, places.camera, Vec3::new(0.5, 1.8, 6.0));
+    let mist = pixel(&closed, middle.0, middle.1);
+    assert!(mist[2] > mist[0] + 25 && mist[2] > mist[1] + 10, "the mist in the middle of the opening: {mist:?}");
     // The post in front of it is drawn over both alike.
     let post = (WIDTH / 2 - 22, HEIGHT / 2 + 10);
     let (a, b) = (pixel(&open, post.0, post.1), pixel(&closed, post.0, post.1));

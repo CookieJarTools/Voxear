@@ -106,6 +106,15 @@ impl ViewCarry {
     }
 }
 
+/// On an Obj that draws something, set each frame by the engine: it is
+/// part-way through a Portal, and is drawn a second time where this takes
+/// it, so what has passed the opening shows on the far side while the rest
+/// still shows on the near one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Straddles(pub Carry);
+
+impl Component for Straddles {}
+
 /// Where a Portal stands: its Obj's place and turn in the world, whatever
 /// its scale.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -464,11 +473,15 @@ pub struct PortalQuality {
     /// blocks, in metres: never further than round the camera. Its far
     /// view reaches from there as far as the world's own does.
     pub far_side_distance: f32,
+    /// Whether the water of a far side's worlds of blocks is drawn. It
+    /// costs about as much again as the water of the camera's own view
+    /// while any shows through an opening.
+    pub water: bool,
 }
 
 impl Default for PortalQuality {
     fn default() -> Self {
-        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0 }
+        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0, water: true }
     }
 }
 

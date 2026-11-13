@@ -350,7 +350,8 @@ pub fn record(
     let contact_shadows = frame.contact_shadows;
     let reflections = frame.reflections;
     // Drawn as depth first, then shaded over it, for what reads the depth before shading.
-    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
+    let through = frame.through;
+    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || through;
     if let Some(atmosphere) = frame.atmosphere.filter(|_| !frame.through) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
@@ -418,7 +419,8 @@ pub fn record(
         let surface = frame.surface.expect("the depth passes' surface");
         let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
         fg.add_pass(name, &images, &shading_buffers, move |ctx| {
-            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY);
+            // A view through a Portal draws into the depth opened for it.
+            depth_only(ctx, pipeline, &push, indirect, (depth, surface), list == LIST_EARLY && !through);
         });
     };
 
@@ -516,8 +518,6 @@ pub fn record(
             }
         }
         false => {
-            // A view through a Portal draws over what the view it is seen in drew, into the depth opened for it.
-            let through = frame.through;
             fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
                 let clear = Clear { color: !through, depth: !through };
                 opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
@@ -588,7 +588,8 @@ pub fn record(
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
             let again = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
             for (name, list) in [("Opaque (early)", LIST_EARLY), ("Opaque (late)", LIST_LATE)] {
-                let clear = Clear { color: list == LIST_EARLY, depth: false };
+                // A view through a Portal draws over what the view it is seen in drew.
+                let clear = Clear { color: list == LIST_EARLY && !through, depth: false };
                 fg.add_pass(name, &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
                     opaque(ctx, forward, &Push { list, ..again }, indirect, scene, clear);
                 });

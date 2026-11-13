@@ -155,6 +155,7 @@ impl Game {
         crate::modules::put(&mut game.engine.world, game.project.modules());
         game.project.file.quality.put(&mut game.engine.world);
         game.project.file.world.put(&mut game.engine.world);
+        game.project.file.portals.put(&mut game.engine.world);
         game
     }
 

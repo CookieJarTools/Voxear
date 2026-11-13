@@ -162,7 +162,9 @@ pub use scene::{
     ViewOptions,
     temperature_color,
 };
-pub use portals::{CameraFollows, Carry, Portal, PortalFar, PortalPose, PortalSide, PortalTraveller, ViewCarry};
+pub use portals::{
+    CameraFollows, Carry, Portal, PortalFar, PortalPose, PortalSide, PortalTraveller, Straddles, ViewCarry,
+};
 pub use voxear_rhi::TextureId;
 pub use hot_reload::{CustomCode, compile_custom_shaders, engine_shader_dir};
 
@@ -1698,8 +1700,11 @@ struct PortalPass {
     atmosphere: Option<atmosphere::Tables>,
     sky_light: u64,
     cloud_drift: [f64; 2],
-    /// The sun casts shadows on its side.
+    /// The sun casts shadows on its side, and its worlds of blocks' water is drawn.
     shadows: bool,
+    water: bool,
+    /// Its opening's rectangle in the view: its lowest and highest x and y, from -1 to 1.
+    rect: [f32; 4],
     /// How many Portals deep it is: 1 for one seen straight from a camera.
     level: u32,
 }
@@ -2114,9 +2119,23 @@ impl View {
         if objs.is_empty() {
             return;
         }
-        for (owner, model) in &mut self.prev_models {
-            if let Some((_, by)) = objs.iter().find(|(entity, _)| *entity == owner.entity) {
-                *model = (*by * Mat4::from_cols_array_2d(model)).to_cols_array_2d();
+        // What was drawn of each on the far side is now what is drawn of it on the near side, and the other way
+        // round: an Obj part-way through was drawn on both.
+        let went: Vec<scene::Owner> = self.prev_models.keys().filter(|owner| !owner.far_side).copied().collect();
+        for owner in went {
+            let Some((_, by)) = objs.iter().find(|(entity, _)| *entity == owner.entity) else { continue };
+            let far = scene::Owner { far_side: true, ..owner };
+            let (here, there) = (self.prev_models.remove(&owner), self.prev_models.remove(&far));
+            match (here, there) {
+                (Some(here), Some(there)) => {
+                    self.prev_models.insert(owner, there);
+                    self.prev_models.insert(far, here);
+                }
+                (Some(here), None) => {
+                    let carried = (*by * Mat4::from_cols_array_2d(&here)).to_cols_array_2d();
+                    self.prev_models.insert(owner, carried);
+                }
+                _ => {}
             }
         }
     }
@@ -2266,7 +2285,8 @@ impl View {
         let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
         for (instance, owner) in extracted.instances.iter_mut().zip(&extracted.entities) {
-            if let Some(posed) = setup.posed.get(owner) {
+            // Drawn again on a Portal's far side, it is posed as it is on the near one.
+            if let Some(posed) = setup.posed.get(&scene::Owner { far_side: false, ..*owner }) {
                 posed.apply(instance);
             }
         }
@@ -2398,7 +2418,9 @@ impl View {
             frame_data.post.reflection_texture = fg.texture(target).0;
         }
         // The depth passes run for these, and write each pixel's normal and roughness beside the depth.
-        let surface = match ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() {
+        // A view through a Portal draws its depth first too, so each pixel of its opening is shaded once.
+        let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
+        let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
                 let desc = ImageDesc::new(extent.width, extent.height, pipelines::SURFACE_FORMAT, usage);
@@ -2483,7 +2505,7 @@ impl View {
             || !extracted.water_bodies.streams.is_empty()
             || block_water.is_some();
         // Through a Portal, only the water of worlds of blocks, and only while some of it shows there.
-        let shown = portal.is_none() || block_water.is_some();
+        let shown = portal.is_none_or(|pass| pass.water && block_water.is_some());
         let water = match wet && !wireframe && shown {
             true => Some(water::Water::new(
                 fg,
@@ -2549,7 +2571,12 @@ impl View {
         // frame's.
         let cloudy = frame_data.lighting.clouds.cover > 0.0 && !wireframe;
         let cloud_images = match cloudy {
-            true => Some(clouds::CloudImages::new(fg, (gpu, bindless), extent, history)?),
+            true => {
+                let mut images = clouds::CloudImages::new(fg, (gpu, bindless), extent, history)?;
+                // Through a Portal, only the part of the sky its opening shows.
+                images.within = portal.map(|pass| pass.rect);
+                Some(images)
+            }
             false => None,
         };
         if let Some(images) = cloud_images {
@@ -2863,7 +2890,7 @@ impl View {
         let mut children = std::mem::take(&mut self.portals);
         let mut failed = None;
         let mut far_sides = |fg: &mut FrameGraph<'_>| {
-            let (Some(sees), Some(seen_depth)) = (sees.as_ref(), seen_depth) else { return };
+            let Some(sees) = sees.as_ref() else { return };
             let targets = (hdr, velocity, seen_depth);
             let services = (gpu, &mut *bindless, pipelines, assets);
             failed = draw_portals(&mut children, fg, services, (world, setup, slot), sees, targets).err();
@@ -2936,7 +2963,7 @@ fn draw_portals(
     (gpu, bindless, pipelines, assets): (&Gpu, &mut Bindless, &Pipelines, &Assets),
     (world, setup, slot): (&World, &ViewSetup, usize),
     sees: &Sees,
-    (hdr, velocity, seen_depth): (ImageId, ImageId, ImageId),
+    (hdr, velocity, seen_depth): (ImageId, ImageId, Option<ImageId>),
 ) -> Result<()> {
     let quality = world.resource::<portals::PortalQuality>().copied().unwrap_or_default();
     let pipelines = *pipelines;
@@ -2945,7 +2972,7 @@ fn draw_portals(
     let level = sees.level + 1;
     let (parent_depth, parent_push) = (sees.depth, sees.push);
     let parent_texture = fg.texture(parent_depth).0;
-    if sees.level == 0 {
+    if let Some(seen_depth) = seen_depth.filter(|_| sees.level == 0) {
         // The camera's own depth first, for the far sides to be laid over.
         let push = Push { textures: [parent_texture, 0, 0, 0], ..parent_push };
         let images = [(parent_depth, ImageAccess::Sampled), (seen_depth, ImageAccess::ColorAttachment)];
@@ -2954,6 +2981,8 @@ fn draw_portals(
         });
     }
     for (index, seen) in sees.seen.iter().enumerate() {
+        // Kept by the camera's own view whenever it draws any far side.
+        let Some(seen_depth) = seen_depth else { break };
         let at = match children.iter().position(|child| child.portal == seen.entity) {
             Some(at) => at,
             None => {
@@ -3006,6 +3035,8 @@ fn draw_portals(
             sky_light: sees.sky_light,
             cloud_drift: sees.cloud_drift,
             shadows: seen.distance < quality.shadow_distance,
+            water: quality.water,
+            rect: seen.rect,
             level,
         };
         fg.set_prefix(&format!("portal view {} ", child.view.number));
@@ -3019,7 +3050,8 @@ fn draw_portals(
         if let Some(nested) = recorded.sees {
             let mut deeper = std::mem::take(&mut child.view.portals);
             let services = (gpu, &mut *bindless, &pipelines, assets);
-            let drawn = draw_portals(&mut deeper, fg, services, (world, setup, slot), &nested, (hdr, velocity, seen_depth));
+            let targets = (hdr, velocity, Some(seen_depth));
+            let drawn = draw_portals(&mut deeper, fg, services, (world, setup, slot), &nested, targets);
             children[at].view.portals = deeper;
             drawn?;
         }

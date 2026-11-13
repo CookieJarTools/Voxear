@@ -26,6 +26,9 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	private const int ViewDistanceValue = 8;
 	private const int ReadyValue = 9;
 	private const int PassedCountValue = 20;
+	private const int BetweenFromValue = 30;
+	private const int BetweenToValue = 31;
+	private const int BetweenValue = 32;
 	private const int PassedValue = 100;
 	private const int PassedKept = 64;
 
@@ -105,6 +108,22 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 		var (a, b) = (first.AddPortal(), second.AddPortal());
 		a.To = b;
 		b.To = a;
+	}
+
+	/// <summary>
+	/// The open Portal whose opening lies between two places, or None. A camera that keeps clear of walls asks it
+	/// before it looks for what is in its way: with a Portal between it and what it follows, the line it would
+	/// test runs on from the far side of the opening, where nothing is in its way.
+	/// <code>
+	/// var wanted = pivot + back * distance;
+	/// var clear = Portal.Between(pivot, wanted).IsValid || !Physics.Linecast(pivot, wanted, out var hit);
+	/// </code>
+	/// </summary>
+	public static Portal Between(Vector3 from, Vector3 to)
+	{
+		NativeComponent.Set(NativeComponent.Portal, Obj.None, BetweenFromValue, new Vector4(from, 0f));
+		NativeComponent.Set(NativeComponent.Portal, Obj.None, BetweenToValue, new Vector4(to, 0f));
+		return NativeComponent.Get(NativeComponent.Portal, Obj.None, BetweenValue, out var value) ? new Portal(NativeComponent.ObjOf(value)) : None;
 	}
 
 	/// <summary>Lets Objs through and shows its far side.</summary>

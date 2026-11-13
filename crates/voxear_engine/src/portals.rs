@@ -188,7 +188,8 @@ const MADE_BEFORE: f32 = 24.0;
 const KEPT_PAST: f32 = 32.0;
 
 /// How far round a Portal's far side the ground must be made, with what
-/// stands on it, before the Portal opens: room to come out and look round.
+/// stands on it, before the Portal opens: room to come out and look round,
+/// and never more than is made there.
 const READY_ROUND: f32 = 40.0;
 
 /// How many ticks a far side's ground must have stood before the Portal
@@ -200,12 +201,17 @@ const READY_TICKS: u32 = 3;
 const CLEARS_IN: f32 = 0.4;
 
 /// Finds the far sides to make this tick: of each Portal that leads to one
-/// that is there, while where the world is seen from is near enough for it
-/// to show. Before the world's ground is brought round where it is seen
-/// from, which takes them in.
+/// that is there, while where the world is seen from, or what a camera
+/// films, is near enough for it to show. Before the world's ground is
+/// brought round where it is seen from, which takes them in.
 pub(crate) fn find_exits(world: &mut World) {
     let was = world.remove_resource::<PortalExits>().unwrap_or_default();
     let Some(viewer) = crate::terrain::viewer(world) else { return };
+    // Where the world is seen from, and what each camera films: through a Portal ahead of its camera, it stands by
+    // one whose far side is the place the camera is still in.
+    let mut near = vec![viewer];
+    let cameras: Vec<Entity> = world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
+    near.extend(cameras.into_iter().filter_map(|camera| subject(world, camera)).map(|subject| place(world, subject)));
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let switched = Switched::of(world);
     let exits: Vec<PortalExit> = world
@@ -218,9 +224,13 @@ pub(crate) fn find_exits(world: &mut World) {
             let pose = PortalPose::of(transform, placed);
             let kept = was.exits.iter().any(|exit| exit.portal == entity);
             let reach = portal.view_distance.max(0.0) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
-            let local = pose.local(viewer);
-            let nearest = Vec3::new(local.x.clamp(-portal.size.x * 0.5, portal.size.x * 0.5), local.y.clamp(0.0, portal.size.y), 0.0);
-            (local.distance(nearest) <= reach).then_some(())?;
+            let within = |from: &Vec3| {
+                let local = pose.local(*from);
+                let (half, high) = (portal.size.x * 0.5, portal.size.y);
+                let nearest = Vec3::new(local.x.clamp(-half, half), local.y.clamp(0.0, high), 0.0);
+                local.distance(nearest) <= reach
+            };
+            near.iter().any(within).then_some(())?;
             let at = PortalPose::of_obj(world, to)?.position;
             Some(PortalExit { portal: entity, at, distance: quality.far_side_distance })
         })
@@ -248,25 +258,26 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
     }
     let mut exits = world.remove_resource::<PortalExits>().unwrap_or_default();
     let mut made_for = HashMap::new();
+    let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+    let round = READY_ROUND.min(quality.far_side_distance * 0.4);
     for (entity, was) in portals {
-        let exit = exits.exits.iter().find(|exit| exit.portal == entity).copied();
-        // Nothing streams at all: as it stands.
-        let streams = exit.map_or_else(|| crate::blocks::made_round(world, Vec3::ZERO, 0.0), |exit| crate::blocks::made_round(world, exit.at, READY_ROUND));
-        let now = match (streams, exit) {
-            (None, _) => None,
-            (Some(made), Some(_)) => {
-                let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
-                made_for.insert(entity, ticks);
-                let ready = ticks >= READY_TICKS;
-                let shown = match (ready, was) {
-                    (true, Some(was)) => (was.shown + delta.max(0.0) / CLEARS_IN).min(1.0),
-                    _ => 0.0,
-                };
-                Some(PortalFar { ready, shown })
-            }
-            // Too far for its far side to be made.
-            (Some(_), None) => Some(PortalFar { ready: false, shown: 0.0 }),
+        // Whether the ground is made where it leads, whoever it was made for: round the camera, or as another
+        // Portal's far side. Nothing streams at all: as it stands.
+        let to = world.get::<Portal>(entity).and_then(|portal| portal.to).and_then(|to| PortalPose::of_obj(world, to));
+        let made = match to {
+            Some(to) => crate::blocks::made_round(world, to.position, round),
+            None => crate::blocks::made_round(world, Vec3::ZERO, 0.0).map(|_| false),
         };
+        let now = made.map(|made| {
+            let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
+            made_for.insert(entity, ticks);
+            let ready = ticks >= READY_TICKS;
+            let shown = match (ready, was) {
+                (true, Some(was)) => (was.shown + delta.max(0.0) / CLEARS_IN).min(1.0),
+                _ => 0.0,
+            };
+            PortalFar { ready, shown }
+        });
         match now {
             Some(far) if was != Some(far) => {
                 world.insert(entity, far);
@@ -452,6 +463,58 @@ pub(crate) fn carry_views(world: &mut World) {
     world.insert_resource(views);
 }
 
+/// How near a Portal's opening the middle of an Obj that goes through
+/// Portals must be for it to be drawn on both sides, in metres: about as
+/// far as a body reaches from its middle.
+const STRADDLES_WITHIN: f32 = 1.5;
+
+/// Marks each Obj that goes through Portals and is part-way through one,
+/// with what is under it, to be drawn on both sides (its `Straddles`), and
+/// clears the mark from those that no longer are. After everything has
+/// moved, before the frame is drawn.
+pub(crate) fn mark_straddlers(world: &mut World) {
+    use voxear_render::Straddles;
+    let ways = ways(world);
+    let marked: Vec<Entity> = world.query_ref::<(Entity, &Straddles)>().into_iter().map(|(entity, _)| entity).collect();
+    if ways.is_empty() && marked.is_empty() {
+        return;
+    }
+    let mut wanted: HashMap<Entity, Carry> = HashMap::new();
+    for (entity, _) in travellers(world) {
+        let matrix = voxear_scene::world_matrix(world, entity);
+        let middle = matrix.w_axis.truncate() + matrix.y_axis.truncate().normalize_or_zero() * SUBJECT_HEIGHT;
+        let through = ways.iter().find(|way| {
+            let local = way.pose.local(middle);
+            let size = way.portal.size;
+            let nearest = Vec3::new(local.x.clamp(-size.x * 0.5, size.x * 0.5), local.y.clamp(0.0, size.y), 0.0);
+            local.distance(nearest) < STRADDLES_WITHIN
+        });
+        if let Some(way) = through {
+            wanted.insert(entity, way.carry);
+        }
+    }
+    // And everything under each.
+    if !wanted.is_empty() {
+        let below: Vec<Entity> = world.query_ref::<(Entity, &Parent)>().into_iter().map(|(entity, _)| entity).collect();
+        let roots: Vec<(Entity, Carry)> = wanted.iter().map(|(root, carry)| (*root, *carry)).collect();
+        for entity in below {
+            if let Some((_, carry)) = roots.iter().find(|(root, _)| entity != *root && under(world, entity, *root)) {
+                wanted.entry(entity).or_insert(*carry);
+            }
+        }
+    }
+    for entity in marked {
+        if !wanted.contains_key(&entity) {
+            world.remove::<Straddles>(entity);
+        }
+    }
+    for (entity, carry) in wanted {
+        if world.get::<Straddles>(entity) != Some(&Straddles(carry)) {
+            world.insert(entity, Straddles(carry));
+        }
+    }
+}
+
 /// Tells the renderer of each camera whose view went through a Portal this
 /// frame, and each Obj that did, before it draws the frame.
 pub(crate) fn tell_renderer(world: &mut World, renderer: Option<&mut Renderer>) {
@@ -479,6 +542,23 @@ const READY: i32 = 9;
 // Obj, the Portals it went from and to, the turn, where each Portal stood, and the face it went in at.
 const PASSED_COUNT: i32 = 20;
 const PASSED: i32 = 100;
+// Which open Portal's opening lies between two places: the first written, then the second, then the Portal read.
+const BETWEEN_FROM: i32 = 30;
+const BETWEEN_TO: i32 = 31;
+const BETWEEN: i32 = 32;
+
+/// What a script last asked of the Portals between two places.
+#[derive(Default)]
+struct PortalAsked {
+    from: Vec3,
+    found: Option<Entity>,
+}
+
+/// The open Portal whose opening the way from `from` to `to` goes through,
+/// if any: the first found.
+pub fn between(world: &World, from: Vec3, to: Vec3) -> Option<Entity> {
+    ways(world).iter().find(|way| crossing(&way.pose, way.portal.size, from, to, 0.0).is_some()).map(|way| way.entity)
+}
 
 /// Sets what answers `Portal` in scripts.
 pub(crate) fn register() {
@@ -507,6 +587,20 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             6 => number(f32::from(u8::from(passed.side == PortalSide::Back))),
             _ => None,
         };
+    }
+    match (what, written) {
+        (BETWEEN_FROM, Some([x, y, z, _])) => {
+            world.insert_resource(PortalAsked { from: Vec3::new(x, y, z), found: None });
+            return Some([0.0; 4]);
+        }
+        (BETWEEN_TO, Some([x, y, z, _])) => {
+            let from = world.resource::<PortalAsked>().map_or(Vec3::ZERO, |asked| asked.from);
+            let found = between(world, from, Vec3::new(x, y, z));
+            world.insert_resource(PortalAsked { from, found });
+            return Some([0.0; 4]);
+        }
+        (BETWEEN, None) => return Some(obj_value(world.resource::<PortalAsked>().and_then(|asked| asked.found))),
+        _ => {}
     }
     if !world.is_alive(entity) {
         return None;

@@ -872,6 +872,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     println!("  {:<16} {total:>7.3} ms", "passes added");
     let frame_ms = frame_gpu.iter().sum::<f32>() / frame_gpu.len().max(1) as f32;
     println!("  {:<16} {frame_ms:>7.3} ms", "frame");
+    // Other programs using the GPU are counted in a frame's time: the least of the frames is the frame's own.
+    let least = frame_gpu.iter().copied().fold(f32::MAX, f32::min);
+    println!("  {:<16} {least:>7.3} ms", "frame, the least");
 
     let stats = renderer.stats();
     println!(

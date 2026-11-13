@@ -32,6 +32,9 @@ pub struct ProjectFile {
     /// What making worlds of blocks may spend (see `voxear_terrain::budget`).
     #[serde(default)]
     pub world: voxear_terrain::WorldBudget,
+    /// What Portals may spend (see [`PortalSettings`]).
+    #[serde(default)]
+    pub portals: PortalSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     pub modules: Option<crate::modules::Modules>,
@@ -55,6 +58,53 @@ pub struct QualitySettings {
 impl Default for QualitySettings {
     fn default() -> Self {
         Self { particles: voxear_render::DEFAULT_PARTICLE_BUDGET }
+    }
+}
+
+/// How much the project lets Portals spend (see `crate::portals` and
+/// `voxear_render::portals::PortalQuality`).
+///
+/// ```toml
+/// [portals]
+/// views = 4               # far sides drawn in a view at most, the nearest first
+/// depth = 1               # 2 draws the far side of a Portal seen through a Portal too
+/// shadow_distance = 30.0  # the sun casts shadows on a far side within this of its opening
+/// far_side_distance = 96.0  # how far round a far side a world without end makes its own blocks
+/// water = true            # whether the water of a far side's worlds of blocks is drawn
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PortalSettings {
+    pub views: u32,
+    pub depth: u32,
+    pub shadow_distance: f32,
+    pub far_side_distance: f32,
+    pub water: bool,
+}
+
+impl Default for PortalSettings {
+    fn default() -> Self {
+        let quality = voxear_render::portals::PortalQuality::default();
+        Self {
+            views: quality.views,
+            depth: quality.depth,
+            shadow_distance: quality.shadow_distance,
+            far_side_distance: quality.far_side_distance,
+            water: quality.water,
+        }
+    }
+}
+
+impl PortalSettings {
+    /// Puts the project's settings where the renderer and the engine read them.
+    pub fn put(&self, world: &mut voxear_ecs::World) {
+        world.insert_resource(voxear_render::portals::PortalQuality {
+            views: self.views.min(voxear_render::portals::MAX_PORTAL_QUADS as u32),
+            depth: self.depth.min(voxear_render::portals::MAX_PORTAL_DEPTH),
+            shadow_distance: self.shadow_distance.max(0.0),
+            far_side_distance: self.far_side_distance.clamp(32.0, 4096.0),
+            water: self.water,
+        });
     }
 }
 

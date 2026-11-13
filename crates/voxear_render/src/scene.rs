@@ -293,6 +293,9 @@ pub struct Owner {
     pub entity: Entity,
     pub plant: Option<u32>,
     pub part: Option<u32>,
+    /// Drawn again where a Portal its Obj is part-way through takes it
+    /// (see `portals::Straddles`): the instance on the far side.
+    pub far_side: bool,
 }
 
 /// What the game draws of what it may leave out, as its project's modules
@@ -805,7 +808,7 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| shown(*entity) && on(*entity, Switch::Renderer))
         .map(|(entity, renderer, transform, world_transform)| {
-            entities.push(Owner { entity, plant: None, part: None });
+            entities.push(Owner { entity, plant: None, part: None, far_side: false });
             let model = world_transform.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,
@@ -839,7 +842,7 @@ pub fn extract(
         let lod = MeshRenderer { lod_bias: drawn.lod_bias, ..MeshRenderer::new(MeshHandle(0), MaterialHandle(0)) };
         let (flags, lod_bias, lod_screen) = lod.lod_bits();
         for (index, part) in drawn.parts.iter().enumerate() {
-            entities.push(Owner { entity, plant: None, part: Some(index as u32) });
+            entities.push(Owner { entity, plant: None, part: Some(index as u32), far_side: false });
             let model = obj * part.transform;
             let normal = Mat3::from_mat4(model).inverse().transpose();
             instances.push(GpuInstance {
@@ -855,6 +858,19 @@ pub fn extract(
                 ..GpuInstance::default()
             });
         }
+    }
+    // An Obj part-way through a Portal is drawn on both sides: here, and where the Portal takes it.
+    for index in 0..instances.len() {
+        let Some(straddles) = world.get::<crate::portals::Straddles>(entities[index].entity) else { continue };
+        let model = straddles.0.matrix() * Mat4::from_cols_array_2d(&instances[index].model);
+        let normal = Mat3::from_mat4(model).inverse().transpose();
+        entities.push(Owner { far_side: true, ..entities[index] });
+        instances.push(GpuInstance {
+            model: cols(model),
+            prev_model: cols(model),
+            normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+            ..instances[index]
+        });
     }
     frame.instance_count = instances.len() as u32;
     // Into the view's own space, whose middle is a whole number of metres from the world's.

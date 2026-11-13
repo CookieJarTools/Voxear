@@ -646,6 +646,9 @@ impl Engine {
             // Cameras are where their scripts put them: those with a Portal between them and what they film
             // look through it.
             crate::portals::carry_views(&mut self.world);
+            if !self.edit_mode {
+                crate::portals::mark_straddlers(&mut self.world);
+            }
         }
 
         profile_scope!("End of Frame");

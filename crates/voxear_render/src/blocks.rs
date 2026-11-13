@@ -351,7 +351,7 @@ struct Pool {
     /// The world's faces, its own and coarser, as the pool was last brought
     /// up to them, and as every one of its own had its mesh for rays made.
     made_from: Option<(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)>,
-    proxied: Option<Arc<ChunkMeshes>>,
+    proxied: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)>,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner, made again as they change.
     placed: Option<Arc<[(MeshHandle, Vec3)]>>,
@@ -723,10 +723,17 @@ impl BlockWorlds {
             };
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
-            if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
+            let same = |(meshes, places): &(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)| {
+                Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places)
+            };
+            if !pool.proxied.as_ref().is_some_and(same) {
+                // Seen from more places than one, as through Portals, only what is round the first is traced:
+                // the GI's rays reach no further than round the camera.
+                let own = blocks.places.first().map(|place| &place.columns);
+                let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
                 pool.proxies.retain(|key, (_, mesh)| {
-                    let kept = blocks.meshes.contains_key(key);
+                    let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
                     }
@@ -738,7 +745,7 @@ impl BlockWorlds {
                 let uv_scale = 1.0 / blocks.block_size.max(0.01);
                 // Uploaded and built together, waited for once.
                 let batch = gpu.batch();
-                for (key, mesh) in blocks.meshes.iter() {
+                for (key, mesh) in blocks.meshes.iter().filter(|(key, _)| traced(key)) {
                     if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
                         continue;
                     }
@@ -775,7 +782,7 @@ impl BlockWorlds {
                     batch.finish()?;
                 }
                 if all {
-                    pool.proxied = Some(blocks.meshes.clone());
+                    pool.proxied = Some((blocks.meshes.clone(), blocks.places.clone()));
                 }
                 if changed {
                     pool.placed = None;
@@ -899,7 +906,7 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
                 flags: INSTANCE_RAYS_ONLY,
                 ..GpuInstance::default()
             });
-            extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32) });
+            extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32), far_side: false });
         }
     }
 }

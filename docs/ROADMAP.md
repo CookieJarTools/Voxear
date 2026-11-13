@@ -1114,8 +1114,26 @@ Done so far:
     settings there are not), every built-in pack, the worn look following the level's lighting, a player's
     folder; a C# system listing, wearing, trying and taking off packs, and the game starting in the one kept; a
     GPU picture of a Block World under each built-in pack with the level's own lighting unchanged.
-  - Later: water in a pack, pictures of a pack's own (a colour lookup table, block pictures), a pack's own
-    shader over the picture, a rows-and-tabs Inspector for a pack as lighting settings have.
+  - **Water:** `[water]` (`WaterData`, the renderer's `WaterLook`): deep, scatter, clarity, murk and foam over
+    the sea and every Pool of water as a frame is extracted; Block Worlds' water takes `deep` through
+    `GpuOcean::block_water`, which `blockWaterLook` puts in the block's colour's place.
+  - **A look shader:** a third kind of `.shader`, one with a `look` function (`ShaderInfo::look`), given each
+    pixel of the finished picture at the end of Composite (`LookInput`, `shaders/look_custom.slang`,
+    `look_dispatch_code`, the `post` module among those compiled with a project's shaders, in the editor and into
+    a build). A pack names one with `[shader]` and its properties by name; `look_packs::wear` finds its number
+    and values (`shaders::look_shader`) and they travel in `GpuPost::look_shader` and `look_values`, up to 8.
+    New Shader offers Look. A renderer compiles its custom shaders in a folder of its own, so two in one
+    process do not write over each other's.
+  - **The Inspector:** a pack shows as lighting settings do (`LightingFields::for_pack`): the same tabs but
+    for the weather, with Pack, Water and Blocks; a row empty, or its menu on Level's own, where the pack writes
+    nothing; a toggle as a menu of three; a colour with a button to give it back; what the pack writes in bold.
+    A table emptied of its last setting leaves the file (`prune`).
+  - Tests added with these: the ready-made screen opened, its rows' layout and picking; the Inspector's rows
+    typed in, emptied and written; a pack's water over a sea, a Pool and lava, and a GPU picture of a pond of
+    blocks in a pack's colour; a look shader read, dispatched and given a pack's values, a GPU picture of one
+    turning the sky to its negative, and a project's pack wearing its shader and refusing others.
+  - Later: texture packs for a pack's own pictures; a look shader reading the pixels round it and the depth; a
+    picker for a pack's shader in the Inspector.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

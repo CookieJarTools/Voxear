@@ -7,6 +7,7 @@
 #include "atmosphere.slang"
 #include "common.slang"
 #include "ddgi_sample.slang"
+#include "look_custom.slang"
 #include "volume.slang"
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
@@ -677,6 +678,17 @@ float4 compositeFragment(PostOut input) : SV_Target
     }
 
     color = saturate(color);
+    // A look pack's own shader has the last word on the picture.
+    if (post.lookShader != 0)
+    {
+        LookInput seen;
+        seen.color = color;
+        seen.uv = uv;
+        seen.size = float2(frame->viewport);
+        seen.pixel = uv * seen.size;
+        seen.time = frame->time;
+        color = saturate(customLook(post.lookShader, seen));
+    }
     if (push.output != 0)
     {
         color = dither(color, input.position.xy, frame->frameIndex);

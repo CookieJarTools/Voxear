@@ -98,11 +98,14 @@ pub fn engine_shader_dir() -> Option<PathBuf> {
 pub struct CustomCode {
     pub materials: String,
     pub ui: String,
+    /// `project_look_shaders.slang`, which defines `customLook` (see
+    /// `shaders/look_custom.slang`). Empty compiles to none.
+    pub look: String,
 }
 
 impl From<String> for CustomCode {
     fn from(materials: String) -> Self {
-        Self { materials, ui: String::new() }
+        Self { materials, ui: String::new(), look: String::new() }
     }
 }
 
@@ -114,6 +117,9 @@ impl From<&str> for CustomCode {
 
 /// The UI's `customUi` when a project has no UI shaders of its own.
 const NO_UI_SHADERS: &str = "float4 customUi(uint shader, uint first, UiInput input)\n{\n    return input.background;\n}\n";
+
+/// What a project without look shaders compiles in their place.
+const NO_LOOK_SHADERS: &str = "float3 customLook(uint shader, LookInput input)\n{\n    return input.color;\n}\n";
 
 /// A project's custom shaders compiling on a thread of their own, into the
 /// modules that draw materials and the UI.
@@ -150,6 +156,8 @@ pub fn compile_custom_shaders(code: impl Into<CustomCode>, dir: &Path) -> Result
     std::fs::write(dir.join("project_shaders.slang"), &code.materials)?;
     let ui = if code.ui.is_empty() { NO_UI_SHADERS } else { &code.ui };
     std::fs::write(dir.join("project_ui_shaders.slang"), ui)?;
+    let look = if code.look.is_empty() { NO_LOOK_SHADERS } else { &code.look };
+    std::fs::write(dir.join("project_look_shaders.slang"), look)?;
     let compiled: Vec<Result<(String, Vec<u8>)>> = std::thread::scope(|scope| {
         let jobs: Vec<_> = CUSTOM_SHADER_MODULES
             .iter()

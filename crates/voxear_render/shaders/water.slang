@@ -3648,6 +3648,9 @@ BlockWaterLook blockWaterLook(BlockWorld world, uint surface)
 {
     uint material = world.surfaceCount > 0 ? world.surfaces[min(surface, world.surfaceCount - 1)].material : world.material;
     float3 color = max(buffers()->materials[material].baseColor.rgb, 0.0);
+    // A look pack's colour for all such water takes the place of the block's own.
+    float4 worn = push.frame->ocean.blockWater;
+    color = lerp(color, worn.rgb, worn.a);
     float3 own = color / max(max(max(color.r, color.g), color.b), 1e-3);
     BlockWaterLook look;
     look.deep = color;

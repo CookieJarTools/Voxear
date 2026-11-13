@@ -212,6 +212,7 @@ impl Game {
             let code = voxear_render::CustomCode {
                 materials: crate::shaders::dispatch_code(registry),
                 ui: crate::shaders::ui_dispatch_code(registry),
+                look: crate::shaders::look_dispatch_code(registry),
             };
             if !renderer.set_custom_shaders(code) {
                 return;

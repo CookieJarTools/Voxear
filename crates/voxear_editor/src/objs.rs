@@ -59,6 +59,13 @@ pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 23] = [
     ("Rifle", "Rifle", RIFLE, Some(Module::Guns)),
 ];
 
+/// Whether the New Object kind `kind` stands on the ground, as a frame or a
+/// car does: made in the Scene view, it goes on the ground in front of the
+/// view, where the Hierarchy puts others in the air there.
+pub fn stands_on_ground(kind: usize) -> bool {
+    matches!(NEW_OBJS.get(kind).map(|(_, name, ..)| *name), Some("Portals" | "Car"))
+}
+
 /// Two Portals that lead to each other, 8 m apart and face to face, each in
 /// a frame of metre blocks round an opening 2 m wide and 3 m high, and each
 /// marked on every map. Move one wherever the other should lead.

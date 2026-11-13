@@ -2871,7 +2871,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     The starter oak, birch and pine logs are logs with ring pictures, and Starter Blocks has an oak log. A plain
     cube a plant names as its wood is read as a log (`Content::plant_woods`), so worlds of plant files made before
     logs thin too; a trunk thins most low down (with the square root of its height); leaves cover every block of
-    wood in a crown with nothing over it and each branch's end (`plant::cover_wood`).
+    wood in a crown with nothing over it and each branch's end (`plant::cover_wood`). Each log lies along its own
+    step, so a slanting limb is a staircase joined end to end, and a thin log reaches only to a thicker log or one
+    lying towards it (`mesh::around_of`), so two limbs side by side do not join. A conifer's branches go one way
+    each round its trunk, each at a height of its own, rising a block at most, two blocks over the next one its
+    way. The starter trees stand on longer trunks for a third-person camera (oak 9 to 13, birch 9.5 to 13.5, pine
+    14 to 19 with a crown of 8 to 11; the maple and blossom 10 to 14 and 8 to 11), and so do the starter Tree,
+    Birch and Pine models (`StarterPlant::lift`). Far off, a world's structures go on: rings 1 to 3 take them
+    coarsened, a cell showing the block most of its built blocks are where a sixteenth of it is built
+    (`map::FarStructures`); past that each plant structure is a wood of its own leaves in its structure's biomes
+    (`grown_plants::structure_woods`, `Woods::biomes`, each later structure taking only the ground those before
+    leave), and a wood's plants are crowns as wide as theirs over a trunk rather than columns.
   - **Chopping and felling** (`engine::trees`, `terrain::blocks::fell`): a log that chops (`BlockDef::chops`,
     `slice`) stands a slice thinner each time it is mined (`trees::chop`), and its last cuts it through; one that
     fells (`BlockDef::fells`) brings down what it held up: `fell::loose_tree` takes the logs of its family over the

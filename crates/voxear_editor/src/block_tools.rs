@@ -163,7 +163,21 @@ fn block_under(
     let from = ((origin - corner) / size).to_array();
     let through = brush != BlockBrush::Break && !builds_water(game);
     let meets = |block: BlockId| block != AIR && !(through && is_water(&blocks.faces, block));
-    voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), REACH / size, &meets)
+    // Building meets a block of parts where its parts are, as it shows: a slab's top half a block down. Using and
+    // linking meet a block whole, so a door or a lever is easy to point at.
+    match brush {
+        BlockBrush::Use | BlockBrush::Link => {
+            voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), REACH / size, &meets)
+        }
+        _ => voxear_terrain::blocks::raycast_shaped(
+            &blocks.blocks,
+            &blocks.faces,
+            from,
+            direction.to_array(),
+            REACH / size,
+            &meets,
+        ),
+    }
 }
 
 /// The blocks a brush `size` blocks across reaches round `middle`: a ball.

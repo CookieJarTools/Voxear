@@ -187,7 +187,7 @@ impl Editor {
             "components" => done(self.components_json()),
             "kinds" => done(kinds_json(&self.game.project.modules())),
             "obj.create" => self.obj_create(args, renderer),
-            "obj.set" => self.obj_set(args),
+            "obj.set" => self.obj_set(args, renderer),
             "obj.duplicate" => self.obj_duplicate(args, renderer),
             "obj.delete" => self.obj_delete(args),
             "obj.move" => self.obj_move(args),
@@ -582,9 +582,16 @@ impl Editor {
             Some(scene) => Some(link::resolve_project_asset(&self.game, scene)?.0),
             None => None,
         };
+        // A kind that stands on the ground, made where nothing says, goes on the ground in the middle of the view.
+        let standing = opt_text(args, "kind").and_then(|kind| {
+            NEW_OBJS
+                .iter()
+                .position(|(label, name, ..)| label.eq_ignore_ascii_case(kind) || name.eq_ignore_ascii_case(kind))
+        });
         let position = match opt_vector(args, "position")? {
             Some(at) => Vec3::from_array(at),
             None if parent.is_some() => Vec3::ZERO,
+            None if standing.is_some_and(objs::stands_on_ground) => self.new_obj_on_ground(renderer),
             None => self.new_obj_position(),
         };
         let modules = self.game.project.modules();
@@ -625,21 +632,63 @@ impl Editor {
         if let Some(name) = opt_text(args, "name") {
             self.game.engine.world.insert(made, Name(name.to_string()));
         }
+        if opt_bool(args, "on_ground") == Some(true)
+            && let Some(at) = self.grounded(renderer, made)
+            && let Some(transform) = self.game.engine.world.get_mut::<voxear_scene::Transform>(made)
+        {
+            transform.position = at;
+        }
         self.record(Edit::Exists { root: made, taken: None });
         self.shown_again();
         done(json!({ "obj": obj_ref(&self.game, made) }))
     }
 
-    fn obj_set(&mut self, args: &Json) -> Called {
+    /// Where, from its parent, the Obj `entity` stands on the ground under
+    /// it (see `Editor::on_ground`), passing through itself and what is
+    /// under it.
+    fn grounded(&self, renderer: &Renderer, entity: Entity) -> Option<Vec3> {
+        let world = &self.game.engine.world;
+        let at = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+        let ground = self.on_ground(renderer, at, &objs::family(world, entity));
+        let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+        let parent =
+            parent.map_or(voxear_core::math::Mat4::IDENTITY, |parent| voxear_scene::world_matrix(world, parent));
+        let local = world.get::<voxear_scene::Transform>(entity)?.position;
+        Some(local + parent.inverse().transform_vector3(ground - at))
+    }
+
+    fn obj_set(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
         let entity = self.obj_arg(args)?;
+        // Stood on the ground where it would be, once moved.
+        let moved = opt_vector(args, "position")?;
+        let grounded = match opt_bool(args, "on_ground") == Some(true) {
+            true => {
+                let world = &mut self.game.engine.world;
+                let was = world.get::<voxear_scene::Transform>(entity).map(|transform| transform.position);
+                if let (Some(at), Some(transform)) = (moved, world.get_mut::<voxear_scene::Transform>(entity)) {
+                    transform.position = Vec3::from_array(at);
+                }
+                let grounded = self.grounded(renderer, entity);
+                if let (Some(was), Some(transform)) =
+                    (was, self.game.engine.world.get_mut::<voxear_scene::Transform>(entity))
+                {
+                    transform.position = was;
+                }
+                grounded
+            }
+            false => None,
+        };
         let world = &mut self.game.engine.world;
         let before = ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         let mut after = before.clone();
         if let Some(name) = opt_text(args, "name") {
             after.name = name.to_string();
         }
-        if let Some(at) = opt_vector(args, "position")? {
+        if let Some(at) = moved {
             after.transform.position = Vec3::from_array(at);
+        }
+        if let Some(at) = grounded {
+            after.transform.position = at;
         }
         if let Some([x, y, z]) = opt_vector(args, "rotation")? {
             after.transform.rotation = Quat::from_euler(EulerRot::YXZ, y.to_radians(), x.to_radians(), z.to_radians());

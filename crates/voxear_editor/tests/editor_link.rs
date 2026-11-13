@@ -48,9 +48,22 @@ fn hello_copy() -> tempfile::TempDir {
     dir
 }
 
+/// Every line logged in this test program, which every editor's Console
+/// here shows: one subscriber for all, as a subscriber set for one thread
+/// can miss lines another test's thread met first.
+fn shared_log() -> LogCapture {
+    static LOG: std::sync::OnceLock<LogCapture> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let log = LogCapture::default();
+        let _ = tracing::subscriber::set_global_default(voxear_core::logging::capturing_only(log.clone()));
+        log
+    })
+    .clone()
+}
+
 /// The editor open on `dir`, a frame in, or `None` without a GPU.
 fn open(dir: &Path) -> Option<(Renderer, Editor)> {
-    open_logging(dir, LogCapture::default())
+    open_logging(dir, shared_log())
 }
 
 /// The same, its Console showing what is put in `log`.
@@ -129,9 +142,7 @@ fn field<'a>(obj: &'a Value, component: &str, name: &str) -> &'a Value {
 #[test]
 fn a_tool_makes_an_obj_sets_a_field_undoes_saves_and_captures() {
     let dir = hello_copy();
-    let log = LogCapture::default();
-    let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
-    let Some((mut renderer, mut editor)) = open_logging(dir.path(), log) else { return };
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
     let capture = dir.path().join("Lamp.png");
     let shot = capture.clone();
     let (lamp, before_undo, after_undo, saved, pictured, logged) =
@@ -152,7 +163,7 @@ fn a_tool_makes_an_obj_sets_a_field_undoes_saves_and_captures() {
             call(&mut client, "redo", json!({}));
             let saved = call(&mut client, "save", json!({}));
             let pictured = call(&mut client, "capture", json!({ "view": "scene", "path": shot.display().to_string() }));
-            let logged = call(&mut client, "console.read", json!({ "level": "info" }));
+            let logged = call(&mut client, "console.read", json!({ "level": "info", "limit": 10000 }));
             (lamp, before_undo, after_undo, saved, pictured, logged)
         });
     assert_eq!(before_undo["name"], "Lamp");
@@ -174,7 +185,8 @@ fn a_tool_makes_an_obj_sets_a_field_undoes_saves_and_captures() {
     assert!(picture.pixels().any(|p| p.0[..3] != picture.get_pixel(0, 0).0[..3]), "the capture is one colour");
 
     let lines = logged["lines"].as_array().unwrap();
-    assert!(lines.iter().any(|line| line["message"].as_str().unwrap_or_default().contains("[Tools] obj.create")));
+    let made = |line: &&Value| line["message"].as_str().is_some_and(|m| m.contains("[Tools] obj.create") && m.contains("Lamp"));
+    assert!(lines.iter().any(|line| made(&line)), "the Console has no line for the Lamp made");
 }
 
 #[test]
@@ -351,4 +363,195 @@ fn every_component_and_its_fields_are_reached() {
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// A behaviour whose fields point at an Obj and at an Obj's camera, as a
+/// script's description has them.
+const FOLLOWER: &str = r#"{"behaviours": [{"name": "Hello.Follower", "bases": [], "interfaces": [], "fields": [
+  {"name": "Target", "type": {"kind": "obj"}, "default": null},
+  {"name": "Eye", "type": {"kind": "component", "name": "Voxear.Camera"}, "default": null}
+]}], "components": [], "types": {}, "commands": []}"#;
+
+#[test]
+fn a_scripts_obj_and_camera_fields_take_their_targets_and_read_them_back() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    editor.set_script_types(voxear_engine::script_types::parse(FOLLOWER).unwrap());
+    let follower = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Follower" }))["obj"].clone();
+    let camera = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Camera", "name": "Eye" }))["obj"].clone();
+    let ball = done(&mut editor, &mut renderer, "objs.list", json!({ "name": "Chrome Ball" }))["objs"][0]["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": follower, "component": "Hello.Follower" }));
+
+    // The camera field offers the Objs with a camera.
+    let eye = json!({ "obj": follower, "component": "Hello.Follower", "field": "Eye" });
+    let choices = done(&mut editor, &mut renderer, "field.choices", eye.clone());
+    let offered: Vec<&Value> = choices["choices"].as_array().unwrap().iter().map(|c| &c["value"]).collect();
+    assert!(offered.contains(&&camera), "the camera field offers no camera: {choices}");
+
+    for (field, target) in [("Eye", &camera), ("Target", &ball)] {
+        let set = json!({ "obj": follower, "component": "Hello.Follower", "field": field, "value": target });
+        done(&mut editor, &mut renderer, "field.set", set);
+    }
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": follower }));
+    assert_eq!(field(&shown, "Hello.Follower", "Eye")["value"], camera, "{shown}");
+    assert_eq!(field(&shown, "Hello.Follower", "Target")["value"], ball, "{shown}");
+}
+
+#[test]
+fn a_maps_open_action_is_set_from_its_menu() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let map = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Map" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": map, "component": "map" }));
+    let action = json!({ "obj": map, "component": "map", "field": "open_action" });
+    let choices = done(&mut editor, &mut renderer, "field.choices", action.clone());
+    let picked = choices["choices"].as_array().unwrap().iter().find(|c| !c["value"].is_null()).cloned();
+    let Some(picked) = picked else { return eprintln!("skipping: Hello has no input actions to open a map with") };
+    let mut set = action.clone();
+    set["value"] = picked["value"].clone();
+    done(&mut editor, &mut renderer, "field.set", set);
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": map }));
+    assert_eq!(field(&shown, "map", "open_action")["value"], picked["value"], "{shown}");
+    // By its label, as the menu shows it, too.
+    let mut by_label = action;
+    by_label["value"] = json!(null);
+    done(&mut editor, &mut renderer, "field.set", by_label.clone());
+    by_label["value"] = picked["label"].clone();
+    assert_eq!(done(&mut editor, &mut renderer, "field.set", by_label)["changed"], true);
+}
+
+#[test]
+fn a_block_world_takes_blocks_from_a_tool_and_its_file_from_disk() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let block = done(&mut editor, &mut renderer, "asset.create", json!({ "kind": "Block", "folder": "Blocks" }))["asset"].clone();
+    let world = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Blocks", "position": [0, 0, 0] }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": world, "component": "block_world" }));
+    frames(&mut editor, &mut renderer, 5);
+
+    // Its Settings tab's fields and its Build tab's alike, whichever the Inspector shows.
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": world }));
+    field(&shown, "block_world", "block_size");
+    field(&shown, "block_world", "brush");
+
+    let high = [0.5, 40.5, 0.5];
+    let placed = done(&mut editor, &mut renderer, "blocks.set", json!({ "obj": world, "at": high, "block": block }));
+    assert_eq!(placed["changed"], 1, "{placed}");
+    let found = done(&mut editor, &mut renderer, "blocks.get", json!({ "obj": world, "at": high }));
+    assert_eq!(found["block"]["path"], block["path"], "{found}");
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    let gone = done(&mut editor, &mut renderer, "blocks.get", json!({ "obj": world, "at": high }));
+    assert!(gone["block"].is_null(), "undo left the block: {gone}");
+    let filled = done(
+        &mut editor,
+        &mut renderer,
+        "blocks.fill",
+        json!({ "obj": world, "from": [0.5, 40.5, 0.5], "to": [2.5, 41.5, 2.5], "block": block }),
+    );
+    assert_eq!(filled["changed"], 18, "{filled}");
+
+    // Its file written by a tool is read again.
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let data = field(&done(&mut editor, &mut renderer, "obj.get", json!({ "obj": world })), "block_world", "data")["value"]
+        ["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let file = dir.path().join(&data);
+    let mut table: toml::Table = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    table.insert("block_size".into(), toml::Value::Float(0.5));
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::write(&file, toml::to_string(&table).unwrap()).unwrap();
+    done(&mut editor, &mut renderer, "files.look", json!({}));
+    frames(&mut editor, &mut renderer, 3);
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": world }));
+    assert_eq!(field(&shown, "block_world", "block_size")["value"], 0.5, "{shown}");
+}
+
+#[test]
+fn the_scene_view_turns_to_look_at_a_point() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let set = json!({ "position": [0.0, 10.0, -10.0], "look_at": [0.0, 0.0, 0.0] });
+    done(&mut editor, &mut renderer, "view.set", set);
+    frames(&mut editor, &mut renderer, 2);
+    let view = done(&mut editor, &mut renderer, "view.get", json!({}));
+    let forward: Vec<f64> = view["forward"].as_array().unwrap().iter().map(|n| n.as_f64().unwrap()).collect();
+    let wanted = [0.0, -std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2];
+    assert!(forward.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 1e-3), "looks along {forward:?}");
+    assert_eq!(view["position"], json!([0.0, 10.0, -10.0]));
+}
+
+#[test]
+fn an_editor_takes_the_link_once_the_editor_holding_it_closes() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut first)) = open(dir.path()) else { return };
+    first.serve_link(false).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut second = Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    assert!(second.serve_link(false).is_err(), "two editors had the link");
+    frames(&mut second, &mut renderer, 3);
+    assert!(!second.has_link());
+    drop(first);
+    let began = Instant::now();
+    while !second.has_link() {
+        assert!(began.elapsed() < Duration::from_secs(10), "the second editor never took the link");
+        frames(&mut second, &mut renderer, 1);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let folder = link::link_folder(dir.path());
+    let talking = std::thread::spawn(move || LinkClient::connect(&folder, link::LINK_FILE).map(|client| client.about.pid));
+    while !talking.is_finished() {
+        frames(&mut second, &mut renderer, 1);
+    }
+    assert_eq!(talking.join().unwrap().unwrap(), std::process::id());
+}
+
+/// The only test here that starts .NET, which starts once per process: a
+/// `[Command]` run on the edited level has the game's services, so it puts
+/// a block by its file into an open Block World, one step to undo; and
+/// Add Component offers the engine's own behaviours, as Block User.
+#[test]
+fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offered() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    // With its scripts, this once.
+    let hello = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello/voxear.toml");
+    std::fs::copy(hello, dir.path().join("voxear.toml")).unwrap();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let block = done(&mut editor, &mut renderer, "asset.create", json!({ "kind": "Block", "folder": "Blocks" }))["asset"].clone();
+    let world = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Blocks" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": world, "component": "block_world" }));
+    let tool = format!(
+        "using System.Numerics;\nusing Voxear;\n\nnamespace Hello;\n\ninternal static class BlockTools\n{{\n\
+         \t[Command(\"Place Test Block\")]\n\tprivate static void PlaceTestBlock()\n\t{{\n\
+         \t\tBlocks.Set(new Vector3(0.5f, 40.5f, 0.5f), Block.Load(\"{}\"));\n\t}}\n}}\n",
+        block["path"].as_str().unwrap()
+    );
+    std::fs::write(dir.path().join("Scripts/BlockTools.cs"), tool).unwrap();
+    let built = done(&mut editor, &mut renderer, "scripts.build", json!({}));
+    assert_eq!(built["ok"], true, "{built}");
+
+    let components = done(&mut editor, &mut renderer, "components", json!({}));
+    let offered: Vec<&str> = components["components"].as_array().unwrap().iter().filter_map(|c| c["component"].as_str()).collect();
+    assert!(offered.contains(&"Voxear.BlockUser"), "{offered:?}");
+    let user = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Player" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": user, "component": "Voxear.BlockUser" }));
+
+    let commands = done(&mut editor, &mut renderer, "commands", json!({}));
+    let id = commands["commands"].as_array().unwrap().iter().find(|c| c["title"] == "Place Test Block").unwrap()["id"].clone();
+    let undo = done(&mut editor, &mut renderer, "editor.state", json!({}))["undo"].as_u64().unwrap();
+    done(&mut editor, &mut renderer, "command.run", json!({ "id": id }));
+    let at = json!({ "obj": world, "at": [0.5, 40.5, 0.5] });
+    let began = Instant::now();
+    while done(&mut editor, &mut renderer, "blocks.get", at.clone())["block"].is_null() {
+        assert!(began.elapsed() < Duration::from_secs(300), "the command put no block: {:?}", editor.play_error());
+        frames(&mut editor, &mut renderer, 1);
+    }
+    assert_eq!(done(&mut editor, &mut renderer, "blocks.get", at.clone())["block"]["path"], block["path"]);
+    assert_eq!(done(&mut editor, &mut renderer, "editor.state", json!({}))["undo"].as_u64().unwrap(), undo + 1);
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert!(done(&mut editor, &mut renderer, "blocks.get", at)["block"].is_null(), "one undo takes the block back");
 }

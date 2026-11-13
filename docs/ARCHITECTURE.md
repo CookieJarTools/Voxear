@@ -4250,12 +4250,18 @@ can change an open project and see the result, each change a step on the editor'
   order. Each connection has a thread of its own; calls go over a channel to the editor's thread, which runs them
   in its frame, beside the shortcuts (`Editor::update_link`), so they meet the editor's state as a click does.
   `link.hello` is answered by the connection's thread, to tell a live link from a file left by an editor that
-  crashed (which the client then removes). A second editor on the project does not open a link. Errors carry a
+  crashed (which the client then removes). A second editor on the project waits for the link: it looks every two seconds whether the editor holding it
+  is still running (`local_link::holder_running`, without asking it) and takes the link once it has gone. Errors carry a
   kind (`ErrorKind`: `no_such_obj`, `wrong_value`, `unsaved_conflict`, `refused_while_playing`, `not_allowed`…).
 - **Calls** (`voxear_editor::link`, run in `editor/link_calls.rs`). The calls are not written per feature:
   - Components and fields go through the Inspector's own `Part`/`Prop` layer (`props::parts`, `props`, `get`,
     `set`, `pick`, `choices`), so every built-in component and every script field the Inspector shows is
-    reachable.
+    reachable. A component whose Inspector has tabs (a Block World's Build and Settings, a Terrain's and a
+    Foliage's tools) lists every tab's fields (`link::every_prop`); a field with no name of its own is named
+    from its label. A reference reads back from a script field's target, and is set by what its menu offers,
+    so one set by a key, as a Map's input action, is set as listed.
+  - Blocks are set at points in the world (`blocks.set`, `blocks.fill`), numbered into the world as a script's
+    `Blocks.Set` numbers them, one step to undo; the Scene view's camera is moved and turned with `view.set`.
   - Commands are the command palette's (`palette::command_list`), scripts' `[Command]`s included.
   - Files are the Project panel's (`project_files`).
   - `link::every_part` and `link::asset_kind_id` match their enums whole, so a new component or asset kind does
@@ -4270,7 +4276,11 @@ can change an open project and see the result, each change a step on the editor'
   scene whose file no longer holds what the scene has (`Levels::scene_matches_disk`, so the editor's own saves do
   not count) is read again with `Levels::reload_scenes` when no edits wait. Undo starts afresh and the selection
   is kept by Obj path. With edits waiting, the file is left and the status bar says so; `scene.reload` with
-  `discard` reads it anyway. `voxear.toml` is read again into the project and Project Settings.
+  `discard` reads it anyway. `voxear.toml` is read again into the project and Project Settings. A Block World's
+  `.blockworld` or `.blocks` written on disk is read again into every Block World drawing it
+  (`block_props::read_again`), unless it has changes not saved; the editor's own saves mark the files seen.
+- **Script commands on the edited level** run with the game's services lent, as while playing
+  (`Game::with_services`), so `Blocks`, `Block.Load` and prefabs work from a `[Command]`.
 - **`vox editor call <call> [name=value…]`** prints the answer as JSON. Exit codes: 0 done, 1 failed, 2 usage,
   3 no editor open, 4 refused. `--headless` opens an offscreen editor for the call when none is open
   (`voxear_editor::call_headless`); `batch` with no arguments reads its calls from stdin. `--describe [--json]`
@@ -4280,7 +4290,7 @@ can change an open project and see the result, each change a step on the editor'
 - **`vox mcp`** serves the calls as Model Context Protocol tools over stdio, hand-written on `serde_json`. Each
   call is a tool, `.` written `_`, its arguments as the input schema; one `vox` tool runs the other commands.
   `capture` returns the PNG inline. It uses the open editor, or starts `vox editor serve` and closes it on exit.
-- **Not yet.** Brush tools (terrain sculpt and paint, block placing and digging, plant painting), the generator
+- **Not yet.** Brush tools (terrain sculpt and paint, plant painting), the generator
   graph and the Model window are reached only through their files and `files.look`; no pointer or key input;
   nothing is pushed to a tool (it polls, as `console.read` with `after` does); undo steps carry no tool's name.
 

@@ -769,27 +769,46 @@ pub fn takes(kind: &FieldKind) -> &str {
 /// Whether an Obj has the engine component a component field names by its
 /// C# type, as `Voxear.AudioSource`.
 fn has_component(world: &World, entity: Entity, name: &str) -> bool {
-    match short(name) {
-        "AudioSource" => world.has::<AudioSource>(entity),
-        "Collider" => world.has::<Collider>(entity),
-        "Rigidbody" => world.has::<Rigidbody>(entity),
-        "Buoyancy" => world.has::<voxear_engine::water::Buoyancy>(entity),
-        "Light" => world.has::<voxear_render::Light>(entity),
-        "ParticleSystem" => world.has::<voxear_render::ParticleSystem>(entity),
-        "ForceField" => world.has::<voxear_render::ForceField>(entity),
-        "Smoke" => world.has::<voxear_render::Smoke>(entity),
-        "Mist" => world.has::<voxear_render::Mist>(entity),
-        "UiPanel" => world.has::<voxear_render::UiPanel>(entity),
-        "ScreenUi" => world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
-        "CharacterController" => world.has::<CharacterController>(entity),
-        "Joint" => world.has::<Joint>(entity),
-        "Portal" => world.has::<voxear_render::Portal>(entity),
-        "Collider2D" => world.has::<Collider2D>(entity),
-        "Rigidbody2D" => world.has::<Rigidbody2D>(entity),
-        "Vehicle" => world.has::<Vehicle>(entity),
-        "Wheel" => world.has::<Wheel>(entity),
-        _ => false,
-    }
+    component_check(name).is_some_and(|has| has(world, entity))
+}
+
+/// How to tell an Obj has the engine component a script's field names by
+/// its C# type, as `Light`; `None` for a type that is not one. Every C#
+/// component of Voxear.Core is here, as a test checks.
+fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
+    use voxear_engine::{animation, heat, map};
+    Some(match short(name) {
+        "AudioSource" => |world, entity| world.has::<AudioSource>(entity),
+        "BlockMob" => |world, entity| world.has::<voxear_engine::block_mob::BlockMob>(entity),
+        "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),
+        "Buoyancy" => |world, entity| world.has::<voxear_engine::water::Buoyancy>(entity),
+        "Camera" => |world, entity| world.has::<voxear_render::Camera>(entity),
+        "CharacterController" => |world, entity| world.has::<CharacterController>(entity),
+        "Collider" => |world, entity| world.has::<Collider>(entity),
+        "Collider2D" => |world, entity| world.has::<Collider2D>(entity),
+        "FirstPersonView" => |world, entity| world.has::<voxear_engine::first_person::FirstPersonView>(entity),
+        "ForceField" => |world, entity| world.has::<voxear_render::ForceField>(entity),
+        "HeatBody" => |world, entity| world.has::<heat::HeatBody>(entity),
+        "HeatSource" => |world, entity| world.has::<heat::HeatSource>(entity),
+        "HeatZone" => |world, entity| world.has::<heat::HeatZone>(entity),
+        "Joint" => |world, entity| world.has::<Joint>(entity),
+        "Light" => |world, entity| world.has::<voxear_render::Light>(entity),
+        "Map" => |world, entity| world.has::<map::Map>(entity),
+        "MapMarker" => |world, entity| world.has::<map::MapMarker>(entity),
+        "Mist" => |world, entity| world.has::<voxear_render::Mist>(entity),
+        "MobMotion" => |world, entity| world.has::<animation::MobMotion>(entity),
+        "MotionMatcher" => |world, entity| world.has::<animation::MotionMatcher>(entity),
+        "ParticleSystem" => |world, entity| world.has::<voxear_render::ParticleSystem>(entity),
+        "Portal" => |world, entity| world.has::<voxear_render::Portal>(entity),
+        "Rigidbody" => |world, entity| world.has::<Rigidbody>(entity),
+        "Rigidbody2D" => |world, entity| world.has::<Rigidbody2D>(entity),
+        "ScreenUi" => |world, entity| world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
+        "Smoke" => |world, entity| world.has::<voxear_render::Smoke>(entity),
+        "UiPanel" => |world, entity| world.has::<voxear_render::UiPanel>(entity),
+        "Vehicle" => |world, entity| world.has::<Vehicle>(entity),
+        "Wheel" => |world, entity| world.has::<Wheel>(entity),
+        _ => return None,
+    })
 }
 
 fn name_of(world: &World, entity: Entity) -> String {
@@ -863,6 +882,32 @@ fn summary(world: &World, value: &toml::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every engine component a script's field can name, as Voxear.Core's C# declares them
+    /// (`struct Light : IObjComponent`), is one the editor can tell an Obj has, so the field offers those Objs.
+    #[test]
+    fn every_engine_component_a_field_can_name_is_known() {
+        fn declared(folder: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    declared(&path, found);
+                } else if path.extension().is_some_and(|e| e == "cs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for line in text.lines().filter(|line| line.contains("IObjComponent") && line.contains(" struct ")) {
+                        let after = line.split(" struct ").nth(1).unwrap_or_default();
+                        let name: String = after.chars().take_while(|c| c.is_alphanumeric()).collect();
+                        found.push(name);
+                    }
+                }
+            }
+        }
+        let mut names = Vec::new();
+        declared(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../managed/Voxear.Core"), &mut names);
+        assert!(names.len() >= 20, "found only {names:?}");
+        let unknown: Vec<&String> = names.iter().filter(|name| component_check(name).is_none()).collect();
+        assert!(unknown.is_empty(), "a field naming these offers no Objs: {unknown:?}");
+    }
 
     /// An arm drawing a model with a hand, and a holder whose Bone field
     /// points at it: the field shows its Obj, with a row under it for the

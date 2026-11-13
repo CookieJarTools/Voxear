@@ -284,7 +284,7 @@ impl Editor {
             }
             Mode::Editing => {
                 let scripts = self.play.scripts.as_mut()?;
-                Some(scripts.run_check(&mut self.game.engine.world, type_name, method))
+                Some(self.game.with_services(None, |world| scripts.run_check(world, type_name, method)))
             }
         }
     }
@@ -298,7 +298,9 @@ impl Editor {
             world.query_ref::<(Entity, &Name)>().without::<EditorOnly>().into_iter().map(|(e, _)| e).collect();
         let before: Vec<(Entity, ObjState)> = objs.iter().filter_map(|&e| Some((e, ObjState::of(world, e)?))).collect();
         let scripts = self.play.scripts.as_mut().expect("checked by the caller");
-        let ran = scripts.run_command(&mut self.game.engine.world, type_name, method);
+        // With the game's services, as while playing, so a command can load blocks and prefabs.
+        let ran = self.game.with_services(None, |world| scripts.run_command(world, type_name, method));
+        self.link.refresh_blocks = true;
         let doomed = scripts.take_obj_destroys();
         let world = &self.game.engine.world;
         let mut edits: Vec<Edit> = before

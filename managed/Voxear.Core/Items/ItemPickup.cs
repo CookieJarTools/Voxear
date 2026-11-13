@@ -9,6 +9,7 @@ namespace Voxear;
 /// GetBehaviour&lt;ItemPickup&gt;().PickedUp += stack => inventory.Add(stack);
 /// </code>
 /// </summary>
+[AddComponentMenu("Items/Item Pickup")]
 public sealed class ItemPickup : Behaviour
 {
 	/// <summary>How near an item lies to be taken up, in metres.</summary>

@@ -297,6 +297,14 @@ pub(crate) fn drawn_bounds(world: &World, renderer: &Renderer, entity: Entity) -
         let ([width, length], [low, high]) = (terrain.heights.size(), terrain.heights.range());
         return Some((Vec3::new(0.0, low, 0.0), Vec3::new(width, high, length)));
     }
+    // A world of blocks, as far as its chunks with faces reach: those made round the camera, for one without end.
+    if let Some(blocks) = world.get::<voxear_terrain::blocks::BlockWorld>(entity) {
+        let side = voxear_terrain::blocks::chunk::CHUNK as f32 * blocks.block_size;
+        let mut keys = blocks.meshes.keys().map(|&[x, y, z]| Vec3::new(x as f32, y as f32, z as f32));
+        let first = keys.next()?;
+        let (low, high) = keys.fold((first, first), |(low, high), key| (low.min(key), high.max(key)));
+        return Some((low * side, (high + 1.0) * side));
+    }
     let foliage = world.get::<Foliage>(entity)?;
     let (min, max) = renderer.mesh_bounds(foliage.mesh)?;
     // Each plant's mesh as far as it can reach, whichever way it is turned.

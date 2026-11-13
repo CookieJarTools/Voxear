@@ -6,6 +6,7 @@ namespace Voxear;
 /// Put it on the player's camera, or on the player with its camera as its Eye. With no action picked it uses
 /// Player/Interact.
 /// </summary>
+[AddComponentMenu("Blocks/Block User")]
 public sealed class BlockUser : Behaviour
 {
 	/// <summary>The action that uses a block.</summary>

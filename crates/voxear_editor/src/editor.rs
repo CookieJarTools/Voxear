@@ -2380,6 +2380,8 @@ impl Editor {
             }
             Ok(written) => {
                 self.prefab_saved();
+                // The files written are the editor's own, not changes from outside to read again.
+                self.files_seen();
                 tracing::info!("saved {}", written.join(", "));
                 let names: Vec<&str> = written.iter().map(|path| path.rsplit('/').next().unwrap_or(path)).collect();
                 self.notify(&format!("Saved {}", names.join(", ")));

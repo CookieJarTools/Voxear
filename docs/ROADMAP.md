@@ -2971,8 +2971,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (order, a wrong secret, loopback and 0600, a second editor, a stale file), an editor driven over the socket
   (make an Obj, set a field, undo, redo, save, capture, the Console), a batch as one step, refusals, scenes
   changed on disk, every component's fields reached, `vox editor call` and `vox mcp` from outside. Manual: The
-  Command Line, Driving the Editor from a Terminal. Not done: brush tools, the generator graph and the Model
-  window by call rather than by file; pointer and key input; events pushed to tools.
+  Command Line, Driving the Editor from a Terminal. Then, from using it on a real project: blocks set and filled
+  at points (`blocks.set`, `blocks.fill`, `blocks.get`) and a script's `[Command]` given the game's services on
+  the edited level, so blocks go into an open Block World from outside; Block Worlds written on disk read again;
+  every Inspector tab's fields reached; script Obj fields read back; Camera and every engine component a field
+  can name offered; the engine's own behaviours (Block User, Item Pickup, Saved Transform) in Add Component; a
+  Map's input action set from its menu; the Scene view turned (`view.set`) and a Block World framed by its
+  chunks; a second editor taking the link once the first has closed. Not done: terrain and plant brushes, the
+  generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
+  tools.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

@@ -1118,6 +1118,32 @@ fn made_on(
     made
 }
 
+/// Reads the world of blocks `guid` again from its files, as after a tool
+/// wrote them, into each Block World drawing it, and returns how many did.
+pub fn read_again(game: &mut Game, mut renderer: Option<&mut Renderer>, guid: AssetGuid) -> usize {
+    game.content.forget_block_world(guid);
+    let content = &game.content;
+    let using: Vec<(Entity, BlockWorldData)> = game
+        .engine
+        .world
+        .query_ref::<(Entity, &BlockWorldSource)>()
+        .into_iter()
+        .filter(|(_, source)| content.parse(&source.0.data).ok().and_then(|r| r.guid()) == Some(guid))
+        .map(|(entity, source)| (entity, source.0.clone()))
+        .collect();
+    let mut read = 0;
+    for (entity, data) in using {
+        match voxear_engine::prefab::block_world(&mut game.content, renderer.as_deref_mut(), &data) {
+            Ok(parts) => {
+                put(&mut game.engine.world, entity, parts);
+                read += 1;
+            }
+            Err(error) => tracing::error!("could not read {} again: {error:#}", data.data),
+        }
+    }
+    read
+}
+
 /// Makes every world of blocks whose ground the world generator `guid`
 /// makes again from it, the changes built on its old ground kept, as after
 /// the generator changed.

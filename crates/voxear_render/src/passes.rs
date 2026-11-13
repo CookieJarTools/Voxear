@@ -361,7 +361,10 @@ pub fn record(
     let caustics = frame.water.as_ref().map(crate::water::Water::caustics);
     if let Some(water) = &frame.water {
         crate::water::record_dry_mask(fg, (pipelines, push), water, draws.index_buffer);
-        crate::water::record_waves(fg, (pipelines, push), water);
+        // A view through a Portal draws with the waves the camera's own view worked out.
+        if !water.shares_waves() {
+            crate::water::record_waves(fg, (pipelines, push), water);
+        }
     }
     let mut tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     if let Some(clouds) = frame.clouds {

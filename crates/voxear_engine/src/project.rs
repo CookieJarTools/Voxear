@@ -71,6 +71,7 @@ impl Default for QualitySettings {
 /// shadow_distance = 30.0  # the sun casts shadows on a far side within this of its opening
 /// far_side_distance = 96.0  # how far round a far side a world without end makes its own blocks
 /// water = true            # whether the water of a far side's worlds of blocks is drawn
+/// draw_distance = 0.0     # how far ahead a far side is drawn; 0 for as far as the world is
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -80,6 +81,7 @@ pub struct PortalSettings {
     pub shadow_distance: f32,
     pub far_side_distance: f32,
     pub water: bool,
+    pub draw_distance: f32,
 }
 
 impl Default for PortalSettings {
@@ -91,6 +93,7 @@ impl Default for PortalSettings {
             shadow_distance: quality.shadow_distance,
             far_side_distance: quality.far_side_distance,
             water: quality.water,
+            draw_distance: quality.draw_distance,
         }
     }
 }
@@ -104,6 +107,7 @@ impl PortalSettings {
             shadow_distance: self.shadow_distance.max(0.0),
             far_side_distance: self.far_side_distance.clamp(32.0, 4096.0),
             water: self.water,
+            draw_distance: self.draw_distance.max(0.0),
         });
     }
 }

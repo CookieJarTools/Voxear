@@ -389,13 +389,17 @@ pub struct Through {
     pub cut: [f32; 4],
     /// The Portal it looks out of, which it does not draw as one.
     pub out_of: Entity,
+    /// Where that Portal stands, in the view's own space: all the view
+    /// sees, it sees through there.
+    pub window: Vec3,
 }
 
 impl Through {
     /// The view through `seen` for a camera `from_near` from the near
     /// Portal's place, turned `rotation` in the world, whose projection
-    /// without jitter is `projection`.
-    pub fn new(seen: &PortalSeen, from_near: Vec3, rotation: Quat, projection: Mat4) -> Self {
+    /// without jitter is `projection`, drawing no further than `far` metres
+    /// ahead where that is given.
+    pub fn new(seen: &PortalSeen, from_near: Vec3, rotation: Quat, projection: Mat4, far: Option<f32>) -> Self {
         let offset = seen.far.position.round();
         // From the near Portal, then from the far one's own middle: small numbers all the way.
         let position = (seen.far.position - offset) + seen.carry.direction(from_near);
@@ -427,9 +431,16 @@ impl Through {
             side(corners[0], corners[1]),
             side(corners[2], corners[3]),
             cut,
-            [0.0, 0.0, 0.0, 1.0],
+            // As far as it is drawn, where it is not drawn as far as the world.
+            match far {
+                Some(far) => {
+                    let ahead = rotation * Vec3::Z;
+                    [-ahead.x, -ahead.y, -ahead.z, ahead.dot(position) + far]
+                }
+                None => [0.0, 0.0, 0.0, 1.0],
+            },
         ];
-        Self { position, rotation, offset, planes, cut, out_of: seen.to }
+        Self { position, rotation, offset, planes, cut, out_of: seen.to, window: on_plane }
     }
 }
 
@@ -477,11 +488,14 @@ pub struct PortalQuality {
     /// costs about as much again as the water of the camera's own view
     /// while any shows through an opening.
     pub water: bool,
+    /// How far ahead a far side is drawn, in metres; 0 for as far as the
+    /// world is. Past it shows the sky.
+    pub draw_distance: f32,
 }
 
 impl Default for PortalQuality {
     fn default() -> Self {
-        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0, water: true }
+        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0, water: true, draw_distance: 0.0 }
     }
 }
 
@@ -584,7 +598,7 @@ mod tests {
             cover: 0.1,
             rect,
         };
-        let through = Through::new(&seen, eye - near.position, turned, projection);
+        let through = Through::new(&seen, eye - near.position, turned, projection, None);
         assert_eq!(through.offset, Vec3::new(30_000.0, 12.0, -7_001.0));
         // The camera stands 4 m behind the far one, in a space whose numbers are small.
         let behind = far.position - through.offset - far.front() * 4.0 + Vec3::Y * 1.6;

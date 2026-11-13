@@ -1708,6 +1708,8 @@ struct PortalPass {
     rect: [f32; 4],
     /// How many Portals deep it is: 1 for one seen straight from a camera.
     level: u32,
+    /// The waves and caustics of the view it is seen in, when that drew water.
+    waves: Option<water::SharedWaves>,
 }
 
 /// The Portals a view sees, and what the views through them need of it.
@@ -1735,6 +1737,8 @@ struct Sees {
     cloud_drift: [f64; 2],
     /// How many Portals deep it is itself: 0 for a camera's own view.
     level: u32,
+    /// Its water's waves and caustics, for the views through its Portals to share.
+    waves: Option<water::SharedWaves>,
 }
 
 /// What every view's frame shares.
@@ -2328,7 +2332,7 @@ impl View {
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let view_blocks =
-            blocks::gather(&setup.blocks, &extracted, &buffers.blocks, (offset, portal.is_none(), sun_shadows));
+            blocks::gather(&setup.blocks, &extracted, &buffers.blocks, (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows));
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let gathered = grass::gather(terrains, &extracted.frame, extracted.origin, &buffers.grass);
@@ -2522,6 +2526,7 @@ impl View {
                     },
                     water::dry_meshes(&extracted.water_bodies, assets),
                 ),
+                portal.and_then(|pass| pass.waves),
             )?),
             false => None,
         };
@@ -2799,6 +2804,7 @@ impl View {
                 },
                 cloud_drift: self.cloud_drift,
                 level,
+                waves: water.as_ref().map(water::Water::shared_waves),
             }
         });
         // What the passes after the scene read as its depth: with far sides drawn, theirs where they show.
@@ -3026,7 +3032,13 @@ fn draw_portals(
         // From the near Portal's place, in the seeing view's own small numbers.
         let from_near = sees.eye - (seen.near.position - sees.offset);
         let pass = PortalPass {
-            through: portals::Through::new(seen, from_near, sees.rotation, sees.projection),
+            through: portals::Through::new(
+                seen,
+                from_near,
+                sees.rotation,
+                sees.projection,
+                (quality.draw_distance > 0.0).then_some(quality.draw_distance),
+            ),
             hdr,
             velocity,
             depth,
@@ -3039,6 +3051,7 @@ fn draw_portals(
             water: quality.water,
             rect: seen.rect,
             level,
+            waves: sees.waves,
         };
         fg.set_prefix(&format!("portal view {} ", child.view.number));
         let recorded = child.view.record(fg, (gpu, &mut *bindless, &pipelines, assets), world, setup, hdr, slot, Some(&pass))?;

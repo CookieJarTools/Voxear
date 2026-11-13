@@ -1004,13 +1004,15 @@ pub struct BlockCounts {
 /// `entities` gives each instance's owner, from which each world finds its
 /// anchor among its meshes for rays. A view through a Portal has a space of
 /// its own, its middle `offset` from the world's (see `portals::Through`),
-/// looks from outside the world's chunks, so every chunk in view counts as
-/// seen into (`sights` false), and may go without the sun's shadows.
+/// and may go without the sun's shadows. Only the chunks seen into through
+/// their sides from `sights` are drawn: the camera, or for a view through a
+/// Portal, where the Portal it looks out of stands, as all it sees, it sees
+/// through there, and its camera may stand inside the ground behind it.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
-    (offset, sights, shadows): (Vec3, bool, bool),
+    (offset, sights, shadows): (Vec3, Option<Vec3>, bool),
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
@@ -1063,24 +1065,27 @@ pub(crate) fn gather(
         let local = camera - corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
         let planes = voxear_terrain::lod::planes_from(&frame.planes, corner);
-        // The chunks the camera can see into, walking from its own through their sides that see each other.
-        let seen = blocks.sights.as_ref().filter(|_| sights).and_then(|(map, sights)| {
-            let side = CHUNK as f32 * blocks.block_size;
-            let from = (local / side).floor().as_ivec3().to_array();
-            let bounds = |key: [i32; 3]| {
-                let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                [low, low + Vec3::splat(side)]
-            };
-            voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
-        });
-        // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
-        let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
-        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
         // What the world shows from the place nearest the camera, where it is seen from more than one.
         let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
             (place.at[0] - local.x).powi(2) + (place.at[1] - local.z).powi(2)
         };
         let shown = blocks.places.iter().min_by(|a, b| nearest(a).total_cmp(&nearest(b))).map(|place| &place.columns);
+        // The chunks the camera can see into, walking from its own through their sides that see each other: within
+        // the columns shown from its place, where the world is seen from more than one, as the walk would otherwise
+        // cross every column of air between the places.
+        let seen = blocks.sights.as_ref().zip(sights).and_then(|((map, sights), from)| {
+            let side = CHUNK as f32 * blocks.block_size;
+            let from = ((from - corner) / side).floor().as_ivec3().to_array();
+            let bounds = |key: [i32; 3]| {
+                let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                [low, low + Vec3::splat(side)]
+            };
+            let ours = |key: [i32; 3]| shown.is_none_or(|shown| shown.contains(&[0, key[0], key[2]]));
+            voxear_terrain::blocks::sight::seen(map, sights, from, |key| ours(key) && within(&planes, bounds(key)))
+        });
+        // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
+        let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
+        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
         lists[LIST_EARLY as usize] =
             pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref(), shown);
         let wet = pick_water(&blocks.chunks, &planes, seen.as_ref(), shown);

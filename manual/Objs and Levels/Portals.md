@@ -92,6 +92,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Shadow Distance | The sun casts shadows on a far side while the camera is within this many metres of the opening: 30 |
 | Far Side Distance | How far round a far side a world without end makes its own blocks, in metres: 96 |
 | Water | Whether the water of a far side's Block Worlds is drawn |
+| Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
 
 ```toml
 [portals]
@@ -100,6 +101,7 @@ depth = 1
 shadow_distance = 30.0
 far_side_distance = 96.0
 water = true
+draw_distance = 0.0
 ```
 
 ## In scene files

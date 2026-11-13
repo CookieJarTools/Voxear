@@ -438,6 +438,41 @@ impl Growing {
     }
 }
 
+/// Leaves over each block of a plant's wood in its crown that has none
+/// over it, and round the end of each branch but under it, so no wood shows
+/// through the top or the edge of its crown however thin its clumps are.
+/// The crown starts at its lowest leaf.
+fn cover_wood(plant: &mut Growing) {
+    let Some(lowest) = plant.blocks.iter().filter(|(_, (part, _))| *part == PlantPart::Leaf).map(|(at, _)| at[1]).min()
+    else {
+        return;
+    };
+    let wood = |plant: &Growing, at: [i32; 3]| plant.blocks.get(&at).is_some_and(|(part, _)| part.is_wood());
+    let mut crown: Vec<([i32; 3], PlantPart)> = plant
+        .blocks
+        .iter()
+        .filter(|(at, (part, _))| part.is_wood() && at[1] >= lowest)
+        .map(|(at, (part, _))| (*at, *part))
+        .collect();
+    // In a fixed order, so a seed grows the same plant.
+    crown.sort_unstable_by_key(|(at, _)| (at[1], at[2], at[0]));
+    const AROUND: [[i32; 3]; 4] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
+    let mut covers: Vec<[i32; 3]> = Vec::new();
+    for (at, part) in crown {
+        covers.push([at[0], at[1] + 1, at[2]]);
+        // A branch's end: wood beside it face to face on one side at most.
+        let joined = AROUND.iter().chain(&[[0, 1, 0], [0, -1, 0]]).filter(|d| wood(plant, [at[0] + d[0], at[1] + d[1], at[2] + d[2]]));
+        if part == PlantPart::Branch && joined.count() <= 1 {
+            covers.extend(AROUND.iter().map(|d| [at[0] + d[0], at[1], at[2] + d[2]]));
+        }
+    }
+    for at in covers {
+        if !plant.blocks.contains_key(&at) {
+            plant.blocks.insert(at, (PlantPart::Leaf, BlockState::default()));
+        }
+    }
+}
+
 impl PlantDef {
     pub fn parse(text: &str) -> anyhow::Result<Self> {
         Ok(toml::from_str(text)?)
@@ -465,6 +500,7 @@ impl PlantDef {
             }
             PlantKind::Bush => self.stems(&mut plant, &mut random, (width, height.min(crown))),
         }
+        cover_wood(&mut plant);
         if self.kind != PlantKind::Bush {
             self.roots_out(&mut plant, &mut random);
         }
@@ -479,9 +515,11 @@ impl PlantDef {
         PlantModel { blocks }
     }
 
-    /// Half how thick the trunk is `share` of the way up it.
+    /// Half how thick the trunk is `share` of the way up it: thinning most
+    /// low down, as a tree's trunk does from its flared foot, so the part of
+    /// it under the crown is seen to thin, to its top's thickness.
     fn trunk_radius(&self, share: f32) -> f32 {
-        self.trunk.max(0.25) * 0.5 * (1.0 - self.taper.clamp(0.0, 1.0) * share)
+        self.trunk.max(0.25) * 0.5 * (1.0 - self.taper.clamp(0.0, 1.0) * share.clamp(0.0, 1.0).sqrt())
     }
 
     /// How thick its branches are, in sixteenths across.
@@ -825,6 +863,26 @@ mod tests {
         let even = PlantDef { taper: 0.0, ..oak.clone() }.grow(4);
         assert!(even.blocks.iter().filter(|(_, p, _)| *p == PlantPart::Trunk).all(|(_, _, s)| s.across() == 16));
         assert_eq!(PlantDef::parse("branch = 0.5").unwrap().branch, 0.5);
+    }
+
+    #[test]
+    fn no_wood_shows_through_the_top_of_a_crown_or_at_a_branchs_end() {
+        // Thin clumps, full of holes, where wood showed through before.
+        let sparse = PlantDef { leaf_density: 0.3, leaf_size: 2.6, ..PlantDef::default() };
+        for kind in PlantKind::ALL {
+            for seed in 0..12 {
+                let model = PlantDef { kind, ..sparse.clone() }.grow(seed);
+                let blocks: HashMap<[i32; 3], PlantPart> = model.parts().collect();
+                let lowest = blocks.iter().filter(|(_, p)| **p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap();
+                for (at, part) in &blocks {
+                    if !part.is_wood() || at[1] < lowest {
+                        continue;
+                    }
+                    let over = blocks.get(&[at[0], at[1] + 1, at[2]]);
+                    assert!(over.is_some(), "{kind:?} seed {seed}: the wood at {at:?} is open to the sky");
+                }
+            }
+        }
     }
 
     #[test]

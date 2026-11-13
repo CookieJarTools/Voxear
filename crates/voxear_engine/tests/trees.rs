@@ -45,6 +45,13 @@ fn project() -> tempfile::TempDir {
             "color = [0.3, 0.6, 0.2]\nshape = \"sapling\"\ngrows = \"Plants/Oak.voxplant\"\n".to_string(),
         ),
         ("Plants/Oak.voxplant", OAK.to_string()),
+        // A log made before blocks had that shape: a plain cube, which a plant grows as its wood.
+        ("Blocks/Old Log.block", "color = [0.35, 0.24, 0.18]\nhardness = 1.0\n".to_string()),
+        ("Blocks/Stone.block", "color = [0.5, 0.5, 0.5]\n".to_string()),
+        (
+            "Plants/Old.voxplant",
+            "height = [9.0, 9.0]\ntrunk = 1.1\ntaper = 0.45\nwood = \"Blocks/Old Log.block\"\nleaves = \"Blocks/Oak Leaves.block\"\n".to_string(),
+        ),
         (
             "Items/Oak Sapling.asset",
             "type = \"Voxear.Item\"\n\n[fields]\nplaces = \"Blocks/Oak Sapling.block\"\n".to_string(),
@@ -271,4 +278,38 @@ fn a_sapling_takes_root_in_the_light_grows_into_a_tree_and_dies_without_room_and
         .filter(|drop| drop.item.contains("Sapling"))
         .count();
     assert_eq!(lying, 0, "the item is the sapling now; the felled oak's logs lie still");
+}
+
+#[test]
+fn a_plain_block_a_plant_grows_as_its_wood_is_a_log_so_trees_of_plant_files_made_before_logs_thin() {
+    use voxear_terrain::blocks::block::BlockShape;
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let (_, old) = game.content.block("Blocks/Old Log.block").unwrap();
+    let (_, stone) = game.content.block("Blocks/Stone.block").unwrap();
+    assert_eq!((old.shape, stone.shape), (BlockShape::Log, BlockShape::Cube), "only a plant's wood");
+    // Its tree grows thinner logs as it rises, as a sapling of it shows once grown.
+    let entity = field(&game);
+    let plant = voxear_terrain::blocks::plant::PlantDef::parse(
+        &std::fs::read_to_string(dir.path().join("Plants/Old.voxplant")).unwrap(),
+    )
+    .unwrap();
+    let model = plant.grow(3);
+    let thin = model.blocks.iter().filter(|(_, part, state)| part.is_wood() && state.size != 0).count();
+    assert!(thin > 0);
+    for (at, _, state) in model.blocks.iter().filter(|(at, part, _)| part.is_wood() && at[1] >= 0) {
+        let number = voxear_engine::blocks::block_number_state(
+            &mut game.engine.world,
+            &mut game.content,
+            entity,
+            "Blocks/Old Log.block",
+            state.to_byte(),
+            true,
+        )
+        .unwrap();
+        game.engine.world.get_mut::<BlockWorld>(entity).unwrap().set_blocks([([16 + at[0], 6 + at[1], 16 + at[2]], number)]);
+    }
+    let thinner = (6..20).filter_map(|y| across_at(&game, [16, y, 16])).filter(|&across| across < 16).count();
+    assert!(thinner > 0, "logs thinner than a block up its trunk");
 }

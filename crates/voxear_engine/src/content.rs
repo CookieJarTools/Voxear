@@ -507,6 +507,9 @@ pub struct Content {
     biomes: HashMap<AssetGuid, Option<Arc<voxear_terrain::generate::BiomeDef>>>,
     structures: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::structure::StructureDef>>>,
     plants: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::plant::PlantDef>>>,
+    /// The blocks the project's plants grow as their wood, found once as a
+    /// block is first read, and again once a plant is saved.
+    plant_woods: Option<std::collections::HashSet<AssetGuid>>,
     /// Heightmap pictures terrains' layers read, by GUID.
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// World generators terrains' Generate layers read, by GUID.
@@ -692,6 +695,7 @@ impl Content {
             biomes: HashMap::new(),
             structures: HashMap::new(),
             plants: HashMap::new(),
+            plant_woods: None,
             terrain_greys: HashMap::new(),
             world_gens: HashMap::new(),
             handlings_version: 0,
@@ -1659,7 +1663,15 @@ impl Content {
         let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::Block)?.path.clone();
         let read = self.read_text(&path).and_then(|text| voxear_terrain::blocks::block::BlockDef::parse(&text));
         let kept = match read {
-            Ok(block) => Some(Arc::new(block)),
+            Ok(mut block) => {
+                // A plain cube a plant grows as its wood is a log, made before blocks had that shape: its trees
+                // thin as they rise and have branches of thin logs, and it is chopped and felled.
+                use voxear_terrain::blocks::block::{BlockShape, Liquid};
+                if block.shape == BlockShape::Cube && block.liquid == Liquid::None && self.plant_woods().contains(&guid) {
+                    block.shape = BlockShape::Log;
+                }
+                Some(Arc::new(block))
+            }
             Err(error) => {
                 tracing::warn!("{path} could not be read: {error:#}");
                 None
@@ -1667,6 +1679,24 @@ impl Content {
         };
         self.blocks.insert(guid, kept.clone());
         kept.map(|block| (guid, block))
+    }
+
+    /// The blocks the project's plants grow as their wood, by GUID: read from
+    /// every plant once, until a plant is saved.
+    fn plant_woods(&mut self) -> &std::collections::HashSet<AssetGuid> {
+        if self.plant_woods.is_none() {
+            let plants: Vec<AssetGuid> =
+                self.db.entries().filter(|entry| entry.kind == AssetKind::Plant).map(|entry| entry.guid).collect();
+            let woods = plants
+                .into_iter()
+                .filter_map(|plant| {
+                    let (_, plant) = self.plant(&plant.to_string())?;
+                    self.parse(plant.wood.as_deref()?).ok()?.guid()
+                })
+                .collect();
+            self.plant_woods = Some(woods);
+        }
+        self.plant_woods.as_ref().expect("found above")
     }
 
     /// The block at `guid`, where it was read already.
@@ -1743,7 +1773,21 @@ impl Content {
     pub fn forget_structure(&mut self, guid: AssetGuid) {
         self.structures.remove(&guid);
         self.plants.remove(&guid);
+        // A plant's wood may be another block now: read the blocks again, as logs where they are its.
+        if self.plants_wood_changed(guid) {
+            self.blocks.clear();
+        }
         self.blocks_version += 1;
+    }
+
+    /// Whether `guid` is a plant whose wood might no longer be what was
+    /// found: the woods are found again when next asked for.
+    fn plants_wood_changed(&mut self, guid: AssetGuid) -> bool {
+        let plant = self.db.get(guid).is_some_and(|entry| entry.kind == AssetKind::Plant);
+        if plant {
+            self.plant_woods = None;
+        }
+        plant
     }
 
     /// The biome at `guid`, where it was read already.
@@ -1774,6 +1818,7 @@ impl Content {
     /// Forgets every block, as after their files changed outside the editor.
     pub fn forget_blocks(&mut self) {
         self.blocks.clear();
+        self.plant_woods = None;
         self.blocks_version += 1;
     }
 

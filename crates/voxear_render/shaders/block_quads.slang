@@ -144,10 +144,13 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
         from = middle;
         if (side < 4)
         {
-            // Against the block beside it along +x, -x, +z or -z.
+            // Against the block beside it along +x, -x, +z or -z: on its side, as far into its cube as that side
+            // lies (a log thinner than a block), and drawn as wide as the side is (mesh::climbed).
             float3 toward = side < 2 ? float3(side == 0 ? 1.0 : -1.0, 0.0, 0.0) : float3(0.0, 0.0, side == 2 ? 1.0 : -1.0);
-            from += toward * (0.5 - BLOCK_VINE_OFF);
-            across = float3(-toward.z, 0.0, toward.x) * 0.5;
+            float inset = float((sheet >> 4) & 15) / 16.0;
+            float edges = float((quad.y >> 10) & 15) / 16.0;
+            from += toward * (0.5 - BLOCK_VINE_OFF + inset);
+            across = float3(-toward.z, 0.0, toward.x) * (0.5 - edges);
         }
         else
         {

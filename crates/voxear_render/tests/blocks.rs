@@ -2324,6 +2324,8 @@ struct TreeLook {
     /// Whether vines hang from its crown and climb its trunk.
     vines: bool,
     wind: Option<f32>,
+    /// Whether the tree grows vines of its own, as a `.voxplant` with `vines` does.
+    grown_vines: bool,
 }
 
 /// A birch of blocks on a field of grass, grown from a seed, seen from `eye` looking `towards`, after one second
@@ -2358,10 +2360,15 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
         leaf_size: 3.4,
         leaf_density: 0.9,
         roots: 0,
+        vines: if look.grown_vines { 1.0 } else { 0.0 },
         ..PlantDef::default()
     };
     for (at, part) in birch.grow(5).parts() {
-        let block = if part == PlantPart::Leaf { leaves } else { wood };
+        let block = match part {
+            PlantPart::Leaf => leaves,
+            PlantPart::Vine => vine,
+            _ => wood,
+        };
         blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
     }
     if look.vines {
@@ -2440,7 +2447,7 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
 #[test]
 fn bushy_leaves_reach_out_past_their_blocks_in_tufts_with_a_picture_or_none_and_sway() {
     let (eye, towards) = (Vec3::new(21.0, 10.5, 14.5), Vec3::new(0.3, 0.0, 1.0));
-    let plain = TreeLook { bushy: false, pictured: false, vines: false, wind: None };
+    let plain = TreeLook { bushy: false, pictured: false, vines: false, grown_vines: false, wind: None };
     let Some(([cubes, _], none)) = tree_render(plain, eye, towards) else { return };
     let ([bushy, bushy_later], loose) = tree_render(TreeLook { bushy: true, ..plain }, eye, towards).unwrap();
     let ([pictured, _], _) = tree_render(TreeLook { bushy: true, pictured: true, ..plain }, eye, towards).unwrap();
@@ -2490,7 +2497,7 @@ fn bushy_leaves_reach_out_past_their_blocks_in_tufts_with_a_picture_or_none_and_
 #[test]
 fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free() {
     let (eye, towards) = (Vec3::new(21.0, 8.5, 15.5), Vec3::new(0.3, 0.0, 1.0));
-    let bare = TreeLook { bushy: true, pictured: false, vines: false, wind: None };
+    let bare = TreeLook { bushy: true, pictured: false, vines: false, grown_vines: false, wind: None };
     let Some(([without, _], tufts)) = tree_render(bare, eye, towards) else { return };
     let ([with, later], loose) = tree_render(TreeLook { vines: true, ..bare }, eye, towards).unwrap();
     let ([windy, windy_later], _) = tree_render(TreeLook { vines: true, wind: Some(2.0), ..bare }, eye, towards).unwrap();
@@ -2511,6 +2518,23 @@ fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free
     let (still, swayed) = (unlike(&with, &later, 0..WIDTH, under.clone()), unlike(&windy, &windy_later, 0..WIDTH, under));
     eprintln!("vines: {shown} shown, {still} moved with no wind, {swayed} in it");
     assert!(still < 0.01 && swayed > still * 3.0 + 0.004, "{swayed} against {still}");
+}
+
+#[test]
+fn a_trees_own_vines_hang_from_its_leaves_seen_from_below_and_from_the_side() {
+    let look = TreeLook { bushy: true, pictured: true, vines: false, grown_vines: true, wind: None };
+    // From under the crown's edge looking up into it, and from the side at the crown's foot, near and further off.
+    let views = [
+        ("below", Vec3::new(21.5, 6.0, 19.0), Vec3::new(0.35, 0.9, 0.6)),
+        ("side", Vec3::new(24.5, 10.0, 15.0), Vec3::new(0.0, 0.05, 1.0)),
+        ("side far", Vec3::new(24.5, 11.0, 2.0), Vec3::new(0.0, 0.02, 1.0)),
+    ];
+    for (name, eye, towards) in views {
+        let Some(([with, _], _)) = tree_render(look, eye, towards) else { return };
+        let ([without, _], _) = tree_render(TreeLook { grown_vines: false, ..look }, eye, towards).unwrap();
+        keep_image(&format!("tree vines {name}.png"), &with);
+        keep_image(&format!("tree vines {name} none.png"), &without);
+    }
 }
 
 #[test]

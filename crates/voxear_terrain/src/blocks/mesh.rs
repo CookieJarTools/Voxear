@@ -212,10 +212,58 @@ impl ChunkMesh {
 /// A loose quad: a sheet of the block at `at` in its chunk, `sheet` of its
 /// kind's (with [`VINE_TIP`] for a vine's foot), drawn with `surface`, as
 /// open or closed in as `open` says from 0 to 3, its corners that sway a
-/// bit each in `free`.
+/// bit each in `free`. A vine's sheet against a block keeps, in its sheet's
+/// bits from the fifth up, how far that block's side lies inside its cube,
+/// and in its second word's bits 10 to 13 how far in its sheet's edges are
+/// drawn, both in sixteenths (see `climbed`).
 pub fn pack_loose(at: [u32; 3], kind: usize, sheet: u32, surface: u8, open: u8, free: u32) -> [u32; 2] {
     let first = at[0] | at[1] << 5 | at[2] << 10 | (sheet & 1023) << 15 | (kind as u32) << 25 | (free & 15) << 28;
     [first, u32::from(surface) | u32::from(open & 3) << 8]
+}
+
+/// The most blocks of vine looked up through for what a vine hangs from.
+const VINE_LOOKS_UP: i32 = 48;
+
+/// Whether block `block` is leaves: bushy, or swaying, as a tree's crown is.
+/// A vine hangs from leaves and climbs no side of them.
+fn is_leaves(faces: &[BlockFaces], block: BlockId) -> bool {
+    is_ground(faces, block) && (is_bushy(faces, block) || sways(faces, block))
+}
+
+/// Whether the vine at `at`, counted in the world's blocks, hangs from
+/// leaves: the first block over it that is no vine is leaves.
+fn hangs_from_leaves(faces: &[BlockFaces], map: &BlockMap, [x, y, z]: [i32; 3]) -> bool {
+    let over = (1..=VINE_LOOKS_UP).map(|up| map.get([x, y + up, z])).find(|&block| !is_vine(faces, block));
+    over.is_some_and(|block| is_leaves(faces, block))
+}
+
+/// How a vine clings to the block at `at`, beside it the way `by` goes from
+/// it, where that block is one a vine climbs (wood, stone, any ground that
+/// is not leaves): how far the block's side towards the vine lies inside
+/// its cube, and how far in from each edge of the vine's sheet its sides
+/// lie, both in sixteenths of a block. A cube's side is its cube's; a block
+/// of parts, as a log thinner than a block, has its parts' nearest side,
+/// so the vine lies on its bark. None for a block a vine does not climb.
+fn climbed(faces: &[BlockFaces], map: &BlockMap, at: [i32; 3], by: [i32; 3]) -> Option<(u32, u32)> {
+    let id = map.get(at);
+    if !is_ground(faces, id) || is_leaves(faces, id) {
+        return None;
+    }
+    if !is_part(faces, id) {
+        return Some((0, 0));
+    }
+    let boxes = boxes_at(faces, &|q| map.get(q), at);
+    // The axis the vine faces it along, and the one its sheet runs across.
+    let (axis, across) = if by[0] != 0 { (0, 2) } else { (2, 0) };
+    let towards = |part: &PartBox| if by[axis] > 0 { u32::from(part.from[axis]) } else { 16 - u32::from(part.to[axis]) };
+    let inset = boxes.iter().map(towards).min()?;
+    // Only a side most of a block high is climbed: not a slab's, a fence's rail or a step.
+    let tall = boxes.iter().filter(|part| towards(part) <= inset + 2).map(|part| part.to[1].saturating_sub(part.from[1])).max();
+    if tall.unwrap_or(0) < 12 {
+        return None;
+    }
+    let edges = boxes.iter().map(|part| u32::from(part.from[across]).min(16 - u32::from(part.to[across]))).min();
+    Some((inset.min(15), edges.unwrap_or(0).min(7)))
 }
 
 /// Which sheet a loose quad is, where a face has its size: for a tuft, its
@@ -517,11 +565,23 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         // A sapling stands crossed on what is under it, clinging to nothing beside it.
                         let sapling = faces[usize::from(id)].shape == super::block::BlockShape::Sapling;
                         let tip = if sapling || is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
-                        let clings: Vec<u32> = (0..4)
-                            .filter(|&s| !sapling && is_ground(faces, block(step(beside[s as usize]))))
-                            .collect();
-                        for &sheet in &clings {
-                            mesh.quads.push(pack_loose(at, VINE, sheet | tip, look, 3, 0));
+                        let whole = [0, 1, 2].map(|k| corner[k] + p[k]);
+                        // A vine that hangs from leaves hangs crossed all the way down from them, clinging to
+                        // nothing it passes; one up a trunk or a wall clings to the wood or stone beside it.
+                        let hangs = !sapling && hangs_from_leaves(faces, map, whole);
+                        let clings: Vec<(u32, u32)> = match sapling || hangs {
+                            true => Vec::new(),
+                            false => (0..4u32)
+                                .filter_map(|s| {
+                                    let by = beside[s as usize];
+                                    climbed(faces, map, [whole[0] + by[0], whole[1], whole[2] + by[2]], by)
+                                        .map(|(inset, margin)| (s | inset << 4, margin))
+                                })
+                                .collect(),
+                        };
+                        for &(sheet, margin) in &clings {
+                            let [first, second] = pack_loose(at, VINE, sheet | tip, look, 3, 0);
+                            mesh.quads.push([first, second | margin << 10]);
                         }
                         if clings.is_empty() {
                             // Hanging free, its foot and its head sway unless ground holds them.
@@ -1582,6 +1642,68 @@ mod part_tests {
         file::{BlockFile, BlockKind},
         shape::{BlockHalf, DoorHinge},
     };
+
+    #[test]
+    fn a_vine_hangs_crossed_from_leaves_and_lies_on_the_bark_of_a_log_thinner_than_a_block() {
+        // Stone (1), an upright log ten sixteenths thick (2), leaves (3) and a vine (4).
+        let log = BlockState { size: super::super::shape::log_size(10.0), ..BlockState::default_for(BlockShape::Log) };
+        let mut faces = world_of(&[(BlockShape::Log, log)]);
+        faces.push(BlockFaces { shape: BlockShape::Bushy, sways: true, ..BlockFaces::new(3, 3, 3) });
+        faces.push(BlockFaces { shape: BlockShape::Vine, sways: true, ..BlockFaces::new(4, 4, 4) });
+        let mut map = BlockMap::default();
+        for z in 0..12 {
+            for x in 0..12 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        // A trunk with a vine up its -z side, a crown over it of leaves one deep, and a vine hanging from the
+        // crown beside a leaf hanging lower than the rest.
+        for y in 1..7 {
+            map.set([4, y, 4], 2);
+        }
+        for y in 1..5 {
+            map.set([4, y, 3], 4);
+        }
+        for z in 2..7 {
+            for x in 2..10 {
+                map.set([x, 7, z], 3);
+            }
+        }
+        map.set([8, 6, 4], 3);
+        for y in 3..7 {
+            map.set([7, y, 4], 4);
+        }
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let (first, count) = mesh.loose();
+        let sheets: Vec<[u32; 2]> = mesh.quads[first as usize..(first + count) as usize].to_vec();
+        let of = |at: [u32; 3]| sheets.iter().copied().filter(|&quad| unpack(quad).0 == at).collect::<Vec<_>>();
+        // Up the trunk: one sheet each, against the log (+z), on its bark three sixteenths in from the block's side,
+        // three in from each edge, as the log is ten wide.
+        for y in 1..5 {
+            let on_trunk = of([4, y, 3]);
+            assert_eq!(on_trunk.len(), 1, "at {y}");
+            let sheet = loose_sheet(on_trunk[0]);
+            assert_eq!((sheet & 7, sheet >> 4 & 15, on_trunk[0][1] >> 10 & 15), (2, 3, 3), "at {y}");
+        }
+        // From the crown: crossed all the way down, the leaf beside it no wall to cling to.
+        for y in 3..7 {
+            let hanging = of([7, y, 4]);
+            assert_eq!(hanging.len(), 2, "at {y}");
+            assert!(hanging.iter().all(|&quad| (4..6).contains(&(loose_sheet(quad) & 7))), "at {y}");
+        }
+        // Against a whole block of stone it lies at the cube's side, as before.
+        let mut wall = map.clone();
+        for y in 1..5 {
+            wall.set([5, y, 3], 1);
+        }
+        let mesh = mesh_chunk(&wall, [0, 0, 0], &faces);
+        let (first, count) = mesh.loose();
+        let by_wall = mesh.quads[first as usize..(first + count) as usize]
+            .iter()
+            .filter(|&&quad| unpack(quad).0 == [4, 2, 3] && loose_sheet(quad) & 7 == 0)
+            .count();
+        assert_eq!(by_wall, 1, "and against the stone beside it, along +x");
+    }
 
     /// A world's faces of stone (1) and, after it, a block of each shape
     /// and state given, numbered from 2.

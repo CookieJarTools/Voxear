@@ -139,17 +139,31 @@ impl Resolved {
     /// when nothing says (see `BlockState::default_for`), where it is
     /// listed so.
     pub fn number_of(&self, guid: AssetGuid) -> Option<BlockId> {
-        let first = self.guids.iter().position(|listed| *listed == Some(guid))?;
+        let first =
+            self.guids.iter().zip(&self.file.blocks).position(|(listed, kind)| *listed == Some(guid) && !kind.slab)?;
         let shape = self.file.blocks[first].shape;
         self.number_of_state(guid, BlockState::default_for(shape).normalized(shape).to_byte())
     }
 
     /// The number of the `.block` at `guid` placed in `state`, where it is
-    /// listed so.
+    /// listed so: the block itself, never a slab made of it.
     pub fn number_of_state(&self, guid: AssetGuid, state: u8) -> Option<BlockId> {
         let at = self.guids.iter().zip(&self.file.blocks).position(|(listed, kind)| {
-            *listed == Some(guid) && kind.state == BlockState::from_byte(state).normalized(kind.shape).to_byte()
+            *listed == Some(guid)
+                && !kind.slab
+                && kind.state == BlockState::from_byte(state).normalized(kind.shape).to_byte()
         })?;
+        Some((at + 1) as BlockId)
+    }
+
+    /// The number of the slab made of the `.block` at `guid` (see
+    /// `BlockKind::slab`), placed in `state`, where it is listed so.
+    pub fn slab_number_of(&self, guid: AssetGuid, state: u8) -> Option<BlockId> {
+        let state = BlockState::from_byte(state).normalized(BlockShape::Slab).to_byte();
+        let at =
+            self.guids.iter().zip(&self.file.blocks).position(|(listed, kind)| {
+                *listed == Some(guid) && kind.slab && kind.is_live() && kind.state == state
+            })?;
         Some((at + 1) as BlockId)
     }
 
@@ -257,6 +271,60 @@ pub fn with_block_state(
     file.blocks.push(BlockKind::of_state(&guid.to_string(), state));
     let drawn = resolved(content, &file);
     (drawn.looks() <= MAX_LOOKS).then_some((file, drawn))
+}
+
+/// The number of what painting the `.block` at `guid` over the block
+/// numbered `over` puts there, in the world `file` holds, `file` growing by
+/// the entry it needs. A block drawn as a cube, a bush or a vine becomes
+/// the painted block, placed as it is when nothing says. A block of parts
+/// keeps its shape and the way it stands: it becomes the painted block
+/// placed so where that block has its shape, or the painted block's slab
+/// (see `BlockKind::slab_placed`) where it is a slab and the painted block
+/// a plain cube, as generated ground makes its slabs. None where the
+/// painted block has no such shape, so the block is left as it is (a stair
+/// painted with a plain cube stays a stair), and where the world has no
+/// room for another.
+pub fn painted(content: &mut Content, file: &mut BlockFile, guid: AssetGuid, over: BlockId) -> Option<BlockId> {
+    let (_, block) = content.block(&guid.to_string())?;
+    let shape = if block.liquid == Liquid::None { block.shape } else { BlockShape::Cube };
+    let drawn = resolved(content, file);
+    let kind = drawn.file.kind(over)?;
+    let standing = BlockState::from_byte(kind.state);
+    let (state, slab) = if !kind.drawn_shape().is_part() {
+        (BlockState::default_for(shape).normalized(shape), false)
+    } else if shape == kind.shape {
+        (standing.normalized(shape), false)
+    } else if kind.shape == BlockShape::Slab && block.liquid == Liquid::None && shape == BlockShape::Cube {
+        // A slab only of a cube that is drawn whole: none of leaves or glass, as generated ground lays none.
+        let (_, with) = with_block(content, file, guid)?;
+        let cube = with.file.blocks.last()?;
+        if cube.cutout || cube.water {
+            return None;
+        }
+        (standing.normalized(BlockShape::Slab), true)
+    } else {
+        return None;
+    };
+    let byte = state.to_byte();
+    let known = if slab { drawn.slab_number_of(guid, byte) } else { drawn.number_of_state(guid, byte) };
+    if known.is_some() {
+        return known;
+    }
+    if file.blocks.len() >= MAX_BLOCKS {
+        return None;
+    }
+    let reference = guid.to_string();
+    let entry = match slab {
+        true => BlockKind::slab_placed(&BlockKind::of(&reference), byte),
+        false => BlockKind::of_state(&reference, byte),
+    };
+    let mut grown = file.clone();
+    grown.blocks.push(entry);
+    if resolved(content, &grown).looks() > MAX_LOOKS {
+        return None;
+    }
+    *file = grown;
+    Some(file.blocks.len() as BlockId)
 }
 
 /// `file` with its generated ground's biomes read (see

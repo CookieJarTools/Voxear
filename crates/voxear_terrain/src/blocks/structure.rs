@@ -2229,6 +2229,77 @@ mod tests {
         assert!(huts >= 1, "a hut found whole");
     }
 
+    #[test]
+    fn every_vine_of_a_wood_hangs_from_its_trees_leaves_or_wood_never_from_the_air() {
+        let world = Preset::RollingHills.world();
+        // A close wood of oaks with vines on every tree, of logs 7, leaves 8 and vines 9, over plain ground 1.
+        let oak = PlantDef { vines: 1.0, ..PlantDef::default() };
+        let trees = PlacedStructure {
+            placement: Placement {
+                spacing: 9.0,
+                separation: 4.0,
+                chance: 0.9,
+                salt: 2,
+                slope: 40.0,
+                on: SiteOn::Land,
+                ..Placement::default()
+            },
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Plant { plant: oak, wood: 7, leaves: 8, vine: 9, logs: Vec::new() },
+            biomes: Vec::new(),
+        };
+        let structures = WorldStructures { list: vec![trees], ..WorldStructures::default() };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+        let make = |[cx, cz]: [i32; 2]| {
+            let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
+            for z in 0..32 {
+                for x in 0..32 {
+                    let (gx, gz) = (cx * 32 + x, cz * 32 + z);
+                    for y in -4..=ground.top(gx, gz) {
+                        let key = [cx, y.div_euclid(32), cz];
+                        let at = chunks.iter().position(|(k, _)| *k == key).unwrap_or_else(|| {
+                            chunks.push((key, Chunk::filled(AIR)));
+                            chunks.len() - 1
+                        });
+                        chunks[at].1.set(x as u32, y.rem_euclid(32) as u32, z as u32, 1);
+                    }
+                }
+            }
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
+            chunks
+        };
+        let columns: Vec<Vec<([i32; 3], Chunk)>> = (0..16).map(|i| make([i % 4 - 2, i / 4 - 2])).collect();
+        let block_at = |x: i32, y: i32, z: i32| {
+            let column = &columns[((z.div_euclid(32) + 2) * 4 + x.div_euclid(32) + 2) as usize];
+            column
+                .iter()
+                .find(|(k, _)| k[1] == y.div_euclid(32))
+                .map_or(AIR, |(_, c)| c.get(x.rem_euclid(32) as u32, y.rem_euclid(32) as u32, z.rem_euclid(32) as u32))
+        };
+        let (mut vines, mut loose) = (0, Vec::new());
+        for z in -60..60 {
+            for x in -60..60 {
+                for y in -4..80 {
+                    if block_at(x, y, z) != 9 {
+                        continue;
+                    }
+                    vines += 1;
+                    // Up through the vine to what it hangs from; or, beside it, the trunk it climbs.
+                    let over = (1..16).map(|up| block_at(x, y + up, z)).find(|&block| block != 9).unwrap_or(AIR);
+                    let beside =
+                        [[1, 0], [-1, 0], [0, 1], [0, -1]].iter().any(|d| block_at(x + d[0], y, z + d[1]) == 7);
+                    if over == AIR && !beside {
+                        loose.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        assert!(vines > 100, "{vines} blocks of vine in the wood");
+        let first = &loose[..loose.len().min(12)];
+        assert!(loose.is_empty(), "{} of {vines} blocks of vine hang from the air: {first:?}", loose.len());
+    }
+
     /// A town of block 11's paths: a well of block 10, 5 by 3 by 5, and cottages of walls 12 with a door in the
     /// middle of their -z side, 7 by 5 by 7 and 5 by 4 by 5.
     fn village() -> Town {

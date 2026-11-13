@@ -24,9 +24,10 @@
 //! Autumn Woods, orange with fallen leaves under red maples; the Blossom
 //! Grove, fresh grass under pink blossom trees; and the Volcanic Fields,
 //! grey ash over black basalt, its steep faces hot magma rock. They keep
-//! to how warm it is alone, the woods where it is cool, the grove where it
-//! is mild and the fields where it is warm, so a world's climate puts all
-//! three a walk apart. A world of blocks lists them, with their trees
+//! to how warm it is alone: made for a world, they split the warmth of its
+//! land round where it starts into thirds, the woods in the coolest, the
+//! grove in the middle one and the fields in the warmest, so all three lie
+//! a walk apart in a world of any climate. A world of blocks lists them, with their trees
 //! (`starter_trees`), when it is first given a generator; **Add Showcase
 //! Biomes** lists them on a world that has one.
 //!
@@ -112,12 +113,19 @@ fn showcase_block(name: &str, color: [f32; 3]) -> BlockDef {
     BlockDef { heat, ..BlockDef::colored(color) }
 }
 
-/// A showcase biome: its name, how warm it is there, in °C from and to,
-/// its colour on maps, its ground's blocks by name as a starter's are, how
+/// Where the showcase biomes part, in °C, for a world with no generator to
+/// read the warmth of.
+const SHOWCASE_SPLIT: [f32; 2] = [10.0, 16.0];
+
+/// How far round where a world starts the warmth of its land is split
+/// into thirds, in metres, and how far apart it is read.
+const SPLIT_REACH: f32 = 1000.0;
+const SPLIT_STEP: f32 = 40.0;
+
+/// A showcase biome: its name, its colour on maps, its ground's blocks by name as a starter's are, how
 /// steep its steep ground is, in degrees, and how many vines hang in it.
 struct Showcase {
     name: &'static str,
-    temperature: [f32; 2],
     color: [f32; 3],
     top: &'static str,
     under: (&'static str, u32),
@@ -130,7 +138,6 @@ struct Showcase {
 const SHOWCASE: [Showcase; 3] = [
     Showcase {
         name: "Autumn Woods",
-        temperature: [-60.0, 10.0],
         color: [0.8, 0.42, 0.15],
         top: "Fallen Leaves",
         under: ("Dirt", 3),
@@ -141,7 +148,6 @@ const SHOWCASE: [Showcase; 3] = [
     },
     Showcase {
         name: "Blossom Grove",
-        temperature: [10.0, 16.0],
         color: [0.95, 0.66, 0.78],
         top: "Spring Grass",
         under: ("Dirt", 3),
@@ -152,7 +158,6 @@ const SHOWCASE: [Showcase; 3] = [
     },
     Showcase {
         name: "Volcanic Fields",
-        temperature: [16.0, 60.0],
         color: [0.25, 0.22, 0.22],
         top: "Ash",
         under: ("Basalt", 4),
@@ -163,12 +168,14 @@ const SHOWCASE: [Showcase; 3] = [
     },
 ];
 
-/// The showcase biomes, each by its name, the blocks of its ground named as
-/// `block` names them (see [`biomes`]).
-pub fn showcase(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, BiomeDef)> {
-    let made = |biome: &Showcase, block: &mut dyn FnMut(&str) -> String| BiomeDef {
+/// The showcase biomes, each by its name, parted where it is `split` °C,
+/// the blocks of their ground named as `block` names them (see
+/// [`biomes`]).
+pub fn showcase(split: [f32; 2], mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, BiomeDef)> {
+    let warmth = [[-60.0, split[0]], split, [split[1], 60.0]];
+    let made = |biome: &Showcase, temperature: [f32; 2], block: &mut dyn FnMut(&str) -> String| BiomeDef {
         color: biome.color,
-        temperature: biome.temperature,
+        temperature,
         humidity: [0.0, 1.0],
         height: None,
         sunk: None,
@@ -187,7 +194,48 @@ pub fn showcase(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Bio
             false => BiomeVines::default(),
         },
     };
-    SHOWCASE.iter().map(|biome| (biome.name, made(biome, &mut block))).collect()
+    SHOWCASE.iter().zip(warmth).map(|(biome, warmth)| (biome.name, made(biome, warmth, &mut block))).collect()
+}
+
+/// The warmths, in °C, that part the land of `world` within [`SPLIT_REACH`]
+/// of `middle` into thirds, the cooler first, a degree apart at least.
+/// None where there is too little land there to tell.
+pub(crate) fn warmth_thirds(world: &voxear_terrain::generate::WorldGen, middle: [f32; 2]) -> Option<[f32; 2]> {
+    let steps = (SPLIT_REACH / SPLIT_STEP) as i32;
+    let mut warmths = Vec::new();
+    for z in -steps..=steps {
+        for x in -steps..=steps {
+            let (x, z) = (middle[0] + x as f32 * SPLIT_STEP, middle[1] + z as f32 * SPLIT_STEP);
+            let height = world.height_at(x, z);
+            if height >= world.sea_level() {
+                warmths.push(world.climate(x, z, height).0);
+            }
+        }
+    }
+    if warmths.len() < 50 {
+        return None;
+    }
+    warmths.sort_by(f32::total_cmp);
+    // To a tenth of a degree, for a tidy file.
+    let at = |third: usize| (warmths[warmths.len() * third / 3] * 10.0).round() / 10.0;
+    let (cool, warm) = (at(1), at(2));
+    let middle = (cool + warm) * 0.5;
+    Some(if warm - cool < 1.0 { [middle - 0.5, middle + 0.5] } else { [cool, warm] })
+}
+
+/// Where the showcase biomes part for the world of blocks on `entity`: in
+/// thirds of the warmth round where it starts, by its generator.
+fn showcase_split(game: &mut Game, entity: Entity) -> Option<[f32; 2]> {
+    let file = game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(entity)?.file.clone();
+    let world = voxear_engine::blocks::generator(&mut game.content, &file)?;
+    let generate = file.generate.as_ref()?;
+    // An endless world starts at its corner; another round its middle.
+    let side = file.ground.size.map(|columns| columns as f32 * file.block_size);
+    let middle = match generate.endless {
+        Some(_) => generate.position,
+        None => [generate.position[0] + side[0] * 0.5, generate.position[1] + side[1] * 0.5],
+    };
+    warmth_thirds(&world, middle)
 }
 
 /// A starter biome: the climate it takes, its colour on maps, its
@@ -338,17 +386,19 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> 
 /// the world of blocks on `entity`, and lists the biomes on it and the
 /// trees under its generator. Whether the world changed.
 pub fn add_showcase(game: &mut Game, mut renderer: Option<&mut Renderer>, entity: Entity) -> Result<bool> {
+    let split = showcase_split(game, entity).unwrap_or(SHOWCASE_SPLIT);
     // The starters' blocks they share, and their own.
     let mut named = std::collections::HashSet::new();
-    showcase(|name| {
+    showcase(split, |name| {
         named.insert(name.to_string());
         String::new()
     });
     let starters = BLOCKS.into_iter().filter(|(name, _)| named.contains(*name));
     let starters = starters.map(|(name, color)| (name, BlockDef::colored(color)));
     let own = SHOWCASE_BLOCKS.into_iter().map(|(name, color)| (name, showcase_block(name, color)));
-    let listed =
-        add_made(game, renderer.as_deref_mut(), entity, starters.chain(own).collect(), &|block| showcase(block))?;
+    let listed = add_made(game, renderer.as_deref_mut(), entity, starters.chain(own).collect(), &|block| {
+        showcase(split, block)
+    })?;
     let grown = crate::starter_trees::add_showcase(game, renderer, entity)?;
     Ok(listed || grown)
 }
@@ -500,18 +550,23 @@ mod tests {
         assert_eq!(vine_block().shape, BlockShape::Vine);
     }
 
-    /// For each of `preset`'s worlds' land within `reach` metres of its middle, every 32 m: each showcase biome's
-    /// share of it, and how near to the middle the nearest place of each is, in metres.
-    fn showcase_round(preset: Preset, reach: f32) -> ([f32; 3], [f32; 3]) {
-        let world = preset.world();
-        let listed: Vec<BiomeDef> = showcase(|name| name.to_string()).into_iter().map(|(_, biome)| biome).collect();
+    /// For `world`'s land within `reach` metres of `middle`, every 32 m, the showcase biomes parted for it there:
+    /// each one's share of it, and how near to the middle the nearest place of each is, in metres.
+    fn showcase_round(
+        world: &voxear_terrain::generate::WorldGen,
+        middle: [f32; 2],
+        reach: f32,
+    ) -> ([f32; 3], [f32; 3]) {
+        let split = warmth_thirds(world, middle).unwrap();
+        let listed: Vec<BiomeDef> =
+            showcase(split, |name| name.to_string()).into_iter().map(|(_, biome)| biome).collect();
         let placed = Biomes::new(listed, 15.0, 0.3, world.seed());
         let (mut count, mut each, mut nearest) = (0usize, [0usize; 3], [f32::MAX; 3]);
         let steps = (reach / 32.0) as i32;
         for z in -steps..=steps {
             for x in -steps..=steps {
-                let (x, z) = (x as f32 * 32.0, z as f32 * 32.0);
-                let away = (x * x + z * z).sqrt();
+                let (dx, dz) = (x as f32 * 32.0, z as f32 * 32.0);
+                let (x, z, away) = (middle[0] + dx, middle[1] + dz, (dx * dx + dz * dz).sqrt());
                 let height = world.height_at(x, z);
                 let above_sea = height - world.sea_level();
                 if away > reach || above_sea < 0.0 {
@@ -529,13 +584,14 @@ mod tests {
 
     #[test]
     fn the_showcase_biomes_lie_a_walk_apart_each_of_its_own_blocks_magma_rock_hot() {
-        let named: Vec<&str> = showcase(|name| name.to_string()).into_iter().map(|(name, _)| name).collect();
+        let named: Vec<&str> =
+            showcase(SHOWCASE_SPLIT, |name| name.to_string()).into_iter().map(|(name, _)| name).collect();
         assert_eq!(named, ["Autumn Woods", "Blossom Grove", "Volcanic Fields"]);
         // Every block they name is made with them.
         let blocks: Vec<&str> =
             BLOCKS.iter().chain(SHOWCASE_BLOCKS.iter()).map(|(name, _)| *name).chain([VINE.0]).collect();
         let mut used = std::collections::BTreeSet::new();
-        showcase(|name| {
+        showcase(SHOWCASE_SPLIT, |name| {
             used.insert(name.to_string());
             name.to_string()
         });
@@ -545,16 +601,28 @@ mod tests {
         for (name, color) in SHOWCASE_BLOCKS {
             assert_eq!(showcase_block(name, color).heat.is_some(), name == "Magma Rock", "{name}");
         }
-        // In a mild world all three lie a short walk from its middle, each a good share of its land.
-        for preset in [Preset::BattlefieldPlains, Preset::RollingHills] {
-            let (shares, nearest) = showcase_round(preset, 2000.0);
-            println!("{:>20}: {shares:.2?} nearest {nearest:.0?}", preset.name());
-            assert!(shares.iter().all(|&share| share > 0.15), "{}: {shares:?}", preset.name());
-            assert!(nearest.iter().all(|&away| away < 1000.0), "{}: {nearest:?}", preset.name());
+        // Parted for the world they are made for, all three lie a short walk from where it starts, each a good
+        // share of its land, in a mild world, cold mountains, warm canyons and tropical islands alike.
+        let islands = voxear_terrain::generate::starters().into_iter().find(|starter| starter.name == "Archipelago");
+        let islands = islands.unwrap().world(0, 1.0);
+        // The first place on a 500 m grid with land enough round it.
+        let ashore = (0..1600).map(|i| [(i % 40) as f32 * 500.0, (i / 40) as f32 * 500.0]);
+        let shore = ashore.into_iter().find(|&middle| warmth_thirds(&islands, middle).is_some());
+        let mut worlds: Vec<(String, voxear_terrain::generate::WorldGen, [f32; 2])> =
+            [Preset::BattlefieldPlains, Preset::RollingHills, Preset::Alpine, Preset::Canyons]
+                .into_iter()
+                .map(|preset| (preset.name().to_string(), preset.world(), [0.0, 0.0]))
+                .collect();
+        worlds.push(("Archipelago".into(), islands, shore.expect("land on the islands within 20 km")));
+        for (name, world, middle) in &worlds {
+            let (shares, nearest) = showcase_round(world, *middle, 1000.0);
+            println!("{name:>20}: {:?} {shares:.2?} nearest {nearest:.0?}", warmth_thirds(world, *middle));
+            assert!(shares.iter().all(|&share| share > 0.15), "{name}: {shares:?}");
+            assert!(nearest.iter().all(|&away| away < 700.0), "{name}: {nearest:?}");
         }
-        // The mountains are too cold for the volcanic fields, and the canyons too warm for the woods.
-        let (alpine, _) = showcase_round(Preset::Alpine, 2000.0);
-        let (canyons, _) = showcase_round(Preset::Canyons, 2000.0);
-        assert!(alpine[0] > alpine[2] && canyons[2] > canyons[0], "{alpine:?} {canyons:?}");
+        // With no generator to read, they part at 10 and 16 °C.
+        let parted: Vec<[f32; 2]> =
+            showcase(SHOWCASE_SPLIT, |name| name.to_string()).into_iter().map(|(_, biome)| biome.temperature).collect();
+        assert_eq!(parted, [[-60.0, 10.0], [10.0, 16.0], [16.0, 60.0]]);
     }
 }

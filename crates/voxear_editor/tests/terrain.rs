@@ -3357,34 +3357,15 @@ fn biomes_made_on(
 
 #[test]
 fn the_showcase_biomes_lie_side_by_side_on_a_world_of_hills_with_their_trees() {
-    use voxear_terrain::generate::{BiomeDef, Biomes, Preset, biomes::Place};
-    // Where the showcase biomes fall, as warm as each keeps to: a square of hills that has all three.
-    let world = Preset::RollingHills.world();
-    let kept = [[-60.0, 10.0], [10.0, 16.0], [16.0, 60.0]];
-    let listed = kept.map(|temperature| BiomeDef { temperature, humidity: [0.0, 1.0], ..BiomeDef::default() });
-    let placed = Biomes::new(listed.to_vec(), 15.0, 0.3, world.seed());
+    use voxear_terrain::generate::Preset;
+    // Low hills, all land: the showcase biomes part its warmth round its middle into thirds.
     let side = 448.0;
-    let all_three = |corner: [f32; 2], least: f32, _: f32| {
-        if least < 2.0 {
-            return false;
-        }
-        let mut seen = [false; 3];
-        for i in 0..17 * 17 {
-            let (x, z) = (corner[0] + (i % 17) as f32 * side / 16.0, corner[1] + (i / 17) as f32 * side / 16.0);
-            let height = world.height_at(x, z);
-            let (temperature, humidity) = world.climate(x, z, height);
-            let place = Place { temperature, humidity, above_sea: height - world.sea_level(), sunk: 0.0 };
-            if let Some(biome) = placed.at(x, z, place) {
-                seen[biome] = true;
-            }
-        }
-        seen == [true; 3]
-    };
+    let hills = |_: [f32; 2], least: f32, greatest: f32| least >= 2.0 && greatest < 90.0;
     let made = biomes_made_on(
         "Add Showcase Biomes",
         Preset::RollingHills,
         (1.0, side as u32),
-        all_three,
+        hills,
         "showcase-biomes-hills-1m.png",
     );
     let Some(bands) = made else { return };

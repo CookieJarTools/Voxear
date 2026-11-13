@@ -111,11 +111,11 @@ A world gets three showcase biomes when it is first given a **Generator**, if it
 
 | Biome | Climate | Top, over | Steep | Shore | Trees |
 | --- | --- | --- | --- | --- | --- |
-| Autumn Woods | Up to 10 °C | Fallen Leaves, over Dirt | Stone | Gravel | Maple, red |
-| Blossom Grove | 10 to 16 °C | Spring Grass, over Dirt | Stone | Sand | Blossom, pink |
-| Volcanic Fields | From 16 °C | Ash, over Basalt | Magma Rock, from 50° | Obsidian | None |
+| Autumn Woods | The coolest third | Fallen Leaves, over Dirt | Stone | Gravel | Maple, red |
+| Blossom Grove | The middle third | Spring Grass, over Dirt | Stone | Sand | Blossom, pink |
+| Volcanic Fields | The warmest third | Ash, over Basalt | Magma Rock, from 50° | Obsidian | None |
 
-They keep to warmth alone, so a mild world has all three a short walk apart: in the Rolling Hills, each is within a few hundred metres of the middle. A cold world is mostly woods, and a warm one mostly fields.
+They keep to warmth alone. When they are made for a world, its generator's warmth over the land within a kilometre of where the world starts is split into thirds, and each biome takes one. So all three lie a short walk apart in a world of any climate, cold mountains and tropical islands alike, usually within a few hundred metres of the start. The splits are written into their `.biome` files, so change them there. A world with no generator yet parts them at 10 and 16 °C.
 
 **Magma Rock** is hot, 220 °C out to 2 m (see [[Temperature#Hot and cold blocks|Hot and cold blocks]]), so food dropped on a volcanic slope cooks. The grove and the woods have a few vines.
 

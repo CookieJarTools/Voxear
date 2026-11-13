@@ -1756,9 +1756,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
-- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders: on the graph compiler
-  particles share, whose shaders must cost what hand-written ones do (see
-  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
+- **The shader graph compiler ✅** (`voxear_shader_graph`; no editor or asset for it yet). A graph of typed nodes
+  (inputs a stage is given, the surface as it stands, constants and colours, properties and picture reads, the
+  usual maths, Compare and Branch, Split, Combine, Swizzle and a whole-number Random) is lowered from its output
+  nodes into typed steps, which are folded, simplified and merged as they are made, with what no output reads
+  left out; each step knows whether it changes never, once a draw or from place to place. A Branch with a side
+  worth skipping becomes a real `if` holding only that side's work, the rest selects. It writes the same
+  properties struct and `surface`, `vertex` and `light` functions as a hand-written `.shader`, and counts each
+  node's instructions and picture reads once all that is done. Hologram and Sway made again as graphs
+  (`starters`) draw the same picture as the built-in ones and take the same GPU time (0.226 against 0.228 ms,
+  0.240 against 0.239 ms, least of sixty frames). Tests: folding, merging, leaving out, branches, errors at their
+  nodes, files read back; on a GPU, the two graphs against the hand-written shaders.
+- Shader Graph with previews and sub-graphs, plus material variants: `.shadergraph` assets compiled as project
+  shaders, the graph editor on the generator graphs' canvas with each node's cost, then work moved to the vertex
+  stage and properties' sums worked out on the CPU (see [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
   and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or

@@ -1726,8 +1726,12 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   deep, blocks and water 20 km off, mist, only the opening changing; a character walking through to ground made
   for it 9 km off in a world without end and standing on it; a thrown body keeping speed and spin; nothing shown
   between the places; cameras carried; scene files; a script making a pair and hearing a ball go through. Manual:
-  Portals. Still to come: holding the cost target on the GPU (one Portal over a third of the screen and two in
-  view, 1080p, in an endless world) and its timing test, light, shadows and sound through Portals, bodies resting
+  Portals. Cost at 1080p on an RTX 3070, the least of 60 frames: in the test scene +0.15 ms for one Portal over a
+  third of the picture and +0.5 ms for two (the timing test holds +1.5 and +2.5); in an endless world of Ultra
+  quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
+  draw_distance` cuts. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
+  shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
+  bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
   part-way through, the server deciding and checking crossings, Portals to other levels.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.

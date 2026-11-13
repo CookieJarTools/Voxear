@@ -171,13 +171,13 @@ A block whose **Shape** is one of these is drawn as a few boxes in place of a cu
 | Stairs | A step rising away from where it was put. It turns a corner where another stair meets it from the side, and stands upside down in the upper half of its block |
 | Fence | A post, with rails to the fences, fence gates and whole blocks beside it |
 | Wall | A thick post, with low walls to the walls, fence gates and whole blocks beside it. A straight run has no posts |
-| Pane | A thin sheet reaching to the panes and whole blocks beside it, as glass in a window |
+| Pane | A thin sheet reaching to the panes and whole blocks beside it, as glass in a window. Beside a door, or with nothing to reach to, it is still a whole pane, across the way it faces |
 | Door | A door against one side of its block, two blocks high, that swings open on its hinge |
 | Trap Door | A hatch in the lower or upper half of its block, that swings up on its hinge |
 | Fence Gate | A gate between two posts, that fits into a fence and swings open |
 | Lever | A handle on a plate, on a floor, a wall or a ceiling, that tips over to turn on and off |
 | Button | A button on a floor, a wall or a ceiling, that sinks when pressed and stays on for its **Press Time** |
-| Chain | Links hanging from what is over them, swaying a little |
+| Chain | Links hanging from what is over them, swaying a little: two sheets crossed through the middle of the block, each its picture once |
 | Rope | A rope hanging from what is over it, swaying a little |
 | Boxes | The block's own boxes (see [Boxes of its own](#boxes-of-its-own)) |
 

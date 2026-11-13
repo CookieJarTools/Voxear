@@ -554,7 +554,9 @@ fn part_fields(ui: &mut Ui, root: NodeId, block: &BlockDef) -> PartFields {
     let shape = block.shape;
     let looks = block.part_look();
     let opens = !matches!(UseKind::of(shape, false, false), UseKind::None);
-    if shape.is_part() || block.usable {
+    // Use, where it has a row: a door, a gate and a lever are used whatever they say, so show none of their own.
+    let has_use = !opens || shape == BlockShape::Button || shape == BlockShape::Boxes || looks.hangs;
+    if (shape.is_part() || block.usable) && has_use {
         let rows = part(ui, root, "Use", "settings");
         if !opens {
             let row = prop(ui, rows, "Usable");

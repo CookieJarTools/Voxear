@@ -1729,6 +1729,10 @@ impl Editor {
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
             let free = free && !self.terrain_tools.is_hovered();
+            // The block the brush builds with read, so how it would stand put down shows before the first click.
+            if let Some(guid) = crate::block_props::built_with(&self.game) {
+                let _ = self.game.content.block(&guid.to_string());
+            }
             self.block_tools.hover(&self.game, &camera, selected, over_field.filter(|_| free));
             let free = free && !self.block_tools.is_hovered();
             self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));

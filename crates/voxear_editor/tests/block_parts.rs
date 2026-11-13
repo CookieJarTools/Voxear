@@ -298,6 +298,11 @@ fn blocks_of_parts_are_put_down_turned_a_door_whole_and_the_use_brush_opens_one(
     assert_eq!((lower.half, upper.half, upper.facing), (BlockHalf::Lower, BlockHalf::Upper, lower.facing));
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "parts-door.png");
+    // The brush's outline over the ground beside it is a door's panel, not a whole block.
+    pointer_to(&mut editor, [door_point[0] + 120.0, door_point[1]]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "parts-door-outline.png");
     // The Use brush opens it as a player would, and undo shuts it again.
     let brush = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brush's choice");
     choose(&mut editor, &mut renderer, brush, 4);
@@ -313,6 +318,7 @@ fn blocks_of_parts_are_put_down_turned_a_door_whole_and_the_use_brush_opens_one(
     frame(&mut editor, &mut renderer);
     assert!(!state_at(&editor, field, door).unwrap().open, "shut again");
     // Broken from its upper block, the whole door goes.
+    let brush = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brush's choice");
     choose(&mut editor, &mut renderer, brush, 1);
     let camera = editor.scene_camera().unwrap();
     let corner = editor.game.engine.world.get::<voxear_scene::Transform>(field).unwrap().position;
@@ -341,10 +347,21 @@ fn a_blocks_inspector_offers_every_shape_and_a_doors_motion_keys() {
     frame(&mut editor, &mut renderer);
     let mut options = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
-    let names: Vec<String> = options.iter().map(|&option| row_text(&editor.ui, option).trim().to_string()).collect();
-    let texts: Vec<String> = options.iter().map(|&option| editor.ui.text(option)).collect();
+    // Each option's words, wherever in it they are.
+    fn words(ui: &Ui, node: NodeId, out: &mut Vec<String>) {
+        out.push(ui.text(node));
+        ui.children(node).into_iter().for_each(|child| words(ui, child, out));
+    }
+    let names: Vec<String> = options
+        .iter()
+        .map(|&option| {
+            let mut out = Vec::new();
+            words(&editor.ui, option, &mut out);
+            out.concat()
+        })
+        .collect();
     for wanted in ["Cube", "Slab", "Stairs", "Fence", "Wall", "Pane", "Door", "Trap Door", "Fence Gate", "Lever", "Button", "Chain", "Rope", "Boxes"] {
-        assert!(names.iter().chain(&texts).any(|name| name == wanted), "{wanted} offered: {names:?} {texts:?}");
+        assert!(names.iter().any(|name| name == wanted), "{wanted} offered: {names:?}");
     }
     editor.ui.key_down(Key::Escape);
     frame(&mut editor, &mut renderer);

@@ -52,7 +52,7 @@ fn keep_image(name: &str, pixels: &[u8]) {
     }
 }
 
-/// Where the camera stands, looking along -z.
+/// Where the camera stands, looking along -z, +x to the left.
 const EYE: Vec3 = Vec3::new(16.0, 5.5, 48.0);
 
 /// The colour at the point `at` in the world, as the camera at [`EYE`] sees it.
@@ -61,17 +61,32 @@ fn seen(pixels: &[u8], at: Vec3) -> [i32; 3] {
     let half = (30f32).to_radians().tan() * away;
     let u = (at.x - EYE.x) / (half * WIDTH as f32 / HEIGHT as f32);
     let v = (at.y - EYE.y) / half;
-    let (x, y) = (((u + 1.0) * 0.5 * WIDTH as f32) as u32, ((1.0 - v) * 0.5 * HEIGHT as f32) as u32);
+    // Turned to look along -z, +x lies to the left.
+    let (x, y) = (((1.0 - u) * 0.5 * WIDTH as f32) as u32, ((1.0 - v) * 0.5 * HEIGHT as f32) as u32);
     let i = ((y * WIDTH + x) * 4) as usize;
     [pixels[i], pixels[i + 1], pixels[i + 2]].map(i32::from)
 }
 
-/// Whether `rgb` is the colour `want` lit: nearest to it of the scene's colours, by hue.
+/// Whether `rgb` is the colour `want` lit: of the scene's colours, the nearest to it by hue. Light and haze wash
+/// every colour towards grey alike, which leaves its hue; one washed nearly grey is the sky's.
 fn is(rgb: [i32; 3], want: [f32; 3]) -> bool {
-    let sum = rgb.iter().sum::<i32>().max(1) as f32;
-    let share = rgb.map(|c| c as f32 / sum);
-    let wanted = want.iter().sum::<f32>().max(1e-3);
-    (0..3).all(|i| (share[i] - want[i] / wanted).abs() < 0.12)
+    let hue = |[r, g, b]: [f32; 3]| {
+        let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+        let span = (high - low).max(1e-4);
+        let sixth = if high == r { (g - b) / span } else if high == g { 2.0 + (b - r) / span } else { 4.0 + (r - g) / span };
+        ((sixth * 60.0) + 360.0) % 360.0
+    };
+    let seen = rgb.map(|c| c as f32 / 255.0);
+    let (high, low) = (seen[0].max(seen[1]).max(seen[2]), seen[0].min(seen[1]).min(seen[2]));
+    if (high - low) / high.max(1e-4) < 0.12 {
+        return false;
+    }
+    let apart = |c: [f32; 3]| {
+        let d = (hue(c) - hue(seen)).abs();
+        d.min(360.0 - d)
+    };
+    let nearest = [GRASS, RED, BLUE, WOOD].into_iter().min_by(|a, b| apart(*a).total_cmp(&apart(*b))).unwrap();
+    nearest == want
 }
 
 const GRASS: [f32; 3] = [0.33, 0.52, 0.2];

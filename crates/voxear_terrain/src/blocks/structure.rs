@@ -20,7 +20,16 @@
 //! size = [5, 4, 5]                                    # blocks along x, up and along z
 //! palette = ["Blocks/Planks.block", "Blocks/Log.block"]
 //! runs = "25:2 3:2 1:0 1:2 ..."                        # count:entry, along x, then z, then up; 0 leaves the block be
+//!
+//! [[model.states]]                                    # a palette entry placed facing a way, open, a door's top
+//! entry = 2
+//! facing = "east"
+//! half = "upper"
 //! ```
+//!
+//! A structure placed turned turns each block's state with it (see
+//! [`WorldStructures::turns`]): a door facing east in a house turned a
+//! quarter faces south.
 //!
 //! A world numbers the blocks a structure names as it does a biome's (see
 //! [`StructureBlocks`]); building it into a chunk column needs nothing
@@ -75,6 +84,20 @@ pub struct StructureModel {
     pub size: [u32; 3],
     pub palette: Vec<String>,
     pub runs: String,
+    /// The state each entry of its palette that has one is placed in, by
+    /// its place in the palette from 1: a door's way and half, a stair's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<PaletteState>,
+}
+
+/// The state a structure's palette entry is placed in (see
+/// `shape::BlockState`), by the entry's place from 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaletteState {
+    pub entry: u16,
+    #[serde(flatten)]
+    pub state: super::shape::BlockState,
 }
 
 impl StructureModel {
@@ -92,7 +115,13 @@ impl StructureModel {
             runs.push_str(&format!("{count}:{entry}"));
             at += count;
         }
-        Self { size, palette, runs }
+        Self { size, palette, runs, states: Vec::new() }
+    }
+
+    /// The state its palette entry `entry` (from 1) is placed in, where it
+    /// says.
+    pub fn state_of(&self, entry: usize) -> Option<super::shape::BlockState> {
+        self.states.iter().find(|placed| usize::from(placed.entry) == entry).map(|placed| placed.state)
     }
 
     /// Its blocks, along x, then z, then up, each an entry of its palette
@@ -528,9 +557,25 @@ pub struct PlacedStructure {
 
 /// A world's structures, in the order it lists them; a structure listed
 /// later gives way to one listed earlier where their sites would overlap.
+/// Beside them, each block of theirs that faces a way, by its number, as
+/// it is numbered turned each of four ways, and then mirrored each of the
+/// four (see [`WorldStructures::turned_block`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorldStructures {
     pub list: Vec<PlacedStructure>,
+    pub turns: std::collections::BTreeMap<BlockId, [BlockId; 8]>,
+}
+
+impl WorldStructures {
+    /// The number of block `block` turned `turns` quarter turns about the
+    /// up axis, mirrored along x first where `mirrored` says: the block
+    /// itself where it faces no way.
+    pub fn turned_block(&self, block: BlockId, turns: u8, mirrored: bool) -> BlockId {
+        match self.turns.get(&block) {
+            Some(turned) => turned[usize::from(turns % 4) + if mirrored { 4 } else { 0 }],
+            None => block,
+        }
+    }
 }
 
 /// One block of a structure as built: where it is from its site's foot, and
@@ -658,6 +703,9 @@ struct Part {
     pieces: Vec<Piece>,
     ground: GroundFit,
     sink: i32,
+    /// How its pieces were turned, for the states of its blocks to turn.
+    turns: u8,
+    mirrored: bool,
 }
 
 impl Part {
@@ -689,7 +737,7 @@ impl Town {
         let mut parts = Vec::new();
         if let Some(middle) = &self.middle {
             let pieces = model_pieces(middle.size, &middle.blocks);
-            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink });
+            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink, turns: 0, mirrored: false });
         }
         let middle_radius = self.middle.as_ref().map_or(1.5, TownPiece::radius);
         let streets = self.streets(&mut draws, centre, middle_radius, ground);
@@ -799,7 +847,7 @@ impl Town {
                 continue;
             }
             stubs.extend(stub);
-            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink });
+            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink, turns, mirrored: false });
             placed += 1;
             built[which] += 1;
         }
@@ -1824,11 +1872,17 @@ fn build_looking(
                         let buried = |at: &[i32; 3]| base + at[1] <= ground.top(block[0] + at[0], block[1] + at[2]);
                         pieces.retain(|(at, piece)| *vine == AIR || piece != vine || !buried(at));
                     }
-                    vec![Part { at: block, pieces, ground: structure.ground, sink: structure.sink }]
+                    let (turns, mirrored) = (site.turns, site.mirrored);
+                    vec![Part { at: block, pieces, ground: structure.ground, sink: structure.sink, turns, mirrored }]
                 }
             };
-            for part in parts {
+            for mut part in parts {
                 let foot = ground.top(part.at[0], part.at[1]);
+                if !structures.turns.is_empty() && (part.turns % 4 != 0 || part.mirrored) {
+                    for (_, block) in &mut part.pieces {
+                        *block = structures.turned_block(*block, part.turns, part.mirrored);
+                    }
+                }
                 build_part(&mut put, &ground, &part, foot, under);
             }
         }
@@ -2001,9 +2055,9 @@ mod tests {
         assert_eq!(StructureDef::parse("").unwrap(), StructureDef::default());
         assert!(StructureDef::parse("grond = \"leave\"").is_err());
         // Runs that do not fill its size, or name an entry it has not, are no model.
-        let short = StructureModel { size: [2, 2, 2], palette: vec!["a".into()], runs: "7:1".into() };
+        let short = StructureModel { size: [2, 2, 2], palette: vec!["a".into()], runs: "7:1".into(), states: Vec::new() };
         assert_eq!(short.blocks(), None);
-        let unknown = StructureModel { size: [2, 2, 2], palette: vec!["a".into()], runs: "8:2".into() };
+        let unknown = StructureModel { size: [2, 2, 2], palette: vec!["a".into()], runs: "8:2".into(), states: Vec::new() };
         assert_eq!(unknown.blocks(), None);
     }
 
@@ -2055,7 +2109,7 @@ mod tests {
             blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: 7, leaves: 8, vine: 0 },
             biomes: Vec::new(),
         };
-        WorldStructures { list: vec![hut, trees] }
+        WorldStructures { list: vec![hut, trees], ..WorldStructures::default() }
     }
 
     #[test]
@@ -2263,7 +2317,7 @@ mod tests {
             blocks: StructureBlocks::Town(village()),
             biomes: Vec::new(),
         };
-        let structures = WorldStructures { list: vec![town] };
+        let structures = WorldStructures { list: vec![town], ..WorldStructures::default() };
         let make = |[cx, cz]: [i32; 2]| {
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
             build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4), [cx, cz], 2);
@@ -2457,7 +2511,7 @@ mod tests {
                 biomes: Vec::new(),
             },
         ];
-        let structures = WorldStructures { list };
+        let structures = WorldStructures { list, ..WorldStructures::default() };
         let mut found: Vec<(BlockId, [i32; 3])> = Vec::new();
         for cz in -5..5 {
             for cx in -5..5 {
@@ -2519,7 +2573,7 @@ mod tests {
         thick[0].placement = place(3, 70.0, 20.0);
         thick[1].placement = place(4, 11.0, 0.0);
         list.extend(thick);
-        let structures = WorldStructures { list };
+        let structures = WorldStructures { list, ..WorldStructures::default() };
         let at = (1.0, [300.0, -200.0], -64);
         let near = looks(&structures, at.0);
         // Each as far as it reaches at the least, the first furthest, the trees no further than their crowns

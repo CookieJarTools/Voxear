@@ -41,4 +41,20 @@ public abstract class BlockRules : Definition
 	public virtual void OnPlaced(in BlockHit hit, Item? item)
 	{
 	}
+
+	/// <summary>
+	/// Whether the block may be used now, by <see cref="BlockUse.User"/>: false keeps a door shut, as a lock does.
+	/// <code>
+	/// public override bool CanUse(BlockUse use) =&gt; use.User.Get&lt;Keyring&gt;()?.Has(Key) == true;
+	/// </code>
+	/// </summary>
+	public virtual bool CanUse(BlockUse use)
+	{
+		return true;
+	}
+
+	/// <summary>Runs once the block was used by <see cref="Blocks.Use(System.Numerics.Vector3, Obj)"/>.</summary>
+	public virtual void OnUsed(BlockUse use)
+	{
+	}
 }

@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 84;
+pub(crate) const API_VERSION: u32 = 85;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -561,6 +561,21 @@ pub(crate) struct NativeApi {
     /// `TexturePacks.WriteStarter`: makes a pack to start from, called `name`, in the player's folder, and writes
     /// what names it; its length, or -1 where it could not be made.
     pub texture_pack_starter: unsafe extern "C" fn(name: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `Blocks.Use`: uses the block at a point; what kind of use it was, with 16 over it where it is open now.
+    pub block_use: unsafe extern "C" fn(at: *const [f32; 3]) -> i32,
+    /// `Blocks.StateAt`: the state the block at a point is placed in, a byte; -1 for air.
+    pub block_state: unsafe extern "C" fn(at: *const [f32; 3]) -> i32,
+    /// `Blocks.SetState`: the block at a point put in a state, by its motion where `animate` says.
+    pub block_set_state: unsafe extern "C" fn(at: *const [f32; 3], state: i32, animate: i32) -> i32,
+    /// `Blocks.Set` with a state: a block by its `.block` put at a point in a state.
+    pub block_set_placed: unsafe extern "C" fn(at: *const [f32; 3], block: *const u8, len: i32, state: i32) -> i32,
+    /// `BlockState.Placed`: the state a block of a shape is put down in against a face.
+    pub block_placed_state:
+        unsafe extern "C" fn(shape: i32, within: *const [f32; 3], normal: *const [f32; 3], look: *const [f32; 3]) -> i32,
+    /// `Blocks.Link` and `Blocks.Unlink`: a lever or a button linked to a block it drives, or not.
+    pub block_link: unsafe extern "C" fn(what: i32, from: *const [f32; 3], to: *const [f32; 3]) -> i32,
+    /// `Blocks.LinksFrom`: the middles of the blocks a lever or a button drives.
+    pub block_links: unsafe extern "C" fn(from: *const [f32; 3], out: *mut [f32; 3], capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2168,6 +2183,13 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         texture_pack_wear,
         texture_packs_info: crate::services::texture_packs_info,
         texture_pack_starter: crate::services::texture_pack_starter,
+        block_use: crate::blocks::block_use,
+        block_state: crate::blocks::block_state,
+        block_set_state: crate::blocks::block_set_state,
+        block_set_placed: crate::blocks::block_set_placed,
+        block_placed_state: crate::blocks::block_placed_state,
+        block_link: crate::blocks::block_link,
+        block_links: crate::blocks::block_links,
     }
 }
 

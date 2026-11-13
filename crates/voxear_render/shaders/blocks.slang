@@ -71,7 +71,7 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
     // Leaves sway, now and as they were a frame ago, for their motion.
     float3 swayed = blockSway(frame, world, b, frame->time);
-    float3 before = b.world + blockSway(frame, world, b, frame->time - frame->deltaTime);
+    float3 before = b.world + b.back + blockSway(frame, world, b, frame->time - frame->deltaTime);
     b.world += swayed;
     float4 at = float4(b.world, 1.0);
     VertexOut o;
@@ -81,7 +81,8 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     o.tangent = float4(normalizeOr(float3(b.normal.y, -b.normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
     // The corner's shading, for blockShading to darken by, and what a face that joins or takes another block's edge
     // keeps of the faces round it; for a loose quad, where it is on its sheet.
-    o.uv = b.loose != 0 ? b.across : float2(b.shade, float(b.joins));
+    // A face of a block of parts says so over that, with the way it faces as it rests (partPoint).
+    o.uv = b.loose != 0 ? b.across : float2(b.shade, float(b.joins | (b.part << 20)));
     o.material = world.material;
     o.lod = blockLooseWord(b);
     o.instance = world.anchor;
@@ -103,8 +104,8 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     }
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
-    // Bounced light is read where the block stands.
-    o.moved = swayed;
+    // Bounced light is read where the block stands, and a moving part's pictures where it rests.
+    o.moved = swayed + b.posedBy;
     o.hidden = 0.0;
     return o;
 }
@@ -698,10 +699,17 @@ bool terrainShading(
         uint index = input.lod & 0xFF;
         float3 facing;
         float sunk, grain, shown;
-        bool cubes = blockCubes(world, index, stands, normal, spot, facing, sunk, grain, shown);
-        // What the face keeps of the faces round it (cubePoint), and its chunk's level over that.
+        // What the face keeps of the faces round it (cubePoint), and its chunk's level over that; a face of a block
+        // of parts, over those, the way it faces as it rests, which its pictures are read by, so they stay on it as
+        // it moves. It is never cut into small cubes.
         uint round = uint(input.uv.y + 0.5);
-        uint level = round >> 14;
+        uint level = (round >> 14) & 63;
+        bool part = ((round >> 20) & 1) != 0;
+        if (part)
+        {
+            normal = blockFacingWay((round >> 21) & 7);
+        }
+        bool cubes = !part && blockCubes(world, index, stands, normal, spot, facing, sunk, grain, shown);
         TerrainSurface drawn = world.surfaces[min(index, world.surfaceCount - 1)];
         bool mixed = (drawn.flags & TERRAIN_SURFACE_MIXED) != 0;
         // A face that joins those beside it reads its pictures' tile for where on it this is.
@@ -765,6 +773,18 @@ bool terrainShading(
     metallic = layer.metallic;
     roughness = layer.roughness;
     normal = normalizeOr(layer.normal, normal);
+    if (!smooth && ((uint(input.uv.y + 0.5) >> 20) & 1) != 0 && ((input.lod >> 8) & 3) == 0)
+    {
+        // A moving part's pictures were read as it rests: its bumps turned as it is turned now.
+        float3 rested = blockFacingWay((uint(input.uv.y + 0.5) >> 21) & 7);
+        float3 now = normalize(input.normal);
+        float3 hinge = cross(rested, now);
+        float turned = length(hinge);
+        if (turned > 1e-4)
+        {
+            normal = normalize(turnAbout(normal, hinge / turned, atan2(turned, dot(rested, now))));
+        }
+    }
     return true;
 }
 
@@ -787,8 +807,8 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
 {
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
-    // Its picture stays on its face as the face sways.
-    float3 stands = b.world;
+    // Its picture stays on its face as the face sways, and on a moving part where it rests.
+    float3 stands = b.world - b.posedBy;
     b.world += blockSway(push.frame, world, b, push.frame->time);
     BlockShadowOut o;
     o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));

@@ -45,6 +45,12 @@ public readonly struct Block : IEquatable<Block>, IAsset<Block>
 	/// <summary>Whether it is a liquid, as water is: nothing stands on it, and blocks are placed through it.</summary>
 	public bool IsLiquid => Info?.Liquid ?? false;
 
+	/// <summary>Its shape: a cube, or a block of parts such as a slab, a stair, a fence or a door.</summary>
+	public BlockShape Shape => Info?.Shape ?? BlockShape.Cube;
+
+	/// <summary>Whether a player can use it: a door, a trap door, a gate, a lever, a button, or a block marked usable.</summary>
+	public bool IsUsable => Info?.Usable ?? false;
+
 	/// <summary>How many seconds it takes to break by hand.</summary>
 	public float Hardness => Info?.Hardness ?? 0f;
 

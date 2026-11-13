@@ -302,6 +302,43 @@ pub trait ScriptServices {
         None
     }
 
+    /// As [`block_number`](Self::block_number), the block placed in
+    /// `state` (see `voxear_terrain::blocks::shape::BlockState`): each state
+    /// of a block a world holds is a number of its own.
+    fn block_number_state(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        reference: &str,
+        _state: u8,
+        grow: bool,
+    ) -> Option<u16> {
+        self.block_number(world, entity, reference, grow)
+    }
+
+    /// Uses the block at `at`, in blocks from the corner of the world of
+    /// blocks on `entity` (see `voxear_terrain::blocks::usable`): what kind
+    /// of use it was, by `UseKind`'s place, and whether it is open (or on)
+    /// now. None where it is no block a player uses.
+    fn block_use(&mut self, _world: &mut World, _entity: Entity, _at: [i32; 3]) -> Option<(u8, bool)> {
+        None
+    }
+
+    /// Puts the block at `at` of the world of blocks on `entity` in
+    /// `state`, the same block, moving there by its motion where `animate`
+    /// says and only its open or on changes: a door with its pair, a lever
+    /// with what it drives. How many blocks changed.
+    fn block_change_state(&mut self, _world: &mut World, _entity: Entity, _at: [i32; 3], _state: u8, _animate: bool) -> usize {
+        0
+    }
+
+    /// `changes` to the world of blocks on `entity` with what goes with
+    /// each: a door's upper block over a door put down, and a door's other
+    /// block taken away with it.
+    fn door_halves(&mut self, _world: &mut World, _entity: Entity, changes: Vec<([i32; 3], u16)>) -> Vec<([i32; 3], u16)> {
+        changes
+    }
+
     /// The blocks the world of blocks on `entity` numbered since its file
     /// was read, whose numbers are this machine's own: each number, and its
     /// block's GUID.

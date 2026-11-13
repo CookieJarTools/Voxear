@@ -100,7 +100,7 @@ fn sea(renderer: &mut Renderer) -> World {
         })
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
     let mut world = World::new();
     world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
     let towards_sun = Vec3::new(-50f32.to_radians().cos(), 50f32.to_radians().sin(), 0.35).normalize();

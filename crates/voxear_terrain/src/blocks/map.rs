@@ -865,7 +865,7 @@ mod tests {
             blocks: StructureBlocks::Model { size: [5, 4, 5], blocks: [vec![WOOD; 75], vec![roof; 25]].concat() },
             biomes: Vec::new(),
         };
-        making.generate.built = Some(Arc::new(WorldStructures { list: vec![hut] }));
+        making.generate.built = Some(Arc::new(WorldStructures { list: vec![hut], ..WorldStructures::default() }));
         making
     }
 

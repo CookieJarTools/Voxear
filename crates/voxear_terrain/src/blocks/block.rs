@@ -37,6 +37,25 @@
 //! ```
 //!
 //! ```toml
+//! color = [0.45, 0.3, 0.16]
+//! shape = "door"              # or "slab", "stairs", "fence", "wall", "pane", "trap_door", "fence_gate",
+//!                             # "lever", "button", "chain", "rope", or "boxes" for its own
+//!
+//! [motion]                    # how it swings open; a door's own unless it says
+//! keys = [{ time = 0.0, turn = 0.0 }, { time = 0.4, turn = 95.0 }, { time = 0.5, turn = 90.0 }]
+//! ```
+//!
+//! ```toml
+//! shape = "boxes"             # a lantern
+//! hangs = true
+//! swing = 4.0
+//!
+//! [[boxes]]
+//! from = [5, 1, 5]
+//! to = [11, 9, 11]
+//! ```
+//!
+//! ```toml
 //! color = [0.9, 0.3, 0.05]
 //! heat = { celsius = 1100.0, reach = 4.0 }  # magma: hot round it, as ice is cold
 //! ```
@@ -44,7 +63,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::file::BlockKind;
+use super::{
+    file::BlockKind,
+    shape::{BlockFacing, BlockMotion, BoxDef, CustomShape, MOST_BOXES, MOST_SWING, PRESS_TIME, PartLook, SWING},
+};
 
 /// The colour a block that cannot be found is drawn in, loud enough to see.
 pub const MISSING: [f32; 3] = [1.0, 0.0, 1.0];
@@ -105,6 +127,50 @@ pub struct BlockDef {
     /// snow. None for a block that is as warm as where it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heat: Option<BlockHeat>,
+    /// Whether a player can use it: a door, a trap door, a gate, a lever
+    /// and a button are always; any other block says so, and using it is
+    /// for a game's scripts to answer (see `shape::UseKind`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub usable: bool,
+    /// How many seconds a button stays on once pressed; [`PRESS_TIME`]
+    /// unless it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub press_time: Option<f32>,
+    /// How far a hanging block swings at most, in degrees, in the wind and
+    /// as things brush past it; [`SWING`] unless it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swing: Option<f32>,
+    /// Whether a block of its own boxes hangs from what is over it and
+    /// sways, as a chain does: a lantern.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hangs: bool,
+    /// How its moving parts go from shut to open, or off to on; its
+    /// shape's own unless it says (see `shape::BlockMotion::default_for`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motion: Option<BlockMotion>,
+    /// A block of its own boxes' boxes, facing north, at most
+    /// [`MOST_BOXES`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub boxes: Vec<BoxDef>,
+    /// What a block of its own boxes' moving boxes turn about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hinge: Option<BoxHinge>,
+}
+
+/// What the moving boxes of a block of its own boxes turn about: a point in
+/// sixteenths of a block from its corner, and the way of the axis, which
+/// they turn about as a right hand curls and move along.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BoxHinge {
+    pub pivot: [f32; 3],
+    pub axis: BlockFacing,
+}
+
+impl Default for BoxHinge {
+    fn default() -> Self {
+        Self { pivot: [8.0, 0.0, 8.0], axis: BlockFacing::Up }
+    }
 }
 
 /// A block's own temperature and how far it reaches: at the block it is
@@ -186,7 +252,8 @@ impl Liquid {
     }
 }
 
-/// The shape a block is drawn in.
+/// The shape a block is drawn in: a whole cube, leaves and vines, or a
+/// block of parts, a few boxes in sixteenths of a block (see `shape`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockShape {
@@ -200,16 +267,76 @@ pub enum BlockShape {
     /// crossed sheets where it hangs free. It is no ground: nothing stands
     /// on it, and it hides nothing.
     Vine,
+    /// Half a block, against the side it faces: lying low or high, or
+    /// standing up against a side.
+    Slab,
+    /// A step up towards the way it faces, turning a corner where another
+    /// stair meets it from the side; upside down in its upper half.
+    Stairs,
+    /// A post, with rails to the fences, gates and whole blocks beside it.
+    Fence,
+    /// A thick post, with walls to the walls, gates and whole blocks
+    /// beside it, and none where it runs straight on.
+    Wall,
+    /// A thin sheet, reaching to the panes and whole blocks beside it.
+    Pane,
+    /// A door against the side it faces, two blocks high, that swings open
+    /// on its hinge.
+    Door,
+    /// A hatch lying in its half of the block, that swings up on its hinge.
+    TrapDoor,
+    /// A gate between two posts, that swings open.
+    FenceGate,
+    /// A handle on a plate that tips over, turning on and off.
+    Lever,
+    /// A button that sinks when pressed, on for a moment.
+    Button,
+    /// Links hanging from what is over them, swaying a little.
+    Chain,
+    /// A rope hanging from what is over it, swaying a little.
+    Rope,
+    /// The block's own boxes (see `BlockDef::boxes`).
+    Boxes,
 }
 
 impl BlockShape {
-    pub const ALL: [BlockShape; 3] = [BlockShape::Cube, BlockShape::Bushy, BlockShape::Vine];
+    pub const ALL: [BlockShape; 16] = [
+        BlockShape::Cube,
+        BlockShape::Bushy,
+        BlockShape::Vine,
+        BlockShape::Slab,
+        BlockShape::Stairs,
+        BlockShape::Fence,
+        BlockShape::Wall,
+        BlockShape::Pane,
+        BlockShape::Door,
+        BlockShape::TrapDoor,
+        BlockShape::FenceGate,
+        BlockShape::Lever,
+        BlockShape::Button,
+        BlockShape::Chain,
+        BlockShape::Rope,
+        BlockShape::Boxes,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             BlockShape::Cube => "Cube",
             BlockShape::Bushy => "Bushy",
             BlockShape::Vine => "Vine",
+            BlockShape::Slab => "Slab",
+            BlockShape::Stairs => "Stairs",
+            BlockShape::Fence => "Fence",
+            BlockShape::Wall => "Wall",
+            BlockShape::Pane => "Pane",
+            BlockShape::Door => "Door",
+            BlockShape::TrapDoor => "Trap Door",
+            BlockShape::FenceGate => "Fence Gate",
+            BlockShape::Lever => "Lever",
+            BlockShape::Button => "Button",
+            BlockShape::Chain => "Chain",
+            BlockShape::Rope => "Rope",
+            BlockShape::Boxes => "Boxes",
         }
     }
 
@@ -219,6 +346,43 @@ impl BlockShape {
 
     pub fn is_vine(&self) -> bool {
         *self == BlockShape::Vine
+    }
+
+    /// Whether it is drawn as sheets besides or in place of a cube: bushy
+    /// leaves and vines.
+    pub fn is_loose(&self) -> bool {
+        matches!(self, BlockShape::Bushy | BlockShape::Vine)
+    }
+
+    /// Whether it is a block of parts, drawn as boxes (see `shape`).
+    pub fn is_part(&self) -> bool {
+        !matches!(self, BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine)
+    }
+
+    /// Whether it hangs from what is over it, and sways.
+    pub fn hangs(&self) -> bool {
+        matches!(self, BlockShape::Chain | BlockShape::Rope)
+    }
+
+    /// Whether characters and mobs walk through it, as through a vine:
+    /// levers, buttons, chains, ropes, and doors, gates and trap doors
+    /// while they are open.
+    pub fn passes(&self, open: bool) -> bool {
+        match self {
+            BlockShape::Lever | BlockShape::Button | BlockShape::Chain | BlockShape::Rope => true,
+            BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate => open,
+            _ => false,
+        }
+    }
+
+    /// Whether it collides a block and a half high, so nothing steps or
+    /// jumps over it: fences, walls, and gates while they are shut.
+    pub fn is_tall(&self, open: bool) -> bool {
+        match self {
+            BlockShape::Fence | BlockShape::Wall => true,
+            BlockShape::FenceGate => !open,
+            _ => false,
+        }
     }
 }
 
@@ -241,6 +405,13 @@ impl Default for BlockDef {
             drops: Vec::new(),
             sounds: BlockSounds::default(),
             heat: None,
+            usable: false,
+            press_time: None,
+            swing: None,
+            hangs: false,
+            motion: None,
+            boxes: Vec::new(),
+            hinge: None,
         }
     }
 }
@@ -257,6 +428,10 @@ impl BlockDef {
             heat.celsius = if heat.celsius.is_finite() { heat.celsius.clamp(-273.0, 5000.0) } else { 20.0 };
             heat.reach = if heat.reach.is_finite() { heat.reach.clamp(0.0, MAX_HEAT_REACH) } else { 0.0 };
         }
+        block.press_time = block.press_time.map(|t| if t.is_finite() { t.clamp(0.05, 60.0) } else { PRESS_TIME });
+        block.swing = block.swing.map(|s| if s.is_finite() { s.clamp(0.0, MOST_SWING) } else { SWING });
+        block.motion = block.motion.take().map(BlockMotion::tidied);
+        block.boxes.truncate(MOST_BOXES);
         Ok(block)
     }
 
@@ -286,7 +461,32 @@ impl BlockDef {
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
         let shape = |block: &Self| (block.liquid, block.overlap, block.shape);
-        look(self) == look(other) && shape(self) == shape(other)
+        look(self) == look(other) && shape(self) == shape(other) && self.part_look() == other.part_look()
+    }
+
+    /// What a world draws of it as a block of parts: whether it is used,
+    /// how a button presses, how far it swings, its motion (its own or its
+    /// shape's), and its own boxes.
+    pub fn part_look(&self) -> PartLook {
+        let shape = if self.liquid.is_none() { self.shape } else { BlockShape::Cube };
+        let hangs = shape.hangs() || shape == BlockShape::Boxes && self.hangs;
+        let custom = (shape == BlockShape::Boxes).then(|| {
+            let hinge = self.hinge.unwrap_or_default();
+            CustomShape::of(&self.boxes, hinge.pivot, hinge.axis)
+        });
+        let moves = custom.is_some_and(|custom| custom.boxes().iter().any(|part| part.moves.is_some()));
+        let motion = match shape {
+            BlockShape::Boxes if !moves => None,
+            _ => self.motion.clone().filter(|motion| !motion.keys.is_empty()).or_else(|| BlockMotion::default_for(shape)),
+        };
+        PartLook {
+            usable: self.usable,
+            press_time: self.press_time.unwrap_or(PRESS_TIME),
+            swing: if hangs { self.swing.unwrap_or(SWING) } else { 0.0 },
+            hangs,
+            motion,
+            custom,
+        }
     }
 
     /// Gives `kind`, a world's entry naming this block, the block's look.
@@ -299,6 +499,7 @@ impl BlockDef {
         kind.sways = self.sways;
         kind.overlap = if self.liquid.is_none() { self.overlap } else { 0 };
         kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
+        kind.part = self.part_look();
     }
 }
 

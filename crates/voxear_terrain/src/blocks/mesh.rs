@@ -71,9 +71,11 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
-    connects,
+    PART_DRAWN, PART_HANGS, PART_SOLID, PART_TALL, connects, covers,
     file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP, MIXED_LOOK},
-    hides, is_bushy, is_ground, is_see_through, is_vine, is_water, sways,
+    hides, is_bushy, is_ground, is_part, is_see_through, is_vine, is_water, part_of,
+    shape::{Around, BlockFacing, BlockState, Hinge, PartBox, StairCorner, part_boxes, posed_box, tall_boxes},
+    sways,
 };
 
 /// The faces round a face it may join, in the order of their bits: where
@@ -157,8 +159,9 @@ pub const VINE_SHEETS: u32 = 6;
 pub const VINE_TIP: u32 = 8;
 
 /// A chunk's faces: its quads, kept by facing, `buckets[f]..buckets[f + 1]`
-/// those of facing `f`, then its loose quads from `buckets[FACINGS]`, and
-/// after `buckets[FACINGS + 1]` its water's; its
+/// those of facing `f`, then its loose quads from `buckets[FACINGS]`, its
+/// blocks of parts' from `buckets[FACINGS + 1]` (two quads' words each, see
+/// [`pack_part`]), and after `buckets[FACINGS + 2]` its water's; its
 /// ground's faces as triangles, in blocks from the chunk's corner, three
 /// indices a triangle, facing out; which of the chunk's sides see each
 /// other through its air and water (see `sight`); and, drawn smooth, the
@@ -166,9 +169,13 @@ pub const VINE_TIP: u32 = 8;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub quads: Vec<[u32; 2]>,
-    pub buckets: [u32; FACINGS + 2],
+    pub buckets: [u32; FACINGS + 3],
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// Boxes it collides as besides its triangles, in blocks from its
+    /// corner, lowest corner first: its fences and walls a block and a half
+    /// high. Physics alone takes them; nothing draws them.
+    pub colliders: Vec<[[f32; 3]; 2]>,
     pub sights: u16,
     /// For a chunk drawn smooth, the ways its triangles face, all within a
     /// cone: its axis, and the sine of how far from it the furthest turns.
@@ -185,8 +192,14 @@ impl ChunkMesh {
 
     /// Its water's quads: where they start among its quads, and how many.
     pub fn water(&self) -> (u32, u32) {
-        let first = self.buckets[FACINGS + 1];
+        let first = self.buckets[FACINGS + 2];
         (first, self.quads.len() as u32 - first)
+    }
+
+    /// Its blocks of parts' quads, two quads' words each: where they start
+    /// among its quads, and how many words.
+    pub fn parts(&self) -> (u32, u32) {
+        (self.buckets[FACINGS + 1], self.buckets[FACINGS + 2] - self.buckets[FACINGS + 1])
     }
 
     /// Its loose quads, the sheets of bushy leaves and vines: where they
@@ -286,8 +299,14 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     }
     let block =
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
-    let solid = |p: [i32; 3]| is_ground(faces, block(p));
+    // A block of parts closes no corner in: a slab beside a face leaves it as light.
+    let solid = |p: [i32; 3]| is_ground(faces, block(p)) && !is_part(faces, block(p));
     let hidden_by = |p: [i32; 3]| hides(faces, block(p));
+    let any_part = faces.iter().any(|faces| faces.part & PART_DRAWN != 0 && !faces.water);
+    // A face is never seen against a block that hides, nor against a side of a block of parts covered whole.
+    let hidden_from = |p: [i32; 3], facing: usize| {
+        hidden_by(p) || any_part && covers(faces, block(p)) & (1 << (facing ^ 1)) != 0
+    };
     // Ground that stands still holds every corner it touches.
     let any_sway = faces.iter().any(|faces| faces.sways);
     let still = |p: [i32; 3]| is_ground(faces, block(p)) && !sways(faces, block(p));
@@ -320,7 +339,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                     let id = block(p);
                     let mut beyond = p;
                     beyond[axis] += step;
-                    if !is_ground(faces, id) || hidden_by(beyond) {
+                    if !is_ground(faces, id) || hidden_from(beyond, facing) || any_part && is_part(faces, id) {
                         continue;
                     }
                     // A block whose faces join is one body with those of its kind: no face between two of them.
@@ -459,7 +478,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         }
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
-    let loose = |faces: &BlockFaces| !faces.shape.is_cube() && !faces.water;
+    let loose = |faces: &BlockFaces| faces.shape.is_loose() && !faces.water;
     if faces.iter().any(loose) && chunk.may_hold(|id| faces.get(usize::from(id)).is_some_and(loose)) {
         let corner = key.map(|v| v * CHUNK as i32);
         // A corner of a sheet sways unless a still block touches the corner of its block's cube nearest it.
@@ -518,13 +537,272 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         }
     }
     mesh.buckets[FACINGS + 1] = mesh.quads.len() as u32;
+    if any_part && chunk.may_hold(|id| is_part(faces, id)) {
+        let corner = key.map(|v| v * CHUNK as i32);
+        mesh_parts(&mut mesh, &block, &hidden_from, faces, &|at: [i32; 3]| map.get(at), corner);
+    }
+    mesh.buckets[FACINGS + 2] = mesh.quads.len() as u32;
     if chunk.may_hold(|block| is_water(faces, block)) {
         let made = held(key, made);
-        let open = |beyond: BlockId| beyond == AIR || is_vine(faces, beyond);
+        // Water shows a face against a block of parts but where its side is covered whole.
+        let open = |beyond: BlockId| {
+            beyond == AIR || is_vine(faces, beyond) || is_part(faces, beyond) && covers(faces, beyond) == 0
+        };
         mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| open(beyond) && made(at)));
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
+}
+
+/// A part quad's kind among loose quads' (`VINE`), with this bit for the
+/// first of its two quads' words and the other for its second, which a
+/// vine's sheet never has.
+pub const PART_HEAD: u32 = 1 << 24;
+pub const PART_TAIL: u32 = 1 << 23;
+
+/// One face of a box of a block of parts, as its two quads' words say it:
+/// its block in its chunk, the way it faces, where its plane is along that
+/// way and the rectangle it fills across it, in sixteenths (`AXES` gives
+/// which ways are across), its surface, and what it moves by: whether it
+/// moves, its block's motion (from 1, 0 for none), whether its block is
+/// open (or on), what it turns about, and how many hanging blocks are over
+/// its block before what holds them, from 1 (0 where it does not hang).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartQuad {
+    pub at: [u32; 3],
+    pub facing: usize,
+    pub plane: u32,
+    pub across: [u32; 2],
+    pub up: [u32; 2],
+    pub surface: u8,
+    pub moves: Option<Hinge>,
+    pub motion: u32,
+    pub open: bool,
+    pub hangs: u32,
+}
+
+/// A part quad as two quads' words, in the order the renderer reads them
+/// (`partPoint` in `shaders/block_quads.slang`): the second's of each pair
+/// keeps its low half alone, as the renderer puts a chunk's number over it.
+pub fn pack_part(quad: &PartQuad) -> [[u32; 2]; 2] {
+    let [x, y, z] = quad.at;
+    let moving = u32::from(quad.moves.is_some());
+    let kind = (VINE as u32) << 25;
+    let head = x | y << 5 | z << 10 | (quad.facing as u32) << 15 | quad.plane << 18 | moving << 23 | PART_HEAD | kind;
+    let head = head | (quad.across[0] & 15) << 28;
+    let head_second = u32::from(quad.surface) | (quad.up[0] & 15) << 8 | (quad.hangs & 15) << 12;
+    let hinge = quad.moves.unwrap_or_default();
+    let axis = u32::from(hinge.axis.index());
+    let tail = quad.across[1] | quad.up[1] << 5 | (quad.motion & 63) << 10 | u32::from(quad.open) << 16 | axis << 17;
+    let tail = tail | PART_TAIL | kind;
+    let [px, py, pz] = hinge.pivot.map(u32::from);
+    [[head, head_second], [tail, px | py << 5 | pz << 10]]
+}
+
+/// A part quad from its two quads' words, as [`pack_part`] writes them.
+pub fn unpack_part([[head, head_second], [tail, tail_second]]: [[u32; 2]; 2]) -> PartQuad {
+    let moving = head >> 23 & 1 != 0;
+    let hinge = Hinge {
+        pivot: [tail_second & 31, tail_second >> 5 & 31, tail_second >> 10 & 31].map(|v| v as u8),
+        axis: BlockFacing::from_index((tail >> 17 & 7) as u8),
+    };
+    PartQuad {
+        at: [head & 31, head >> 5 & 31, head >> 10 & 31],
+        facing: (head >> 15 & 7) as usize,
+        plane: head >> 18 & 31,
+        across: [head >> 28, tail & 31],
+        up: [head_second >> 8 & 15, tail >> 5 & 31],
+        surface: head_second as u8,
+        moves: moving.then_some(hinge),
+        motion: tail >> 10 & 63,
+        open: tail >> 16 & 1 != 0,
+        hangs: head_second >> 12 & 15,
+    }
+}
+
+/// How many hanging blocks a part quad counts over its block at most.
+const MOST_HANGING: u32 = 14;
+
+/// What a block of parts of `kind` at `p` takes from those round it: which
+/// of them a fence, a wall or a pane joins, and which corner a stair turns.
+pub fn around_of(faces: &[BlockFaces], block: &dyn Fn([i32; 3]) -> BlockId, p: [i32; 3], kind: &BlockFaces) -> Around {
+    use super::block::BlockShape;
+    let step = |way: BlockFacing| {
+        let s = way.step();
+        [p[0] + s[0], p[1] + s[1], p[2] + s[2]]
+    };
+    let faces_of = |id: BlockId| faces.get(usize::from(id)).copied().unwrap_or_default();
+    match kind.shape {
+        BlockShape::Fence | BlockShape::Wall | BlockShape::Pane => {
+            let mut joins = 0;
+            for (bit, way) in BlockFacing::AROUND.into_iter().enumerate() {
+                let id = block(step(way));
+                let other = faces_of(id);
+                // A whole block, or another of its kind; a gate across the way.
+                let whole = is_ground(faces, id) && !is_part(faces, id);
+                let gate = other.shape == BlockShape::FenceGate && !other.water && {
+                    let facing = BlockState::from_byte(other.state).facing.step();
+                    let across = way.step();
+                    facing[0] * across[0] + facing[2] * across[2] == 0
+                };
+                let same = other.shape == kind.shape && !other.water;
+                let joined = whole || same || gate && kind.shape != BlockShape::Pane;
+                joins |= u8::from(joined && id != AIR) << bit;
+            }
+            Around { joins, ..Around::default() }
+        }
+        BlockShape::Stairs => {
+            let state = BlockState::from_byte(kind.state);
+            let stair = |id: BlockId| {
+                let other = faces_of(id);
+                let theirs = BlockState::from_byte(other.state);
+                let across = theirs.facing != state.facing && theirs.facing != state.facing.opposite();
+                (other.shape == BlockShape::Stairs && !other.water && theirs.half == state.half && across)
+                    .then_some(theirs.facing)
+            };
+            let corner = match (stair(block(step(state.facing))), stair(block(step(state.facing.opposite())))) {
+                (Some(other), _) => StairCorner::Outer(other),
+                (None, Some(other)) => StairCorner::Inner(other),
+                _ => StairCorner::Straight,
+            };
+            Around { corner, ..Around::default() }
+        }
+        _ => Around::default(),
+    }
+}
+
+/// Every block of parts' faces in a chunk: each box's faces as part quads
+/// (but those against a block that hides them, unless the box moves), its
+/// boxes that collide as triangles, posed as they rest, and its fences' and
+/// walls' tall boxes as colliders. `block` gives the blocks of the chunk
+/// and a block round it, `hidden_from` whether a face facing so is hidden
+/// by the block at a place, and `world` any block of the world, from the
+/// chunk's `corner`, for how far a hanging block hangs.
+fn mesh_parts(
+    mesh: &mut ChunkMesh,
+    block: &dyn Fn([i32; 3]) -> BlockId,
+    hidden_from: &dyn Fn([i32; 3], usize) -> bool,
+    faces: &[BlockFaces],
+    world: &dyn Fn([i32; 3]) -> BlockId,
+    corner: [i32; 3],
+) {
+    let side = CHUNK as i32;
+    for y in 0..side {
+        for z in 0..side {
+            for x in 0..side {
+                let p = [x, y, z];
+                let id = block(p);
+                if !is_part(faces, id) {
+                    continue;
+                }
+                let kind = faces[usize::from(id)];
+                let state = BlockState::from_byte(kind.state);
+                let around = around_of(faces, block, p, &kind);
+                let boxes = part_boxes(kind.shape, state, around, kind.custom.as_ref());
+                // How many hanging blocks are over it, to what holds them up; none where nothing does.
+                let hangs = match kind.part & PART_HANGS != 0 {
+                    false => 0,
+                    true => {
+                        let mut over = 0;
+                        let at = |up: i32| world([corner[0] + x, corner[1] + y + up, corner[2] + z]);
+                        while over < MOST_HANGING && part_of(faces, at(over as i32 + 1)) & PART_HANGS != 0 {
+                            over += 1;
+                        }
+                        let holder = at(over as i32 + 1);
+                        if holder == AIR || is_water(faces, holder) { 0 } else { over + 1 }
+                    }
+                };
+                let at = p.map(|v| v as u32);
+                for part in &boxes {
+                    for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
+                        let plane = if out { part.to[axis] } else { part.from[axis] };
+                        let on_side = if out { plane == 16 } else { plane == 0 };
+                        let mut beyond = p;
+                        beyond[axis] += if out { 1 } else { -1 };
+                        if part.moves.is_none() && on_side && hidden_from(beyond, facing) {
+                            continue;
+                        }
+                        // A rail's end against the fence, wall or gate it joins lies inside what it joins.
+                        let joined = BlockFacing::of_side(facing);
+                        let bit = BlockFacing::AROUND.iter().position(|&way| way == joined);
+                        if on_side && bit.is_some_and(|bit| around.joins & (1 << bit) != 0) && is_part(faces, block(beyond)) {
+                            continue;
+                        }
+                        let (across, up) = ([part.from[u], part.to[u]], [part.from[v], part.to[v]]);
+                        if across[0] >= across[1] || up[0] >= up[1] {
+                            continue;
+                        }
+                        let quad = PartQuad {
+                            at,
+                            facing,
+                            plane: u32::from(plane.min(16)),
+                            across: across.map(|v| u32::from(v.min(16))),
+                            up: up.map(|v| u32::from(v.min(16))),
+                            surface: surface(faces, id, facing),
+                            moves: part.moves,
+                            motion: u32::from(kind.motion),
+                            open: state.is_moved(),
+                            hangs,
+                        };
+                        mesh.quads.extend(pack_part(&quad));
+                    }
+                }
+                let origin = p.map(|v| v as f32);
+                if kind.part & PART_SOLID != 0 {
+                    let (turn, shift) = (f32::from(kind.rest[0]) / 10.0, f32::from(kind.rest[1]) / 4.0);
+                    for part in &boxes {
+                        let [low, high] = posed_box(part, turn, shift);
+                        box_triangles(mesh, origin, [low, high].map(|c| c.map(|v| v / 16.0)));
+                    }
+                }
+                if kind.part & PART_TALL != 0 {
+                    for part in tall_boxes(kind.shape, state, around) {
+                        let (from, to) = (part.from.map(|v| f32::from(v) / 16.0), part.to.map(|v| f32::from(v) / 16.0));
+                        mesh.colliders.push([0, 1].map(|end| {
+                            let c = if end == 0 { from } else { to };
+                            [origin[0] + c[0], origin[1] + c[1], origin[2] + c[2]]
+                        }));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A box's six faces as triangles, facing out, from `origin` in blocks and
+/// its corners `[low, high]` in blocks from there.
+fn box_triangles(mesh: &mut ChunkMesh, origin: [f32; 3], [low, high]: [[f32; 3]; 2]) {
+    if (0..3).any(|i| high[i] - low[i] <= 1e-4) {
+        return;
+    }
+    for &(axis, out, u, v) in &AXES {
+        let mut corner = [0.0f32; 3];
+        corner[axis] = origin[axis] + if out { high[axis] } else { low[axis] };
+        corner[u] = origin[u] + low[u];
+        corner[v] = origin[v] + low[v];
+        let (w, h) = (high[u] - low[u], high[v] - low[v]);
+        let first = mesh.positions.len() as u32;
+        for (du, dv) in [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)] {
+            let mut point = corner;
+            point[u] += du;
+            point[v] += dv;
+            mesh.positions.push(point);
+        }
+        mesh.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+    }
+}
+
+/// The part boxes of the block of parts at `p` in `faces`' world, as
+/// [`part_boxes`] makes them, with what it takes from the blocks round it:
+/// for a brush's outline and a block's picture.
+pub fn boxes_at(faces: &[BlockFaces], block: &dyn Fn([i32; 3]) -> BlockId, p: [i32; 3]) -> Vec<PartBox> {
+    let id = block(p);
+    if !is_part(faces, id) {
+        return Vec::new();
+    }
+    let kind = faces[usize::from(id)];
+    let around = around_of(faces, block, p, &kind);
+    part_boxes(kind.shape, BlockState::from_byte(kind.state), around, kind.custom.as_ref())
 }
 
 /// The bit of a block's faces facing `facing` among those that join (see
@@ -1249,5 +1527,160 @@ mod tests {
             buried.put_chunk(key, Chunk::filled(1));
         }
         assert!(mesh_chunk(&buried, [-1, -1, -1], &faces).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod part_tests {
+    use super::*;
+    use crate::blocks::{
+        block::{BlockDef, BlockShape},
+        file::{BlockFile, BlockKind},
+        shape::{BlockHalf, DoorHinge},
+    };
+
+    /// A world's faces of stone (1) and, after it, a block of each shape
+    /// and state given, numbered from 2.
+    fn world_of(parts: &[(BlockShape, BlockState)]) -> Vec<BlockFaces> {
+        let mut file = BlockFile { blocks: vec![BlockKind::colored("Stone", [0.5; 3])], ..BlockFile::default() };
+        for (at, &(shape, state)) in parts.iter().enumerate() {
+            let mut kind = BlockKind::of_state(&format!("Blocks/Part {at}.block"), state.normalized(shape).to_byte());
+            BlockDef { shape, ..BlockDef::colored([0.6, 0.4, 0.2]) }.fill(&mut kind);
+            file.blocks.push(kind);
+        }
+        file.faces().1
+    }
+
+    fn parts_of(mesh: &ChunkMesh) -> Vec<PartQuad> {
+        let (first, words) = mesh.parts();
+        let quads = &mesh.quads[first as usize..(first + words) as usize];
+        quads.chunks_exact(2).map(|pair| unpack_part([pair[0], pair[1]])).collect()
+    }
+
+    #[test]
+    fn a_part_quad_keeps_all_it_says_in_two_quads_words() {
+        let hinge = Hinge { pivot: [29, 16, 3], axis: BlockFacing::Up };
+        let quad = PartQuad {
+            at: [31, 0, 17],
+            facing: 4,
+            plane: 16,
+            across: [3, 16],
+            up: [0, 13],
+            surface: 201,
+            moves: Some(hinge),
+            motion: 63,
+            open: true,
+            hangs: 15,
+        };
+        let words = pack_part(&quad);
+        assert!(words.iter().all(|word| word[1] >> 16 == 0), "a chunk's number goes over each second word's top half");
+        assert_eq!(unpack_part(words), quad);
+        assert_eq!(unpack_part(pack_part(&PartQuad { moves: None, ..quad })).moves, None);
+        // Read as loose quads, the first is a part's head and the second its tail, and neither is a vine's sheet.
+        assert!(words[0][0] & PART_HEAD != 0 && words[1][0] & PART_HEAD == 0 && words[1][0] & PART_TAIL != 0);
+        assert!(words.iter().all(|word| (word[0] >> 25) & 7 == VINE as u32));
+    }
+
+    #[test]
+    fn a_slab_hides_the_face_it_lies_on_and_is_drawn_and_stood_on_as_half_a_block() {
+        let faces = world_of(&[(BlockShape::Slab, BlockState::default_for(BlockShape::Slab))]);
+        let mut map = BlockMap::default();
+        map.set([4, 0, 4], 1);
+        map.set([4, 1, 4], 2);
+        map.set([5, 1, 4], 1);
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        // The stone's top under the slab is hidden; the stone beside it keeps its face towards the slab.
+        let tops: Vec<_> = (mesh.buckets[2]..mesh.buckets[3]).map(|i| unpack(mesh.quads[i as usize]).0).collect();
+        assert!(!tops.contains(&[4, 0, 4]) && tops.contains(&[5, 1, 4]), "{tops:?}");
+        let west: Vec<_> = (mesh.buckets[1]..mesh.buckets[2]).map(|i| unpack(mesh.quads[i as usize]).0).collect();
+        assert!(west.contains(&[5, 1, 4]), "the stone's face towards the slab shows: {west:?}");
+        // The slab: five faces, none under it, none against the stone beside it; its top half a block up.
+        let parts = parts_of(&mesh);
+        assert_eq!(parts.len(), 4, "{parts:?}");
+        let top = parts.iter().find(|quad| quad.facing == 2).expect("a top");
+        assert_eq!((top.plane, top.across, top.up), (8, [0, 16], [0, 16]));
+        assert!(parts.iter().all(|quad| quad.at == [4, 1, 4] && quad.moves.is_none() && quad.hangs == 0));
+        // Its collision is half a block high.
+        let highest = mesh.positions.iter().filter(|p| p[0] >= 4.0 && p[0] < 4.99 && p[2] >= 4.0 && p[2] < 4.99);
+        let highest = highest.map(|p| p[1]).fold(0.0f32, f32::max);
+        assert_eq!(highest, 1.5);
+        assert!(is_ground(&faces, 2) && !hides(&faces, 2), "stood on, but hiding nothing whole");
+    }
+
+    #[test]
+    fn a_fence_joins_fences_and_whole_blocks_and_collides_a_block_and_a_half_high() {
+        let faces = world_of(&[(BlockShape::Fence, BlockState::default())]);
+        let mut map = BlockMap::default();
+        map.set([2, 1, 2], 2);
+        map.set([3, 1, 2], 2);
+        map.set([2, 1, 1], 1);
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let first: Vec<_> = parts_of(&mesh).into_iter().filter(|quad| quad.at == [2, 1, 2]).collect();
+        // A post and two rails each way it joins: east to the fence, north to the stone.
+        let rails_east = first.iter().filter(|quad| quad.facing == 0 && quad.plane == 16).count();
+        let rails_north = first.iter().filter(|quad| quad.facing == 5 && quad.plane == 0).count();
+        assert_eq!((rails_east, rails_north), (0, 0), "a rail's end against what it joins is hidden");
+        let reaching_east = first.iter().filter(|quad| quad.facing == 2 && quad.up == [10, 16]).count();
+        assert_eq!(reaching_east, 2, "two rails reach east: {first:?}");
+        assert!(mesh.colliders.iter().any(|[low, high]| low[0] == 2.375 && high[1] == 2.5), "{:?}", mesh.colliders);
+        assert!(super::super::path::can_stand(&map, &faces, [2, 2, 1], 2), "stood on the stone");
+        assert!(!super::super::path::can_stand(&map, &faces, [3, 2, 2], 2), "nothing stands on a fence");
+    }
+
+    #[test]
+    fn an_open_door_collides_against_its_hinge_side_and_is_walked_through() {
+        let shut = BlockState { facing: BlockFacing::North, half: BlockHalf::Lower, hinge: DoorHinge::Left, ..BlockState::default() };
+        let faces = world_of(&[(BlockShape::Door, shut), (BlockShape::Door, BlockState { open: true, ..shut })]);
+        assert!(is_ground(&faces, 2) && !is_ground(&faces, 3), "a shut door blocks the way, an open one does not");
+        assert_eq!(faces[3].family, 3, "each its own block here");
+        for (id, (low, high)) in [(2u16, ([0.0, 0.0], [1.0, 0.1875])), (3, ([0.0, 0.0], [0.1875, 1.0]))] {
+            let mut map = BlockMap::default();
+            map.set([0, 0, 0], id);
+            let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+            let xs = mesh.positions.iter().map(|p| p[0]);
+            let zs = mesh.positions.iter().map(|p| p[2]);
+            let span = |values: Vec<f32>| [values.iter().copied().fold(f32::MAX, f32::min), values.iter().copied().fold(f32::MIN, f32::max)];
+            let (x, z) = (span(xs.collect()), span(zs.collect()));
+            assert!((x[0] - low[0]).abs() < 1e-4 && (x[1] - high[0]).abs() < 1e-4, "{id}: x {x:?}");
+            assert!((z[0] - low[1]).abs() < 1e-4 && (z[1] - high[1]).abs() < 1e-4, "{id}: z {z:?}");
+            let parts = parts_of(&mesh);
+            assert!(parts.iter().all(|quad| quad.moves.is_some() && quad.motion > 0 && quad.open == (id == 3)));
+        }
+    }
+
+    #[test]
+    fn a_chain_counts_how_far_it_hangs_and_one_standing_free_does_not_sway() {
+        let faces = world_of(&[(BlockShape::Chain, BlockState::default()), (BlockShape::Lever, BlockState::default_for(BlockShape::Lever))]);
+        let mut map = BlockMap::default();
+        map.set([1, 10, 1], 1);
+        map.set([1, 9, 1], 2);
+        map.set([1, 8, 1], 2);
+        map.set([6, 1, 6], 2);
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let hangs = |at: [u32; 3]| parts_of(&mesh).into_iter().find(|quad| quad.at == at).map(|quad| quad.hangs);
+        assert_eq!([hangs([1, 9, 1]), hangs([1, 8, 1]), hangs([6, 1, 6])], [Some(1), Some(2), Some(0)]);
+        assert!(!is_ground(&faces, 2) && !is_ground(&faces, 3), "chains and levers are walked through");
+        assert!(super::super::keeps_water_out(&faces, 3), "but water keeps out of them");
+        assert!(mesh.positions.iter().all(|p| !(p[0] > 1.0 && p[0] < 2.0 && p[1] > 8.0 && p[1] < 10.0)), "no collision");
+    }
+
+    #[test]
+    fn stairs_turn_a_corner_where_another_meets_them_from_the_side() {
+        let north = BlockState::default();
+        let east = BlockState { facing: BlockFacing::East, ..north };
+        let faces = world_of(&[(BlockShape::Stairs, north), (BlockShape::Stairs, east)]);
+        let mut map = BlockMap::default();
+        map.set([4, 0, 4], 2);
+        map.set([4, 0, 3], 3);
+        let around = around_of(&faces, &|p| map.get(p), [4, 0, 4], &faces[2]);
+        assert_eq!(around.corner, StairCorner::Outer(BlockFacing::East));
+        map.set([4, 0, 3], AIR);
+        map.set([4, 0, 5], 3);
+        assert_eq!(around_of(&faces, &|p| map.get(p), [4, 0, 4], &faces[2]).corner, StairCorner::Inner(BlockFacing::East));
+        // A part-only chunk is still made, and a world of cubes alone makes no part quads.
+        assert!(!mesh_chunk(&map, [0, 0, 0], &faces).is_empty());
+        let mut cubes = BlockMap::default();
+        cubes.set([0, 0, 0], 1);
+        assert_eq!(mesh_chunk(&cubes, [0, 0, 0], &faces).parts().1, 0);
     }
 }

@@ -23,7 +23,7 @@ MILESTONES = [
     ("", "Water", "The sea, pools, rivers and lava: shores, foam, going under, buoyancy", "done"),
     ("M6", "Animation", "GPU skinning, motion matching, rigs and IK, box models, state machines", "now"),
     ("", "Gameplay kits", "Guns with procedural recoil, heat and cold, controllers, destruction", "now"),
-    ("M7", "Materials and particles", "Custom shaders, Shader Graph, material variants, GPU particles", "now"),
+    ("M7", "Materials and particles", "Custom shaders, VoxShade, material variants, GPU particles", "now"),
     ("M8", "Terrain", "Heightmaps, digging, endless block worlds, biomes, towns, caves, maps", "now"),
     ("M9", "Navigation, cameras, Timeline", "Pathfinding and avoidance, camera rigs, Timeline", "planned"),
     ("M10", "2D and networking", "Replication, RPCs and prediction, sprites and tilemaps", "now"),

@@ -1,5 +1,5 @@
-//! A shader graph in the editor, on a copy of Hello: opened from the
-//! Project, it shows on the Shader Graph panel's canvas with each node's
+//! A VoxShade shader in the editor, on a copy of Hello: opened from the
+//! Project, it shows on the VoxShade panel's canvas with each node's
 //! cost; a node is added from the search and wired by a drag, a value is
 //! typed into the side's rows, each change is saved and compiled into the
 //! project's shaders, and Ctrl+Z takes it back. Skips itself without a GPU.
@@ -7,13 +7,13 @@
 use voxear_core::logging::LogCapture;
 use voxear_engine::Project;
 use voxear_render::{Renderer, RendererSettings};
-use voxear_shader_graph::{Graph, NodeKind, starters};
 use voxear_ui::{Key, Modifiers, NodeId, Ui};
+use voxear_voxshade::{Graph, NodeKind, starters};
 
 const SIZE: (u32, u32) = (1600, 900);
-const PATH: &str = "Shaders/Glow.shadergraph";
+const PATH: &str = "Shaders/Glow.voxshade";
 
-/// A copy of Hello, inside the repository, with a plain lit shader graph named Glow.
+/// A copy of Hello, inside the repository, with a plain lit VoxShade shader named Glow.
 fn hello_with_a_graph() -> tempfile::TempDir {
     fn copy(from: &std::path::Path, to: &std::path::Path) {
         std::fs::create_dir_all(to).unwrap();
@@ -114,13 +114,13 @@ fn saved(dir: &tempfile::TempDir) -> Graph {
 }
 
 /// The open graph's first node of this kind.
-fn node(editor: &voxear_editor::Editor, kind: &NodeKind) -> voxear_shader_graph::NodeId {
-    let graph = editor.shader_graph().graph().expect("a graph is open");
+fn node(editor: &voxear_editor::Editor, kind: &NodeKind) -> voxear_voxshade::NodeId {
+    let graph = editor.voxshade().graph().expect("a graph is open");
     graph.nodes.iter().find(|node| node.kind == *kind).map(|node| node.id).expect("the node")
 }
 
 #[test]
-fn a_shader_graph_is_opened_wired_set_saved_compiled_and_undone() {
+fn a_voxshade_is_opened_wired_set_saved_compiled_and_undone() {
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         return eprintln!("skipping: no usable GPU");
     };
@@ -142,10 +142,10 @@ fn a_shader_graph_is_opened_wired_set_saved_compiled_and_undone() {
     // Opened as a double click on it in the Project does, on the panel beside the Scene view.
     assert!(editor.open_path(PATH, &mut renderer));
     frames(&mut editor, &mut renderer, 3);
-    assert_eq!(editor.shader_graph().path(), Some(PATH));
-    let panel = editor.ui.find(editor.ui.root(), "shader-graph-panel").expect("the Shader Graph panel");
+    assert_eq!(editor.voxshade().path(), Some(PATH));
+    let panel = editor.ui.find(editor.ui.root(), "voxshade-panel").expect("the VoxShade panel");
     assert!(editor.ui.rect(panel)[2] > 400.0, "showing: {:?}", editor.ui.rect(panel));
-    let drawn = editor.shader_graph().drawn().unwrap().clone();
+    let drawn = editor.voxshade().drawn().unwrap().clone();
     let titles: Vec<&str> = drawn.nodes.iter().map(|n| n.title.as_str()).collect();
     assert!(titles.contains(&"tint") && titles.contains(&"Sample picture") && titles.contains(&"Surface Output"));
     let sample = drawn.nodes.iter().find(|n| n.title == "Sample picture").unwrap();
@@ -167,28 +167,28 @@ fn a_shader_graph_is_opened_wired_set_saved_compiled_and_undone() {
     let row = picker_row(&editor.ui, "Time").expect("Time is offered");
     click(&mut editor.ui, row);
     frames(&mut editor, &mut renderer, 3);
-    let time = node(&editor, &NodeKind::Input { input: voxear_shader_graph::Input::Time });
+    let time = node(&editor, &NodeKind::Input { input: voxear_voxshade::Input::Time });
 
     // Dragged from Time's output into the Surface Output's Emission, a wire, saved and compiled.
     let out = node(&editor, &NodeKind::SurfaceOutput);
-    let from = editor.shader_graph().port_point(&editor.ui, time, true, 0).expect("Time's output");
-    let to = editor.shader_graph().port_point(&editor.ui, out, false, 5).expect("the Emission input");
+    let from = editor.voxshade().port_point(&editor.ui, time, true, 0).expect("Time's output");
+    let to = editor.voxshade().port_point(&editor.ui, out, false, 5).expect("the Emission input");
     drag(&mut editor, &mut renderer, from, to);
     frames(&mut editor, &mut renderer, 2);
     let wired = saved(&dir);
     assert!(wired.links.iter().any(|l| l.from == time && l.to == out && l.input == 5), "{:?}", wired.links);
-    let summary = editor.shader_graph().compiled().unwrap().as_ref().map(|c| c.source.clone()).unwrap();
+    let summary = editor.voxshade().compiled().unwrap().as_ref().map(|c| c.source.clone()).unwrap();
     assert!(
         summary.contains("float3(input.time, input.time, input.time)") && summary.contains("surface.emission = "),
         "{summary}"
     );
 
     // The Surface Output picked, its Alpha, with no wire into it, typed in the side's rows.
-    let on = editor.shader_graph().node_point(&editor.ui, out).expect("the Surface Output");
+    let on = editor.voxshade().node_point(&editor.ui, out).expect("the Surface Output");
     click_at(&mut editor, &mut renderer, on);
     frames(&mut editor, &mut renderer, 2);
-    assert_eq!(editor.shader_graph().picked(), [out]);
-    let field = editor.shader_graph().row_control(|field| field == "Literal(1)").expect("the Alpha row");
+    assert_eq!(editor.voxshade().picked(), [out]);
+    let field = editor.voxshade().row_control(|field| field == "Literal(1)").expect("the Alpha row");
     editor.ui.focus(field);
     editor.ui.set_modifiers(Modifiers { shift: false, control: true });
     editor.ui.key_down(Key::Char('a'));
@@ -198,7 +198,7 @@ fn a_shader_graph_is_opened_wired_set_saved_compiled_and_undone() {
     editor.ui.blur();
     frames(&mut editor, &mut renderer, 3);
     let set = saved(&dir);
-    shot(&mut renderer, "shader graph panel.png");
+    shot(&mut renderer, "voxshade panel.png");
     let alpha = set.node(out).unwrap().literals.iter().find(|l| l.input == 1).map(|l| l.value[0]);
     assert_eq!(alpha, Some(0.5));
     // The project's shaders compiled again from the file, its Slang setting what was typed.

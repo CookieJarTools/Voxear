@@ -2,17 +2,17 @@
 order: 8
 ---
 
-A **shader graph** is a custom shader made of nodes rather than written in Slang. You wire nodes together on a canvas, and the editor turns the graph into the same kind of shader a `.shader` file holds. Materials pick it as their **Shader** and set its properties in the Inspector, exactly as they would for one written by hand (see [[Custom Shaders]]).
+**VoxShade** makes custom shaders out of nodes rather than written in Slang. You wire nodes together on a canvas, and the editor turns them into the same kind of shader a `.shader` file holds. Materials pick a VoxShade shader as their **Shader** and set its properties in the Inspector, exactly as they would for one written by hand (see [[Custom Shaders]]).
 
-A graph costs what the same shader written by hand costs. Before any Slang is written, the editor works out everything it can: numbers known when the graph is saved, work that changes nothing (adding nothing, multiplying by one), the same work done by two nodes, and nodes nothing reaches. Hologram and Sway made again as graphs draw the same pictures as the hand-written ones, in the same time on the graphics card.
+A VoxShade shader costs what the same shader written by hand costs. Before any Slang is written, the editor works out everything it can: numbers known when the graph is saved, work that changes nothing (adding nothing, multiplying by one), the same work done by two nodes, and nodes nothing reaches. Hologram and Sway made again as graphs draw the same pictures as the hand-written ones, in the same time on the graphics card.
 
-## Making a shader graph
+## Making a VoxShade shader
 
-Right-click in the Project panel, choose **New Shader…**, and pick **Graph**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram Graph** and **Sway Graph** start as the built-in shaders made of nodes, to change.
+Right-click in the Project panel, choose **New Shader…**, and pick **VoxShade**. It starts as a tint over a picture, lit as the Standard shader is. **Hologram (VoxShade)** and **Sway (VoxShade)** start as the built-in shaders made of nodes, to change.
 
-Double-click the `.shadergraph` file, or press **Open** in its Inspector, to open it in the **Shader Graph** panel.
+Double-click the `.voxshade` file, or press **Open** in its Inspector, to open it in the **VoxShade** panel.
 
-## The Shader Graph panel
+## The VoxShade panel
 
 The graph fills the middle. Down the side are the picked node's values, the shader's properties and its own settings. The bar along the top shows what each stage of the shader costs.
 
@@ -69,4 +69,4 @@ To read a property in the graph, add it from the search's Properties folder, or 
 
 ## The Slang it makes
 
-Select a shader graph in the Project panel to see what the Inspector makes of it: its properties, its functions, whether it compiles, and under **Code** the Slang the graph turns into, read only. To change that Slang by hand, copy it into a `.shader` file of your own.
+Select a `.voxshade` file in the Project panel to see what the Inspector makes of it: its properties, its functions, whether it compiles, and under **Code** the Slang the graph turns into, read only. To change that Slang by hand, copy it into a `.shader` file of your own.

@@ -95,7 +95,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | Required Vulkan features | dynamic rendering, synchronization2, timeline semaphores, buffer device address, descriptor indexing | Bindless, GPU-driven rendering. Supported by NVIDIA Maxwell+, AMD GCN+ and Intel Gen9+ on current drivers. |
 | Optional tiers | mesh shaders, ray query / acceleration structures | Detected at startup (`vox doctor` shows them). Compute fallbacks always exist. |
 | GPU memory | gpu-allocator | Proven allocator. It can be replaced later without API churn. |
-| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make shader graph output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
+| Shading language | **Slang** | Khronos-hosted. Modules, generics and interfaces make node shaders' output and permutations clean. It compiles to SPIR-V today and other targets later. The bootstrap pass is GLSL until the material system lands. |
 | Windowing | winit | Handles Wayland, X11 and Win32. |
 | Scripting | C# on **CoreCLR**, .NET 10 LTS now, .NET 11 when it ships (November 2026) | The engine hosts `hostfxr` itself, with no `nethost` download. `Voxear.Core` is built with `RollForward=LatestMajor`, so newer runtimes work. |
 | Shipping scripts | CoreCLR now; NativeAOT as an option later | NativeAOT gives faster startup and no JIT for players and consoles. Hot reload stays CoreCLR-only. |
@@ -1315,7 +1315,7 @@ history on camera cuts.
 - An inspector with live previews.
 - A C# API: `Post.Current.Bloom.Intensity = 0.1f` for the easy path, and the full struct for the advanced one.
 
-## Materials and Shader Graph
+## Materials and VoxShade
 
 **Shaders.** Shaders are Slang modules. A material is a Definition: a shader plus parameter values. Material
 variants inherit from a parent and override only what differs.
@@ -1326,11 +1326,11 @@ variants inherit from a parent and override only what differs.
 - Drag a texture onto an Obj and a material is made for it.
 
 **Advanced.**
-- **Shader Graph:** a node graph that compiles to Slang.
+- **VoxShade:** shaders made of nodes, compiled to Slang.
 - Every node has an inline preview, and sub-graphs and custom Slang nodes are supported.
 - Hand-written Slang shaders can implement the same surface interface, so graph and code materials mix freely.
 
-**The graph compiler** *(the compiler, the `.shadergraph` asset and its panel implemented; previews, sub-graphs,
+**The graph compiler** *(the compiler, the `.voxshade` asset and its panel implemented; previews, sub-graphs,
 moving work to the vertex stage and to the CPU planned)*. One graph tool serves materials and particle effects, on the canvas generator
 graphs use (`graph_canvas`), and what it makes must cost what a hand-written shader costs. Graph tools lose that
 in five places, and each has its answer here:
@@ -1369,12 +1369,12 @@ values, what the function is given and properties are written where they are rea
 of its own, and the Slang compiler after it does the rest. Hologram and Sway made again as graphs draw the same
 pictures as the built-in ones at the same cost on the GPU, which is the test this compiler is held to.
 
-A `.shadergraph` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
+A `.voxshade` file is the graph, not its Slang. The shader registry compiles a graph's file wherever a
 `.shader`'s source is read (`shaders::graph_source`), in the editor and in a build alike, so nothing downstream
 knows the difference, and a graph that does not compile is a shader with an error, named by node. The panel
 compiles the graph itself at every change, in well under a millisecond, for the costs and errors it draws; the
 renderer's compile follows each save on its own thread, as any shader's does. Chose a side column of the
-panel's own for a node's values over the Inspector the generator graphs use: a shader graph's nodes have few
+panel's own for a node's values over the Inspector the generator graphs use: a VoxShade shader's nodes have few
 values, mostly the numbers an unwired input takes, and the properties belong beside the graph they are read in.
 
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
@@ -2717,7 +2717,7 @@ terrain, brush tools and asset names are placeholders, not planned features.
   - folders with item counts
   - files with their sizes
 - **Viewport:**
-  - Scene, Game and Shader Graph tabs
+  - Scene, Game and VoxShade tabs
   - a shading mode menu, a Gizmos toggle and full screen
   - a floating tool strip: select, move, rotate, scale, tool modes, Pivot/Global and grid snap
   - Unity's axis colours on the gizmo, and a view gizmo bottom right
@@ -3039,7 +3039,7 @@ next.
    by one compute pass for every system and every view (`voxear_render::particle_sim`,
    `shaders/particle_sim.slang`). The modules are fixed, so there is no shader to compile for an effect.
 3. **Compiled** *(planned)*. An effect with graph or custom-code modules gets a program of its own, made from
-   the shared graph compiler (see Materials and Shader Graph).
+   the shared graph compiler (see Materials and VoxShade).
 
 **The simulated path.** Every simulated system shares one pool of particles, 36 bytes each (position, velocity,
 age, life and a seed; size, colour and spin are worked out from the seed and age where it is drawn, as on the

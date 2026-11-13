@@ -37,7 +37,7 @@ voxear_physics.workspace = true
 voxear_physics2d.workspace = true
 voxear_localization.workspace = true
 voxear_packages.workspace = true
-voxear_shader_graph.workspace = true
+voxear_voxshade.workspace = true
 semver.workspace = true
 uuid.workspace = true
 

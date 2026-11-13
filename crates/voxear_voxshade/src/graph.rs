@@ -1,5 +1,5 @@
-//! A shader graph: its properties, its nodes and the wires between their
-//! ports, as a `.shadergraph` file keeps them.
+//! A VoxShade shader: its properties, its nodes and the wires between their
+//! ports, as a `.voxshade` file keeps them.
 //!
 //! A node and a property each have a number of their own, kept in the file
 //! and never given to another, so wires and the nodes that read a property
@@ -160,7 +160,7 @@ impl Graph {
 
     /// Reads a graph from its file's text.
     pub fn from_toml(text: &str) -> Result<Self> {
-        let graph: Self = toml::from_str(text).context("reading a shader graph")?;
+        let graph: Self = toml::from_str(text).context("reading a VoxShade shader")?;
         graph.check()?;
         Ok(graph)
     }

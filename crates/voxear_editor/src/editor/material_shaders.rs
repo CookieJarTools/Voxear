@@ -31,7 +31,7 @@ impl Editor {
             |path: &str| registry.shaders.iter().any(|s| s.path == path && s.info.as_ref().is_ok_and(|info| info.ui || info.look));
         let db = self.game.content.db();
         let materials = |e: &&voxear_assets::AssetEntry| {
-            matches!(e.kind, AssetKind::Shader | AssetKind::ShaderGraph) && !draws_ui(&e.path)
+            matches!(e.kind, AssetKind::Shader | AssetKind::VoxShade) && !draws_ui(&e.path)
         };
         let mut paths: Vec<String> = db.entries().filter(materials).map(|e| e.path.clone()).collect();
         paths.sort();
@@ -76,7 +76,7 @@ impl Editor {
     /// A shader dragged from the Project panel onto a material's Shader.
     pub(super) fn drop_material_shader(&mut self, material: &str, source: &DragSource, renderer: &mut Renderer) {
         let Some(path) = self.dragged_asset(source) else { return };
-        if !matches!(self.asset_kind_of(&path), Some(AssetKind::Shader | AssetKind::ShaderGraph)) {
+        if !matches!(self.asset_kind_of(&path), Some(AssetKind::Shader | AssetKind::VoxShade)) {
             return self.notify("Only a shader goes in a material's Shader");
         }
         self.pick_material_shader(material, &Pick::Asset(Some(path)), renderer);

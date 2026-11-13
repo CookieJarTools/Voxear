@@ -236,7 +236,7 @@ Some of the editor's work is done with brushes and canvases rather than fields:
 - placing and digging blocks in a Block World
 - painting plants
 - editing a World Generator's graph
-- editing a shader graph
+- editing a VoxShade shader
 - building a box model in the Model window
 
-For these, a tool can write the files themselves (the `.terrain`, `.blockworld`, `.worldgen` or `.shadergraph` file) and call `files.look`. A shader graph read with `asset.get` comes back as JSON, its nodes, wires and properties as its file has them, and one written and looked at compiles into the project's shaders as one saved in its panel does. Calls for them come later.
+For these, a tool can write the files themselves (the `.terrain`, `.blockworld`, `.worldgen` or `.voxshade` file) and call `files.look`. A VoxShade shader read with `asset.get` comes back as JSON, its nodes, wires and properties as its file has them, and one written and looked at compiles into the project's shaders as one saved in its panel does. Calls for them come later.

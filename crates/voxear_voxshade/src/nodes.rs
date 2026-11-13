@@ -1,4 +1,4 @@
-//! The nodes a shader graph is made of, and the ports each has.
+//! The nodes a VoxShade shader is made of, and the ports each has.
 //!
 //! A port's type is fixed, or for most of the maths any width of numbers:
 //! such a node works on the widest of what is wired into it, a single

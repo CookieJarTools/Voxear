@@ -65,8 +65,8 @@
                 <DockPanel id="generator" title="Generator" icon="sprout" class="dock-content">
                     <Panel name="generator-panel" class="fill generator-panel" />
                 </DockPanel>
-                <DockPanel id="shader-graph" title="Shader Graph" icon="nodes" class="dock-content">
-                    <Panel name="shader-graph-panel" class="fill generator-panel" />
+                <DockPanel id="voxshade" title="VoxShade" icon="nodes" class="dock-content">
+                    <Panel name="voxshade-panel" class="fill generator-panel" />
                 </DockPanel>
                 <DockPanel id="blocks" title="Blocks" icon="block" class="dock-content">
                     <Panel name="blocks-panel" class="fill blocks-panel" />

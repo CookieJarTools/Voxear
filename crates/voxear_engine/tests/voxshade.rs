@@ -1,4 +1,4 @@
-//! Shader graphs against the shaders written by hand that they were made
+//! VoxShade shaders against the shaders written by hand that they were made
 //! from: the graph Hologram and Sway compiled into the renderer's shaders
 //! beside the built-in ones, each drawn on a ball on a real GPU, and the
 //! two pictures compared, and the two shaders' cost on the GPU. Skips
@@ -19,7 +19,7 @@ use voxear_render::{
     Primitive, Renderer, RendererSettings, Sky,
 };
 use voxear_scene::Transform;
-use voxear_shader_graph::{compile, starters};
+use voxear_voxshade::{compile, starters};
 
 const SIZE: (u32, u32) = (640, 360);
 
@@ -100,7 +100,7 @@ fn the_graph_hologram_and_sway_draw_what_the_hand_written_ones_do_at_the_same_co
             assert_eq!(info.properties, built_in.properties, "{}: the same properties", graph.name);
             assert_eq!((info.unlit, info.max_offset), (built_in.unlit, built_in.max_offset));
             // As the project has it: the graph's file, which the registry compiles.
-            (guid(n), format!("Shaders/{}.shadergraph", graph.name), graph.to_toml())
+            (guid(n), format!("Shaders/{}.voxshade", graph.name), graph.to_toml())
         })
         .collect();
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

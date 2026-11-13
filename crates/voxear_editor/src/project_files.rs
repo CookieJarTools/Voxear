@@ -493,11 +493,11 @@ pub enum ShaderStart {
     /// One that draws the finished picture, for a look pack to name.
     Look,
     Copy(BuiltinShader),
-    /// A graph of nodes, edited in the Shader Graph panel.
+    /// A graph of nodes, edited in the VoxShade panel.
     Graph(GraphStart),
 }
 
-/// What a new shader graph starts as: a plain lit surface, or one of the
+/// What a new VoxShade shader starts as: a plain lit surface, or one of the
 /// built-in shaders made of nodes, to change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphStart {
@@ -523,8 +523,8 @@ impl ShaderStart {
             Self::Look => "Look",
             Self::Copy(builtin) => builtin.title(),
             Self::Graph(GraphStart::Lit) => "Graph",
-            Self::Graph(GraphStart::Hologram) => "Hologram Graph",
-            Self::Graph(GraphStart::Sway) => "Sway Graph",
+            Self::Graph(GraphStart::Hologram) => "Hologram (VoxShade)",
+            Self::Graph(GraphStart::Sway) => "Sway (VoxShade)",
         }
     }
 
@@ -553,30 +553,30 @@ pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &
         ShaderStart::Ui => create(root, folder, NewFile::UiShader, namespace),
         ShaderStart::Look => create(root, folder, NewFile::LookShader, namespace),
         ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
-        ShaderStart::Graph(start) => create_shader_graph(root, folder, start),
+        ShaderStart::Graph(start) => create_voxshade(root, folder, start),
     }
 }
 
-/// Makes a new shader graph in `folder` (from the project's folder) as
+/// Makes a new VoxShade shader in `folder` (from the project's folder) as
 /// `start` says, and returns its path. Its properties struct is named for
 /// its file, as a new shader's is.
-fn create_shader_graph(root: &Path, folder: &str, start: GraphStart) -> Result<String> {
-    use voxear_shader_graph::starters;
+fn create_voxshade(root: &Path, folder: &str, start: GraphStart) -> Result<String> {
+    use voxear_voxshade::starters;
     let stem = match start {
-        GraphStart::Lit => "New Shader Graph",
+        GraphStart::Lit => "New VoxShade",
         GraphStart::Hologram => "Hologram",
         GraphStart::Sway => "Sway",
     };
-    let name = unique(&root.join(folder), stem, ".shadergraph");
+    let name = unique(&root.join(folder), stem, ".voxshade");
     let path = join(folder, &name);
-    let named = struct_name(&name[..name.len() - ".shadergraph".len()]);
+    let named = struct_name(&name[..name.len() - ".voxshade".len()]);
     let mut graph = match start {
         GraphStart::Lit => starters::lit(&named),
         GraphStart::Hologram => starters::hologram(),
         GraphStart::Sway => starters::sway(),
     };
     graph.name = named;
-    let text = format!("{}{}", crate::editor::SHADER_GRAPH_HEADING, graph.to_toml());
+    let text = format!("{}{}", crate::editor::VOXSHADE_HEADING, graph.to_toml());
     let file = root.join(&path);
     std::fs::write(&file, text).with_context(|| format!("making {}", file.display()))?;
     Ok(path)
@@ -985,14 +985,14 @@ mod tests {
     }
 
     #[test]
-    fn a_new_shader_graph_is_named_for_its_file_and_compiles_as_a_shader() {
+    fn a_new_voxshade_is_named_for_its_file_and_compiles_as_a_shader() {
         let dir = tempfile::tempdir().unwrap();
         let path = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::Lit), "Game").unwrap();
-        assert_eq!(path, "New Shader Graph.shadergraph");
+        assert_eq!(path, "New VoxShade.voxshade");
         let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
         let source = voxear_engine::shaders::graph_source(&text).unwrap();
         let info = voxear_engine::shaders::read(&source).unwrap();
-        assert_eq!(info.name, "NewShaderGraph");
+        assert_eq!(info.name, "NewVoxShade");
         assert!(info.surface && !info.unlit);
         // A built-in one made of nodes, to change, with the built-in one's properties.
         let sway = create_shader(dir.path(), "", ShaderStart::Graph(GraphStart::Sway), "Game").unwrap();

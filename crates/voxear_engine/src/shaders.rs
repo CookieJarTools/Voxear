@@ -297,17 +297,17 @@ pub struct ShaderInfo {
 
 /// Whether the shader at `path` is a graph of nodes rather than Slang.
 pub fn is_graph(path: &str) -> bool {
-    path.to_ascii_lowercase().ends_with(".shadergraph")
+    path.to_ascii_lowercase().ends_with(".voxshade")
 }
 
-/// The Slang a shader graph's file compiles into, or what stops it, each
+/// The Slang a VoxShade shader's file compiles into, or what stops it, each
 /// thing wrong with the node it is at, by its title.
 pub fn graph_source(text: &str) -> Result<String, String> {
-    let graph = voxear_shader_graph::Graph::from_toml(text).map_err(|error| format!("{error:#}"))?;
-    match voxear_shader_graph::compile(&graph) {
+    let graph = voxear_voxshade::Graph::from_toml(text).map_err(|error| format!("{error:#}"))?;
+    match voxear_voxshade::compile(&graph) {
         Ok(compiled) => Ok(compiled.source),
         Err(errors) => {
-            let at = |error: &voxear_shader_graph::CompileError| {
+            let at = |error: &voxear_voxshade::CompileError| {
                 let node = error.node.and_then(|id| graph.node(id)).map(|node| node.kind.title());
                 node.map_or(error.message.clone(), |title| format!("{title}: {}", error.message))
             };
@@ -832,26 +832,26 @@ mod tests {
     }
 
     #[test]
-    fn a_shader_graph_is_compiled_into_the_registry_and_what_stops_it_is_kept_as_its_error() {
+    fn a_voxshade_is_compiled_into_the_registry_and_what_stops_it_is_kept_as_its_error() {
         let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
-        let good = voxear_shader_graph::starters::lit("Glow").to_toml();
-        let mut broken = voxear_shader_graph::starters::lit("Broken");
-        let light = broken.add(voxear_shader_graph::NodeKind::Input { input: voxear_shader_graph::Input::LightColor }, [0.0; 2]);
-        let out = broken.nodes.iter().find(|n| n.kind == voxear_shader_graph::NodeKind::SurfaceOutput).unwrap().id;
+        let good = voxear_voxshade::starters::lit("Glow").to_toml();
+        let mut broken = voxear_voxshade::starters::lit("Broken");
+        let light = broken.add(voxear_voxshade::NodeKind::Input { input: voxear_voxshade::Input::LightColor }, [0.0; 2]);
+        let out = broken.nodes.iter().find(|n| n.kind == voxear_voxshade::NodeKind::SurfaceOutput).unwrap().id;
         broken.link(light, 0, out, 5);
         let registry = ShaderRegistry::new(
             vec![
-                (guid(1), "Shaders/Glow.shadergraph".into(), good),
-                (guid(2), "Shaders/Broken.shadergraph".into(), broken.to_toml()),
+                (guid(1), "Shaders/Glow.voxshade".into(), good),
+                (guid(2), "Shaders/Broken.voxshade".into(), broken.to_toml()),
             ],
             &BTreeSet::new(),
         );
         let (_, info) = registry.get(ShaderRef::Asset(guid(1))).expect("compiled and read");
         assert_eq!((info.name.as_str(), info.properties.len()), ("Glow", 2));
-        let failed = registry.shaders.iter().find(|s| s.path.ends_with("Broken.shadergraph")).unwrap();
+        let failed = registry.shaders.iter().find(|s| s.path.ends_with("Broken.voxshade")).unwrap();
         let error = failed.info.as_ref().unwrap_err();
         assert!(error.starts_with("Light Color: ") && error.contains("Surface"), "{error}");
-        assert!(is_graph("A/B.ShaderGraph") && !is_graph("A/B.shader"));
+        assert!(is_graph("A/B.VoxShade") && !is_graph("A/B.shader"));
     }
 
     #[test]

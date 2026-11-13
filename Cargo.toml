@@ -29,7 +29,7 @@ voxear_localization = { path = "crates/voxear_localization" }
 voxear_packages = { path = "crates/voxear_packages" }
 voxear_net = { path = "crates/voxear_net" }
 voxear_terrain = { path = "crates/voxear_terrain" }
-voxear_shader_graph = { path = "crates/voxear_shader_graph" }
+voxear_voxshade = { path = "crates/voxear_voxshade" }
 
 anyhow = "1"
 ash = "0.38"

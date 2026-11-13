@@ -62,7 +62,7 @@
 <circle cx="56" cy="552" r="7.5" fill="#ffffff" stroke="#5b6cf0" stroke-width="2"/><path d="M56 546.5 a5.5 5.5 0 0 1 0 11 z" fill="#5b6cf0"/>
 <text x="80" y="557" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M7</text>
 <text x="120" y="557" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1f2328">Materials and particles</text>
-<text x="380" y="557" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Custom shaders, Shader Graph, material variants, GPU particles</text>
+<text x="380" y="557" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Custom shaders, VoxShade, material variants, GPU particles</text>
 <rect x="32" y="576" width="816" height="32" rx="7" fill="#f6f8fa"/>
 <circle cx="56" cy="592" r="7.5" fill="#ffffff" stroke="#5b6cf0" stroke-width="2"/><path d="M56 586.5 a5.5 5.5 0 0 1 0 11 z" fill="#5b6cf0"/>
 <text x="80" y="597" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M8</text>

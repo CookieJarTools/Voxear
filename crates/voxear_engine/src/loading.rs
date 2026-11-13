@@ -425,7 +425,7 @@ fn gather(
                 | AssetKind::LookPack
                 | AssetKind::TexturePack
                 | AssetKind::Shader
-                | AssetKind::ShaderGraph
+                | AssetKind::VoxShade
                 | AssetKind::Ui
                 | AssetKind::InputActions
                 | AssetKind::Strings

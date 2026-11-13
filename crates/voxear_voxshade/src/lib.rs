@@ -1,4 +1,4 @@
-//! Shader graphs: nodes wired together into a shader, compiled to Slang
+//! VoxShade shaders: nodes wired together into a shader, compiled to Slang
 //! that costs what Slang written by hand does.
 //!
 //! A graph is compiled in three steps:
@@ -76,7 +76,7 @@ pub fn compile(graph: &Graph) -> Result<Compiled, Vec<CompileError>> {
     let mut nodes = HashMap::new();
     let stages = programs.iter().map(|(stage, program)| (*stage, cost::program(program, &mut nodes))).collect();
     let mut source = String::new();
-    let _ = writeln!(source, "// {}: made from a shader graph. Change the graph, not this.\n", graph.name);
+    let _ = writeln!(source, "// {}: made in VoxShade. Change it there, not here.\n", graph.name);
     if graph.unlit {
         source.push_str("[Unlit]\n");
     }

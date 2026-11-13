@@ -553,7 +553,7 @@ impl AssetView {
                 code(ui, root, &file, "slang", dark);
             }
             // A graph's state and properties as a shader's, and the Slang it compiles into.
-            ItemKind::Asset(AssetKind::ShaderGraph) => {
+            ItemKind::Asset(AssetKind::VoxShade) => {
                 view.shader_state = shader(ui, root, game, &item.path);
                 let found = game.content.shaders().shaders.iter().find(|shader| shader.path == item.path);
                 if let Some(compiled) = found.map(|shader| shader.source.as_str()).filter(|source| !source.is_empty()) {
@@ -624,7 +624,7 @@ impl AssetView {
             item.kind,
             ItemKind::Script
                 | ItemKind::Asset(
-                    AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions | AssetKind::ShaderGraph
+                    AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions | AssetKind::VoxShade
                 )
         );
         if opens {
@@ -1684,7 +1684,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
         ItemKind::Asset(AssetKind::TexturePack) => "Texture pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
-        ItemKind::Asset(AssetKind::ShaderGraph) => "Shader Graph",
+        ItemKind::Asset(AssetKind::VoxShade) => "VoxShade",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
         ItemKind::Asset(AssetKind::Particles) => "Particle Effect",
@@ -1721,7 +1721,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LookPack) => "eye",
         ItemKind::Asset(AssetKind::TexturePack) => "image",
         ItemKind::Asset(AssetKind::Shader) => "shader",
-        ItemKind::Asset(AssetKind::ShaderGraph) => "nodes",
+        ItemKind::Asset(AssetKind::VoxShade) => "nodes",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",
         ItemKind::Asset(AssetKind::Particles) => "particles",

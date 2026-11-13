@@ -92,13 +92,13 @@ impl Editor {
     /// What a shortcut asks of the open graph, while the keys are its own.
     /// False for one that is not the graph's to answer.
     pub(super) fn graph_command(&mut self, command: Command) -> bool {
-        // The shader graph's, when its panel was the last pressed in.
-        if self.shader_graph_has_keys() {
+        // The VoxShade shader's, when its panel was the last pressed in.
+        if self.voxshade_has_keys() {
             match command {
-                Command::Undo | Command::Redo => self.shader_graph_undo(command == Command::Undo),
-                Command::Delete => self.shader_graph_key(CanvasKey::Delete),
-                Command::Duplicate => self.shader_graph_key(CanvasKey::Duplicate),
-                Command::Frame => self.shader_graph_key(CanvasKey::Frame),
+                Command::Undo | Command::Redo => self.voxshade_undo(command == Command::Undo),
+                Command::Delete => self.voxshade_key(CanvasKey::Delete),
+                Command::Duplicate => self.voxshade_key(CanvasKey::Duplicate),
+                Command::Frame => self.voxshade_key(CanvasKey::Frame),
                 _ => return false,
             }
             return true;
@@ -127,7 +127,7 @@ impl Editor {
     /// Ctrl+V and Space.
     pub(super) fn graph_key(&self, key: &winit::keyboard::Key) -> Option<CanvasKey> {
         use winit::keyboard::{Key, NamedKey};
-        if !self.generator_has_keys() && !self.shader_graph_has_keys() {
+        if !self.generator_has_keys() && !self.voxshade_has_keys() {
             return None;
         }
         match key {

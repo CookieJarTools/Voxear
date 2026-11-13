@@ -335,7 +335,7 @@ pub fn build_mounted(
         .collect();
     let shaders: Vec<(AssetGuid, String, String)> = usage
         .keys()
-        .filter_map(|guid| db.get(*guid).filter(|entry| matches!(entry.kind, AssetKind::Shader | AssetKind::ShaderGraph)))
+        .filter_map(|guid| db.get(*guid).filter(|entry| matches!(entry.kind, AssetKind::Shader | AssetKind::VoxShade)))
         .map(|entry| Ok((entry.guid, entry.path.clone(), String::from_utf8(stored[&entry.guid].clone())?)))
         .collect::<Result<_>>()?;
     // The built-in shaders the materials shipped pick, which are compiled in with the project's.
@@ -405,7 +405,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::LookPack
         | AssetKind::TexturePack
         | AssetKind::Shader
-        | AssetKind::ShaderGraph
+        | AssetKind::VoxShade
         | AssetKind::PromptIcons => false,
     }
 }
@@ -510,7 +510,7 @@ fn usage_sets(
                         | AssetKind::Strings
                         | AssetKind::AssetTable
                         | AssetKind::Shader
-                        | AssetKind::ShaderGraph
+                        | AssetKind::VoxShade
                         | AssetKind::Block
                         | AssetKind::LookPack
                         | AssetKind::TexturePack
@@ -697,7 +697,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Shader
-        | AssetKind::ShaderGraph
+        | AssetKind::VoxShade
         | AssetKind::WorldGen
         | AssetKind::VoxModel => {}
     }

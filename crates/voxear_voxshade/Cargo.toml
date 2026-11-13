@@ -1,6 +1,6 @@
 [package]
-name = "voxear_shader_graph"
-description = "Shader graphs: nodes wired together, compiled to Slang that costs what hand-written Slang does"
+name = "voxear_voxshade"
+description = "VoxShade: shaders made of nodes, compiled to Slang that costs what hand-written Slang does"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

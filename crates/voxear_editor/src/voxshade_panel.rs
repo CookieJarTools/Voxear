@@ -1,6 +1,6 @@
-//! The Shader Graph panel: a shader made of nodes (`voxear_shader_graph`),
+//! The VoxShade panel: a shader made of nodes (`voxear_voxshade`),
 //! to build and edit by hand. It opens from a double click on a
-//! `.shadergraph` in the Project, or from Open in its Inspector.
+//! `.voxshade` in the Project, or from Open in its Inspector.
 //!
 //! The graph is on the canvas the generator graphs use (`graph_canvas`):
 //! nodes with their inputs down the left and outputs down the right, wires
@@ -19,11 +19,11 @@
 
 use std::time::{Duration, Instant};
 
-use voxear_shader_graph::{
+use voxear_ui::{Color, NodeId, Style, Ui};
+use voxear_voxshade::{
     CompareOp, Compiled, Component, Graph, Input, Link, MathOp, Node, NodeId as GraphNode, NodeKind, PortTy,
     PropertyId, PropertyKind, Stage, Ty, compile,
 };
-use voxear_ui::{Color, NodeId, Style, Ui};
 
 use crate::{
     asset_inspector::part,
@@ -169,7 +169,7 @@ struct Open {
     history: History,
     unsaved: bool,
     /// The graph compiled as it now is, or what stops it.
-    compiled: Result<Compiled, Vec<voxear_shader_graph::CompileError>>,
+    compiled: Result<Compiled, Vec<voxear_voxshade::CompileError>>,
     drawn: CanvasGraph,
     stale: bool,
     /// Where the node the search adds goes, and the wire it goes on the end of.
@@ -178,7 +178,7 @@ struct Open {
 
 /// What the panel asks of the editor.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ShaderGraphEvent {
+pub enum VoxShadeEvent {
     /// Save the graph at this path as it now is, and compile it into the renderer's shaders.
     Save(String, Graph),
     /// Open the search for a node to add, under this element.
@@ -193,7 +193,7 @@ pub struct Offer {
     pub kind: NodeKind,
 }
 
-pub struct ShaderGraphPanel {
+pub struct VoxShadePanel {
     hint: NodeId,
     body: NodeId,
     name: NodeId,
@@ -218,12 +218,12 @@ pub struct ShaderGraphPanel {
     active: bool,
     hold_active: bool,
     showing: Option<bool>,
-    pending: Vec<ShaderGraphEvent>,
+    pending: Vec<VoxShadeEvent>,
 }
 
-impl ShaderGraphPanel {
+impl VoxShadePanel {
     pub fn new(ui: &mut Ui, root: NodeId) -> Self {
-        let hint = ui.add_label(root, "Double-click a Shader Graph in the Project to edit it.");
+        let hint = ui.add_label(root, "Double-click a VoxShade in the Project to edit it.");
         ui.add_class(hint, "placeholder");
         let body = ui.panel(root, Style::column());
         ui.add_class(body, "fill");
@@ -283,7 +283,7 @@ impl ShaderGraphPanel {
     /// Opens the graph at `path`: all of it in view, nothing picked, nothing to undo.
     pub fn open(&mut self, ui: &mut Ui, path: &str, graph: Graph) {
         let file = path.rsplit('/').next().unwrap_or(path);
-        ui.set_text(self.name, file.strip_suffix(".shadergraph").unwrap_or(file));
+        ui.set_text(self.name, file.strip_suffix(".voxshade").unwrap_or(file));
         ui.set_tooltip(self.name, path, None);
         let compiled = compile(&graph);
         self.open = Some(Open {
@@ -323,7 +323,7 @@ impl ShaderGraphPanel {
     }
 
     /// The open graph compiled, as it now is.
-    pub fn compiled(&self) -> Option<&Result<Compiled, Vec<voxear_shader_graph::CompileError>>> {
+    pub fn compiled(&self) -> Option<&Result<Compiled, Vec<voxear_voxshade::CompileError>>> {
         self.open.as_ref().map(|open| &open.compiled)
     }
 
@@ -336,7 +336,7 @@ impl ShaderGraphPanel {
         if let Some(open) = self.open.as_mut() {
             open.path = path.to_string();
             let file = path.rsplit('/').next().unwrap_or(path);
-            ui.set_text(self.name, file.strip_suffix(".shadergraph").unwrap_or(file));
+            ui.set_text(self.name, file.strip_suffix(".voxshade").unwrap_or(file));
             ui.set_tooltip(self.name, path, None);
         }
     }
@@ -451,7 +451,7 @@ impl ShaderGraphPanel {
     }
 
     /// The panel's frame: the canvas's, the side's rows', and what they ask of the editor.
-    pub fn update(&mut self, ui: &mut Ui, shown: bool, alt: bool) -> Vec<ShaderGraphEvent> {
+    pub fn update(&mut self, ui: &mut Ui, shown: bool, alt: bool) -> Vec<VoxShadeEvent> {
         let mut events = std::mem::take(&mut self.pending);
         let open = self.open.is_some();
         if self.showing != Some(open) {
@@ -476,7 +476,7 @@ impl ShaderGraphPanel {
         let held = ui.holds_press() || self.canvas.is_dragging();
         if let Some(open) = self.open.as_mut().filter(|open| open.unsaved && !held) {
             open.unsaved = false;
-            events.push(ShaderGraphEvent::Save(open.path.clone(), open.graph.clone()));
+            events.push(VoxShadeEvent::Save(open.path.clone(), open.graph.clone()));
         }
         events
     }
@@ -497,7 +497,7 @@ impl ShaderGraphPanel {
     }
 
     /// The canvas's frame, and what was done on it carried out on the graph.
-    fn update_canvas(&mut self, ui: &mut Ui, alt: bool, events: &mut Vec<ShaderGraphEvent>) {
+    fn update_canvas(&mut self, ui: &mut Ui, alt: bool, events: &mut Vec<VoxShadeEvent>) {
         let Some(open) = self.open.as_mut() else { return };
         if std::mem::take(&mut open.stale) {
             open.compiled = compile(&open.graph);
@@ -535,7 +535,7 @@ impl ShaderGraphPanel {
                 }
                 CanvasEvent::Search { at, wire } => {
                     open.adding = Some((at, wire));
-                    events.push(ShaderGraphEvent::Search(self.canvas.anchor()));
+                    events.push(VoxShadeEvent::Search(self.canvas.anchor()));
                 }
                 CanvasEvent::Delete(nodes) => nodes.into_iter().for_each(|node| graph.remove(id(node))),
                 CanvasEvent::Duplicate(nodes) => {
@@ -639,7 +639,7 @@ impl ShaderGraphPanel {
                     }
                     NodeKind::Property { .. } | NodeKind::SamplePicture { .. } => {
                         let pictures = matches!(node.kind, NodeKind::SamplePicture { .. });
-                        let listed: Vec<&voxear_shader_graph::Property> =
+                        let listed: Vec<&voxear_voxshade::Property> =
                             graph.properties.iter().filter(|p| (p.kind == PropertyKind::Picture) == pictures).collect();
                         choosable = listed.iter().map(|p| p.id).collect();
                         let names = listed.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
@@ -759,10 +759,10 @@ impl ShaderGraphPanel {
                     match field {
                         Field::Name => {
                             changed.name = typed;
-                            voxear_shader_graph::graph::is_identifier(&changed.name)
+                            voxear_voxshade::graph::is_identifier(&changed.name)
                         }
                         Field::PropertyName(id) => {
-                            let free = voxear_shader_graph::graph::is_identifier(&typed)
+                            let free = voxear_voxshade::graph::is_identifier(&typed)
                                 && !changed.properties.iter().any(|p| p.name == typed && p.id != *id);
                             if free && let Some(p) = changed.properties.iter_mut().find(|p| p.id == *id) {
                                 p.name = typed;
@@ -967,7 +967,7 @@ fn set_numbers(graph: &mut Graph, node: Option<&mut Node>, field: Field, numbers
         Field::Literal(input) => match node {
             Some(node) => {
                 node.literals.retain(|l| l.input != input);
-                node.literals.push(voxear_shader_graph::Literal { input, value: fill(numbers) });
+                node.literals.push(voxear_voxshade::Literal { input, value: fill(numbers) });
                 true
             }
             None => false,
@@ -1113,7 +1113,7 @@ fn title(graph: &Graph, kind: &NodeKind) -> String {
 
 /// A node as the canvas draws it, without its cost.
 fn describe_node(graph: &Graph, node: &Node) -> CanvasNode {
-    let ports = |ports: Vec<voxear_shader_graph::Port>| -> Vec<CanvasPort> {
+    let ports = |ports: Vec<voxear_voxshade::Port>| -> Vec<CanvasPort> {
         ports.into_iter().map(|port| CanvasPort { label: port.label.to_string(), color: port_color(port.ty) }).collect()
     };
     CanvasNode {
@@ -1129,7 +1129,7 @@ fn describe_node(graph: &Graph, node: &Node) -> CanvasNode {
 
 /// A graph as the canvas draws it: each node with what it costs once
 /// compiled, and what stops the graph compiling on the nodes at fault.
-fn describe(graph: &Graph, compiled: &Result<Compiled, Vec<voxear_shader_graph::CompileError>>) -> CanvasGraph {
+fn describe(graph: &Graph, compiled: &Result<Compiled, Vec<voxear_voxshade::CompileError>>) -> CanvasGraph {
     let mut notice = String::new();
     let nodes = graph
         .nodes
@@ -1172,7 +1172,7 @@ fn cost_text(alu: u32, samples: u32) -> String {
 
 /// Each stage's cost, for the bar.
 fn summary(compiled: &Compiled) -> String {
-    let stage = |(stage, cost): &(Stage, voxear_shader_graph::StageCost)| {
+    let stage = |(stage, cost): &(Stage, voxear_voxshade::StageCost)| {
         let mut text = format!("{}: {}", stage.name(), cost_text(cost.alu, cost.samples));
         if cost.branches > 0 {
             text += &format!(", {} {}", cost.branches, if cost.branches == 1 { "branch" } else { "branches" });
@@ -1237,7 +1237,7 @@ pub fn folder_icon(folder: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use voxear_shader_graph::starters;
+    use voxear_voxshade::starters;
 
     use super::*;
 

@@ -256,7 +256,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Paths) => "branch",
                 FileKind::Asset(AssetKind::LightProfile) => "light",
                 FileKind::Asset(AssetKind::Shader) => "shader",
-                FileKind::Asset(AssetKind::ShaderGraph) => "nodes",
+                FileKind::Asset(AssetKind::VoxShade) => "nodes",
                 FileKind::Asset(AssetKind::MotionSet) => "play",
                 FileKind::Asset(AssetKind::GunHandling) => "crosshair",
                 FileKind::Asset(AssetKind::Particles) => "particles",

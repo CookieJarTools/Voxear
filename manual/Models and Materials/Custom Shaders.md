@@ -58,7 +58,7 @@ void surface(Tinted shader, SurfaceInput input, inout SurfaceOutput surface)
 }
 ```
 
-To make a shader from nodes on a canvas rather than writing Slang, pick **Graph** instead: see [[Shader Graphs]].
+To make a shader from nodes on a canvas rather than writing Slang, pick **VoxShade** instead: see [[VoxShade]].
 
 Select a shader in the Project panel to see what the Inspector makes of it: its properties, which functions it has, and any error, with the line it is on.
 

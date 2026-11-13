@@ -305,6 +305,20 @@ impl BlockKind {
         Self { removed: true, ..Self::default() }
     }
 
+    /// The shape it is drawn as: a cube for water, and for a whole log
+    /// standing up, which is drawn and joins as any cube does; else its
+    /// block's.
+    pub fn drawn_shape(&self) -> super::block::BlockShape {
+        use super::block::BlockShape;
+        let state = super::shape::BlockState::from_byte(self.state);
+        let upright = state.size == 0 && state.facing.axis() == super::shape::BlockFacing::Up;
+        match self.shape {
+            _ if self.water => BlockShape::Cube,
+            BlockShape::Log if upright => BlockShape::Cube,
+            shape => shape,
+        }
+    }
+
     /// Whether it is a block, rather than the place one was taken out of.
     pub fn is_live(&self) -> bool {
         !self.removed
@@ -524,7 +538,7 @@ impl BlockFile {
                 faces.push(BlockFaces::default());
                 continue;
             }
-            let shape = if kind.water { BlockShape::Cube } else { kind.shape };
+            let shape = kind.drawn_shape();
             let leafy = shape.is_loose();
             // Which of its faces join: each by the material it is drawn with. Only a cube's do.
             let joins = |own: &Option<String>, bit: u8| {
@@ -576,7 +590,7 @@ impl BlockFile {
     pub fn motions(&self) -> Vec<(Option<BlockMotion>, f32)> {
         let mut motions = Vec::new();
         for kind in &self.blocks {
-            let shape = if kind.water { BlockShape::Cube } else { kind.shape };
+            let shape = kind.drawn_shape();
             let _ = self.part_faces(kind, shape, &mut motions, BlockFaces::default());
         }
         motions

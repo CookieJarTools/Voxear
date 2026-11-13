@@ -1018,14 +1018,14 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
             placement: land(13.0, 6.0, 0.7, 35.0, 1),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: oak_log, leaves: oak_leaves, vine: 0 },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: oak_log, leaves: oak_leaves, vine: 0, logs: Vec::new() },
             biomes: Vec::new(),
         },
         PlacedStructure {
             placement: land(17.0, 7.0, 0.6, 40.0, 2),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: pine, wood: pine_log, leaves: pine_needles, vine: 0 },
+            blocks: StructureBlocks::Plant { plant: pine, wood: pine_log, leaves: pine_needles, vine: 0, logs: Vec::new() },
             biomes: Vec::new(),
         },
     ];
@@ -1225,7 +1225,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
             placement: land(15.0, 7.0, 0.5, 35.0, 1),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: log, leaves, vine: 0 },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: log, leaves, vine: 0, logs: Vec::new() },
             biomes: Vec::new(),
         },
     ];
@@ -2192,7 +2192,7 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
         roots: 0,
         ..PlantDef::default()
     };
-    for (at, part) in birch.grow(5).blocks {
+    for (at, part) in birch.grow(5).parts() {
         let block = if part == PlantPart::Leaf { leaves } else { wood };
         blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
     }
@@ -2377,4 +2377,121 @@ fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
     let back = render(&mut renderer, &world, 8);
     let again = rgb_at(&back, middle.0, middle.1);
     assert!((0..3).all(|c| (again[c] - was[c]).abs() <= 3), "its own again: {again:?} against {was:?}");
+}
+
+/// An oak of blocks on a field of grass, its wood logs that thin (`logs`) or whole cubes, grown from a seed and seen
+/// from `eye` looking `towards`; and how many of its blocks are thin logs.
+fn oak_render(logs: bool, eye: Vec3, towards: Vec3) -> Option<(Vec<u8>, usize)> {
+    use voxear_terrain::blocks::{
+        block::BlockShape,
+        file::BlockKind,
+        plant::{PlantDef, PlantPart},
+        shape::{BlockFacing, BlockState, LOG_SIZES},
+        structure::log_number,
+    };
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [48, 48];
+    file.ground.height = 4;
+    // The log, in every way it stands, each entry of the same block so they join; whole and upright first.
+    let log = |state: BlockState| BlockKind {
+        block: Some("Blocks/Oak Log.block".into()),
+        shape: if logs { BlockShape::Log } else { BlockShape::Cube },
+        state: state.to_byte(),
+        ..BlockKind::colored("Oak Log", [0.62, 0.3, 0.12])
+    };
+    file.blocks.push(log(BlockState::default_for(BlockShape::Log)));
+    let wood = file.blocks.len() as u16;
+    let mut numbers = Vec::new();
+    for facing in [BlockFacing::Up, BlockFacing::East, BlockFacing::North] {
+        for size in std::iter::once(0).chain(LOG_SIZES).filter(|&size| logs && (size != 0 || facing != BlockFacing::Up)) {
+            let state = BlockState { facing, size, ..BlockState::default() };
+            file.blocks.push(log(state));
+            numbers.push((state.to_byte(), file.blocks.len() as u16));
+        }
+    }
+    let leaf = BlockKind { sways: true, shape: BlockShape::Bushy, ..BlockKind::colored("Oak Leaves", [0.25, 0.5, 0.16]) };
+    file.blocks.push(leaf);
+    let leaves = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    let oak = PlantDef {
+        height: [11.0, 11.0],
+        trunk: 1.2,
+        taper: 0.75,
+        bend: 0.2,
+        crown_width: [9.0, 9.0],
+        crown_height: [6.0, 6.0],
+        leaf_size: 2.6,
+        leaf_density: 0.6,
+        roots: 3,
+        ..PlantDef::default()
+    };
+    let grown = oak.grow(9);
+    let thin = grown.blocks.iter().filter(|(_, part, state)| part.is_wood() && state.size != 0).count();
+    for (at, part, state) in grown.blocks {
+        let block = if part == PlantPart::Leaf { leaves } else { log_number(wood, &numbers, state) };
+        blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|face| {
+            let [r, g, b] = face.color.map(|c| c.powf(2.2));
+            let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: face.leafy,
+                mixed: face.mixed,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let block_look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), block_look, Transform::default()));
+    let towards = towards.normalize();
+    let turned = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+    world.spawn((Camera::default(), Transform::new(eye, turned, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    Some((render(&mut renderer, &world, 30), thin))
+}
+
+#[test]
+fn a_tree_of_logs_thins_as_its_trunk_rises_and_its_branches_are_thin_logs() {
+    let (eye, towards) = (Vec3::new(24.5, 11.0, 4.0), Vec3::new(0.0, 0.05, 1.0));
+    let Some((logs, thin)) = oak_render(true, eye, towards) else { return };
+    let (cubes, none) = oak_render(false, eye, towards).unwrap();
+    keep_image("tree of logs.png", &logs);
+    keep_image("tree of whole logs.png", &cubes);
+    assert!(thin > 20 && none > 20, "the same tree, grown with thin logs: {thin}");
+    // How much of the picture is wood: red well over green and blue.
+    let wood = |pixels: &[u8]| {
+        pixels.chunks_exact(4).filter(|p| i32::from(p[0]) > i32::from(p[1]) + 30 && p[0] > p[2]).count()
+    };
+    let (thin_wood, whole_wood) = (wood(&logs), wood(&cubes));
+    eprintln!("wood: {thin_wood} pixels of logs, {whole_wood} of cubes");
+    assert!(thin_wood > 800, "the trunk and branches show: {thin_wood}");
+    assert!((thin_wood as f32) < whole_wood as f32 * 0.85, "{thin_wood} against {whole_wood}");
+    // The trunk under the crown: whole at its foot and thinner higher up, in the picture's middle columns.
+    let across = |y: u32| {
+        (WIDTH / 3..WIDTH * 2 / 3).filter(|&x| {
+            let [r, g, b] = rgb_at(&logs, x, y);
+            r > g + 30 && r > b
+        })
+        .count()
+    };
+    let rows: Vec<usize> = (HEIGHT / 2..HEIGHT).step_by(12).map(across).collect();
+    eprintln!("trunk across, from halfway down: {rows:?}");
 }

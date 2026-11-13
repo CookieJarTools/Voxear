@@ -1,7 +1,7 @@
 //! The starter blocks: a set of blocks of parts a project can start from,
 //! made by **Starter Blocks** in the Blocks panel, so a world can have
 //! slabs, stairs, fences, walls, panes, doors, trap doors, gates, levers,
-//! buttons, chains, ropes and a lantern without drawing anything.
+//! buttons, chains, ropes, a lantern and a log without drawing anything.
 //!
 //! Oak and stone, each a slab, stairs and more; glass in a pane; iron for
 //! a chain. Their pictures are drawn here: oak planks in boards, glass clear
@@ -113,6 +113,7 @@ fn starters(planks: &str, glass: &str, chain: &str) -> Vec<(&'static str, BlockD
         ("Chain", part(BlockShape::Chain, IRON, Some(chain), 1.0)),
         ("Rope", part(BlockShape::Rope, ROPE, None, 0.3)),
         ("Lantern", lantern()),
+        ("Oak Log", part(BlockShape::Log, [0.42, 0.31, 0.2], None, 2.0)),
     ]
 }
 

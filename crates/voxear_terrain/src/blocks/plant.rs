@@ -11,6 +11,7 @@
 //! height = [9.0, 14.0]           # blocks, from and to: a seed picks within
 //! trunk = 1.4                    # how thick at the foot, in blocks across
 //! taper = 0.6                    # how much thinner at the top, 0 to 1
+//! branch = 0.375                 # how thick a branch is, in blocks across
 //! bend = 0.25                    # how far it leans and wanders, 0 for straight
 //! crown_width = [8.0, 12.0]
 //! crown_height = [6.0, 9.0]
@@ -34,12 +35,23 @@
 //! A tree with vines has one or two climbing its trunk from the ground,
 //! and some hanging from under the edge of its crown.
 //!
+//! Where its trunk is thinner than a block it is a column of logs, each as
+//! thick as the trunk is there, so a trunk of whole logs at its foot thins
+//! to posts towards its top; and its branches are logs lying along the way
+//! they reach, as thick as `branch`, each joined to the next face to face.
+//! A plant grown keeps how thick each block of its wood is and which way it
+//! lies ([`PlantModel::blocks`]); a world whose wood block is a log
+//! (`block::BlockShape::Log`) builds it so, and one whose wood is a cube
+//! builds every block of it whole.
+//!
 //! It is all whole-number hashes, sums, products and square roots, so a
 //! seed grows the same plant on every machine.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use super::shape::{BlockFacing, BlockState, log_size};
 
 /// The kind of plant, which sets how it grows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -77,6 +89,9 @@ pub struct PlantDef {
     pub trunk: f32,
     /// How much thinner it is at the top, from 0 for none to 1 for a point.
     pub taper: f32,
+    /// How thick its branches are, across: a log as thin as that where its
+    /// wood is a log.
+    pub branch: f32,
     /// How far the trunk leans and wanders: 0 for straight.
     pub bend: f32,
     pub crown_width: [f32; 2],
@@ -113,6 +128,7 @@ impl Default for PlantDef {
             height: [9.0, 14.0],
             trunk: 1.4,
             taper: 0.6,
+            branch: 0.375,
             bend: 0.25,
             crown_width: [8.0, 12.0],
             crown_height: [6.0, 9.0],
@@ -148,24 +164,30 @@ impl PlantPart {
 }
 
 /// A plant grown: its blocks, each by where it is from the foot of its
-/// trunk (x and z along the ground, y up; roots reach below 0) and what it
-/// is part of, in a fixed order.
+/// trunk (x and z along the ground, y up; roots reach below 0), what it is
+/// part of, and for wood, how it stands as a log (which way it lies and
+/// how thick it is: see `shape::BlockState`), in a fixed order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlantModel {
-    pub blocks: Vec<([i32; 3], PlantPart)>,
+    pub blocks: Vec<([i32; 3], PlantPart, BlockState)>,
 }
 
 impl PlantModel {
     /// The lowest and highest block along each axis; none for no blocks.
     pub fn bounds(&self) -> Option<([i32; 3], [i32; 3])> {
         let first = self.blocks.first()?.0;
-        Some(self.blocks.iter().fold((first, first), |(low, high), (at, _)| {
+        Some(self.blocks.iter().fold((first, first), |(low, high), (at, _, _)| {
             ([0, 1, 2].map(|k| low[k].min(at[k])), [0, 1, 2].map(|k| high[k].max(at[k])))
         }))
     }
 
     pub fn count(&self, part: PlantPart) -> usize {
-        self.blocks.iter().filter(|(_, kind)| *kind == part).count()
+        self.blocks.iter().filter(|(_, kind, _)| *kind == part).count()
+    }
+
+    /// Its blocks with what each is part of, without how they stand.
+    pub fn parts(&self) -> impl Iterator<Item = ([i32; 3], PlantPart)> + '_ {
+        self.blocks.iter().map(|&(at, part, _)| (at, part))
     }
 }
 
@@ -230,16 +252,84 @@ fn add(a: [f32; 3], b: [f32; 3], by: f32) -> [f32; 3] {
     [a[0] + b[0] * by, a[1] + b[1] * by, a[2] + b[2] * by]
 }
 
-/// A plant as it grows: its blocks so far.
+/// The blocks a line from `from` to `to` passes through, in order, each
+/// beside the last face to face: what a limb of logs takes.
+fn blocks_along(from: [f32; 3], to: [f32; 3]) -> Vec<[i32; 3]> {
+    let mut at = from.map(|v| v.floor() as i32);
+    let end = to.map(|v| v.floor() as i32);
+    let way = [0, 1, 2].map(|k| to[k] - from[k]);
+    let step = way.map(|v| if v > 0.0 { 1 } else { -1 });
+    // How far along the line, from 0 to 1, each next border is, and how far between borders.
+    let apart = way.map(|v| if v.abs() < 1e-6 { f32::MAX } else { 1.0 / v.abs() });
+    let mut next = [0, 1, 2].map(|k| {
+        if way[k].abs() < 1e-6 {
+            f32::MAX
+        } else {
+            let border = if way[k] > 0.0 { at[k] as f32 + 1.0 } else { at[k] as f32 };
+            (border - from[k]) / way[k]
+        }
+    });
+    let mut found = vec![at];
+    while at != end && found.len() < 512 {
+        let k = (0..3).min_by(|&a, &b| next[a].total_cmp(&next[b])).expect("three axes");
+        if next[k] > 1.0 {
+            break;
+        }
+        at[k] += step[k];
+        next[k] += apart[k];
+        found.push(at);
+    }
+    found
+}
+
+/// The way along which `way` reaches furthest, as a log lies.
+fn lying(way: [f32; 3]) -> BlockFacing {
+    let [x, y, z] = way.map(f32::abs);
+    if y >= x && y >= z {
+        BlockFacing::Up
+    } else if x >= z {
+        BlockFacing::East
+    } else {
+        BlockFacing::North
+    }
+}
+
+/// A plant as it grows: its blocks so far, and how each stands.
 struct Growing {
-    blocks: HashMap<[i32; 3], PlantPart>,
+    blocks: HashMap<[i32; 3], (PlantPart, BlockState)>,
 }
 
 impl Growing {
+    /// A whole block of `part`.
     fn put(&mut self, at: [i32; 3], part: PlantPart) {
-        let kept = self.blocks.entry(at).or_insert(part);
-        if part < *kept {
-            *kept = part;
+        let whole = BlockState { facing: BlockFacing::Up, ..BlockState::default() };
+        self.put_as(at, part, whole);
+    }
+
+    /// A block of `part` standing as `state`. Wood takes the place of
+    /// leaves and vines; where two of wood meet the thicker stays.
+    fn put_as(&mut self, at: [i32; 3], part: PlantPart, state: BlockState) {
+        let kept = self.blocks.entry(at).or_insert((part, state));
+        match (part.is_wood(), kept.0.is_wood()) {
+            (true, false) => *kept = (part, state),
+            (true, true) => {
+                kept.0 = kept.0.min(part);
+                if state.across() > kept.1.across() {
+                    kept.1 = state;
+                }
+            }
+            (false, false) if part < kept.0 => *kept = (part, state),
+            _ => {}
+        }
+    }
+
+    /// A limb of logs `across` sixteenths thick from `from` to `to`, each
+    /// lying along the way it reaches and beside the last face to face.
+    fn logs(&mut self, from: [f32; 3], to: [f32; 3], across: f32, part: PlantPart) {
+        let facing = lying([0, 1, 2].map(|k| to[k] - from[k]));
+        let state = BlockState { facing, size: log_size(across), ..BlockState::default() };
+        for at in blocks_along(from, to) {
+            self.put_as(at, part, state);
         }
     }
 
@@ -259,6 +349,15 @@ impl Growing {
                     }
                 }
             }
+        }
+    }
+
+    /// A trunk's logs from `from` up to `to`, `across` sixteenths thick,
+    /// each standing up.
+    fn logs_up(&mut self, from: [f32; 3], to: [f32; 3], across: f32) {
+        let state = BlockState { facing: BlockFacing::Up, size: log_size(across), ..BlockState::default() };
+        for at in blocks_along(from, to) {
+            self.put_as(at, PlantPart::Trunk, state);
         }
     }
 
@@ -329,14 +428,20 @@ impl PlantDef {
         if vines.unit() < self.vines.clamp(0.0, 1.0) {
             self.vines_on(&mut plant, &mut vines);
         }
-        let mut blocks: Vec<([i32; 3], PlantPart)> = plant.blocks.into_iter().collect();
-        blocks.sort_by_key(|(at, _)| (at[1], at[2], at[0]));
+        let mut blocks: Vec<([i32; 3], PlantPart, BlockState)> =
+            plant.blocks.into_iter().map(|(at, (part, state))| (at, part, state)).collect();
+        blocks.sort_by_key(|(at, _, _)| (at[1], at[2], at[0]));
         PlantModel { blocks }
     }
 
     /// Half how thick the trunk is `share` of the way up it.
     fn trunk_radius(&self, share: f32) -> f32 {
-        (self.trunk.max(0.5) * 0.5 * (1.0 - self.taper.clamp(0.0, 1.0) * share)).max(0.3)
+        self.trunk.max(0.25) * 0.5 * (1.0 - self.taper.clamp(0.0, 1.0) * share)
+    }
+
+    /// How thick its branches are, in sixteenths across.
+    fn branch_across(&self) -> f32 {
+        (self.branch * 16.0).clamp(4.0, 16.0)
     }
 
     /// The trunk, from the ground up `height` blocks, leaning and wandering
@@ -345,10 +450,18 @@ impl PlantDef {
         let bend = self.bend.clamp(0.0, 1.0);
         let lean = [random.signed() * bend * 0.35, random.signed() * bend * 0.35];
         let mut at = [0.5, 0.0, 0.5];
+        let mut last = at;
         let steps = (height * 2.0).ceil() as u32;
         for step in 0..=steps {
             let share = step as f32 / steps as f32;
-            plant.ball(at, self.trunk_radius(share), PlantPart::Trunk);
+            let radius = self.trunk_radius(share);
+            match radius * 32.0 >= 15.0 {
+                // A block or more across: whole blocks round the middle.
+                true => plant.ball(at, radius.max(0.3), PlantPart::Trunk),
+                // Thinner: a column of logs, joined to the block below it face to face where it wanders.
+                false => plant.logs_up(last, at, (radius * 32.0).max(4.0)),
+            }
+            last = at;
             // A lean one way, and a wander that grows with height.
             let wander = bend * 0.3 * share;
             at = [
@@ -411,7 +524,7 @@ impl PlantDef {
                     continue;
                 }
                 let next = add(ends[from].0, pull, step / size);
-                plant.limb(ends[from].0, next, 0.35, PlantPart::Branch);
+                plant.logs(ends[from].0, next, self.branch_across(), PlantPart::Branch);
                 ends[from].2 += 1;
                 ends.push((next, from, 0));
                 grew = true;
@@ -463,7 +576,7 @@ impl PlantDef {
                 let long = reach * (0.8 + 0.2 * random.unit());
                 // Out and a little down.
                 let end = [trunk[0] + way[0] * long, up - long * 0.18, trunk[2] + way[1] * long];
-                plant.limb(trunk, end, 0.3, PlantPart::Branch);
+                plant.logs(trunk, end, self.branch_across(), PlantPart::Branch);
                 let clumps = (long / (leaf * 1.2)).ceil().max(1.0) as u32;
                 for clump in 1..=clumps {
                     let at = add(trunk, [0, 1, 2].map(|k| end[k] - trunk[k]), clump as f32 / clumps as f32);
@@ -487,7 +600,7 @@ impl PlantDef {
             let out = width * 0.5 * (0.3 + 0.7 * random.unit()) - self.leaf_size * 0.25;
             let up = high * (0.55 + 0.45 * random.unit()) - self.leaf_size * 0.25;
             let end = [foot[0] + way[0] * out.max(0.0), up.max(0.5), foot[2] + way[1] * out.max(0.0)];
-            plant.limb(foot, end, 0.3, PlantPart::Branch);
+            plant.logs(foot, end, self.branch_across(), PlantPart::Branch);
             plant.clump(end, self.leaf_size, self.leaf_density.clamp(0.05, 1.0), random);
         }
         plant.clump([foot[0], high * 0.5, foot[2]], self.leaf_size, self.leaf_density.clamp(0.05, 1.0), random);
@@ -500,7 +613,7 @@ impl PlantDef {
     fn vines_on(&self, plant: &mut Growing, random: &mut Random) {
         const SIDES: [[i32; 2]; 4] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         let mut trunk: Vec<[i32; 3]> =
-            plant.blocks.iter().filter(|(_, part)| **part == PlantPart::Trunk).map(|(at, _)| *at).collect();
+            plant.blocks.iter().filter(|(_, (part, _))| *part == PlantPart::Trunk).map(|(at, _)| *at).collect();
         // In a fixed order: the blocks are kept in no order of their own, and of two as far out the last is taken.
         trunk.sort_unstable_by_key(|at| (at[1], at[2], at[0]));
         let top = trunk.iter().map(|at| at[1]).max().unwrap_or(0);
@@ -520,7 +633,7 @@ impl PlantDef {
         }
         // Under the crown: a leaf with open air below it, the further from the trunk the likelier.
         let mut leaves: Vec<[i32; 3]> =
-            plant.blocks.iter().filter(|(_, part)| **part == PlantPart::Leaf).map(|(at, _)| *at).collect();
+            plant.blocks.iter().filter(|(_, (part, _))| *part == PlantPart::Leaf).map(|(at, _)| *at).collect();
         leaves.sort_unstable_by_key(|at| (at[1], at[2], at[0]));
         for [x, y, z] in leaves {
             let draw = (random.unit(), random.unit());
@@ -533,7 +646,7 @@ impl PlantDef {
         }
         for at in added {
             if !plant.blocks.contains_key(&at) {
-                plant.blocks.insert(at, PlantPart::Vine);
+                plant.blocks.insert(at, (PlantPart::Vine, BlockState::default()));
             }
         }
     }
@@ -562,7 +675,7 @@ mod tests {
     /// blocks of wood, corner to corner at the least.
     fn wood_is_one_piece(model: &PlantModel) -> bool {
         let wood: HashSet<[i32; 3]> =
-            model.blocks.iter().filter(|(_, part)| part.is_wood()).map(|(at, _)| *at).collect();
+            model.parts().filter(|(_, part)| part.is_wood()).map(|(at, _)| at).collect();
         let Some(&start) = wood.iter().min_by_key(|at| (at[1].abs(), at[0].abs() + at[2].abs())) else { return true };
         let (mut reached, mut next) = (HashSet::from([start]), vec![start]);
         while let Some(at) = next.pop() {
@@ -609,7 +722,7 @@ mod tests {
             let (low, high) = model.bounds().unwrap();
             // The trunk stands 9 to 14 blocks; its crown reaches a third of its height over it, and a clump more.
             let trunk_top =
-                model.blocks.iter().filter(|(_, p)| *p == PlantPart::Trunk).map(|(at, _)| at[1]).max().unwrap();
+                model.parts().filter(|(_, p)| *p == PlantPart::Trunk).map(|(at, _)| at[1]).max().unwrap();
             assert!((8..=14).contains(&trunk_top), "seed {seed}: trunk to {trunk_top}");
             assert!(high[1] > trunk_top && high[1] <= trunk_top + 9, "seed {seed}: crown to {}", high[1]);
             let wide = (high[0] - low[0]).max(high[2] - low[2]);
@@ -619,12 +732,65 @@ mod tests {
             assert!(wood_is_one_piece(&model), "seed {seed}: wood in one piece");
             // Leaves only in the crown: none under the trunk's lower half.
             let lowest_leaf =
-                model.blocks.iter().filter(|(_, p)| *p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap();
+                model.parts().filter(|(_, p)| *p == PlantPart::Leaf).map(|(at, _)| at[1]).min().unwrap();
             assert!(lowest_leaf > trunk_top / 4, "seed {seed}: leaves from {lowest_leaf}");
         }
         // Straight with no bend: the trunk's blocks all over its foot.
         let straight = PlantDef { bend: 0.0, trunk: 1.0, ..PlantDef::default() }.grow(3);
-        assert!(straight.blocks.iter().filter(|(_, p)| *p == PlantPart::Trunk).all(|(at, _)| at[0] == 0 && at[2] == 0));
+        assert!(straight.parts().filter(|(_, p)| *p == PlantPart::Trunk).all(|(at, _)| at[0] == 0 && at[2] == 0));
+    }
+
+    /// Each block of wood, how thick it is across and which way it lies.
+    fn wood(model: &PlantModel) -> HashMap<[i32; 3], (u8, BlockFacing)> {
+        model.blocks.iter().filter(|(_, part, _)| part.is_wood()).map(|(at, _, s)| (*at, (s.across(), s.facing))).collect()
+    }
+
+    #[test]
+    fn a_trunk_is_whole_logs_at_its_foot_and_thins_as_it_rises_and_its_branches_are_thin_logs_lying_as_they_reach() {
+        let oak = PlantDef { taper: 0.7, ..PlantDef::default() };
+        for seed in 0..12 {
+            let model = oak.grow(seed);
+            let wood = wood(&model);
+            // Up the trunk, the thickest log at each height: whole at the foot, never thicker higher up, thin at the top.
+            let thickest = |y: i32| {
+                model.blocks.iter().filter(|(at, p, _)| *p == PlantPart::Trunk && at[1] == y).map(|(_, _, s)| s.across()).max()
+            };
+            let rising: Vec<u8> = (0..).map_while(thickest).collect();
+            assert_eq!(rising[0], 16, "seed {seed}: {rising:?}");
+            assert!(rising.windows(2).all(|pair| pair[1] <= pair[0]), "seed {seed}: {rising:?}");
+            assert!(*rising.last().unwrap() <= 10, "seed {seed}: {rising:?}");
+            // Every log thinner than a block stands up in the trunk, or lies along its branch: as thin as a branch is.
+            let branches: Vec<_> = model.blocks.iter().filter(|(_, p, _)| *p == PlantPart::Branch).collect();
+            assert!(branches.iter().all(|(_, _, s)| s.across() == 6 || s.across() == 16), "seed {seed}");
+            let lying = branches.iter().filter(|(_, _, s)| s.facing != BlockFacing::Up).count();
+            assert!(lying * 3 > branches.len(), "seed {seed}: {lying} of {} branch logs lie down", branches.len());
+            // Every block of wood beside another face to face: no limb steps from corner to corner.
+            for &at in wood.keys().filter(|at| at[1] > 0) {
+                let beside = BlockFacing::ALL.iter().any(|way| {
+                    let s = way.step();
+                    wood.contains_key(&[at[0] + s[0], at[1] + s[1], at[2] + s[2]])
+                });
+                assert!(beside, "seed {seed}: the log at {at:?} touches no other face to face");
+            }
+            assert!(wood_is_one_piece(&model), "seed {seed}");
+        }
+        // Thicker branches when asked; a trunk that does not taper stays whole all the way up.
+        let thick = PlantDef { branch: 0.75, ..oak.clone() }.grow(4);
+        assert!(thick.blocks.iter().filter(|(_, p, _)| *p == PlantPart::Branch).any(|(_, _, s)| s.across() == 12));
+        let even = PlantDef { taper: 0.0, ..oak.clone() }.grow(4);
+        assert!(even.blocks.iter().filter(|(_, p, _)| *p == PlantPart::Trunk).all(|(_, _, s)| s.across() == 16));
+        assert_eq!(PlantDef::parse("branch = 0.5").unwrap().branch, 0.5);
+    }
+
+    #[test]
+    fn blocks_along_a_line_are_each_beside_the_last_face_to_face() {
+        let found = blocks_along([0.5, 0.5, 0.5], [3.7, 2.2, -1.4]);
+        assert_eq!(found.first(), Some(&[0, 0, 0]));
+        assert_eq!(found.last(), Some(&[3, 2, -2]));
+        assert!(found.windows(2).all(|pair| (0..3).map(|k| (pair[1][k] - pair[0][k]).abs()).sum::<i32>() == 1));
+        assert_eq!(lying([0.2, -3.0, 1.0]), BlockFacing::Up);
+        assert_eq!(lying([-2.0, 1.0, 1.0]), BlockFacing::East);
+        assert_eq!(lying([0.5, 0.2, 1.0]), BlockFacing::North);
     }
 
     #[test]
@@ -637,12 +803,11 @@ mod tests {
         for seed in 0..12 {
             let (plain, model) = (bare.grow(seed), vined.grow(seed));
             // The same tree, with vines besides.
-            let rest: Vec<_> = model.blocks.iter().copied().filter(|(_, part)| *part != PlantPart::Vine).collect();
+            let rest: Vec<_> = model.blocks.iter().copied().filter(|(_, part, _)| *part != PlantPart::Vine).collect();
             assert_eq!(rest, plain.blocks, "seed {seed}");
             assert_eq!(model, vined.grow(seed));
-            let blocks: std::collections::HashMap<[i32; 3], PlantPart> = model.blocks.iter().copied().collect();
-            let vines: Vec<[i32; 3]> =
-                model.blocks.iter().filter(|(_, part)| *part == PlantPart::Vine).map(|(at, _)| *at).collect();
+            let blocks: std::collections::HashMap<[i32; 3], PlantPart> = model.parts().collect();
+            let vines: Vec<[i32; 3]> = model.parts().filter(|(_, part)| *part == PlantPart::Vine).map(|(at, _)| at).collect();
             assert!(vines.len() >= 3, "seed {seed}: {} blocks of vine", vines.len());
             for &[x, y, z] in &vines {
                 // Beside the trunk, or hanging from a leaf through vines alone; and never under the ground.
@@ -677,7 +842,7 @@ mod tests {
             let model = pine.grow(seed);
             let (_, high) = model.bounds().unwrap();
             let wide_at = |from: i32, to: i32| {
-                let leaves = model.blocks.iter().filter(|(at, p)| *p == PlantPart::Leaf && (from..to).contains(&at[1]));
+                let leaves = model.parts().filter(|(at, p)| *p == PlantPart::Leaf && (from..to).contains(&at[1]));
                 leaves.map(|(at, _)| at[0].abs().max(at[2].abs())).max().unwrap_or(0)
             };
             let (lower, upper) = (wide_at(high[1] - 12, high[1] - 8), wide_at(high[1] - 4, high[1] + 1));

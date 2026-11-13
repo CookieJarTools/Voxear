@@ -297,10 +297,15 @@ pub enum BlockShape {
     Rope,
     /// The block's own boxes (see `BlockDef::boxes`).
     Boxes,
+    /// A log, lying along the way it faces: a whole block, or a post as
+    /// thin as its placed state says, reaching to the logs beside it. A
+    /// tree's trunk thins as it rises, its branches are thin logs, and an
+    /// axe takes a slice off it at a time (see `BlockDef::chops`).
+    Log,
 }
 
 impl BlockShape {
-    pub const ALL: [BlockShape; 16] = [
+    pub const ALL: [BlockShape; 17] = [
         BlockShape::Cube,
         BlockShape::Bushy,
         BlockShape::Vine,
@@ -317,6 +322,7 @@ impl BlockShape {
         BlockShape::Chain,
         BlockShape::Rope,
         BlockShape::Boxes,
+        BlockShape::Log,
     ];
 
     pub fn name(self) -> &'static str {
@@ -337,6 +343,7 @@ impl BlockShape {
             BlockShape::Chain => "Chain",
             BlockShape::Rope => "Rope",
             BlockShape::Boxes => "Boxes",
+            BlockShape::Log => "Log",
         }
     }
 

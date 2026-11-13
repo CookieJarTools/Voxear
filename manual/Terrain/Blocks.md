@@ -235,7 +235,7 @@ Put down, a block of its own boxes faces the way it was put, turned a quarter at
 
 ### Starter blocks
 
-**Starter Blocks** in the Blocks panel makes a set of blocks of parts in the project's **Blocks/Starter** folder: an oak slab, stairs, fence, fence gate, door and trap door, a stone slab, stairs, wall and button, a lever, a glass pane, a chain, a rope and a lantern that hangs. The oak, the glass and the chain are drawn with small pictures of their own, made with them: planks, clear glass in a frame, and links. A block of a starter's name already there is left as it is.
+**Starter Blocks** in the Blocks panel makes a set of blocks of parts in the project's **Blocks/Starter** folder: an oak slab, stairs, fence, fence gate, door and trap door, a stone slab, stairs, wall and button, a lever, a glass pane, a chain, a rope, a lantern that hangs and an oak log. The oak, the glass and the chain are drawn with small pictures of their own, made with them: planks, clear glass in a frame, and links. A block of a starter's name already there is left as it is.
 
 ### Breaking
 

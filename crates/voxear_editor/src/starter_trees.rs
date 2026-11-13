@@ -8,7 +8,8 @@
 //! Their logs and leaves are blocks made in the Blocks folder beside the
 //! world, each with a small picture drawn here from whole-number hashes
 //! and a material for it: the leaves cut out, bushy and swaying, the logs
-//! of bark. The oak and the birch have vines on some of their trees, of the
+//! (`BlockShape::Log`) of bark with rings at their ends, so a trunk
+//! thins to posts towards its top and its branches are thin logs. The oak and the birch have vines on some of their trees, of the
 //! Vine block the starter biomes hang too.
 //!
 //! Where the world has the starter biomes, each tree keeps to the ones
@@ -58,7 +59,8 @@ const TREES: [StarterTree; 3] = [
         plant: || PlantDef {
             height: [7.0, 11.0],
             trunk: 1.2,
-            taper: 0.5,
+            taper: 0.6,
+            branch: 0.375,
             bend: 0.25,
             crown_width: [7.0, 10.0],
             crown_height: [5.0, 7.0],
@@ -81,7 +83,8 @@ const TREES: [StarterTree; 3] = [
         plant: || PlantDef {
             height: [8.0, 12.0],
             trunk: 1.0,
-            taper: 0.2,
+            taper: 0.5,
+            branch: 0.25,
             bend: 0.1,
             crown_width: [5.0, 7.0],
             crown_height: [6.0, 8.0],
@@ -106,6 +109,7 @@ const TREES: [StarterTree; 3] = [
             height: [12.0, 18.0],
             trunk: 1.2,
             taper: 0.7,
+            branch: 0.25,
             bend: 0.0,
             crown_width: [6.0, 8.0],
             crown_height: [9.0, 13.0],
@@ -131,6 +135,12 @@ const VINE: &str = "Vine";
 /// The folder, in the Blocks folder beside the world, the starter trees'
 /// pictures and their materials go in.
 const PICTURES_FOLDER: &str = "Pictures";
+
+/// A starter tree's log as a block: a log, so its trunk thins and its
+/// branches are thin logs.
+fn log_block(color: [f32; 3]) -> BlockDef {
+    BlockDef { shape: BlockShape::Log, hardness: 2.0, ..BlockDef::colored(color) }
+}
 
 /// A starter tree's leaves as a block: bushy, swaying, quick to break.
 fn leaves_block(color: [f32; 3]) -> BlockDef {
@@ -192,6 +202,22 @@ fn bark_picture(color: [f32; 3], marks: Option<[f32; 3]>, salt: u32) -> Vec<u8> 
             Some(mark) => toned(mark, 1.0, 255),
             None => toned(color, [0.82, 0.94, 1.0, 1.1][(mixed(x, y / 4, salt) % 4) as usize], 255),
         }
+    })
+}
+
+/// The end of a log of `color`: rings round its middle, lighter wood
+/// inside its bark, as a cut trunk shows.
+fn rings_picture(color: [f32; 3], salt: u32) -> Vec<u8> {
+    picture(|x, y| {
+        // How far from the middle, in squares, a little uneven.
+        let (dx, dy) = (x as f32 - 7.5, y as f32 - 7.5);
+        let out = (dx * dx + dy * dy).sqrt() + (mixed(x, y, salt + 5) % 3) as f32 * 0.25;
+        if out > 6.6 {
+            return toned(color, 0.85, 255);
+        }
+        let ring = (out as u32) % 2 == 0;
+        let wood = [color[0] * 1.6 + 0.1, color[1] * 1.6 + 0.08, color[2] * 1.5 + 0.04];
+        toned(wood, if ring { 0.82 } else { 1.0 }, 255)
     })
 }
 
@@ -276,12 +302,16 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> 
         let salt = 100 + at as u32 * 10;
         let has =
             |game: &Game, name: &str| game.content.db().guid_of(&format!("{blocks_folder}/{name}.block")).is_some();
-        let mut log_block = BlockDef::colored(tree.log.1);
+        let mut log_block = log_block(tree.log.1);
         if !has(game, tree.log.0) {
             let pictures = format!("{blocks_folder}/{PICTURES_FOLDER}");
             let bark = bark_picture(tree.log.1, tree.marks, salt);
             let bark = material_with(game, &format!("{pictures}/{}", tree.log.0), &bark, false)?;
             log_block.material = Some(named(game, &bark));
+            let rings = rings_picture(tree.log.1, salt);
+            let rings = material_with(game, &format!("{pictures}/{} Rings", tree.log.0), &rings, false)?;
+            log_block.top = Some(named(game, &rings));
+            log_block.bottom = Some(named(game, &rings));
         }
         let mut leaf_block = leaves_block(tree.leaves.1);
         if !has(game, tree.leaves.0) {
@@ -342,6 +372,7 @@ mod tests {
         for tree in &TREES {
             let block = leaves_block(tree.leaves.1);
             assert!(block.shape == BlockShape::Bushy && block.sways, "{}", tree.name);
+            assert_eq!(log_block(tree.log.1).shape, BlockShape::Log, "{}", tree.name);
             // Grown from a few seeds: a trunk, and leaves over it; taller than a person, no wider than a house.
             for seed in 0..4 {
                 let model = (tree.plant)().grow(seed);

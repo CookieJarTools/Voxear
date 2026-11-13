@@ -304,6 +304,29 @@ fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named:
     number_placed(content, file, owner, named, None)
 }
 
+/// The numbers `file` gives the log `wood`, which `owner` names, in each
+/// way a tree's wood stands but whole and upright (the block's own number):
+/// thinner than a block or lying down, each by its state's byte, `file`
+/// growing to hold them. None where the wood is no log.
+fn log_numbers(content: &mut Content, file: &mut BlockFile, owner: &str, wood: Option<&str>) -> Vec<(u8, BlockId)> {
+    use voxear_terrain::blocks::shape::{BlockFacing, LOG_SIZES};
+    let Some(wood) = wood.filter(|wood| content.block(wood).is_some_and(|(_, block)| block.shape == BlockShape::Log))
+    else {
+        return Vec::new();
+    };
+    let mut numbers = Vec::new();
+    for facing in [BlockFacing::Up, BlockFacing::East, BlockFacing::North] {
+        for size in std::iter::once(0).chain(LOG_SIZES) {
+            if facing == BlockFacing::Up && size == 0 {
+                continue;
+            }
+            let state = BlockState { facing, size, ..BlockState::default() };
+            numbers.push((state.to_byte(), number_placed(content, file, owner, wood, Some(state))));
+        }
+    }
+    numbers
+}
+
 /// Each block that faces a way, by its number, as it is numbered turned each
 /// way and mirrored (see `WorldStructures::turns`).
 type Turns = std::collections::BTreeMap<BlockId, [BlockId; 8]>;
@@ -406,7 +429,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
                 // A plant that grows no vines numbers no block for them.
                 let vine = if def.vines > 0.0 { number(&def.vine) } else { 0 };
-                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine }
+                let logs = log_numbers(content, &mut file, plant, def.wood.as_deref());
+                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine, logs }
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");

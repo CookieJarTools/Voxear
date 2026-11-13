@@ -18,8 +18,10 @@
 //! leaf_size = 4.0                # how large a clump of leaves is, in blocks
 //! leaf_density = 0.8             # how full a clump is, 0 to 1
 //! roots = 4
+//! vines = 0.3                    # how many of its trees have vines, 0 to 1
 //! wood = "Blocks/Oak Log.block"
 //! leaves = "Blocks/Oak Leaves.block"
+//! vine = "Blocks/Vine.block"
 //! ```
 //!
 //! A broadleaf's crown is grown towards points scattered through its shape:
@@ -28,6 +30,9 @@
 //! crown and never cross it twice. A conifer has a ring of branches every
 //! so often up its trunk, each ring shorter than the one below. A bush is
 //! stems from the ground with a clump at each end.
+//!
+//! A tree with vines has one or two climbing its trunk from the ground,
+//! and some hanging from under the edge of its crown.
 //!
 //! It is all whole-number hashes, sums, products and square roots, so a
 //! seed grows the same plant on every machine.
@@ -83,11 +88,22 @@ pub struct PlantDef {
     /// How full a clump is, 0 to 1.
     pub leaf_density: f32,
     pub roots: u32,
+    /// How many of the plants it grows have vines, from 0 for none to 1 for
+    /// every one: up the trunk, and hanging from under the crown.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub vines: f32,
     /// The blocks its wood and leaves are, each a reference to a `.block`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wood: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub leaves: Option<String>,
+    /// The block its vines are: one whose shape is a vine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vine: Option<String>,
+}
+
+fn is_nothing(amount: &f32) -> bool {
+    *amount == 0.0
 }
 
 impl Default for PlantDef {
@@ -104,8 +120,10 @@ impl Default for PlantDef {
             leaf_size: 4.0,
             leaf_density: 0.8,
             roots: 4,
+            vines: 0.0,
             wood: None,
             leaves: None,
+            vine: None,
         }
     }
 }
@@ -118,12 +136,14 @@ pub enum PlantPart {
     Branch,
     Root,
     Leaf,
+    Vine,
 }
 
 impl PlantPart {
-    /// Whether it is wood: the plant's `wood` block rather than its `leaves`.
+    /// Whether it is wood: the plant's `wood` block rather than its
+    /// `leaves` or its `vine`.
     pub fn is_wood(self) -> bool {
-        self != PlantPart::Leaf
+        !matches!(self, PlantPart::Leaf | PlantPart::Vine)
     }
 }
 
@@ -304,6 +324,11 @@ impl PlantDef {
         if self.kind != PlantKind::Bush {
             self.roots_out(&mut plant, &mut random);
         }
+        // Drawn whether it has vines or not, so the rest of a plant does not depend on them.
+        let mut vines = Random::new(seed ^ 0x5EED_71AE);
+        if vines.unit() < self.vines.clamp(0.0, 1.0) {
+            self.vines_on(&mut plant, &mut vines);
+        }
         let mut blocks: Vec<([i32; 3], PlantPart)> = plant.blocks.into_iter().collect();
         blocks.sort_by_key(|(at, _)| (at[1], at[2], at[0]));
         PlantModel { blocks }
@@ -468,6 +493,51 @@ impl PlantDef {
         plant.clump([foot[0], high * 0.5, foot[2]], self.leaf_size, self.leaf_density.clamp(0.05, 1.0), random);
     }
 
+    /// Vines on a plant grown: one or two up its trunk from the ground, each
+    /// beside the trunk's blocks on one side as far up as it goes, and some
+    /// hanging from under the leaves at the edge of its crown, a few blocks
+    /// long. Only where no block of the plant is.
+    fn vines_on(&self, plant: &mut Growing, random: &mut Random) {
+        const SIDES: [[i32; 2]; 4] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        let mut trunk: Vec<[i32; 3]> =
+            plant.blocks.iter().filter(|(_, part)| **part == PlantPart::Trunk).map(|(at, _)| *at).collect();
+        // In a fixed order: the blocks are kept in no order of their own, and of two as far out the last is taken.
+        trunk.sort_unstable_by_key(|at| (at[1], at[2], at[0]));
+        let top = trunk.iter().map(|at| at[1]).max().unwrap_or(0);
+        let mut added: Vec<[i32; 3]> = Vec::new();
+        if top >= 3 {
+            let first = (random.next() % 4) as usize;
+            for climber in 0..1 + (random.next() % 2) as usize {
+                let [dx, dz] = SIDES[(first + climber * (1 + (random.next() % 2) as usize)) % 4];
+                let high = (top as f32 * (0.45 + 0.5 * random.unit())) as i32;
+                for y in 0..=high {
+                    // Beside the trunk's block furthest that way at this height.
+                    let outer = trunk.iter().filter(|at| at[1] == y).max_by_key(|at| at[0] * dx + at[2] * dz);
+                    let Some(outer) = outer else { continue };
+                    added.push([outer[0] + dx, y, outer[2] + dz]);
+                }
+            }
+        }
+        // Under the crown: a leaf with open air below it, the further from the trunk the likelier.
+        let mut leaves: Vec<[i32; 3]> =
+            plant.blocks.iter().filter(|(_, part)| **part == PlantPart::Leaf).map(|(at, _)| *at).collect();
+        leaves.sort_unstable_by_key(|at| (at[1], at[2], at[0]));
+        for [x, y, z] in leaves {
+            let draw = (random.unit(), random.unit());
+            let out = ((x * x + z * z) as f32).sqrt();
+            if plant.blocks.contains_key(&[x, y - 1, z]) || out < 2.0 || draw.0 > 0.16 {
+                continue;
+            }
+            let long = 1 + (draw.1 * (y as f32 * 0.6).clamp(1.0, 6.0)) as i32;
+            added.extend((1..=long).map(|down| [x, y - down, z]).take_while(|at| at[1] >= 1));
+        }
+        for at in added {
+            if !plant.blocks.contains_key(&at) {
+                plant.blocks.insert(at, PlantPart::Vine);
+            }
+        }
+    }
+
     /// Roots out from the trunk's foot along the ground and a block or two
     /// into it.
     fn roots_out(&self, plant: &mut Growing, random: &mut Random) {
@@ -555,6 +625,42 @@ mod tests {
         // Straight with no bend: the trunk's blocks all over its foot.
         let straight = PlantDef { bend: 0.0, trunk: 1.0, ..PlantDef::default() }.grow(3);
         assert!(straight.blocks.iter().filter(|(_, p)| *p == PlantPart::Trunk).all(|(at, _)| at[0] == 0 && at[2] == 0));
+    }
+
+    #[test]
+    fn a_tree_with_vines_has_them_up_its_trunk_and_under_its_crown_and_is_otherwise_the_same_tree() {
+        let bare = PlantDef::default();
+        let vined = PlantDef { vines: 1.0, vine: Some("Blocks/Vine.block".into()), ..PlantDef::default() };
+        assert!(vined.to_text().contains("vines = 1.0") && !bare.to_text().contains("vine"));
+        assert_eq!(PlantDef::parse(&vined.to_text()).unwrap(), vined);
+        let mut with_some = 0;
+        for seed in 0..12 {
+            let (plain, model) = (bare.grow(seed), vined.grow(seed));
+            // The same tree, with vines besides.
+            let rest: Vec<_> = model.blocks.iter().copied().filter(|(_, part)| *part != PlantPart::Vine).collect();
+            assert_eq!(rest, plain.blocks, "seed {seed}");
+            assert_eq!(model, vined.grow(seed));
+            let blocks: std::collections::HashMap<[i32; 3], PlantPart> = model.blocks.iter().copied().collect();
+            let vines: Vec<[i32; 3]> =
+                model.blocks.iter().filter(|(_, part)| *part == PlantPart::Vine).map(|(at, _)| *at).collect();
+            assert!(vines.len() >= 3, "seed {seed}: {} blocks of vine", vines.len());
+            for &[x, y, z] in &vines {
+                // Beside the trunk, or hanging from a leaf through vines alone; and never under the ground.
+                let on_trunk = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                    .iter()
+                    .any(|d| blocks.get(&[x + d[0], y, z + d[1]]) == Some(&PlantPart::Trunk));
+                let over = (1..=8).map(|up| blocks.get(&[x, y + up, z])).find(|part| *part != Some(&PlantPart::Vine));
+                assert!(on_trunk || over == Some(Some(&PlantPart::Leaf)), "seed {seed}: a vine at {:?}", [x, y, z]);
+                assert!(y >= 0, "seed {seed}");
+            }
+            with_some += usize::from(vines.iter().any(|at| at[1] > 4));
+        }
+        assert!(with_some >= 8, "most have vines up in the crown: {with_some}");
+        // Half the trees of a wood with vines on half of them have some.
+        let half = PlantDef { vines: 0.5, ..vined.clone() };
+        let grown = (0..200).filter(|&seed| half.grow(seed).count(PlantPart::Vine) > 0).count();
+        assert!((70..130).contains(&grown), "{grown} of 200");
+        assert!(!PlantPart::Vine.is_wood());
     }
 
     #[test]

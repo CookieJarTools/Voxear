@@ -107,6 +107,7 @@ mod block_panel;
 mod block_props;
 mod block_tools;
 mod plants_panel;
+mod heat_props;
 mod plants_props;
 mod plants_tools;
 mod terrain_panel;
@@ -122,6 +123,7 @@ mod motion_set_inspector;
 mod prompt_icons_inspector;
 mod world_gen_inspector;
 mod starter_biomes;
+mod starter_trees;
 mod strings_inspector;
 #[cfg(target_os = "linux")]
 mod wayland_drops;

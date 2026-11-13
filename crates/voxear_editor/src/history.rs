@@ -63,6 +63,10 @@ pub struct ObjState {
     pub screen_ui: Option<voxear_engine::screen_ui::ScreenUi>,
     pub map: Option<Box<voxear_engine::map::Map>>,
     pub map_marker: Option<Box<voxear_engine::map::MapMarker>>,
+    pub climate: Option<voxear_engine::heat::Climate>,
+    pub heat_source: Option<voxear_engine::heat::HeatSource>,
+    pub heat_zone: Option<voxear_engine::heat::HeatZone>,
+    pub heat_body: Option<Box<voxear_engine::heat::HeatBody>>,
     pub net: Option<voxear_engine::net::NetObject>,
     pub animator: Option<Box<voxear_engine::animation::Animator>>,
     pub mob_motion: Option<Box<voxear_engine::animation::MobMotion>>,
@@ -173,6 +177,10 @@ impl ObjState {
             screen_ui: world.get::<voxear_engine::screen_ui::ScreenUi>(entity).copied(),
             map: world.get::<voxear_engine::map::Map>(entity).cloned().map(Box::new),
             map_marker: world.get::<voxear_engine::map::MapMarker>(entity).cloned().map(Box::new),
+            climate: world.get::<voxear_engine::heat::Climate>(entity).copied(),
+            heat_source: world.get::<voxear_engine::heat::HeatSource>(entity).copied(),
+            heat_zone: world.get::<voxear_engine::heat::HeatZone>(entity).copied(),
+            heat_body: world.get::<voxear_engine::heat::HeatBody>(entity).cloned().map(Box::new),
             net: world.get::<voxear_engine::net::NetObject>(entity).copied(),
             animator: world.get::<voxear_engine::animation::Animator>(entity).cloned().map(Box::new),
             mob_motion: world.get::<voxear_engine::animation::MobMotion>(entity).cloned().map(Box::new),
@@ -262,6 +270,10 @@ impl ObjState {
         put(world, entity, self.screen_ui);
         put(world, entity, self.map.as_deref().cloned());
         put(world, entity, self.map_marker.as_deref().cloned());
+        put(world, entity, self.climate);
+        put(world, entity, self.heat_source);
+        put(world, entity, self.heat_zone);
+        put(world, entity, self.heat_body.as_deref().cloned());
         put(world, entity, self.net);
         put(world, entity, self.animator.as_deref().cloned());
         put(world, entity, self.mob_motion.as_deref().cloned());

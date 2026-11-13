@@ -335,6 +335,88 @@ mod tests {
     }
 
     #[test]
+    fn a_biomes_vines_hang_under_ledges_and_cave_roofs_through_the_open_air_the_same_from_any_column() {
+        use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
+        // Ground with caves and overhangs, of metre blocks, one biome all over: its vines are block 4.
+        let (mut file, world) = generated(0.5, 9.0);
+        file.block_size = 1.0;
+        // Deep enough under the ground for caves.
+        file.generate.as_mut().unwrap().bottom = -150;
+        file.blocks.truncate(3);
+        file.blocks.push(BlockKind::colored("Vine", [0.2, 0.5, 0.15]));
+        let without = file.make_ground(Some(&world));
+        let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let place = |amount: f32, depth: f32| {
+            let vines = BiomeBlocks { vine: 4, vine_amount: amount, vine_length: [2, 6], vine_depth: depth, ..BiomeBlocks::default() };
+            let biomes = Biomes::new(vec![land.clone()], 15.0, 0.3, world.seed());
+            Some(std::sync::Arc::new(WorldBiomes { biomes, blocks: vec![vines] }))
+        };
+        file.generate.as_mut().unwrap().placed = place(0.4, 30.0);
+        let map = file.make_ground(Some(&world));
+        let mut vines = Vec::new();
+        for (key, chunk) in map.chunks().filter(|(_, chunk)| chunk.may_hold(|block| block == 4)) {
+            for i in 0..CHUNK * CHUNK * CHUNK {
+                let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                if chunk.get(x, y, z) == 4 {
+                    vines.push([key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32]);
+                }
+            }
+        }
+        assert!(vines.len() > 60, "{} blocks of vine", vines.len());
+        // Nothing else changed: a vine is only where there was open air.
+        for (key, chunk) in map.chunks() {
+            for i in 0..CHUNK * CHUNK * CHUNK {
+                let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                let at = [key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32];
+                let (now, was) = (chunk.get(x, y, z), without.get(at));
+                assert!(now == was || (now == 4 && was == AIR), "{at:?}: {was} became {now}");
+            }
+        }
+        // Each hangs from ground: up its column there are only vines until ground, within six blocks.
+        let mut beside_a_wall = 0;
+        for &[x, y, z] in &vines {
+            let over = (1..=6).map(|up| map.get([x, y + up, z])).find(|&block| block != 4);
+            assert!(matches!(over, Some(block) if block != AIR), "the vine at {:?} hangs from {over:?}", [x, y, z]);
+            let walls = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+            beside_a_wall += usize::from(walls.iter().any(|d| ![AIR, 4].contains(&map.get([x + d[0], y, z + d[1]]))));
+        }
+        assert!(beside_a_wall * 3 > vines.len(), "{beside_a_wall} of {} are beside a wall", vines.len());
+        // A chunk column made alone has the vines it has among its neighbours.
+        let generate = file.generate.clone().unwrap();
+        for column in [[0, 0], [1, 0], [1, 1]] {
+            for (key, chunk) in column_chunks(&file, &generate, &world, 0, column, Some([64, 64])) {
+                assert_eq!(Some(&chunk), map.chunk(key).map(|chunk| &**chunk), "chunk {key:?}");
+            }
+        }
+        // Fewer with a smaller amount, none below the depth they keep to, none at all with no block for them.
+        let count = |amount: f32, depth: f32| {
+            let mut file = file.clone();
+            file.generate.as_mut().unwrap().placed = place(amount, depth);
+            let map = file.make_ground(Some(&world));
+            let surface = |x: i32, z: i32| (-150..400).rev().find(|&y| ![AIR, 4].contains(&map.get([x, y, z]))).unwrap();
+            let mut found = Vec::new();
+            for (key, chunk) in map.chunks().filter(|(_, chunk)| chunk.may_hold(|block| block == 4)) {
+                for i in 0..CHUNK * CHUNK * CHUNK {
+                    let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                    if chunk.get(x, y, z) == 4 {
+                        let (x, z) = (key[0] * 32 + x as i32, key[2] * 32 + z as i32);
+                        found.push(surface(x, z) - (key[1] * 32 + y as i32));
+                    }
+                }
+            }
+            found
+        };
+        assert!(count(0.1, 30.0).len() * 2 < vines.len());
+        // Hung no deeper than 4 m under the generator's own surface, and no longer than six blocks.
+        let shallow = count(0.4, 4.0);
+        assert!(!shallow.is_empty() && shallow.len() < vines.len(), "{} near the surface", shallow.len());
+        assert!(count(0.0, 30.0).is_empty());
+        // The far rings, of larger blocks, have none.
+        let far = column_chunks(&file, &generate, &world, 1, [0, 0], None);
+        assert!(far.iter().all(|(_, chunk)| !chunk.may_hold(|block| block == 4)));
+    }
+
+    #[test]
     fn a_chasms_floor_takes_the_biome_kept_to_sunk_ground_and_its_roof_the_lands() {
         use crate::generate::{
             BiomeBlocks, BiomeDef, Biomes, Graph, NodeKind, WorldBiomes,

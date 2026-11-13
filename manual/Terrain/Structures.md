@@ -30,6 +30,39 @@ Spacing, Chance and Apart together keep a world from being crowded: a large town
 
 Structures are built in the order the world lists them. One listed later keeps clear of what earlier ones built: its trunk off their streets, its crown off their houses. So list towns first, then lone buildings, then woods.
 
+## Trees of blocks
+
+A structure that names a **plant** grows a tree or a bush of blocks at each of its places, from a `.voxplant` file: a few numbers that say what kind of plant it is, and a seed of its own at every place, so a wood of one file has no two trees alike.
+
+| Setting | What it does |
+| --- | --- |
+| `kind` | `broadleaf`, a trunk under a rounded crown of forking branches; `conifer`, rings of branches shorter towards the top; or `bush`, stems from the ground |
+| `height` | How tall the trunk is, in blocks, from and to |
+| `trunk`, `taper` | How thick the trunk is at its foot, in blocks, and how much thinner at its top, from 0 to 1 |
+| `bend` | How far the trunk leans and wanders: 0 for straight |
+| `crown_width`, `crown_height` | How wide and how tall the crown is, in blocks, each from and to |
+| `branches` | How thick with branches the crown is, from 0 to 1 |
+| `leaf_size`, `leaf_density` | How large a clump of leaves is, in blocks, and how full, from 0 to 1 |
+| `roots` | How many roots run out from its foot |
+| `vines` | How many of its trees have vines, from 0 to 1: one or two up the trunk, and some hanging under the crown's edge |
+| `wood`, `leaves`, `vine` | The [[Blocks|blocks]] its wood, its leaves and its vines are |
+
+```toml
+kind = "broadleaf"
+height = [7.0, 11.0]
+trunk = 1.2
+crown_width = [7.0, 10.0]
+crown_height = [5.0, 7.0]
+vines = 0.3
+wood = "Blocks/Oak Log.block"
+leaves = "Blocks/Oak Leaves.block"
+vine = "Blocks/Vine.block"
+```
+
+Give the leaves a block whose **Shape** is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. A tree's vines hang only in open air: none where a hillside rises into them.
+
+**Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga.
+
 ## How the ground meets a structure
 
 | Ground | What it does |

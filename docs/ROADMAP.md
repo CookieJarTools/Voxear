@@ -1285,6 +1285,25 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
     frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
     world's first level sways. The face's picture and its bounced light are read where it stands.
+  - A block has a **Shape** (`block::BlockShape`, a dropdown in its Inspector): Cube, Bushy or Vine.
+    - **Bushy leaves:** a bushy block that meets open air has three sheets of leaves crossed through its middle,
+      nearly twice the block's width, thinning out cell by cell to a ragged edge, so a crown of blocks is a soft
+      mass. They are loose quads in the chunk's own pool (`ChunkMesh::loose`, facing 6), two words each, drawn
+      from both sides by one quad whose corners `loosePoint` takes the other way round from behind; drawn with
+      the block's cut-out picture, or as small square leaves from whole-number hashes (`blockSheetLook`), the
+      cube's own faces alike (`blockLeafShade`). Their corners sway with the cube corner nearest each. Out to 160
+      blocks from the camera.
+    - **Vines:** a vine block is no ground (`is_ground`): a sheet against each block of ground beside it, or two
+      crossed sheets where it hangs free (loose quads of facing 7), strands and leaves with no picture. A biome
+      hangs them under ledges, overhangs and cave roofs (`[vines]` in a `.biome`, a Vines part in its Inspector,
+      `hang_vines`), each column from its own blocks alone; a `.voxplant` with `vines` grows them up its trunk and
+      under its crown. The wet starter biomes have them, of a Vine block made with their ground's.
+    - Tests: the mesher (sheets a block, which corners sway, a vine clinging and hanging, water beside a vine),
+      the block file, the generator (vines only in open air under ground, the same from any column, by amount and
+      depth), a tree's vines, and GPU pictures of a tree of blocks with cube, bushy and pictured leaves and with
+      vines, still and in the wind. Manual: Blocks (Bushy leaves, Vines), Biomes (Vines), Wind.
+    - Not done: climbing a vine (the Character Controller has no ladders), a vine falling when what holds it is
+      dug away, vines in a Voxel Terrain, tufts in the far rings, light through leaves.
   - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
     in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
   - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds
@@ -1567,6 +1586,26 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   - spread that grows with firing and moving and settles when still, aim down sights, and bloom
   - impacts by surface (decals, particles, sounds), muzzle flash and shell ejection
   - damage with falloff and hit zones, and an interface for anything that can be hit
+- **Heat and cold ✅.** Every place has a temperature (`voxear_engine::heat`): the climate, from a world's
+  generator or the level's **Climate**, warmer in the afternoon and colder before dawn and swinging wider where
+  it is dry; drawn to the deep ground's mild temperature under blocks, or the water's in water; then **Heat
+  Zones** (a box or sphere that sets or adds, with a soft edge) and the hottest and coldest of what is near:
+  **Heat Sources**, blocks with a **Heat** (`BlockDef::heat`, a °C and a reach, each chunk's hot and cold blocks
+  listed once until it changes), lava Pools and Streams, and heat scripts set off for a while. Sums and products
+  only, the same on every machine. The level's Climate holds a clock: time of day, day length, and whether it
+  turns the first Directional Light. A **Heat Body** follows its place's temperature on the fixed steps (Warms
+  In); its **Changes** each count while it is above or below a °C and hold still while not, and once one has
+  counted long enough scripts hear of it by name and the Obj becomes the change's prefab, starting as warm. A
+  character **Feels** Freezing, Cold, Comfortable, Hot or Scorching by its Comfort widened by Cold and Heat
+  Resistance, and `Beyond` gives how far past its band it is; what that does is the game's. An item's
+  **Dropped** prefab is what it is when it lies in the world, so dropped food cooks. Scripts: `Heat.At`,
+  `Heat.Sample` (`HeatSample`), `Heat.AddSource`, `Clock`, `Obj.HeatBody` (`Temperature`, `Feels`,
+  `ColdResistance`, `HeatResistance`, `Progress`), `HeatBody.Changed`, `HeatBody.FeelsChanged`, `HeatSource`
+  and `HeatZone`; native API 82. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
+  Scene view's **Heat** shading, the ground round the camera tinted by temperature. Tests: a generated desert
+  by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
+  in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads; what heat does to the weather;
+  a GPU tint over every surface in place of the Heat shading's squares.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2514,6 +2553,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
   near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
   terrains.
+- ~~**Small details on a Block World:**~~ done: thirteen more starter plants of small cubes
+  (`voxear_render::StarterPlant`: Tall Grass, Daisy, Bluebell, Fern, Dry Bush, Mushroom, Birch, Dead Tree, Stump,
+  Log, Stick, Pebbles, Boulder), the Tree with limbs under its crown, each growing where it suits it by climate,
+  slope and patches (`grown_plants::starter_growth`); stumps, logs and boulders solid. A rule keeps **near**
+  something (`grow::Near`, `near_plants`, `near_blocks` and `within` in `[obj.foliage.grow]`; Near plant, Near
+  block and Within in the Grow tool): within so many metres of the plants another Foliage of the world grows,
+  taken as that rule tries them (grid, chance, patches, and on generated ground climate and height), or of a
+  place whose highest block is a given block. Sticks, logs, stumps and mushrooms keep near the trees, pebbles
+  near rocks and boulders and, as a second Foliage, along the shore. Plants grow under leaves: a column's highest
+  block to grow on looks through leaves and vines (`grow::Tops`), so a tree of blocks has grass beneath it and no
+  rock on its crown. Editor: **All Starter Plants** on a Block World's Add plant row adds every one the world
+  does not grow yet, one step to undo; **Starter Trees of Blocks** makes an oak, a birch and a pine as
+  `.voxplant`s with bushy leaves and vines, their blocks and a structure each, and lists the structures on the
+  world (`starter_trees`, `block_props::list_structures`); each block has a picture drawn there from whole-number
+  hashes, 16 squares a side, and a material for it: bark, or cut-out leaves. Tests: the rule (near another rule's plants, near and
+  far alike, near a tree of blocks, grass under a crown), every starter's model, a GPU picture of each starter
+  and of a world growing them all. Manual: Block Worlds, Foliage, Structures. Not done: far trees for trees of
+  blocks, a list of structures in the Block World's Inspector, near blocks across a chunk column's edge.
 - ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
   is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
   (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing

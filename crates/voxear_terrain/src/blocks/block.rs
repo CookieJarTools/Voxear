@@ -29,6 +29,17 @@
 //! color = [0.04, 0.46, 0.33]  # the water's own colour
 //! liquid = "water"            # see-through, and things float in it
 //! ```
+//!
+//! ```toml
+//! color = [0.3, 0.62, 0.16]
+//! shape = "bushy"             # a cube with tufts of leaves reaching out of it; or "vine"
+//! sways = true
+//! ```
+//!
+//! ```toml
+//! color = [0.9, 0.3, 0.05]
+//! heat = { celsius = 1100.0, reach = 4.0 }  # magma: hot round it, as ice is cold
+//! ```
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -59,6 +70,9 @@ pub struct BlockDef {
     /// no still block move a little with the level's wind.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sways: bool,
+    /// Its shape: a cube, a cube with tufts of leaves, or a vine.
+    #[serde(skip_serializing_if = "BlockShape::is_cube")]
+    pub shape: BlockShape,
     /// How many seconds it takes to break by hand.
     pub hardness: f32,
     /// Whether nothing breaks it.
@@ -82,7 +96,29 @@ pub struct BlockDef {
     /// The sounds of breaking it, placing it and stepping on it.
     #[serde(skip_serializing_if = "BlockSounds::is_none")]
     pub sounds: BlockSounds,
+    /// How hot or cold it is, for what is near it: magma, fire, ice and
+    /// snow. None for a block that is as warm as where it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heat: Option<BlockHeat>,
 }
+
+/// A block's own temperature and how far it reaches: at the block it is
+/// `celsius`, and it fades to where it is by `reach` metres away.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockHeat {
+    pub celsius: f32,
+    pub reach: f32,
+}
+
+impl Default for BlockHeat {
+    fn default() -> Self {
+        Self { celsius: 600.0, reach: 3.0 }
+    }
+}
+
+/// The farthest a block's heat reaches, in metres.
+pub const MAX_HEAT_REACH: f32 = 16.0;
 
 fn is_zero(value: &u32) -> bool {
     *value == 0
@@ -141,6 +177,42 @@ impl Liquid {
     }
 }
 
+/// The shape a block is drawn in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockShape {
+    /// A cube, as most blocks are.
+    #[default]
+    Cube,
+    /// A cube with tufts of leaves reaching out past it wherever it meets
+    /// open air, so a crown of such blocks is a soft mass of leaves.
+    Bushy,
+    /// A vine: a thin sheet against each block of ground beside it, or two
+    /// crossed sheets where it hangs free. It is no ground: nothing stands
+    /// on it, and it hides nothing.
+    Vine,
+}
+
+impl BlockShape {
+    pub const ALL: [BlockShape; 3] = [BlockShape::Cube, BlockShape::Bushy, BlockShape::Vine];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BlockShape::Cube => "Cube",
+            BlockShape::Bushy => "Bushy",
+            BlockShape::Vine => "Vine",
+        }
+    }
+
+    pub fn is_cube(&self) -> bool {
+        *self == BlockShape::Cube
+    }
+
+    pub fn is_vine(&self) -> bool {
+        *self == BlockShape::Vine
+    }
+}
+
 impl Default for BlockDef {
     fn default() -> Self {
         Self {
@@ -150,6 +222,7 @@ impl Default for BlockDef {
             bottom: None,
             liquid: Liquid::None,
             sways: false,
+            shape: BlockShape::Cube,
             hardness: 1.0,
             unbreakable: false,
             tool: None,
@@ -157,6 +230,7 @@ impl Default for BlockDef {
             data: None,
             drops: Vec::new(),
             sounds: BlockSounds::default(),
+            heat: None,
         }
     }
 }
@@ -168,6 +242,10 @@ impl BlockDef {
         for drop in &mut block.drops {
             drop.count = [drop.count[0].min(drop.count[1]), drop.count[0].max(drop.count[1])];
             drop.chance = if drop.chance.is_finite() { drop.chance.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        if let Some(heat) = &mut block.heat {
+            heat.celsius = if heat.celsius.is_finite() { heat.celsius.clamp(-273.0, 5000.0) } else { 20.0 };
+            heat.reach = if heat.reach.is_finite() { heat.reach.clamp(0.0, MAX_HEAT_REACH) } else { 0.0 };
         }
         Ok(block)
     }
@@ -197,7 +275,7 @@ impl BlockDef {
     /// Whether it is drawn as `other` is, whatever their rules.
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
-        look(self) == look(other) && self.liquid == other.liquid
+        look(self) == look(other) && self.liquid == other.liquid && self.shape == other.shape
     }
 
     /// Gives `kind`, a world's entry naming this block, the block's look.
@@ -208,6 +286,7 @@ impl BlockDef {
         kind.bottom = self.bottom.clone();
         kind.water = self.liquid == Liquid::Water;
         kind.sways = self.sways;
+        kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
     }
 }
 
@@ -241,6 +320,39 @@ mod tests {
     }
 
     #[test]
+    fn a_blocks_shape_is_written_only_where_it_is_no_cube_and_reaches_its_worlds_faces() {
+        use crate::blocks::{file::BlockFile, is_bushy, is_ground, is_vine};
+        let leaves = BlockDef { shape: BlockShape::Bushy, sways: true, ..BlockDef::colored([0.3, 0.62, 0.16]) };
+        let vine = BlockDef { shape: BlockShape::Vine, ..BlockDef::colored([0.2, 0.46, 0.14]) };
+        assert!(leaves.to_text().contains("shape = \"bushy\"") && vine.to_text().contains("shape = \"vine\""));
+        assert!(!BlockDef::default().to_text().contains("shape"), "a cube does not say so");
+        assert_eq!(BlockDef::parse(&leaves.to_text()).unwrap(), leaves);
+        assert_eq!(BlockDef::parse(&vine.to_text()).unwrap(), vine);
+        assert!(BlockDef::parse("shape = \"ball\"").is_err(), "a shape there is none of");
+        assert!(!leaves.looks_like(&BlockDef { shape: BlockShape::Cube, ..leaves.clone() }));
+        // A world listing them draws them so: leaves ground with tufts, a vine no ground; water is no shape.
+        let mut file = BlockFile::default();
+        for block in [&leaves, &vine, &BlockDef { liquid: Liquid::Water, shape: BlockShape::Vine, ..vine.clone() }] {
+            let mut kind = BlockKind::of("Blocks/Some.block");
+            block.fill(&mut kind);
+            file.blocks.push(kind);
+        }
+        let (looks, faces) = file.faces();
+        assert!(is_bushy(&faces, 4) && is_ground(&faces, 4) && faces[4].sways);
+        assert!(is_vine(&faces, 5) && !is_ground(&faces, 5) && !crate::blocks::hides(&faces, 5));
+        assert!(faces[6].water && !is_vine(&faces, 6) && faces[6].shape.is_cube());
+        // Their faces are drawn as leaves, a colour's of its own beside a cube's of the same colour.
+        assert!(looks[faces[4].sides as usize].leafy && looks[faces[5].sides as usize].leafy);
+        assert!(!looks[faces[1].sides as usize].leafy);
+        let mut same_colour = BlockKind::of("Blocks/Other.block");
+        BlockDef::colored(leaves.color).fill(&mut same_colour);
+        file.blocks.push(same_colour);
+        let (looks, faces) = file.faces();
+        assert_ne!(faces[7].sides, faces[4].sides);
+        assert!(!looks[faces[7].sides as usize].leafy);
+    }
+
+    #[test]
     fn a_blocks_rules_read_as_written_and_a_block_written_before_it_had_any_reads_with_a_new_blocks() {
         // As blocks were written while they had a look alone.
         let older = "color = [0.5, 0.5, 0.52]\nmaterial = \"Materials/Stone.material\"\n";
@@ -268,5 +380,16 @@ mod tests {
         let odd = "hardness = -2.0\n[[drops]]\nitem = \"Items/Flint.asset\"\ncount = [3, 1]\nchance = 4.0\n";
         let read = BlockDef::parse(odd).unwrap();
         assert_eq!((read.hardness, read.drops[0].count, read.drops[0].chance), (0.0, [1, 3], 1.0));
+    }
+
+    #[test]
+    fn a_hot_block_says_how_hot_and_how_far_and_a_block_without_heat_says_nothing() {
+        let magma = BlockDef { heat: Some(BlockHeat { celsius: 1100.0, reach: 4.0 }), ..BlockDef::colored([0.9, 0.3, 0.05]) };
+        let text = magma.to_text();
+        assert!(text.contains("celsius = 1100"), "{text}");
+        assert_eq!(BlockDef::parse(&text).unwrap(), magma);
+        assert!(!BlockDef::default().to_text().contains("heat"));
+        let far = BlockDef::parse("[heat]\ncelsius = -30.0\nreach = 900.0\n").unwrap().heat.unwrap();
+        assert_eq!((far.celsius, far.reach), (-30.0, MAX_HEAT_REACH));
     }
 }

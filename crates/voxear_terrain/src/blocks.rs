@@ -60,8 +60,8 @@ use mesh::ChunkMesh;
 /// `file::BlockFile::faces`): the surfaces its top, its sides and its
 /// bottom are drawn with, whether it is water, whether it is seen through
 /// where its faces' pictures are clear, whether it sways in the wind as
-/// leaves do, and its own colour, sRGB a byte each, which water takes from
-/// in it.
+/// leaves do, its shape (a cube, a cube with tufts of leaves, or a vine),
+/// and its own colour, sRGB a byte each, which water takes from in it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockFaces {
     pub top: u8,
@@ -70,19 +70,29 @@ pub struct BlockFaces {
     pub water: bool,
     pub see_through: bool,
     pub sways: bool,
+    pub shape: block::BlockShape,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false, see_through: false, sways: false, color: [0; 3] }
+        Self {
+            top,
+            sides,
+            bottom,
+            water: false,
+            see_through: false,
+            sways: false,
+            shape: block::BlockShape::Cube,
+            color: [0; 3],
+        }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
         let (top, sides, bottom) = (surface, surface, surface);
-        Self { top, sides, bottom, water: true, see_through: false, sways: false, color: [0; 3] }
+        Self { water: true, ..Self::new(top, sides, bottom) }
     }
 }
 
@@ -91,9 +101,21 @@ pub fn is_water(faces: &[BlockFaces], block: BlockId) -> bool {
     faces.get(usize::from(block)).is_some_and(|faces| faces.water)
 }
 
-/// Whether block `block` is ground: neither air nor water.
+/// Whether block `block` is ground: neither air nor water, nor a vine,
+/// which hangs in the air and is walked through.
 pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
-    block != AIR && !is_water(faces, block)
+    block != AIR && !faces.get(usize::from(block)).is_some_and(|faces| faces.water || faces.shape.is_vine())
+}
+
+/// Whether block `block` is a vine: drawn as sheets on the ground beside
+/// it, or hanging, and no ground itself.
+pub fn is_vine(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.shape.is_vine() && !faces.water)
+}
+
+/// Whether block `block` is a cube with tufts of leaves reaching out of it.
+pub fn is_bushy(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.shape == block::BlockShape::Bushy && !faces.water)
 }
 
 /// Whether block `block` is ground seen through, as leaves are.

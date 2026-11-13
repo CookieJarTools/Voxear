@@ -2914,7 +2914,8 @@ impl View {
             }
             let targets = (hdr, velocity, seen_depth);
             let services = (gpu, &mut *bindless, pipelines, assets);
-            failed = draw_portals(&mut children, fg, services, (world, setup, slot), sees, targets).err();
+            let root = fg.prefix().to_string();
+            failed = draw_portals(&mut children, fg, services, (world, setup, slot), (sees, &root), targets).err();
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws, &mut far_sides);
         // The water and glass drawn since, where they stand in front of what the far sides' depth holds.
@@ -2982,12 +2983,17 @@ impl View {
 /// and lays each one's depth over `seen_depth`; then the far sides of the
 /// Portals each of those sees in turn; and last the mist of the view's own
 /// openings.
+///
+/// Its images are named after the camera's own view, whose prefix is
+/// `root`: two cameras' views, as the editor's Game and Scene views, are of
+/// different sizes, and an image of one name made at another size is made
+/// again in its place.
 fn draw_portals(
     children: &mut Vec<PortalChild>,
     fg: &mut FrameGraph<'_>,
     (gpu, bindless, pipelines, assets): (&Gpu, &mut Bindless, &Pipelines, &Assets),
     (world, setup, slot): (&World, &ViewSetup, usize),
-    sees: &Sees,
+    (sees, root): (&Sees, &str),
     (hdr, velocity, seen_depth): (ImageId, ImageId, Option<ImageId>),
 ) -> Result<()> {
     let quality = world.resource::<portals::PortalQuality>().copied().unwrap_or_default();
@@ -3032,7 +3038,7 @@ fn draw_portals(
         child.used = setup.frame_index;
         // A depth for each level, which its views use in turn: the furthest where the opening shows, the nearest
         // everywhere else.
-        fg.set_prefix(&format!("portal level {level} "));
+        fg.set_prefix(&format!("{root}portal level {level} "));
         let usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let depth = fg.create_image(gpu, bindless, "depth", ImageDesc::new(extent.width, extent.height, DEPTH_FORMAT, usage))?;
         let mask = Push { texture: parent_texture, level: index as u32, ..parent_push };
@@ -3071,7 +3077,8 @@ fn draw_portals(
             level,
             waves: sees.waves,
         };
-        fg.set_prefix(&format!("portal view {} ", child.view.number));
+        // After the view it is seen in, as the views through each of that one's Portals are numbered alike.
+        fg.set_prefix(&format!("{outer}portal view {} ", child.view.number));
         let recorded = child.view.record(fg, (gpu, &mut *bindless, &pipelines, assets), world, setup, hdr, slot, Some(&pass))?;
         let over = Push { textures: [fg.texture(depth).0, 0, 0, 0], ..parent_push };
         let images = [(depth, ImageAccess::Sampled), (seen_depth, ImageAccess::ColorAttachment)];
@@ -3083,7 +3090,7 @@ fn draw_portals(
             let mut deeper = std::mem::take(&mut child.view.portals);
             let services = (gpu, &mut *bindless, &pipelines, assets);
             let targets = (hdr, velocity, Some(seen_depth));
-            let drawn = draw_portals(&mut deeper, fg, services, (world, setup, slot), &nested, targets);
+            let drawn = draw_portals(&mut deeper, fg, services, (world, setup, slot), (&nested, root), targets);
             children[at].view.portals = deeper;
             drawn?;
         }

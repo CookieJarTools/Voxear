@@ -327,6 +327,51 @@ fn a_portal_seen_through_a_portal_shows_its_own_far_side_when_asked_to() {
     assert!(outside < 20, "{outside} pixels outside the opening changed");
 }
 
+#[test]
+fn two_views_of_different_sizes_each_show_the_far_side_in_their_openings() {
+    use voxear_render::ViewOptions;
+    let Some(mut renderer) = renderer() else { return };
+    let places = places(&mut renderer, 0.4);
+    let alone = frames(&mut renderer, &places.world, 3);
+    keep_image("portal one view.png", &alone);
+    // A second, smaller view of the same camera in the picture's top left corner, as the editor's Scene view is drawn
+    // beside its Game view.
+    let [sx, sy, sw, sh] = [0u32, 0, 240, 150];
+    renderer
+        .set_more_views(&[([sx, sy, sw, sh], ViewOptions { camera: Some(places.camera), ..ViewOptions::default() })])
+        .unwrap();
+    let both = frames(&mut renderer, &places.world, 3);
+    keep_image("portal two views.png", &both);
+    renderer.set_more_views(&[]).unwrap();
+
+    // The first view's opening is as it was with no second view.
+    let rect = opening(&places.world, places.camera, places.near, 2);
+    let (mut all, mut differ) = (0, 0);
+    for y in rect[1]..rect[3] {
+        for x in rect[0]..rect[2] {
+            if x < sx + sw + 2 && y < sy + sh + 2 {
+                continue;
+            }
+            all += 1;
+            let (p, q) = (pixel(&alone, x, y), pixel(&both, x, y));
+            differ += usize::from(p.iter().zip(q).any(|(p, q)| p.abs_diff(q) > 12));
+        }
+    }
+    assert!(all > 2000, "{all} pixels of the first view's opening to judge");
+    assert!(differ * 100 < all, "{differ} of {all} pixels of the first view's opening changed with a second view");
+    // The second view shows the far place's green ground in its own opening, and no black.
+    let (mut green, mut black) = (0, 0);
+    for y in sy..sy + sh {
+        for x in sx..sx + sw {
+            let p = pixel(&both, x, y);
+            green += usize::from(p[1] > p[0] + 20 && p[1] > p[2] + 20);
+            black += usize::from(p.iter().all(|&c| c < 8));
+        }
+    }
+    assert!(green > 200, "the second view shows the far place: {green} green pixels");
+    assert!(black < 20, "{black} black pixels in the second view");
+}
+
 /// A world of blocks with two fields 20 km apart, each with a Portal that
 /// leads to the other: the first plain grass with a stone pillar; the second
 /// with a pit of water, a tall pillar of dirt and steps of stone. The

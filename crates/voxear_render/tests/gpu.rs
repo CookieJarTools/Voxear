@@ -3593,6 +3593,53 @@ fn a_plant_of_cubes_leans_in_the_wind_and_away_from_what_walks_through_it() {
 }
 
 #[test]
+fn every_starter_plant_shows_against_the_sky_each_its_own_shape() {
+    use voxear_render::{Sky, StarterPlant};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let camera = world.spawn((Camera::default(), Transform::default()));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.7, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    let mut shown = Vec::new();
+    for plant in StarterPlant::ALL {
+        let text = plant.model().to_text();
+        let model = voxear_render::prepare_model("Plant.boxmodel", &mut |file| match file {
+            "Plant.boxmodel" => Ok(text.clone().into_bytes()),
+            other => anyhow::bail!("no {other}"),
+        })
+        .unwrap();
+        let imported = renderer.upload_model(&model).unwrap();
+        let standing =
+            world.spawn((MeshRenderer::new(imported.nodes[0].mesh, imported.nodes[0].material), Transform::default()));
+        // From a little above its middle, near enough to fill the picture, a little to one side.
+        let [wide, tall, deep] = plant.size();
+        let back = wide.max(tall).max(deep) * 0.95 + 0.3;
+        let eye = Vec3::new(back * 0.35, tall * 0.5 + back * 0.3, -back);
+        let towards = (Vec3::new(0.0, tall * 0.45, 0.0) - eye).normalize();
+        let facing = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+        *world.get_mut::<Transform>(camera).unwrap() = Transform::new(eye, facing, Vec3::ONE);
+        run(&mut renderer, &world, &mut 0.0, 3);
+        let pixels = renderer.read_pixels().unwrap().2;
+        world.despawn(standing);
+        keep_image(&format!("starter {}.png", plant.name()), &pixels);
+        // What is no sky: far from the colour of the picture's corner.
+        let sky = rgb_at(&pixels, (2, 2));
+        let of_it = (0..360u32)
+            .flat_map(|y| (0..640u32).map(move |x| (x, y)))
+            .filter(|&at| (0..3).any(|c| rgb_at(&pixels, at)[c].abs_diff(sky[c]) > 40))
+            .count();
+        assert!(of_it > 1500, "{} shows: {of_it} pixels", plant.name());
+        shown.push(pixels);
+    }
+    // No two alike.
+    for (at, one) in shown.iter().enumerate() {
+        assert!(shown[at + 1..].iter().all(|other| other != one), "{}", StarterPlant::ALL[at].name());
+    }
+}
+
+#[test]
 fn a_pulsing_glow_rises_and_falls_and_a_steady_one_stays() {
     use voxear_render::{Glow, Sky};
     let Some(mut renderer) = renderer() else { return };
@@ -6727,6 +6774,88 @@ fn ui_backgrounds_draw_with_built_in_effects_in_the_window_and_the_game() {
     assert!((17..=21).contains(&game_swings), "the game's UI striped alike: {game_swings}");
 }
 
+/// A project's look shader, compiled into the post-processing's shader: the
+/// finished picture as the level left it until it compiles and while no
+/// pack names it, and its negative, tinted by its property, once one does.
+#[test]
+fn a_look_packs_shader_has_the_last_word_on_the_picture() {
+    use voxear_render::{CustomCode, CustomShaderState, LOOK_VALUES, LookShader, Sky, WaterLook, WornLook};
+    const LOOK_SHADERS: &str = r#"
+namespace look_shader_7
+{
+struct Negative { float3 tint; };
+float3 look(Negative negative, LookInput input) { return (1.0 - input.color) * negative.tint; }
+}
+look_shader_7::Negative look_shader_7_properties()
+{
+    float4 values[LOOK_VALUES] = push.frame->post.lookValues;
+    look_shader_7::Negative properties;
+    properties.tint = values[0].xyz;
+    return properties;
+}
+float3 customLook(uint shader, LookInput input)
+{
+    switch (shader)
+    {
+    case 7:
+        return look_shader_7::look(look_shader_7_properties(), input);
+    default:
+        return input.color;
+    }
+}
+"#;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -5.0))));
+    let sky = Sky::default();
+    world.insert_resource(sky);
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let own = renderer.read_pixels().unwrap().2;
+    let at = |pixels: &[u8]| rgb_at(pixels, (320, 60));
+    let sky_blue = at(&own);
+    assert!(sky_blue[2] > sky_blue[0] + 10, "a blue sky to begin with: {sky_blue:?}");
+    // A pack names shader 7 before it is compiled: the picture is as it was.
+    let mut values = [[0.0; 4]; LOOK_VALUES];
+    values[0] = [1.0, 1.0, 0.0, 1.0];
+    let worn = WornLook {
+        sky,
+        sun: None,
+        post: steady_post(),
+        voxels: None,
+        water: WaterLook::default(),
+        shader: Some(LookShader { number: 7, values }),
+    };
+    world.insert_resource(worn);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue, "no shader 7 yet");
+    renderer.set_custom_shaders(CustomCode {
+        materials: CUSTOM_SHADERS.to_string(),
+        ui: String::new(),
+        look: LOOK_SHADERS.to_string(),
+    });
+    for _ in 0..600 {
+        run(&mut renderer, &world, &mut 0.0, 1);
+        match renderer.custom_shaders() {
+            CustomShaderState::Ready => break,
+            CustomShaderState::Failed(error) => panic!("the look shader did not compile: {error}"),
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let negative = renderer.read_pixels().unwrap().2;
+    keep_image("look shader negative.png", &negative);
+    let seen = at(&negative);
+    // The sky's negative, with no blue left by the tint: most red where it was least red.
+    assert!(seen[2] <= 2, "its property takes the blue out: {seen:?}");
+    assert!(seen[0] > seen[1] && seen[1] > 100, "the negative of a sky bluer than it is red: {seen:?} of {sky_blue:?}");
+    // Taken off, the picture is the level's own again.
+    world.remove_resource::<WornLook>();
+    run(&mut renderer, &world, &mut 0.0, 3);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), sky_blue);
+}
+
 /// A project's UI shader, compiled into the UI's shader as material shaders
 /// are into the scene's: a background it colours green, drawn as its own red
 /// background until it compiles.
@@ -6780,7 +6909,7 @@ float4 customUi(uint shader, uint first, UiInput input)
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [255, 0, 0], "its own background until the shader compiles");
 
-    renderer.set_custom_shaders(CustomCode { materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
+    renderer.set_custom_shaders(CustomCode { look: String::new(), materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
     for _ in 0..600 {
         run(&mut renderer, &world, &mut 0.0, 1);
         match renderer.custom_shaders() {

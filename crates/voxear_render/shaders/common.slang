@@ -392,6 +392,9 @@ struct Ocean
     // How far into its tile each cascade's waves start, along x and z, as shares of the tile: where the world's
     // middle is from the level's (src/gpu.rs's GpuOcean::phases), so the sea is the same when it moves.
     float2 phases[6];
+    // The colour worlds of blocks' water is drawn in where a look pack sets one, with 1 after it; all 0 for each
+    // block's own (src/looks.rs's WaterLook::block_water).
+    float4 blockWater;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,
@@ -458,6 +461,9 @@ struct LocalShadows
 };
 
 // Post-processing settings; mirrors GpuPost in src/gpu.rs.
+// How many properties a look shader's values hold (src/looks.rs's LOOK_VALUES).
+static const uint LOOK_VALUES = 8;
+
 struct Post
 {
     float bloomIntensity;
@@ -547,6 +553,11 @@ struct Post
     float3 bloomTint;
     // How dark auto exposure leaves dark scenes, 0 as bright as day, 1 as the eye sees them.
     float exposureNight;
+    // The look shader the finished picture is drawn with, by its number, 0 for none, and its properties' values
+    // (src/looks.rs's LookShader; look_custom.slang).
+    uint lookShader;
+    uint3 lookPad;
+    float4 lookValues[LOOK_VALUES];
 };
 
 static const uint SKY_GRADIENT = 0;
@@ -1261,8 +1272,10 @@ static const uint TERRAIN_SURFACE_WET = 2;
 static const uint TERRAIN_SURFACE_PUDDLES = 4;
 static const uint TERRAIN_SURFACE_LAVA = 8;
 static const uint TERRAIN_SURFACE_GLITTER = 16;
+// A world of blocks' surface of leaves or of a vine: with no picture, drawn as small leaves (blocks.slang).
+static const uint TERRAIN_SURFACE_LEAFY = 32;
 // A world of blocks' look's twin: each of its faces one block, with the look that creeps over its edge (blocks.slang).
-static const uint TERRAIN_SURFACE_MIXED = 32;
+static const uint TERRAIN_SURFACE_MIXED = 64;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

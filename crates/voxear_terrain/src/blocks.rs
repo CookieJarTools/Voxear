@@ -60,8 +60,8 @@ use mesh::ChunkMesh;
 /// `file::BlockFile::faces`): the surfaces its top, its sides and its
 /// bottom are drawn with, whether it is water, whether it is seen through
 /// where its faces' pictures are clear, whether it sways in the wind as
-/// leaves do, and its own colour, sRGB a byte each, which water takes from
-/// in it.
+/// leaves do, its shape (a cube, a cube with tufts of leaves, or a vine),
+/// and its own colour, sRGB a byte each, which water takes from in it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockFaces {
     pub top: u8,
@@ -84,14 +84,16 @@ pub struct BlockFaces {
     /// How far up the order of blocks that meet it lies: its picture creeps
     /// over the edge of a block beside it with a lower one.
     pub overlap: u8,
+    pub shape: block::BlockShape,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        let (water, see_through, sways) = (false, false, false);
-        Self { top, sides, bottom, water, see_through, sways, connects: 0, mixes: 0, overlap: 0, color: [0; 3] }
+        let (water, see_through, sways, shape) = (false, false, false, block::BlockShape::Cube);
+        let (connects, mixes, overlap) = (0, 0, 0);
+        Self { top, sides, bottom, water, see_through, sways, connects, mixes, overlap, shape, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
@@ -106,9 +108,21 @@ pub fn is_water(faces: &[BlockFaces], block: BlockId) -> bool {
     faces.get(usize::from(block)).is_some_and(|faces| faces.water)
 }
 
-/// Whether block `block` is ground: neither air nor water.
+/// Whether block `block` is ground: neither air nor water, nor a vine,
+/// which hangs in the air and is walked through.
 pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
-    block != AIR && !is_water(faces, block)
+    block != AIR && !faces.get(usize::from(block)).is_some_and(|faces| faces.water || faces.shape.is_vine())
+}
+
+/// Whether block `block` is a vine: drawn as sheets on the ground beside
+/// it, or hanging, and no ground itself.
+pub fn is_vine(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.shape.is_vine() && !faces.water)
+}
+
+/// Whether block `block` is a cube with tufts of leaves reaching out of it.
+pub fn is_bushy(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.shape == block::BlockShape::Bushy && !faces.water)
 }
 
 /// Whether block `block` is ground seen through, as leaves are.
@@ -282,6 +296,13 @@ pub struct BlockWorld {
 
 impl Component for BlockWorld {}
 
+/// How fast water running out sideways from what feeds it flows, in metres
+/// a second, where it has just left it.
+pub const RUNNING_SPEED: f32 = 1.2;
+
+/// How fast falling water falls, in metres a second.
+pub const FALLING_SPEED: f32 = 5.0;
+
 impl PartialEq for BlockWorld {
     fn eq(&self, other: &Self) -> bool {
         (Arc::ptr_eq(&self.blocks, &other.blocks) || self.blocks == other.blocks)
@@ -375,10 +396,44 @@ impl BlockWorld {
         let fill = self.blocks.fill(block);
         let height = match self.smooth {
             true => 0.5 + flow::smooth_surface(fill),
-            false => f32::from(flow::Water::of(fill).height().0) / 16.0,
+            false => f32::from(flow::water_height(fill).0) / 16.0,
         };
         let top = (block[1] as f32 + height) * self.block_size;
         Some(top - at[1])
+    }
+
+    /// How the water at `at` flows of itself, in metres a second, a point in
+    /// metres from the world's corner in its water or over it within `reach`
+    /// metres of air, as [`BlockWorld::water_depth`] finds it: water running
+    /// out sideways flows away from what feeds it, faster the further it has
+    /// run; falling water falls; a generated river's flows along its
+    /// current. `None` where there is no water there, and nothing for still
+    /// water.
+    pub fn water_flow(&self, at: [f32; 3], reach: f32) -> Option<[f32; 3]> {
+        self.water_depth(at, reach)?;
+        let (mut block, _) = self.block_at(at);
+        let water = |block: [i32; 3]| is_water(&self.faces, self.blocks.get(block));
+        // The block of water at the point, or the top of the water under it.
+        while !water(block) {
+            block[1] -= 1;
+        }
+        let fill = self.blocks.fill(block);
+        Some(match flow::Water::of(fill) {
+            // A generated river's water flows along its current.
+            flow::Water::Source if !self.smooth => flow::current_of(fill).map_or([0.0; 3], |[x, z]| [x, 0.0, z]),
+            flow::Water::Source => [0.0; 3],
+            flow::Water::Falling => [0.0, -FALLING_SPEED, 0.0],
+            flow::Water::Flowing { level, up } => {
+                // Away from the side it is fed from, along the ground.
+                let speed = RUNNING_SPEED * (1.0 + f32::from(flow::REACH.saturating_sub(level)) * 0.15);
+                let mut way = [0.0; 3];
+                let axis = usize::from(up) / 2;
+                if axis != 1 {
+                    way[axis] = if up % 2 == 0 { -speed } else { speed };
+                }
+                way
+            }
+        })
     }
 
     /// How high the water over `at` stands, in metres from the world's
@@ -489,7 +544,8 @@ impl BlockWorld {
     pub fn restyled(&self, faces: &[BlockFaces], smooth: bool) -> Self {
         // What a mesh keeps of a block's faces: its surfaces, and what it shows, moves and joins.
         let drawn = |faces: &BlockFaces| {
-            let shape = (faces.water, faces.see_through, faces.sways, faces.connects, faces.mixes, faces.overlap);
+            let joins = (faces.connects, faces.mixes, faces.overlap);
+            let shape = (faces.water, faces.see_through, faces.sways, faces.shape, joins);
             (faces.top, faces.sides, faces.bottom, shape)
         };
         if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {

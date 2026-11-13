@@ -150,6 +150,30 @@ A mask wired into **Mask** keeps the chasms to where it is over a half.
 
 Wire Sunk into the Output's **Sunk** for biomes that keep to chasm floors, Walls into its **Rock** for bare walls, and Rim into a Roof's **Top** to cover chasms over into caverns.
 
+### Rivers
+
+Rivers running down the ground wired in, lakes in its hollows, and waterfalls where a river drops over a cliff. Wire its Height, Water and Falls into the Output's, and a [[Block Worlds|Block World]] fills its rivers and lakes with its **Sea block** and pours its waterfalls as falling water.
+
+Water finds its way over a grid of points 64 m apart: each drains the steepest way down, and a hollow spills over its rim. How much ground drains through a point is counted from the points up its way within half a kilometre, worked out from the points alone, so every chunk of an endless world finds the same rivers and none stops at a seam.
+
+| Row | What it does |
+| --- | --- |
+| Source | How much ground drains into a place before a river starts there, in hectares. Less makes more, smaller streams |
+| Width | How wide a river is where a square kilometre drains into it, in metres. Where four times as much does, it is twice as wide |
+| Depth | How deep its bed is there, in metres |
+| Valley | How far either side the ground slopes down to its banks, in metres |
+| Falls | Over how many metres' drop between two points the river pours over a waterfall, halfway, into a pool |
+| Lakes | How much ground drains into a hollow before it holds a lake, in hectares; none at 0. A lake stands as high as the lowest of the ground round it, and rivers run in and out of it |
+| Meander | How much the rivers wind, 0 to 1 |
+
+Under Advanced: **Spacing** (how far apart the grid's points are) and **Seed**.
+
+A river's water always runs downhill. Its bed is cut into the ground, and where the ground beside it is lower than its water, banks are raised, so water never stands over the air beside it.
+
+**In:** Ground. **Out:** Height, Water (the water's height where there is a river or a lake), Falls (how many metres of a waterfall pour down there), Banks (1 on a river and its banks, fading out across its valley).
+
+The water flows down its slope: a [[Block Worlds#Rivers and currents|river in a Block World]] carries what floats in it, and drags characters wading it.
+
 ### Clamp
 
 What is wired in, held between **Min** and **Max**.
@@ -387,7 +411,9 @@ What the generator makes. With nothing wired into Height the ground lies at the 
 
 **Sunk** takes how far under the land round about the ground lies, in metres: a Chasms node's Sunk. A world's biomes can keep to ground sunk so far (see [[Block Worlds#Deep ground|Deep ground]]), so a chasm's floor or a cavern's grows country of its own.
 
-**In:** Height, Temperature, Humidity, Volume, Rock, Sunk.
+**Water** takes how high water stands where a river or a lake is, and **Falls** how many metres of it pour down as a waterfall's curtain: a Rivers node's. A world of blocks fills the air under the water with its Sea block, and a waterfall's curtain with falling water.
+
+**In:** Height, Temperature, Humidity, Volume, Rock, Sunk, Water, Falls.
 
 ## What a node costs
 
@@ -397,5 +423,7 @@ Most nodes work each place out once. A few read the ground round each place, and
 | --- | --- |
 | Slope Mask, Curvature, Gullies | 5 times |
 | Smooth | 9 times |
+
+A **Rivers** node reads the ground it runs down once more for each point of its grid, 64 m apart, a tile of them at a time. The first chunks of a place wait a moment for its tile.
 
 These multiply. A Gullies node behind a Smooth works its own input out 45 times. Put the dear nodes as far along the graph as they will go, and add fine detail after them rather than before.

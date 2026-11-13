@@ -36,6 +36,20 @@ impl Editor {
         self.lighting_panel.shown()
     }
 
+    /// A look pack's file changed: read again, and worn again as it now is
+    /// where the scene is shown under one.
+    pub(super) fn look_pack_changed(&mut self) {
+        self.game.content.forget_kind(voxear_assets::AssetKind::LookPack);
+        let game = &mut self.game;
+        let worn = voxear_engine::look_packs::worn(&game.engine.world).map(str::to_string);
+        let again = worn.map(|reference| {
+            voxear_engine::look_packs::wear(&mut game.engine.world, &mut game.content, &reference)
+        });
+        if let Some(Err(error)) = again {
+            tracing::error!("{error:#}");
+        }
+    }
+
     /// The Lighting page's menu of look packs to show the scene under.
     pub fn lighting_look_menu(&self) -> voxear_ui::NodeId {
         self.lighting_panel.look_menu()
@@ -58,6 +72,13 @@ impl Editor {
     pub(super) fn lighting_action(&mut self, action: LightingAction, renderer: &mut Renderer) {
         let done = match action {
             LightingAction::SetScene(reference) => self.set_scene_lighting(reference.as_deref()),
+            // A look pack's setting: written into its file, and the scene shown under it wears it as it now is.
+            LightingAction::Set { file, path, value } if file.extension().is_some_and(|e| e == "lookpack") => {
+                lighting_panel::write_setting(&file, path, value).map(|()| {
+                    self.files_seen();
+                    self.look_pack_changed();
+                })
+            }
             LightingAction::Set { file, path, value } => {
                 lighting_panel::write_setting(&file, path, value).and_then(|()| {
                     self.files_seen();

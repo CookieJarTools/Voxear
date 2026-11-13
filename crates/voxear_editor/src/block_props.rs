@@ -415,6 +415,9 @@ pub enum BlockField {
     Lowest,
     Overhangs,
     Caves,
+    /// Whether rivers run down its generated ground, where its generator
+    /// makes no water of its own.
+    Rivers,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -511,6 +514,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     }
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
+                    fields.push(F::Rivers);
                     fields.push(F::Biomes);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
@@ -550,6 +554,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Lowest => "Lowest block",
         F::Overhangs => "Overhangs",
         F::Caves => "Caves",
+        F::Rivers => "Rivers",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -734,6 +739,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Lowest => Value::Number(file()?.generate.as_ref()?.bottom as f32),
         F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
+        F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
         F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
@@ -848,7 +854,9 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             file.ground.height = number(v).unwrap_or(file.ground.height as f32).round().clamp(0.0, 1024.0) as u32;
         }
         (F::Ground, Value::Choice(at, _)) => {
-            let generate = file.generate.clone().unwrap_or_default();
+            // Ground newly generated has rivers.
+            let fresh = || voxear_terrain::blocks::generate::BlockGenerate { rivers: true, ..Default::default() };
+            let generate = file.generate.clone().unwrap_or_else(fresh);
             file.generate = (*at == 1).then_some(generate);
         }
         (F::Offset, v) => {
@@ -870,6 +878,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Caves, v) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.caves = number(v).unwrap_or(generate.caves).clamp(0.0, 1.0);
+        }
+        (F::Rivers, Value::Toggle(on)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.rivers = *on;
         }
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };
@@ -1103,15 +1115,18 @@ pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
     if matches!(field, F::Block | F::NewBiome) {
         found.retain(|(_, pick)| *pick != Pick::Asset(None));
     }
-    // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked.
+    // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked. Before them,
+    // every starter plant at once, and the starter trees of blocks.
     if field == F::AddPlant {
         let has = |path: &str| found.iter().any(|(_, pick)| *pick == Pick::Asset(Some(path.to_string())));
-        let new: Vec<(String, Pick)> = voxear_render::StarterPlant::ALL
+        let sets = [("All Starter Plants", crate::objs::ALL_STARTER_PLANTS), ("Starter Trees of Blocks", crate::objs::STARTER_TREES)];
+        let sets = sets.into_iter().map(|(name, pick)| (name.to_string(), Pick::Asset(Some(pick.to_string()))));
+        let new = voxear_render::StarterPlant::ALL
             .into_iter()
             .map(|plant| (plant, crate::objs::starter_plant_path(plant)))
             .filter(|(_, path)| !has(path))
-            .map(|(plant, path)| (format!("New {}", plant.name()), Pick::Asset(Some(path))))
-            .collect();
+            .map(|(plant, path)| (format!("New {}", plant.name()), Pick::Asset(Some(path))));
+        let new: Vec<(String, Pick)> = sets.chain(new).collect();
         found.splice(1..1, new);
     }
     found
@@ -1296,6 +1311,31 @@ pub fn list_biomes(game: &mut Game, renderer: Option<&mut Renderer>, entity: Ent
             generate.biomes.push(guid.to_string());
         }
     }
+    change_file(game, renderer, entity, file)
+}
+
+/// Lists each of `structures` the world's generator does not build yet at
+/// the end of its structures, and makes its ground again once with them
+/// all. Nothing for a world whose ground is not generated.
+pub fn list_structures(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    structures: &[AssetGuid],
+) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let listed = |generate: &voxear_terrain::blocks::generate::BlockGenerate, guid: AssetGuid| {
+        let is = |reference: &String| game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+        generate.structures.iter().any(|reference| is(reference) == Some(guid))
+    };
+    for &guid in structures {
+        if !listed(generate, guid) {
+            generate.structures.push(guid.to_string());
+        }
+    }
+    // Its structures as it lists them now, the blocks they name numbered.
+    let file = voxear_engine::blocks::with_structures(&mut game.content, &file);
     change_file(game, renderer, entity, file)
 }
 

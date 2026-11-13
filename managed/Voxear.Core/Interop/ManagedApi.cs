@@ -33,4 +33,5 @@ internal unsafe struct ManagedApi
 	public delegate* unmanaged[Cdecl]<uint, int, void> SetEnabled;
 	public delegate* unmanaged[Cdecl]<int*, void> OriginMoved;
 	public delegate* unmanaged[Cdecl]<ParticleHitData*, int, void> ParticleHits;
+	public delegate* unmanaged[Cdecl]<HeatEventData*, int, byte*, int, void> HeatEvents;
 }

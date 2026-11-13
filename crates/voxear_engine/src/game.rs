@@ -11,7 +11,7 @@ use voxear_localization::{Localization, StringTable};
 use voxear_render::{MAX_PREVIEW_SIZE, MeshHandle, MeshRenderer, PostProcess, PreviewId, PreviewOptions, Renderer};
 use voxear_scene::{Destroying, Parent, Placement, Transform};
 use voxear_scripting::{
-    AssetName, AudioAsk, ContentStats, CursorLock, LevelInfo, LevelLoadOptions, LoadProgress, PlaySound,
+    AssetName, AudioAsk, ContentStats, CursorLock, HeatEventData, LevelInfo, LevelLoadOptions, LoadProgress, PlaySound,
     PreviewOptions as ScriptPreviewOptions, PreviewSource, PreviewState, SceneLoadOptions, SceneRequest,
     ScriptServices, ServicesScope, SoundFacts, SpawnedPrefab, UiAnswer, UiAsk,
 };
@@ -212,6 +212,7 @@ impl Game {
             let code = voxear_render::CustomCode {
                 materials: crate::shaders::dispatch_code(registry),
                 ui: crate::shaders::ui_dispatch_code(registry),
+                look: crate::shaders::look_dispatch_code(registry),
             };
             if !renderer.set_custom_shaders(code) {
                 return;
@@ -603,6 +604,65 @@ impl Game {
         self.engine.instantiate(&template, parent, placement)
     }
 
+    /// Makes what Heat Bodies' changes became this frame, each in its Obj's
+    /// place under its parent, starting as warm as it was, the Obj taken
+    /// away; then tells scripts of every change and every character that
+    /// feels otherwise.
+    fn make_heat_changes(&mut self, mut renderer: Option<&mut Renderer>) {
+        let due = crate::heat::take_due(&mut self.engine.world);
+        if due.changes.is_empty() && due.feels.is_empty() {
+            return;
+        }
+        let mut events = Vec::with_capacity(due.changes.len() + due.feels.len());
+        let mut names = Vec::with_capacity(events.capacity());
+        for change in due.changes {
+            let entity = change.entity;
+            let mut became = None;
+            if let Some(prefab) = change.becomes.as_deref().filter(|_| self.engine.world.is_alive(entity)) {
+                let world = &self.engine.world;
+                let parent = world.get::<Parent>(entity).map(|parent| parent.0);
+                let placement =
+                    world.get::<Transform>(entity).map(|t| Placement { position: t.position, rotation: t.rotation });
+                let warmth = world.get::<crate::heat::HeatState>(entity).map(|state| state.temperature);
+                match self.instantiate(prefab, parent, placement, renderer.as_deref_mut()) {
+                    Ok(made) => {
+                        let world = &mut self.engine.world;
+                        if let (Some(body), Some(warmth)) = (world.get::<crate::heat::HeatBody>(made).cloned(), warmth) {
+                            world.insert(made, crate::heat::HeatState::new(&body, warmth));
+                        }
+                        self.engine.destroy_objs(&[entity]);
+                        became = Some(made);
+                    }
+                    Err(error) => tracing::error!("a Heat Body's change {} could not make {prefab}: {error:#}", change.name),
+                }
+            }
+            let became = became.map_or(0, Entity::to_bits);
+            events.push(HeatEventData { obj: entity.to_bits(), became, kind: 0, value: change.index as i32 });
+            names.push(change.name);
+        }
+        for (entity, feels) in due.feels {
+            let value = crate::heat::Feels::ALL.iter().position(|&f| f == feels).unwrap_or_default() as i32;
+            events.push(HeatEventData { obj: entity.to_bits(), became: 0, kind: 1, value });
+            names.push(String::new());
+        }
+        let names = names.join("\n");
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer,
+            models: self.models,
+            unload_requested: &mut self.unload_requested,
+            previews: &mut self.previews,
+            ui: &mut self.ui,
+            display: &mut self.display,
+            audio: &mut self.audio,
+            input: &mut self.input,
+        };
+        let _scope = ServicesScope::enter(&mut services);
+        self.engine.tell_heat_events(&events, &names);
+    }
+
     /// Runs one frame, then any level change scripts asked for. A level that
     /// fails to load is logged and the game carries on, as in Unity.
     /// Loads the colour grading lookup table the level's post-processing
@@ -666,6 +726,7 @@ impl Game {
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
+        crate::heat::prepare(&mut self.engine.world, &mut self.content);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
         if let Some(renderer) = renderer.as_deref() {
             crate::mesh_boxes::refresh(&mut self.engine.world, renderer);
@@ -697,6 +758,7 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        self.make_heat_changes(renderer.as_deref_mut());
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.

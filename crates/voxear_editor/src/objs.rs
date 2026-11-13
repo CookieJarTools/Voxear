@@ -387,6 +387,12 @@ pub fn create(
 /// The folder a project keeps its starter plants in.
 pub const PLANTS_FOLDER: &str = "Plants";
 
+/// What a Block World's Add plant row is given for every starter plant at
+/// once, and for the starter trees of blocks: no files, though they read as
+/// the places of two.
+pub const ALL_STARTER_PLANTS: &str = "Plants/All Starter Plants";
+pub const STARTER_TREES: &str = "Plants/Starter Trees of Blocks";
+
 /// Where a starter plant's model is kept in a project.
 pub fn starter_plant_path(plant: StarterPlant) -> String {
     format!("{PLANTS_FOLDER}/{}.boxmodel", plant.name())
@@ -434,6 +440,51 @@ pub fn make_starter_plant(game: &mut Game, plant: StarterPlant) -> Result<String
 /// suits it: grass thick and near, trees far apart where it is wet enough,
 /// rocks on any ground. Returns it.
 pub fn create_grown_plant(game: &mut Game, renderer: &mut Renderer, world: Entity, path: &str) -> Result<Entity> {
+    let growth = starter_plant_at(path).map(voxear_engine::grown_plants::starter_growth);
+    create_grown(game, renderer, world, path, (stem(path), growth))
+}
+
+/// The names of the Foliages under the Block World on `world` that grow by
+/// themselves.
+pub fn grown_names(game: &Game, world: Entity) -> HashSet<String> {
+    use voxear_engine::scene_file::FoliageSource;
+    let objs = game.engine.world.query_ref::<(&FoliageSource, &Parent, &Name)>().without::<Destroying>();
+    let grows = objs.into_iter().filter(|(source, parent, _)| parent.0 == world && source.0.grow.is_some());
+    grows.map(|(_, _, name)| name.0.clone()).collect()
+}
+
+/// The models of the starter plants `growth`'s plants keep near to, and the
+/// blocks: the leaves of the starter trees of blocks, by the paths they are
+/// made at beside the world at `world_path`, whether the project has them
+/// yet or not.
+fn near_names(growth: &voxear_engine::grown_plants::StarterGrowth, world_path: &str) -> (Vec<String>, Vec<String>) {
+    let plants: Vec<String> = growth.near.iter().map(|plant| starter_plant_path(*plant)).collect();
+    let trees = growth.near.iter().any(|plant| voxear_engine::grown_plants::STARTER_TREES.contains(plant));
+    let folder = crate::block_props::blocks_beside(world_path);
+    let leaves = crate::starter_trees::leaf_blocks().into_iter().map(|name| format!("{folder}/{name}.block"));
+    (plants, if trees { leaves.collect() } else { Vec::new() })
+}
+
+/// The tops of the starter biomes that plants grow on, by reference, of
+/// those the project has in the Blocks folder beside the world at
+/// `world_path`: grass and moss, and not sand, snow or stone.
+fn starter_soils(game: &Game, world_path: &str) -> Vec<String> {
+    const SOILS: [&str; 5] = ["Grass", "Moss", "Needles Floor", "Jungle Floor", "Dry Grass"];
+    let folder = crate::block_props::blocks_beside(world_path);
+    let found = SOILS.iter().filter_map(|name| game.content.db().guid_of(&format!("{folder}/{name}.block")));
+    found.map(|guid| guid.to_string()).collect()
+}
+
+/// As [`create_grown_plant`], the Foliage called `name` and its plants
+/// grown as `growth` says where there is one: a starter plant's own way, or
+/// another for the same model, as pebbles along a shore.
+pub fn create_grown(
+    game: &mut Game,
+    renderer: &mut Renderer,
+    world: Entity,
+    path: &str,
+    (name, growth): (&str, Option<voxear_engine::grown_plants::StarterGrowth>),
+) -> Result<Entity> {
     use voxear_engine::{blocks::BlockWorldAsset, grown_plants};
     let parts = model_parts(game, renderer, path);
     let part = |icon: &str| parts.iter().find(|part| part.icon == icon).and_then(|part| part.reference.clone());
@@ -443,12 +494,21 @@ pub fn create_grown_plant(game: &mut Game, renderer: &mut Renderer, world: Entit
     let material = part("material").map(|material| kept(game, &material)).transpose()?;
     let asset = game.engine.world.get::<BlockWorldAsset>(world).context("the Block World has no asset")?;
     let top = asset.drawn.guid(asset.file.ground.top).map(|top| top.to_string());
-    let name = stem(path);
+    let world_path = game.content.db().get(asset.guid).map(|entry| entry.path.clone()).unwrap_or_default();
     // A starter tree shows far off as a block of its leaves' colour, made beside its model.
     let starter = starter_plant_at(path);
     let far = starter.and_then(|plant| starter_far_block(game, plant).transpose()).transpose()?;
-    let blocks = (top.as_deref(), far.as_deref());
-    let foliage = grown_plants::foliage_text(&mesh, material.as_deref(), starter, blocks);
+    let (near_plants, near_blocks) = growth.as_ref().map(|growth| near_names(growth, &world_path)).unwrap_or_default();
+    // A starter plant grows on the starter biomes' tops that things grow on too, where the project has them.
+    let soils = if growth.is_some() { starter_soils(game, &world_path) } else { Vec::new() };
+    let names = grown_plants::GrownNames {
+        top: top.as_deref(),
+        soils: &soils,
+        far: far.as_deref(),
+        near_plants: &near_plants,
+        near_blocks: &near_blocks,
+    };
+    let foliage = grown_plants::grown_text(&mesh, material.as_deref(), growth.as_ref(), &names);
     let text = format!("format = 1\n\n[[obj]]\nid = 1\nname = {}\n{foliage}", toml::Value::String(name.to_string()));
     let file = scene_file::parse(&text, name)?;
     let spawned = scene_file::spawn(&mut game.engine, &mut game.content, Some(renderer), &file, &HashSet::new())?;

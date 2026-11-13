@@ -141,6 +141,74 @@ pub struct WornLook {
     /// How many small cubes every world of blocks' faces are drawn as, and
     /// how deep; none for each world's own.
     pub voxels: Option<crate::blocks::BlockVoxels>,
+    /// What the pack sets of how water looks, wherever it is.
+    pub water: WaterLook,
+    /// The look shader the finished picture is drawn with; none for none.
+    pub shader: Option<LookShader>,
+}
+
+/// How many properties a look shader's values hold.
+pub const LOOK_VALUES: usize = 8;
+
+/// A look shader a pack names, as the picture is drawn with it: its number
+/// among the project's shaders, and each of its properties' values, in
+/// their order, colours linear.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LookShader {
+    pub number: u32,
+    pub values: [[f32; 4]; LOOK_VALUES],
+}
+
+/// What a look pack sets of how water looks: the sea, every Pool of water
+/// and the water of worlds of blocks. Each is the water's own where the
+/// pack sets none. Colours are sRGB, as an Ocean's and a Pool's are.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterLook {
+    /// The water's own colour: what it fades into where it is deep.
+    pub deep: Option<[f32; 3]>,
+    /// The colour light takes through the thin tops of waves and ripples.
+    pub scatter: Option<[f32; 3]>,
+    /// What a metre of water lets through, by colour.
+    pub clarity: Option<[f32; 3]>,
+    /// How murky it is: 1 as Clarity says, more to see less far into it.
+    pub murk: Option<f32>,
+    /// How much foam the sea's breaking crests have.
+    pub foam: Option<f32>,
+}
+
+impl WaterLook {
+    /// The sea as it looks under the pack.
+    pub fn over_ocean(&self, ocean: crate::Ocean) -> crate::Ocean {
+        crate::Ocean {
+            deep: self.deep.unwrap_or(ocean.deep),
+            scatter: self.scatter.unwrap_or(ocean.scatter),
+            clarity: self.clarity.unwrap_or(ocean.clarity),
+            murk: self.murk.unwrap_or(ocean.murk),
+            foam: self.foam.unwrap_or(ocean.foam),
+            ..ocean
+        }
+    }
+
+    /// A Pool as it looks under the pack: one of water, as lava keeps its own.
+    pub fn over_pool(&self, pool: crate::Pool) -> crate::Pool {
+        if pool.liquid != crate::Liquid::Water {
+            return pool;
+        }
+        crate::Pool {
+            deep: self.deep.unwrap_or(pool.deep),
+            scatter: self.scatter.unwrap_or(pool.scatter),
+            clarity: self.clarity.unwrap_or(pool.clarity),
+            murk: self.murk.unwrap_or(pool.murk),
+            ..pool
+        }
+    }
+
+    /// The colour worlds of blocks' water is drawn in under the pack,
+    /// linear, with 1 after it; all 0 for each block's own.
+    pub fn block_water(&self) -> [f32; 4] {
+        let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        self.deep.map_or([0.0; 4], |[r, g, b]| [linear(r), linear(g), linear(b), 1.0])
+    }
 }
 
 /// A look's settings.

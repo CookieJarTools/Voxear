@@ -372,6 +372,18 @@ pub struct ObjData {
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
+    /// A Climate: the level's clock, and its climate where no generator gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub climate: Option<crate::heat::Climate>,
+    /// A Heat Source, warming or cooling what is near it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_source: Option<crate::heat::HeatSource>,
+    /// A Heat Zone, an area hotter or colder than round it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_zone: Option<crate::heat::HeatZone>,
+    /// A Heat Body, taking the temperature of where it is and changing with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_body: Option<crate::heat::HeatBody>,
     /// Bends foliage out of the Obj's way as it passes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_interaction: Option<FoliageInteraction>,
@@ -468,6 +480,10 @@ impl ObjData {
             stream: None,
             buoyancy: None,
             seasons: None,
+            climate: None,
+            heat_source: None,
+            heat_zone: None,
+            heat_body: None,
             foliage_interaction: None,
             track_maker: None,
             cave_shape: None,
@@ -1009,6 +1025,25 @@ pub struct GrowData {
     /// out for plants that do not show so far off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub far_block: Option<String>,
+    /// The plants its own keep near to: each the model another Foliage of
+    /// the same world grows, by GUID or project path. None, with no
+    /// `near_blocks` either, for plants that grow anywhere.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub near_plants: Vec<String>,
+    /// The blocks its plants keep near to, each a `.block` by GUID or
+    /// project path: where one is the highest block of its place.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub near_blocks: Vec<String>,
+    /// How near, in metres.
+    #[serde(skip_serializing_if = "is_usual_within")]
+    pub within: f32,
+}
+
+/// How near its plants keep to what they keep near to, unless a rule says.
+pub const USUAL_WITHIN: f32 = 6.0;
+
+fn is_usual_within(metres: &f32) -> bool {
+    *metres == USUAL_WITHIN
 }
 
 impl Default for GrowData {
@@ -1028,6 +1063,9 @@ impl Default for GrowData {
             scale: rule.scale,
             aligned: true,
             far_block: None,
+            near_plants: Vec::new(),
+            near_blocks: Vec::new(),
+            within: USUAL_WITHIN,
         }
     }
 }
@@ -1037,6 +1075,12 @@ impl GrowData {
     /// number there. A block the world does not hold is one nothing stands
     /// on.
     pub fn rule(&self, mut number: impl FnMut(&str) -> Option<u16>) -> voxear_terrain::blocks::grow::GrowRule {
+        // The blocks it keeps near to; the plants it keeps near to are other Foliages' rules, which whoever has
+        // the world's Foliages puts in (`near.plants`).
+        let near_blocks: Vec<u16> = self.near_blocks.iter().filter_map(|block| number(block)).collect();
+        let near = (!self.near_plants.is_empty() || !self.near_blocks.is_empty()).then(|| {
+            voxear_terrain::blocks::grow::Near { within: self.within.max(0.0), plants: Vec::new(), blocks: near_blocks }
+        });
         voxear_terrain::blocks::grow::GrowRule {
             on: self.on.iter().map(|block| number(block).unwrap_or(voxear_terrain::blocks::chunk::AIR)).collect(),
             temperature: self.temperature,
@@ -1050,6 +1094,7 @@ impl GrowData {
             seed: self.seed,
             scale: self.scale,
             aligned: self.aligned,
+            near,
         }
     }
 }
@@ -1770,6 +1815,18 @@ fn capture_instance(
     if root.seasons.is_some() && root.seasons != prefab_root.seasons {
         instance.seasons = root.seasons;
     }
+    if root.climate.is_some() && root.climate != prefab_root.climate {
+        instance.climate = root.climate;
+    }
+    if root.heat_source.is_some() && root.heat_source != prefab_root.heat_source {
+        instance.heat_source = root.heat_source;
+    }
+    if root.heat_zone.is_some() && root.heat_zone != prefab_root.heat_zone {
+        instance.heat_zone = root.heat_zone;
+    }
+    if root.heat_body.is_some() && root.heat_body != prefab_root.heat_body {
+        instance.heat_body.clone_from(&root.heat_body);
+    }
     if root.foliage_interaction.is_some() && root.foliage_interaction != prefab_root.foliage_interaction {
         instance.foliage_interaction = root.foliage_interaction;
     }
@@ -1988,6 +2045,18 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
+    }
+    if let Some(climate) = actual.climate.filter(|c| Some(*c) != expected.climate) {
+        put("climate", whole(&climate, &crate::heat::Climate::default())?);
+    }
+    if let Some(source) = actual.heat_source.filter(|h| Some(*h) != expected.heat_source) {
+        put("heat_source", whole(&source, &crate::heat::HeatSource::default())?);
+    }
+    if let Some(zone) = actual.heat_zone.filter(|h| Some(*h) != expected.heat_zone) {
+        put("heat_zone", whole(&zone, &crate::heat::HeatZone::default())?);
+    }
+    if let Some(body) = actual.heat_body.as_ref().filter(|h| Some(*h) != expected.heat_body.as_ref()) {
+        put("heat_body", whole(body, &crate::heat::HeatBody::default())?);
     }
     if let Some(push) = actual.foliage_interaction.filter(|p| Some(*p) != expected.foliage_interaction) {
         put("foliage_interaction", whole(&push, &FoliageInteraction::default())?);
@@ -2275,6 +2344,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.stream = world.get::<Stream>(entity).copied();
     obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
+    obj.climate = world.get::<crate::heat::Climate>(entity).copied();
+    obj.heat_source = world.get::<crate::heat::HeatSource>(entity).copied();
+    obj.heat_zone = world.get::<crate::heat::HeatZone>(entity).copied();
+    obj.heat_body = world.get::<crate::heat::HeatBody>(entity).cloned();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
     obj.cave_shape = world.get::<CaveShape>(entity).copied();
@@ -2945,7 +3018,8 @@ seed = 3
         assert_eq!(again, data);
         // What is as it starts is left out; a Foliage that grows nowhere says nothing of it.
         let plain = toml::to_string(&FoliageData { grow: Some(GrowData::default()), ..data.clone() }).unwrap();
-        for left_out in ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"] {
+        let left = ["on", "humidity", "temperature", "height", "patches", "seed", "aligned", "far_block"];
+        for left_out in left.into_iter().chain(["near_plants", "near_blocks", "within"]) {
             assert!(!plain.contains(&format!("\n{left_out} =")), "{left_out} in {plain}");
         }
         assert!(!toml::to_string(&FoliageData { grow: None, ..data }).unwrap().contains("grow"));
@@ -2958,5 +3032,19 @@ seed = 3
         });
         assert_eq!(rule.on, [1, 7, voxear_terrain::blocks::chunk::AIR]);
         assert_eq!((rule.humidity, rule.patches, rule.seed, rule.spacing), (Some([0.5, 1.0]), 20.0, 3, 6.0));
+        assert!(rule.near.is_none(), "it grows anywhere");
+        // What its plants keep near to: blocks by the world's numbers, those it has not left out; the plants are
+        // other Foliages' rules, for whoever has them to put in.
+        let near = "mesh = \"builtin:cube\"\n[grow]\nnear_plants = [\"Plants/Tree.boxmodel\"]\n\
+                    near_blocks = [\"Blocks/Moss.block\", \"Blocks/Lost.block\"]\nwithin = 4.5\n";
+        let data: FoliageData = toml::from_str(near).expect("foliage");
+        assert_eq!(toml::from_str::<FoliageData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        let rule = data.grow.as_ref().unwrap().rule(|block| (block == "Blocks/Moss.block").then_some(7));
+        let kept = rule.near.expect("what it keeps near to");
+        assert_eq!((kept.within, kept.blocks, kept.plants.len()), (4.5, vec![7], 0));
+        let only_plants = "mesh = \"builtin:cube\"\n[grow]\nnear_plants = [\"Plants/Tree.boxmodel\"]\n";
+        let data: FoliageData = toml::from_str(only_plants).unwrap();
+        let rule = data.grow.unwrap().rule(|_| None);
+        assert_eq!(rule.near.map(|near| near.within), Some(USUAL_WITHIN), "near nothing until the plants are put in");
     }
 }

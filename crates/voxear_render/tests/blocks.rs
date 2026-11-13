@@ -86,6 +86,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -203,6 +204,7 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -280,6 +282,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -378,6 +381,7 @@ fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted(
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -456,6 +460,7 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -529,6 +534,7 @@ fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -682,6 +688,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -761,6 +768,7 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -889,6 +897,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1009,14 +1018,14 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
             placement: land(13.0, 6.0, 0.7, 35.0, 1),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: oak_log, leaves: oak_leaves },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: oak_log, leaves: oak_leaves, vine: 0 },
             biomes: Vec::new(),
         },
         PlacedStructure {
             placement: land(17.0, 7.0, 0.6, 40.0, 2),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: pine, wood: pine_log, leaves: pine_needles },
+            blocks: StructureBlocks::Plant { plant: pine, wood: pine_log, leaves: pine_needles, vine: 0 },
             biomes: Vec::new(),
         },
     ];
@@ -1037,6 +1046,7 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1215,7 +1225,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
             placement: land(15.0, 7.0, 0.5, 35.0, 1),
             ground: GroundFit::Leave,
             sink: 0,
-            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: log, leaves },
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: log, leaves, vine: 0 },
             biomes: Vec::new(),
         },
     ];
@@ -1251,6 +1261,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1402,6 +1413,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1502,6 +1514,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
         floors: [1, 1],
         floor_gap: 14,
         depth: [26, 30],
+        caves: 0,
         wall: bricks,
         floor: flagstones,
         corridor_width: 3,
@@ -1573,6 +1586,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1665,6 +1679,7 @@ fn generated_view(
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1791,6 +1806,106 @@ fn fantasy_presets_stand_towers_blades_and_great_peaks_and_cut_rifts_down_to_flo
     assert!(teal > 500, "{teal} pixels of fern on the rift's floor");
 }
 
+#[test]
+fn a_generated_river_runs_between_its_banks_and_pours_over_a_waterfall_into_a_pool() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let preset = |name: &str| starters().into_iter().find(|starter| starter.name == name).unwrap().world(7, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    // Water's own colour, darker than the sky: lake green, blue over the ground under it.
+    let water = |pixels: &[u8]| {
+        (0..WIDTH * HEIGHT)
+            .filter(|at| {
+                let [r, g, b] = rgb_at(pixels, at % WIDTH, at / WIDTH);
+                g > r + 15 && b > r + 15 && b < 150
+            })
+            .count()
+    };
+    // A river through rolling hills, from over its bank 30 m off, looking down at it.
+    let hills = preset("Rolling Hills");
+    let (xs, zs): (Vec<f32>, Vec<f32>) = (0..200 * 200).map(|at| ((at % 200) as f32 * 8.0, (at / 200) as f32 * 8.0)).unzip();
+    let (level, _) = hills.water(&xs, &zs).unwrap();
+    let flowing = |at: usize| hills.current(xs[at], zs[at]).is_some_and(|[x, z]| x * x + z * z > 0.1);
+    let river = (0..xs.len()).find(|&at| level[at] > 2.0 && flowing(at)).expect("a river");
+    let corner = [xs[river] - 128.0, zs[river] - 128.0];
+    let eye = Vec3::new(107.0, level[river] + 14.0, 107.0);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, 0.785, 0.42),
+        "blocks river.png",
+    );
+    assert!(water(&pixels) > 2000, "{} pixels of the river", water(&pixels));
+    // A waterfall down a mountainside, from 30 m off at its pool's height and a little over.
+    let alpine = preset("Alpine");
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..400 * 400).map(|at| ((at % 400) as f32 * 6.0 - 1200.0, (at / 400) as f32 * 6.0 - 1200.0)).unzip();
+    let (level, _) = alpine.water(&xs, &zs).unwrap();
+    let wet = |at: usize| level[at] > -1000.0;
+    let fall = (0..xs.len())
+        .filter(|&at| wet(at) && at % 400 + 1 < 400 && wet(at + 1))
+        .find_map(|at| {
+            let line: (Vec<f32>, Vec<f32>) = (0..=12).map(|k| (xs[at] + k as f32 * 0.5, zs[at])).unzip();
+            let (top, falls) = alpine.water(&line.0, &line.1).unwrap();
+            (0..line.0.len()).find(|&k| falls[k] > 4.0).map(|k| (line.0[k], line.1[k], top[k], falls[k]))
+        })
+        .expect("a waterfall");
+    let (fx, fz, top, height) = fall;
+    let corner = [fx - 128.0, fz - 128.0];
+    let eye = Vec3::new(100.0, top - height + 6.0, 128.0);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &alpine,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, std::f32::consts::FRAC_PI_2, 0.0),
+        "blocks waterfall.png",
+    );
+    assert!(water(&pixels) > 500, "{} pixels of the waterfall and its pool", water(&pixels));
+}
+
+#[test]
+fn a_great_cave_mouth_opens_in_the_hillside_into_a_hall() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let caves = starters().into_iter().find(|starter| starter.name == "Highlands").unwrap().world(1, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    let rooms = caves.caves().expect("its caves").rooms_near([0.0, 200.0, 0.0], 2000.0);
+    let mouth = rooms.iter().find(|room| room.mouth).expect("a mouth");
+    let out = mouth.out.expect("where its passage comes out");
+    let corner = [out[0] - 128.0, out[2] - 128.0];
+    // From 45 m out down the hillside and a little over it, looking back at its mouth.
+    let (dx, dz) = (out[0] - mouth.at[0], out[2] - mouth.at[2]);
+    let long = (dx * dx + dz * dz).sqrt().max(0.01);
+    let (ax, az) = (dx / long, dz / long);
+    let eye = Vec3::new(128.0 + ax * 45.0, out[1] + 12.0, 128.0 + az * 45.0);
+    let yaw = (-ax).atan2(-az);
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &caves,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, yaw, 0.2),
+        "blocks cave mouth.png",
+    );
+    assert!(sky_pixels(&pixels) > 0);
+    // From the hall's floor, looking out through its passage.
+    let eye = Vec3::new(mouth.floor[0] - corner[0], mouth.floor[1] + 4.0, mouth.floor[2] - corner[1]);
+    let (inside, _) = generated_view(
+        &mut renderer,
+        &caves,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        (eye, (ax).atan2(az), 0.0),
+        "blocks cave mouth inside.png",
+    );
+    assert!(sky_pixels(&inside) > 100, "sky through the mouth: {}", sky_pixels(&inside));
+}
+
 /// A picture of bricks, 16 pixels a side: three courses with dark mortar between, each brick a shade of its own.
 fn bricks(renderer: &mut Renderer) -> voxear_render::TextureId {
     let size = 16u32;
@@ -1843,6 +1958,7 @@ fn small_cubes_render(voxels: voxear_render::BlockVoxels, eye: Vec3, towards: Ve
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -1951,6 +2067,7 @@ fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
                 mixed: false,
             }
         })
@@ -2011,4 +2128,253 @@ fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves(
     };
     let (stood, stands) = (trunk(&calm), trunk(&windy));
     assert!(stood.0.is_some() && stands == stood, "{stands:?} against {stood:?}");
+}
+
+/// A picture of leaves, 16 pixels a side: leaves in three greens with clear gaps between them.
+fn leaf_picture(renderer: &mut Renderer) -> voxear_render::TextureId {
+    let size = 16u32;
+    let rgba: Vec<u8> = (0..size * size)
+        .flat_map(|i| {
+            let (x, y) = (i % size, i / size);
+            let mixed = (x * 7 + y * 13 + (x / 2) * (y / 2) * 5) % 11;
+            let clear = mixed < 3;
+            let [r, g, b] = [[52, 120, 30], [70, 150, 38], [96, 178, 48]][(mixed % 3) as usize];
+            [r, g, b, if clear { 0 } else { 255 }]
+        })
+        .collect();
+    let source = voxear_render::TextureSource { name: "leaves", width: size, height: size, rgba: &rgba, srgb: true };
+    renderer.add_texture(&source).unwrap()
+}
+
+/// How a tree's leaves and the vines on it are drawn in [`tree_render`].
+#[derive(Clone, Copy, PartialEq)]
+struct TreeLook {
+    /// Whether its leaves are bushy.
+    bushy: bool,
+    /// Whether its leaves have a cut-out picture rather than a colour alone.
+    pictured: bool,
+    /// Whether vines hang from its crown and climb its trunk.
+    vines: bool,
+    wind: Option<f32>,
+}
+
+/// A birch of blocks on a field of grass, grown from a seed, seen from `eye` looking `towards`, after one second
+/// and after a second and a half; with how many loose quads its chunks hold.
+fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2], u32)> {
+    use voxear_render::WindZone;
+    use voxear_terrain::blocks::{
+        block::BlockShape,
+        file::BlockKind,
+        plant::{PlantDef, PlantPart},
+    };
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [48, 48];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind::colored("Birch Log", [0.86, 0.85, 0.8]));
+    let wood = file.blocks.len() as u16;
+    let shape = if look.bushy { BlockShape::Bushy } else { BlockShape::Cube };
+    let leaf = BlockKind { sways: true, shape, cutout: look.pictured, ..BlockKind::colored("Birch Leaves", [0.3, 0.62, 0.16]) };
+    file.blocks.push(BlockKind { material: look.pictured.then(|| "leaves".to_string()), ..leaf });
+    let leaves = file.blocks.len() as u16;
+    file.blocks.push(BlockKind { sways: true, shape: BlockShape::Vine, ..BlockKind::colored("Vine", [0.2, 0.46, 0.14]) });
+    let vine = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    let birch = PlantDef {
+        height: [8.0, 8.0],
+        trunk: 1.0,
+        taper: 0.0,
+        bend: 0.0,
+        crown_width: [7.0, 7.0],
+        crown_height: [6.0, 6.0],
+        leaf_size: 3.4,
+        leaf_density: 0.9,
+        roots: 0,
+        ..PlantDef::default()
+    };
+    for (at, part) in birch.grow(5).blocks {
+        let block = if part == PlantPart::Leaf { leaves } else { wood };
+        blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
+    }
+    if look.vines {
+        // Up the trunk's side towards the camera, and hanging from under the crown here and there.
+        for y in 4..9 {
+            blocks.set([24, y, 23], vine);
+        }
+        for (x, z, long) in [(21, 22, 4), (27, 21, 3), (22, 26, 5), (26, 27, 2), (20, 24, 3)] {
+            let Some(under) = (5..16).find(|&y| blocks.get([x, y, z]) == leaves && blocks.get([x, y - 1, z]) == 0) else {
+                continue;
+            };
+            for y in under - long..under {
+                blocks.set([x, y, z], vine);
+            }
+        }
+    }
+    let picture = look.pictured.then(|| leaf_picture(&mut renderer));
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|face| {
+            // A block's colour is sRGB; a material's is linear.
+            let [r, g, b] = face.color.map(|c| c.powf(2.2));
+            let pictured = face.material.is_some();
+            let desc = MaterialDesc {
+                base_color: if pictured { [1.0; 4] } else { [r, g, b, 1.0] },
+                base_color_texture: picture.filter(|_| pictured),
+                alpha_cutoff: pictured.then_some(0.5),
+                roughness: 1.0,
+                ..MaterialDesc::default()
+            };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: face.leafy,
+                mixed: face.mixed,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let block_look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    let made = BlockWorld::new(blocks, &faces, 1.0);
+    let loose = made.meshes.values().map(|mesh| mesh.loose().1).sum();
+    world.spawn((made, block_look, Transform::default()));
+    let towards = towards.normalize();
+    let turned = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+    world.spawn((Camera::default(), Transform::new(eye, turned, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = look.wind {
+        world.spawn((WindZone { strength, ..WindZone::default() }, Transform::default()));
+    }
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let mut time = 0.0;
+    let mut after = |frames: u32| {
+        for _ in 0..frames {
+            time += 1.0 / 60.0;
+            renderer.render(&world, time).expect("frame renders");
+        }
+        renderer.read_pixels().expect("pixels").2
+    };
+    Some(([after(60), after(30)], loose))
+}
+
+#[test]
+fn bushy_leaves_reach_out_past_their_blocks_in_tufts_with_a_picture_or_none_and_sway() {
+    let (eye, towards) = (Vec3::new(21.0, 10.5, 14.5), Vec3::new(0.3, 0.0, 1.0));
+    let plain = TreeLook { bushy: false, pictured: false, vines: false, wind: None };
+    let Some(([cubes, _], none)) = tree_render(plain, eye, towards) else { return };
+    let ([bushy, bushy_later], loose) = tree_render(TreeLook { bushy: true, ..plain }, eye, towards).unwrap();
+    let ([pictured, _], _) = tree_render(TreeLook { bushy: true, pictured: true, ..plain }, eye, towards).unwrap();
+    let ([flat, _], _) = tree_render(TreeLook { pictured: true, ..plain }, eye, towards).unwrap();
+    let ([windy, windy_later], _) = tree_render(TreeLook { bushy: true, wind: Some(2.0), ..plain }, eye, towards).unwrap();
+    keep_image("leaves cubes.png", &cubes);
+    keep_image("leaves bushy.png", &bushy);
+    keep_image("leaves bushy pictured.png", &pictured);
+    keep_image("leaves bushy later.png", &bushy_later);
+    keep_image("leaves cubes pictured.png", &flat);
+    keep_image("leaves bushy in the wind.png", &windy);
+    assert_eq!(none, 0, "a tree of cubes has no sheets");
+    assert!(loose > 100 && loose % 3 == 0, "three sheets to each block of the crown's outside: {loose}");
+    // How much of the picture is leaves: green well over red and blue.
+    let leafy = |pixels: &[u8]| {
+        let green = |p: &[u8]| i32::from(p[1]) > i32::from(p[0]) + 6 && i32::from(p[1]) > i32::from(p[2]) + 6;
+        let upper = &pixels[..(WIDTH * HEIGHT / 2 * 4) as usize];
+        upper.chunks_exact(4).filter(|p| green(p)).count() as f32 / (WIDTH * HEIGHT / 2) as f32
+    };
+    eprintln!("leaves: {} cubes, {} bushy, {} pictured cubes, {} pictured bushy", leafy(&cubes), leafy(&bushy), leafy(&flat), leafy(&pictured));
+    // The crown of tufts is wider and taller than the crown of cubes: leaves stand where the sky was.
+    assert!(leafy(&bushy) > leafy(&cubes) * 1.04, "{} against {}", leafy(&bushy), leafy(&cubes));
+    assert!(leafy(&pictured) > leafy(&flat) * 1.1, "{} against {}", leafy(&pictured), leafy(&flat));
+    // Its outline is ragged: along the crown's edge, sky and leaf change places far more often than a cube's does.
+    let edges = |pixels: &[u8]| {
+        let green = |x: u32, y: u32| {
+            let [r, g, b] = rgb_at(pixels, x, y);
+            g > r + 6 && g > b + 6
+        };
+        (0..HEIGHT / 2).map(|y| (1..WIDTH).filter(|&x| green(x, y) != green(x - 1, y)).count()).sum::<usize>()
+    };
+    eprintln!("edges: {} cubes, {} bushy", edges(&cubes), edges(&bushy));
+    assert!(edges(&bushy) > edges(&cubes) * 2, "{} against {}", edges(&bushy), edges(&cubes));
+    // Still with no wind, stirring in it.
+    let unlike = |a: &[u8], b: &[u8]| {
+        let pairs = a.chunks_exact(4).zip(b.chunks_exact(4));
+        pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 6)).count() as f32 / (WIDTH * HEIGHT) as f32
+    };
+    // A still crown is the same but for a few pixels along its fine edges and shadows.
+    let (still, stirred) = (unlike(&bushy, &bushy_later), unlike(&windy, &windy_later));
+    eprintln!("moved: {still} with no wind, {stirred} in it");
+    assert!(still < 0.01, "with no wind nothing moves: {still}");
+    assert!(stirred > 0.03 && stirred > still * 4.0, "tufts stir in the wind: {stirred} against {still}");
+}
+
+
+#[test]
+fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free() {
+    let (eye, towards) = (Vec3::new(21.0, 8.5, 15.5), Vec3::new(0.3, 0.0, 1.0));
+    let bare = TreeLook { bushy: true, pictured: false, vines: false, wind: None };
+    let Some(([without, _], tufts)) = tree_render(bare, eye, towards) else { return };
+    let ([with, later], loose) = tree_render(TreeLook { vines: true, ..bare }, eye, towards).unwrap();
+    let ([windy, windy_later], _) = tree_render(TreeLook { vines: true, wind: Some(2.0), ..bare }, eye, towards).unwrap();
+    keep_image("vines none.png", &without);
+    keep_image("vines.png", &with);
+    keep_image("vines in the wind.png", &windy);
+    assert!(loose > tufts + 10, "the vines' sheets beside the leaves': {loose} against {tufts}");
+    let unlike = |a: &[u8], b: &[u8], columns: std::ops::Range<u32>, rows: std::ops::Range<u32>| {
+        let differs = |x: u32, y: u32| (0..3).any(|c| rgb_at(a, x, y)[c].abs_diff(rgb_at(b, x, y)[c]) > 6);
+        let all = rows.clone().flat_map(|y| columns.clone().map(move |x| (x, y)));
+        all.filter(|&(x, y)| differs(x, y)).count() as f32 / (rows.len() * columns.len()) as f32
+    };
+    // Vines show under the crown and on the trunk, where there were none.
+    let under = HEIGHT / 2..HEIGHT * 5 / 6;
+    let shown = unlike(&with, &without, 0..WIDTH, under.clone());
+    assert!(shown > 0.01, "vines under the crown: {shown}");
+    // The one on the trunk stands still in the wind; those hanging free sway.
+    let (still, swayed) = (unlike(&with, &later, 0..WIDTH, under.clone()), unlike(&windy, &windy_later, 0..WIDTH, under));
+    eprintln!("vines: {shown} shown, {still} moved with no wind, {swayed} in it");
+    assert!(still < 0.01 && swayed > still * 3.0 + 0.004, "{swayed} against {still}");
+}
+
+#[test]
+fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
+    use voxear_render::{WaterLook, WornLook};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond(&mut renderer, &[]);
+    // Straight down on the pond from above its middle: water in the middle of the picture, grass round it.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+    let own = render(&mut renderer, &world, 8);
+    // The level's own lighting, with a pack's water over it: as red as wine.
+    let worn = WornLook {
+        sky: *world.resource::<Sky>().unwrap(),
+        sun: None,
+        post: *world.resource::<PostProcess>().unwrap(),
+        voxels: None,
+        water: WaterLook { deep: Some([0.7, 0.05, 0.1]), ..WaterLook::default() },
+        shader: None,
+    };
+    world.insert_resource(worn);
+    let wine = render(&mut renderer, &world, 8);
+    keep_image("block water own.png", &own);
+    keep_image("block water of a pack.png", &wine);
+    let (middle, corner) = ((WIDTH / 2, HEIGHT / 2), (20, 20));
+    let (was, now) = (rgb_at(&own, middle.0, middle.1), rgb_at(&wine, middle.0, middle.1));
+    assert!(was[1] > was[0] + 10, "the pond is its block's green to begin with: {was:?}");
+    assert!(now[0] > now[1] + 20 && now[0] > was[0] + 20, "and the pack's red under it: {now:?} against {was:?}");
+    let (grass, still) = (rgb_at(&own, corner.0, corner.1), rgb_at(&wine, corner.0, corner.1));
+    assert!((0..3).all(|c| (grass[c] - still[c]).abs() <= 2), "the grass is as it was: {still:?} against {grass:?}");
+    // A pack that sets no water leaves each block's own.
+    world.insert_resource(WornLook { water: WaterLook::default(), ..worn });
+    let back = render(&mut renderer, &world, 8);
+    let again = rgb_at(&back, middle.0, middle.1);
+    assert!((0..3).all(|c| (again[c] - was[c]).abs() <= 3), "its own again: {again:?} against {was:?}");
 }

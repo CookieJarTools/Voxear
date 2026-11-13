@@ -45,7 +45,7 @@ Each change is saved as you make it, and every terrain in the open level generat
 
 ## Presets
 
-A preset is a graph of nodes built and tuned for one kind of ground, with a few of its values as rows:
+A preset is a graph of nodes built and tuned for one kind of ground, with a few of its values as rows. Every preset but Rifts and Cave Level has [[Generator Nodes#Rivers|rivers]] running down its ground, with lakes and waterfalls:
 
 | Preset | Its ground | Its own rows |
 | --- | --- | --- |

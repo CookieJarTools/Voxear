@@ -28,7 +28,7 @@ impl Editor {
         // The project's shaders, but those that draw UI, which draw no materials.
         let registry = self.game.content.shaders();
         let draws_ui =
-            |path: &str| registry.shaders.iter().any(|s| s.path == path && s.info.as_ref().is_ok_and(|info| info.ui));
+            |path: &str| registry.shaders.iter().any(|s| s.path == path && s.info.as_ref().is_ok_and(|info| info.ui || info.look));
         let db = self.game.content.db();
         let materials = |e: &&voxear_assets::AssetEntry| e.kind == AssetKind::Shader && !draws_ui(&e.path);
         let mut paths: Vec<String> = db.entries().filter(materials).map(|e| e.path.clone()).collect();

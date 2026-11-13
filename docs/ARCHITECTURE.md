@@ -1103,7 +1103,12 @@ that in their place and passes its small cubes on to every world of blocks (`Ext
 worked out again only when the level's lighting or the pack has changed, so wearing one costs a comparison a tick.
 Weather goes over the worn look as it goes over the level's own. Packs are the engine's (`BUILTIN`), the project's
 assets, or files in the player's `Looks` folder beside the saves; the reference of the one chosen is kept in
-`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts.
+`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts. A pack's `[water]` is laid over the sea
+and each Pool of water as they are extracted (`WaterLook`), and over the water of worlds of blocks as one colour in
+the ocean's record. A pack's `[shader]` names a look shader, a `.shader` with a `look` function: the engine writes
+every such shader into `project_look_shaders.slang` behind `customLook` (as it writes UI shaders behind `customUi`),
+the `post` module is compiled with it, and Composite calls it last with the pixel's colour, by the number and the
+values the frame's post settings carry.
 
 **Texture packs** (`voxear_engine::texture_packs`) are the player's choice of pictures, as look packs are of
 light. A `.texturepack` names blocks and materials by their assets and gives each pictures. The pack worn is kept by
@@ -3353,6 +3358,17 @@ floor is the generator's height, with its own layers. Chasms are a height node: 
 what grows there follows from the Output's Sunk, which `WorldGen::sunk` lessens by however much higher the height
 asked about stands (a roof's top over a floor is sunk not at all).
 
+Rivers (`generate/nodes/rivers.rs`) need the ground somewhere other than where they are asked, so the node compiles
+its input as a program of its own (`Compiler::input_program`) and reads it over a grid of points, in blocks of points
+kept and shared by every thread. A tile of points works out drainage from a margin of points round it wide enough
+that every tile decides each point alike: the steepest way down, a hollow's spill (the lowest point within two whose
+own way down does not lead back into it), and catchment counted only from points within a fixed reach up each way.
+Tiles are kept and shared too. A place far from any river or lake point leaves its ground as it was without looking
+further. The Output's Water and Falls are compiled together, and `WorldGen::current` is the flow down the water's
+slope. A world of cubes keeps a river's current in its source blocks' fills, in the range a smooth world uses for
+its sea's surface, so the flow step treats them as any source, while the mesher, the water shader and
+`BlockWorld::water_flow` read the current back.
+
 Caves of rooms (`generate::caves`) are the one part of a generator made somewhere other than in its graph: a room
 is a prefab of Cave Shape and Cave Exit Objs, and `voxear_terrain` reads no prefabs. So the Cave Network node keeps
 each room as numbers beside its prefab's reference, and the editor reads them from the prefab
@@ -3424,7 +3440,29 @@ no still block touches (`mesh::swaying_corners`). `blockSway` moves those corner
 phase hashed from its whole-number place among the world's corners, so every face meeting at a corner moves it alike
 and held corners keep leaves on their wood: nothing parts. The depth and shadow passes move them too, last frame's
 place gives their motion, and a face's picture and bounced light are read where it stands (`VertexOut::moved`). A face
-drawn with its block's colour alone is matt (roughness 1). Further,
+drawn with its block's colour alone is matt (roughness 1). A block has a shape (`block::BlockShape`, **Shape** in its
+Inspector, `BlockFaces::shape`): a cube, a cube with tufts of leaves (bushy), or a vine. The mesher keeps a chunk's
+**loose quads** after its faces and before its water (`ChunkMesh::loose`, `buckets[FACINGS]`): for each bushy block
+that meets open air three sheets crossed through its middle (`mesh::TUFT_SHEETS`, two upright and one of four that
+lean, picked by a hash of the block's place), and for a vine a sheet against each block of ground beside it or two
+crossed sheets where it hangs free. A loose quad is two words as a face is, its facing 6 or 7 (`TUFT`, `VINE`), its
+sheet where a face has its size, and its four sway bits say which of its corners move: a tuft's with the cube corner
+nearest each, a hanging vine's but where ground holds its head or foot. They are no triangles, so physics and the
+GI's rays never meet them, and a vine is no ground at all (`is_ground`): it hides no face, shades no corner, and
+water shows its face towards it. `loosePoint` in `shaders/block_quads.slang` places a sheet's corners, turned the
+other way round where the camera is behind it, so one quad is seen from both sides with back faces culled, and
+shrinks a tuft away over the last quarter of `LOOSE_REACH` (160 blocks), past which a view leaves a chunk's loose
+quads out (`blocks::pick`). `blockSheetLook` in `shaders/blocks.slang` cuts a sheet into cells, as many to a block
+as its picture has pixels or 16: a tuft thins out from whole in its middle to nothing at its edge by a hash of each
+cell, a vine with no cut-out picture is strands by a hash of each column of cells with leaves beside them, and a
+cut-out picture cuts its own clear parts away; the shaded pass, the depth pass and the sun's shadows all ask it. A
+face of leaves with no picture (`SurfaceLook::leafy`, `TERRAIN_SURFACE_LEAFY`) is drawn as small leaves in three
+shades with dark gaps (`blockLeafShade`), the squares taken two, four and eight together as they shrink on screen.
+Vines are hung by the generator (`generate::columns::hang_vines`, a biome's `[vines]`, `BiomeBlocks::vine`): after a
+chunk column's ground is made and before its structures, a block of open air with ground over it starts one by a
+hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
+has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
+(`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
@@ -3574,6 +3612,17 @@ top block, height and slope, its climate asked in one batch, kept with the chanc
 plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
 plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
 
+A rule may keep its plants near something (`grow::Near`). Near another Foliage's plants: the engine finds the
+world's other growing Foliages by the model each draws (`GrowData::near_plants` names models) and puts their rules in
+(`Near::plants`, what those keep near to themselves left out); `near_sites` asks each for its tries round the column,
+by its grid, chance and patches and, on generated ground, the climate and height over the sea it likes, in one call
+to the generator, and a try is kept within `within` metres of one. That needs no blocks, so near ground and far
+ground agree; it does not ask what block a tree would stand on or how steep, so a few plants keep near a tree that
+never grew. Near a block: `Tops`, a column's highest blocks, keeps beside the ground to grow on the highest block of
+all, leaves and vines too, and a try is kept within reach of one of the rule's blocks among them, the column's own
+alone. The ground to grow on looks through leaves and vines (`is_canopy`: a vine, or a block that is bushy, seen
+through or swaying), so plants stand under a tree of blocks and never on its crown.
+
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
 square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on
@@ -3590,6 +3639,38 @@ Terrain.Crater(hit.Point, radius: 3f, depth: 1.2f, Dirt);     // easy
 Terrain.Apply(TerrainEdit.Flatten(at, 4f, floor));            // advanced
 var edits = Terrain.CaptureEdits();                           // for a save, or a player joining
 ```
+
+## Heat *(implemented: the temperature field, the clock, Heat Sources, Zones and Bodies, hot and cold blocks)*
+
+Every place has a temperature, in °C, and things there warm and cool towards it: food cooks and freezes, and
+characters feel the cold. All of it is sums and products, so every machine in a networked game agrees.
+
+- **The field** (`voxear_engine::heat::sample`, `heat/field.rs`): a `HeatSample` is the climate, from the first
+  world of blocks' generator that reaches the point (`WorldGen::climate`, given each frame by `heat::prepare`) or
+  the level's `Climate` lapsed with height; what the time of day adds (`day_curve`, coldest at five and warmest at
+  three, smoothsteps, scaled by the Climate's swing and by dryness); shelter, five upward rays through the block
+  worlds, the share that meet ground times how much rock is straight overhead, drawing it to the deep ground's
+  temperature (water's in water); Heat Zones in the order they were made, each setting or adding by how far inside
+  it the point is; and what is near: the hottest and the coldest of Heat Sources, short-lived `Burst`s, lava under
+  or below (`water::sample`) and hot and cold blocks, each faded by `1 - smoothstep(d / reach)`.
+- **Hot and cold blocks:** a `.block`'s `heat` (`BlockDef::heat`, `BlockHeat { celsius, reach }`, reach at most 16
+  m) is kept by each world as `Resolved::heat` by block number. `HeatWorld` keeps each chunk's hot and cold
+  blocks as a list beside the `Arc<Chunk>` it was read from; holding the `Arc` makes a change copy the chunk, so a
+  pointer that differs is a chunk read again. A chunk whose palette holds no hot block is never scanned.
+- **The clock:** the level's first `Climate` has the time of day, which `turn_clock` moves while playing and which
+  turns the first Directional Light where it says (`sun_rotation`, drawn only, so it may use the sine).
+- **Heat Bodies** (`heat::update`, on each fixed step after physics while playing): a `HeatState` beside each
+  `HeatBody` keeps its temperature, the place's (looked at every 0.2 s), each change's held seconds and whether
+  it happened, and how it feels. Temperature moves by `delta / (warms_in + delta)` of the way each step. What is
+  due goes in a `HeatDue` resource; the game (`Game::make_heat_changes`, after the engine's tick, since only it has
+  prefabs) makes each change's prefab in its Obj's place under its parent, starting it as warm, destroys the Obj,
+  and tells scripts.
+- **Scripts:** natives `heat_sample`, `heat_add` and `clock_value` answered through `HeatHooks`; Heat Body, Heat
+  Source and Heat Zone through `ComponentKind` 22 to 24; changes and feelings as `HeatEventData` through the
+  managed `heat_events`, raised as `HeatBody.Changed` and `HeatBody.FeelsChanged`. Native API 82.
+- **Editor:** `heat_props` shows the four components, a Heat Body's changes as a list whose length is a number;
+  the block Inspector's Heat section; and the Scene view's Heat shading (`editor/heat_view.rs`), a grid round the
+  camera looked at a few hundred places a frame and drawn as tinted squares with the gizmos.
 
 ## Maps *(implemented for block worlds: tiles, drawing, the Map and Map Marker components, UI elements, knowledge; other terrains planned)*
 

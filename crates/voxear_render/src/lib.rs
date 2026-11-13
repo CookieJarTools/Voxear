@@ -129,7 +129,7 @@ pub use previews::{
 };
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
-pub use looks::{Look, LookName, SunLook, WornLook};
+pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
@@ -2322,6 +2322,8 @@ impl View {
         if let Some(water) = &water {
             frame_data.ocean = water.frame;
         }
+        // A look pack's colour for the water of worlds of blocks, in place of each block's own.
+        frame_data.ocean.block_water = extracted.block_water;
         let glass = match panes.is_empty() {
             true => None,
             false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),
@@ -2884,12 +2886,18 @@ struct CustomShaders {
     compiling: Option<CustomCompile>,
     waiting: Option<CustomCode>,
     state: CustomShaderState,
+    /// Which of the process's renderers this is, for a folder of its own.
+    number: std::sync::OnceLock<u32>,
 }
 
 impl CustomShaders {
     /// Where the project's `project_shaders.slang` and its modules are
-    /// written, for this run.
+    /// written, for this run: a folder of this renderer's own, so two
+    /// renderers of one process compiling at once do not write over each
+    /// other's.
     fn dir(&self) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("voxear-custom-shaders-{}", std::process::id()))
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let number = self.number.get_or_init(|| NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        std::env::temp_dir().join(format!("voxear-custom-shaders-{}-{number}", std::process::id()))
     }
 }

@@ -699,7 +699,7 @@ const BLOCK_WATER_REACH: f32 = 96.0;
 /// ground beside a pond is not taken to be under it) and as deep as the
 /// water goes along those ways, in the colours its faces are drawn in
 /// (`blockWaterLook` in `shaders/water.slang`).
-pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3) -> Option<GpuWaterBody> {
+pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3, worn: [f32; 4]) -> Option<GpuWaterBody> {
     use voxear_scene::{Destroying, Transform, WorldTransform};
     use voxear_terrain::blocks::BlockWorld;
     let worlds = world.query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
@@ -730,7 +730,9 @@ pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3) -> Option<Gpu
             let c = f32::from(c) / 255.0;
             if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
         };
-        let color = faces.color.map(linear);
+        // A look pack's colour for all such water, in place of the block's own.
+        let own = faces.color.map(linear);
+        let color = if worn[3] > 0.0 { [worn[0], worn[1], worn[2]] } else { own };
         let most = color.iter().copied().fold(1e-3, f32::max);
         let middle = (low + high) * 0.5;
         let to_world = Mat4::from_translation(Vec3::new(middle.x, camera.y + depth, middle.z));
@@ -774,7 +776,7 @@ mod tests {
         world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(Vec3::new(10.0, 0.0, 20.0))));
         // In it, a block under its top; and just over it.
         for camera in [Vec3::new(16.5, 4.0, 27.5), Vec3::new(16.5, 5.8, 27.5)] {
-            let body = block_water(&world, camera).expect("in or just over the pond");
+            let body = block_water(&world, camera, [0.0; 4]).expect("in or just over the pond");
             assert_eq!((body.kind, body.shape, body.liquid), (WATER_BLOCKS, 0, Liquid::Water as u32));
             let at = Mat4::from_cols_array_2d(&body.to_world).w_axis.truncate();
             // Level with the pond's top, over its middle, a block wider each way and a block deeper.
@@ -785,8 +787,8 @@ mod tests {
             assert!(body.absorb[0] > body.absorb[1] && body.absorb[1] > body.absorb[2]);
         }
         // Over the stone beside it, or high over it, none.
-        assert!(block_water(&world, Vec3::new(12.5, 5.5, 27.5)).is_none());
-        assert!(block_water(&world, Vec3::new(16.5, 9.0, 27.5)).is_none());
+        assert!(block_water(&world, Vec3::new(12.5, 5.5, 27.5), [0.0; 4]).is_none());
+        assert!(block_water(&world, Vec3::new(16.5, 9.0, 27.5), [0.0; 4]).is_none());
     }
 
     #[test]

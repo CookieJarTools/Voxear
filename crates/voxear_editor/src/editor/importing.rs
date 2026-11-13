@@ -332,15 +332,7 @@ impl Editor {
             }
             // A look pack edited outside the editor is worn as it now is, where the scene is shown under it.
             if looks {
-                self.game.content.forget_kind(voxear_assets::AssetKind::LookPack);
-                let game = &mut self.game;
-                let worn = voxear_engine::look_packs::worn(&game.engine.world).map(str::to_string);
-                let again = worn.map(|reference| {
-                    voxear_engine::look_packs::wear(&mut game.engine.world, &mut game.content, &reference)
-                });
-                if let Some(Err(error)) = again {
-                    tracing::error!("{error:#}");
-                }
+                self.look_pack_changed();
                 self.refresh_lighting_page();
             }
             // A texture pack edited outside the editor is worn as it now is, where the scene is shown under it.

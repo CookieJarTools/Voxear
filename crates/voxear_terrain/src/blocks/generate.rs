@@ -50,6 +50,12 @@ pub struct BlockGenerate {
     pub bottom: i32,
     pub overhangs: f32,
     pub caves: f32,
+    /// Whether rivers run down its ground where its generator makes no
+    /// water of its own: a Rivers node over the generator's ground (see
+    /// `generate::nodes::Rivers`). Off for a world written before worlds
+    /// had them; a world given generated ground in the editor starts on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rivers: bool,
     /// The block the air below its generator's sea level is filled with, by
     /// its place in the list from 1: air for none.
     #[serde(skip_serializing_if = "is_air")]
@@ -87,6 +93,7 @@ impl Default for BlockGenerate {
             bottom: -16,
             overhangs: 0.0,
             caves: 0.3,
+            rivers: false,
             sea: AIR,
             endless: None,
             biomes: Vec::new(),
@@ -201,6 +208,55 @@ mod tests {
     }
 
     #[test]
+    fn no_piece_of_ground_is_left_loose_in_the_air_where_caves_and_overhangs_cut_under_it() {
+        // Steep ground pushed out in overhangs, over caves, great halls and wide tunnels among them.
+        let (file, world) = generated(1.0, 8.0);
+        let map = file.make_ground(Some(&world));
+        let (side, low, high) = (64, -40, 400);
+        let solid = |at: [i32; 3]| map.get(at) != AIR;
+        // Every piece of ground joined to nothing but itself, within the map and over its foot: none as small as
+        // loose rock, wherever it is. What is known held up, by a piece looked at before, holds up what meets it.
+        let mut known: std::collections::HashMap<[i32; 3], bool> = std::collections::HashMap::new();
+        let mut loose = Vec::new();
+        for y in low + 1..high {
+            for z in 0..side {
+                for x in 0..side {
+                    if !solid([x, y, z]) || known.contains_key(&[x, y, z]) {
+                        continue;
+                    }
+                    let mut piece = vec![[x, y, z]];
+                    let mut within = std::collections::HashSet::from([[x, y, z]]);
+                    let (mut next, mut held) = (0, false);
+                    while next < piece.len() && !held && piece.len() <= 300 {
+                        let p = piece[next];
+                        next += 1;
+                        for w in [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] {
+                            let q = [p[0] + w[0], p[1] + w[1], p[2] + w[2]];
+                            // Past the map's sides or its foot, it may be held up: what this world has not made.
+                            let past = q[0] < 0 || q[2] < 0 || q[0] >= side || q[2] >= side || q[1] <= low;
+                            if past || known.get(&q) == Some(&true) {
+                                held = true;
+                                break;
+                            }
+                            if solid(q) && within.insert(q) {
+                                piece.push(q);
+                            }
+                        }
+                    }
+                    let held = held || piece.len() > 256;
+                    if !held {
+                        loose.push((piece[0], piece.len()));
+                    }
+                    for p in piece {
+                        known.insert(p, held);
+                    }
+                }
+            }
+        }
+        assert!(loose.is_empty(), "loose pieces of ground: {loose:?}");
+    }
+
+    #[test]
     fn generated_ground_takes_its_blocks_from_the_biome_each_place_is() {
         use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
         let (mut file, world) = generated(0.0, 0.0);
@@ -276,6 +332,88 @@ mod tests {
         let text = file.to_text();
         assert!(text.contains("biomes = [\"Biomes/Cold.biome\"]") && !text.contains("placed"), "{text}");
         assert_eq!(BlockFile::parse(&text).unwrap().generate.unwrap().placed, None);
+    }
+
+    #[test]
+    fn a_biomes_vines_hang_under_ledges_and_cave_roofs_through_the_open_air_the_same_from_any_column() {
+        use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
+        // Ground with caves and overhangs, of metre blocks, one biome all over: its vines are block 4.
+        let (mut file, world) = generated(0.5, 9.0);
+        file.block_size = 1.0;
+        // Deep enough under the ground for caves.
+        file.generate.as_mut().unwrap().bottom = -150;
+        file.blocks.truncate(3);
+        file.blocks.push(BlockKind::colored("Vine", [0.2, 0.5, 0.15]));
+        let without = file.make_ground(Some(&world));
+        let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let place = |amount: f32, depth: f32| {
+            let vines = BiomeBlocks { vine: 4, vine_amount: amount, vine_length: [2, 6], vine_depth: depth, ..BiomeBlocks::default() };
+            let biomes = Biomes::new(vec![land.clone()], 15.0, 0.3, world.seed());
+            Some(std::sync::Arc::new(WorldBiomes { biomes, blocks: vec![vines] }))
+        };
+        file.generate.as_mut().unwrap().placed = place(0.4, 30.0);
+        let map = file.make_ground(Some(&world));
+        let mut vines = Vec::new();
+        for (key, chunk) in map.chunks().filter(|(_, chunk)| chunk.may_hold(|block| block == 4)) {
+            for i in 0..CHUNK * CHUNK * CHUNK {
+                let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                if chunk.get(x, y, z) == 4 {
+                    vines.push([key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32]);
+                }
+            }
+        }
+        assert!(vines.len() > 60, "{} blocks of vine", vines.len());
+        // Nothing else changed: a vine is only where there was open air.
+        for (key, chunk) in map.chunks() {
+            for i in 0..CHUNK * CHUNK * CHUNK {
+                let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                let at = [key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32];
+                let (now, was) = (chunk.get(x, y, z), without.get(at));
+                assert!(now == was || (now == 4 && was == AIR), "{at:?}: {was} became {now}");
+            }
+        }
+        // Each hangs from ground: up its column there are only vines until ground, within six blocks.
+        let mut beside_a_wall = 0;
+        for &[x, y, z] in &vines {
+            let over = (1..=6).map(|up| map.get([x, y + up, z])).find(|&block| block != 4);
+            assert!(matches!(over, Some(block) if block != AIR), "the vine at {:?} hangs from {over:?}", [x, y, z]);
+            let walls = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+            beside_a_wall += usize::from(walls.iter().any(|d| ![AIR, 4].contains(&map.get([x + d[0], y, z + d[1]]))));
+        }
+        assert!(beside_a_wall * 3 > vines.len(), "{beside_a_wall} of {} are beside a wall", vines.len());
+        // A chunk column made alone has the vines it has among its neighbours.
+        let generate = file.generate.clone().unwrap();
+        for column in [[0, 0], [1, 0], [1, 1]] {
+            for (key, chunk) in column_chunks(&file, &generate, &world, 0, column, Some([64, 64])) {
+                assert_eq!(Some(&chunk), map.chunk(key).map(|chunk| &**chunk), "chunk {key:?}");
+            }
+        }
+        // Fewer with a smaller amount, none below the depth they keep to, none at all with no block for them.
+        let count = |amount: f32, depth: f32| {
+            let mut file = file.clone();
+            file.generate.as_mut().unwrap().placed = place(amount, depth);
+            let map = file.make_ground(Some(&world));
+            let surface = |x: i32, z: i32| (-150..400).rev().find(|&y| ![AIR, 4].contains(&map.get([x, y, z]))).unwrap();
+            let mut found = Vec::new();
+            for (key, chunk) in map.chunks().filter(|(_, chunk)| chunk.may_hold(|block| block == 4)) {
+                for i in 0..CHUNK * CHUNK * CHUNK {
+                    let (x, y, z) = (i % CHUNK, i / (CHUNK * CHUNK), i / CHUNK % CHUNK);
+                    if chunk.get(x, y, z) == 4 {
+                        let (x, z) = (key[0] * 32 + x as i32, key[2] * 32 + z as i32);
+                        found.push(surface(x, z) - (key[1] * 32 + y as i32));
+                    }
+                }
+            }
+            found
+        };
+        assert!(count(0.1, 30.0).len() * 2 < vines.len());
+        // Hung no deeper than 4 m under the generator's own surface, and no longer than six blocks.
+        let shallow = count(0.4, 4.0);
+        assert!(!shallow.is_empty() && shallow.len() < vines.len(), "{} near the surface", shallow.len());
+        assert!(count(0.0, 30.0).is_empty());
+        // The far rings, of larger blocks, have none.
+        let far = column_chunks(&file, &generate, &world, 1, [0, 0], None);
+        assert!(far.iter().all(|(_, chunk)| !chunk.may_hold(|block| block == 4)));
     }
 
     #[test]
@@ -557,7 +695,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xb5c2_959f_3398_5e27, 0x06fa_ee9e_a714_aca3, 0x7257_8dd2_041f_3d95],
+            [0xbd24_a714_3e22_e08f, 0x06fa_ee9e_a714_aca3, 0x97e3_2cd8_e4e4_3c43],
             "generated blocks changed: were they meant to? {hashes:#x?}"
         );
     }
@@ -810,9 +948,94 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0x879c_99e5_626f_1886, 0x06fa_ee9e_a714_aca3, 0xfc09_8f2b_e038_785a],
+            [0xebe7_713d_2d66_92e6, 0x06fa_ee9e_a714_aca3, 0x9e5d_1b83_bd14_7c1b],
             "overhanging blocks changed: were they meant to? {hashes:#x?}"
         );
+    }
+
+    #[test]
+    fn a_generated_river_runs_in_blocks_of_the_seas_water_between_banks_flowing_its_way() {
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap().world(7, 1.0);
+        // A river's water, a few metres wide, somewhere.
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..300 * 300).map(|at| ((at % 300) as f32 * 6.0, (at / 300) as f32 * 6.0)).unzip();
+        let (water, _) = world.water(&xs, &zs).expect("rivers wired in");
+        let flowing = |at: usize| world.current(xs[at], zs[at]).is_some_and(|[x, z]| x * x + z * z > 0.1);
+        let river = |at: &usize| water[*at] > world.sea_level() + 2.0 && flowing(*at);
+        let at = (0..xs.len()).find(river).expect("a river somewhere");
+        let mut file = BlockFile {
+            ground: Ground { size: [48, 48], ..Ground::default() },
+            generate: Some(BlockGenerate {
+                position: [xs[at] - 24.0, zs[at] - 24.0],
+                bottom: -20,
+                ..BlockGenerate::default()
+            }),
+            ..BlockFile::default()
+        };
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let sea = file.blocks.len() as BlockId;
+        file.generate.as_mut().unwrap().sea = sea;
+        let map = file.make_ground(Some(&world));
+        // Water in the river's column, its top where the river's is, over the sea.
+        let top = (-20..300).rev().find(|&y| map.get([24, y, 24]) != AIR).expect("the column");
+        assert_eq!(map.get([24, top, 24]), sea, "the river's water");
+        assert!(((top + 1) as f32 - water[at]).abs() <= 1.0, "its top at {} for a river at {}", top + 1, water[at]);
+        // Its blocks keep which way it flows.
+        let (mut wet, mut flowing, mut walls) = (0, 0, 0);
+        for y in -20..300 {
+            for z in 1..47 {
+                for x in 1..47 {
+                    if map.get([x, y, z]) != sea {
+                        continue;
+                    }
+                    wet += 1;
+                    flowing += usize::from(crate::blocks::flow::current_of(map.fill([x, y, z])).is_some());
+                    // No water stands beside air with no water under it: a wall of it. Beside air over lower water,
+                    // it is the river's surface stepping down.
+                    let beside = [[x - 1, y, z], [x + 1, y, z], [x, y, z - 1], [x, y, z + 1]];
+                    let wall = |&&[x, y, z]: &&[i32; 3]| map.get([x, y, z]) == AIR && map.get([x, y - 1, z]) != sea;
+                    walls += beside.iter().filter(wall).count();
+                }
+            }
+        }
+        assert!(wet > 50 && flowing * 2 > wet, "{flowing} of {wet} blocks of the river flow");
+        assert!(walls * 100 <= wet, "{walls} sides of water against air, of {wet} blocks");
+    }
+
+    #[test]
+    fn a_world_with_rivers_runs_them_down_a_generator_that_has_none_of_its_own() {
+        // A landmass, as generators written before graphs are, with no water but its sea.
+        let world = Preset::Archipelago.world();
+        let mut graph = world.graph().clone();
+        assert!(crate::generate::nodes::add_rivers(&mut graph));
+        let rivered = world.with_graph(graph);
+        // A river's water, well over the sea, somewhere.
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..300 * 300).map(|at| ((at % 300) as f32 * 8.0 - 1200.0, (at / 300) as f32 * 8.0 - 1200.0)).unzip();
+        let (water, _) = rivered.water(&xs, &zs).expect("rivers wired in");
+        let at = (0..xs.len()).find(|&at| water[at] > world.sea_level() + 4.0).expect("a river somewhere");
+        let made = |rivers: bool| {
+            let mut file = BlockFile {
+                ground: Ground { size: [32, 32], ..Ground::default() },
+                generate: Some(BlockGenerate {
+                    position: [xs[at] - 16.0, zs[at] - 16.0],
+                    bottom: -20,
+                    caves: 0.0,
+                    rivers,
+                    ..BlockGenerate::default()
+                }),
+                ..BlockFile::default()
+            };
+            file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+            file.generate.as_mut().unwrap().sea = file.blocks.len() as BlockId;
+            let water = file.blocks.len() as BlockId;
+            let map = file.make_ground(Some(&world));
+            let over_sea = (world.sea_level() + 1.0) as i32;
+            let places = (over_sea..300).flat_map(|y| (0..32).flat_map(move |z| (0..32).map(move |x| [x, y, z])));
+            places.filter(|&p| map.get(p) == water).count()
+        };
+        assert!(made(true) > 20, "{} blocks of river water over the sea", made(true));
+        assert_eq!(made(false), 0, "no river with the world's rivers off");
     }
 
     #[test]

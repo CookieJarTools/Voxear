@@ -34,6 +34,7 @@ Pick a block, and the Inspector shows:
 | Top | Its top's material |
 | Bottom | Its bottom's material |
 | Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
+| Shape | **Cube**, as most blocks are; **Bushy**, a cube with tufts of leaves reaching out of it (see [Bushy leaves](#bushy-leaves)); or **Vine**, thin sheets on the blocks beside it (see [Vines](#vines)) |
 | Overlap | Where it lies in the order of blocks that meet: its picture creeps over the edge of a block beside it with a lower Overlap. 0 keeps to itself (see [Blocks that meet](#blocks-that-meet)) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
@@ -74,6 +75,7 @@ Draw the same inside in all five, and only the border differently. Each quarter 
 - A [[Texture Packs|texture pack]] can make a block join, or stop it joining, with the pictures it brings.
 - A joining face is drawn plain in a world of [[Block Worlds#Faces of small cubes|small cubes]].
 - A world drawn smooth joins nothing: give its blocks pictures of one tile.
+- Only a block whose **Shape** is **Cube** joins.
 
 ### Blocks that meet
 
@@ -84,9 +86,42 @@ Where two different blocks lie side by side, the edge between them is a straight
 - Blocks meet in one plane: grass creeps over the rock level with it, not over a step up or down, and not over a block whose face is covered.
 - Every higher block beside a face creeps over it, each from its own side, the highest on top: rock with grass on one side and dirt on another takes a fringe of each.
 - Two blocks with the same Overlap keep a straight edge between them.
-- A liquid, a see-through block, one that sways and a face that joins take no fringe and give none.
+- A liquid, a see-through block, one that sways, a bushy block, a vine and a face that joins take no fringe and give none.
 - Far off, past the world's own blocks, edges are straight. So are those of a world drawn smooth, which blends its ground its own way.
 - A world can mix its blocks while it draws 128 looks or fewer.
+
+### Bushy leaves
+
+Set a leaf block's **Shape** to **Bushy** and its leaves reach out past its cube: three sheets of leaves cross through the block's middle, two upright from corner to corner and one that leans, each nearly twice as wide as the block and thinning out to a ragged edge. Leaves overhang the blocks beside and below, and a crown of such blocks is a soft mass of leaves with no straight edge to it.
+
+- With a material that is cut out, the sheets are drawn with the block's leaf picture, clear where the picture is clear.
+- With a colour alone, the sheets and the cube's own faces are drawn as small square leaves in shades of the colour, with dark gaps between them: 16 to a block's side, or as many as the world's **Voxels**.
+- A block has its sheets only where it meets open air, so the inside of a crown costs nothing more.
+- The sheets sway with the block when it **Sways in wind**, held still wherever the block touches wood or ground.
+- They are lit as one soft mass, cast their own ragged shadow, and are drawn out to 160 blocks from the camera, shrinking away before that. The larger blocks of a world's far rings have none.
+
+The block is a cube in every other way: stood on, built on and dug as before, and the sheets are no part of its collision.
+
+In a block's file:
+
+```toml
+color = [0.3, 0.62, 0.16]
+shape = "bushy"
+sways = true
+```
+
+### Vines
+
+A block whose **Shape** is **Vine** is a vine: no cube at all, but a thin sheet against each block of ground beside it, a little off its face. With no ground beside it, a vine hangs free as two crossed sheets, from a roof, from leaves or from the vine above it.
+
+- A vine is no ground. Characters walk through it, nothing stands on it, it hides no face behind it and shades no corner, and physics rays pass it by. `Blocks.Raycast` and the brush do meet a vine, so it is placed and broken as any block.
+- What a vine clings to is read from the blocks round it, so nothing more is saved for it, and it turns to the wall as soon as one is built beside it.
+- With a material that is cut out, each sheet is drawn with the vine's picture, once a block. With a colour alone, a vine is strands running down its whole length with leaves to either side, each strand ending at its own height at the vine's foot.
+- A vine that hangs free sways when it **Sways in wind**, fixed where it meets ground. One against a wall stays still.
+
+Vines grow by themselves in a generated world: a [[Biomes#Vines|biome]] hangs them under its ledges and cave roofs, and a [[Structures#Trees of blocks|tree of blocks]] can have them up its trunk and under its crown.
+
+Vines are not climbed yet: a game's own script can ask which block a character is in (`Blocks.DefinitionAt`) and move the character up while it is a vine.
 
 ### Breaking
 

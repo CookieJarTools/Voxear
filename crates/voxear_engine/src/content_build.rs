@@ -579,11 +579,13 @@ fn compile_shaders(
     let code = voxear_render::CustomCode {
         materials: crate::shaders::dispatch_code(&registry),
         ui: crate::shaders::ui_dispatch_code(&registry),
+        look: crate::shaders::look_dispatch_code(&registry),
     };
     let engine = voxear_render::engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&engine)?.map(|entry| Ok(entry?.path())).collect::<Result<_>>()?;
     sources.sort();
-    let mut parts = vec![code.materials.clone().into_bytes(), code.ui.clone().into_bytes()];
+    let mut parts =
+        vec![code.materials.clone().into_bytes(), code.ui.clone().into_bytes(), code.look.clone().into_bytes()];
     for source in sources.iter().filter(|path| path.extension().is_some_and(|extension| extension == "slang")) {
         parts.push(std::fs::read(source)?);
     }

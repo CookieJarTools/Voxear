@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Voxear;
 
 /// <summary>
@@ -29,6 +31,9 @@ public class Item : Definition
 	[Tooltip("The item left in the hand once it is put down, as a bucket is by a bucket of water")]
 	public Item? Leaves;
 
+	[Tooltip("What it is when it lies in the world: a prefab, which a Heat Body on it cooks or freezes")]
+	public Prefab Dropped;
+
 	[Title("Tool")]
 	[Tooltip("The kind of tool it is: it breaks the blocks that ask for that kind faster")]
 	public ToolKind? Tool;
@@ -44,6 +49,15 @@ public class Item : Definition
 	[Tooltip("How many blocks it breaks before it is worn out; 0 never wears")]
 	[MinValue(0)]
 	public int Durability;
+
+	/// <summary>
+	/// Puts one of it down in the world at <paramref name="position"/>, made from its Dropped prefab, and returns the
+	/// Obj; None when it has no Dropped prefab. Give the prefab a Heat Body for food that cooks where it lies.
+	/// </summary>
+	public Obj Drop(Vector3 position)
+	{
+		return Dropped.IsValid ? Dropped.Instantiate(position, Quaternion.Identity) : Obj.None;
+	}
 
 	/// <summary>Whether it is a tool of some kind.</summary>
 	public bool IsTool => Tool != null;

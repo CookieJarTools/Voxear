@@ -34,7 +34,7 @@ use voxear_scene::Destroying;
 use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
-        block::{Liquid, MISSING},
+        block::{BlockHeat, Liquid, MISSING},
         chunk::BlockId,
         edits::{BlockEdits, blocks_file},
         file::{BlockFile, BlockKind, MAX_BLOCKS, MAX_LOOKS},
@@ -100,6 +100,9 @@ pub struct Resolved {
     /// The `.block` each entry is, by its place in the list; none for a kind
     /// of the world's own, a place left empty, or a block that is not there.
     guids: Vec<Option<AssetGuid>>,
+    /// How hot or cold each entry's block is, by its place in the list,
+    /// where it says (see `crate::heat`).
+    heats: Vec<Option<BlockHeat>>,
 }
 
 impl std::ops::Deref for Resolved {
@@ -116,6 +119,21 @@ impl Resolved {
         usize::from(block).checked_sub(1).and_then(|at| self.guids.get(at).copied()).flatten()
     }
 
+    /// How hot or cold the block numbered `block` is, where it says.
+    pub fn heat(&self, block: BlockId) -> Option<BlockHeat> {
+        usize::from(block).checked_sub(1).and_then(|at| self.heats.get(at).copied()).flatten()
+    }
+
+    /// Whether any block it numbers is hot or cold.
+    pub fn has_heat(&self) -> bool {
+        self.heats.iter().any(Option::is_some)
+    }
+
+    /// How far the farthest reaching of its hot and cold blocks reaches.
+    pub fn heat_reach(&self) -> f32 {
+        self.heats.iter().flatten().map(|heat| heat.reach).fold(0.0, f32::max)
+    }
+
     /// The number of the `.block` at `guid`, where it is listed.
     pub fn number_of(&self, guid: AssetGuid) -> Option<BlockId> {
         let at = self.guids.iter().position(|listed| *listed == Some(guid))?;
@@ -129,7 +147,8 @@ impl Resolved {
 pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
     let mut file = file.clone();
     let mut guids = Vec::with_capacity(file.blocks.len());
-    for kind in &mut file.blocks {
+    let mut heats = vec![None; file.blocks.len()];
+    for (at, kind) in file.blocks.iter_mut().enumerate() {
         let Some(reference) = kind.block.clone().filter(|_| kind.is_live()) else {
             guids.push(None);
             continue;
@@ -139,6 +158,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
                 block.fill(kind);
                 kind.name = content.block_name(guid).unwrap_or_default();
                 guids.push(Some(guid));
+                heats[at] = block.heat;
             }
             None => {
                 (kind.material, kind.top, kind.bottom, kind.water) = (None, None, None, false);
@@ -189,7 +209,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
             file = own;
         }
     }
-    Resolved { file, guids }
+    Resolved { file, guids, heats }
 }
 
 /// `file` with the block at `guid` numbered after those it has, and that
@@ -230,6 +250,7 @@ pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
             continue;
         };
         let numbered = BiomeBlocks::of(&biome.ground, |named| number_named(content, &mut file, reference, named));
+        let numbered = numbered.with_vines(&biome.vines, |named| number_named(content, &mut file, reference, named));
         list.push((*biome).clone());
         blocks.push(numbered);
     }
@@ -306,7 +327,9 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     named.as_deref().map_or(0, |named| number_named(content, &mut file, plant, named))
                 };
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
-                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves }
+                // A plant that grows no vines numbers no block for them.
+                let vine = if def.vines > 0.0 { number(&def.vine) } else { 0 };
+                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine }
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");
@@ -350,6 +373,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     loops: dungeon.loops,
                     floors: dungeon.floors,
                     floor_gap: dungeon.floor_gap,
+                    caves: dungeon.caves,
                     depth: dungeon.depth,
                     wall,
                     floor,
@@ -703,6 +727,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             fills_in: 0.0,
             liquid: Default::default(),
             glitter: false,
+            leafy: face.leafy,
             mixed: face.mixed,
         });
     }

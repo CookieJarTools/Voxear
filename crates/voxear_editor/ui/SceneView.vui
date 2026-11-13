@@ -8,6 +8,7 @@
             <Option>Unlit</Option>
             <Option>Wireframe</Option>
             <Option>Lit Wireframe</Option>
+            <Option>Heat</Option>
         </Dropdown>
         <Button name="gizmos" class="header-button">Gizmos</Button>
         <Button name="gizmos-menu" class="icon-button"><Icon icon="chevron-down" /></Button>

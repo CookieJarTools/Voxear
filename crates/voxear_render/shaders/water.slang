@@ -3406,7 +3406,38 @@ struct BlockWaterOut
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
     nointerpolation uint2 water : WATER;
+    // How it flows along x and z, in metres a second, its ripples carried with it.
+    nointerpolation float2 flow : FLOW;
 };
+
+// How fast water running out sideways from what feeds it flows, and a river's current, in metres a second
+// (voxear_terrain::blocks::RUNNING_SPEED, flow::RIVER_SPEED).
+static const float BLOCK_RUNNING = 1.2;
+static const float BLOCK_RIVER = 1.5;
+
+// How long its ripples drift before they start over, in seconds: so they are never read far from where they began.
+static const float BLOCK_DRIFT_PERIOD = 900.0;
+
+// How the water of a quad flows (voxear_terrain::blocks::mesh::water_current): along its current, of a river's top,
+// which keeps which of eight ways round from +x towards +z it flows, one more than its number, where a shape keeps how
+// far its lower corners are raised; away from what feeds water running out sideways.
+float2 blockWaterFlow(uint2 quad, uint up)
+{
+    uint facing = (quad.x >> 25) & 7;
+    uint way = (quad.y >> 12) & 15;
+    if (facing == 2 && way > 0 && (up == 7 || up == 2))
+    {
+        float turn = float(way - 1) * (3.14159265 / 4.0);
+        return float2(cos(turn), sin(turn)) * BLOCK_RIVER;
+    }
+    if (up < 6)
+    {
+        uint axis = up / 2;
+        float away = (up & 1) == 0 ? -BLOCK_RUNNING : BLOCK_RUNNING;
+        return axis == 0 ? float2(away, 0.0) : (axis == 2 ? float2(0.0, away) : float2(0.0, 0.0));
+    }
+    return float2(0.0, 0.0);
+}
 
 // A corner of a face of the water of the world push.level names (its number and one): six to a quad, its quads one
 // after another in the world's pool from push.output on. Flowing water stands lower than its block: a quad of it keeps
@@ -3446,6 +3477,7 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, at);
     o.water = uint2(push.level - 1, b.surface & 0xFF);
+    o.flow = smooth ? float2(0.0, 0.0) : blockWaterFlow(quad, up);
     return o;
 }
 
@@ -3477,6 +3509,9 @@ BlockWaterLook blockWaterLook(BlockWorld world, uint surface)
 {
     uint material = world.surfaceCount > 0 ? world.surfaces[min(surface, world.surfaceCount - 1)].material : world.material;
     float3 color = max(buffers()->materials[material].baseColor.rgb, 0.0);
+    // A look pack's colour for all such water takes the place of the block's own.
+    float4 worn = push.frame->ocean.blockWater;
+    color = lerp(color, worn.rgb, worn.a);
     float3 own = color / max(max(max(color.r, color.g), color.b), 1e-3);
     BlockWaterLook look;
     look.deep = color;
@@ -3503,14 +3538,16 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float3 v = normalize(frame->cameraPosition - input.world);
     float3 face = normalize(input.normal);
     bool level = abs(face.y) > 0.5;
-    // Ripples on its top and its underside, as a Pool's with none of the sea's swell; its sides stand still.
+    // Ripples on its top and its underside, as a Pool's with none of the sea's swell, carried along as it flows;
+    // its sides stand still.
     float2 slope = 0.0;
     float variance = 0.0;
     float folded = 1.0;
     float3 moved = 0.0;
     if (level)
     {
-        addWaves(frame, input.world.xz, 0.0, 1.0, slope, variance, folded, moved);
+        float2 drifted = input.world.xz - input.flow * fmod(frame->time, BLOCK_DRIFT_PERIOD);
+        addWaves(frame, drifted, 0.0, 1.0, slope, variance, folded, moved);
     }
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) * face.y + face);
     float slopes = sqrt(0.02 * 0.02 + 2.0 * variance);

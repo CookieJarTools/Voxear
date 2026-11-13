@@ -189,6 +189,9 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, float*, float, void> WeatherSet;
 	public delegate* unmanaged[Cdecl]<byte*, int, int, void> LookPackWear;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> LookPacksInfo;
+	public delegate* unmanaged[Cdecl]<Vector3*, float*, float> HeatSample;
+	public delegate* unmanaged[Cdecl]<Vector3*, float, float, float, int> HeatAdd;
+	public delegate* unmanaged[Cdecl]<int, int, float, float> ClockValue;
 	public delegate* unmanaged[Cdecl]<byte*, int, int, void> TexturePackWear;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> TexturePacksInfo;
 	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> TexturePackStarter;

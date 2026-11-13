@@ -163,6 +163,9 @@ pub enum NewFile {
     UnlitShader,
     /// A shader a UI element's background is drawn with.
     UiShader,
+    /// A shader that has the last word on the finished picture, which a
+    /// look pack names.
+    LookShader,
     Script,
     MotionSet,
     GunHandling,
@@ -183,7 +186,7 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 20] = [
+    pub const ALL: [NewFile; 21] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -194,6 +197,7 @@ impl NewFile {
         NewFile::Shader,
         NewFile::UnlitShader,
         NewFile::UiShader,
+        NewFile::LookShader,
         NewFile::Script,
         NewFile::MotionSet,
         NewFile::GunHandling,
@@ -230,6 +234,7 @@ impl NewFile {
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::UiShader => "New UI Shader",
+            NewFile::LookShader => "New Look Shader",
             NewFile::Script => "New C# Script",
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
@@ -257,6 +262,7 @@ impl NewFile {
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::UiShader => ("New UI Shader", ".shader"),
+            NewFile::LookShader => ("New Look Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
@@ -289,6 +295,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UiShader => std::fs::write(&file, shader(NEW_UI_SHADER, &name[..name.len() - extension.len()])),
+        NewFile::LookShader => std::fs::write(&file, shader(NEW_LOOK_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
@@ -483,13 +490,15 @@ pub enum ShaderStart {
     Lit,
     Unlit,
     Ui,
+    /// One that draws the finished picture, for a look pack to name.
+    Look,
     Copy(BuiltinShader),
 }
 
 impl ShaderStart {
     /// As New Shader offers them: the three to write first, then the built-in ones.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui];
+        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui, Self::Look];
         all.extend(BuiltinShader::ALL.map(Self::Copy));
         all
     }
@@ -499,6 +508,7 @@ impl ShaderStart {
             Self::Lit => "Lit",
             Self::Unlit => "Unlit",
             Self::Ui => "UI",
+            Self::Look => "Look",
             Self::Copy(builtin) => builtin.title(),
         }
     }
@@ -506,7 +516,7 @@ impl ShaderStart {
     /// What it starts as, beside its name.
     pub fn detail(self) -> &'static str {
         match self {
-            Self::Lit | Self::Unlit | Self::Ui => "To write",
+            Self::Lit | Self::Unlit | Self::Ui | Self::Look => "To write",
             Self::Copy(_) => "Built in, to change",
         }
     }
@@ -519,6 +529,7 @@ pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &
         ShaderStart::Lit => create(root, folder, NewFile::Shader, namespace),
         ShaderStart::Unlit => create(root, folder, NewFile::UnlitShader, namespace),
         ShaderStart::Ui => create(root, folder, NewFile::UiShader, namespace),
+        ShaderStart::Look => create(root, folder, NewFile::LookShader, namespace),
         ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
     }
 }
@@ -626,6 +637,30 @@ float4 ui(NAME shader, UiInput input)
     float band = saturate(1.0 - abs(input.uv.x - at) / 0.3);
     float4 light = shader.glow * band * band;
     return light + input.background * (1.0 - light.a);
+}
+"#;
+
+/// What a new look shader starts as: the picture drawn in a few flat steps
+/// of colour, as a print is.
+const NEW_LOOK_SHADER: &str = r#"// A look shader. It has the last word on the finished picture where a look pack names it:
+//     [shader]
+//     shader = "Shaders/NAME.shader"
+//     steps = 5
+// Its properties are set in the pack by their names. The Manual's Look Packs page says what it is given.
+
+struct NAME
+{
+    [Property, Range(2, 16), Tooltip("How many steps of brightness the picture is drawn in")] float steps = 6.0;
+    [Property, Range(0, 1), Tooltip("How much of the effect shows")] float strength = 1.0;
+}
+
+// The colour one pixel of the picture is shown in. input.color is the pixel as the level's lighting left it,
+// from 0 to 1; input.uv is where it is, from 0 to 1 across and down, and input.pixel the same in pixels of the
+// input.size the picture has; input.time is in seconds.
+float3 look(NAME shader, LookInput input)
+{
+    float3 stepped = floor(input.color * shader.steps + 0.5) / shader.steps;
+    return lerp(input.color, stepped, shader.strength);
 }
 "#;
 
@@ -899,6 +934,17 @@ mod tests {
         let plain = voxear_render::PostProcess::default();
         let worn = pack.worn(voxear_render::Sky::default(), None, plain).unwrap();
         assert!(worn.post.bloom.intensity == 0.15 && worn.sun.is_some());
+    }
+
+    #[test]
+    fn a_new_look_shader_draws_the_picture_alone_with_two_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create_shader(dir.path(), "", ShaderStart::Look, "Game").unwrap();
+        assert_eq!(path, "New Look Shader.shader");
+        let info = voxear_engine::shaders::read(&std::fs::read_to_string(dir.path().join(&path)).unwrap()).unwrap();
+        assert!(info.look && !info.ui && !info.surface, "a look shader, which neither materials nor UI can pick");
+        let names: Vec<&str> = info.properties.iter().map(|property| property.name.as_str()).collect();
+        assert_eq!(names, ["steps", "strength"]);
     }
 
     #[test]

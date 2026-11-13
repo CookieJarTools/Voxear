@@ -1,14 +1,15 @@
 //! A Block in the Inspector, laid out as a material's is. Its **Look**: its
 //! colour, the material every face is drawn with and those its top and
-//! bottom have of their own, and which liquid it is (a liquid is drawn in
-//! its colour alone, so its materials go). **Breaking**: how long it takes
+//! bottom have of their own, its shape (a cube, a cube with tufts of leaves,
+//! or a vine), and which liquid it is (a liquid is drawn in its colour
+//! alone, so its materials and its shape go). **Breaking**: how long it takes
 //! by hand, the kind of tool that breaks it fast, and the tier of that tool
 //! that gets its drops. Its **Drops**, each an item, how many and how
 //! often. Its **Sounds**, and the **Data** asset a game gives it. Each
 //! change is saved as it is made, and every world of blocks listing the
 //! block takes it up at once (see `editor::blocks`).
 
-use voxear_terrain::blocks::block::{BlockDef, BlockDrop, Liquid};
+use voxear_terrain::blocks::block::{BlockDef, BlockDrop, BlockHeat, BlockShape, Liquid, MAX_HEAT_REACH};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -122,7 +123,13 @@ pub struct BlockFields {
     sways: Option<NodeId>,
     /// How far up the order of blocks that meet it lies; none for a liquid.
     overlap: Option<NodeId>,
+    /// Its shape; none for a liquid.
+    shape: Option<NodeId>,
     tier: NodeId,
+    /// Whether it is hot or cold, and how much and how far when it is.
+    heat: NodeId,
+    celsius: Option<NodeId>,
+    reach: Option<NodeId>,
     drops: Collection,
     drop_rows: Vec<DropRow>,
     make_item: Option<NodeId>,
@@ -176,6 +183,16 @@ impl BlockFields {
             }
             field
         });
+        let shape = block.liquid.is_none().then(|| {
+            let row = prop(ui, rows, "Shape");
+            let tip = "Cube: a block as most are. Bushy: a cube with tufts of leaves reaching out past it. Vine: thin \
+                       sheets on the blocks beside it, or hanging; walked through";
+            ui.set_tooltip(row, tip, None);
+            let picked = BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or_default();
+            let shape = ui.dropdown(row, &BlockShape::ALL.map(BlockShape::name), picked);
+            ui.add_class(shape, "value-choice");
+            shape
+        });
         let row = prop(ui, rows, "Liquid");
         let picked = LIQUIDS.iter().position(|(liquid, _)| *liquid == block.liquid).unwrap_or_default();
         let liquid = ui.dropdown(row, &LIQUIDS.map(|(_, name)| name), picked);
@@ -187,6 +204,12 @@ impl BlockFields {
         let unbreakable = ui.toggle(row, "", block.unbreakable);
         field(ui, rows, BlockRef::Tool, "Tool");
         let tier = number_field(ui, rows, "Tier", block.tier as f32);
+
+        let rows = part(ui, root, "Heat", "sun");
+        let row = prop(ui, rows, "Hot or Cold");
+        let heat = ui.toggle(row, "", block.heat.is_some());
+        let celsius = block.heat.map(|heat| number_field(ui, rows, "Temperature", heat.celsius));
+        let reach = block.heat.map(|heat| number_field(ui, rows, "Reach", heat.reach));
 
         let rows = part(ui, root, "Drops", "box");
         let drops = collection::collection(ui, rows, block.drops.len(), true, Some("Add Drop"));
@@ -229,7 +252,11 @@ impl BlockFields {
                 unbreakable,
                 sways,
                 overlap,
+                shape,
                 tier,
+                heat,
+                celsius,
+                reach,
                 drops,
                 drop_rows,
                 make_item,
@@ -270,8 +297,20 @@ impl BlockFields {
                 return Some(BlockChange::Shape);
             }
         }
+        if ui.changed(self.heat) {
+            self.block.heat = ui.is_checked(self.heat).then(BlockHeat::default);
+            return Some(BlockChange::Shape);
+        }
         let mut typed = false;
         let block = &mut self.block;
+        if let Some(heat) = block.heat.as_mut() {
+            if let Some(celsius) = self.celsius.and_then(|field| changed_number(ui, field)) {
+                (heat.celsius, typed) = (celsius.clamp(-273.0, 5000.0), true);
+            }
+            if let Some(reach) = self.reach.and_then(|field| changed_number(ui, field)) {
+                (heat.reach, typed) = (reach.clamp(0.0, MAX_HEAT_REACH), true);
+            }
+        }
         if self.color.iter().any(|&field| ui.changed(field)) {
             for (at, field) in self.color.iter().enumerate() {
                 block.color[at] = ui.text(*field).trim().parse::<f32>().unwrap_or(block.color[at]).clamp(0.0, 1.0);
@@ -289,6 +328,10 @@ impl BlockFields {
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);
+        }
+        if let Some(shape) = self.shape.filter(|&shape| ui.changed(shape)) {
+            let picked = BlockShape::ALL[ui.selected_option(shape).min(BlockShape::ALL.len() - 1)];
+            (block.shape, typed) = (picked, true);
         }
         if let Some(tier) = changed_number(ui, self.tier) {
             (block.tier, typed) = (tier.round().clamp(0.0, 1000.0) as u32, true);

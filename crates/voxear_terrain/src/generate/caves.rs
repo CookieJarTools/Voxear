@@ -112,6 +112,14 @@ pub struct Caves {
 /// most.
 const SEARCHED: usize = 2048;
 
+/// The rooms of endless networks worked out so far, by network and region,
+/// shared by every thread (see [`Caves::room`]); all let go once there are
+/// this many.
+type KeptRoom = Arc<std::sync::OnceLock<Option<PlacedRoom>>>;
+static ROOMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, [i32; 3]), KeptRoom>>> =
+    std::sync::LazyLock::new(Default::default);
+const ROOMS_KEPT: usize = 16384;
+
 impl Caves {
     pub(crate) fn new(net: Arc<Network>) -> Self {
         Self { net }
@@ -178,11 +186,29 @@ impl Caves {
     }
 
     /// The room of `region`: none where it has none.
+    ///
+    /// Each region's room of an endless network is worked out once, by the
+    /// first thread to ask, and kept for every thread: a dungeon breaking
+    /// into the nearest cave asks after the rooms round it for every chunk
+    /// column it reaches, and a room's walls take a while to place.
     pub fn room(&self, region: [i32; 3]) -> Option<PlacedRoom> {
         let net = &*self.net;
         if net.level.is_some() {
             return self.rooms().into_iter().find(|room| room.region == region);
         }
+        let kept = {
+            let mut rooms = ROOMS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if rooms.len() >= ROOMS_KEPT {
+                rooms.clear();
+            }
+            rooms.entry((net.id, region)).or_default().clone()
+        };
+        kept.get_or_init(|| self.room_made(region)).clone()
+    }
+
+    /// The room of `region` of an endless network, worked out.
+    fn room_made(&self, region: [i32; 3]) -> Option<PlacedRoom> {
+        let net = &*self.net;
         let grid = net.grid();
         let plan = net.seated(&grid, region)?;
         let ground = net.grounds(&[plan.stand.foot])[0];

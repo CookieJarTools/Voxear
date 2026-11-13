@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Value, ValueSpec};
 use crate::generate::{
-    compile::{Compiler, Kernel, Key, Places, V},
+    compile::{Compiler, Kernel, Key, Pass, Places, V},
     graph::NodeId,
 };
 
@@ -90,14 +90,26 @@ struct Mixed;
 
 impl Kernel for Mixed {
     fn key(&self, key: &mut Key) {
-        key.name("blend");
+        key.name("blend exact");
     }
 
+    /// A where the mask is nothing or less and B where it is 1 or more, each
+    /// to the bit, so the other need not be made there.
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (at, out) in out.iter_mut().enumerate() {
-            let (a, b) = (inputs[0][at], inputs[1][at]);
-            *out = a + (b - a) * inputs[2][at].clamp(0.0, 1.0);
+            let (a, b, mask) = (inputs[0][at], inputs[1][at], inputs[2][at]);
+            *out = if mask <= 0.0 {
+                a
+            } else if mask >= 1.0 {
+                b
+            } else {
+                a + (b - a) * mask
+            };
         }
+    }
+
+    fn passes(&self) -> Option<Pass> {
+        Some(Pass { low: 0, high: 1, by: 2 })
     }
 }
 

@@ -354,8 +354,11 @@ struct Finder {
 
 /// The tiles of points last worked out, by finder and tile, shared by every
 /// thread: a tile takes a while to work out, and the chunks round it are
-/// made on many threads at once.
-static TILES: Mutex<Vec<(u64, [i32; 2], Arc<Vec<Point>>)>> = Mutex::new(Vec::new());
+/// made on many threads at once. Each is worked out by the first thread to
+/// ask for it, and any other asking meanwhile waits for it rather than
+/// working it out too.
+type Tile = Arc<std::sync::OnceLock<Arc<Vec<Point>>>>;
+static TILES: Mutex<Vec<(u64, [i32; 2], Tile)>> = Mutex::new(Vec::new());
 
 /// How many tiles are kept.
 const KEPT: usize = 48;
@@ -364,9 +367,11 @@ const KEPT: usize = 48;
 /// ground's program, the seed and the spacing, and the block: kept, shared
 /// by every thread, so the tiles round one need not read again what their
 /// margins share.
-static GROUNDS: Mutex<Vec<(u64, [i32; 2], Arc<Vec<f32>>)>> = Mutex::new(Vec::new());
+type Grounds = std::collections::HashMap<(u64, [i32; 2]), Arc<Vec<f32>>>;
+static GROUNDS: std::sync::LazyLock<Mutex<Grounds>> = std::sync::LazyLock::new(Default::default);
 const GROUND_BLOCK: i32 = 16;
-const GROUNDS_KEPT: usize = 1024;
+/// How many blocks are kept before all are let go.
+const GROUNDS_KEPT: usize = 8192;
 
 fn smooth(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -412,23 +417,22 @@ impl Finder {
     /// The points of tile `tile`, kept from the last time they were worked
     /// out where they can be.
     fn tile(&self, tile: [i32; 2]) -> Arc<Vec<Point>> {
-        let kept = |tiles: &Vec<(u64, [i32; 2], Arc<Vec<Point>>)>| {
-            tiles.iter().find(|(id, known, _)| *id == self.id && *known == tile).map(|kept| kept.2.clone())
+        let cell = {
+            let mut tiles = TILES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match tiles.iter().find(|(id, known, _)| *id == self.id && *known == tile) {
+                Some(kept) => kept.2.clone(),
+                None => {
+                    if tiles.len() >= KEPT {
+                        tiles.remove(0);
+                    }
+                    let cell = Tile::default();
+                    tiles.push((self.id, tile, cell.clone()));
+                    cell
+                }
+            }
         };
-        if let Some(kept) = kept(&TILES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())) {
-            return kept;
-        }
-        // Worked out with the tiles let go of, so other threads go on; two threads may both work one out, alike.
-        let made = Arc::new(self.make_tile(tile));
-        let mut tiles = TILES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(kept) = kept(&tiles) {
-            return kept;
-        }
-        if tiles.len() >= KEPT {
-            tiles.remove(0);
-        }
-        tiles.push((self.id, tile, made.clone()));
-        made
+        // Worked out with the tiles let go of, so threads wanting other tiles go on.
+        cell.get_or_init(|| Arc::new(self.make_tile(tile))).clone()
     }
 
     /// The ground at the points of the `side` by `side` square from point
@@ -444,10 +448,7 @@ impl Finder {
         let mut found: Vec<([i32; 2], Arc<Vec<f32>>)> = {
             let kept = GROUNDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let id = self.ground.hash ^ u64::from(self.seed) ^ u64::from(self.spacing.to_bits()) << 32;
-            wanted
-                .iter()
-                .filter_map(|&at| Some((at, kept.iter().find(|(k, b, _)| *k == id && *b == at)?.2.clone())))
-                .collect()
+            wanted.iter().filter_map(|&at| Some((at, kept.get(&(id, at))?.clone()))).collect()
         };
         let missing: Vec<[i32; 2]> =
             wanted.iter().copied().filter(|at| found.iter().all(|(known, _)| known != at)).collect();
@@ -466,12 +467,12 @@ impl Finder {
             self.ground.run(xs.len(), Givens { x: &xs, z: &zs, ..Givens::default() }, &mut [&mut read]);
             let id = self.ground.hash ^ u64::from(self.seed) ^ u64::from(self.spacing.to_bits()) << 32;
             let mut kept = GROUNDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if kept.len() + missing.len() > GROUNDS_KEPT {
+                kept.clear();
+            }
             for (k, &at) in missing.iter().enumerate() {
                 let values = Arc::new(read[k * each..(k + 1) * each].to_vec());
-                if kept.len() >= GROUNDS_KEPT {
-                    kept.remove(0);
-                }
-                kept.push((id, at, values.clone()));
+                kept.insert((id, at), values.clone());
                 found.push((at, values));
             }
         }

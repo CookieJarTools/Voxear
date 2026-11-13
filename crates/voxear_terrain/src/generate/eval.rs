@@ -121,41 +121,27 @@ impl Program {
 
     /// Runs it over `count` places, filling each of `outs` with one of what
     /// it makes, in the order of its outputs.
+    ///
+    /// A block of places at a time, each row made only as what is asked for
+    /// needs it: where a kernel passes one input or another through by a
+    /// third (see `Kernel::passes`), and the third says the same one at
+    /// every place of the block, the other is not made, nor anything only
+    /// that reads. A biome's land, worked out for
+    /// the places that biome is and passed over elsewhere, costs where it
+    /// lies alone.
     pub fn run(&self, count: usize, given: Givens, outs: &mut [&mut [f32]]) {
         let mut rows = ROWS.take();
         if rows.len() < self.steps.len() {
             rows.resize_with(self.steps.len(), || vec![0.0; BLOCK]);
         }
+        let mut made = vec![false; self.steps.len()];
         let mut start = 0;
         while start < count {
             let len = (count - start).min(BLOCK);
-            for (at, step) in self.steps.iter().enumerate() {
-                let (before, rest) = rows.split_at_mut(at);
-                let out = &mut rest[0][..len];
-                match step {
-                    Step::Given(which) => {
-                        let all = match *which {
-                            Given::X => given.x,
-                            Given::Y => given.y,
-                            Given::Z => given.z,
-                            Given::Ground => given.ground,
-                            Given::Size => std::slice::from_ref(&given.size),
-                            Given::Carried(row) => given.carried.get(usize::from(row)).copied().unwrap_or(&[]),
-                        };
-                        match (all, all.get(start..start + len)) {
-                            ([one], _) => out.fill(*one),
-                            (_, Some(part)) => out.copy_from_slice(part),
-                            (_, None) => out.fill(0.0),
-                        }
-                    }
-                    Step::Run { kernel, inputs } => {
-                        let mut read: [&[f32]; MOST_INPUTS] = [&[]; MOST_INPUTS];
-                        for (slot, &input) in read.iter_mut().zip(inputs) {
-                            *slot = &before[input as usize][..len];
-                        }
-                        kernel.run(&read[..inputs.len().min(MOST_INPUTS)], out);
-                    }
-                }
+            made.fill(false);
+            let block = Block { given: &given, start, len };
+            for &row in &self.outputs {
+                self.make(row as usize, &mut rows, &mut made, &block);
             }
             for (out, &row) in outs.iter_mut().zip(&self.outputs) {
                 out[start..start + len].copy_from_slice(&rows[row as usize][..len]);
@@ -164,4 +150,73 @@ impl Program {
         }
         ROWS.set(rows);
     }
+
+    /// Makes row `at` for `block`, and first each row it reads that is not
+    /// made yet.
+    fn make(&self, at: usize, rows: &mut [Vec<f32>], made: &mut [bool], block: &Block) {
+        if made[at] {
+            return;
+        }
+        made[at] = true;
+        let len = block.len;
+        let (kernel, inputs) = match &self.steps[at] {
+            Step::Given(which) => {
+                let given = block.given;
+                let all = match *which {
+                    Given::X => given.x,
+                    Given::Y => given.y,
+                    Given::Z => given.z,
+                    Given::Ground => given.ground,
+                    Given::Size => std::slice::from_ref(&given.size),
+                    Given::Carried(row) => given.carried.get(usize::from(row)).copied().unwrap_or(&[]),
+                };
+                let out = &mut rows[at][..len];
+                match (all, all.get(block.start..block.start + len)) {
+                    ([one], _) => out.fill(*one),
+                    (_, Some(part)) => out.copy_from_slice(part),
+                    (_, None) => out.fill(0.0),
+                }
+                return;
+            }
+            Step::Run { kernel, inputs } => (kernel, inputs),
+        };
+        if let Some(pass) = kernel.passes()
+            && let (Some(&low), Some(&high), Some(&by)) = (inputs.get(pass.low), inputs.get(pass.high), inputs.get(pass.by))
+        {
+            self.make(by as usize, rows, made, block);
+            let by = &rows[by as usize][..len];
+            let through = if by.iter().all(|&value| value <= 0.0) {
+                Some(low as usize)
+            } else if by.iter().all(|&value| value >= 1.0) {
+                Some(high as usize)
+            } else {
+                None
+            };
+            if let Some(through) = through {
+                self.make(through, rows, made, block);
+                let row = std::mem::take(&mut rows[through]);
+                rows[at][..len].copy_from_slice(&row[..len]);
+                rows[through] = row;
+                return;
+            }
+        }
+        for &input in inputs {
+            self.make(input as usize, rows, made, block);
+        }
+        let mut out = std::mem::take(&mut rows[at]);
+        let mut read: [&[f32]; MOST_INPUTS] = [&[]; MOST_INPUTS];
+        for (slot, &input) in read.iter_mut().zip(inputs) {
+            *slot = &rows[input as usize][..len];
+        }
+        kernel.run(&read[..inputs.len().min(MOST_INPUTS)], &mut out[..len]);
+        rows[at] = out;
+    }
+}
+
+/// The block of places a program is being run over: what is given, and
+/// which of the places.
+struct Block<'a, 'b> {
+    given: &'b Givens<'a>,
+    start: usize,
+    len: usize,
 }

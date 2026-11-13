@@ -29,7 +29,7 @@
 //! or not there at all, never cut off at the mask's edge. A Climate Mask
 //! keeps them to one kind of country.
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -275,11 +275,16 @@ struct Finder {
 }
 
 thread_local! {
-    /// The spires last found on this thread, by finder and cell: those of the cells reaching it.
-    static FOUND: RefCell<Vec<(u64, [i32; 2], Rc<Vec<Spire>>)>> = const { RefCell::new(Vec::new()) };
+    /// The spires found on this thread, by finder and cell: those of the cells reaching it.
+    static FOUND: RefCell<HashMap<(u64, [i32; 2]), Rc<Vec<Spire>>>> = RefCell::new(HashMap::new());
+    /// Each cell's own spire or none, by finder and cell: neighbouring columns reach many of the same cells, and
+    /// finding one reads the ground.
+    static CELLS: RefCell<HashMap<(u64, [i32; 2]), Option<Spire>>> = RefCell::new(HashMap::new());
 }
 
-const KEPT: usize = 48;
+/// How many of each are kept on a thread before all are let go: enough for a far tile's columns, which lie in a
+/// different cell nearly every one.
+const KEPT: usize = 8192;
 
 impl Finder {
     fn new(set: &Spires, seed: u32, ground: Arc<Program>, mask: Option<Arc<Program>>) -> Self {
@@ -350,27 +355,39 @@ impl Finder {
 
     /// The spires that can reach into the column of `cell`.
     fn near(&self, cell: [i32; 2]) -> Rc<Vec<Spire>> {
-        let kept = FOUND.with_borrow(|kept| {
-            kept.iter().find(|(id, known, _)| *id == self.id && *known == cell).map(|kept| kept.2.clone())
-        });
-        if let Some(kept) = kept {
+        if let Some(kept) = FOUND.with_borrow(|kept| kept.get(&(self.id, cell)).cloned()) {
             return kept;
         }
         let reach = self.reach();
         let mut made = Vec::new();
         for dz in -reach..=reach {
             for dx in -reach..=reach {
-                made.extend(self.found([cell[0] + dx, cell[1] + dz]));
+                made.extend(self.found_kept([cell[0] + dx, cell[1] + dz]));
             }
         }
         let made = Rc::new(made);
         FOUND.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {
-                kept.remove(0);
+                kept.clear();
             }
-            kept.push((self.id, cell, made.clone()));
+            kept.insert((self.id, cell), made.clone());
         });
         made
+    }
+
+    /// The spire of `cell`, found once on each thread.
+    fn found_kept(&self, cell: [i32; 2]) -> Option<Spire> {
+        if let Some(kept) = CELLS.with_borrow(|kept| kept.get(&(self.id, cell)).copied()) {
+            return kept;
+        }
+        let found = self.found(cell);
+        CELLS.with_borrow_mut(|kept| {
+            if kept.len() >= KEPT {
+                kept.clear();
+            }
+            kept.insert((self.id, cell), found);
+        });
+        found
     }
 
     /// The spires near the column at `x`, `z`, kept from the last column

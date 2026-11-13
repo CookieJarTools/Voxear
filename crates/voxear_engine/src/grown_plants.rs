@@ -608,10 +608,33 @@ pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Ar
     // Nearer, its structures themselves, coarser (see `map::FarStructures`).
     let structures = world.get::<BlockWorldAsset>(entity).and_then(|asset| asset.file.generate.as_ref()?.built.clone());
     if let Some(structures) = structures.filter(|structures| !structures.list.is_empty()) {
-        let stamp = voxear_terrain::layers::stable_hash(format!("{:?}", structures.list).as_bytes());
+        let stamp = structures_stamp(&structures);
         built.push(Arc::new(voxear_terrain::blocks::map::FarStructures { stamp }));
     }
     built
+}
+
+/// A number for `structures`, worked out once while they stay the same:
+/// it is asked for every frame, and writing out every structure to hash it
+/// takes a while.
+fn structures_stamp(structures: &Arc<voxear_terrain::blocks::structure::WorldStructures>) -> u64 {
+    type Stamped = Vec<(Arc<voxear_terrain::blocks::structure::WorldStructures>, u64)>;
+    thread_local! {
+        static STAMPED: std::cell::RefCell<Stamped> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    if let Some(stamp) =
+        STAMPED.with_borrow(|kept| kept.iter().find(|(kept, _)| Arc::ptr_eq(kept, structures)).map(|(_, stamp)| *stamp))
+    {
+        return stamp;
+    }
+    let stamp = voxear_terrain::layers::stable_hash(format!("{:?}", structures.list).as_bytes());
+    STAMPED.with_borrow_mut(|kept| {
+        if kept.len() >= 8 {
+            kept.remove(0);
+        }
+        kept.push((structures.clone(), stamp));
+    });
+    stamp
 }
 
 /// The trees the structures of the Block World on `entity` grow, as woods

@@ -2357,12 +2357,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - ~~**Biomes that shape their land:**~~ done: a biome's new **Land** (`generate::land`) is the generator's own
     ground or its own Plains, Hills, Mountains (sharp peaks, bands of cliff, valleys), Tablelands or Pillars, with
     overhangs, pillars of rock and natural bridges. A world of blocks adds them to a copy of its generator's graph
-    as Peaks, Plateaus, Noise, Gullies, Spires, Arches and Overhangs nodes, each kept to its biome by a Climate Mask
+    as Peaks, Plateaus, Noise, Spires, Arches and Overhangs nodes, each kept to its biome by a Climate Mask
     and blended from the widest biome to the narrowest, so the land matches the blocks; rivers run down the land so
     shaped, and the engine hands the shaped generator to everything that asks about the ground. Spires and Arches
     gain a Mask. A Block World's **Land from** keeps the generator's ground round its start. The starter and
     showcase biomes come with land of their own. Tests: mountains rise where their biome is and the ground
     elsewhere is left; pillars stand only in their biome; GPU renders of mountains, pillars and tablelands.
+  - ~~**Endless worlds that load fast:**~~ done: a project's endless world with biome land, continents, rivers,
+    dungeons and trees took over a minute to show its own blocks round the start and several to fill its view;
+    now the ground within 64 m shows in about 1.5 s and the 256 m view in about 9 s, the far view settled in about
+    12 s, on a busy 24-core machine. A generator works out only what is asked for: a Blend's left-out side, where
+    its mask leaves it out for a whole batch of places (`Kernel::passes`), so a biome's land costs where it lies; a
+    blend gives A or B to the bit at its ends. Cave rooms, river tiles, and whether each structure's site fits are
+    worked out once and kept for every thread, a structure's sites a batch at a time; spires and arches keep what
+    they found by place; kept sites are looked up by a grid, not one by one; biome valleys are cut along noise in
+    place of reading all the ground again. Tests: the terrain crate's own; timings and pictures in release from a
+    standing start, before and after.
   - ~~**Biome tints:**~~ done: a block's new **Tint** (None, Grass, Grass Top, Foliage) has its colour take the
     biome it stands in, from each biome's new grass and foliage tints, fading from one biome's to the next: the
     generator's biomes on a lattice every 4 blocks, each point averaged with those 3 each way round it

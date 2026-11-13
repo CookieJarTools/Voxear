@@ -28,7 +28,7 @@
 //! a world of blocks asks about no more air than that, and a far view
 //! shows the bridges.
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -267,11 +267,15 @@ pub(crate) struct Finder {
 }
 
 thread_local! {
-    /// The bridges last found on this thread, by finder and region: those of the region and the eight round it.
-    static FOUND: RefCell<Vec<(u64, [i32; 2], Rc<Near>)>> = const { RefCell::new(Vec::new()) };
+    /// The bridges found on this thread, by finder and region: those of the region and the eight round it.
+    static FOUND: RefCell<HashMap<(u64, [i32; 2]), Rc<Near>>> = RefCell::new(HashMap::new());
+    /// Each region's own bridge and windows, by finder and region: neighbouring regions share eight of their nine,
+    /// and finding them reads the ground.
+    static REGIONS: RefCell<HashMap<(u64, [i32; 2]), (Option<Bridge>, Rc<Vec<Window>>)>> = RefCell::new(HashMap::new());
 }
 
-const KEPT: usize = 48;
+/// How many of each are kept on a thread before all are let go.
+const KEPT: usize = 4096;
 
 /// The bridges and windows that can reach into a region.
 #[derive(Debug, Default)]
@@ -425,26 +429,39 @@ impl Finder {
     /// The bridges that can reach into `region`: its own and those of the
     /// eight round it, found now or as they were kept.
     pub fn near(&self, region: [i32; 2]) -> Rc<Near> {
-        let kept = FOUND.with_borrow(|kept| {
-            kept.iter().find(|(id, known, _)| *id == self.id && *known == region).map(|kept| kept.2.clone())
-        });
-        if let Some(kept) = kept {
+        if let Some(kept) = FOUND.with_borrow(|kept| kept.get(&(self.id, region)).cloned()) {
             return kept;
         }
         let round = (0..9).map(|at| [region[0] + at % 3 - 1, region[1] + at / 3 - 1]);
         let mut made = Near::default();
         for region in round {
-            made.bridges.extend(self.found(region));
-            made.windows.extend(self.windows(region));
+            let (bridge, windows) = self.region_kept(region);
+            made.bridges.extend(bridge);
+            made.windows.extend(windows.iter().copied());
         }
         let made = Rc::new(made);
         FOUND.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {
-                kept.remove(0);
+                kept.clear();
             }
-            kept.push((self.id, region, made.clone()));
+            kept.insert((self.id, region), made.clone());
         });
         made
+    }
+
+    /// The bridge and windows of `region` alone, found once on each thread.
+    fn region_kept(&self, region: [i32; 2]) -> (Option<Bridge>, Rc<Vec<Window>>) {
+        if let Some(kept) = REGIONS.with_borrow(|kept| kept.get(&(self.id, region)).cloned()) {
+            return kept;
+        }
+        let found = (self.found(region), Rc::new(self.windows(region)));
+        REGIONS.with_borrow_mut(|kept| {
+            if kept.len() >= KEPT {
+                kept.clear();
+            }
+            kept.insert((self.id, region), found.clone());
+        });
+        found
     }
 }
 

@@ -29,7 +29,7 @@
 //! between them. Rivers run down the land so shaped.
 //!
 //! It is done with the generator's own nodes, added to a copy of its graph:
-//! Peaks, Plateaus, Noise, Gullies, Spires, Arches and Overhangs, each
+//! Peaks, Plateaus, Noise, Spires, Arches and Overhangs, each
 //! kept to its biome by a Climate Mask, so the same shapes can be built by
 //! hand in a generator, and changed there.
 
@@ -39,8 +39,8 @@ use voxear_core::curve::Curve;
 use super::{
     BiomeDef, Graph, NodeId, NodeKind,
     nodes::{
-        Arches, Blend, ClimateMask, Falloff, FalloffShape, Gullies, Math, Noise, Operation, Output, Overhangs, Peaks,
-        Plateaus, Remap, Rivers, SlopeMask, Spires, Terrace,
+        Arches, Blend, ClimateMask, Falloff, FalloffShape, Math, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
+        Remap, Rivers, SlopeMask, Spires, Terrace,
     },
 };
 use crate::noise::NoiseStyle;
@@ -217,7 +217,6 @@ pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: O
     };
 
     let mut height = (base.from, base.output);
-    let mut valleys = Vec::new();
     // Where a place is within the ranges of two biomes, the narrower is the one it is (see `biomes`): so the widest
     // is blended in first, and each narrower over it.
     let mut order: Vec<usize> = (0..biomes.len()).collect();
@@ -240,6 +239,11 @@ pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: O
         if let Some((from, output)) = humidity {
             g.wire(from, output, mask, ClimateMask::HUMIDITY);
         }
+        // Kept clear of a world's start, where the land is not made at all.
+        let mask = match shaped.open {
+            Some(open) => g.math2(Operation::Multiply, (mask, 0), (open, 0)),
+            None => mask,
+        };
         shaped.masks.push((at, mask));
         if biome.land.form == Landform::Keep {
             continue;
@@ -249,32 +253,6 @@ pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: O
         g.wire(height.0, height.1, blend, Blend::A);
         g.wire(land, 0, blend, Blend::B);
         g.wire(mask, 0, blend, Blend::MASK);
-        height = (blend, 0);
-        if biome.land.valleys > 0.0 {
-            valleys.push((mask, biome.land.valleys.min(1.0), biome.land.size));
-        }
-    }
-    // Valleys cut once, down the land as it is blended, as deep as each biome's are where it lies: cutting each
-    // biome's land on its own would read all the ground under it again for each.
-    if let Some(deepest) = valleys.iter().map(|valley| valley.1).reduce(f32::max) {
-        let size = valleys.iter().map(|valley| valley.2).sum::<f32>() / valleys.len() as f32;
-        let spacing = (size * 0.12).clamp(40.0, 300.0);
-        let cut = g.add(NodeKind::Gullies(Gullies { strength: deepest * 0.9, spacing, octaves: 3 }));
-        g.wire(height.0, height.1, cut, 0);
-        let mut deep: Option<NodeId> = None;
-        for (mask, valleys, _) in valleys {
-            let share = g.math(Operation::Multiply, (mask, 0), valleys / deepest);
-            deep = Some(match deep {
-                Some(deep) => g.math2(Operation::Max, (deep, 0), (share, 0)),
-                None => share,
-            });
-        }
-        let blend = g.add(NodeKind::Blend(Blend::default()));
-        g.wire(height.0, height.1, blend, Blend::A);
-        g.wire(cut, 0, blend, Blend::B);
-        if let Some(deep) = deep {
-            g.wire(deep, 0, blend, Blend::MASK);
-        }
         height = (blend, 0);
     }
     if height.0 != base.from {
@@ -321,11 +299,6 @@ pub fn add_land_volume(graph: &mut Graph, biomes: &[BiomeDef], shaped: &Shaped) 
         for &(at, mask) in &shaped.masks {
             let land = &biomes[at].land;
             g.next();
-            // Kept clear of a world's start, as the land is.
-            let mask = match shaped.open {
-                Some(open) => g.math2(Operation::Multiply, (mask, 0), (open, 0)),
-                None => mask,
-            };
             if land.pillars > 0.0 {
                 let tallest = land.pillar_height.max(12.0);
                 let spires = Spires {
@@ -368,9 +341,11 @@ pub fn add_land_volume(graph: &mut Graph, biomes: &[BiomeDef], shaped: &Shaped) 
                     }
                     steep
                 });
-                let kept = g.add(NodeKind::Math(Math { operation: Operation::Multiply, a: 0.0, b: 0.0 }));
-                g.wire(steep, 0, kept, 0);
-                g.wire(mask, 0, kept, 1);
+                // The steep ground within its biome: a blend from nothing, so where the biome is not, how steep the
+                // ground is is never read.
+                let kept = g.add(NodeKind::Blend(Blend { a: 0.0, b: 1.0, mask: 0.0 }));
+                g.wire(steep, 0, kept, Blend::B);
+                g.wire(mask, 0, kept, Blend::MASK);
                 let amount = land.overhangs.min(60.0);
                 let overhangs = Overhangs {
                     amount,
@@ -561,7 +536,29 @@ impl Adder<'_> {
                 self.math2(Operation::Add, base, (tables, 0))
             }
         };
-        raised
+        if land.valleys <= 0.0 {
+            return raised;
+        }
+        // Valleys along the lines of a ridged noise, cut V-shaped into the land as it rises: each place read once.
+        // Cutting them as water would (a Gullies node) reads all the ground under it again and again, which costs
+        // many times what the land itself does.
+        let noise = self.add(NodeKind::Noise(Noise {
+            style: NoiseStyle::Ridged,
+            size: size * 0.7,
+            octaves: 2,
+            low: 0.0,
+            high: 1.0,
+        }));
+        let lines = self.add(NodeKind::Curve(Remap {
+            curve: Curve::new(&[[0.0, 0.0], [0.55, 0.0], [0.8, 0.3], [1.0, 1.0]]),
+            low: 0.0,
+            high: 1.0,
+        }));
+        self.wire(noise, 0, lines, 0);
+        let depth = (height * 0.45).max(6.0) * land.valleys.min(1.0);
+        let cut = self.math(Operation::Multiply, (lines, 0), depth);
+        let cut = self.math2(Operation::Multiply, (cut, 0), (rising, 0));
+        self.math2(Operation::Subtract, (raised, 0), (cut, 0))
     }
 
     /// `node` kept from 0 to 1.

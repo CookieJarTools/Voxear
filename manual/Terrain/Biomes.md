@@ -92,7 +92,7 @@ A biome shapes its own country, not only the blocks laid over it. **Form** picks
 | --- | --- |
 | Height | How high its hills, peaks, tables or rolls rise over the generator's ground, in metres |
 | Size | How far apart they stand, in metres |
-| Valleys | How deep valleys are cut down its slopes, 0 for none to 1 |
+| Valleys | How deep valleys are cut into its land, along winding lines, 0 for none to 1 |
 | Overhangs | How far its steep faces lean and hang out, in metres |
 | Pillars | How many of the places a pillar could stand have one, 0 to 1 |
 | Pillar height | How tall the tallest pillar is, in metres |
@@ -102,7 +102,9 @@ The land rises out of the generator's ground over the first 40 m above the sea, 
 
 A world's **Land from** (see [[Block Worlds]]) keeps the generator's own ground round where the world starts, so a level built there keeps the ground it was built on.
 
-The land is made of the generator's own nodes (Peaks, Plateaus, Noise, Gullies, Spires, Arches and Overhangs, each kept to its biome by a Climate Mask), added to a copy of its graph when the world is made. The same shapes can be built by hand in a [[Generator Graphs|generator graph]] and changed there. It costs: a world with land of its own takes a few times as long to make each chunk as its generator alone.
+The land is made of the generator's own nodes (Peaks, Plateaus, Noise, Spires, Arches and Overhangs, each kept to its biome by a Climate Mask and blended in), added to a copy of its graph when the world is made. The same shapes can be built by hand in a [[Generator Graphs|generator graph]] and changed there.
+
+A biome's land is worked out only where that biome is: a generator passes over whatever a Blend would leave out, wherever its mask leaves out the same side for a whole batch of places at once. Within **Land from** none of it is worked out at all. So land costs where it lies, and ground near the start costs what its generator's does.
 
 Each change is written to the biome's file as you make it, and every world listing the biome has its ground made again at once, in the level you are editing and in a game you are playing. There is nothing to save, and nothing to undo.
 

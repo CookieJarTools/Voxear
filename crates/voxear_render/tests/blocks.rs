@@ -2576,6 +2576,30 @@ fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
 /// from `eye` looking `towards`; and how many of its blocks are thin logs. `fallen` turns it about its foot, come
 /// loose from the field as a world of its own.
 fn oak_render(logs: bool, eye: Vec3, towards: Vec3, fallen: Option<Quat>) -> Option<(Vec<u8>, usize)> {
+    let oak = voxear_terrain::blocks::plant::PlantDef {
+        height: [11.0, 11.0],
+        trunk: 1.2,
+        taper: 0.75,
+        bend: 0.2,
+        crown_width: [9.0, 9.0],
+        crown_height: [6.0, 6.0],
+        leaf_size: 2.6,
+        leaf_density: 0.6,
+        roots: 3,
+        ..Default::default()
+    };
+    plant_render(&oak, (logs, true), eye, towards, fallen)
+}
+
+/// `plant` grown from a seed on a field of grass, as [`oak_render`] draws an oak, its leaves left out unless
+/// `leaves` says.
+fn plant_render(
+    plant: &voxear_terrain::blocks::plant::PlantDef,
+    (logs, leafy): (bool, bool),
+    eye: Vec3,
+    towards: Vec3,
+    fallen: Option<Quat>,
+) -> Option<(Vec<u8>, usize)> {
     use voxear_terrain::blocks::{
         block::BlockShape,
         file::BlockKind,
@@ -2608,22 +2632,13 @@ fn oak_render(logs: bool, eye: Vec3, towards: Vec3, fallen: Option<Quat>) -> Opt
     file.blocks.push(leaf);
     let leaves = file.blocks.len() as u16;
     let mut blocks = file.make_ground(None);
-    let oak = PlantDef {
-        height: [11.0, 11.0],
-        trunk: 1.2,
-        taper: 0.75,
-        bend: 0.2,
-        crown_width: [9.0, 9.0],
-        crown_height: [6.0, 6.0],
-        leaf_size: 2.6,
-        leaf_density: 0.6,
-        roots: 3,
-        ..PlantDef::default()
-    };
-    let grown = oak.grow(9);
+    let grown = plant.grow(9);
     let thin = grown.blocks.iter().filter(|(_, part, state)| part.is_wood() && state.size != 0).count();
     let mut tree = Vec::new();
     for (at, part, state) in grown.blocks {
+        if !part.is_wood() && !leafy {
+            continue;
+        }
         let block = if part == PlantPart::Leaf { leaves } else { log_number(wood, &numbers, state) };
         // Its roots stay in the ground.
         match fallen.is_some() && at[1] >= 0 {
@@ -2843,4 +2858,31 @@ fn a_sapling_stands_crossed_on_the_ground_and_grows_into_its_tree_stage_by_stage
         })
         .count();
     assert!(leafy > 100, "{leafy} pixels of the first stage's leaves");
+}
+
+#[test]
+fn a_pines_branches_leave_its_trunk_at_many_heights_rising_and_forking_joined_log_to_log() {
+    use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
+    let pine = PlantDef {
+        kind: PlantKind::Conifer,
+        height: [16.0, 16.0],
+        trunk: 1.2,
+        taper: 0.7,
+        branch: 0.25,
+        bend: 0.0,
+        crown_width: [7.0, 7.0],
+        crown_height: [11.0, 11.0],
+        leaf_size: 2.4,
+        ..PlantDef::default()
+    };
+    let (eye, towards) = (Vec3::new(17.0, 16.0, 13.0), Vec3::new(0.55, -0.15, 1.0));
+    let Some((wood, _)) = plant_render(&pine, (true, false), eye, towards, None) else { return };
+    let (whole, _) = plant_render(&pine, (true, true), eye, towards, None).unwrap();
+    let (above, _) = plant_render(&pine, (true, false), Vec3::new(21.0, 30.0, 18.0), Vec3::new(0.5, -1.0, 0.9), None).unwrap();
+    keep_image("pine wood.png", &wood);
+    keep_image("pine wood from above.png", &above);
+    keep_image("pine.png", &whole);
+    // Its wood shows, and its crown hides most of it.
+    let woody = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| i32::from(p[0]) > i32::from(p[1]) + 30 && p[0] > p[2]).count();
+    assert!(woody(&wood) > 600 && woody(&whole) < woody(&wood) / 2, "{} of wood alone, {} under its needles", woody(&wood), woody(&whole));
 }

@@ -1646,7 +1646,7 @@ impl Ground<'_> {
 
 /// How far ground `height` metres high at `at` is sunk under the land round
 /// about, where any of `biomes` asks.
-fn sunk_at(world: &WorldGen, biomes: &Biomes, at: [f32; 2], height: f32) -> f32 {
+pub(crate) fn sunk_at(world: &WorldGen, biomes: &Biomes, at: [f32; 2], height: f32) -> f32 {
     if !biomes.list().iter().any(|biome| biome.sunk.is_some()) {
         return 0.0;
     }

@@ -5,8 +5,8 @@ namespace Voxear;
 
 /// <summary>
 /// What a placed block keeps of itself: which way it faces, which half of its block it is in, whether it is open and
-/// whether it is on, and which side a door turns on. Each shape keeps only what it uses, so a fence's state is always
-/// the first. It is part of the block's number in its world, so saved changes stay as small as they were.
+/// whether it is on, and which side a door turns on; for a log, which way it lies and how thick it is across, in
+/// sixteenths of a block (0 for whole). Each shape keeps only what it uses, so a fence's state is always the first. It is part of the block's number in its world, so saved changes stay as small as they were.
 /// <code>
 /// // A stair facing east, upside down.
 /// Blocks.Set(at, Stairs, new BlockState(BlockFacing.East, BlockHalf.Upper));
@@ -21,11 +21,19 @@ public readonly record struct BlockState(
 	BlockHalf Half = BlockHalf.Lower,
 	bool Open = false,
 	bool On = false,
-	DoorHinge Hinge = DoorHinge.Left)
+	DoorHinge Hinge = DoorHinge.Left,
+	byte Size = 0)
 {
-	/// <summary>As one byte, as the engine keeps it.</summary>
+	/// <summary>How thick a log is across, in sixteenths of a block: 16 for a whole one.</summary>
+	public int Across => Size == 0 ? 16 : Size;
+
+	/// <summary>As one byte, as the engine keeps it: a thin log's thickness over its facing, with the top bit set.</summary>
 	public byte ToByte()
 	{
+		if (Size != 0)
+		{
+			return (byte)(((int)Facing & 7) | ((Size & 15) << 3) | 0x80);
+		}
 		var facing = (int)Facing & 7;
 		var upper = Half == BlockHalf.Upper ? 8 : 0;
 		var open = Open ? 16 : 0;
@@ -37,6 +45,10 @@ public readonly record struct BlockState(
 	/// <summary>A state from the byte the engine keeps.</summary>
 	public static BlockState FromByte(int value)
 	{
+		if ((value & 0x80) != 0)
+		{
+			return new BlockState((BlockFacing)((value & 7) % 6), Size: (byte)((value >> 3) & 15));
+		}
 		var facing = (BlockFacing)((value & 7) % 6);
 		var half = (value & 8) != 0 ? BlockHalf.Upper : BlockHalf.Lower;
 		var hinge = (value & 64) != 0 ? DoorHinge.Right : DoorHinge.Left;

@@ -308,7 +308,7 @@ impl BiomeFields {
 }
 
 /// A row of a number, with its unit after it where it has one.
-fn number_row(ui: &mut Ui, rows: NodeId, label: &str, unit: &str, value: f32) -> NodeId {
+pub(crate) fn number_row(ui: &mut Ui, rows: NodeId, label: &str, unit: &str, value: f32) -> NodeId {
     let row = prop(ui, rows, label);
     let within = with_unit(ui, row, unit);
     let field = ui.text_field(within, &number(value));
@@ -320,7 +320,7 @@ fn number_row(ui: &mut Ui, rows: NodeId, label: &str, unit: &str, value: f32) ->
 
 /// A row of two numbers, from and to, with their unit after them where
 /// they have one.
-fn range_row(ui: &mut Ui, rows: NodeId, label: &str, unit: &str, range: [f32; 2]) -> [NodeId; 2] {
+pub(crate) fn range_row(ui: &mut Ui, rows: NodeId, label: &str, unit: &str, range: [f32; 2]) -> [NodeId; 2] {
     let row = prop(ui, rows, label);
     let within = with_unit(ui, row, unit);
     let pair = ui.panel(within, Style::row());
@@ -353,13 +353,13 @@ fn show_unit(ui: &mut Ui, within: NodeId, unit: &str) {
     }
 }
 
-fn changed_number(ui: &Ui, field: NodeId) -> Option<f32> {
+pub(crate) fn changed_number(ui: &Ui, field: NodeId) -> Option<f32> {
     ui.changed(field).then(|| ui.text(field).trim().parse().ok()).flatten()
 }
 
 /// A range typed into: from the lesser to the greater of what its two
 /// fields say, one that is no number kept as `now` has it.
-fn changed_range(ui: &Ui, fields: [NodeId; 2], now: [f32; 2]) -> Option<[f32; 2]> {
+pub(crate) fn changed_range(ui: &Ui, fields: [NodeId; 2], now: [f32; 2]) -> Option<[f32; 2]> {
     if !fields.iter().any(|&field| ui.changed(field)) {
         return None;
     }

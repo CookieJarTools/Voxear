@@ -94,6 +94,16 @@ impl BlockFacing {
         }
     }
 
+    /// The way along its axis a log facing this way keeps: up for up and
+    /// down, east for east and west, north for north and south.
+    pub fn axis(self) -> Self {
+        match self {
+            BlockFacing::Up | BlockFacing::Down => BlockFacing::Up,
+            BlockFacing::East | BlockFacing::West => BlockFacing::East,
+            BlockFacing::North | BlockFacing::South => BlockFacing::North,
+        }
+    }
+
     /// Whether it is one of the four ways round, not up or down.
     pub fn is_around(self) -> bool {
         !matches!(self, BlockFacing::Up | BlockFacing::Down)
@@ -197,8 +207,9 @@ impl DoorHinge {
 
 /// What a placed block keeps of itself, as one byte: which way it faces
 /// (three bits), its half, whether it is open, whether it is on, and which
-/// side a door turns on. Each shape keeps only what it uses
-/// ([`BlockState::normalized`]), so a block takes as few numbers as it can.
+/// side a door turns on; or, for a log, which way it faces and how thick it
+/// is. Each shape keeps only what it uses ([`BlockState::normalized`]), so
+/// a block takes as few numbers as it can.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlockState {
@@ -207,10 +218,42 @@ pub struct BlockState {
     pub open: bool,
     pub on: bool,
     pub hinge: DoorHinge,
+    /// How thick a log is across, in sixteenths of a block: 0 for a whole
+    /// block (see [`log_size`]).
+    #[serde(skip_serializing_if = "is_whole")]
+    pub size: u8,
+}
+
+fn is_whole(size: &u8) -> bool {
+    *size == 0
+}
+
+/// The thicknesses a log can be, in sixteenths across, thinnest first: a
+/// log is a whole block or one of these, kept as its state's `size`.
+pub const LOG_SIZES: [u8; 6] = [4, 6, 8, 10, 12, 14];
+
+/// A log's thickness, `across` sixteenths wide, as its state keeps it: the
+/// nearest of [`LOG_SIZES`], or 0 for a whole block from 15 up. Under 2 is
+/// no log at all, and is kept as the thinnest.
+pub fn log_size(across: f32) -> u8 {
+    if across >= 15.0 {
+        return 0;
+    }
+    LOG_SIZES
+        .into_iter()
+        .min_by(|a, b| (f32::from(*a) - across).abs().total_cmp(&(f32::from(*b) - across).abs()))
+        .unwrap_or(LOG_SIZES[0])
 }
 
 impl BlockState {
+    /// As a byte. A log thinner than a whole block sets the top bit and
+    /// keeps its thickness over its facing, in place of the half, open, on
+    /// and hinge no log uses; no other state sets that bit, so a byte
+    /// written before logs had thickness reads as it did.
     pub fn to_byte(self) -> u8 {
+        if self.size != 0 {
+            return self.facing.index() | (self.size.min(15) & 15) << 3 | 0x80;
+        }
         self.facing.index()
             | u8::from(self.half == BlockHalf::Upper) << 3
             | u8::from(self.open) << 4
@@ -219,13 +262,22 @@ impl BlockState {
     }
 
     pub fn from_byte(byte: u8) -> Self {
+        if byte & 0x80 != 0 {
+            return Self { facing: BlockFacing::from_index(byte & 7), size: (byte >> 3) & 15, ..Self::default() };
+        }
         Self {
             facing: BlockFacing::from_index(byte & 7),
             half: if byte & 8 != 0 { BlockHalf::Upper } else { BlockHalf::Lower },
             open: byte & 16 != 0,
             on: byte & 32 != 0,
             hinge: if byte & 64 != 0 { DoorHinge::Right } else { DoorHinge::Left },
+            size: 0,
         }
+    }
+
+    /// How thick it is across, in sixteenths: 16 for a whole block.
+    pub fn across(self) -> u8 {
+        if self.size == 0 { 16 } else { self.size }
     }
 
     /// The state a block of `shape` is placed in when nothing says: a slab
@@ -234,6 +286,7 @@ impl BlockState {
     pub fn default_for(shape: BlockShape) -> Self {
         let facing = match shape {
             BlockShape::Slab | BlockShape::Lever | BlockShape::Button => BlockFacing::Down,
+            BlockShape::Log => BlockFacing::Up,
             _ => BlockFacing::North,
         };
         Self { facing, ..Self::default() }
@@ -252,8 +305,19 @@ impl BlockState {
             BlockShape::FenceGate => Self { facing: around(self.facing), open: self.open, ..blank },
             BlockShape::Lever | BlockShape::Button => Self { facing: self.facing, on: self.on, ..blank },
             BlockShape::Boxes => Self { facing: around(self.facing), open: self.open, ..blank },
+            BlockShape::Log => {
+                let size = if self.size == 0 { 0 } else { log_size(f32::from(self.size)) };
+                Self { facing: self.facing.axis(), size, ..blank }
+            }
             _ => blank,
         }
+    }
+
+    /// The same log thinner by `by` sixteenths across, or none once there
+    /// is nothing left of it: as an axe takes a slice off it.
+    pub fn thinned(self, by: u8) -> Option<Self> {
+        let left = self.across().checked_sub(by.max(1)).filter(|&left| left >= LOG_SIZES[0])?;
+        Some(Self { size: log_size(f32::from(left)), ..self })
     }
 
     /// Turned `turns` quarter turns about the up axis and, first, mirrored
@@ -319,6 +383,8 @@ pub fn placed_state(shape: BlockShape, normal: [i32; 3], within: [f32; 3], look:
         BlockShape::FenceGate => BlockState { facing: ahead, ..base },
         BlockShape::Lever | BlockShape::Button => BlockState { facing: against.unwrap_or(BlockFacing::Down), ..base },
         BlockShape::Boxes => BlockState { facing: ahead.opposite(), ..base },
+        // Along the way out of the face it is put on, as a log lies.
+        BlockShape::Log => BlockState { facing: against.unwrap_or(BlockFacing::Up), ..base },
         _ => base,
     };
     state.normalized(shape)
@@ -329,6 +395,11 @@ pub fn placed_state(shape: BlockShape, normal: [i32; 3], within: [f32; 3], look:
 pub fn turned_on(shape: BlockShape, state: BlockState) -> BlockState {
     let next = match StateUse::of(shape).facings {
         6 => BlockFacing::from_index((state.facing.index() + 1) % 6),
+        3 => match state.facing.axis() {
+            BlockFacing::Up => BlockFacing::East,
+            BlockFacing::East => BlockFacing::North,
+            _ => BlockFacing::Up,
+        },
         4 => state.facing.turned(1),
         _ => state.facing,
     };
@@ -336,8 +407,9 @@ pub fn turned_on(shape: BlockShape, state: BlockState) -> BlockState {
 }
 
 /// What a shape uses of a block's state: which ways it can face (none, the
-/// four round, or all six), whether it has halves, opens, turns on, or has
-/// a hinge. The Inspector and the brush offer only these.
+/// three axes a log lies along, the four round, or all six), whether it has
+/// halves, opens, turns on, has a hinge, or a thickness. The Inspector and
+/// the brush offer only these.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StateUse {
     pub facings: u8,
@@ -345,6 +417,7 @@ pub struct StateUse {
     pub open: bool,
     pub on: bool,
     pub hinge: bool,
+    pub size: bool,
 }
 
 impl StateUse {
@@ -358,6 +431,7 @@ impl StateUse {
             BlockShape::FenceGate => Self { facings: 4, open: true, ..none },
             BlockShape::Lever | BlockShape::Button => Self { facings: 6, on: true, ..none },
             BlockShape::Boxes => Self { facings: 4, open: true, ..none },
+            BlockShape::Log => Self { facings: 3, size: true, ..none },
             _ => none,
         }
     }
@@ -647,7 +721,8 @@ pub enum StairCorner {
 
 /// What a block's parts take from the blocks round it: which of the four
 /// sides round it it joins (a bit each, in [`BlockFacing::AROUND`]'s
-/// order), and for a stair, its corner.
+/// order; for a log, of all six, in [`BlockFacing::ALL`]'s, whose first
+/// four are those), and for a stair, its corner.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Around {
     pub joins: u8,
@@ -863,8 +938,45 @@ pub fn part_boxes(shape: BlockShape, state: BlockState, around: Around, custom: 
             Some(custom) => custom.boxes().iter().map(|&part| turn_box(part, facing)).collect(),
             None => vec![b([4, 0, 4], [12, 8, 12])],
         },
-        BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine => Vec::new(),
+        BlockShape::Log => log_boxes(state, around.joins),
+        BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine | BlockShape::Sapling => Vec::new(),
     }
+}
+
+/// A log's boxes: a post as thick as its state says, running the length of
+/// its block along the way it faces, and an arm as thick out to each side
+/// of the six it joins (`joins`, a bit each in [`BlockFacing::ALL`]'s
+/// order) across that way, so a limb that steps aside reads as one. A whole
+/// log is the whole block.
+fn log_boxes(state: BlockState, joins: u8) -> Vec<PartBox> {
+    let across = state.across().min(16);
+    let (low, high) = (8 - across / 2, 8 + across / 2);
+    let axis = match state.facing.axis() {
+        BlockFacing::East => 0,
+        BlockFacing::Up => 1,
+        _ => 2,
+    };
+    let (mut from, mut to) = ([low; 3], [high; 3]);
+    (from[axis], to[axis]) = (0, 16);
+    let mut boxes = vec![PartBox::new(from, to)];
+    if across >= 16 {
+        return boxes;
+    }
+    for way in BlockFacing::ALL {
+        let step = way.step();
+        let along = (0..3).find(|&i| step[i] != 0).expect("a way along an axis");
+        if along == axis || joins & (1 << way.index()) == 0 {
+            continue;
+        }
+        let (mut from, mut to) = ([low; 3], [high; 3]);
+        if step[along] > 0 {
+            (from[along], to[along]) = (high, 16);
+        } else {
+            (from[along], to[along]) = (0, low);
+        }
+        boxes.push(PartBox::new(from, to));
+    }
+    boxes
 }
 
 /// The boxes a placed block collides as besides those it is drawn as: a
@@ -896,6 +1008,7 @@ pub fn covers(shape: BlockShape, state: BlockState, custom: Option<&CustomShape>
         BlockShape::Slab | BlockShape::Boxes => part_boxes(shape, state, Around::default(), custom),
         // A stair's half under (or over) its step, whatever corner it turns.
         BlockShape::Stairs => part_boxes(shape, state, Around::default(), None).into_iter().take(1).collect(),
+        BlockShape::Log if state.size == 0 => return 0b11_1111,
         _ => return 0,
     };
     let mut covered = 0u8;
@@ -953,16 +1066,57 @@ mod tests {
 
     #[test]
     fn a_state_is_one_byte_and_keeps_only_what_its_shape_uses() {
-        for byte in (0..128u8).filter(|byte| byte & 7 < 6) {
+        for byte in (0..=255u8).filter(|byte| byte & 7 < 6 && (byte & 0x80 == 0 || byte >> 3 & 15 != 0)) {
             assert_eq!(BlockState::from_byte(byte).to_byte(), byte);
         }
-        let door = BlockState { facing: BlockFacing::West, half: BlockHalf::Upper, open: true, on: true, hinge: DoorHinge::Right };
+        let door = BlockState { facing: BlockFacing::West, half: BlockHalf::Upper, open: true, on: true, hinge: DoorHinge::Right, size: 0 };
         assert_eq!(BlockState::from_byte(door.to_byte()), door);
         let kept = door.normalized(BlockShape::Door);
         assert!(kept.open && !kept.on && kept.hinge == DoorHinge::Right);
         assert_eq!(door.normalized(BlockShape::Fence), BlockState::default(), "a fence keeps nothing");
         assert_eq!(BlockState { facing: BlockFacing::Up, ..door }.normalized(BlockShape::Stairs).facing, BlockFacing::North);
         assert_eq!(BlockState::default_for(BlockShape::Slab).facing, BlockFacing::Down);
+    }
+
+    #[test]
+    fn a_log_lies_along_one_of_three_ways_and_keeps_how_thick_it_is_and_an_axe_thins_it() {
+        let thin = BlockState { facing: BlockFacing::West, size: 6, ..BlockState::default() }.normalized(BlockShape::Log);
+        assert_eq!((thin.facing, thin.size), (BlockFacing::East, 6));
+        assert_eq!(BlockState::from_byte(thin.to_byte()), thin);
+        assert!(thin.to_byte() & 0x80 != 0, "a thin log's byte is no other shape's");
+        assert_eq!(BlockState { size: 7, ..thin }.normalized(BlockShape::Log).size, 6, "to the nearest thickness");
+        assert_eq!(thin.normalized(BlockShape::Door).size, 0, "only a log keeps its thickness");
+        // Whole, a log keeps its way and no thickness, and its byte is as it was before logs had one.
+        let whole = BlockState::default_for(BlockShape::Log);
+        assert_eq!((whole.facing, whole.size, whole.across()), (BlockFacing::Up, 0, 16));
+        assert_eq!(log_size(16.0), 0);
+        assert_eq!(log_size(1.0), 4);
+        // An axe takes a slice at a time, until there is nothing left.
+        let cuts: Vec<u8> = std::iter::successors(Some(whole), |log| log.thinned(4)).map(BlockState::across).collect();
+        assert_eq!(cuts, [16, 12, 8, 4]);
+        // Put against the side of a block, it lies out from it; the brush turns it through its three ways.
+        assert_eq!(placed_state(BlockShape::Log, [0, 0, 1], [0.5; 3], [0.0, 0.0, -1.0]).facing, BlockFacing::North);
+        assert_eq!(placed_state(BlockShape::Log, [0, 1, 0], [0.5; 3], [0.0, -1.0, 0.0]).facing, BlockFacing::Up);
+        let turns: Vec<BlockFacing> =
+            std::iter::successors(Some(whole), |log| Some(turned_on(BlockShape::Log, *log))).take(4).map(|s| s.facing).collect();
+        assert_eq!(turns, [BlockFacing::Up, BlockFacing::East, BlockFacing::North, BlockFacing::Up]);
+    }
+
+    #[test]
+    fn a_thin_log_is_a_post_along_its_way_with_arms_to_the_logs_it_joins_and_a_whole_one_covers_its_block() {
+        let up = BlockState { facing: BlockFacing::Up, size: 6, ..BlockState::default() };
+        assert_eq!(part_boxes(BlockShape::Log, up, Around::default(), None), vec![PartBox::new([5, 0, 5], [11, 16, 11])]);
+        // Joined east and up: an arm east, none up, which is along its way already.
+        let joins = 1 << BlockFacing::East.index() | 1 << BlockFacing::Up.index();
+        let boxes = part_boxes(BlockShape::Log, up, Around { joins, ..Around::default() }, None);
+        assert_eq!(boxes, vec![PartBox::new([5, 0, 5], [11, 16, 11]), PartBox::new([11, 5, 5], [16, 11, 11])]);
+        let lying = BlockState { facing: BlockFacing::North, size: 4, ..BlockState::default() };
+        let boxes = part_boxes(BlockShape::Log, lying, Around { joins: 1 << BlockFacing::Down.index(), ..Around::default() }, None);
+        assert_eq!(boxes, vec![PartBox::new([6, 6, 0], [10, 10, 16]), PartBox::new([6, 0, 6], [10, 6, 10])]);
+        let whole = BlockState { facing: BlockFacing::East, ..BlockState::default() };
+        assert_eq!(part_boxes(BlockShape::Log, whole, Around { joins: 63, ..Around::default() }, None).len(), 1);
+        assert_eq!(covers(BlockShape::Log, whole, None), 0b11_1111);
+        assert_eq!(covers(BlockShape::Log, up, None), 0);
     }
 
     #[test]

@@ -31,6 +31,7 @@
 pub mod block;
 pub mod chunk;
 pub mod edits;
+pub mod fell;
 pub mod file;
 pub mod flow;
 pub mod generate;
@@ -40,6 +41,7 @@ pub mod map_known;
 pub mod mesh;
 pub mod path;
 pub mod plant;
+pub mod sapling;
 pub mod shape;
 pub mod sight;
 pub mod smooth;

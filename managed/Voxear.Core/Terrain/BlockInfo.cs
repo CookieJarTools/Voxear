@@ -40,6 +40,9 @@ internal sealed class BlockInfo
 		sounds = [named.GetProperty("break").GetString(), named.GetProperty("place").GetString(), named.GetProperty("step").GetString()];
 		Shape = json.TryGetProperty("shape", out var shape) ? (BlockShape)shape.GetInt32() : BlockShape.Cube;
 		Usable = json.TryGetProperty("usable", out var usable) && usable.GetBoolean();
+		Chops = json.TryGetProperty("chops", out var chops) ? chops.GetInt32() : 0;
+		Fells = json.TryGetProperty("fells", out var fells) && fells.GetBoolean();
+		IsSapling = json.TryGetProperty("grows", out var grows) && grows.ValueKind == JsonValueKind.String;
 		foreach (var drop in json.GetProperty("drops").EnumerateArray())
 		{
 			var count = drop.GetProperty("count");
@@ -56,6 +59,12 @@ internal sealed class BlockInfo
 	public BlockShape Shape { get; init; }
 
 	public bool Usable { get; init; }
+
+	public int Chops { get; init; }
+
+	public bool Fells { get; init; }
+
+	public bool IsSapling { get; init; }
 
 	public float Hardness { get; }
 

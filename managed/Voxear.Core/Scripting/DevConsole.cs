@@ -10,8 +10,9 @@ namespace Voxear.Scripting;
 
 /// <summary>
 /// A development build's console, as far as scripts go: a typed line runs a [Command] method by its name with what
-/// follows as its arguments, or reads or sets a [ConsoleVariable]. Names match ignoring case. What a line does is
-/// handed back as lines to print, so the console shows them as it shows the log.
+/// follows as its arguments, or reads or sets a [ConsoleVariable]: the game's own, and those of Voxear.Core. Names
+/// match ignoring case. What a line does is handed back as lines to print, so the console shows them as it shows the
+/// log.
 /// </summary>
 internal static class DevConsole
 {
@@ -20,8 +21,11 @@ internal static class DevConsole
 	/// <summary>Runs a line against the game's scripts. Null when no command or variable has its first word as a name.</summary>
 	public static List<(LogLevel Level, string Text)>? Run(string line)
 	{
-		return Run(line, GameScripts.Assemblies);
+		return Run(line, Searched);
 	}
+
+	/// <summary>The assemblies whose commands and variables a line can name: the game's scripts, and Voxear.Core's own.</summary>
+	public static IEnumerable<Assembly> Searched => GameScripts.Assemblies.Append(typeof(DevConsole).Assembly).Distinct();
 
 	public static List<(LogLevel Level, string Text)>? Run(string line, IEnumerable<Assembly> assemblies)
 	{

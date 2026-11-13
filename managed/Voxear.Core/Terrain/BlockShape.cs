@@ -22,4 +22,8 @@ public enum BlockShape
 	Chain,
 	Rope,
 	Boxes,
+	/// <summary>A log: a whole block, or a post as thin as its state's Size, thinner a slice each time it is mined.</summary>
+	Log,
+	/// <summary>A sapling: crossed sheets standing on the block under it, which grows into the plant its block names.</summary>
+	Sapling,
 }

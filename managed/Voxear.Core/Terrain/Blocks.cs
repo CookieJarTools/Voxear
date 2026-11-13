@@ -158,7 +158,9 @@ public static unsafe partial class Blocks
 	public static bool Place(in BlockHit hit, Item item)
 	{
 		var block = item.Places;
-		if (!block.IsValid || !Place(hit, block))
+		// A sapling takes root only where it has ground under it, room and light, and is kept to grow.
+		var put = block.IsSapling ? Saplings.Plant(block, hit.Before) : Place(hit, block);
+		if (!block.IsValid || !put)
 		{
 			return false;
 		}
@@ -172,7 +174,8 @@ public static unsafe partial class Blocks
 	/// Breaks the block a ray met by its rules, at once, and gives what it drops to the tool <paramref name="held"/>:
 	/// nothing where the tool does not get its drops, and nothing, the block left there, where nothing breaks it. A
 	/// kind a world keeps itself has no rules: it breaks and drops nothing. Use a <see cref="BlockMiner"/> to take the
-	/// time the block takes.
+	/// time the block takes. A log that chops loses a slice instead, and only its last breaks it: then the tree it held
+	/// up comes down, away from the face the ray met (see <see cref="Trees"/>).
 	/// </summary>
 	public static ItemStack[] Mine(in BlockHit hit, Item? held = null)
 	{
@@ -189,9 +192,24 @@ public static unsafe partial class Blocks
 		{
 			return false;
 		}
+		// A slice off a log that chops, but its last: it stands thinner, and nothing breaks.
+		var away = Trees.Away(hit);
+		if (Trees.SlicesLeft(hit) > 1)
+		{
+			if (Trees.Chop(hit, away) == ChopResult.Thinner)
+			{
+				Sound(block.BreakSound, hit.Middle);
+			}
+			return false;
+		}
 		var mining = new BlockMining(hit, block, held, block.RollDrops(held));
 		Mining?.Invoke(mining);
-		if (mining.Cancel || !Break(hit))
+		if (mining.Cancel)
+		{
+			return false;
+		}
+		var broke = block.Chops > 0 && block.Shape == BlockShape.Log ? Trees.Chop(hit, away) != ChopResult.None : Break(hit);
+		if (!broke)
 		{
 			return false;
 		}

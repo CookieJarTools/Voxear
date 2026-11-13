@@ -505,8 +505,36 @@ BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
     return b;
 }
 
+// `v` turned by the quaternion `q`.
+float3 quaternionTurn(float4 q, float3 v)
+{
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+// `b`, a corner of a world drawn turned, turned about the world's corner. Its pictures are read where it rests, as a
+// moving part's are, so they stay on it as it turns: a face of a cube says the way it faces as it rests, as a part's
+// face does.
+BlockPoint turnedPoint(BlockWorld world, BlockPoint b)
+{
+    float3 turned = world.corner + quaternionTurn(world.turn, b.world - world.corner);
+    b.posedBy += turned - b.world;
+    b.world = turned;
+    b.back = quaternionTurn(world.turn, b.back);
+    if (b.part == 0 && b.loose == 0)
+    {
+        // East, west, up, down, south, north, as partPoint numbers the ways a face of a block can face.
+        float3 n = b.normal;
+        float3 a = abs(n);
+        uint facing = a.x >= a.y && a.x >= a.z ? (n.x > 0.0 ? 1u : 3u) : a.y >= a.z ? (n.y > 0.0 ? 4u : 5u) : (n.z > 0.0 ? 2u : 0u);
+        b.part = 1 | (facing << 1);
+    }
+    b.normal = quaternionTurn(world.turn, b.normal);
+    return b;
+}
+
 // Vertex `vertexId` of the world `push.level` names (its number and one): a quad's corner, or, drawn smooth, a
-// triangle's.
+// triangle's; turned where the world is drawn turned.
 BlockPoint blockPoint(uint vertexId)
 {
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
@@ -514,5 +542,6 @@ BlockPoint blockPoint(uint vertexId)
     {
         return smoothPoint(world, vertexId);
     }
-    return cubePoint(world, vertexId, true);
+    BlockPoint b = cubePoint(world, vertexId, true);
+    return (world.flags & BLOCKS_TURNED) != 0 ? turnedPoint(world, b) : b;
 }

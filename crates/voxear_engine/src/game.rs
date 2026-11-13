@@ -580,6 +580,27 @@ impl Game {
         self.loads.status(id)
     }
 
+    /// Puts each item drop shown as its item's Dropped prefab's prefab under
+    /// it, once.
+    fn show_dropped_prefabs(&mut self, mut renderer: Option<&mut Renderer>) {
+        use crate::item_drops::DroppedAs;
+        let waiting: Vec<(Entity, String)> = self
+            .engine
+            .world
+            .query_ref::<(Entity, &DroppedAs)>()
+            .without::<voxear_scene::Destroying>()
+            .into_iter()
+            .filter(|(_, dropped)| !dropped.shown)
+            .map(|(entity, dropped)| (entity, dropped.prefab.clone()))
+            .collect();
+        for (entity, prefab) in waiting {
+            self.engine.world.insert(entity, DroppedAs { prefab: prefab.clone(), shown: true });
+            if let Err(error) = self.instantiate(&prefab, Some(entity), None, renderer.as_deref_mut()) {
+                tracing::warn!("an item's Dropped prefab {prefab}: {error:#}");
+            }
+        }
+    }
+
     /// Instantiates a prefab by GUID or project path, loading it first if
     /// needed. Awake and OnEnable run before this returns; see
     /// [`Engine::instantiate`].
@@ -738,6 +759,13 @@ impl Game {
         crate::blocks::flow(&mut self.engine.world, delta);
         crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
+        // Trees coming down, and what they broke into, while the game plays.
+        if !self.engine.is_edit_mode() {
+            crate::trees::update(&mut self.engine.world, &mut self.content, delta);
+            crate::saplings::update(&mut self.engine.world, &mut self.content, delta);
+            crate::item_drops::update(&mut self.engine.world, &mut self.content, renderer.as_deref_mut(), delta);
+            self.show_dropped_prefabs(renderer.as_deref_mut());
+        }
         crate::heat::prepare(&mut self.engine.world, &mut self.content);
         crate::storms::prepare(&mut self.engine.world, &mut self.content);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
@@ -1113,6 +1141,68 @@ impl ScriptServices for GameServices<'_> {
 
     fn door_halves(&mut self, world: &mut World, entity: Entity, changes: Vec<([i32; 3], u16)>) -> Vec<([i32; 3], u16)> {
         crate::blocks::with_door_halves(world, self.content, entity, changes)
+    }
+
+    fn tree_call(&mut self, world: &mut World, what: i32, at: [f32; 3], way: [f32; 3]) -> i32 {
+        use crate::trees::{Chopped, block_at, chop, cut_through};
+        let Some((entity, place)) = block_at(world, Vec3::from(at)) else { return 0 };
+        if what == 2 {
+            let grew = crate::saplings::grow_now(world, self.content, entity, place);
+            return if matches!(grew, crate::saplings::Grew::Grew | crate::saplings::Grew::Done) { 4 } else { 0 };
+        }
+        let done = match what {
+            0 => chop(world, self.content, entity, place, Vec3::from(way)),
+            1 => cut_through(world, self.content, entity, place, Vec3::from(way)),
+            _ => Chopped::No,
+        };
+        match done {
+            Chopped::No => 0,
+            Chopped::Thinner => 1,
+            Chopped::Cut => 2,
+            Chopped::Felled(_) => 3,
+        }
+    }
+
+    fn sapling_plant(&mut self, world: &mut World, reference: &str, at: [f32; 3]) -> bool {
+        crate::saplings::plant_at(world, self.content, Vec3::from(at), reference)
+    }
+
+    fn saplings(&mut self, world: &World) -> Vec<([f32; 3], f32)> {
+        crate::saplings::all(world, self.content).into_iter().map(|(at, grown)| (at.to_array(), grown)).collect()
+    }
+
+    fn trees_felled(&mut self, world: &mut World) -> Vec<voxear_scripting::FelledInfo> {
+        crate::trees::take_felled(world)
+            .into_iter()
+            .map(|tree| voxear_scripting::FelledInfo {
+                world: tree.world.to_bits(),
+                cut: tree.cut.to_array(),
+                away: tree.away.to_array(),
+                landed: tree.landed.to_array(),
+                drops: tree.drops.iter().map(|drop| drop.to_bits()).collect(),
+            })
+            .collect()
+    }
+
+    fn item_drop(&mut self, world: &mut World, reference: &str, count: u32, at: [f32; 3], velocity: [f32; 3]) -> u64 {
+        crate::item_drops::drop_item(world, reference, count, Vec3::from(at), Vec3::from(velocity)).to_bits()
+    }
+
+    fn item_drops_near(&mut self, world: &World, at: [f32; 3], radius: f32) -> Vec<u64> {
+        crate::item_drops::near(world, Vec3::from(at), radius).into_iter().map(|drop| drop.to_bits()).collect()
+    }
+
+    fn item_drop_read(&mut self, world: &mut World, drop: u64, take: bool) -> Option<(String, u32, [f32; 3])> {
+        let entity = Entity::from_bits(drop);
+        let at = world.get::<voxear_scene::Transform>(entity)?.position.to_array();
+        let (item, count) = match take {
+            true => crate::item_drops::take(world, entity)?,
+            false => {
+                let drop = world.get::<crate::item_drops::ItemDrop>(entity).filter(|_| !world.has::<voxear_scene::Destroying>(entity))?;
+                (drop.item.clone(), drop.count)
+            }
+        };
+        Some((item, count, at))
     }
 
     fn blocks_grown(&mut self, world: &World, entity: Entity) -> Vec<(u16, String)> {

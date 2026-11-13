@@ -3124,3 +3124,51 @@ fn a_pines_branches_leave_its_trunk_at_many_heights_rising_and_forking_joined_lo
     let woody = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| i32::from(p[0]) > i32::from(p[1]) + 30 && p[0] > p[2]).count();
     assert!(woody(&wood) > 600 && woody(&whole) < woody(&wood) / 2, "{} of wood alone, {} under its needles", woody(&wood), woody(&whole));
 }
+
+#[test]
+fn a_biomes_own_land_rises_in_mountains_pillars_and_tablelands() {
+    use voxear_terrain::generate::{BiomeDef, BiomeLand, Landform, land::add_land, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let hills = starters().into_iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    // A kilometre and a bit of ground in blocks of 2 m.
+    let (side, size) = (640u32, 2.0f32);
+    let across = side as f32 * size;
+    let forms = [
+        (Landform::Mountains, "land mountains.png", [0.36, 0.5, 0.26]),
+        (Landform::Pillars, "land pillars.png", [0.42, 0.56, 0.24]),
+        (Landform::Tablelands, "land tablelands.png", [0.72, 0.5, 0.34]),
+    ];
+    for (form, name, colour) in forms {
+        let biome =
+            BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], land: BiomeLand::of(form), ..BiomeDef::default() };
+        let mut graph = hills.graph().clone();
+        add_land(&mut graph, std::slice::from_ref(&biome), hills.sea_level(), None);
+        let landed = hills.with_graph(graph);
+        // The highest of its land over a few kilometres, looked at from a corner of the ground round it.
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..40 * 40).map(|at| ((at % 40) as f32 * 150.0 - 3000.0, (at / 40) as f32 * 150.0 - 3000.0)).unzip();
+        let mut heights = vec![0.0; xs.len()];
+        landed.heights(&xs, &zs, &mut heights);
+        let top = (0..xs.len()).max_by(|&a, &b| heights[a].total_cmp(&heights[b])).unwrap();
+        let middle = [xs[top], zs[top]];
+        let corner = [middle[0] - across * 0.5, middle[1] - across * 0.5];
+        let near = landed.height_at(corner[0] + 30.0, corner[1] + 30.0);
+        let eye = Vec3::new(30.0, near.max(heights[top] * 0.6) + 40.0, 30.0);
+        let away = (across * 0.5 - 30.0) * std::f32::consts::SQRT_2;
+        let pitch = ((eye.y - heights[top] * 0.7) / away).atan().max(0.05);
+        let view = (eye, std::f32::consts::FRAC_PI_4, pitch);
+        let ground = (biome, "Grass", colour);
+        let (pixels, _) = generated_view_with(
+            &mut renderer,
+            &hills,
+            (size, side, corner),
+            std::slice::from_ref(&ground),
+            view,
+            name,
+            (false, false, 0.0, None),
+        );
+        let sky = sky_pixels(&pixels);
+        assert!(sky < (WIDTH * HEIGHT) as usize * 3 / 4, "{name}: {sky} pixels of sky");
+        println!("{name}: highest {:.0} m over {:.0} m round it", heights[top], near);
+    }
+}

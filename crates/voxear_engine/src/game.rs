@@ -459,6 +459,17 @@ impl Game {
         Ok(placed.len())
     }
 
+    /// Starts the game's UI afresh, with nothing on it, and lets go of what
+    /// showed on the one before: its documents, and its maps with the
+    /// input and the pointer an open map held. What the editor does as
+    /// play stops, so the next play's UI is made as the first was.
+    pub fn reset_ui(&mut self, renderer: Option<&mut Renderer>) {
+        let shaders = self.ui.shaders();
+        self.ui = GameUi::default();
+        self.ui.set_shaders(shaders);
+        self.maps.leave_ui(&mut self.input, &mut self.display, renderer);
+    }
+
     /// Frees what nothing uses any more (see [`Content::release_unused`]).
     /// Runs after every level change, and when scripts call
     /// `Content.UnloadUnused`.

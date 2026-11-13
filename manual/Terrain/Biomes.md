@@ -75,6 +75,35 @@ Only a world's own blocks have vines, not the larger ones of its far rings, and 
 
 White, 1 for each part, leaves a block as it is; under 1 darkens that part, over 1 brightens it. Its swatch shows it over a pale grey-green, as a block of grass made to be tinted looks.
 
+### Land
+
+A biome shapes its own country, not only the blocks laid over it. **Form** picks the kind, and each comes with the numbers below set for it; change them after.
+
+| Form | What it makes |
+| --- | --- |
+| Generator's Own | The ground as the world's generator makes it |
+| Plains | The ground brought down to a third of its height over the sea, rolling a little |
+| Hills | Rounded hills over the ground, with valleys cut down them |
+| Mountains | Ranges of sharp peaks with level land between, bands of cliff across their flanks, deep valleys, overhanging faces and natural bridges |
+| Tablelands | Level tables at a few heights with sheer walls between, some pillars and bridges |
+| Pillars | Low rolling ground with tall towers of rock standing out of it, grown over on top, and bridges between high places |
+
+| Setting | What it does |
+| --- | --- |
+| Height | How high its hills, peaks, tables or rolls rise over the generator's ground, in metres |
+| Size | How far apart they stand, in metres |
+| Valleys | How deep valleys are cut down its slopes, 0 for none to 1 |
+| Overhangs | How far its steep faces lean and hang out, in metres |
+| Pillars | How many of the places a pillar could stand have one, 0 to 1 |
+| Pillar height | How tall the tallest pillar is, in metres |
+| Bridges | How many of the places a natural bridge could span have one, 0 to 1 |
+
+The land rises out of the generator's ground over the first 40 m above the sea, so coasts and islands stay where the generator put them. Where one biome meets another, its land fades into the next over a few degrees of the climate past its own range, so mountains fall away into hills rather than stopping at a line. Where a place is within the ranges of several biomes, the narrowest one's land is what it has, as its blocks are. A pillar or a bridge stands whole where its biome is, never cut off at the border. Rivers and lakes run down the land so shaped.
+
+A world's **Land from** (see [[Block Worlds]]) keeps the generator's own ground round where the world starts, so a level built there keeps the ground it was built on.
+
+The land is made of the generator's own nodes (Peaks, Plateaus, Noise, Gullies, Spires, Arches and Overhangs, each kept to its biome by a Climate Mask), added to a copy of its graph when the world is made. The same shapes can be built by hand in a [[Generator Graphs|generator graph]] and changed there. It costs: a world with land of its own takes a few times as long to make each chunk as its generator alone.
+
 Each change is written to the biome's file as you make it, and every world listing the biome has its ground made again at once, in the level you are editing and in a game you are playing. There is nothing to save, and nothing to undo.
 
 ## Tints
@@ -116,6 +145,8 @@ The Grassland, the Forest, the Savanna and the Rainforest are one block of **Gra
 
 All but the Desert have Stone deep down. Ground steeper than 45° is rock; snow lies on ground up to 58°.
 
+Each has [land](#land) of its own: plains in the Tundra, the Grassland and the Savanna, hills in the Taiga and the Forest, tablelands in the Desert and pillars of rock in the Rainforest. The Snow keeps the ground it lies on.
+
 The wet ones have [[Blocks#Vines|vines]], of a **Vine** block made with the rest: thick in the Rainforest, some in the Forest, a few in the Taiga and the Grassland, hanging under ledges and cave roofs down to 40 m under the ground.
 
 A block of the same name anywhere in the project is used as it is, and a biome of the same name already in the folder is listed as it is, so nothing you made is written over and the button is safe to press twice.
@@ -135,6 +166,8 @@ A world gets three showcase biomes when it is first given a **Generator**, if it
 | Volcanic Fields | The warmest third | Ash, over Basalt | Magma Rock, from 50° | Obsidian | None |
 
 They keep to warmth alone. When they are made for a world, its generator's warmth over the land within a kilometre of where the world starts is split into thirds, and each biome takes one. So all three lie a short walk apart in a world of any climate, cold mountains and tropical islands alike, usually within a few hundred metres of the start. The splits are written into their `.biome` files, so change them there. A world with no generator yet parts them at 10 and 16 °C.
+
+The Autumn Woods are [mountains](#land) with bands of cliff, deep valleys and natural bridges; the Blossom Grove stands among pillars of rock, its trees on their tops; the Volcanic Fields are tablelands.
 
 **Magma Rock** is hot, 220 °C out to 2 m (see [[Temperature#Hot and cold blocks|Hot and cold blocks]]), so food dropped on a volcanic slope cooks. The grove and the woods have a few vines.
 

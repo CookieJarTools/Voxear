@@ -23,7 +23,7 @@ If your scripts do not build, the Console lists what is wrong, and the game keep
 
 ## The Game view needs a camera
 
-The Game view looks through the first camera in the level. A level with no camera shows "No camera renders this level." Add one with the Hierarchy's **+** button, then **Camera**. New projects start with one, called Main Camera.
+The Game view looks through the first camera in the level that is switched on, as the game does: a camera a script switches off as the game starts gives way to the next. A level with no camera shows "No camera renders this level." Add one with the Hierarchy's **+** button, then **Camera**. New projects start with one, called Main Camera.
 
 ## Play settings
 

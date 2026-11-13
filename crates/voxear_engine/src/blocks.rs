@@ -82,8 +82,10 @@ impl PartialEq for BlockWorldAsset {
 /// The world generator `file`'s ground is made by, where it is generated
 /// and its generator can be read.
 pub fn generator(content: &mut Content, file: &BlockFile) -> Option<Arc<WorldGen>> {
-    let reference = file.generate.as_ref()?.world.as_ref()?;
-    content.world_gen(reference)
+    let generate = file.generate.as_ref()?;
+    let world = content.world_gen(generate.world.as_ref()?)?;
+    // Its ground shaped by its biomes' land, once they are read.
+    Some(voxear_terrain::blocks::generate::landed(generate, &world))
 }
 
 /// The ground `file` makes, by its generator where it has one.

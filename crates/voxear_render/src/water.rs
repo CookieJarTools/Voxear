@@ -392,16 +392,21 @@ impl Water {
         if !ocean.foam_trails {
             buffers.foam_origin = None;
         }
-        let (mut displacement, mut previous, mut slopes) = (Vec::new(), Vec::new(), Vec::new());
-        for cascade in 0..CASCADES {
-            displacement.push(wave("displacement", cascade, now)?);
-            previous.push(wave("displacement", cascade, then)?);
-            slopes.push(wave("slopes", cascade, now)?);
-        }
-        let cascades = |images: Vec<ImageId>| -> [ImageId; CASCADES] { images.try_into().expect("one a cascade") };
+        // Made only by a view that works its waves out: each holds a slot of the bindless set's few storage images
+        // for each of its mips.
         let (displacement, previous, slopes) = match shared {
             Some(waves) => (waves.displacement, waves.previous, waves.slopes),
-            None => (cascades(displacement), cascades(previous), cascades(slopes)),
+            None => {
+                let (mut displacement, mut previous, mut slopes) = (Vec::new(), Vec::new(), Vec::new());
+                for cascade in 0..CASCADES {
+                    displacement.push(wave("displacement", cascade, now)?);
+                    previous.push(wave("displacement", cascade, then)?);
+                    slopes.push(wave("slopes", cascade, now)?);
+                }
+                let cascades =
+                    |images: Vec<ImageId>| -> [ImageId; CASCADES] { images.try_into().expect("one a cascade") };
+                (cascades(displacement), cascades(previous), cascades(slopes))
+            }
         };
         let mut copy_desc = ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage).with_mips();
         copy_desc.mip_levels = copy_desc.mip_levels.min(7);

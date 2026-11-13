@@ -366,6 +366,16 @@ pub enum NodeKind {
     Peaks(Peaks),
 }
 
+/// What a mask wired in as a program of its own (see
+/// `Compiler::input_program`) is at `x`, `z`, from 0 to 1: 1 with none, so a
+/// node with nothing wired into its mask keeps everything.
+pub(crate) fn mask_at(mask: Option<&super::eval::Program>, x: f32, z: f32) -> f32 {
+    let Some(mask) = mask else { return 1.0 };
+    let mut out = [0.0];
+    mask.run(1, super::eval::Givens { x: &[x], z: &[z], ..Default::default() }, &mut [&mut out]);
+    out[0].clamp(0.0, 1.0)
+}
+
 /// `$do` for the values of whichever kind `$node` is, as `$kind`.
 macro_rules! each_kind {
     ($node:expr, $kind:ident => $do:expr) => {

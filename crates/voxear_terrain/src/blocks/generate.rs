@@ -32,7 +32,7 @@ mod columns;
 pub mod far;
 pub mod tints;
 
-pub use cells::CAVE_ROOF;
+pub use cells::{CAVE_ROOF, landed};
 pub use columns::column_chunks;
 
 /// How a world of blocks' ground is generated: by the world generator
@@ -82,6 +82,12 @@ pub struct BlockGenerate {
     /// layers everywhere.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub biomes: Vec<String>,
+    /// How far from where it lies in its generator's world, in metres, its
+    /// biomes' land (see `crate::generate::land`) starts to rise: the
+    /// ground within it is the generator's own, so a level built where the
+    /// world starts keeps the ground it was built on. Nothing for none.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub land_from: f32,
     /// Its biomes as read, with their blocks by this world's numbers: filled
     /// in by whoever has the project's files, before ground is made.
     #[serde(skip)]
@@ -95,6 +101,10 @@ pub struct BlockGenerate {
     /// filled in as `placed` is.
     #[serde(skip)]
     pub built: Option<std::sync::Arc<super::structure::WorldStructures>>,
+}
+
+fn is_nothing(value: &f32) -> bool {
+    *value <= 0.0
 }
 
 /// Whether `generate`'s ground has its top laid in half blocks: it says so,
@@ -117,6 +127,7 @@ impl Default for BlockGenerate {
             sea: AIR,
             endless: None,
             biomes: Vec::new(),
+            land_from: 0.0,
             placed: None,
             structures: Vec::new(),
             built: None,

@@ -69,6 +69,30 @@ fn written(number: f64) -> String {
 }
 
 impl Maps {
+    /// Lets go of everything the maps had on a UI that is gone, as when
+    /// play stops in the editor and the game's UI starts afresh: each
+    /// Map's minimap and map, the input maps and the pointer an open map
+    /// held, every view's window in `renderer`, and the tiles of the world
+    /// that was played. The next UI's maps are made from nothing, as a
+    /// game's first are.
+    pub fn leave_ui(
+        &mut self,
+        input: &mut voxear_input::Input,
+        display: &mut Display,
+        mut renderer: Option<&mut voxear_render::Renderer>,
+    ) {
+        for (_, hud) in self.huds.drain() {
+            release(hud.held, input, display);
+        }
+        for (_, view) in self.views.drain() {
+            if let (Some(map), Some(renderer)) = (view.map, renderer.as_deref_mut()) {
+                renderer.free_map(map);
+            }
+        }
+        // Tiles still being made come to nothing: they were asked of a world that is gone.
+        *self = Maps::default();
+    }
+
     /// Keeps a minimap and a map on the screen for each Map in `world`,
     /// set as it says: opens and closes its map when its action is
     /// pressed, frees the mouse while it is open and leaves on only the
@@ -104,6 +128,14 @@ impl Maps {
         }
         self.explore(world);
         for (entity, mut map) in found {
+            // One whose minimap is no longer on the screen was made on a UI that is gone: made again on this one.
+            let gone = self.huds.get(&entity).is_some_and(|hud| {
+                ui.node(hud.numbers[0]) != Some(hud.mini) || ui.ui().map_view_settings(hud.mini).is_none()
+            });
+            if gone {
+                let hud = self.huds.remove(&entity).expect("found above");
+                release(hud.held, input, display);
+            }
             if !self.huds.contains_key(&entity) {
                 let Some(hud) = make(ui) else { continue };
                 self.huds.insert(entity, hud);

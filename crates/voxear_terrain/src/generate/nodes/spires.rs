@@ -23,6 +23,11 @@
 //!
 //! Its Footprint is 1 over every column a spire stands over: wire it into
 //! the Output's Rock and the spires are bare rock, tops and all.
+//!
+//! A mask wired into Mask keeps the spires to where it is high: How Often
+//! is multiplied by it where each spire would stand, so a spire is whole
+//! or not there at all, never cut off at the mask's edge. A Climate Mask
+//! keeps them to one kind of country.
 
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -80,8 +85,9 @@ impl Default for Spires {
 }
 
 impl Spires {
-    /// Its ground, among its inputs.
+    /// Its ground and its mask, among its inputs.
     pub const GROUND: usize = 0;
+    pub const MASK: usize = 1;
 }
 
 const VALUES: &[ValueSpec] = &[
@@ -98,7 +104,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
 ];
 
-const INPUTS: &[Port] = &[Port::volume("ground", "Ground")];
+const INPUTS: &[Port] = &[Port::volume("ground", "Ground"), Port::field("mask", "Mask")];
 
 const OUTPUTS: &[Port] = &[Port::volume("ground", "Ground"), Port::field("footprint", "Footprint")];
 
@@ -157,7 +163,8 @@ impl Kind for Spires {
         if self.often <= 0.0 || self.often.is_nan() {
             return cx.constant(0.0);
         }
-        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground()));
+        let mask = cx.input_program(node, Self::MASK);
+        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground(), mask));
         cx.run(Over { finder, what: 4 }, &[at.x, at.z])
     }
 
@@ -166,7 +173,8 @@ impl Kind for Spires {
         if self.often <= 0.0 || self.often.is_nan() {
             return ground;
         }
-        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground()));
+        let mask = cx.input_program(node, Self::MASK);
+        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground(), mask));
         let end = |cx: &mut Compiler, what: u32| {
             let finder = finder.clone();
             cx.column(at, |cx, places| cx.run(Over { finder, what }, &[places.x, places.z]))
@@ -261,6 +269,8 @@ struct Finder {
     set: Spires,
     seed: u32,
     ground: Arc<Program>,
+    /// Where they stand, as its Mask says: anywhere with none.
+    mask: Option<Arc<Program>>,
     id: u64,
 }
 
@@ -272,7 +282,7 @@ thread_local! {
 const KEPT: usize = 48;
 
 impl Finder {
-    fn new(set: &Spires, seed: u32, ground: Arc<Program>) -> Self {
+    fn new(set: &Spires, seed: u32, ground: Arc<Program>, mask: Option<Arc<Program>>) -> Self {
         let mut set = set.clone();
         set.size_from = set.size_from.clamp(4.0, 1000.0);
         set.size_to = set.size_to.clamp(set.size_from, 1000.0);
@@ -288,7 +298,10 @@ impl Finder {
         key.number(set.height_to).number(set.spacing).number(set.often).number(set.taper).number(set.lean);
         key.number(set.bands).number(set.clusters);
         key.whole(seed).whole(ground.hash as u32).whole((ground.hash >> 32) as u32);
-        Self { set, seed, ground, id: key.hash() }
+        if let Some(mask) = &mask {
+            key.name("mask").whole(mask.hash as u32).whole((mask.hash >> 32) as u32);
+        }
+        Self { set, seed, ground, mask, id: key.hash() }
     }
 
     fn cell_of(&self, x: f32, z: f32) -> [i32; 2] {
@@ -315,6 +328,9 @@ impl Finder {
             return None;
         }
         let at = [middle[0] + (pick(1) - 0.5) * set.spacing * 0.8, middle[1] + (pick(2) - 0.5) * set.spacing * 0.8];
+        if pick(0) >= chance * super::mask_at(self.mask.as_deref(), at[0], at[1]) {
+            return None;
+        }
         let radius = (set.size_from + (set.size_to - set.size_from) * pick(3)) * 0.5;
         // The lowest of the ground round its foot, so it stands on all of it.
         let xs = [at[0], at[0] + radius, at[0] - radius, at[0], at[0]];

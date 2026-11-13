@@ -42,6 +42,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
+| Land from | How far from where the world starts, in metres, its biomes' [[Biomes#Land|land]] starts to rise: the ground nearer is the generator's own, so a level built there keeps its ground. Past it the land rises over as far again. 0 for none |
 | Slabs | Whether the ground's top is laid in half blocks, so slopes rise half a block at a time (see [[Block Worlds#Half steps|Half steps]]). On for ground newly generated |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 | Biomes | The [[Biomes|biomes]] its ground has: each place takes its top, under and deep blocks from the biome it is |

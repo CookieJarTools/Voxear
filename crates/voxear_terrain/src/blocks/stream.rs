@@ -222,7 +222,9 @@ impl Window {
 
 /// A place a world of blocks without end is seen from, which its chunks are
 /// kept round: where, in metres from the world's corner along x and z, and
-/// how far, near and coarse.
+/// how far, near and coarse. Only the first place's `far` counts: every
+/// place has as many rings as it, so that all their rings lie on the same
+/// columns and none overlaps another's by part of a column.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StreamFrom {
     pub at: [f32; 2],
@@ -256,23 +258,27 @@ impl Area {
     }
 }
 
-/// Each level's columns kept round the places in `from`: every place's own
-/// windows (see `windows`), a level's together. Each window's sides lie on
-/// its next level's columns, so a coarse column is wholly in or out of each
-/// finer window, and so of them all.
-fn areas(file: &BlockFile, from: &[StreamFrom]) -> Vec<Area> {
-    let mut areas: Vec<Area> = Vec::new();
+/// Each level's columns kept round the places in `from`, a level's
+/// together, and each place's own windows (see `windows`): as many levels
+/// for every place as the first has. Each window's sides lie on its next
+/// level's columns, so a coarse column is wholly in or out of each finer
+/// window.
+fn areas(file: &BlockFile, from: &[StreamFrom]) -> (Vec<Area>, Vec<Vec<Window>>) {
+    let levels = from.first().map_or(1, |first| windows(file, first.distance, first.far, first.at).len());
+    let mut areas: Vec<Area> = vec![Area::default(); levels];
+    let mut places = Vec::with_capacity(from.len());
     for place in from {
-        for (level, window) in windows(file, place.distance, place.far, place.at).into_iter().enumerate() {
-            if areas.len() <= level {
-                areas.push(Area::default());
-            }
-            if !areas[level].0.contains(&window) {
-                areas[level].0.push(window);
+        // Far enough for any number of levels, then as many as the first place has.
+        let mut own = windows(file, place.distance, f32::MAX, place.at);
+        own.truncate(levels);
+        for (level, window) in own.iter().enumerate() {
+            if !areas[level].0.contains(window) {
+                areas[level].0.push(*window);
             }
         }
+        places.push(own);
     }
-    areas
+    (areas, places)
 }
 
 /// The nine chunk columns round `at`, its own among them.
@@ -466,7 +472,7 @@ impl BlockStreamer {
             self.making = Some(Arc::new(making));
         }
         let making = self.making.clone().expect("kept above");
-        let windows = areas(&making.file, from);
+        let (windows, by_place) = areas(&making.file, from);
         // Near columns are drawn within the first level's windows, their blocks made a column further.
         let (shown, made) = (windows[0].clone(), windows[0].grown());
         changed |= self.take_finished(world, (base, pending), (&shown, &made));
@@ -493,7 +499,7 @@ impl BlockStreamer {
             self.ask(world, &making, &windows, (from, pending));
         }
         if changed || moved {
-            changed |= self.show_coarse(world, &windows);
+            changed |= self.show_coarse(world, &by_place, from);
         }
         self.windows = Some(windows);
         self.seen = Some(world.meshes.clone());
@@ -841,33 +847,54 @@ impl BlockStreamer {
         }
     }
 
-    /// Draws each coarse column where the four finer columns under it are
-    /// not all drawn. True if what is drawn changed.
-    fn show_coarse(&self, world: &mut BlockWorld, windows: &[Area]) -> bool {
+    /// Draws, from each place the world is seen from, each coarse column
+    /// where the four finer columns under it are not all drawn from there:
+    /// each place by its own windows, as the detail kept round another
+    /// place lies under this one's coarser rings. The coarsest columns show
+    /// from every place, wherever they are. True if what is drawn changed.
+    fn show_coarse(&self, world: &mut BlockWorld, by_place: &[Vec<Window>], from: &[StreamFrom]) -> bool {
         voxear_core::profile_scope!("Coarse");
         let drawn_fine = |level: u32, at: [i32; 2]| {
             if level == 0 { self.drawn.contains(&at) } else { self.coarse.contains_key(&(level, at)) }
         };
         let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
-        for ((level, at), meshes) in &self.coarse {
-            let finer = &windows[*level as usize - 1];
-            let covered = (0..4).all(|i| {
-                let child = [at[0] * 2 + (i & 1), at[1] * 2 + (i >> 1)];
-                finer.contains(child) && drawn_fine(level - 1, child)
-            });
-            if covered {
-                continue;
+        let mut places = Vec::with_capacity(by_place.len());
+        for (windows, place) in by_place.iter().zip(from) {
+            let top = windows.len() - 1;
+            let own = self.drawn.iter().filter(|at| windows[0].contains(**at));
+            let mut columns: HashSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
+            for ((level, at), meshes) in &self.coarse {
+                let index = *level as usize;
+                let mine = index >= top || windows[index].contains(*at);
+                let finer = windows[(index - 1).min(top)];
+                let covered = (0..4).all(|i| {
+                    let child = [at[0] * 2 + (i & 1), at[1] * 2 + (i >> 1)];
+                    finer.contains(child) && drawn_fine(level - 1, child)
+                });
+                if !mine || covered {
+                    continue;
+                }
+                columns.insert([*level as i32, at[0], at[1]]);
+                for (key, mesh) in meshes.iter().filter(|(_, mesh)| !mesh.is_empty()) {
+                    far.insert([*level as i32, key[0], key[1], key[2]], mesh.clone());
+                }
             }
-            for (key, mesh) in meshes.iter().filter(|(_, mesh)| !mesh.is_empty()) {
-                far.insert([*level as i32, key[0], key[1], key[2]], mesh.clone());
-            }
+            places.push(super::BlockPlace { at: place.at, columns });
+        }
+        // Seen from one place alone, everything made shows from anywhere, as it always did.
+        if places.len() < 2 {
+            places.clear();
         }
         let same_far = world.far.len() == far.len()
             && far.iter().all(|(key, mesh)| world.far.get(key).is_some_and(|kept| Arc::ptr_eq(kept, mesh)));
         if !same_far {
             world.far = Arc::new(far);
         }
-        !same_far
+        let same_places = *world.places == places;
+        if !same_places {
+            world.places = Arc::new(places);
+        }
+        !same_far || !same_places
     }
 }
 
@@ -1512,12 +1539,36 @@ mod tests {
         };
         assert!(coarse_by(&world, second.at, 400.0), "coarse ground round the second place");
         assert!(!coarse_by(&world, [4500.0, -1500.0], 400.0));
+        // From each place the world shows that place's own blocks and rings, and none of the other's detail.
+        assert_eq!(world.places.len(), 2);
+        let (first, other) = (&world.places[0], &world.places[1]);
+        let [cx, cz] = column(camera.at);
+        let [sx, sz] = column(second.at);
+        assert!(first.columns.contains(&[0, cx, cz]) && !first.columns.contains(&[0, sx, sz]));
+        assert!(other.columns.contains(&[0, sx, sz]) && !other.columns.contains(&[0, cx, cz]));
+        // Every column shown from a place is one of a level's: no two overlap by part.
+        for place in world.places.iter() {
+            for &[level, x, z] in &place.columns {
+                let under = (0..level).any(|finer| {
+                    let scale = 1 << (level - finer);
+                    (0..scale).any(|dx| (0..scale).any(|dz| place.columns.contains(&[finer, x * scale + dx, z * scale + dz])))
+                });
+                assert!(!under, "column {x},{z} of level {level} is drawn over finer ones");
+            }
+        }
+        // The coarsest ring shows from both, wherever it was made for: over the second place it shows from the
+        // camera, which has none of the detail there, and not from the second place, which has.
+        let top = world.far.keys().map(|key| key[0]).max().unwrap();
+        let over = |at: [f32; 2]| [top, (at[0] / (64.0 * (1 << top) as f32)).floor() as i32, (at[1] / (64.0 * (1 << top) as f32)).floor() as i32];
+        assert!(first.columns.contains(&over(second.at)) && !other.columns.contains(&over(second.at)));
+        assert!(other.columns.contains(&over(camera.at)) && !first.columns.contains(&over(camera.at)));
         let both = world.meshes.len();
         // The second place gone: its columns go, the camera's stay.
         settle(&mut streamer, &mut world, &[camera]);
         assert!(!has_faces(&world, column(second.at)) && has_faces(&world, column(camera.at)));
         assert!(world.meshes.len() < both && !coarse_by(&world, second.at, 400.0));
         assert!(!streamer.drawn_round(second.at, 32.0));
+        assert!(world.places.is_empty(), "seen from one place, everything shows from anywhere");
     }
 
     #[test]

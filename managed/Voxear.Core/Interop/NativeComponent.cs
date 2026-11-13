@@ -24,6 +24,7 @@ internal static unsafe class NativeComponent
 	public const int GunHolder = 17;
 	public const int Map = 20;
 	public const int MapMarker = 21;
+	public const int Portal = 22;
 
 	/// <summary>The value every kind reads as 1 when the Obj has one.</summary>
 	public const int Has = 0;

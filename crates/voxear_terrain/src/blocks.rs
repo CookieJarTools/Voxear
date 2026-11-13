@@ -251,6 +251,11 @@ pub struct BlockWorld {
     /// water shows no face towards them. `None` for a world of its blocks
     /// alone.
     pub columns: Option<Arc<HashSet<[i32; 2]>>>,
+    /// For a world without end seen from more places than one, as through
+    /// Portals, what it shows from each (see [`BlockPlace`]): a view draws
+    /// what is shown from the place nearest its camera. Empty, everything
+    /// shows from anywhere.
+    pub places: Arc<Vec<BlockPlace>>,
     pub block_size: f32,
     pub smooth: bool,
     pub cast_shadows: bool,
@@ -261,6 +266,19 @@ pub struct BlockWorld {
 
 impl Component for BlockWorld {}
 
+/// What a world of blocks without end shows from one of the places it is
+/// seen from: its own blocks near that place, and each coarser ring beyond
+/// them, with none of the detail kept round the other places, which lies
+/// under this place's coarser rings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlockPlace {
+    /// Where the place is, in metres from the world's corner along x and z.
+    pub at: [f32; 2],
+    /// The chunk columns shown from it: each by its level, 0 for the
+    /// world's own blocks, and its place in that level's columns.
+    pub columns: HashSet<[i32; 3]>,
+}
+
 impl PartialEq for BlockWorld {
     fn eq(&self, other: &Self) -> bool {
         (Arc::ptr_eq(&self.blocks, &other.blocks) || self.blocks == other.blocks)
@@ -268,6 +286,7 @@ impl PartialEq for BlockWorld {
             && self.faces == other.faces
             && (Arc::ptr_eq(&self.far, &other.far) || self.far == other.far)
             && self.columns == other.columns
+            && (Arc::ptr_eq(&self.places, &other.places) || self.places == other.places)
             && self.block_size == other.block_size
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
@@ -293,6 +312,7 @@ impl BlockWorld {
             faces: faces.into(),
             far: Arc::default(),
             columns: None,
+            places: Arc::default(),
             block_size,
             smooth,
             cast_shadows: true,

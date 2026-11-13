@@ -2209,7 +2209,7 @@ impl View {
             &|mesh| assets.mesh_sphere(mesh),
             through.as_ref(),
         );
-        // What a view through a Portal goes without: what reads the screen, bounced light, and water.
+        // What a view through a Portal goes without: what reads the screen, bounced light, and the sea.
         if portal.is_some() {
             let post = &mut extracted.post;
             post.ambient_occlusion.enabled = false;
@@ -2482,7 +2482,9 @@ impl View {
             || extracted.water_bodies.pools > 0
             || !extracted.water_bodies.streams.is_empty()
             || block_water.is_some();
-        let water = match wet && !wireframe && portal.is_none() {
+        // Through a Portal, only the water of worlds of blocks, and only while some of it shows there.
+        let shown = portal.is_none() || block_water.is_some();
+        let water = match wet && !wireframe && shown {
             true => Some(water::Water::new(
                 fg,
                 (gpu, bindless),

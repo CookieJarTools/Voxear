@@ -59,6 +59,22 @@ pub struct PortalPassed {
 #[derive(Clone, Debug, Default)]
 pub struct PortalEvents {
     pub passed: Vec<PortalPassed>,
+    /// How many have gone through in all, and the last of them, each where
+    /// its number puts it, for scripts, which hear of them a little later.
+    count: u32,
+    recent: Vec<Option<PortalPassed>>,
+}
+
+/// How many of the last Objs through Portals scripts can still be told of.
+const RECENT: u32 = 64;
+
+impl PortalEvents {
+    fn push(&mut self, passed: PortalPassed) {
+        self.passed.push(passed);
+        self.recent.resize(RECENT as usize, None);
+        self.recent[(self.count % RECENT) as usize] = Some(passed);
+        self.count = self.count.wrapping_add(1);
+    }
 }
 
 /// Where each Obj that can go through a Portal was when last looked at.
@@ -147,10 +163,8 @@ pub struct PortalExit {
     pub portal: Entity,
     /// Where the Portal it leads to stands.
     pub at: Vec3,
-    /// How far round it a world without end makes its own blocks, and how
-    /// far its far view reaches from there.
+    /// How far round it a world without end makes its own blocks.
     pub distance: f32,
-    pub far: f32,
 }
 
 /// The far sides being made this tick, as a world's resource, and how many
@@ -208,7 +222,7 @@ pub(crate) fn find_exits(world: &mut World) {
             let nearest = Vec3::new(local.x.clamp(-portal.size.x * 0.5, portal.size.x * 0.5), local.y.clamp(0.0, portal.size.y), 0.0);
             (local.distance(nearest) <= reach).then_some(())?;
             let at = PortalPose::of_obj(world, to)?.position;
-            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, far: quality.far_side_far_view })
+            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance })
         })
         .collect();
     if exits.is_empty() && was.made_for.is_empty() {
@@ -333,10 +347,9 @@ pub(crate) fn carry_objs(world: &mut World) {
         crate::tick_smoothing::carried(world, entity, &way.carry);
         seen.insert(entity, place(world, entity));
         let passed = PortalPassed { obj: entity, from: way.entity, side, to: way.to, carry: way.carry };
-        match world.resource_mut::<PortalEvents>() {
-            Some(events) => events.passed.push(passed),
-            None => world.insert_resource(PortalEvents { passed: vec![passed] }),
-        }
+        let mut events = world.remove_resource::<PortalEvents>().unwrap_or_default();
+        events.push(passed);
+        world.insert_resource(events);
         // The renderer hears of it, and of everything under it, before the frame is drawn.
         let mut views = world.remove_resource::<PortalViews>().unwrap_or_default();
         let moved = way.carry.matrix();
@@ -449,6 +462,109 @@ pub(crate) fn tell_renderer(world: &mut World, renderer: Option<&mut Renderer>) 
         renderer.carry_view(*camera, *moved);
     }
     renderer.carry_objs(&objs);
+}
+
+// What `values` reads or writes, as `Portal` in Voxear.Core numbers them.
+const HAS: i32 = 0;
+const ADD: i32 = 1;
+const REMOVE: i32 = 2;
+const TO: i32 = 3;
+const SIZE: i32 = 4;
+const OPEN: i32 = 5;
+const PASSES: i32 = 6;
+const MIST: i32 = 7;
+const VIEW_DISTANCE: i32 = 8;
+const READY: i32 = 9;
+// How many Objs have gone through Portals in all; and from `PASSED` on, the last of them, eight values each: the
+// Obj, the Portals it went from and to, the turn, where each Portal stood, and the face it went in at.
+const PASSED_COUNT: i32 = 20;
+const PASSED: i32 = 100;
+
+/// Sets what answers `Portal` in scripts.
+pub(crate) fn register() {
+    voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::Portal, values);
+}
+
+fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    use crate::cameras::{obj_value, value_obj};
+    let number = |n: f32| Some([n, 0.0, 0.0, 0.0]);
+    let bits = |n: u32| Some([f32::from_bits(n), 0.0, 0.0, 0.0]);
+    // What went through, whichever Obj asks.
+    if written.is_none() && what == PASSED_COUNT {
+        return bits(world.resource::<PortalEvents>().map_or(0, |events| events.count));
+    }
+    if written.is_none() && what >= PASSED {
+        let (slot, value) = ((what - PASSED) / 8, (what - PASSED) % 8);
+        let passed = world.resource::<PortalEvents>()?.recent.get(slot as usize).copied().flatten()?;
+        let place = |at: Vec3| Some([at.x, at.y, at.z, 0.0]);
+        return match value {
+            0 => Some(obj_value(Some(passed.obj))),
+            1 => Some(obj_value(Some(passed.from))),
+            2 => Some(obj_value(Some(passed.to))),
+            3 => Some(passed.carry.rotation.to_array()),
+            4 => place(passed.carry.from),
+            5 => place(passed.carry.to),
+            6 => number(f32::from(u8::from(passed.side == PortalSide::Back))),
+            _ => None,
+        };
+    }
+    if !world.is_alive(entity) {
+        return None;
+    }
+    match (what, written) {
+        (HAS, None) => return number(f32::from(u8::from(world.has::<Portal>(entity)))),
+        (ADD, Some(_)) => {
+            if !world.has::<Portal>(entity) {
+                world.insert(entity, Portal::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => {
+            world.remove::<PortalFar>(entity);
+            return world.remove::<Portal>(entity).map(|_| [0.0; 4]);
+        }
+        (READY, None) => {
+            let portal = world.get::<Portal>(entity)?;
+            let leads = portal.to.is_some_and(|to| world.has::<Portal>(to));
+            let made = world.get::<PortalFar>(entity).is_none_or(|far| far.ready);
+            return number(f32::from(u8::from(leads && made)));
+        }
+        _ => {}
+    }
+    let portal = world.get_mut::<Portal>(entity)?;
+    match (what, written) {
+        (TO, None) => Some(obj_value(portal.to)),
+        (SIZE, None) => Some([portal.size.x, portal.size.y, 0.0, 0.0]),
+        (OPEN, None) => number(f32::from(u8::from(portal.open))),
+        (PASSES, None) => bits(portal.passes),
+        (MIST, None) => Some([portal.mist.x, portal.mist.y, portal.mist.z, 1.0]),
+        (VIEW_DISTANCE, None) => number(portal.view_distance),
+        (TO, Some(value)) => {
+            portal.to = value_obj(value).filter(|to| *to != entity);
+            Some([0.0; 4])
+        }
+        (SIZE, Some([width, height, ..])) => {
+            portal.size = voxear_core::math::Vec2::new(width.max(0.01), height.max(0.01));
+            Some([0.0; 4])
+        }
+        (OPEN, Some([open, ..])) => {
+            portal.open = open != 0.0;
+            Some([0.0; 4])
+        }
+        (PASSES, Some([layers, ..])) => {
+            portal.passes = layers.to_bits();
+            Some([0.0; 4])
+        }
+        (MIST, Some([r, g, b, _])) => {
+            portal.mist = Vec3::new(r, g, b).max(Vec3::ZERO);
+            Some([0.0; 4])
+        }
+        (VIEW_DISTANCE, Some([distance, ..])) => {
+            portal.view_distance = distance.max(0.0);
+            Some([0.0; 4])
+        }
+        _ => None,
+    }
 }
 
 /// A Portal as a scene or prefab file writes it, the Portal it leads to

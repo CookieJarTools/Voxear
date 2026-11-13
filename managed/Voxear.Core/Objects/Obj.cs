@@ -403,6 +403,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new MapMarker(this);
 	}
 
+	/// <summary>The Obj's Portal, an opening onto the place another Portal stands in. Not valid when it has none.</summary>
+	public Portal Portal => new Portal(this);
+
+	/// <summary>Gives the Obj a Portal, unless it has one, and returns it.</summary>
+	public Portal AddPortal()
+	{
+		NativeComponent.Set(NativeComponent.Portal, this, NativeComponent.Add, Vector4.Zero);
+		return new Portal(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

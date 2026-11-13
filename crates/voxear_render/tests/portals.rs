@@ -322,3 +322,130 @@ fn a_portal_seen_through_a_portal_shows_its_own_far_side_when_asked_to() {
     let outside = differing(&deep, &shallow, [0, 0, WIDTH, HEIGHT], 16) - differing(&deep, &shallow, wide, 16);
     assert!(outside < 20, "{outside} pixels outside the opening changed");
 }
+
+/// A world of blocks with two fields 20 km apart, each with a Portal that
+/// leads to the other: the first plain grass with a stone pillar; the second
+/// with a pit of water, a tall pillar of dirt and steps of stone. The
+/// camera stands in the first, looking at its Portal.
+fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
+    use std::sync::Arc;
+    use voxear_render::{BlockLook, Sky, SurfaceLook};
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        chunk::BlockId,
+        file::{BlockFile, BlockKind},
+    };
+    const FAR: i32 = 20_000;
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+    let water = file.blocks.len() as BlockId;
+    let mut blocks = file.make_ground(None);
+    for y in 4..10 {
+        blocks.set([20, y, 44], 3);
+    }
+    // The second field, the same ground 20 km along x.
+    for z in 0..64 {
+        for x in 0..64 {
+            for y in 0..4 {
+                blocks.set([FAR + x, y, z], if y == 3 { 1 } else { 2 });
+            }
+        }
+    }
+    for z in 40..52 {
+        for x in 24..40 {
+            for y in 1..4 {
+                blocks.set([FAR + x, y, z], water);
+            }
+            blocks.set([FAR + x, 0, z], 3);
+        }
+    }
+    for y in 4..16 {
+        blocks.set([FAR + 36, y, 36], 2);
+    }
+    for step in 0..5 {
+        for y in 4..5 + step {
+            blocks.set([FAR + 24 + step, y, 34], 3);
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            let [r, g, b] = look.color.map(linear);
+            let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    // On the grass, 4 m up: the first looks back down -z at the camera, the second out over the water.
+    let half_turn = Quat::from_rotation_y(std::f32::consts::PI);
+    let near = world.spawn((Portal::default(), Transform::new(Vec3::new(32.0, 4.0, 40.0), half_turn, Vec3::ONE)));
+    let far = world.spawn((Portal::default(), Transform::new(Vec3::new(FAR as f32 + 32.0, 4.0, 30.0), Quat::IDENTITY, Vec3::ONE)));
+    *world.get_mut::<Portal>(near).unwrap() = Portal::to(SIZE, far);
+    *world.get_mut::<Portal>(far).unwrap() = Portal::to(SIZE, near);
+    let eye = Vec3::new(31.0, 5.7, 34.5);
+    let camera = world.spawn((Camera::default(), Transform::new(eye, looking(eye, Vec3::new(32.0, 5.4, 40.0)), Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.75, -0.3).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.reflections.enabled = false;
+    post.global_illumination.enabled = false;
+    world.insert_resource(post);
+    world.insert_resource(PortalQuality { shadow_distance: 1000.0, ..PortalQuality::default() });
+    (world, [near, far, camera])
+}
+
+#[test]
+fn blocks_and_their_water_show_through_an_opening_as_they_stand_twenty_kilometres_off() {
+    let Some(mut renderer) = renderer() else { return };
+    let (mut world, [near, far, camera]) = fields(&mut renderer);
+    let through = frames(&mut renderer, &world, 4);
+    keep_image("portal blocks through.png", &through);
+    let rect = opening(&world, camera, near, 0);
+    let near_pose = PortalPose::of_obj(&world, near).unwrap();
+    let corners = near_pose.corners(SIZE).map(|corner| on_screen_exact(&world, camera, corner));
+    // The camera carried to the second field, with no Portal in the way.
+    let carry = Carry::between(&near_pose, &PortalPose::of_obj(&world, far).unwrap());
+    let at = *world.get::<Transform>(camera).unwrap();
+    for portal in [near, far] {
+        world.despawn(portal);
+    }
+    *world.get_mut::<Transform>(camera).unwrap() = Transform::new(carry.point(at.position), carry.turn(at.rotation), Vec3::ONE);
+    let there = frames(&mut renderer, &world, 4);
+    keep_image("portal blocks there.png", &there);
+    let (mut all, mut differ, mut wet) = (0, 0, 0);
+    for y in rect[1]..rect[3] {
+        for x in rect[0]..rect[2] {
+            if in_opening(&corners, (x, y), 2.0) {
+                all += 1;
+                let (p, q) = (pixel(&through, x, y), pixel(&there, x, y));
+                differ += usize::from(p.iter().zip(q).any(|(p, q)| p.abs_diff(q) > 14));
+                // The water: more green and blue than red, and not the grass's green.
+                wet += usize::from(p[2] > p[0] + 12 && p[1] > p[0] + 12);
+            }
+        }
+    }
+    assert!(all > 6000, "{all} pixels inside the opening");
+    assert!(differ * 50 < all, "{differ} of {all} pixels in the opening differ from the far field");
+    assert!(wet * 20 > all, "the far field's water shows in the opening: {wet} of {all} pixels");
+}

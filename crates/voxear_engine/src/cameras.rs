@@ -12,6 +12,7 @@ const REMOVE: i32 = 2;
 const FIELD_OF_VIEW: i32 = 3;
 const NEAR: i32 = 4;
 const EXPOSURE: i32 = 5;
+const FOLLOWS: i32 = 6;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Camera, values);
@@ -31,6 +32,21 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             return Some([0.0; 4]);
         }
         (REMOVE, Some(_)) => return world.remove::<Camera>(entity).map(|_| [0.0; 4]),
+        // The Obj it films, which its view is carried through Portals to go on seeing (see `crate::portals`).
+        (FOLLOWS, None) if world.has::<Camera>(entity) => {
+            return Some(obj_value(world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0)));
+        }
+        (FOLLOWS, Some(value)) if world.has::<Camera>(entity) => {
+            match value_obj(value).filter(|follows| *follows != entity) {
+                Some(follows) => {
+                    world.insert(entity, voxear_render::CameraFollows(follows));
+                }
+                None => {
+                    world.remove::<voxear_render::CameraFollows>(entity);
+                }
+            }
+            return Some([0.0; 4]);
+        }
         _ => {}
     }
     let camera = world.get_mut::<Camera>(entity)?;

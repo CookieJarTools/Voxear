@@ -80,6 +80,7 @@ impl Engine {
         crate::smoke::register();
         crate::mist::register();
         crate::cameras::register();
+        crate::portals::register();
         crate::ui_panels::register();
         crate::screen_ui::register();
         crate::map::register();

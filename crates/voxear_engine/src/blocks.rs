@@ -777,7 +777,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
         from.extend(exits.iter().map(|exit| StreamFrom {
             at: [exit.at.x - corner.x, exit.at.z - corner.z],
             distance: exit.distance.min(distances.0),
-            far: exit.far.min(distances.1),
+            far: distances.1,
         }));
         if streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from) {
             world.insert(entity, blocks);

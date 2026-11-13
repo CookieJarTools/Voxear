@@ -96,6 +96,8 @@ pub struct ObjState {
     /// are shared.
     pub block_world: Option<Box<BlockWorldState>>,
     pub joint: Option<Box<Joint>>,
+    pub portal: Option<Box<voxear_render::Portal>>,
+    pub camera_follows: Option<voxear_render::CameraFollows>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
     pub vehicle: Option<Box<Vehicle>>,
@@ -212,6 +214,8 @@ impl ObjState {
             terrain: TerrainState::of(world, entity).map(Box::new),
             block_world: BlockWorldState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
+            portal: world.get::<voxear_render::Portal>(entity).copied().map(Box::new),
+            camera_follows: world.get::<voxear_render::CameraFollows>(entity).copied(),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
             vehicle: world.get::<Vehicle>(entity).copied().map(Box::new),
@@ -230,6 +234,12 @@ impl ObjState {
         }
         if let Some(obj) = self.joint.as_mut().and_then(|joint| joint.connected.as_mut()) {
             *obj = renamed.get(obj).copied().unwrap_or(*obj);
+        }
+        if let Some(obj) = self.portal.as_mut().and_then(|portal| portal.to.as_mut()) {
+            *obj = renamed.get(obj).copied().unwrap_or(*obj);
+        }
+        if let Some(follows) = self.camera_follows.as_mut() {
+            follows.0 = renamed.get(&follows.0).copied().unwrap_or(follows.0);
         }
     }
 
@@ -299,6 +309,8 @@ impl ObjState {
         put(world, entity, blocks.and_then(|state| state.asset.clone()));
         put(world, entity, blocks.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
+        put(world, entity, self.portal.as_deref().copied());
+        put(world, entity, self.camera_follows);
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());
         put(world, entity, self.vehicle.as_deref().copied());

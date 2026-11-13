@@ -52,6 +52,8 @@ const FLOW_MARKS: f32 = 4.0;
 /// slow the Scene view; the rest are left out.
 const MESH_TRIANGLES: usize = 4096;
 const JOINT: u32 = 0xf2a14c;
+/// A Portal's opening.
+const PORTAL: u32 = 0x8fb8ff;
 /// A gun's sockets and parts.
 const GUN: u32 = 0xe86f6f;
 /// How big a joint's anchor and a hinge's axis are drawn, on screen.
@@ -478,6 +480,9 @@ fn colliders(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         let placed = Mat4::from_scale_rotation_translation(scale, rotation, position);
         joint_marks(shapes, world, camera, joint, placed);
     }
+    if let Some(portal) = world.get::<voxear_render::Portal>(entity) {
+        portal_marks(shapes, world, camera, portal, voxear_render::PortalPose { position, rotation });
+    }
     if let Some(wheel) = world.get::<Wheel>(entity) {
         wheel_marks(shapes, camera, wheel, position, rotation, color);
     }
@@ -497,6 +502,33 @@ fn wheel_marks(shapes: &mut Vec<Shape>, camera: &ViewCamera, wheel: &Wheel, at: 
     polyline(shapes, camera, &ring(camera, at, turn * Vec3::X, wheel.radius), color);
     let half = turn * Vec3::Y * (wheel.suspension * 0.5);
     line(shapes, camera, at - half, at + half, color.with_alpha(160));
+}
+
+/// A Portal's opening as its outline, an arrow out of its front, and a line
+/// to the Portal it leads to.
+fn portal_marks(
+    shapes: &mut Vec<Shape>,
+    world: &World,
+    camera: &ViewCamera,
+    portal: &voxear_render::Portal,
+    pose: voxear_render::PortalPose,
+) {
+    let color = Color::hex(PORTAL);
+    let corners = pose.corners(portal.size);
+    for corner in 0..4 {
+        line(shapes, camera, corners[corner], corners[(corner + 1) % 4], color);
+    }
+    let middle = pose.position + pose.rotation * Vec3::new(0.0, portal.size.y * 0.5, 0.0);
+    let out = middle + pose.front() * (portal.size.x * 0.5).max(0.5);
+    line(shapes, camera, middle, out, color);
+    for side in [-1.0, 1.0] {
+        let barb = out - pose.front() * 0.25 + pose.rotation * Vec3::X * 0.15 * side;
+        line(shapes, camera, out, barb, color);
+    }
+    if let Some(to) = portal.to.filter(|&to| world.is_alive(to)) {
+        let there = voxear_scene::world_matrix(world, to).w_axis.truncate();
+        line(shapes, camera, middle, there, color.with_alpha(160));
+    }
 }
 
 /// A joint's anchor as a small cross, a hinge's axis through it, and a

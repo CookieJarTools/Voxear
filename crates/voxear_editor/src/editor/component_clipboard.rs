@@ -29,6 +29,7 @@ pub(super) enum Copied {
     Rigidbody(Rigidbody),
     Character(CharacterController),
     Joint(Joint),
+    Portal(voxear_render::Portal),
     Collider2D(Collider2D),
     Rigidbody2D(Rigidbody2D),
     Vehicle(Vehicle),
@@ -85,6 +86,7 @@ impl Copied {
             Part::Rigidbody => Self::Rigidbody(*world.get::<Rigidbody>(entity)?),
             Part::Character => Self::Character(*world.get::<CharacterController>(entity)?),
             Part::Joint => Self::Joint(*world.get::<Joint>(entity)?),
+            Part::Portal => Self::Portal(*world.get::<voxear_render::Portal>(entity)?),
             Part::Collider2D => Self::Collider2D(*world.get::<Collider2D>(entity)?),
             Part::Rigidbody2D => Self::Rigidbody2D(*world.get::<Rigidbody2D>(entity)?),
             Part::Vehicle => Self::Vehicle(*world.get::<Vehicle>(entity)?),
@@ -181,6 +183,11 @@ impl Copied {
             Self::Joint(joint) => {
                 let connected = joint.connected.filter(|&other| other != entity);
                 world.insert(entity, Joint { connected, ..*joint });
+            }
+            // Leading where it led, unless that is the Obj it goes on.
+            Self::Portal(portal) => {
+                let to = portal.to.filter(|&other| other != entity);
+                world.insert(entity, voxear_render::Portal { to, ..*portal });
             }
             Self::Collider2D(collider) => drop(world.insert(entity, *collider)),
             Self::Rigidbody2D(body) => drop(world.insert(entity, *body)),

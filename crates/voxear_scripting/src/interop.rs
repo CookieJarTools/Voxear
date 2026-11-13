@@ -568,6 +568,9 @@ pub enum ComponentKind {
     Map = 20,
     /// An Obj's mark on every map.
     MapMarker = 21,
+    /// An opening onto the place another Portal stands in, and the Objs
+    /// that went through any.
+    Portal = 22,
 }
 
 /// The most kinds `kind_value` answers.

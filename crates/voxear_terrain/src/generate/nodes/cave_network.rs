@@ -117,10 +117,10 @@ impl Default for CaveNetwork {
     fn default() -> Self {
         Self {
             layout: Laid::Endless,
-            spacing: 128.0,
+            spacing: 192.0,
             depth: 40.0,
-            tunnel_width: 12.0,
-            tunnel_width_max: 18.0,
+            tunnel_width: 14.0,
+            tunnel_width_max: 22.0,
             winding: 0.6,
             slope_limit: 0.7,
             branches: 0.2,

@@ -722,7 +722,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xbd24_a714_3e22_e08f, 0x06fa_ee9e_a714_aca3, 0x97e3_2cd8_e4e4_3c43],
+            [0xc4a8_ae72_922e_e33a, 0x06fa_ee9e_a714_aca3, 0x56ad_b1e9_cadc_ac61],
             "generated blocks changed: were they meant to? {hashes:#x?}"
         );
     }
@@ -975,7 +975,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xebe7_713d_2d66_92e6, 0x06fa_ee9e_a714_aca3, 0x9e5d_1b83_bd14_7c1b],
+            [0x5391_a2b4_0bdd_5252, 0x06fa_ee9e_a714_aca3, 0x5346_5916_77b2_355f],
             "overhanging blocks changed: were they meant to? {hashes:#x?}"
         );
     }

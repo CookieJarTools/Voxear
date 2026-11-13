@@ -69,6 +69,11 @@ pub struct Placement {
     /// any.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub biomes: Vec<String>,
+    /// Whether a plant of it may stand by water: on the shore and on river
+    /// and lake banks, as reeds and mangroves do. Off, as for most trees,
+    /// it keeps to dry ground off the shore and away from the water.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub by_water: bool,
 }
 
 fn is_zero(value: &u32) -> bool {
@@ -91,6 +96,7 @@ impl Default for Placement {
             height: None,
             slope: 15.0,
             biomes: Vec::new(),
+            by_water: false,
         }
     }
 }

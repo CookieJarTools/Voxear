@@ -39,7 +39,8 @@ pub struct Chambers {
 
 impl Default for Chambers {
     fn default() -> Self {
-        Self { amount: 0.3, size: 40.0, roof: 3.0, seed: 0 }
+        // Few and large by default.
+        Self { amount: 0.3, size: 100.0, roof: 3.0, seed: 0 }
     }
 }
 

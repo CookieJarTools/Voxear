@@ -529,6 +529,10 @@ fn slab_cell(
     Some((y, slab))
 }
 
+/// How far under the top of river or lake water beside it a column's ground
+/// is kept whole where caves cut it, in blocks.
+const BY_WATER: f32 = 6.0;
+
 /// A depth under the surface past any layer's.
 const DEEP: f32 = 1.0e9;
 
@@ -622,6 +626,21 @@ pub fn column_chunks(
         _ => Sea::at(sea, sea_top, y, file.smooth),
     };
     let water_top = |at: usize| waters.as_ref().map_or(sea_top, |waters| waters[at].0.max(sea_top));
+    // How high river or lake water stands in each column or the four beside it, where caves are cut: ground at
+    // that height is kept whole there, so a cave passing by never opens onto the water's side.
+    let near_water: Vec<f32> = match (&waters, asked && !file.smooth) {
+        (Some(waters), true) => {
+            let mut near: Vec<f32> = waters.iter().map(|water| water.0).collect();
+            for (dx, dz) in [(size, 0.0), (-size, 0.0), (0.0, size), (0.0, -size)] {
+                let (bx, bz): (Vec<f32>, Vec<f32>) = xs.iter().zip(&zs).map(|(x, z)| (x + dx, z + dz)).unzip();
+                if let Some(beside) = waters_of(file, generate, world, level, (&bx, &bz)) {
+                    near.iter_mut().zip(beside).for_each(|(near, beside)| *near = near.max(beside.0));
+                }
+            }
+            near
+        }
+        _ => Vec::new(),
+    };
     let surfaces = (0..places.len()).filter(|&at| own(places[at])).map(|at| columns[at].surface.max(water_top(at)));
     let mut highest = surfaces.fold(f32::MIN, f32::max).max(sea_top) + over_reach + 1.0;
     if asked && volume.spanned() {
@@ -817,6 +836,18 @@ pub fn column_chunks(
             match made.binary_search_by(|&(made_y, _)| y.cmp(&made_y)) {
                 Ok(found) => made[found].1 = (slab, None),
                 Err(before) => made.insert(before, (y, (slab, None))),
+            }
+        }
+        // By river or lake water, the ground the caves cut away is kept from a few blocks under its top up to it.
+        if let Some(&top) = near_water.get(at).filter(|&&top| top > sea_top) {
+            for y in (top - BY_WATER).floor() as i32..top.ceil() as i32 {
+                let depth = ground_column.surface - (y as f32 + 0.5);
+                if depth <= 0.0 {
+                    continue;
+                }
+                if let Err(before) = made.binary_search_by(|&(made_y, _)| y.cmp(&made_y)) {
+                    made.insert(before, (y, (ground_column.block(depth), None)));
+                }
             }
         }
         // Kept from the lowest up, as chunks' blocks are.

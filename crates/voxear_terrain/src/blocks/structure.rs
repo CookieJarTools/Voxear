@@ -1593,6 +1593,13 @@ fn lay(cells: &mut Vec<[i32; 2]>, point: [f32; 2], width: f32) {
     }
 }
 
+/// How high over the sea a plant stands at least, in metres, whatever its
+/// biome's shore: a beach is bare.
+const BEACH: f32 = 2.5;
+
+/// How far from a river's or a lake's water a plant keeps, in metres.
+const BY_WATER: f32 = 6.0;
+
 /// The ground under a place, for building: the generator's height there,
 /// in metres in its world.
 struct Ground<'a> {
@@ -1764,7 +1771,20 @@ fn build_looking(
             let sunk = sunk_at(world, biomes, site.at, height);
             biomes.at(site.at[0], site.at[1], Place { temperature, humidity, above_sea, sunk })
         });
-        structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b))
+        let fits = structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b));
+        // A plant keeps off the shore and away from rivers and lakes, but where it is one that grows by water.
+        let plant = matches!(structure.blocks, StructureBlocks::Plant { .. });
+        if !fits || !plant || structure.placement.by_water {
+            return fits;
+        }
+        let shore = biome.and_then(|b| biomes?.list().get(b)).map_or(0.0, |biome| biome.ground.shore_height);
+        if above_sea < shore.max(BEACH) {
+            return false;
+        }
+        let round = [(0.0, 0.0), (BY_WATER, 0.0), (-BY_WATER, 0.0), (0.0, BY_WATER), (0.0, -BY_WATER)];
+        let (xs, zs): (Vec<f32>, Vec<f32>) = round.iter().map(|(dx, dz)| (site.at[0] + dx, site.at[1] + dz)).unzip();
+        let dry = |water: &f32| *water < crate::generate::nodes::NO_WATER * 0.5;
+        world.water(&xs, &zs).is_none_or(|(water, _)| water.iter().all(dry))
     };
     let within = |x: i32, z: i32| {
         let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));
@@ -2131,6 +2151,65 @@ mod tests {
             biomes: Vec::new(),
         };
         WorldStructures { list: vec![hut, trees], ..WorldStructures::default() }
+    }
+
+    #[test]
+    fn trees_keep_off_the_beach_and_away_from_rivers_but_where_they_grow_by_water() {
+        // The islands' coast where a river runs out into the sea, 256 m a side.
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Archipelago").unwrap().world(7, 1.0);
+        let sea = world.sea_level();
+        let position = [592.0, 64.0];
+        let trees = |by_water: bool| {
+            let trees = PlacedStructure {
+                placement: Placement {
+                    spacing: 8.0,
+                    separation: 3.0,
+                    chance: 0.9,
+                    slope: 35.0,
+                    by_water,
+                    ..Placement::default()
+                },
+                ground: GroundFit::Leave,
+                sink: 0,
+                blocks: StructureBlocks::Plant {
+                    plant: PlantDef::default(),
+                    wood: 7,
+                    leaves: 8,
+                    vine: 0,
+                    logs: Vec::new(),
+                },
+                biomes: Vec::new(),
+            };
+            let structures = WorldStructures { list: vec![trees], ..WorldStructures::default() };
+            // Each trunk's foot: the lowest of its wood in a column.
+            let mut feet: std::collections::HashMap<[i32; 2], i32> = std::collections::HashMap::new();
+            let mut set = |at: [i32; 3], block: BlockId| {
+                if block == 7 {
+                    let foot = feet.entry([at[0], at[2]]).or_insert(at[1]);
+                    *foot = (*foot).min(at[1]);
+                }
+            };
+            build_over(&mut set, &structures, &world, None, (1.0, position, -64, false), ([0, 0], [8, 8]), 2);
+            // Those whose wood reaches down to the ground: trunks and their roots, not branches over the ground.
+            feet.into_iter()
+                .map(|([x, z], foot)| ([position[0] + x as f32 + 0.5, position[1] + z as f32 + 0.5], foot))
+                .filter(|&([x, z], foot)| foot as f32 <= world.height_at(x, z) + 1.0)
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>()
+        };
+        let wet = |[x, z]: [f32; 2]| {
+            let round = [(0.0, 0.0), (2.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0)];
+            let (xs, zs): (Vec<f32>, Vec<f32>) = round.iter().map(|(dx, dz)| (x + dx, z + dz)).unzip();
+            let (water, _) = world.water(&xs, &zs).unwrap();
+            water.iter().any(|&water| water > crate::generate::nodes::NO_WATER * 0.5)
+        };
+        let shore = |at: [f32; 2]| world.height_at(at[0], at[1]) - sea < 1.5;
+        let dry = trees(false);
+        assert!(dry.len() > 100, "{} trees", dry.len());
+        assert!(dry.iter().all(|&at| !shore(at) && !wet(at)), "trees on the beach or by the river");
+        // Those that grow by water come down to the shore and the river's banks.
+        let by = trees(true);
+        assert!(by.len() > dry.len() && by.iter().any(|&at| shore(at) || wet(at)), "{} by water", by.len());
     }
 
     #[test]

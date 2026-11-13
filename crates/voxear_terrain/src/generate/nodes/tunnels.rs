@@ -37,7 +37,9 @@ pub struct Tunnels {
 
 impl Default for Tunnels {
     fn default() -> Self {
-        Self { amount: 0.3, size: 22.0, roof: 3.0, seed: 0 }
+        // Few and wide by default: lines this far apart are some 6 m across. Smaller sizes make the thin, close
+        // web of a warren.
+        Self { amount: 0.3, size: 72.0, roof: 3.0, seed: 0 }
     }
 }
 

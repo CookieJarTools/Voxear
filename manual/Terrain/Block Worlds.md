@@ -112,8 +112,8 @@ The nodes are wired into the **Volume** of the graph's Output, which is the grou
 | --- | --- |
 | Solid | A height made solid: the generator's own ground with nothing wired in |
 | Overhangs | Ground pushed in and out by **Amount** metres, in bulges **Size** metres across with **Octaves** finer ones over them. It pushes where its **Mask** says, and steep ground alone with no mask wired in |
-| Tunnels | Long winding caves, **Amount** wide and winding over **Size** metres, kept **Roof** metres under the ground |
-| Chambers | Wide low caves **Size** metres apart, taking **Amount** of the ground, kept **Roof** metres under it |
+| Tunnels | Long winding caves, **Amount** wide and winding over **Size** metres, kept **Roof** metres under the ground. Their width grows with Size: the default 72 m makes a few tunnels some 6 m across; 20 m or so, a close web of thin ones |
+| Chambers | Wide low caves **Size** metres apart (100 m by default), taking **Amount** of the ground, kept **Roof** metres under it |
 | Cave Network | Rooms you make as prefabs, joined by winding tunnels, without end or as one bounded level. [[Caves]] is about them |
 | Noise 3D | Noise through space, from **Low** to **High** |
 | Combine | Two of these made one: **Union**, **Subtract** or **Smooth**, which runs them together over **Blend** metres |

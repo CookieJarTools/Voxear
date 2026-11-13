@@ -2335,6 +2335,13 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Few big caves, and trees off the shore:**~~ done: a world's own caves are a few wide ones by default:
+    Tunnels at 72 m (lines some 6 m across), Chambers at 100 m, the Cave Network's rooms 192 m apart joined by
+    tunnels 14 to 22 m wide; the ground beside river and lake water is kept whole where caves pass, so none opens
+    onto the water. Trees, of structures and the starter Foliage, keep off the beach (2.5 m over the sea at least, or
+    the biome's shore) and 6 m from rivers and lakes; a structure's new **By water** lets reeds and mangroves down.
+    Tests: a cave cut open is a few large hollows (GPU render, and from inside); trees off the beach and river, and
+    down to them by water.
   - ~~**Biomes, slabs and tints far off:**~~ done: an endless world's ground kept its block list only to its own
     top, under, base and sea blocks, so its biomes' blocks and slabs were lost; it keeps every block its ground is
     laid with now. Slabs are laid at every level, the far tiles too, and the far view takes a second, coarser

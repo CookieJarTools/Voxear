@@ -718,17 +718,19 @@ pub fn starter_growth(plant: StarterPlant) -> StarterGrowth {
             "spacing = 9.0\nseparation = 3.0\nchance = 0.35\nslope = 70.0\nseed = 3\nscale = [0.6, 1.8]\n",
             false,
         ),
+        // Trees keep off the shore: a beach is bare.
         StarterPlant::Tree => growth(
             TALL,
             Some(TRUNK),
-            "humidity = [0.45, 1.0]\nspacing = 7.0\nseparation = 4.0\nchance = 0.6\nslope = 25.0\nseed = 4\n\
-             scale = [0.8, 1.3]\n",
+            "humidity = [0.45, 1.0]\nheight = [2.5, 10000.0]\nspacing = 7.0\nseparation = 4.0\nchance = 0.6\n\
+             slope = 25.0\nseed = 4\nscale = [0.8, 1.3]\n",
             true,
         ),
         StarterPlant::Pine => growth(
             TALL,
             Some(TRUNK),
-            "temperature = [-15.0, 12.0]\nspacing = 6.0\nseparation = 3.5\nchance = 0.6\nseed = 5\n\
+            "temperature = [-15.0, 12.0]\nheight = [2.5, 10000.0]\nspacing = 6.0\nseparation = 3.5\n\
+             chance = 0.6\nseed = 5\n\
              scale = [0.8, 1.4]\n",
             true,
         ),
@@ -781,8 +783,8 @@ pub fn starter_growth(plant: StarterPlant) -> StarterGrowth {
         StarterPlant::Birch => growth(
             TALL,
             Some(TRUNK),
-            "temperature = [2.0, 17.0]\nhumidity = [0.35, 0.85]\nspacing = 13.0\nseparation = 5.0\nchance = 0.4\n\
-             slope = 25.0\nseed = 12\nscale = [0.8, 1.25]\n",
+            "temperature = [2.0, 17.0]\nhumidity = [0.35, 0.85]\nheight = [2.5, 10000.0]\nspacing = 13.0\n\
+             separation = 5.0\nchance = 0.4\nslope = 25.0\nseed = 12\nscale = [0.8, 1.25]\n",
             true,
         ),
         StarterPlant::DeadTree => growth(

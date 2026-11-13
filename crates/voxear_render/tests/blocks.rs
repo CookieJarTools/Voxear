@@ -1649,13 +1649,15 @@ fn generated_view(
     view: (Vec3, f32, f32),
     name: &str,
 ) -> (Vec<u8>, usize) {
-    generated_view_with(renderer, world, (size, side, position), biomes, view, name, (false, false))
+    generated_view_with(renderer, world, (size, side, position), biomes, view, name, (false, false, 0.0, None))
 }
 
 /// [`generated_view`], its ground's top laid in half blocks where `slabs`
 /// says: each biome's top block with its slab; and where `tinted` says, every
 /// biome's top the first's block, of grass taking each biome's grass tint,
-/// with the world's tints over the whole of it.
+/// with the world's tints over the whole of it; its own caves as `caves`
+/// says (see `BlockGenerate::caves`); and where `cut` says, every block
+/// south of that row taken away, so its ground is seen cut open.
 fn generated_view_with(
     renderer: &mut Renderer,
     world: &voxear_terrain::generate::WorldGen,
@@ -1663,7 +1665,7 @@ fn generated_view_with(
     biomes: &[(voxear_terrain::generate::BiomeDef, &str, [f32; 3])],
     (eye, yaw, pitch): (Vec3, f32, f32),
     name: &str,
-    (slabs, tinted): (bool, bool),
+    (slabs, tinted, caves, cut): (bool, bool, f32, Option<i32>),
 ) -> (Vec<u8>, usize) {
     use voxear_terrain::{
         blocks::{
@@ -1672,7 +1674,7 @@ fn generated_view_with(
         },
         generate::{BiomeBlocks, Biomes, WorldBiomes},
     };
-    let generate = BlockGenerate { caves: 0.0, bottom: -200, position, ..BlockGenerate::default() };
+    let generate = BlockGenerate { caves, bottom: -200, position, ..BlockGenerate::default() };
     let mut file = BlockFile {
         block_size: size,
         ground: Ground { size: [side, side], ..Ground::default() },
@@ -1728,8 +1730,26 @@ fn generated_view_with(
         .collect();
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut scene = World::new();
-    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
-    let made = BlockWorld::made(file.make_ground(Some(world)), &faces, size, false);
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+    };
+    let mut ground = file.make_ground(Some(world));
+    if let Some(cut) = cut {
+        let mut gone = Vec::new();
+        for (key, chunk) in ground.chunks() {
+            for (x, y, z) in (0..32).flat_map(|z| (0..32).flat_map(move |y| (0..32).map(move |x| (x, y, z)))) {
+                let at = [key[0] * 32 + x as i32, key[1] * 32 + y as i32, key[2] * 32 + z as i32];
+                if at[2] < cut && chunk.get(x, y, z) != 0 {
+                    gone.push(at);
+                }
+            }
+        }
+        gone.into_iter().for_each(|at| ground.set(at, 0));
+    }
+    let made = BlockWorld::made(ground, &faces, size, false);
     let chunks = made.meshes.len();
     let spawned = scene.spawn((made, look, Transform::default()));
     let mut late = None;
@@ -1962,7 +1982,7 @@ fn generated_hills_laid_in_half_blocks_rise_in_slabs_where_whole_blocks_step_a_b
             std::slice::from_ref(&grass),
             view,
             name,
-            (slabs, false),
+            (slabs, false, 0.0, None),
         )
     };
     let (whole, _) = make(&mut renderer, false, "blocks hills whole.png");
@@ -2014,7 +2034,7 @@ fn grass_takes_each_biomes_tint_and_fades_from_one_to_the_other_where_they_meet(
         &[cool, warm],
         view,
         "blocks tinted grass.png",
-        (false, true),
+        (false, true, 0.0, None),
     );
     // Yellow somewhere and blue-green somewhere, and between them every shade of the way: along each row, from
     // one pixel to the next, the balance of red and blue, as a share of how bright the pixel is, changes only a
@@ -2158,6 +2178,97 @@ fn a_river_opens_into_the_sea_at_its_mouth_and_rises_from_a_spring() {
             .count()
     };
     assert!(watery(&pixels) > 1000, "{} pixels of its pool and river", watery(&pixels));
+}
+
+#[test]
+fn a_worlds_own_caves_are_a_few_big_ones_cut_open_at_its_edge_and_seen_from_inside() {
+    use voxear_terrain::{
+        blocks::{file::Ground, generate::BlockGenerate},
+        generate::{BiomeDef, starters},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let hills = starters().into_iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    let corner = [2000.0, 900.0];
+    // Inside one: the cave block whose air is the most round it, well under the ground.
+    let file = BlockFile {
+        ground: Ground { size: [256, 256], ..Ground::default() },
+        generate: Some(BlockGenerate { caves: 0.3, bottom: -200, position: corner, ..BlockGenerate::default() }),
+        ..BlockFile::default()
+    };
+    let map = file.make_ground(Some(&hills));
+    let mut best = (0, [128, 0, 128]);
+    for z in (16..240).step_by(8) {
+        for x in (16..240).step_by(8) {
+            let top = (-200..300).rev().find(|&y| map.get([x, y, z]) != 0).unwrap_or(0);
+            for y in (top - 60..top - 12).step_by(4) {
+                if map.get([x, y, z]) != 0 {
+                    continue;
+                }
+                let open = (-6..=6).flat_map(|d| [[x + d, y, z], [x, y, z + d], [x, y + d / 2, z]]);
+                let air = open.filter(|&at| map.get(at) == 0).count();
+                if air > best.0 {
+                    best = (air, [x, y, z]);
+                }
+            }
+        }
+    }
+    let [x, y, z] = best.1;
+    let inside = (Vec3::new(x as f32 + 0.5, y as f32 + 1.0, z as f32 + 0.5), 0.6, 0.15);
+    generated_view_with(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        inside,
+        "caves inside.png",
+        (false, false, 0.3, None),
+    );
+    // Cut open: the same ground with everything south of that cave taken away, from the emptied ground at the
+    // cave's height, looking north at the cut rock.
+    let cut = (Vec3::new(x as f32 + 0.5, y as f32 + 6.0, (z as f32 - 70.0).max(2.0)), 0.0, 0.05);
+    let (pixels, _) = generated_view_with(
+        &mut renderer,
+        &hills,
+        (1.0, 256, corner),
+        std::slice::from_ref(&grass),
+        cut,
+        "caves cut open.png",
+        (false, false, 0.3, Some(z)),
+    );
+    // Cut open, the rock shows a few large holes, not a web of small ones: in that row, of the hollows under the
+    // ground, most of their air is in hollows of a hundred blocks or more.
+    let _ = pixels;
+    let under = |x: i32, y: i32| {
+        let top = (-200..300).rev().find(|&t| map.get([x, t, z]) != 0).unwrap_or(-200);
+        y < top - 2 && y > -190 && map.get([x, y, z]) == 0
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut sizes = Vec::new();
+    for x in 0..256 {
+        for y in -190..300 {
+            if seen.contains(&(x, y)) || !under(x, y) {
+                continue;
+            }
+            let (mut size, mut todo) = (0, vec![(x, y)]);
+            seen.insert((x, y));
+            while let Some((px, py)) = todo.pop() {
+                size += 1;
+                for (nx, ny) in [(px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)] {
+                    if (0..256).contains(&nx) && !seen.contains(&(nx, ny)) && under(nx, ny) {
+                        seen.insert((nx, ny));
+                        todo.push((nx, ny));
+                    }
+                }
+            }
+            sizes.push(size);
+        }
+    }
+    let all: usize = sizes.iter().sum();
+    let big: usize = sizes.iter().filter(|&&size| size >= 100).sum();
+    println!("hollows cut open: {sizes:?}");
+    assert!(all > 0 && big * 4 >= all * 3, "{big} of {all} blocks of air in hollows of a hundred or more");
 }
 
 #[test]

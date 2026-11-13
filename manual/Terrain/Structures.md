@@ -25,6 +25,7 @@ Every structure has a placement. The world is cut into squares **Spacing** apart
 | Height | How high over the sea its ground may be, from and to, in metres. Left out for any |
 | Slope | The steepest ground it stands on, in degrees |
 | Biomes | The biomes it stands in (see [[Surfaces#Biomes|Biomes]]). None for any |
+| By water | For a plant: whether it may stand on the shore and by rivers and lakes, as reeds do. Off by default: a tree keeps at least 2.5 m over the sea, and higher where its biome's shore reaches, and 6 m from a river's or a lake's water |
 
 Spacing, Chance and Apart together keep a world from being crowded: a large town with a spacing of 2 km, a chance of 0.5 and Apart of 600 m comes rarely and alone, while a well with a spacing of 200 m is common.
 

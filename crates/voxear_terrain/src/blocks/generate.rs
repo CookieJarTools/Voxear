@@ -56,6 +56,17 @@ pub struct BlockGenerate {
     /// had them; a world given generated ground in the editor starts on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rivers: bool,
+    /// Whether its ground's top is laid in half blocks: where the ground
+    /// lies half a block over a whole one, the top block is a slab of it,
+    /// so slopes rise in half steps. Off for a world written before worlds
+    /// had them; a world given generated ground in the editor starts on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slabs: bool,
+    /// For each block by its number, the number of its slab (see
+    /// `file::BlockKind::slab`), air where it has none: filled in as
+    /// `placed` is, for the blocks the ground's top can be.
+    #[serde(skip)]
+    pub halves: Option<std::sync::Arc<Vec<BlockId>>>,
     /// The block the air below its generator's sea level is filled with, by
     /// its place in the list from 1: air for none.
     #[serde(skip_serializing_if = "is_air")]
@@ -85,6 +96,12 @@ pub struct BlockGenerate {
     pub built: Option<std::sync::Arc<super::structure::WorldStructures>>,
 }
 
+/// Whether `generate`'s ground has its top laid in half blocks: it says so,
+/// and its slabs are numbered.
+pub fn halved(generate: &BlockGenerate) -> bool {
+    generate.slabs && generate.halves.is_some()
+}
+
 impl Default for BlockGenerate {
     fn default() -> Self {
         Self {
@@ -94,6 +111,8 @@ impl Default for BlockGenerate {
             overhangs: 0.0,
             caves: 0.3,
             rivers: false,
+            slabs: false,
+            halves: None,
             sea: AIR,
             endless: None,
             biomes: Vec::new(),
@@ -1007,6 +1026,74 @@ mod tests {
         }
         assert!(wet > 50 && flowing * 2 > wet, "{flowing} of {wet} blocks of the river flow");
         assert!(walls * 100 <= wet, "{walls} sides of water against air, of {wet} blocks");
+    }
+
+    #[test]
+    fn generated_ground_lays_slabs_where_it_lies_half_a_block_over_a_whole_one_so_it_rises_in_half_steps() {
+        // Rolling hills, no caves: every column's top is the generator's height, to the half block.
+        let world = Preset::RollingHills.world();
+        let made = |slabs: bool| {
+            let mut file = BlockFile {
+                ground: Ground { size: [64, 64], ..Ground::default() },
+                generate: Some(BlockGenerate {
+                    position: [300.0, -200.0],
+                    bottom: -20,
+                    caves: 0.0,
+                    slabs,
+                    ..BlockGenerate::default()
+                }),
+                ..BlockFile::default()
+            };
+            // The grass and the dirt each with its slab after the world's own three.
+            let (grass, dirt) = (file.ground.top, file.ground.under);
+            for block in [grass, dirt] {
+                let slab = BlockKind::slab_of(file.kind(block).unwrap());
+                file.blocks.push(slab);
+            }
+            let mut halves = vec![AIR; file.blocks.len() + 1];
+            (halves[usize::from(grass)], halves[usize::from(dirt)]) = (4, 5);
+            file.generate.as_mut().unwrap().halves = Some(std::sync::Arc::new(halves));
+            let map = file.make_ground(Some(&world));
+            (file, map)
+        };
+        let (file, map) = made(true);
+        assert_eq!(file.kind(4).map(|kind| kind.shape), Some(crate::blocks::block::BlockShape::Slab));
+        let top = |map: &BlockMap, x: i32, z: i32| (-20..300).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            (0..64 * 64).map(|at| (300.0 + (at % 64) as f32 + 0.5, -200.0 + (at / 64) as f32 + 0.5)).unzip();
+        let water = world.water(&xs, &zs).map(|(water, _)| water);
+        let (mut slabs, mut checked) = (0, 0);
+        for at in 0..64 * 64 {
+            let (x, z) = ((at % 64) as i32, (at / 64) as i32);
+            let surface = world.height_at(xs[at], zs[at]);
+            let y = top(&map, x, z);
+            let half = (surface - 0.25).floor();
+            // Where a river runs, its water lies on whole blocks.
+            if water.as_ref().is_some_and(|water| water[at] > half) {
+                continue;
+            }
+            checked += 1;
+            let block = map.get([x, y, z]);
+            if surface - half < 0.75 {
+                // Within a quarter of a block of a block's middle: that block is a slab, over whole ground.
+                assert_eq!((y, block), (half as i32, 4), "column ({x}, {z}) at {surface}");
+                assert!([1, 2].contains(&map.get([x, y - 1, z])), "whole ground under the slab");
+                slabs += 1;
+            } else {
+                // Near a whole block: the ground is whole to it, as it always was.
+                assert_eq!((y, block), ((surface - 0.5).ceil() as i32 - 1, 1), "column ({x}, {z}) at {surface}");
+            }
+        }
+        // About half the columns, of those checked.
+        assert!(checked > 3000 && slabs * 4 > checked && slabs * 4 < checked * 3, "{slabs} slabs of {checked}");
+        // Off, there are none; and the slabs are written as such and read back.
+        let (_, without) = made(false);
+        let none = (0..64 * 64).all(|at| without.get([at % 64, top(&without, at % 64, at / 64), at / 64]) != 4);
+        assert!(none, "no slab with the world's slabs off");
+        let text = file.to_text();
+        assert!(text.contains("slabs = true") && text.contains("slab = true") && !text.contains("halves"), "{text}");
+        let read = BlockFile::parse(&text).unwrap();
+        assert_eq!(read.blocks, file.blocks);
     }
 
     #[test]

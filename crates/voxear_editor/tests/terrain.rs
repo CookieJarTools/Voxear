@@ -1136,6 +1136,9 @@ fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_s
 
 /// Picks one of the Block World's tools by its segment.
 fn show_block_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, tool: &str) {
+    // Scrolled back up to them, where the Inspector was scrolled down.
+    let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
+    scroll_to(editor, renderer, strip);
     let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
     let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
     click(&mut editor.ui, segment);
@@ -1173,6 +1176,15 @@ fn scroll_to(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: 
         }
         at = editor.ui.parent(parent);
     }
+}
+
+/// Clicks the button saying `text` within `within`, scrolled to where it shows first, as a hand scrolls down
+/// to it.
+fn press(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, within: NodeId, text: &str) {
+    let button = button_saying(&editor.ui, within, text).unwrap_or_else(|| panic!("{text}"));
+    scroll_to(editor, renderer, button);
+    let button = button_saying(&editor.ui, within, text).unwrap_or_else(|| panic!("{text}"));
+    click(&mut editor.ui, button);
 }
 
 /// Opens the object picker of the Inspector row labelled `label`, scrolled to where it shows.
@@ -1721,6 +1733,9 @@ fn a_block_that_is_water_is_placed_flows_out_and_a_generated_world_can_fill_its_
     let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
     choose(&mut editor, &mut renderer, ground, 1);
     frame(&mut editor, &mut renderer);
+    // Newly generated, its top is laid in half blocks: its grass's and its dirt's slabs are numbered after them.
+    let held = file(&editor).blocks.len();
+    assert_eq!(held, 5);
     assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Sea block")[0]).contains("None"));
     assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Top block")[0]).contains("Grass"));
     open_picker(&mut editor, &mut renderer, "Sea block");
@@ -1728,12 +1743,12 @@ fn a_block_that_is_water_is_placed_flows_out_and_a_generated_world_can_fill_its_
     editor.ui.key_down(Key::Escape);
     frame(&mut editor, &mut renderer);
     pick_asset(&mut editor, &mut renderer, "Sea block", "Water.block");
-    assert_eq!(file(&editor).generate.expect("generated").sea, 4);
-    assert_eq!(file(&editor).blocks.len(), 4);
+    assert_eq!(file(&editor).generate.expect("generated").sea, held as u16 + 1);
+    assert_eq!(file(&editor).blocks.len(), held + 1);
     assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Sea block")[0]).contains("Water"));
-    // Its ground's top made stone, which it holds already: no new number.
+    // Its ground's top made stone, which it holds already: no new number but its slab's.
     pick_asset(&mut editor, &mut renderer, "Top block", "Stone.block");
-    assert_eq!((file(&editor).ground.top, file(&editor).blocks.len()), (3, 4));
+    assert_eq!((file(&editor).ground.top, file(&editor).blocks.len()), (3, held + 2));
     pick_asset(&mut editor, &mut renderer, "Sea block", "None");
     assert_eq!(file(&editor).generate.expect("generated").sea, 0);
 }
@@ -1992,7 +2007,9 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_blo
     let file = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
     assert!(file.blocks[held].cover.is_some_and(|cover| cover.temperature.is_some()));
     let now = blocks(&editor);
-    assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]) as usize, held + 1, "snow on top");
+    // Snow, or snow's slab where the ground lies half a block higher.
+    let on_top = file.kind(now.blocks.get([10, top(&now, 10, 10), 10])).and_then(|kind| kind.block.clone());
+    assert_eq!(on_top, file.blocks[held].block, "snow on top");
 }
 
 /// A copy of Hello open in the editor, its field a Block World made by `Worlds/Steep.worldgen`, a
@@ -2513,8 +2530,9 @@ fn a_block_world_takes_every_starter_plant_at_once_and_the_starter_trees_of_bloc
     assert_eq!(BlockDef::parse(&read(&format!("{blocks_folder}/Vine.block"))).unwrap().shape, BlockShape::Vine);
     // The world lists the structures, numbers their blocks, and its ground is made again with trees on it:
     // blocks of leaves, and their tufts among its chunks' faces.
+    // After the maple and the blossom its showcase biomes brought when it was given a generator.
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
-    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(3));
+    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(5));
     let oak = editor.game.content.parse(&format!("{blocks_folder}/Oak Leaves.block")).unwrap().guid().unwrap();
     let birch = editor.game.content.parse(&format!("{blocks_folder}/Birch Leaves.block")).unwrap().guid().unwrap();
     let numbers = [oak, birch].map(|guid| asset.drawn.number_of(guid));
@@ -2549,16 +2567,16 @@ fn a_block_world_takes_every_starter_plant_at_once_and_the_starter_trees_of_bloc
     for _ in 0..4 {
         frame(&mut editor, &mut renderer);
     }
+    // Its showcase biomes' maple and blossom stay.
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();
-    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(0));
+    assert_eq!(asset.file.generate.as_ref().map(|generate| generate.structures.len()), Some(2));
 
     // The starter biomes hang vines where it is wet: blocks of the Vine under the world's ledges and cave roofs.
     editor.select(Some(field));
     frame(&mut editor, &mut renderer);
     show_block_tool(&mut editor, &mut renderer, "Settings");
     let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
-    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
-    click(&mut editor.ui, starters);
+    press(&mut editor, &mut renderer, inspector, "Add Starter Biomes");
     for _ in 0..8 {
         frame(&mut editor, &mut renderer);
     }
@@ -2621,7 +2639,8 @@ fn a_block_world_grows_a_starter_plant_picked_on_its_add_plant_row_as_one_step_t
     let world = &editor.game.engine.world;
     assert_eq!(world.get::<voxear_scene::Parent>(grass).map(|parent| parent.0), Some(field));
     let grow = world.get::<FoliageSource>(grass).and_then(|source| source.0.grow.clone()).expect("where it grows");
-    assert_eq!((grow.spacing, grow.on.len()), (1.0, 1), "thick, on the world's top block");
+    // On the world's top block, and the grass and the fallen leaves of its showcase biomes.
+    assert_eq!((grow.spacing, grow.on.len()), (1.0, 3), "thick, on the world's top block and its biomes' soils");
     assert!(world.get::<voxear_render::Foliage>(grass).is_some(), "drawn with the model's mesh");
     assert_eq!(editor.selected(), Some(grass));
     // Its plants grow only as near as they are drawn: none while the Scene view looks from far off.
@@ -2869,8 +2888,7 @@ fn a_generated_worlds_biomes_are_listed_added_moved_and_taken_out_each_making_it
 
     // Add Biome offers the project's biomes and nothing else. One picked is listed, and the ground made again from
     // it: with one biome every place is that one, so moss everywhere, numbered as the world first holds it.
-    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
-    click(&mut editor.ui, add);
+    press(&mut editor, &mut renderer, inspector, "Add Biome");
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(picker_rows(&editor.ui), ["Cool.biome", "Warm.biome"]);
@@ -2884,8 +2902,7 @@ fn a_generated_worlds_biomes_are_listed_added_moved_and_taken_out_each_making_it
     assert_eq!((moss, file(&editor).blocks.len()), (4, 4));
     assert_eq!(tops(&editor, field).keys().copied().collect::<Vec<_>>(), [moss]);
     // A second: the warm places are sand, the cool ones moss still.
-    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
-    click(&mut editor.ui, add);
+    press(&mut editor, &mut renderer, inspector, "Add Biome");
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let row = picker_row(&editor.ui, "Warm.biome").unwrap();
@@ -2898,8 +2915,7 @@ fn a_generated_worlds_biomes_are_listed_added_moved_and_taken_out_each_making_it
     assert!(both[&moss] > 100 && both[&sand] > 100 && both.len() == 2, "{both:?}");
     shot_scrolled(&mut editor, &mut renderer, "biomes-list.png", 420.0);
     // One listed already is not listed twice.
-    let add = button_saying(&editor.ui, inspector, "Add Biome").unwrap();
-    click(&mut editor.ui, add);
+    press(&mut editor, &mut renderer, inspector, "Add Biome");
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let row = picker_row(&editor.ui, "Warm.biome").unwrap();
@@ -2928,6 +2944,8 @@ fn a_generated_worlds_biomes_are_listed_added_moved_and_taken_out_each_making_it
 
     // Dragged by its grip above the first, the second goes first; the ground is what it was, as no place is as
     // much within both.
+    let list = first_with(&editor.ui, editor.ui.root(), "block-biomes").unwrap();
+    scroll_to(&mut editor, &mut renderer, list);
     let list = first_with(&editor.ui, editor.ui.root(), "block-biomes").unwrap();
     let items = first_with(&editor.ui, list, "collection-items").unwrap();
     let rows = editor.ui.children(items);
@@ -3131,8 +3149,7 @@ fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed
     std::fs::write(dir.path().join("Mine/Gravel.block"), "color = [0.1, 0.2, 0.3]\n").unwrap();
     editor.game.content.rescan().unwrap();
     let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
-    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").expect("Add Starter Biomes");
-    click(&mut editor.ui, starters);
+    press(&mut editor, &mut renderer, inspector, "Add Starter Biomes");
     for _ in 0..4 {
         frame(&mut editor, &mut renderer);
     }
@@ -3182,8 +3199,7 @@ fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed
     assert!(!now.contains_key(&snow) && !now.contains_key(&1), "{now:?}");
     shot_scrolled(&mut editor, &mut renderer, "biomes-starters.png", 420.0);
     // Asked for again, nothing is made twice or listed twice.
-    let starters = button_saying(&editor.ui, inspector, "Add Starter Biomes").unwrap();
-    click(&mut editor.ui, starters);
+    press(&mut editor, &mut renderer, inspector, "Add Starter Biomes");
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
@@ -3292,8 +3308,7 @@ fn biomes_made_on(
     frame(&mut editor, &mut renderer);
     show_block_tool(&mut editor, &mut renderer, "Settings");
     let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
-    let made = button_saying(&editor.ui, inspector, button).unwrap_or_else(|| panic!("{button}"));
-    click(&mut editor.ui, made);
+    press(&mut editor, &mut renderer, inspector, button);
     // A world this large is made again on other threads: until it is.
     let listed = |editor: &voxear_editor::Editor| {
         let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap();

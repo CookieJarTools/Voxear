@@ -162,6 +162,10 @@ pub struct BlockKind {
     /// block may have entries of several states, each its own number. 0
     /// for a block that keeps none.
     pub state: u8,
+    /// Whether it is its block made a slab, lying in the lower half: a
+    /// cube's own look, half as high. What generated ground lays where it
+    /// lies half a block over a whole one (see `generate::BlockGenerate::slabs`).
+    pub slab: bool,
     /// What it is as a block of parts, as its block says: its motion, its
     /// own boxes, whether it is used. Never written.
     #[serde(skip)]
@@ -204,6 +208,8 @@ struct Written {
     cover: Option<BlockCover>,
     #[serde(skip_serializing_if = "is_no_state")]
     state: u8,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    slab: bool,
 }
 
 fn is_no_state(state: &u8) -> bool {
@@ -224,6 +230,7 @@ impl From<BlockKind> for Written {
             water: own && kind.water,
             cover: kind.cover.filter(|_| !kind.removed),
             state: if kind.removed || own { 0 } else { kind.state },
+            slab: kind.slab && !kind.removed,
         }
     }
 }
@@ -279,6 +286,7 @@ impl Default for BlockKind {
             overlap: 0,
             shape: super::block::BlockShape::Cube,
             state: 0,
+            slab: false,
             part: PartLook::default(),
         }
     }
@@ -298,6 +306,24 @@ impl BlockKind {
     /// An entry naming the `.block` at `reference` placed in `state`.
     pub fn of_state(reference: &str, state: u8) -> Self {
         Self { block: Some(reference.into()), state, ..Self::default() }
+    }
+
+    /// `kind`, a cube, made a slab lying in the lower half (see
+    /// [`BlockKind::slab`]).
+    pub fn slab_of(kind: &BlockKind) -> Self {
+        let mut slab = Self { slab: true, cover: None, ..kind.clone() };
+        slab.shaped();
+        slab
+    }
+
+    /// Its shape made a slab's, lying low, where it is one and its block a
+    /// cube.
+    pub fn shaped(&mut self) {
+        use super::{block::BlockShape, shape::BlockState};
+        if self.slab && matches!(self.shape, BlockShape::Cube | BlockShape::Slab) {
+            self.shape = BlockShape::Slab;
+            self.state = BlockState::default_for(BlockShape::Slab).to_byte();
+        }
     }
 
     /// The place a block was taken out of.
@@ -395,9 +421,10 @@ impl BlockFile {
             if kind.removed {
                 *kind = BlockKind::gap();
             } else if kind.block.is_some() {
-                let (block, cover, state) = (kind.block.take(), kind.cover, kind.state);
-                *kind = BlockKind { block, cover, state, ..BlockKind::default() };
+                let (block, cover, state, slab) = (kind.block.take(), kind.cover, kind.state, kind.slab);
+                *kind = BlockKind { block, cover, state, slab, ..BlockKind::default() };
             }
+            kind.shaped();
         }
         file.forget_gaps();
         Ok(file)
@@ -551,8 +578,17 @@ impl BlockFile {
             let joined = BlockFaces { connects, mixes, overlap, ..shown };
             faces.push(self.part_faces(kind, shape, &mut motions, joined));
         }
-        // Each entry of the same block, in whatever state, is of the family of its first.
+        // Each entry of the same block, in whatever state, is of the family of its first; a slab of a kind of the
+        // world's own, of the kind it is made from.
         let mut firsts: Vec<(&str, BlockId)> = Vec::new();
+        let made_from = |slab: &BlockKind| {
+            let same = |kind: &BlockKind| {
+                kind.is_inline()
+                    && !kind.slab
+                    && (&kind.name, kind.color, &kind.material) == (&slab.name, slab.color, &slab.material)
+            };
+            self.blocks.iter().position(same).map(|at| (at + 1) as BlockId)
+        };
         for (at, kind) in self.blocks.iter().enumerate() {
             let number = (at + 1) as BlockId;
             let family = match kind.block.as_deref().filter(|_| kind.is_live()) {
@@ -563,6 +599,7 @@ impl BlockFile {
                         number
                     }
                 },
+                None if kind.slab && kind.is_live() => made_from(kind).unwrap_or(number),
                 None if kind.is_live() => number,
                 None => 0,
             };

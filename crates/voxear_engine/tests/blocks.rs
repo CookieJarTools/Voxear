@@ -305,6 +305,64 @@ fn a_generated_block_worlds_biomes_put_their_blocks_on_its_ground_numbered_as_it
 }
 
 #[test]
+fn a_generated_block_world_with_slabs_numbers_its_ground_blocks_slabs_as_it_loads_and_lays_them() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{
+        blocks::{block::BlockShape, generate::BlockGenerate},
+        generate::Preset,
+    };
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    // Grass of the project's, on top, over the world's own dirt.
+    std::fs::write(dir.path().join("Blocks/Grass.block"), "color = [0.3, 0.55, 0.2]\n").unwrap();
+    let mut file = BlockFile::default();
+    file.blocks[0] = voxear_terrain::blocks::file::BlockKind::of("Blocks/Grass.block");
+    file.ground.size = [32, 32];
+    let generate = BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        slabs: true,
+        ..BlockGenerate::default()
+    };
+    file.generate = Some(generate);
+    let held = file.blocks.len();
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let load = |dir: &tempfile::TempDir| {
+        let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+        game.start(None).unwrap();
+        let world = &game.engine.world;
+        let blocks = world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+        let asset = world.query_ref::<&BlockWorldAsset>().into_iter().next().expect("its asset").clone();
+        (game, blocks, asset)
+    };
+    let (mut game, blocks, asset) = load(&dir);
+    // The grass's slab and the dirt's numbered after what it held, each its block made half as high.
+    assert_eq!(asset.file.blocks.len(), held + 2);
+    let (grass_slab, dirt_slab) = ((held + 1) as u16, (held + 2) as u16);
+    for (slab, of) in [(grass_slab, 0), (dirt_slab, 1)] {
+        let kind = &asset.file.blocks[usize::from(slab) - 1];
+        assert!(kind.slab && kind.shape == BlockShape::Slab, "{kind:?}");
+        assert_eq!((&kind.block, kind.color), (&asset.file.blocks[of].block, asset.file.blocks[of].color));
+    }
+    let halves = asset.file.generate.as_ref().unwrap().halves.clone().expect("its slabs numbered");
+    assert_eq!((halves[1], halves[2]), (grass_slab, dirt_slab));
+    // Grass slabs on top of about half its columns.
+    let top = |x: i32, z: i32| (-8..200).rev().map(|y| blocks.blocks.get([x, y, z])).find(|&block| block != 0).unwrap();
+    let slabbed = (0..32 * 32).filter(|at| top(at % 32, at / 32) == grass_slab).count();
+    assert!((200..800).contains(&slabbed), "{slabbed} columns of 1024 have a slab on top");
+    // Read again, as each change to it is, nothing is numbered twice; with its slabs off, none are read.
+    let again = voxear_engine::blocks::with_biomes(&mut game.content, &asset.file);
+    assert_eq!((again.blocks.len(), again.generate.as_ref().unwrap().halves.as_deref()), (held + 2, Some(&*halves)));
+    let mut off = asset.file.clone();
+    off.generate.as_mut().unwrap().slabs = false;
+    let off = voxear_engine::blocks::with_biomes(&mut game.content, &off);
+    assert!(off.generate.as_ref().unwrap().halves.is_none());
+}
+
+#[test]
 fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_it_is() {
     use voxear_core::math::Vec3;
     use voxear_engine::blocks::{BlockWorldAsset, biome_at, biome_json};

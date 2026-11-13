@@ -1633,8 +1633,22 @@ fn generated_view(
     world: &voxear_terrain::generate::WorldGen,
     (size, side, position): (f32, u32, [f32; 2]),
     biomes: &[(voxear_terrain::generate::BiomeDef, &str, [f32; 3])],
+    view: (Vec3, f32, f32),
+    name: &str,
+) -> (Vec<u8>, usize) {
+    generated_view_with(renderer, world, (size, side, position), biomes, view, name, false)
+}
+
+/// [`generated_view`], its ground's top laid in half blocks where `slabs`
+/// says: each biome's top block with its slab.
+fn generated_view_with(
+    renderer: &mut Renderer,
+    world: &voxear_terrain::generate::WorldGen,
+    (size, side, position): (f32, u32, [f32; 2]),
+    biomes: &[(voxear_terrain::generate::BiomeDef, &str, [f32; 3])],
     (eye, yaw, pitch): (Vec3, f32, f32),
     name: &str,
+    slabs: bool,
 ) -> (Vec<u8>, usize) {
     use voxear_terrain::{
         blocks::{
@@ -1658,6 +1672,15 @@ fn generated_view(
         file.blocks.push(BlockKind::colored(block, *colour));
         defs.push(biome.clone());
         blocks.push(BiomeBlocks { top: file.blocks.len() as u16, ..BiomeBlocks::default() });
+    }
+    if slabs {
+        let mut halves = vec![0; file.blocks.len() + 1];
+        for top in blocks.iter().map(|blocks| blocks.top) {
+            file.blocks.push(BlockKind::slab_of(file.kind(top).unwrap()));
+            halves[usize::from(top)] = file.blocks.len() as u16;
+        }
+        let generate = file.generate.as_mut().unwrap();
+        (generate.slabs, generate.halves) = (true, Some(Arc::new(halves)));
     }
     if !defs.is_empty() {
         let placed = WorldBiomes { biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
@@ -1865,6 +1888,43 @@ fn a_generated_river_runs_between_its_banks_and_pours_over_a_waterfall_into_a_po
         "blocks waterfall.png",
     );
     assert!(water(&pixels) > 500, "{} pixels of the waterfall and its pool", water(&pixels));
+}
+
+#[test]
+fn generated_hills_laid_in_half_blocks_rise_in_slabs_where_whole_blocks_step_a_block_at_a_time() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let hills = starters().into_iter().find(|starter| starter.name == "Rolling Hills").unwrap().world(7, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land, "Grass", [0.36, 0.6, 0.22]);
+    // A gentle hillside, low over it from 30 m off, the same with whole blocks and with slabs.
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..100 * 100).map(|at| ((at % 100) as f32 * 8.0, (at / 100) as f32 * 8.0)).unzip();
+    let rise = |at: usize| (hills.height_at(xs[at] + 4.0, zs[at]) - hills.height_at(xs[at] - 4.0, zs[at])) / 8.0;
+    let slope = (0..xs.len()).find(|&at| (0.15..0.3).contains(&rise(at))).expect("a gentle slope");
+    let corner = [xs[slope] - 128.0, zs[slope] - 128.0];
+    let ground = hills.height_at(xs[slope], zs[slope]);
+    let eye = Vec3::new(128.0 - 22.0, ground + 4.0, 128.0 - 22.0);
+    let view = (eye, std::f32::consts::FRAC_PI_4, 0.12);
+    let make = |renderer: &mut Renderer, slabs: bool, name: &str| {
+        generated_view_with(renderer, &hills, (1.0, 256, corner), std::slice::from_ref(&grass), view, name, slabs)
+    };
+    let (whole, _) = make(&mut renderer, false, "blocks hills whole.png");
+    let (halved, _) = make(&mut renderer, true, "blocks hills slabs.png");
+    // The same hillside, the ground in much the same places, but its steps another.
+    let land = |pixels: &[u8]| {
+        (0..WIDTH * HEIGHT)
+            .filter(|at| {
+                let [r, g, b] = rgb_at(pixels, at % WIDTH, at / WIDTH);
+                g > r && g > b
+            })
+            .count()
+    };
+    let (seen, seen_halved) = (land(&whole), land(&halved));
+    let all = (WIDTH * HEIGHT) as usize;
+    assert!(seen > all / 4 && seen_halved.abs_diff(seen) < seen / 10, "{seen} and {seen_halved} of grass");
+    let differ = whole.chunks_exact(4).zip(halved.chunks_exact(4)).filter(|(a, b)| a != b).count();
+    assert!(differ > all / 20, "{differ} pixels differ");
 }
 
 #[test]

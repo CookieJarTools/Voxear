@@ -500,6 +500,8 @@ impl BlockDef {
         kind.overlap = if self.liquid.is_none() { self.overlap } else { 0 };
         kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
         kind.part = self.part_look();
+        // A cube made a slab is one still.
+        kind.shaped();
     }
 }
 

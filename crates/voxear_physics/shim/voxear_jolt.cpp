@@ -148,6 +148,8 @@ struct Vehicle {
 struct Character {
 	Ref<CharacterVirtual> inner;
 	float height_offset;
+	// Its capsule's radius, how far a step carries it on at least.
+	float radius;
 	// Its Voxear layer, as it moves.
 	uint32_t layer;
 };
@@ -652,6 +654,7 @@ uint32_t vx_character_add(VxWorld *world, const VxCharacterDesc *desc) {
 	settings->mSupportingVolume = Plane(Vec3::sAxisY(), -desc->radius);
 	Character character;
 	character.height_offset = 0.0f;
+	character.radius = desc->radius;
 	character.layer = desc->layer;
 	character.inner = new CharacterVirtual(settings, RVec3(desc->position[0], desc->position[1], desc->position[2]),
 		Quat::sIdentity(), 0, &world->system);
@@ -685,6 +688,10 @@ void vx_character_move(VxWorld *world, uint32_t character, const float velocity[
 	CharacterVirtual::ExtendedUpdateSettings settings;
 	settings.mWalkStairsStepUp = inner.GetUp() * step_height;
 	settings.mStickToFloorStepDown = inner.GetUp() * -step_height;
+	// A step up carries it on as far as its capsule is round at least, so its foot comes down on the step's top
+	// rather than on its edge, where it would stand propped on its curve. Walking slowly, a frame takes it on only
+	// a little way, and a step half a block high, a slab, would stop it.
+	settings.mWalkStairsMinStepForward = std::max(settings.mWalkStairsMinStepForward, world->characters[character - 1].radius);
 	ObjectLayer layer = object_layer(world->characters[character - 1].layer, true);
 	DefaultBroadPhaseLayerFilter broad(world->layer_vs_broad, layer);
 	DefaultObjectLayerFilter layers(world->layer_pairs, layer);

@@ -427,6 +427,9 @@ pub enum BlockField {
     /// Whether rivers run down its generated ground, where its generator
     /// makes no water of its own.
     Rivers,
+    /// Whether its generated ground's top is laid in half blocks, slabs of
+    /// its top blocks where it lies half a block higher.
+    Slabs,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -523,7 +526,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     }
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
-                    fields.push(F::Rivers);
+                    fields.extend([F::Rivers, F::Slabs]);
                     fields.push(F::Biomes);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
@@ -564,6 +567,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Overhangs => "Overhangs",
         F::Caves => "Caves",
         F::Rivers => "Rivers",
+        F::Slabs => "Slabs",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -776,6 +780,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
         F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
+        F::Slabs => Value::Toggle(file()?.generate.as_ref()?.slabs),
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
         F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
@@ -890,8 +895,9 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             file.ground.height = number(v).unwrap_or(file.ground.height as f32).round().clamp(0.0, 1024.0) as u32;
         }
         (F::Ground, Value::Choice(at, _)) => {
-            // Ground newly generated has rivers.
-            let fresh = || voxear_terrain::blocks::generate::BlockGenerate { rivers: true, ..Default::default() };
+            // Ground newly generated has rivers, and its top laid in half blocks.
+            let fresh =
+                || voxear_terrain::blocks::generate::BlockGenerate { rivers: true, slabs: true, ..Default::default() };
             let generate = file.generate.clone().unwrap_or_else(fresh);
             file.generate = (*at == 1).then_some(generate);
         }
@@ -914,6 +920,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Caves, v) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.caves = number(v).unwrap_or(generate.caves).clamp(0.0, 1.0);
+        }
+        (F::Slabs, Value::Toggle(on)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.slabs = *on;
         }
         (F::Rivers, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };

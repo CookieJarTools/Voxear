@@ -31,6 +31,7 @@ use voxear_scene::{Plant, PlantSet};
 
 use super::{
     BlockFaces, BlockMap,
+    block::BlockShape,
     chunk::{AIR, BlockId, CHUNK, Chunk, depth_of},
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
@@ -231,11 +232,29 @@ pub struct Tops {
 }
 
 /// Whether block `block` is looked through for the ground under it: a
-/// vine, or leaves (bushy, seen through or swaying).
+/// vine, leaves (bushy, seen through or swaying) or a block of parts. A slab
+/// is ground: it is what generated ground's top is laid in half blocks of.
 fn is_canopy(faces: &[BlockFaces], block: BlockId) -> bool {
     faces.get(usize::from(block)).is_some_and(|faces| {
-        !faces.water && (!faces.shape.is_cube() || faces.see_through || faces.sways)
+        !faces.water && (!faces.shape.is_cube() && faces.shape != BlockShape::Slab || faces.see_through || faces.sways)
     })
+}
+
+/// Whether `rule` grows on block `block` near by: it names the block, or
+/// the block whose slab it is, or names none.
+fn grows_on(rule: &GrowRule, faces: &[BlockFaces], block: BlockId) -> bool {
+    let family = faces.get(usize::from(block)).map_or(block, |faces| faces.family);
+    rule.on.is_empty() || rule.on.contains(&block) || rule.on.contains(&family)
+}
+
+/// How far up its block the top of block `block` lies, of one: half for a
+/// slab lying low.
+fn top_of(faces: &[BlockFaces], block: BlockId) -> f32 {
+    let low = |faces: &BlockFaces| {
+        let state = super::shape::BlockState::from_byte(faces.state);
+        faces.shape == BlockShape::Slab && state.facing == super::shape::BlockFacing::Down
+    };
+    if faces.get(usize::from(block)).is_some_and(low) { 0.5 } else { 1.0 }
 }
 
 impl Tops {
@@ -250,7 +269,7 @@ impl Tops {
         let mut tops = vec![None; (CHUNK * CHUNK) as usize];
         let mut over = vec![AIR; tops.len()];
         // Whether any of the world's blocks is looked through: else a chunk's air alone is.
-        let canopies = faces.iter().any(|faces| !faces.water && (!faces.shape.is_cube() || faces.see_through || faces.sways));
+        let canopies = (0..faces.len()).any(|block| is_canopy(faces, block as BlockId));
         // Chunk by chunk from the highest, each place's blocks from the top down, until every place has its own.
         let mut left = tops.len();
         for &(cy, chunk) in &chunks {
@@ -491,7 +510,7 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
         }
         if rule.under_water {
             let Some((y, block, water_top, water)) = bed([bx, bz]) else { continue };
-            if !(rule.on.is_empty() || rule.on.contains(&block)) {
+            if !grows_on(rule, ground.faces, block) {
                 continue;
             }
             // How its bed rises to the beds beside it, those in the column alone.
@@ -508,13 +527,13 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
             continue;
         }
         let Some((y, block, fill)) = blocks.top(inside) else { continue };
-        if is_water(ground.faces, block) || !(rule.on.is_empty() || rule.on.contains(&block)) {
+        if is_water(ground.faces, block) || !grows_on(rule, ground.faces, block) {
             continue;
         }
-        // The top of a cube; drawn smooth, where the surface crosses the block.
+        // The top of a cube, or of a slab lying low; drawn smooth, where the surface crosses the block.
         let top = match ground.smooth {
             true => (y as f32 + 0.5 + depth_of(fill).clamp(-0.5, 0.5)) * size,
-            false => (y + 1) as f32 * size,
+            false => (y as f32 + top_of(ground.faces, block)) * size,
         };
         if !rule.stands_on(top - sea, blocks.slope(inside, y)) {
             continue;

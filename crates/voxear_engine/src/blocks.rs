@@ -265,8 +265,80 @@ pub fn with_block_state(
 /// not hold yet numbered after those it has, in the order the biomes name
 /// them, so the same file gives the same numbers on every machine. A biome
 /// or a block that cannot be found is left out, with a warning; a file
-/// that lists no biomes comes back with none read.
+/// that lists no biomes comes back with none read. Where its ground's top
+/// is laid in half blocks, the slabs of the blocks that top can be are
+/// numbered too (see [`with_halves`]).
 pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
+    let mut file = biomes_read(content, file);
+    with_halves(content, &mut file);
+    file
+}
+
+/// Numbers the slab of each block `file`'s generated ground can lay on its
+/// top, where it says its top is laid in half blocks: its own top and
+/// under blocks, its biomes' top, under, steep and shore blocks, and every
+/// block that covers. A block's slab is the block made half as high (see
+/// `voxear_terrain::blocks::file::BlockKind::slab`), numbered after those
+/// the world has where it has none yet; only a cube's, of no water and not
+/// seen through, and none where the world has no room for more.
+pub fn with_halves(content: &mut Content, file: &mut BlockFile) {
+    let Some(generate) = file.generate.as_ref() else { return };
+    if !generate.slabs {
+        if let Some(generate) = file.generate.as_mut() {
+            generate.halves = None;
+        }
+        return;
+    }
+    let mut tops = vec![file.ground.top, file.ground.under];
+    if let Some(placed) = generate.placed.as_deref() {
+        tops.extend(placed.blocks.iter().flat_map(|blocks| [blocks.top, blocks.under, blocks.steep, blocks.shore]));
+    }
+    tops.extend((1..=file.blocks.len()).filter(|&at| file.blocks[at - 1].cover.is_some()).map(|at| at as BlockId));
+    let mut halves = vec![voxear_terrain::blocks::chunk::AIR; file.blocks.len() + 1];
+    // Each block as it is drawn: its shape, whether it is water and whether it is seen through.
+    let drawn = resolved(content, file).file.blocks;
+    for block in tops {
+        let at = usize::from(block);
+        if at == 0 || at > halves.len() - 1 || halves[at] != voxear_terrain::blocks::chunk::AIR {
+            continue;
+        }
+        let kind = &drawn[at - 1];
+        let whole = kind.is_live() && kind.shape == BlockShape::Cube && !kind.water && !kind.cutout && !kind.slab;
+        if !whole {
+            continue;
+        }
+        let slab = BlockKind::slab_of(&file.blocks[at - 1]);
+        let same = |other: &BlockKind| {
+            other.slab
+                && other.is_live()
+                && other.block == slab.block
+                && (slab.block.is_some()
+                    || (other.name == slab.name && other.color == slab.color && other.material == slab.material))
+        };
+        let number = match file.blocks.iter().position(same) {
+            Some(found) => found + 1,
+            None if file.blocks.len() < MAX_BLOCKS => {
+                let mut grown = file.clone();
+                grown.blocks.push(slab);
+                if resolved(content, &grown).looks() > MAX_LOOKS {
+                    continue;
+                }
+                *file = grown;
+                file.blocks.len()
+            }
+            None => continue,
+        };
+        halves[at] = number as BlockId;
+    }
+    // One for every block it holds now, its slabs too.
+    halves.resize(file.blocks.len() + 1, voxear_terrain::blocks::chunk::AIR);
+    if let Some(generate) = file.generate.as_mut() {
+        generate.halves = Some(Arc::new(halves));
+    }
+}
+
+/// `file` with its generated ground's biomes read, as [`with_biomes`] says.
+fn biomes_read(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::generate::{BiomeBlocks, Biomes, WorldBiomes};
     let mut file = file.clone();
     let Some(generate) = file.generate.clone().filter(|generate| !generate.biomes.is_empty()) else {

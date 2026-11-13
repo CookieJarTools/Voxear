@@ -444,7 +444,7 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
             sets.insert(at, block);
         }
     };
-    let at = (file.block_size.max(0.01), generate.position, generate.bottom);
+    let at = (file.block_size.max(0.01), generate.position, generate.bottom, super::generate::halved(generate));
     super::structure::build_over(&mut set, built, &making.world, biomes, at, (first, end), under);
     sets
 }

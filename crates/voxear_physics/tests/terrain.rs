@@ -275,3 +275,56 @@ fn a_ball_comes_to_rest_on_a_world_drawn_smooth_where_its_surface_lies_between_b
     assert_eq!(hit.obj, entity);
     assert!((hit.point.y - 5.3).abs() < 0.01, "its surface: {}", hit.point.y);
 }
+
+#[test]
+fn a_character_walks_up_ground_rising_in_half_steps_of_slabs_and_not_up_a_whole_block() {
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        file::{BlockFile, BlockKind},
+    };
+    // Metre blocks, ground 4 high, rising half a block a block east from x = 20 to 30: a slab, then a whole
+    // block, then a whole block with a slab on it, as generated ground with slabs lies. Then, at x = 40, a whole
+    // block higher at once.
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    let grass = file.ground.top;
+    file.blocks.push(BlockKind::slab_of(file.kind(grass).unwrap()));
+    let slab = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for x in 20..64 {
+        let halves = (x - 19).min(21);
+        for z in 0..64 {
+            for y in 4..4 + halves / 2 {
+                blocks.set([x, y, z], grass);
+            }
+            if halves % 2 == 1 {
+                blocks.set([x, 4 + halves / 2, z], slab);
+            }
+            if x >= 40 {
+                blocks.set([x, 4 + halves / 2 + 1, z], grass);
+            }
+        }
+    }
+    let (_, faces) = file.faces();
+    // Slowly, at a walk and at a run, never jumping: a step up carries it onto each slab, however little a frame
+    // takes it on.
+    for speed in [1.0, 3.0, 6.0] {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        world.spawn((BlockWorld::new(blocks.clone(), &faces, 1.0), Transform::from_position(Vec3::ZERO)));
+        let walker = world.spawn((Transform::from_position(Vec3::new(15.0, 4.05, 32.0)),));
+        world.insert(walker, CharacterController::default());
+        let mut physics = PhysicsScene::new();
+        physics.step(&mut world, 1.0 / 60.0);
+        let mut highest = 0.0f32;
+        for _ in 0..(30.0 / speed * 60.0) as usize {
+            physics.move_character(&mut world, walker, Vec3::new(speed, -4.0, 0.0), 1.0 / 60.0);
+            highest = highest.max(world.get::<Transform>(walker).unwrap().position.y);
+        }
+        let at = world.get::<Transform>(walker).unwrap().position;
+        // Up all twenty half steps, to the foot of the whole block, and no further.
+        assert!(at.x > 39.0 && at.x < 40.0, "at {speed} m/s, walked up to the whole block: {at}");
+        assert!((at.y - 14.0).abs() < 0.1 && highest < 14.1, "at {speed} m/s, ten blocks up, not onto it: {at}");
+    }
+}

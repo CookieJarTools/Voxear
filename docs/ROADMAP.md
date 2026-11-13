@@ -2254,6 +2254,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Ground in half steps:**~~ done: a generated world's new **Slabs** setting (on for ground newly generated)
+    lays its top to the nearest half block: where the ground lies within a quarter of a block of a block's middle,
+    that block is a slab of the top block there. Any cube the top can be is laid as one with no block of its own: a
+    world's entry may be its block made a slab (`slab = true`), numbered as the world loads for its top and under
+    blocks, its biomes' and its covers'. None under water, under ground that hangs over, or in the far view;
+    structures stand in the slab's place. A character's step up now carries it on as far as its capsule is round,
+    so it walks onto a slab at any pace rather than standing propped on the edge. Tests: slabs where the ground
+    lies half a block over a whole one and nowhere else; numbered once as a world loads; a character walks up
+    twenty half steps slowly, at a walk and at a run, and not up a whole block; a GPU render of a hillside both ways.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

@@ -467,9 +467,11 @@ fn near_names(growth: &voxear_engine::grown_plants::StarterGrowth, world_path: &
 
 /// The tops of the starter biomes that plants grow on, by reference, of
 /// those the project has in the Blocks folder beside the world at
-/// `world_path`: grass and moss, and not sand, snow or stone.
+/// `world_path`: grass, moss and fallen leaves, and not sand, snow, ash or
+/// stone. The showcase biomes' too.
 fn starter_soils(game: &Game, world_path: &str) -> Vec<String> {
-    const SOILS: [&str; 5] = ["Grass", "Moss", "Needles Floor", "Jungle Floor", "Dry Grass"];
+    const SOILS: [&str; 7] =
+        ["Grass", "Moss", "Needles Floor", "Jungle Floor", "Dry Grass", "Spring Grass", "Fallen Leaves"];
     let folder = crate::block_props::blocks_beside(world_path);
     let found = SOILS.iter().filter_map(|name| game.content.db().guid_of(&format!("{folder}/{name}.block")));
     found.map(|guid| guid.to_string()).collect()

@@ -42,6 +42,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
+| Slabs | Whether the ground's top is laid in half blocks, so slopes rise half a block at a time (see [[Block Worlds#Half steps|Half steps]]). On for ground newly generated |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 | Biomes | The [[Biomes|biomes]] its ground has: each place takes its top, under and deep blocks from the biome it is |
 
@@ -52,6 +53,14 @@ The ground's layers follow the pushed ground. The top block is whatever has open
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
 Where a cave or a passage cuts under ground that leans out over it, the rock left hanging in the air is cleared: no piece of ground of 256 blocks or fewer stands loose, joined to nothing. Larger ground standing apart, an island in the sky or a slab of rock, is there on purpose and stays. A piece reaching into the chunk column beside is followed on there, so each column clears it alike.
+
+### Half steps
+
+With **Slabs** on, the ground's top is laid to the nearest half block, not the nearest whole one. Where the generator's ground lies within a quarter of a block of a block's middle, that block is a slab of the top block there: half as high, lying low, drawn and named as its block is. So a hillside rises in steps half a block high, twice as many as before, and a gentle slope reads as one. A character walks up them without jumping, as it walks up any slab, and still has to jump up a whole block.
+
+Any block the ground's top can be is laid as a slab, with no block of its own needed: the world's Top and Under blocks, each biome's top, under, steep and shore blocks, and every block that covers. The world numbers each one's slab after its other blocks as it loads, marked **slab** in its file. A block that is no cube, or is water, or is seen through, as leaves are, keeps whole blocks.
+
+Water lies on whole blocks: there are no slabs under a river, a lake or the sea, so the water meets its bed. Nor are there any where ground hangs over the top or a cave opens just under it. Trees and other structures stand where the slab would be, on the whole block under it, not half a block up. The far view, whose blocks are larger, keeps whole blocks. A world written before slabs keeps whole blocks until **Slabs** is switched on.
 
 ### Tall worlds
 
@@ -477,4 +486,4 @@ Physics and drawing follow a change at once: only the chunks it changed are made
 
 ## Collision
 
-A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. Its blocks of parts collide as their boxes stand, fences and walls a block and a half high, and a character on it steps up half a block by itself (see [[Blocks#Blocks of parts|Blocks of parts]]). It needs no Collider. Its Obj's **Layer** is its blocks' layer. Its water does not collide: things fall into it, and those with Buoyancy float.
+A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. Its blocks of parts collide as their boxes stand, fences and walls a block and a half high, and a character on it steps up half a block by itself, at any pace (see [[Blocks#Blocks of parts|Blocks of parts]]): so it walks up ground laid in [[Block Worlds#Half steps|half steps]] and jumps up a whole block. It needs no Collider. Its Obj's **Layer** is its blocks' layer. Its water does not collide: things fall into it, and those with Buoyancy float.

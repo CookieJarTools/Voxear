@@ -1588,17 +1588,26 @@ struct Ground<'a> {
     size: f32,
     position: [f32; 2],
     biomes: Option<&'a Biomes>,
+    /// Whether its top is laid in half blocks (see `generate::BlockGenerate::slabs`).
+    halved: bool,
 }
 
 impl Ground<'_> {
-    /// The highest block of ground in column `(x, z)`, in blocks from the
-    /// world's corner, as generated ground puts it.
+    /// The highest whole block of ground in column `(x, z)`, in blocks from
+    /// the world's corner, as generated ground puts it: under the slab where
+    /// its top is laid in half blocks and one lies there, so what is built
+    /// stands in the slab's place, not half a block over it.
     fn top(&self, x: i32, z: i32) -> i32 {
         let height = self.world.height_at(
             self.position[0] + (x as f32 + 0.5) * self.size,
             self.position[1] + (z as f32 + 0.5) * self.size,
         );
-        (height / self.size - 0.5).ceil() as i32 - 1
+        let surface = height / self.size;
+        let slab = (surface - 0.25).floor();
+        if self.halved && surface - slab < 0.75 {
+            return slab as i32 - 1;
+        }
+        (surface - 0.5).ceil() as i32 - 1
     }
 
     /// Which of the world's biomes column `(x, z)` is; none where it lists
@@ -1646,7 +1655,7 @@ pub fn build(
     structures: &WorldStructures,
     world: &WorldGen,
     biomes: Option<&Biomes>,
-    at: (f32, [f32; 2], i32),
+    at: (f32, [f32; 2], i32, bool),
     [cx, cz]: [i32; 2],
     under: BlockId,
 ) {
@@ -1667,7 +1676,7 @@ pub fn build_over(
     structures: &WorldStructures,
     world: &WorldGen,
     biomes: Option<&Biomes>,
-    at: (f32, [f32; 2], i32),
+    at: (f32, [f32; 2], i32, bool),
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
 ) {
@@ -1712,13 +1721,13 @@ fn build_looking(
     structures: &WorldStructures,
     world: &WorldGen,
     biomes: Option<&Biomes>,
-    (size, position, bottom): (f32, [f32; 2], i32),
+    (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     (first, end): ([i32; 2], [i32; 2]),
     under: BlockId,
     looks: &[f32],
 ) {
     let side = CHUNK as i32;
-    let ground = Ground { world, size, position, biomes };
+    let ground = Ground { world, size, position, biomes, halved };
     // Nothing is built below the world's lowest block.
     let mut set = |at: [i32; 3], block: BlockId| {
         if at[1] >= bottom {
@@ -2119,7 +2128,7 @@ mod tests {
         let make = |[cx, cz]: [i32; 2]| {
             // Plain ground of block 1 up to the generator's height, a block a metre.
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-            let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+            let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
             for z in 0..32 {
                 for x in 0..32 {
                     let (gx, gz) = (cx * 32 + x, cz * 32 + z);
@@ -2133,7 +2142,7 @@ mod tests {
                     }
                 }
             }
-            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4), [cx, cz], 2);
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
             chunks
         };
         let count = |chunks: &[([i32; 3], Chunk)], block: BlockId| {
@@ -2247,7 +2256,7 @@ mod tests {
     #[test]
     fn a_town_grows_streets_from_its_middle_with_houses_along_them_apart_facing_them() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
         let town = village();
         let mut houses_laid = 0;
         for seed in 0..12u32 {
@@ -2320,7 +2329,7 @@ mod tests {
         let structures = WorldStructures { list: vec![town], ..WorldStructures::default() };
         let make = |[cx, cz]: [i32; 2]| {
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4), [cx, cz], 2);
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4, false), [cx, cz], 2);
             chunks
         };
         let count = |chunks: &[([i32; 3], Chunk)], block: BlockId| -> usize {
@@ -2346,7 +2355,7 @@ mod tests {
     #[test]
     fn roads_join_neighbouring_towns_over_the_ground_the_same_from_every_chunk_they_cross() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
         let town = Town { roads: true, road: 13, bridge: 14, ..village() };
         let structure = PlacedStructure {
             placement: Placement {
@@ -2421,7 +2430,7 @@ mod tests {
         let cool = BiomeDef { temperature: [-60.0, split], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let warm = BiomeDef { temperature: [split, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![cool, warm], 15.0, 0.3, world.seed());
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes) };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes), halved: false };
         let base = village();
         let piece = |wall: BlockId| TownPiece {
             blocks: base.houses[1].piece.blocks.iter().map(|&b| if b == AIR { AIR } else { wall }).collect(),
@@ -2516,7 +2525,7 @@ mod tests {
         for cz in -5..5 {
             for cx in -5..5 {
                 let mut chunks = Vec::new();
-                build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -64), [cx, cz], 2);
+                build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -64, false), [cx, cz], 2);
                 for (key, chunk) in &chunks {
                     for i in 0..32 * 32 * 32u32 {
                         let block = chunk.get(i % 32, i / 1024, (i / 32) % 32);
@@ -2574,7 +2583,7 @@ mod tests {
         thick[1].placement = place(4, 11.0, 0.0);
         list.extend(thick);
         let structures = WorldStructures { list, ..WorldStructures::default() };
-        let at = (1.0, [300.0, -200.0], -64);
+        let at = (1.0, [300.0, -200.0], -64, false);
         let near = looks(&structures, at.0);
         // Each as far as it reaches at the least, the first furthest, the trees no further than their crowns
         // and a little: nothing after them asks for more.
@@ -2700,7 +2709,7 @@ mod tests {
     #[test]
     fn a_dungeon_is_built_under_the_ground_its_stair_open_from_the_surface_to_its_floor() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
         let dungeon = crypt();
         let site = [40, -30];
         let blocks = dungeon.blocks(5, site, &ground, 2);
@@ -2747,7 +2756,7 @@ mod tests {
     fn a_dungeon_breaks_through_into_the_nearest_cave_and_with_no_reach_into_none() {
         let world = crate::generate::starters().into_iter().find(|s| s.name == "Caves").unwrap().world(1, 1.0);
         let caves = world.caves().expect("its caves");
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
         let dungeon = Dungeon { depth: [30, 30], caves: 48, ..crypt() };
         // Of a few sites, the dungeons that find a cave near enough.
         let mut broken = 0;
@@ -2777,7 +2786,7 @@ mod tests {
     #[test]
     fn a_dungeon_of_three_floors_goes_down_floor_by_floor_its_boss_on_the_last() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
         let dungeon = Dungeon { floors: [3, 3], depth: [12, 12], ..crypt() };
         let site = [40, -30];
         let blocks = dungeon.blocks(5, site, &ground, 2);

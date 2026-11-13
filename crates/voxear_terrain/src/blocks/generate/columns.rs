@@ -496,6 +496,39 @@ fn leaving_out() -> bool {
     true
 }
 
+/// Where a column's ground lies within a quarter of a block of the middle of
+/// one of its blocks, that block made half as high, so the ground rises in
+/// half steps: the slab of the block there, or of the column's top block
+/// where that block is open air over ground. `made` is the column's blocks
+/// from the highest down, `halves` each block's slab by its number. None
+/// where the ground lies near a whole block, where water stands on it,
+/// where ground hangs over it, or where its block has no slab.
+fn slab_cell(
+    made: &[(i32, (BlockId, Option<u8>))],
+    column: &Column,
+    halves: &[BlockId],
+    water_top: f32,
+) -> Option<(i32, BlockId)> {
+    let y = (column.surface - 0.25).floor() as i32;
+    if column.surface - y as f32 >= 0.75 || water_top > y as f32 {
+        return None;
+    }
+    let at = |y: i32| made.binary_search_by(|&(made_y, _)| y.cmp(&made_y)).ok().map(|found| made[found].1);
+    if at(y + 1).is_some() {
+        return None;
+    }
+    let block = match at(y) {
+        Some((block, None)) => block,
+        Some(_) => return None,
+        None => {
+            at(y - 1).filter(|&(_, fill)| fill.is_none())?;
+            column.block(0.0)
+        }
+    };
+    let slab = halves.get(usize::from(block)).copied().filter(|&slab| slab != AIR)?;
+    Some((y, slab))
+}
+
 /// A depth under the surface past any layer's.
 const DEEP: f32 = 1.0e9;
 
@@ -665,6 +698,8 @@ pub fn column_chunks(
     let (mut row, mut ground_row) = (vec![0.0f32; tall], vec![0.0f32; tall]);
     let mut read = vec![0usize; places.len()];
     let mut made: Vec<(i32, (BlockId, Option<u8>))> = Vec::new();
+    // Slabs, at the world's own level and where it is drawn as cubes, of the blocks that have them.
+    let halves = generate.halves.as_deref().filter(|_| generate.slabs && level == 0 && !file.smooth);
     let mut chunks: Vec<Option<Chunk>> = vec![None; (high_key - low_key + 1) as usize];
     let mut put = |x: i32, y: i32, z: i32, block: BlockId, fill: Option<u8>| {
         let chunk = chunks[(y.div_euclid(side) - low_key) as usize].get_or_insert_with(|| Chunk::filled(AIR));
@@ -777,6 +812,12 @@ pub fn column_chunks(
             };
             made.extend(cell(column, within, ground, depth, filled, sea_at(at, y), file.smooth).map(|cell| (y, cell)));
         }
+        if let Some((y, slab)) = halves.and_then(|halves| slab_cell(&made, ground_column, halves, water_top(at))) {
+            match made.binary_search_by(|&(made_y, _)| y.cmp(&made_y)) {
+                Ok(found) => made[found].1 = (slab, None),
+                Err(before) => made.insert(before, (y, (slab, None))),
+            }
+        }
         // Kept from the lowest up, as chunks' blocks are.
         for &(y, (block, fill)) in made.iter().rev() {
             put(x, y, z, block, fill);
@@ -827,7 +868,7 @@ pub fn column_chunks(
         // Built up under with the world's own under block.
         let under = file.ground.under;
         let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };
-        let at = (size, generate.position, generate.bottom);
+        let at = (size, generate.position, generate.bottom, halves.is_some());
         crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under);
     }
     chunks.into_iter().map(|(at, chunk)| (at, chunk.tidied())).collect()

@@ -3,12 +3,16 @@
 //! no Volume, and what Move to Generator writes into the generator's graph.
 //!
 //! The generator's own ground is made solid, pushed by an Overhangs node,
-//! and has Tunnels and Chambers taken out of it:
+//! and has Tunnels, Chambers and a Cave Network taken out of it: winding
+//! tunnels and pockets near the surface, and great halls joined by wide
+//! tunnels further down, with ways up to the surface and mouths open in
+//! the hillsides:
 //!
 //! ```text
-//! Solid ─ Overhangs ─┬──────────────────────── Combine (Subtract) ─ Output
-//!                    ├─ Tunnels ──┬─ Combine (Union) ─┘
-//!                    └─ Chambers ─┘
+//! Solid ─ Overhangs ─┬───────────────────────────────────────── Combine (Subtract) ─ Output
+//!                    ├─ Tunnels ──┬─ Combine (Union) ─┬─ Combine (Union) ─┘
+//!                    ├─ Chambers ─┘                   │
+//!                    └─ Cave Network ─────────────────┘
 //! ```
 //!
 //! The nodes' noise is seeded as a world's own was, so moving a world's
@@ -16,7 +20,7 @@
 
 use super::{
     graph::{Graph, NodeId},
-    nodes::{Chambers, Combine, NodeKind, Output, Overhangs, Solid, Tunnels},
+    nodes::{CaveNetwork, Chambers, Combine, NodeKind, Output, Overhangs, Solid, Tunnels},
 };
 
 /// How much past a generator's seed a world of blocks' own overhangs,
@@ -24,6 +28,7 @@ use super::{
 const OVERHANGS_SEED: u32 = 41;
 const TUNNELS_SEED: u32 = 53;
 const CHAMBERS_SEED: u32 = 79;
+const NETWORK_SEED: u32 = 97;
 
 /// A world of blocks' own overhangs and caves: how far its surface is
 /// pushed in and out, in metres; how much of it is hollowed, from 0 for
@@ -67,12 +72,22 @@ impl Graph {
             let chambers = Chambers { amount, roof, seed: CHAMBERS_SEED, ..Chambers::default() };
             let tunnels = self.add(NodeKind::Tunnels(tunnels), [480.0, below + 120.0]);
             let chambers = self.add(NodeKind::Chambers(chambers), [480.0, below + 300.0]);
-            let caves = self.add(NodeKind::Combine(Combine::default()), [720.0, below + 200.0]);
+            let mut caves = self.add(NodeKind::Combine(Combine::default()), [720.0, below + 200.0]);
             let cut = self.add(NodeKind::Combine(Combine::subtract()), [960.0, below]);
             wire(self, ground, tunnels, Tunnels::GROUND);
             wire(self, ground, chambers, Chambers::GROUND);
             wire(self, tunnels, caves, Combine::A);
             wire(self, chambers, caves, Combine::B);
+            // A network of great halls under them, where the world has caves at all: it has no amount of its own.
+            if own.caves > 0.0 {
+                let network = CaveNetwork { seed: NETWORK_SEED, ..CaveNetwork::default() };
+                let network = self.add(NodeKind::CaveNetwork(network), [480.0, below + 480.0]);
+                let all = self.add(NodeKind::Combine(Combine::default()), [840.0, below + 300.0]);
+                wire(self, ground, network, CaveNetwork::GROUND);
+                wire(self, caves, all, Combine::A);
+                wire(self, network, all, Combine::B);
+                caves = all;
+            }
             wire(self, ground, cut, Combine::A);
             wire(self, caves, cut, Combine::B);
             whole = cut;
@@ -496,7 +511,7 @@ mod tests {
         assert!(graph.add_voxels(OwnVoxels { overhangs: 9.0, caves: 0.3, roof: 3.0 }, true));
         let made = WorldGen::new(5, 2.0, hills.sea_level, graph.clone());
         assert_eq!(made.starter(), Some("Rolling Hills"));
-        assert_eq!(graph.volume_nodes().len(), 6);
+        assert_eq!(graph.volume_nodes().len(), 8, "a cave network and its join beside the tunnels and chambers");
         assert_eq!(graph.without_volume(), hills.graph, "the ground's graph is the starter's");
         // A wire of its own in the ground is a graph of its own, with or without a Volume.
         let mut own = graph.clone();

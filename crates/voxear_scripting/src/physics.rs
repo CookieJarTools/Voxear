@@ -73,6 +73,9 @@ const CHARACTER_GROUNDED: i32 = 47;
 const CHARACTER_VELOCITY: i32 = 48;
 const CHARACTER_GROUND_NORMAL: i32 = 49;
 const CHARACTER_UP: i32 = 50;
+const CHARACTER_WATER_PUSH: i32 = 51;
+/// Read, how fast it is carried and shoved now; set, a shove added.
+const CHARACTER_PUSH: i32 = 52;
 // The world's:
 const GRAVITY: i32 = 60;
 // A Joint's; its limits are the least and the greatest, and whether it has them:
@@ -368,6 +371,12 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
         CHARACTER_RADIUS => number(character()?.radius),
         CHARACTER_SLOPE_LIMIT => number(character()?.slope_limit),
         CHARACTER_STEP_OFFSET => number(character()?.step_offset),
+        CHARACTER_WATER_PUSH => number(character()?.water_push),
+        CHARACTER_PUSH => {
+            character()?;
+            let scene = world.resource::<PhysicsScene>();
+            vector(scene.and_then(|scene| scene.character_pushed(entity)).unwrap_or(Vec3::ZERO))
+        }
         CHARACTER_GROUNDED | CHARACTER_VELOCITY | CHARACTER_GROUND_NORMAL => {
             character()?;
             let state = world.resource::<PhysicsScene>().and_then(|scene| scene.character_state(entity));
@@ -602,6 +611,22 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
             change(world, entity, |c: &mut CharacterController| c.slope_limit = n.clamp(0.0, 90.0))
         }
         CHARACTER_STEP_OFFSET => change(world, entity, |c: &mut CharacterController| c.step_offset = n.max(0.0)),
+        CHARACTER_WATER_PUSH => change(world, entity, |c: &mut CharacterController| c.water_push = n.max(0.0)),
+        CHARACTER_PUSH => {
+            if !world.has::<CharacterController>(entity) {
+                return false;
+            }
+            let shove = Vec3::from_array(three(value));
+            with_scene(world, |world, scene| {
+                // One physics has not made yet is made now, so the shove is kept.
+                let controller = world.get::<CharacterController>(entity).copied();
+                if let Some(controller) = controller {
+                    scene.make_character(world, entity, controller);
+                }
+                scene.shove_character(entity, shove);
+                true
+            })
+        }
         _ => false,
     }
 }

@@ -415,8 +415,11 @@ fn starter_project(plants: bool) -> tempfile::TempDir {
         let path = format!("Plants/{}.boxmodel", plant.name());
         std::fs::write(dir.path().join(&path), plant.model().to_text()).unwrap();
         let (mesh, material) = (format!("{path}#mesh0.0"), format!("{path}#material0"));
-        let on = (Some("Blocks/Grass.block"), None);
-        let foliage = grown_plants::foliage_text(&mesh, Some(&material), Some(plant), on);
+        // Each as it suits it, keeping near the starter plants it keeps near to: sticks by trees, pebbles by stones.
+        let growth = grown_plants::starter_growth(plant);
+        let near: Vec<String> = growth.near.iter().map(|near| format!("Plants/{}.boxmodel", near.name())).collect();
+        let names = grown_plants::GrownNames { top: Some("Blocks/Grass.block"), near_plants: &near, ..Default::default() };
+        let foliage = grown_plants::grown_text(&mesh, Some(&material), Some(&growth), &names);
         scene += &format!("\n[[obj]]\nid = {}\nname = \"{}\"\nparent = 1\n{foliage}", at + 10, plant.name());
     }
     std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();
@@ -470,6 +473,15 @@ fn a_world_draws_the_starter_plants_it_grows() {
     assert!(count("Grass Tuft") > 1500, "{counts:?}");
     assert!(count("Flower") > 20 && count("Flower") < count("Grass Tuft") / 4, "{counts:?}");
     assert!(count("Bush") > 5 && count("Rock") > 5, "{counts:?}");
+    // What lies under trees is there, and far thinner than it would be growing everywhere at its spacing.
+    eprintln!("{counts:?}");
+    let trees = count("Tree") + count("Pine") + count("Birch");
+    assert!(trees > 10 && count("Stick") > 10, "{counts:?}");
+    // Pebbles lie only round the rocks and boulders, of which there are few: fewer than the sticks under the wood.
+    assert!(count("Pebbles") > 0 && count("Pebbles") < count("Stick"), "{counts:?}");
+    assert!(count("Stump") > 0 && count("Log") > 0 && count("Mushroom") > 0, "{counts:?}");
+    // Nothing of a hot dry place grows on these cool wet hills.
+    assert_eq!(count("Dry Bush"), 0, "{counts:?}");
     // The ground looks another way with them on it: a fifth of the picture or more is not the bare world's.
     let other = bare
         .chunks_exact(4)

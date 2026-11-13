@@ -473,7 +473,7 @@ fn mesh_levels(
         }
     }
     let last = ends[LEVELS - 1];
-    out.buckets = [0, ends[0], ends[1], ends[2], last, last, last];
+    out.buckets = [0, ends[0], ends[1], ends[2], last, last, last, last];
     out.cone = cone(&out.positions, &out.indices);
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
         out.quads.extend(water_surface(map, key, faces, &padded, made));
@@ -1052,7 +1052,7 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!((mesh.buckets[1] as usize, mesh.water().0), (mesh.indices.len() * 2, mesh.buckets[FACINGS]));
+        assert_eq!((mesh.buckets[1] as usize, mesh.water().0), (mesh.indices.len() * 2, mesh.buckets[FACINGS + 1]));
         let corners = water_corners(&mesh);
         assert!(!corners.is_empty() && corners.iter().all(|&(_, surface)| surface == 7));
         let middle: Vec<_> = corners.iter().filter(|(p, _)| inside(&p)).collect();

@@ -21,6 +21,12 @@
 //! steep_slope = 40.0             # degrees
 //! shore = "Blocks/Sand.block"    # within `shore_height` metres of the sea
 //! shore_height = 2.0
+//!
+//! [vines]
+//! block = "Blocks/Vine.block"    # hangs under ledges, overhangs and cave roofs
+//! amount = 0.3                   # how many of the places one could hang from have one, 0 to 1
+//! length = [2, 7]                # blocks, from and to
+//! depth = 40.0                   # how far under the ground's surface they still hang, in metres
 //! ```
 //!
 //! A place belongs to the biome whose ranges it is nearest: within them,
@@ -60,6 +66,40 @@ pub struct BiomeDef {
     pub sunk: Option<[f32; 2]>,
     /// What its ground is made of.
     pub ground: BiomeGround,
+    /// The vines that hang in it.
+    #[serde(skip_serializing_if = "BiomeVines::is_none")]
+    pub vines: BiomeVines,
+}
+
+/// The vines of a biome: the block they are, one whose shape is a vine,
+/// how many of the places a vine could hang from have one, how long they
+/// hang, and how far under the ground's surface there still are any. A
+/// vine hangs from the underside of the ground, under a ledge, an overhang
+/// or a cave's roof, likelier beside a wall, and down through the open air
+/// until it meets something.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BiomeVines {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
+    /// From 0 for none to 1 for every place.
+    pub amount: f32,
+    /// In blocks, from and to.
+    pub length: [u32; 2],
+    /// In metres under the ground's surface.
+    pub depth: f32,
+}
+
+impl Default for BiomeVines {
+    fn default() -> Self {
+        Self { block: None, amount: 0.3, length: [2, 7], depth: 40.0 }
+    }
+}
+
+impl BiomeVines {
+    pub fn is_none(&self) -> bool {
+        self.block.is_none()
+    }
 }
 
 impl Default for BiomeDef {
@@ -71,6 +111,7 @@ impl Default for BiomeDef {
             height: None,
             sunk: None,
             ground: BiomeGround::default(),
+            vines: BiomeVines::default(),
         }
     }
 }
@@ -257,6 +298,13 @@ pub struct BiomeBlocks {
     pub steep_slope: f32,
     pub shore: BlockId,
     pub shore_height: f32,
+    /// Its vines: their block (air for none), how many of the places one
+    /// could hang from have one, how long they hang in blocks, and how far
+    /// under the surface they still hang, in metres.
+    pub vine: BlockId,
+    pub vine_amount: f32,
+    pub vine_length: [u32; 2],
+    pub vine_depth: f32,
 }
 
 impl Default for BiomeBlocks {
@@ -270,11 +318,28 @@ impl Default for BiomeBlocks {
             steep_slope: 0.84,
             shore: AIR,
             shore_height: 2.0,
+            vine: AIR,
+            vine_amount: 0.0,
+            vine_length: [2, 7],
+            vine_depth: 40.0,
         }
     }
 }
 
 impl BiomeBlocks {
+    /// These with a biome's vines, their block numbered by `number`.
+    pub fn with_vines(self, vines: &BiomeVines, mut number: impl FnMut(&str) -> BlockId) -> Self {
+        let vine = vines.block.as_deref().map_or(AIR, &mut number);
+        let [from, to] = vines.length;
+        Self {
+            vine,
+            vine_amount: if vine == AIR { 0.0 } else { vines.amount.clamp(0.0, 1.0) },
+            vine_length: [from.min(to).max(1), from.max(to).max(1)],
+            vine_depth: vines.depth.max(0.0),
+            ..self
+        }
+    }
+
     /// A biome's ground with each block it names numbered by `number`: air
     /// for one it does not name or the world cannot number.
     pub fn of(ground: &BiomeGround, mut number: impl FnMut(&str) -> BlockId) -> Self {
@@ -288,6 +353,7 @@ impl BiomeBlocks {
             steep_slope: slope_of(ground.steep_slope),
             shore: block(&ground.shore),
             shore_height: ground.shore_height.max(0.0),
+            ..Self::default()
         }
     }
 

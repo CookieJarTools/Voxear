@@ -116,7 +116,8 @@ impl ScriptRuntime {
                 && managed.take_net_fields.is_some()
                 && managed.set_enabled.is_some()
                 && managed.origin_moved.is_some()
-                && managed.particle_hits.is_some(),
+                && managed.particle_hits.is_some()
+                && managed.heat_events.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -401,6 +402,18 @@ impl ScriptRuntime {
         let send = self.api().particle_hits.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { send(hits.as_ptr(), hits.len() as i32) };
+    }
+
+    /// Tells scripts of Heat Bodies' changes and characters' feelings, as
+    /// `HeatBody.Changed` and `HeatBody.FeelsChanged`: `names` has each
+    /// event's change's name, a line each, empty for a feeling.
+    pub fn heat_events(&mut self, world: &mut World, events: &[crate::heat::HeatEventData], names: &str) {
+        if events.is_empty() {
+            return;
+        }
+        let send = self.api().heat_events.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { send(events.as_ptr(), events.len() as i32, names.as_ptr(), names.len() as i32) };
     }
 
     /// Tells behaviours of the marks actions passed, as `OnMotionMark`:

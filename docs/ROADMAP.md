@@ -1053,8 +1053,45 @@ Done so far:
     files; the page's rows; a C# system turning the weather, reading it back and hearing it change; GPU pictures
     of overcast, storm and fog against clear, of rain and snow falling, of wet soil, first snow and lying snow,
     and of a strike.
-  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds, the same weather on every machine
-    of a networked game and in saves, weather by climate in generated worlds.
+  - Later: rain and snow kept out from under roofs, bolts of lightning, sounds. Weather by climate, the same on
+    every machine and in saves, is Storms, below.
+- **Storms ✅:** weather with a place (`voxear_engine::storms`). A `Storm` lies over a round part of the level, with
+  a reach, a strength, a drift, an eye and a life; it comes on, blows and dies away. What falls at a point is the
+  storm's kind, which left to itself is what the open air's temperature there makes it (`heat::open_air`): rain
+  above 2 °C, with thunder once it blows hard, sleet round freezing, snow and blizzards below it, blown sand where
+  it is 28 °C or more and dry; a fog bank is a kind of its own.
+  - **Natural storms** are worked out from the world's seed and the storms' clock alone (`storms::natural`): one
+    try to a 4 km square every fifteen minutes, fewer where it is dry, fog banks where it is cool and wet, and great
+    standing storms round a calm eye at seeded places. Nothing of them is kept or sent.
+  - **Seen from afar:** each frame the nearest eight are the renderer's `WeatherPlaces`: the cloud layer filled in and
+    made heavy over each (`cloudWeather`), a curtain of what falls hanging under it and a wall of sand
+    (`weatherCurtain`, in the sky and with the fog), and what they add where the viewer stands laid over the
+    level's own weather (`Weather::set_here`). Weather has an eighth amount, **dust**, and two more kinds,
+    Blizzard and Sandstorm.
+  - **Rough seas:** a world of blocks' sea sinks under its faces by a swell of four long waves, as rough as the
+    weather over it (`voxear_render::sea`): drawn in the water's fragment shader by walking the view ray across
+    columns (`blockSwell`), as small cubes, block steps or smooth, with white water on the crests; no block
+    changes. `SeaSampler` is the same swell on the CPU, from sums and products alone, which `water::sample` and
+    Buoyancy follow. Only water at the generator's sea level is sea (`SeaLevel`).
+  - **Whirlpools:** a stepped funnel with turning arms whose water runs round, in and down: under strong storms
+    over deep water, standing at seeded places in a generated sea, and from scripts.
+  - **Life on the sea's bed:** a growing rule may be **Under water** (`GrowRule::under_water`), its height then a
+    depth; eight starter plants of small cubes, seagrass, kelp, branch, brain, table and fan coral, a tube sponge
+    and a clam, each with the depth and sea temperature it grows in. Weed sways with the water, more under a
+    storm. Warm seas glow at night where the water breaks.
+  - **Scripts:** `Storms.Start`, `Storms.At` (`WeatherAt`, `StormWeather`), `Storms.All`, `Storms.Arrived`,
+    `Storms.Left`, `Storm` (`Position`, `Radius`, `Strength`, `Kind`, `Velocity`, `MoveAlong`, `Eye`, `Lifetime`,
+    `Stop`), `Sea.Look`, `Sea.SwellHeight`, `Sea.AddWhirlpool`, `Sea.WhirlpoolAt`, `Sea.Swallowed`. A save of the
+    scene keeps the clock and the made storms; `Storms.CaptureState` and `ApplyState` give them as bytes for a
+    host to send. Editor: a **Storms** component, and **Under water** on a Foliage's Grow tool.
+  - Tests: a storm's kind by temperature, its life and its path; natural storms the same from the same seed and
+    clock; the swell flat when calm, the same wherever the world's middle is, and a whirlpool's pull; plants of
+    the bed by depth; an engine test of a storm crossing a sea without end, and of a reef and a kelp forest
+    grown; a C# system starting, changing, keeping and putting back a storm; GPU pictures of the three sea
+    looks, a whirlpool, a storm and a sandstorm far off, and the sea plants.
+  - Not done: the sea freezing where it is cold; the rough sea seen from under water; swell that calms in the
+    shallows and breaks on shores; wet ground and snow by place; storms sent between machines by the engine
+    itself (a game sends `CaptureState` in its own RPC); rain kept out from under roofs; sounds.
 - **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the
   `[sky]`, `[sun]` and `[post]` of a `.lighting` file, with `[blocks]` for every Block World's small cubes, laid
   over whatever lighting a level has rather than in place of it. The level's own sky, sun look and
@@ -1285,6 +1322,25 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
     frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
     world's first level sways. The face's picture and its bounced light are read where it stands.
+  - A block has a **Shape** (`block::BlockShape`, a dropdown in its Inspector): Cube, Bushy or Vine.
+    - **Bushy leaves:** a bushy block that meets open air has three sheets of leaves crossed through its middle,
+      nearly twice the block's width, thinning out cell by cell to a ragged edge, so a crown of blocks is a soft
+      mass. They are loose quads in the chunk's own pool (`ChunkMesh::loose`, facing 6), two words each, drawn
+      from both sides by one quad whose corners `loosePoint` takes the other way round from behind; drawn with
+      the block's cut-out picture, or as small square leaves from whole-number hashes (`blockSheetLook`), the
+      cube's own faces alike (`blockLeafShade`). Their corners sway with the cube corner nearest each. Out to 160
+      blocks from the camera.
+    - **Vines:** a vine block is no ground (`is_ground`): a sheet against each block of ground beside it, or two
+      crossed sheets where it hangs free (loose quads of facing 7), strands and leaves with no picture. A biome
+      hangs them under ledges, overhangs and cave roofs (`[vines]` in a `.biome`, a Vines part in its Inspector,
+      `hang_vines`), each column from its own blocks alone; a `.voxplant` with `vines` grows them up its trunk and
+      under its crown. The wet starter biomes have them, of a Vine block made with their ground's.
+    - Tests: the mesher (sheets a block, which corners sway, a vine clinging and hanging, water beside a vine),
+      the block file, the generator (vines only in open air under ground, the same from any column, by amount and
+      depth), a tree's vines, and GPU pictures of a tree of blocks with cube, bushy and pictured leaves and with
+      vines, still and in the wind. Manual: Blocks (Bushy leaves, Vines), Biomes (Vines), Wind.
+    - Not done: climbing a vine (the Character Controller has no ladders), a vine falling when what holds it is
+      dug away, vines in a Voxel Terrain, tufts in the far rings, light through leaves.
   - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
     in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
   - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds
@@ -1567,6 +1623,26 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   - spread that grows with firing and moving and settles when still, aim down sights, and bloom
   - impacts by surface (decals, particles, sounds), muzzle flash and shell ejection
   - damage with falloff and hit zones, and an interface for anything that can be hit
+- **Heat and cold ✅.** Every place has a temperature (`voxear_engine::heat`): the climate, from a world's
+  generator or the level's **Climate**, warmer in the afternoon and colder before dawn and swinging wider where
+  it is dry; drawn to the deep ground's mild temperature under blocks, or the water's in water; then **Heat
+  Zones** (a box or sphere that sets or adds, with a soft edge) and the hottest and coldest of what is near:
+  **Heat Sources**, blocks with a **Heat** (`BlockDef::heat`, a °C and a reach, each chunk's hot and cold blocks
+  listed once until it changes), lava Pools and Streams, and heat scripts set off for a while. Sums and products
+  only, the same on every machine. The level's Climate holds a clock: time of day, day length, and whether it
+  turns the first Directional Light. A **Heat Body** follows its place's temperature on the fixed steps (Warms
+  In); its **Changes** each count while it is above or below a °C and hold still while not, and once one has
+  counted long enough scripts hear of it by name and the Obj becomes the change's prefab, starting as warm. A
+  character **Feels** Freezing, Cold, Comfortable, Hot or Scorching by its Comfort widened by Cold and Heat
+  Resistance, and `Beyond` gives how far past its band it is; what that does is the game's. An item's
+  **Dropped** prefab is what it is when it lies in the world, so dropped food cooks. Scripts: `Heat.At`,
+  `Heat.Sample` (`HeatSample`), `Heat.AddSource`, `Clock`, `Obj.HeatBody` (`Temperature`, `Feels`,
+  `ColdResistance`, `HeatResistance`, `Progress`), `HeatBody.Changed`, `HeatBody.FeelsChanged`, `HeatSource`
+  and `HeatZone`; native API 82. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
+  Scene view's **Heat** shading, the ground round the camera tinted by temperature. Tests: a generated desert
+  by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
+  in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads;
+  a GPU tint over every surface in place of the Heat shading's squares.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2077,6 +2153,31 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     cut, kept to a mask; a roof at the land's height with holes open to the floor and pillars to it; peaks with
     level land between and narrower tops the sharper; a chasm's floor taking the sunk biome under a roof taking
     the land's; each preset pinned; GPU renders of all four.
+  - ~~**Rivers, lakes, waterfalls and currents in endless worlds:**~~ done: a **Rivers** node finds drainage over a
+    jittered grid of points 64 m apart, each draining the steepest way down and a hollow spilling over the lowest
+    point within two of it whose way does not lead back; catchment counted from the points within half a kilometre
+    up each way, the same whichever tile works it out, so rivers run unbroken through an endless world. Rivers
+    widen and deepen with their catchment, wind, cut their beds and valleys, raise banks where the ground is lower
+    than their water, pour over waterfalls into pools where a stretch drops past Falls, and run into and out of
+    lakes in hollows. The Output's **Water** and **Falls** fill a world of blocks' columns with its Sea block,
+    waterfalls as falling water; a river's blocks keep its current in their fill (`flow::current_fill`), its
+    ripples drift that way, and water pushes: Buoyancy drifts, sunk bodies are dragged along the bed, and a
+    Character Controller is carried as its **Water Push** says (C# `WaterPush`, `AddPush`, `Pushed`). Every land
+    preset runs rivers. Tests: banks hold their water in; water runs downhill; waterfalls over pools; river blocks
+    flowing their way with no water against air; a crate, a boulder and characters in a river.
+  - ~~**Great caves, mouths in hillsides and no loose rock:**~~ done: a Cave Network with no rooms of its own makes
+    great halls (60 to 100 m, pillars, hanging rock, ledges) and chambers by rules, joined by tunnels 12 to 18 m
+    wide; its new **Mouths** makes some ways up the hall itself where the ground falls steeply beside it, set level
+    with the ground below and back into the hill, a wide smooth passage running out level from its floor to the
+    hillside. A world's own Caves over 0 add such a network. Regions look at their diagonal neighbours' rooms too,
+    as great halls reach over corners. Generated chunk columns clear every piece of ground of 256 blocks or fewer
+    left loose in the air, followed into the columns beside where it reaches past the sides. A river's surface
+    steps down in eighths of a block. Tests: halls, wide tunnels and mouths with a level way out; hollows whole
+    where regions meet; no loose ground left; a GPU render from inside a mouth.
+  - ~~**Dungeons break into caves:**~~ done: a dungeon's room nearest a cave room of the world's generator, within its
+    new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
+    caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
+    dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more
@@ -2489,6 +2590,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
   near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
   terrains.
+- ~~**Small details on a Block World:**~~ done: thirteen more starter plants of small cubes
+  (`voxear_render::StarterPlant`: Tall Grass, Daisy, Bluebell, Fern, Dry Bush, Mushroom, Birch, Dead Tree, Stump,
+  Log, Stick, Pebbles, Boulder), the Tree with limbs under its crown, each growing where it suits it by climate,
+  slope and patches (`grown_plants::starter_growth`); stumps, logs and boulders solid. A rule keeps **near**
+  something (`grow::Near`, `near_plants`, `near_blocks` and `within` in `[obj.foliage.grow]`; Near plant, Near
+  block and Within in the Grow tool): within so many metres of the plants another Foliage of the world grows,
+  taken as that rule tries them (grid, chance, patches, and on generated ground climate and height), or of a
+  place whose highest block is a given block. Sticks, logs, stumps and mushrooms keep near the trees, pebbles
+  near rocks and boulders and, as a second Foliage, along the shore. Plants grow under leaves: a column's highest
+  block to grow on looks through leaves and vines (`grow::Tops`), so a tree of blocks has grass beneath it and no
+  rock on its crown. Editor: **All Starter Plants** on a Block World's Add plant row adds every one the world
+  does not grow yet, one step to undo; **Starter Trees of Blocks** makes an oak, a birch and a pine as
+  `.voxplant`s with bushy leaves and vines, their blocks and a structure each, and lists the structures on the
+  world (`starter_trees`, `block_props::list_structures`); each block has a picture drawn there from whole-number
+  hashes, 16 squares a side, and a material for it: bark, or cut-out leaves. Tests: the rule (near another rule's plants, near and
+  far alike, near a tree of blocks, grass under a crown), every starter's model, a GPU picture of each starter
+  and of a world growing them all. Manual: Block Worlds, Foliage, Structures. Not done: far trees for trees of
+  blocks, a list of structures in the Block World's Inspector, near blocks across a chunk column's edge.
 - ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
   is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
   (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing

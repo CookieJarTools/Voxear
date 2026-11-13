@@ -444,6 +444,13 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
         root.model.clone_from(&instance.model);
     }
     root.seasons = instance.seasons.or(root.seasons);
+    root.climate = instance.climate.or(root.climate);
+    root.storms = instance.storms.or(root.storms);
+    root.heat_source = instance.heat_source.or(root.heat_source);
+    root.heat_zone = instance.heat_zone.or(root.heat_zone);
+    if instance.heat_body.is_some() {
+        root.heat_body.clone_from(&instance.heat_body);
+    }
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.track_maker = instance.track_maker.or(root.track_maker);
     root.cave_shape = instance.cave_shape.or(root.cave_shape);
@@ -525,6 +532,11 @@ pub struct TemplateObj {
     pub stream: Option<Stream>,
     pub buoyancy: Option<crate::water::Buoyancy>,
     pub seasons: Option<Seasons>,
+    pub climate: Option<crate::heat::Climate>,
+    pub storms: Option<crate::storms::StormRules>,
+    pub heat_source: Option<crate::heat::HeatSource>,
+    pub heat_zone: Option<crate::heat::HeatZone>,
+    pub heat_body: Option<crate::heat::HeatBody>,
     pub foliage_interaction: Option<FoliageInteraction>,
     pub track_maker: Option<voxear_render::TrackMaker>,
     pub cave_shape: Option<voxear_terrain::generate::CaveShape>,
@@ -751,6 +763,21 @@ impl Template {
             }
             if let Some(seasons) = obj.seasons {
                 world.insert(entity, seasons);
+            }
+            if let Some(climate) = obj.climate {
+                world.insert(entity, climate);
+            }
+            if let Some(storms) = obj.storms {
+                world.insert(entity, storms);
+            }
+            if let Some(source) = obj.heat_source {
+                world.insert(entity, source);
+            }
+            if let Some(zone) = obj.heat_zone {
+                world.insert(entity, zone);
+            }
+            if let Some(body) = obj.heat_body.clone() {
+                world.insert(entity, body);
             }
             if let Some(push) = obj.foliage_interaction {
                 world.insert(entity, push);
@@ -1140,6 +1167,7 @@ pub fn surface_look(
         fills_in: surface.fills_in,
         liquid: surface.liquid,
         glitter: surface.glitter,
+        leafy: false,
     })
 }
 
@@ -1330,6 +1358,11 @@ pub(crate) fn resolve_obj(
         stream: data.stream,
         buoyancy: data.buoyancy,
         seasons: data.seasons,
+        climate: data.climate,
+        storms: data.storms,
+        heat_source: data.heat_source,
+        heat_zone: data.heat_zone,
+        heat_body: data.heat_body.clone(),
         foliage_interaction: data.foliage_interaction,
         track_maker: data.track_maker,
         cave_shape: data.cave_shape,

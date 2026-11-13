@@ -54,6 +54,8 @@ internal static unsafe class NativePhysics
 	public const int CharacterVelocity = 48;
 	public const int CharacterGroundNormal = 49;
 	public const int CharacterUp = 50;
+	public const int CharacterWaterPush = 51;
+	public const int CharacterPush = 52;
 
 	public const int Gravity = 60;
 

@@ -60,8 +60,9 @@ Physics moves bodies in fixed steps, 50 times a second, straight after each `Fix
 | Radius | How wide it is |
 | Slope limit | The steepest slope it can walk up, in degrees. Anything steeper, it slides down |
 | Step offset | The highest step it climbs without jumping, in metres |
+| Water push | How much flowing water carries it along, from 0 for not at all to 1 for as fast as the water flows once it is in up to its middle |
 
-The character's capsule stands on the Obj's origin, so the Obj's position is where its feet are. Physics never pushes a character around on its own. It moves only when your code moves it, and gravity is up to your code too, so a jump is just a velocity upwards.
+The character's capsule stands on the Obj's origin, so the Obj's position is where its feet are. Physics never pushes a character around on its own. It moves only when your code moves it, and gravity is up to your code too, so a jump is just a velocity upwards. Flowing water and shoves from scripts add to each move it makes (see [[Physics from Scripts#Pushing a character|Pushing a character]]).
 
 ## Joints
 

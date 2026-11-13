@@ -16,7 +16,7 @@ use anyhow::{Result, ensure};
 use super::{
     BlockGenerate,
     cells::{Sea, cell, source},
-    columns::{columns_at, sea_of},
+    columns::{columns_at, sea_of, waters_of},
 };
 use crate::{
     blocks::{
@@ -216,8 +216,11 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
     let (sea, sea_top) = sea_of(file, generate, world, level);
     let low = generate.bottom.div_euclid(scale as i32);
     let mut tile = FarTile { level, at, sea: (sea, sea_top), surfaces: Vec::new(), starts: vec![0], runs: Vec::new() };
-    for column in &columns {
-        let high = (column.surface.max(sea_top) + 1.0).ceil() as i32;
+    // Rivers and lakes over the sea, each column's own; far off, no waterfall shows.
+    let waters = waters_of(file, generate, world, level, (&xs, &zs));
+    for (index, column) in columns.iter().enumerate() {
+        let water_top = waters.as_ref().map_or(sea_top, |waters| waters[index].0.max(sea_top));
+        let high = (column.surface.max(water_top) + 1.0).ceil() as i32;
         let mut runs: Vec<Run> = Vec::new();
         // Under every layer the column is its bottom block all the way down: one run, not asked a block at a time.
         let layered = column.layers[0].1 + column.layers[1].1 + 3.0;
@@ -228,7 +231,7 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         let asked_from = if column.bottom != AIR { rock_to } else { low };
         for y in asked_from..=high {
             let plainly = column.surface - (y as f32 + 0.5);
-            let sea_at = far_sea(sea, sea_top, y, (file.smooth, column.surface));
+            let sea_at = far_sea(sea, water_top, y, (file.smooth, column.surface));
             let made = cell(column, plainly, plainly, plainly, plainly, sea_at, file.smooth);
             let Some((block, _)) = made.filter(|(block, _)| *block != AIR) else { continue };
             match runs.last_mut() {
@@ -238,7 +241,7 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         }
         // Of cubes, ground under the sea whose top block reaches the sea's level shows no water over it: that block
         // is the sea's, so a shallow sea far off is water, as drawn smooth it takes the ground's top block too.
-        let under_sea = sea != AIR && !file.smooth && column.surface < sea_top;
+        let under_sea = sea != AIR && !file.smooth && column.surface < water_top;
         if let Some(last) = runs.last_mut().filter(|last| under_sea && last.block != sea) {
             if last.to - last.from > 1 {
                 last.to -= 1;
@@ -315,7 +318,10 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
                     if rock.is_some_and(|(from, to, _)| (from..to).contains(&y)) {
                         continue;
                     }
-                    let fill = if sea != AIR && run.block == sea {
+                    // A river's or a lake's water over the sea is whole blocks far off.
+                    let fill = if sea != AIR && run.block == sea && y as f32 >= sea_top {
+                        None
+                    } else if sea != AIR && run.block == sea {
                         let over = sea_top - (y as f32 + 0.5);
                         match far_sea(sea, sea_top, y, (smooth, surface)).eighths {
                             _ if smooth => Some(surface_fill(over)),

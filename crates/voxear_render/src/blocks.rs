@@ -128,6 +128,11 @@ pub struct GpuBlockWorld {
     /// for none, and how many deep they sink at most (see [`BlockVoxels`]).
     pub voxels: f32,
     pub relief: f32,
+    /// How high its sea's top is over its corner, in metres: only water
+    /// faces there are drawn rough (see `sea`). Far below for a world whose
+    /// water is all its sea.
+    pub sea_top: f32,
+    pub pad: u32,
 }
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
@@ -158,12 +163,20 @@ pub(crate) struct ChunkDraw {
     pub key: [i32; 4],
     pub bounds: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
+    /// Its loose quads, sheets of bushy leaves and of vines, drawn
+    /// whichever way the view looks while it is near enough.
+    pub loose: [u32; 2],
     pub water: [u32; 2],
     /// Drawn smooth, the cone the ways its triangles face lie within (see
     /// `voxear_terrain::blocks::mesh::ChunkMesh::cone`), [`EVERY_WAY`] where
     /// they face every way; `None` for cubes, kept by the way they face.
     pub cone: Option<[f32; 4]>,
 }
+
+/// How far from the camera a chunk's loose quads are drawn, in blocks
+/// (`BLOCK_LOOSE_REACH` in `shaders/block_quads.slang`, which shrinks a
+/// sheet of leaves away before it).
+pub const LOOSE_REACH: f32 = 160.0;
 
 /// The cone of a smooth chunk whose triangles face every way: wider than
 /// any turn, so never turned away.
@@ -272,6 +285,14 @@ pub(crate) fn pick(
             if count > 0 && toward[facing] {
                 picked.push([first, count]);
             }
+        }
+        // Its sheets of leaves and vines, seen from every side, while the camera is near.
+        let near = |detail: Detail| {
+            let reach = LOOSE_REACH * detail.block_size;
+            (detail.camera.clamp(low, high) - detail.camera).length_squared() <= reach * reach
+        };
+        if level == 0 && chunk.loose[1] > 0 && detail.is_none_or(near) {
+            picked.push(chunk.loose);
         }
     }
     merged(picked)
@@ -537,8 +558,10 @@ impl Pool {
                 let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
                 let (water, count) = held.mesh.water();
                 let water = [held.first as u32 + water, count];
+                let (loose, count) = held.mesh.loose();
+                let loose = [held.first as u32 + loose, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
-                ChunkDraw { key: *key, bounds: held.bounds, facings, water, cone }
+                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, water, cone }
             });
             self.draws = Some(draws.collect());
         }
@@ -563,6 +586,8 @@ pub(crate) struct DrawnBlocks {
     /// more than one (see `voxear_terrain::blocks::BlockPlace`).
     pub places: Arc<Vec<voxear_terrain::blocks::BlockPlace>>,
     pub look: BlockLook,
+    /// How high its sea's top is over its corner, where it has a sea level.
+    pub sea_top: Option<f32>,
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
@@ -806,6 +831,7 @@ impl BlockWorlds {
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 places: blocks.places.clone(),
                 look,
+                sea_top: world.get::<crate::sea::SeaLevel>(entity).map(|level| level.0),
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
                 id: None,
@@ -816,7 +842,13 @@ impl BlockWorlds {
             // Until then, the pool of blocks of the old size is drawn where the world is now, as it last drew.
             match self.leaving.get(&entity).and_then(|old| old.shown.clone()) {
                 Some(old) => {
-                    self.drawn.push(DrawnBlocks { corner, look: drawn.look, cast_shadows: drawn.cast_shadows, ..old })
+                    self.drawn.push(DrawnBlocks {
+                        corner,
+                        look: drawn.look,
+                        sea_top: drawn.sea_top,
+                        cast_shadows: drawn.cast_shadows,
+                        ..old
+                    })
                 }
                 None => {
                     pool.shown = Some(drawn.clone());
@@ -1025,6 +1057,8 @@ pub(crate) fn gather(
             flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 },
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
+            sea_top: blocks.sea_top.unwrap_or(crate::sea::ANY_WATER),
+            pad: 0,
         });
         let local = camera - corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
@@ -1198,6 +1232,7 @@ mod tests {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            loose: [0, 0],
             water: [first + 60, 0],
             cone: None,
         };
@@ -1262,6 +1297,7 @@ mod tests {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            loose: [0, 0],
             water: [first + 60, water],
             cone: None,
         };

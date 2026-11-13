@@ -159,6 +159,17 @@ controller.Move((across + Vector3.UnitY * falling) * Time.Delta);
 
 `IsGrounded` says whether it stood on walkable ground after its last move, and `Velocity` how fast it really went once walls and the ground stopped what they could. `GroundNormal` is the way the ground under it faces.
 
+## Pushing a character
+
+A river carries a character wading it, and `AddPush` shoves one: a blast, a gust or a blow. The push is added to every move it makes and dies away over a second or so. Shoves add up:
+
+```csharp
+var away = Vector3.Normalize(player.WorldPosition - blast);
+player.CharacterController.AddPush(away * 8f + Vector3.UnitY * 3f);
+```
+
+`Pushed` is how fast it is carried and shoved together now. `WaterPush` is how much flowing water carries it, 1 by default: 0 for a character that stands its ground in any current.
+
 `Up` is which way the character stands, against gravity: straight up, unless a game turns `Physics.Gravity` another way. To jump and fall whichever way gravity pulls, keep the falling speed along `Up` and take it from `Physics.GravityAt`:
 
 ```csharp

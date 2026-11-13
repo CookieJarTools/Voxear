@@ -6,7 +6,9 @@
 //! take the climates of the same names (`surfaces::Biome`), so with a
 //! generator's own climate a world has different country wherever it is
 //! warmer, colder, wetter or drier. Each has rock on its steep ground and
-//! sand or gravel along its shore.
+//! sand or gravel along its shore. The wet ones have vines, of a Vine
+//! block made with the rest: thick in the Rainforest, some in the Forest,
+//! a few in the Taiga and the Grassland.
 //!
 //! A generator cools 6.5 °C for every 1000 m up, which alone puts snow only
 //! on very high ground: a world 12 °C at the sea freezes at 2000 m. So Snow
@@ -29,8 +31,8 @@ use voxear_ecs::Entity;
 use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_terrain::{
-    blocks::block::BlockDef,
-    generate::{BiomeDef, BiomeGround},
+    blocks::block::{BlockDef, BlockShape},
+    generate::{BiomeDef, BiomeGround, BiomeVines},
     surfaces::Biome,
 };
 
@@ -70,9 +72,18 @@ const BLOCKS: [(&str, [f32; 3]); 15] = [
     ("Gravel", [0.56, 0.54, 0.51]),
 ];
 
-/// A starter biome: the climate it takes, its colour on maps, and its
+/// The starters' vine: its name and its colour. A block whose shape is a
+/// vine, that sways.
+const VINE: (&str, [f32; 3]) = ("Vine", [0.2, 0.46, 0.14]);
+
+/// The starters' vine as a block.
+pub fn vine_block() -> BlockDef {
+    BlockDef { shape: BlockShape::Vine, sways: true, hardness: 0.2, ..BlockDef::colored(VINE.1) }
+}
+
+/// A starter biome: the climate it takes, its colour on maps, its
 /// ground's blocks by name: on top, under it and how deep, deep down, on
-/// steep ground and along the shore.
+/// steep ground and along the shore; and how many vines hang in it.
 struct Starter {
     climate: Biome,
     color: [f32; 3],
@@ -81,6 +92,7 @@ struct Starter {
     deep: &'static str,
     steep: &'static str,
     shore: &'static str,
+    vines: f32,
 }
 
 const STARTERS: [Starter; 8] = [
@@ -92,6 +104,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Gravel",
+        vines: 0.0,
     },
     Starter {
         climate: Biome::Tundra,
@@ -101,6 +114,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Gravel",
+        vines: 0.0,
     },
     Starter {
         climate: Biome::Taiga,
@@ -110,6 +124,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Gravel",
+        vines: 0.06,
     },
     Starter {
         climate: Biome::Grassland,
@@ -119,6 +134,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
+        vines: 0.08,
     },
     Starter {
         climate: Biome::Forest,
@@ -128,6 +144,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Gravel",
+        vines: 0.22,
     },
     Starter {
         climate: Biome::Desert,
@@ -137,6 +154,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Sandstone",
         steep: "Sandstone",
         shore: "Sand",
+        vines: 0.0,
     },
     Starter {
         climate: Biome::Savanna,
@@ -146,6 +164,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
+        vines: 0.0,
     },
     Starter {
         climate: Biome::Rainforest,
@@ -155,6 +174,7 @@ const STARTERS: [Starter; 8] = [
         deep: "Stone",
         steep: "Stone",
         shore: "Sand",
+        vines: 0.5,
     },
 ];
 
@@ -179,6 +199,10 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
                 steep_slope: STEEP,
                 shore: Some(block(starter.shore)),
                 shore_height: 2.0,
+            },
+            vines: match starter.vines > 0.0 {
+                true => BiomeVines { block: Some(block(VINE.0)), amount: starter.vines, ..BiomeVines::default() },
+                false => BiomeVines::default(),
             },
         };
         // The heights are snow in any place but a warm one, and low ground never. Snow lies on steeper ground than
@@ -206,10 +230,11 @@ pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> 
     let root = game.project.root.clone();
     // Each block by its name: the project's own where it has one of that name, or made in the Blocks folder.
     let mut made_blocks = std::collections::HashMap::new();
-    for (name, color) in BLOCKS {
+    let ground = BLOCKS.into_iter().map(|(name, color)| (name, BlockDef::colored(color)));
+    for (name, block) in ground.chain([(VINE.0, vine_block())]) {
         let path = match block_named(game, &blocks_folder, name) {
             Some(path) => path,
-            None => project_files::create_block(&root, &blocks_folder, name, &BlockDef::colored(color))?,
+            None => project_files::create_block(&root, &blocks_folder, name, &block)?,
         };
         made_blocks.insert(name, path);
     }
@@ -316,7 +341,7 @@ mod tests {
 
     #[test]
     fn every_block_a_starter_names_is_one_of_the_starters_blocks() {
-        let blocks: Vec<&str> = BLOCKS.iter().map(|(name, _)| *name).collect();
+        let blocks: Vec<&str> = BLOCKS.iter().map(|(name, _)| *name).chain([VINE.0]).collect();
         let mut named = std::collections::BTreeSet::new();
         biomes(|name| {
             named.insert(name.to_string());
@@ -324,5 +349,13 @@ mod tests {
         });
         assert!(named.iter().all(|name| blocks.contains(&name.as_str())), "{named:?}");
         assert_eq!(named.len(), blocks.len(), "and every block is some starter's: {named:?}");
+        // Vines hang where it is wet: the most in the Rainforest, none in the Desert or on the Snow.
+        let vines = |name: &str| {
+            let (_, biome) = biomes(|name| name.to_string()).into_iter().find(|(named, _)| *named == name).unwrap();
+            biome.vines.block.map_or(0.0, |_| biome.vines.amount)
+        };
+        assert!(vines("Rainforest") > vines("Forest") && vines("Forest") > vines("Grassland"));
+        assert_eq!((vines("Desert"), vines("Snow")), (0.0, 0.0));
+        assert_eq!(vine_block().shape, BlockShape::Vine);
     }
 }

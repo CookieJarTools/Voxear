@@ -48,6 +48,69 @@ const FLOWING: Fill = 128;
 const SURFACE: Fill = 176;
 const SURFACE_STEPS: f32 = 77.0;
 
+/// Where the fills of a source with a current start, in a world of cubes: a
+/// generated river's water, still to flowing as any source is, that moves
+/// things along its current and stands as high in its block as the river's
+/// water does, so a river's surface comes down in eighths of a block as
+/// water placed and running out does. Then eight a way it flows, a height
+/// each, of [`WAYS`]. They are the fills a world drawn smooth keeps its
+/// sea's surface in, which a world of cubes has no use for.
+pub(super) const CURRENT: Fill = SURFACE;
+
+/// The ways a current flows, along x and z, from +x round towards +z.
+pub const WAYS: [[f32; 2]; 8] = [
+    [1.0, 0.0],
+    [0.707_106_77, 0.707_106_77],
+    [0.0, 1.0],
+    [-0.707_106_77, 0.707_106_77],
+    [-1.0, 0.0],
+    [-0.707_106_77, -0.707_106_77],
+    [0.0, -1.0],
+    [0.707_106_77, -0.707_106_77],
+];
+
+/// How fast a river's current flows, in metres a second.
+pub const RIVER_SPEED: f32 = 1.5;
+
+/// The fill of a river's source flowing along `flow` (x and z, its speed
+/// left out) that stands `eighths` of its block high, 1 to 8: the nearest
+/// of [`WAYS`].
+pub fn current_fill(flow: [f32; 2], eighths: u8) -> Fill {
+    let way = (0..WAYS.len())
+        .max_by(|&a, &b| {
+            let along = |at: usize| WAYS[at][0] * flow[0] + WAYS[at][1] * flow[1];
+            along(a).total_cmp(&along(b))
+        })
+        .unwrap_or(0);
+    CURRENT + (way * 8) as Fill + eighths.clamp(1, 8) - 1
+}
+
+/// Which of [`WAYS`] a river's source of fill `fill` flows, and how many
+/// eighths of its block it stands high, where it has a current (see
+/// [`current_fill`]): in a world of cubes alone.
+pub fn current_parts(fill: Fill) -> Option<(usize, u8)> {
+    let at = usize::from(fill.checked_sub(CURRENT)?);
+    (at < WAYS.len() * 8).then_some((at / 8, (at % 8) as u8 + 1))
+}
+
+/// How a source of fill `fill` flows, in metres a second along x and z,
+/// where it has a current (see [`current_fill`]): in a world of cubes alone.
+pub fn current_of(fill: Fill) -> Option<[f32; 2]> {
+    let (way, _) = current_parts(fill)?;
+    Some(WAYS[way].map(|v| v * RIVER_SPEED))
+}
+
+/// How high a block of water of fill `fill` stands in its block, in
+/// sixteenths, and the way up from it where it is not full, in a world of
+/// cubes: a river's source as high as its current's fill says, its way up
+/// straight up, as the top of water does that stands lower than its block.
+pub fn water_height(fill: Fill) -> (u8, Option<usize>) {
+    match (Water::of(fill), current_parts(fill)) {
+        (Water::Source, Some((_, eighths))) if eighths < 8 => (eighths * 2, Some(UP)),
+        (water, _) => water.height(),
+    }
+}
+
 /// The fill of a source whose surface, in a world drawn smooth, stands
 /// `above` blocks over its middle, from nothing to a whole block (the
 /// middle of the block over it): as a generated sea's top blocks are, so it

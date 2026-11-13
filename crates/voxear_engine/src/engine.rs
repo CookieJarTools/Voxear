@@ -84,6 +84,8 @@ impl Engine {
         crate::ui_panels::register();
         crate::screen_ui::register();
         crate::map::register();
+        crate::heat::scripts::register();
+        crate::storms::scripts::register();
         crate::first_person::register();
         crate::animation::bones::register();
         crate::animation::pose_ops::register();
@@ -521,12 +523,16 @@ impl Engine {
         if crate::modules::has(&self.world, crate::modules::Module::Water) {
             crate::water::update(&mut self.world, self.time.elapsed);
         }
+        // Storms drift, and bring their weather to wherever the viewer is under them.
+        crate::storms::update(&mut self.world, self.time.delta, !self.edit_mode);
         // The weather turns, and its rain and snow fall round the viewer.
         crate::weather::update(&mut self.world, self.time.delta);
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
         // The look pack worn is laid over the level's lighting as it is now.
         crate::look_packs::update(&mut self.world);
+        // The level's clock turns while playing, and turns the sun where it says.
+        crate::heat::turn_clock(&mut self.world, self.time.delta, !self.edit_mode);
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);
@@ -539,9 +545,9 @@ impl Engine {
             scripts.publish_weather(voxear_scripting::WeatherState {
                 kind: weather.kind().index() as i32,
                 state: {
-                    let mut state = [0.0; 10];
-                    state[..7].copy_from_slice(&weather.now().to_array());
-                    state[7..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
+                    let mut state = [0.0; 11];
+                    state[..8].copy_from_slice(&weather.now().to_array());
+                    state[8..].copy_from_slice(&[weather.ground().wet, weather.ground().snow, weather.flash()]);
                     state
                 },
                 turning: !weather.settled(),
@@ -584,6 +590,10 @@ impl Engine {
             // What the tick moved through a Portal's opening comes out of the other.
             if !self.edit_mode {
                 crate::portals::carry_objs(&mut self.world);
+            }
+            // Heat Bodies follow where they are on the fixed step, the same on every machine.
+            if !self.edit_mode {
+                crate::heat::update(&mut self.world, self.time.fixed_delta, self.time.elapsed);
             }
             crate::net::after_tick(&mut self.world);
             self.fixed_accumulator -= self.time.fixed_delta;
@@ -788,6 +798,18 @@ impl Engine {
         if let Some(scripts) = self.scripts.as_mut().filter(|_| !hits.is_empty()) {
             profile_scope!("Particle Hits");
             scripts.particle_hits(&mut self.world, &hits);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
+    /// Tells scripts of Heat Bodies' changes, and what each became, and of
+    /// characters that came to feel otherwise, as `HeatBody.Changed` and
+    /// `HeatBody.FeelsChanged`; `names` has each change's name, a line each.
+    pub fn tell_heat_events(&mut self, events: &[voxear_scripting::HeatEventData], names: &str) {
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !events.is_empty()) {
+            profile_scope!("Heat Events");
+            scripts.heat_events(&mut self.world, events, names);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }

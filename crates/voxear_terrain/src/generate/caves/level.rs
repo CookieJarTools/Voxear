@@ -125,7 +125,7 @@ impl Level {
             });
             let part = |part: i32| share(roll(at as i32, 10 + part));
             let jitter = [(part(0) * 2.0 - 1.0) * loose, (part(1) * 2.0 - 1.0) * loose];
-            let plan = net.planned(&grid, region(cell), set.room(part(2)), jitter, links, 0.5, false);
+            let plan = net.planned(&grid, region(cell), set.room(part(2)), jitter, links, 0.5, (false, false));
             all.rooms.push(net.placed(&grid, plan, heights[at], 0.0));
         }
         for at in 1..all.rooms.len() {

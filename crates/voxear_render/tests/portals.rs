@@ -106,7 +106,7 @@ fn places(renderer: &mut Renderer, turn: f32) -> Places {
         colour(0.8, 0.7, 0.5),
         colour(0.1, 0.9, 0.9),
     );
-    let mut block = |world: &mut World, material, at: Vec3, turn: Quat, size: Vec3| {
+    let block = |world: &mut World, material, at: Vec3, turn: Quat, size: Vec3| {
         world.spawn((MeshRenderer::new(cube, material), Transform::new(at, turn, size)));
     };
     // The first place: ground, and a post each side of the way to the Portal.
@@ -389,6 +389,7 @@ fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
+                leafy: false,
             }
         })
         .collect();

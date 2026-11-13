@@ -43,7 +43,7 @@ pub mod structures;
 mod voxels;
 mod world;
 
-pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, Biomes, WorldBiomes};
+pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeVines, Biomes, WorldBiomes};
 pub use caves::{
     CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, PlacedSpot, Room, RoomExit, RoomForm, RoomRules,
     RoomSample, RoomShape,

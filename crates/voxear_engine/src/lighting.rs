@@ -81,13 +81,14 @@ pub struct WeatherData {
     pub rain: f32,
     pub snow: f32,
     pub lightning: f32,
+    pub dust: f32,
 }
 
 impl WeatherData {
     /// The amounts written beside the kind, which a custom kind's are.
     pub fn amounts(&self) -> WeatherAmounts {
-        let Self { cloud, darkness, fog, wind, rain, snow, lightning, .. } = *self;
-        WeatherAmounts { cloud, darkness, fog, wind, rain, snow, lightning }
+        let Self { cloud, darkness, fog, wind, rain, snow, lightning, dust, .. } = *self;
+        WeatherAmounts { cloud, darkness, fog, wind, rain, snow, lightning, dust }
     }
 
     /// The weather it describes, settled.

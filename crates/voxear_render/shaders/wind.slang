@@ -109,6 +109,12 @@ float plantUnderwater(Frame* frame, float3 origin, out bool sea)
         }
     }
     sea = frame->ocean.enabled != 0 && origin.y < frame->ocean.level;
+    if (!sea && origin.y < frame->sea.level)
+    {
+        // Under a world of blocks' sea.
+        sea = true;
+        return frame->sea.level - origin.y;
+    }
     return sea ? frame->ocean.level - origin.y : 0.0;
 }
 
@@ -126,7 +132,13 @@ float3 surgeOffset(Frame* frame, float3 origin, float height, float below, bool 
     float phase = dot(place, along.xz) * 0.12 + windHash(floor(place * 3.0)) * 0.8;
     float period = sea ? 5.0 + windHash(floor(place * 0.5)) : 4.0;
     float beat = time * 6.2831853 / period - phase - up * 1.2;
-    float strength = sea ? (0.12 + 0.25 * saturate(frame->ocean.waveHeight * frame->ocean.waveScale / 3.0)) * exp(-below / 8.0) : 0.06;
+    // A world of blocks' sea moves its weed the more the rougher the weather over it makes it.
+    float rough = frame->ocean.enabled != 0 ? saturate(frame->ocean.waveHeight * frame->ocean.waveScale / 3.0) : frame->sea.everywhere;
+    for (uint i = 0; i < frame->sea.storms && frame->ocean.enabled == 0; i++)
+    {
+        rough = max(rough, frame->sea.roughs[i] * weatherShare(frame, i, origin.xz));
+    }
+    float strength = sea ? (0.12 + 0.25 * rough) * exp(-below / 12.0) : 0.06;
     float to = sin(beat) * 0.8 + sin(beat * 2.3 + 1.3) * 0.2;
     float side = sin(beat * 0.7 + phase * 2.1);
     return (along * to + across * side * 0.3) * strength * height * up * up;

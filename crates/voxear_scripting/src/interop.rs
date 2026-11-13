@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 81;
+pub(crate) const API_VERSION: u32 = 83;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -525,18 +525,33 @@ pub(crate) struct NativeApi {
     /// `Biomes.At`: the GUID of the biome a place is; its length, or 0 where
     /// no world of blocks with biomes reaches.
     pub biome_at: unsafe extern "C" fn(at: *const [f32; 3], buffer: *mut u8, capacity: i32) -> i32,
-    /// `Weather`: the kind the level's weather is or is turning to, with ten numbers written to `state`: what it
-    /// adds this moment (cloud, darkness, fog, wind, rain, snow, lightning), how wet the ground is, how much snow
-    /// has settled, and how bright its lightning is; and whether it is still turning to `turning`. And turning it
-    /// over `seconds` to a kind, or with `amounts`, the first seven of those, to them.
-    pub weather_state: unsafe extern "C" fn(state: *mut [f32; 10], turning: *mut i32) -> i32,
-    pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 7], seconds: f32),
+    /// `Weather`: the kind the level's weather is or is turning to, with eleven numbers written to `state`: what
+    /// it adds this moment (cloud, darkness, fog, wind, rain, snow, lightning, dust), how wet the ground is, how
+    /// much snow has settled, and how bright its lightning is; and whether it is still turning to `turning`. And
+    /// turning it over `seconds` to a kind, or with `amounts`, the first eight of those, to them.
+    pub weather_state: unsafe extern "C" fn(state: *mut [f32; 11], turning: *mut i32) -> i32,
+    pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 8], seconds: f32),
     /// `LookPacks.Use`: wears the look pack a reference names from the next frame, or with none, takes off the
     /// one worn; and, with `remember`, keeps the choice beside the saves for the game's next run.
     pub look_pack_wear: unsafe extern "C" fn(reference: *const u8, len: i32, remember: i32),
     /// `LookPacks`: every look pack there is to wear, which is worn and where a player keeps their own, as JSON;
     /// its length, or -1 when there is none.
     pub look_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// `Heat.Sample` and `Heat.At`: the temperature at a point, in °C, and
+    /// what makes it so into `out`: the climate's, what the time of day
+    /// adds, how sheltered it is, what shelter adds, what zones add, what
+    /// hot and cold things near add, and how wet it is (see `heat`).
+    pub heat_sample: unsafe extern "C" fn(at: *const [f32; 3], out: *mut [f32; 8]) -> f32,
+    /// `Heat.AddSource`: heat at a point, so hot and so wide, for so long.
+    pub heat_add: unsafe extern "C" fn(at: *const [f32; 3], celsius: f32, radius: f32, seconds: f32) -> i32,
+    /// `Clock`: the level's time of day (0), day length in minutes (1) and
+    /// whether it turns the sun (2), set first when `set` is not 0.
+    pub clock_value: unsafe extern "C" fn(what: i32, set: i32, value: f32) -> f32,
+    /// `Storms`, `Storm` and `Sea`: what `what` asks of the storm, whirlpool or setting numbered `id`, with sixteen
+    /// numbers given and written (see `voxear_engine::storms::scripts`).
+    pub storm_call: unsafe extern "C" fn(what: i32, id: u32, values: *mut [f32; 16]) -> i32,
+    /// `Storms.CaptureState` and `Storms.ApplyState`: the storms' clock and those scripts made, as bytes, and back.
+    pub storm_state: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -568,9 +583,15 @@ pub enum ComponentKind {
     Map = 20,
     /// An Obj's mark on every map.
     MapMarker = 21,
+    /// What takes the temperature of where it is, and changes with it.
+    HeatBody = 22,
+    /// Something hot or cold, warming or cooling what is near it.
+    HeatSource = 23,
+    /// An area hotter or colder than round it.
+    HeatZone = 24,
     /// An opening onto the place another Portal stands in, and the Objs
     /// that went through any.
-    Portal = 22,
+    Portal = 25,
 }
 
 /// The most kinds `kind_value` answers.
@@ -1155,6 +1176,11 @@ pub(crate) struct ManagedApi {
     /// Tells scripts of particles' strikes (`OnParticleHit` on the
     /// behaviours of each system's Obj, and `Particles.Hit`).
     pub particle_hits: Option<unsafe extern "C" fn(hits: *const crate::physics::ParticleHitData, count: i32)>,
+    /// Tells scripts of Heat Bodies' changes and characters' feelings
+    /// (`HeatBody.Changed` and `HeatBody.FeelsChanged`), with each change's
+    /// name one to a line.
+    pub heat_events:
+        Option<unsafe extern "C" fn(events: *const crate::heat::HeatEventData, count: i32, text: *const u8, len: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -1193,7 +1219,7 @@ thread_local! {
     /// The level's weather as `Weather` reads it: its kind, what it adds this moment and whether it is turning.
     /// Scripts turning it change the kind here at once, and the engine takes what they asked after the frame.
     static WEATHER: Cell<WeatherState> =
-        const { Cell::new(WeatherState { kind: 0, state: [0.0; 10], turning: false }) };
+        const { Cell::new(WeatherState { kind: 0, state: [0.0; 11], turning: false }) };
     static WEATHER_SET: Cell<Option<WeatherRequest>> = const { Cell::new(None) };
     /// Which of the sea's costlier looks are on, as `Water.Features` reads
     /// them: none without an Ocean. Scripts setting them change them here at
@@ -1254,12 +1280,12 @@ pub(crate) fn take_look_pack_requests() -> Vec<(String, bool)> {
 }
 
 /// The level's weather as scripts read it: its kind, by its place among the kinds; what it adds this moment
-/// (cloud, darkness, fog, wind, rain, snow, lightning), then how wet the ground is, how much snow has settled and
+/// (cloud, darkness, fog, wind, rain, snow, lightning, dust), then how wet the ground is, how much snow has settled and
 /// how bright its lightning is; and whether it is still turning.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeatherState {
     pub kind: i32,
-    pub state: [f32; 10],
+    pub state: [f32; 11],
     pub turning: bool,
 }
 
@@ -1267,7 +1293,7 @@ pub struct WeatherState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeatherRequest {
     pub kind: i32,
-    pub amounts: Option<[f32; 7]>,
+    pub amounts: Option<[f32; 8]>,
     pub seconds: f32,
 }
 
@@ -1279,7 +1305,7 @@ pub(crate) fn take_weather() -> Option<WeatherRequest> {
     WEATHER_SET.take()
 }
 
-unsafe extern "C" fn weather_state(written: *mut [f32; 10], turning: *mut i32) -> i32 {
+unsafe extern "C" fn weather_state(written: *mut [f32; 11], turning: *mut i32) -> i32 {
     let state = WEATHER.get();
     if !written.is_null() {
         unsafe { *written = state.state };
@@ -1290,7 +1316,7 @@ unsafe extern "C" fn weather_state(written: *mut [f32; 10], turning: *mut i32) -
     state.kind
 }
 
-unsafe extern "C" fn weather_set(kind: i32, amounts: *const [f32; 7], seconds: f32) {
+unsafe extern "C" fn weather_set(kind: i32, amounts: *const [f32; 8], seconds: f32) {
     let amounts = (!amounts.is_null()).then(|| unsafe { *amounts });
     WEATHER.set(WeatherState { kind, turning: seconds > 0.0, ..WEATHER.get() });
     let seconds = if seconds.is_finite() { seconds.max(0.0) } else { 0.0 };
@@ -2118,6 +2144,11 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         weather_set,
         look_pack_wear,
         look_packs_info: crate::services::look_packs_info,
+        heat_sample: crate::heat::heat_sample,
+        heat_add: crate::heat::heat_add,
+        clock_value: crate::heat::clock_value,
+        storm_call: crate::storms::storm_call,
+        storm_state: crate::storms::storm_state,
     }
 }
 

@@ -74,6 +74,7 @@ Open the generator's graph (see [[Generator Graphs]]) and add **Cave Network**, 
 | Loops | How many more tunnels there are than it takes to reach every room, from 0 to 1. Each is a way round |
 | Roughness | How far tunnel walls, and the walls of prefab rooms, are pushed in and out, in metres |
 | Entrances | Endless only: how many rooms have a way up to the surface, from 0 to 1 |
+| Mouths | Endless only: how many of those ways up are the room itself, a great hall in a hillside that opens through a wide passage level with its floor, from 0 to 1. Only where the ground falls steeply beside a room: elsewhere it keeps its tunnel up |
 | Main Rooms, Side Rooms | Level only: how many rooms its main path has, and how many lie off it |
 | Layers, Layer Depth | Endless only: how many layers of rooms there are, one under another, and how far under each the next lies, in metres. For worlds with a great deal of rock under the ground |
 
@@ -89,7 +90,9 @@ A room is turned by quarter turns and mirrored as it is placed, so a few prefabs
 
 ### Endless
 
-Rooms in every direction, one to a region of the grid `Spacing` across, each set a little differently in its region and `Depth` under the ground at its own middle, give or take a quarter. **Entrances** gives that share of rooms a tunnel up to the open air; the rest are reached from below.
+Rooms in every direction, one to a region of the grid `Spacing` across, each set a little differently in its region and `Depth` under the ground at its own middle, give or take a quarter. **Entrances** gives that share of rooms a tunnel up to the open air; the rest are reached from below. Of those, **Mouths** makes some the way in themselves where the ground falls steeply beside them, in the side of a cliff or a mountain: the hall is set level with the ground below and back into the hill, and a passage as wide as a third of the hall's height runs out level from its floor to the hillside. A mouth hangs no rock from its roof, and the passage's walls are smooth, so its way in is clear.
+
+A Cave Network with no rooms of its own makes great halls 60 to 100 m across and over 30 m high, with pillars, hanging rock and ledges, and chambers half their size, joined by tunnels 12 to 18 m wide, 128 m apart and 40 m down, half of the rooms with a way up.
 
 With more than one of **Layers**, each layer is such a network of its own, **Layer Depth** under the one over it, and ramps join them: from a room down to the room beside it one layer down, at least one in every sixteen regions and more with Loops. A ramp is a tunnel like any other, wound longer where it would be steeper than the Slope Limit. Only the topmost layer has entrances. Layers are never nearer than the tallest room's Height and a quarter, with 6 m of rock between, whatever Layer Depth says, so the rooms of one do not run into the next. A ramp winds from side to side and climbs evenly, and is held to the Slope Limit by its steepest part, as far as half a region gives it room to wind. Give the world a lowest block deep enough to hold every layer.
 
@@ -101,7 +104,7 @@ Any part of the world is made by itself and meets what is made beside it, as far
 
 One bounded cave, laid out once from the seed: a main path of **Main Rooms** that never crosses itself, and **Side Rooms** off it, each a dead end or the start of one. Every room is joined by a tunnel to the room it was reached from, so all of it can be walked from the first room; **Loops** joins some rooms that lie side by side as well. The first room lies `Depth` under the ground over it, and the others within half of `Depth` above or below.
 
-The **Caves** preset is caves without end made wholly by rules: rocky hills over halls 40 to 60 m across and over 20 m high, smaller chambers between them, near enough that rooms meet now and then, winding tunnels of many widths, ways round and dead ends, in three layers 56 m apart, with **Height**, **Depth**, **Layers**, **Loops** and **Entrances** as rows.
+The **Caves** preset is caves without end made wholly by rules: rocky hills over halls 60 to 100 m across and over 30 m high, chambers half their size between them, near enough that rooms meet now and then, winding tunnels 12 to 27 m wide, ways round and dead ends, in three layers 80 m apart, with **Height**, **Depth**, **Layers**, **Loops** and **Entrances** as rows. **Highlands** has caves of great halls in four layers under its ridges, with mouths in their sides.
 
 A level wants rock to be carved from. The **Cave Level** preset is that: level rock with one cave in it, its **Height**, **Rooms**, **Side Rooms** and **Depth** as rows. Make a generator, pick Cave Level as its Preset, and give it to a Block World whose ground reaches round the level and down past it.
 

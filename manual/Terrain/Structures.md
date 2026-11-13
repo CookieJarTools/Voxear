@@ -30,6 +30,39 @@ Spacing, Chance and Apart together keep a world from being crowded: a large town
 
 Structures are built in the order the world lists them. One listed later keeps clear of what earlier ones built: its trunk off their streets, its crown off their houses. So list towns first, then lone buildings, then woods.
 
+## Trees of blocks
+
+A structure that names a **plant** grows a tree or a bush of blocks at each of its places, from a `.voxplant` file: a few numbers that say what kind of plant it is, and a seed of its own at every place, so a wood of one file has no two trees alike.
+
+| Setting | What it does |
+| --- | --- |
+| `kind` | `broadleaf`, a trunk under a rounded crown of forking branches; `conifer`, rings of branches shorter towards the top; or `bush`, stems from the ground |
+| `height` | How tall the trunk is, in blocks, from and to |
+| `trunk`, `taper` | How thick the trunk is at its foot, in blocks, and how much thinner at its top, from 0 to 1 |
+| `bend` | How far the trunk leans and wanders: 0 for straight |
+| `crown_width`, `crown_height` | How wide and how tall the crown is, in blocks, each from and to |
+| `branches` | How thick with branches the crown is, from 0 to 1 |
+| `leaf_size`, `leaf_density` | How large a clump of leaves is, in blocks, and how full, from 0 to 1 |
+| `roots` | How many roots run out from its foot |
+| `vines` | How many of its trees have vines, from 0 to 1: one or two up the trunk, and some hanging under the crown's edge |
+| `wood`, `leaves`, `vine` | The [[Blocks|blocks]] its wood, its leaves and its vines are |
+
+```toml
+kind = "broadleaf"
+height = [7.0, 11.0]
+trunk = 1.2
+crown_width = [7.0, 10.0]
+crown_height = [5.0, 7.0]
+vines = 0.3
+wood = "Blocks/Oak Log.block"
+leaves = "Blocks/Oak Leaves.block"
+vine = "Blocks/Vine.block"
+```
+
+Give the leaves a block whose **Shape** is **Bushy** for a soft crown (see [[Blocks#Bushy leaves]]), and the vines one whose Shape is **Vine**. A tree's vines hang only in open air: none where a hillside rises into them.
+
+**Starter Trees of Blocks**, on a Block World's **Add plant** row, makes three of these, an oak, a birch and a pine, with their blocks and a structure each, and lists the structures on the world (see [[Block Worlds#Trees of blocks]]). Where the world has the starter biomes, oaks keep to the Forest and the Rainforest, birches to the Forest, the Grassland and the Taiga, and pines to the Taiga.
+
 ## How the ground meets a structure
 
 | Ground | What it does |
@@ -111,11 +144,14 @@ Each kind also has the rules a town's houses have: **Weight** against the others
 | Corridor | How long its corridors are, in blocks, from and to |
 | Loops | How many of the joins between near rooms are made, from 0 to 1 |
 | Depth | How far under the ground its first floor is, in blocks, from and to |
+| Caves | How far one of its rooms breaks through to a cave of the world's, in blocks. 48 by default; 0 for never |
 | Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
 | Corridor width, Corridor height | How wide and high its corridors are |
 | Room size, Hall size, Loot size, Boss size | The sizes of its plain rooms of each role, in blocks along x, up and along z |
 
 A room's doors are in the middles of its sides, a block over its floor: the corridors open its walls there. The stair winds round a pillar, a block up for every block along.
+
+A dungeon in a world with [[Caves|caves]] breaks into them. The room of any floor nearest a cave room, within **Caves** blocks of it, has a rough tunnel cut from its middle to that room's floor, four blocks high and as wide as five or so, never steeper than it runs along. So a dungeon can be found from a cave, and a cave from a dungeon, and the way down from the surface may be either.
 
 ## Not yet
 

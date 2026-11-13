@@ -392,6 +392,10 @@ impl WorldGen {
             bytes.extend(0x5u8.to_le_bytes());
             bytes.extend(sunk.hash.to_le_bytes());
         }
+        if let Some(water) = &compiled.water {
+            bytes.extend(0x6u8.to_le_bytes());
+            bytes.extend(water.hash.to_le_bytes());
+        }
         let hash = crate::layers::stable_hash(&bytes);
         Self {
             seed,
@@ -541,6 +545,50 @@ impl WorldGen {
         let mut mask = vec![0.0; count];
         rock.run(count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }, &mut [&mut mask]);
         Some(mask.into_iter().map(|mask| mask > 0.5).collect())
+    }
+
+    /// How high water stands at each `(xs[i], zs[i])`, in metres, and how
+    /// many metres of it pour down there as a waterfall's curtain over the
+    /// pool at its foot, from what is wired into the Output's Water and
+    /// Falls: a river's or a lake's, and far under everything
+    /// ([`super::nodes::NO_WATER`]) where there is none. None where nothing
+    /// is wired in.
+    pub fn water(&self, xs: &[f32], zs: &[f32]) -> Option<(Vec<f32>, Vec<f32>)> {
+        let program = self.made.compiled.water.as_ref()?;
+        let count = xs.len().min(zs.len());
+        let (mut water, mut falls) = (vec![0.0; count], vec![0.0; count]);
+        program.run(count, Givens { x: xs, z: zs, ..Givens::default() }, &mut [&mut water, &mut falls]);
+        Some((water, falls))
+    }
+
+    /// Which way and how fast water flows at `(x, z)`, in metres a second
+    /// along x and z: down the slope of the water wired into the Output's
+    /// Water, faster the steeper it falls. None where there is no water
+    /// there, or none wired in; nothing where it lies level, as a lake does.
+    pub fn current(&self, x: f32, z: f32) -> Option<[f32; 2]> {
+        // Its height a metre either way along each axis.
+        const STEP: f32 = 1.0;
+        let xs = [x, x - STEP, x + STEP, x, x];
+        let zs = [z, z, z, z - STEP, z + STEP];
+        let (water, _) = self.water(&xs, &zs)?;
+        if water[0] <= super::nodes::NO_WATER * 0.5 {
+            return None;
+        }
+        // Where a neighbour has no water, the slope is read from this side alone.
+        let slope = |low: usize, high: usize| match (water[low] > water[0] - 50.0, water[high] > water[0] - 50.0) {
+            (true, true) => (water[high] - water[low]) / (2.0 * STEP),
+            (true, false) => (water[0] - water[low]) / STEP,
+            (false, true) => (water[high] - water[0]) / STEP,
+            (false, false) => 0.0,
+        };
+        let (gx, gz) = (slope(1, 2), slope(3, 4));
+        let steep = (gx * gx + gz * gz).sqrt();
+        if steep < 1e-5 {
+            return Some([0.0, 0.0]);
+        }
+        // A river running nearly level still moves; one falling steeply runs fast.
+        let speed = (6.0 * steep.sqrt()).clamp(0.4, 4.0);
+        Some([-gx / steep * speed, -gz / steep * speed])
     }
 
     /// How far under the land round about ground `heights[i]` metres high

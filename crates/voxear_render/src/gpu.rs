@@ -396,6 +396,8 @@ pub struct GpuFrame {
     /// shaders); and its height, whole, for the sky and fog, which measure
     /// heights from the level's ground.
     pub origin: [f32; 4],
+    /// How rough a world of blocks' sea is, and where (see `sea`).
+    pub sea: crate::sea::GpuSea,
     /// A plane nothing behind is drawn, inside when `dot(n, p) + d >= 0`:
     /// the far Portal's, for a view through a Portal (see `portals`), and
     /// one that cuts nothing for every other view.
@@ -1347,7 +1349,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16
         );
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
@@ -1357,8 +1359,8 @@ mod tests {
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 67 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
-        // Its corner and block size, three addresses, four words, then its small cubes' count and depth.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8);
+        // Its corner and block size, three addresses, four words, its small cubes' count and depth, then its sea's top.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

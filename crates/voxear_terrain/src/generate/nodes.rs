@@ -36,6 +36,7 @@ mod noise;
 mod output;
 mod peaks;
 mod plateaus;
+mod rivers;
 mod slope_mask;
 mod smooth;
 mod terrace;
@@ -60,6 +61,7 @@ pub use blend::Blend;
 // The Cells node's values: `Cells` by itself is a row of places in space.
 pub use cells::Cellular;
 pub use chasms::{ChasmKind, Chasms};
+pub use rivers::{NO_WATER, Rivers, add_rivers};
 pub use clamp::Clamp;
 pub use climate_mask::ClimateMask;
 pub use constant::Constant;
@@ -334,6 +336,7 @@ pub enum NodeKind {
     Terrace(Terrace),
     Plateaus(Plateaus),
     Chasms(Chasms),
+    Rivers(Rivers),
     Clamp(Clamp),
     Blend(Blend),
     Warp(Bend),
@@ -379,6 +382,7 @@ macro_rules! each_kind {
             NodeKind::Terrace($kind) => $do,
             NodeKind::Plateaus($kind) => $do,
             NodeKind::Chasms($kind) => $do,
+            NodeKind::Rivers($kind) => $do,
             NodeKind::Clamp($kind) => $do,
             NodeKind::Blend($kind) => $do,
             NodeKind::Warp($kind) => $do,
@@ -424,6 +428,7 @@ impl NodeKind {
             NodeKind::Terrace(Terrace::default()),
             NodeKind::Plateaus(Plateaus::default()),
             NodeKind::Chasms(Chasms::default()),
+            NodeKind::Rivers(Rivers::default()),
             NodeKind::Clamp(Clamp::default()),
             NodeKind::Math(Math::default()),
             NodeKind::Blend(Blend::default()),

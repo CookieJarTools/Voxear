@@ -204,6 +204,15 @@ SkyFragmentOut skyFragment(SkyOut input)
         float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.ndc * 0.5 + 0.5, 0.0);
         color = color * seen.a + seen.rgb;
     }
+    // What falls from weather far off hangs under its cloud, in front of the sky behind it.
+    float sand, dark;
+    float through = weatherCurtain(frame, direction, 1.0e5, sand, dark);
+    if (through < 1.0)
+    {
+        float3 level = normalize(float3(direction.x, 0.02, direction.z));
+        float3 lit = atmosphere ? atmosphereSky(frame, level) : frame->skyHorizon;
+        color = lerp(curtainColour(lit, sand, dark), color, through);
+    }
     o.color = float4(color, 1.0);
     o.velocity = skyMotion(frame, direction);
     return o;
@@ -513,7 +522,7 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
         float scattered = 1.0 / (1.0 + 0.35 * shade);
         float lit = (0.3 * direct + 0.7 * scattered) * 0.95 + direct * lining * 0.15;
         // The sky lights their tops more than their undersides, which get the ground's.
-        float3 light = sun * lit + sky * (0.3 + 0.7 * saturate(height));
+        float3 light = (sun * lit + sky * (0.3 + 0.7 * saturate(height))) * (1.0 - 0.5 * cloudWeather(frame, xz).y);
         float kept = exp(-density * step);
         float added = through * (1.0 - kept);
         color += light * added;
@@ -616,7 +625,9 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
                 // came into it, with the sky lighting the layer's top more than its underside.
                 float up = saturate(middle.y / clouds.thickness);
                 float3 mist = sun * (0.3 + 0.65 * exp(-0.7 * shade)) * 0.95 + sky * (0.45 + 0.55 * up);
-                color += lerp(solid, mist, soft) * added;
+                // Heavy weather's clouds are dark.
+                float heavy = cloudWeather(frame, middle.xz + clouds.drift).y;
+                color += lerp(solid, mist, soft) * (1.0 - 0.72 * heavy) * added;
                 weight += added;
                 distance += t * added;
             }

@@ -14,6 +14,13 @@
 //! - **rain** and **snow** fall round the camera, which the engine sees to.
 //! - **lightning** strikes now and then, lighting the sky and the level
 //!   under it for a moment.
+//! - **dust** fills the air with blown sand: thick, dun and dim.
+//!
+//! Weather may lie over a part of the level only, as a storm does:
+//! [`WeatherPlaces`] lists where, and the frame draws each from afar, its
+//! cloud filled in over it and what falls from it under it. What it adds
+//! where the viewer stands is the weather's [`Weather::set_here`], laid
+//! over the level's own.
 //!
 //! What has fallen stays a while ([`WeatherGround`]): rain soaks every
 //! surface in half a minute and dries off over a few once it stops, and
@@ -46,13 +53,27 @@ pub enum WeatherKind {
     Snow,
     /// Thick fog, the sky lost in it.
     Fog,
+    /// Driving snow in a gale, the air white with it.
+    Blizzard,
+    /// A gale full of blown sand under a dun sky.
+    Sandstorm,
     /// Amounts of its own, set one by one.
     Custom,
 }
 
 impl WeatherKind {
-    pub const ALL: [Self; 8] =
-        [Self::Clear, Self::Cloudy, Self::Overcast, Self::Rain, Self::Storm, Self::Snow, Self::Fog, Self::Custom];
+    pub const ALL: [Self; 10] = [
+        Self::Clear,
+        Self::Cloudy,
+        Self::Overcast,
+        Self::Rain,
+        Self::Storm,
+        Self::Snow,
+        Self::Fog,
+        Self::Blizzard,
+        Self::Sandstorm,
+        Self::Custom,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -63,6 +84,8 @@ impl WeatherKind {
             Self::Storm => "Storm",
             Self::Snow => "Snow",
             Self::Fog => "Fog",
+            Self::Blizzard => "Blizzard",
+            Self::Sandstorm => "Sandstorm",
             Self::Custom => "Custom",
         }
     }
@@ -87,6 +110,8 @@ impl WeatherKind {
             Self::Snow => WeatherAmounts { cloud: 0.9, darkness: 0.2, fog: 0.3, wind: 0.15, snow: 0.8, ..none },
             // The sky is covered too: fog is cloud on the ground, and blue overhead would give it away.
             Self::Fog => WeatherAmounts { cloud: 1.0, darkness: 0.1, fog: 1.0, ..none },
+            Self::Blizzard => WeatherAmounts { cloud: 1.0, darkness: 0.45, fog: 0.8, wind: 1.0, snow: 1.0, ..none },
+            Self::Sandstorm => WeatherAmounts { cloud: 0.4, darkness: 0.35, wind: 1.0, dust: 1.0, ..none },
         }
     }
 }
@@ -110,21 +135,34 @@ pub struct WeatherAmounts {
     pub snow: f32,
     /// How often lightning strikes: at 1, every eight seconds or so.
     pub lightning: f32,
+    /// How much blown sand is in the air.
+    pub dust: f32,
 }
 
 /// How many amounts weather is made of.
-pub const AMOUNTS: usize = 7;
+pub const AMOUNTS: usize = 8;
 
 impl WeatherAmounts {
     /// Each amount as a list, in the order scripts and files give them.
     pub fn to_array(self) -> [f32; AMOUNTS] {
-        [self.cloud, self.darkness, self.fog, self.wind, self.rain, self.snow, self.lightning]
+        [self.cloud, self.darkness, self.fog, self.wind, self.rain, self.snow, self.lightning, self.dust]
     }
 
     /// The amounts a list gives, each kept between 0 and 1.
     pub fn from_array(amounts: [f32; AMOUNTS]) -> Self {
-        let [cloud, darkness, fog, wind, rain, snow, lightning] = amounts.map(|amount| amount.clamp(0.0, 1.0));
-        Self { cloud, darkness, fog, wind, rain, snow, lightning }
+        let [cloud, darkness, fog, wind, rain, snow, lightning, dust] = amounts.map(|amount| amount.clamp(0.0, 1.0));
+        Self { cloud, darkness, fog, wind, rain, snow, lightning, dust }
+    }
+
+    /// The more of each amount of these and of `other`.
+    pub fn most(self, other: Self) -> Self {
+        let (a, b) = (self.to_array(), other.to_array());
+        Self::from_array(std::array::from_fn(|i| a[i].max(b[i])))
+    }
+
+    /// Each amount `by` times as much.
+    pub fn scaled(self, by: f32) -> Self {
+        Self::from_array(self.to_array().map(|amount| amount * by))
     }
 
     /// Part of the way from these to `other`.
@@ -150,13 +188,16 @@ impl WeatherAmounts {
         clouds.density *= 1.0 + self.darkness;
         clouds.thickness *= 1.0 + 0.5 * self.darkness;
         clouds.shadows += (1.0 - clouds.shadows.clamp(0.0, 1.0)) * self.darkness.max(self.cloud * 0.5);
-        sky.haze *= 1.0 + 2.0 * self.fog;
-        sky.distance_haze *= 1.0 + self.fog;
+        sky.haze *= 1.0 + 2.0 * self.fog.max(self.dust);
+        sky.distance_haze *= 1.0 + self.fog.max(self.dust);
         let grey = self.darkness.max(self.cloud * 0.5) * 0.7;
         let dim = 1.0 - 0.6 * self.darkness;
+        let dust = self.dust;
         let weathered = |colour: voxear_core::math::Vec3| {
             let luminance = colour.dot(voxear_core::math::Vec3::new(0.2126, 0.7152, 0.0722));
-            colour.lerp(voxear_core::math::Vec3::splat(luminance), grey) * dim
+            let greyed = colour.lerp(voxear_core::math::Vec3::splat(luminance), grey) * dim;
+            // Blown sand turns the sky its own colour, as bright as the sky was.
+            greyed.lerp(DUST_COLOUR * (luminance * dim / 0.5), dust * 0.85)
         };
         sky.zenith = weathered(sky.zenith);
         sky.horizon = weathered(sky.horizon);
@@ -171,13 +212,26 @@ impl WeatherAmounts {
     }
 
     /// The level's fog under this weather: on wherever the weather has any,
-    /// and thicker by it.
-    pub fn fog(self, fog: Fog) -> Fog {
-        if self.fog <= 0.0 {
+    /// and thicker by it. Blown sand is fog of its own colour; `horizon` is
+    /// the sky's, linear, which fog with no colour of its own takes.
+    pub fn fog(self, fog: Fog, horizon: voxear_core::math::Vec3) -> Fog {
+        if self.fog <= 0.0 && self.dust <= 0.0 {
             return fog;
         }
         let own = if fog.enabled { fog.density } else { 0.0 };
-        Fog { enabled: true, density: own + FOG_DENSITY * self.fog, ..fog }
+        let added = FOG_DENSITY * (self.fog + DUST_DENSITY * self.dust);
+        let color = match self.dust > 0.0 {
+            true => {
+                let srgb = |c: f32| if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.max(0.0).powf(1.0 / 2.4) - 0.055 };
+                let was = voxear_core::math::Vec3::from(fog.color.unwrap_or(horizon.to_array().map(srgb)));
+                let sand = voxear_core::math::Vec3::from(DUST_COLOUR.to_array().map(srgb));
+                // As much the sand's colour as the fog there is the sand's.
+                let share = DUST_DENSITY * self.dust * FOG_DENSITY / (own + added).max(1e-6);
+                Some(was.lerp(sand, share.clamp(0.0, 1.0)).to_array())
+            }
+            false => fog.color,
+        };
+        Fog { enabled: true, density: own + added, color, ..fog }
     }
 
     /// The wind over a level with no Wind Zone under this weather, and the
@@ -207,6 +261,47 @@ impl WeatherAmounts {
 /// The density the thickest weather's fog adds: things fade out over a few
 /// tens of metres.
 const FOG_DENSITY: f32 = 0.03;
+/// How many times as thick as fog blown sand is, and its colour, linear.
+const DUST_DENSITY: f32 = 1.3;
+pub(crate) const DUST_COLOUR: voxear_core::math::Vec3 = voxear_core::math::Vec3::new(0.56, 0.4, 0.22);
+
+/// Weather over a part of the level, as a storm: its middle along x and z,
+/// in the world, how far it reaches, in metres, and what it adds at its
+/// middle. It fades out towards its reach, and within `eye` of its reach
+/// from its middle there is none of it, as in a great storm's eye.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeatherPlace {
+    pub middle: voxear_core::math::Vec2,
+    pub radius: f32,
+    pub eye: f32,
+    pub amounts: WeatherAmounts,
+    /// How rough it makes a sea under it, from 0 to 1.
+    pub rough: f32,
+}
+
+/// Where a place's weather starts to fade, as a share of its reach.
+pub const PLACE_FADES_FROM: f32 = 0.55;
+
+impl WeatherPlace {
+    /// How much of it reaches a point `distance` metres from its middle,
+    /// from 0 to 1.
+    pub fn share(&self, distance: f32) -> f32 {
+        let far = distance / self.radius.max(1.0);
+        let smooth = |from: f32, to: f32, x: f32| {
+            let t = ((x - from) / (to - from).max(1e-6)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let outer = 1.0 - smooth(PLACE_FADES_FROM, 1.0, far);
+        let inner = if self.eye > 0.0 { smooth(self.eye * 0.75, self.eye * 1.25, far) } else { 1.0 };
+        outer * inner
+    }
+}
+
+/// The weather that lies over parts of the level this frame, a resource:
+/// the nearest to the viewer first. The frame draws the first
+/// [`crate::sea::MAX_STORMS`] of them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WeatherPlaces(pub Vec<WeatherPlace>);
 
 /// What the weather has left lying on the level: each from 0 to 1.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -296,6 +391,8 @@ pub struct Weather {
     from: WeatherAmounts,
     target: WeatherAmounts,
     now: WeatherAmounts,
+    /// What weather over this part of the level adds where the viewer is.
+    here: WeatherAmounts,
     /// How long the change takes and how much of that has passed, in seconds.
     seconds: f32,
     passed: f32,
@@ -318,7 +415,8 @@ impl Weather {
 
     fn settled_in(kind: WeatherKind, amounts: WeatherAmounts) -> Self {
         let ground = WeatherGround::under(amounts);
-        Self { kind, from: amounts, target: amounts, now: amounts, seconds: 0.0, passed: 0.0, ground, clock: 0.0 }
+        let here = WeatherAmounts::default();
+        Self { kind, from: amounts, target: amounts, now: amounts, here, seconds: 0.0, passed: 0.0, ground, clock: 0.0 }
     }
 
     /// Turns the weather to `kind` over `seconds`, from what it is now; at
@@ -338,18 +436,25 @@ impl Weather {
         self.advance(0.0);
     }
 
+    /// What weather over this part of the level, as a storm passing, adds
+    /// where the viewer is, over the level's own: the more of each amount
+    /// counts.
+    pub fn set_here(&mut self, amounts: WeatherAmounts) {
+        self.here = WeatherAmounts::from_array(amounts.to_array());
+    }
+
     /// Lets `delta` seconds pass: the weather turns, and the ground takes
     /// what falls on it or dries. Says whether anything changed.
     pub fn advance(&mut self, delta: f32) -> bool {
-        let before = (self.now, self.ground);
+        let before = (self.now(), self.ground);
         let delta = delta.max(0.0);
         self.passed = (self.passed + delta).min(self.seconds);
         let part = if self.seconds > 0.0 { self.passed / self.seconds } else { 1.0 };
         // Slow to start and to settle, as weather comes on.
         self.now = self.from.towards(self.target, part * part * (3.0 - 2.0 * part));
-        self.ground = self.ground.after(self.now, delta);
+        self.ground = self.ground.after(self.now(), delta);
         self.clock += f64::from(delta);
-        (self.now, self.ground) != before
+        (self.now(), self.ground) != before
     }
 
     /// What it has left lying on the level.
@@ -367,8 +472,14 @@ impl Weather {
         self.kind
     }
 
-    /// What it adds this moment.
+    /// What it adds this moment where the viewer is: the level's own
+    /// weather and what lies over this part of it.
     pub fn now(&self) -> WeatherAmounts {
+        self.now.most(self.here)
+    }
+
+    /// What the level's own weather adds this moment, everywhere.
+    pub fn everywhere(&self) -> WeatherAmounts {
         self.now
     }
 
@@ -483,6 +594,41 @@ mod tests {
     }
 
     #[test]
+    fn weather_over_a_place_fades_to_its_reach_is_none_in_its_eye_and_adds_to_the_levels_own() {
+        let storm = WeatherPlace { radius: 400.0, amounts: WeatherKind::Storm.amounts(), ..WeatherPlace::default() };
+        assert_eq!((storm.share(0.0), storm.share(200.0), storm.share(400.0), storm.share(900.0)), (1.0, 1.0, 0.0, 0.0));
+        let edge = storm.share(320.0);
+        assert!(edge > 0.05 && edge < 0.6, "fading: {edge}");
+        let eyed = WeatherPlace { eye: 0.3, ..storm };
+        assert_eq!((eyed.share(0.0), eyed.share(60.0)), (0.0, 0.0));
+        assert_eq!(eyed.share(200.0), 1.0, "its wall as hard as any storm");
+        // Over light rain everywhere, a storm overhead is a storm; gone, the rain is as it was.
+        let mut weather = Weather::of(WeatherKind::Rain);
+        let rain = weather.now();
+        weather.set_here(WeatherKind::Storm.amounts());
+        assert_eq!((weather.now().rain, weather.now().lightning), (1.0, 0.8));
+        assert_eq!(weather.everywhere(), rain);
+        weather.set_here(WeatherAmounts::default());
+        assert_eq!(weather.now(), rain);
+    }
+
+    #[test]
+    fn blown_sand_thickens_the_air_and_turns_it_and_the_sky_its_own_colour() {
+        let sand = WeatherKind::Sandstorm.amounts();
+        let horizon = voxear_core::math::Vec3::new(0.5, 0.6, 0.8);
+        let fog = sand.fog(Fog::default(), horizon);
+        assert!(fog.enabled && fog.density > FOG_DENSITY);
+        let [r, _, b] = fog.color.expect("the sand's colour");
+        assert!(r > b + 0.15, "dun, not blue: {:?}", fog.color);
+        let sky = sand.sky(Sky { horizon, zenith: horizon, ..Sky::default() });
+        assert!(sky.horizon.x > sky.horizon.z, "a dun sky: {:?}", sky.horizon);
+        // A blizzard is white: fog of the sky's own colour, and no sand.
+        let white = WeatherKind::Blizzard.amounts().fog(Fog::default(), horizon);
+        assert_eq!(white.color, Fog::default().color);
+        assert!(white.density > 0.0 && WeatherKind::Blizzard.amounts().snow == 1.0);
+    }
+
+    #[test]
     fn clear_weather_leaves_the_lighting_alone_and_a_storm_fills_and_darkens_it() {
         let sky = Sky { clouds: Clouds::covering(0.3), ..Sky::default() };
         let fog = Fog::default();
@@ -490,14 +636,15 @@ mod tests {
         let clear = WeatherKind::Clear.amounts();
         let untouched = clear.sky(sky);
         assert_eq!((untouched.clouds, untouched.haze, untouched.horizon), (sky.clouds, sky.haze, sky.horizon));
-        assert_eq!((clear.fog(fog), clear.wind(zone), clear.sun()), (fog, zone, 1.0));
+        let horizon = voxear_core::math::Vec3::new(0.5, 0.6, 0.7);
+        assert_eq!((clear.fog(fog, horizon), clear.wind(zone), clear.sun()), (fog, zone, 1.0));
         let storm = WeatherKind::Storm.amounts();
         let stormy = storm.sky(sky);
         assert_eq!(stormy.clouds.cover, 1.0);
         assert!(stormy.clouds.density > sky.clouds.density && stormy.clouds.shadows > sky.clouds.shadows);
         assert!(stormy.horizon.length() < sky.horizon.length(), "a gradient sky is dimmed");
         assert!(storm.sun() < 0.7);
-        assert!(storm.fog(fog).enabled && storm.fog(fog).density > 0.0);
+        assert!(storm.fog(fog, horizon).enabled && storm.fog(fog, horizon).density > 0.0);
         assert!(storm.wind(zone).strength > zone.strength * 2.0);
         // Half cloud fills half of what was open.
         assert!((WeatherKind::Cloudy.amounts().sky(sky).clouds.cover - 0.65).abs() < 1e-5);

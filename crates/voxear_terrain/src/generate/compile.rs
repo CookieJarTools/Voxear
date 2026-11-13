@@ -191,6 +191,8 @@ pub(crate) struct Compiler<'a> {
     faults: Vec<Fault>,
     /// The generator's own ground as a program of its own, once a node has asked for it.
     own_ground: Option<Arc<Program>>,
+    /// What is wired into a node's input as a program of its own, by node and input, once it has asked for it.
+    input_programs: HashMap<(NodeId, usize), Arc<Program>>,
     /// The first network of cave rooms compiled into it.
     caves: Option<Arc<Network>>,
 }
@@ -228,6 +230,7 @@ impl<'a> Compiler<'a> {
             making: Vec::new(),
             faults: Vec::new(),
             own_ground: None,
+            input_programs: HashMap::new(),
             caves: None,
         }
     }
@@ -324,6 +327,21 @@ impl<'a> Compiler<'a> {
         let program = Arc::new(cx.finish(&[height]).0);
         self.own_ground = Some(program.clone());
         program
+    }
+
+    /// What is wired into input `input` of `node` as a program of its own: for a kernel that reads its input
+    /// somewhere other than at the places it is run over, as `own_ground` is for the generator's ground. None with no
+    /// wire.
+    pub fn input_program(&mut self, node: NodeId, input: usize) -> Option<Arc<Program>> {
+        if let Some(program) = self.input_programs.get(&(node, input)) {
+            return Some(program.clone());
+        }
+        let mut cx = Compiler::new(self.graph, self.world, false);
+        let at = cx.places();
+        let field = cx.input(node, input, at)?;
+        let program = Arc::new(cx.finish(&[field]).0);
+        self.input_programs.insert((node, input), program.clone());
+        Some(program)
     }
 
     /// Says `caves` is a network of cave rooms this program hollows: the first said is the generator's.
@@ -555,6 +573,8 @@ pub(crate) struct Compiled {
     pub rock: Option<Program>,
     /// How far under the land round about the ground lies, where it is wired in.
     pub sunk: Option<Program>,
+    /// How high water stands over the ground, and how much of it pours down as a waterfall, where water is wired in.
+    pub water: Option<Program>,
 }
 
 /// A graph's Volume, compiled.
@@ -707,7 +727,21 @@ pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> C
     };
     let rock = wired(Output::ROCK);
     let sunk = wired(Output::SUNK);
-    Compiled { height, climate, volume, rock, sunk }
+    // Water and its falls, together, where water is wired in.
+    let water = output.filter(|output| graph.link_into(*output, Output::WATER).is_some()).and_then(|output| {
+        let mut cx = Compiler::new(graph, world, false);
+        let at = cx.places();
+        let water = cx.input(output, Output::WATER, at)?;
+        let falls = cx.input(output, Output::FALLS, at).unwrap_or_else(|| cx.constant(0.0));
+        let (program, found) = cx.finish(&[water, falls]);
+        for fault in found {
+            if !faults.contains(&fault) {
+                faults.push(fault);
+            }
+        }
+        Some(program)
+    });
+    Compiled { height, climate, volume, rock, sunk, water }
 }
 
 /// A program making every output of every node of `graph` at its places,

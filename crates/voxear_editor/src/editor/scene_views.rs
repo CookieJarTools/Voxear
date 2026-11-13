@@ -2,8 +2,8 @@
 //! any more opened from a window's menu (Add Scene View), each a panel of
 //! its own beside the one it was opened from. Each looks through a camera of
 //! its own, flown on its own, and has its own header: a shading menu (Lit,
-//! Unlit, Wireframe, or Lit Wireframe, the lit scene with its meshes' edges
-//! over it), the Gizmos button, which shows or hides lights, cameras and
+//! Unlit, Wireframe, Lit Wireframe, the lit scene with its meshes' edges
+//! over it, or Heat, with the ground tinted by temperature), the Gizmos button, which shows or hides lights, cameras and
 //! what the selected one reaches (see `gizmos`), and full screen, which
 //! gives it the dock alone until pressed again. The first one's shading and
 //! Gizmos are settings, so they are kept; the tool strip's settings are
@@ -82,7 +82,9 @@ pub(super) struct SceneView {
     /// The camera it looks through, which the Hierarchy leaves out.
     pub(super) camera: Entity,
     pub(super) fly: FlyCamera,
-    /// The shading menu's choice: Lit, Unlit, Wireframe or Lit Wireframe.
+    /// The shading menu's choice: Lit, Unlit, Wireframe, Lit Wireframe or
+    /// Heat, the lit scene with the ground tinted by temperature (see
+    /// `heat_view`).
     pub(super) shading: usize,
     pub(super) show_gizmos: bool,
     /// The camera's rotation as the axis gizmo last showed it.

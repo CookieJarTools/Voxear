@@ -1290,6 +1290,12 @@ impl Inspector {
                 if let Prop::Plants(field) = value {
                     meta.range = crate::plants_props::range(*field).map(|r| r.map(f64::from));
                 }
+                if let Prop::Heat(field) = value {
+                    meta.range = crate::heat_props::range(*field).map(|r| r.map(f64::from));
+                }
+                if let Prop::Storm(field) = value {
+                    meta.range = crate::storm_props::range(*field).map(|r| r.map(f64::from));
+                }
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
                 }
@@ -2221,6 +2227,11 @@ impl Inspector {
             (Part::ScreenUi, "UI"),
             (Part::Map, "UI"),
             (Part::MapMarker, "UI"),
+            (Part::Climate, "Heat"),
+            (Part::Storms, "Effects"),
+            (Part::HeatSource, "Heat"),
+            (Part::HeatZone, "Heat"),
+            (Part::HeatBody, "Heat"),
             (Part::NetObject, "Networking"),
             (Part::Animator, "Animation"),
             (Part::MobMotion, "Animation"),
@@ -2966,6 +2977,11 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::ScreenUi) => "screen_ui",
         Some(Part::Map) => "map",
         Some(Part::MapMarker) => "map_marker",
+        Some(Part::Climate) => "climate",
+        Some(Part::Storms) => "storms",
+        Some(Part::HeatSource) => "heat_source",
+        Some(Part::HeatZone) => "heat_zone",
+        Some(Part::HeatBody) => "heat_body",
         Some(Part::NetObject) => "net",
         Some(Part::Animator) => "animator",
         Some(Part::MobMotion) => "mob_motion",

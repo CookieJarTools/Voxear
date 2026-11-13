@@ -73,6 +73,32 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 		set { Set(NativePhysics.CharacterStepOffset, value); }
 	}
 
+	/// <summary>
+	/// How much flowing water carries it along: from 0 for not at all to 1 for as fast as the water flows, once the
+	/// water is up to its middle. A river drags a wading character downstream, and a waterfall pushes one under it down.
+	/// </summary>
+	public float WaterPush
+	{
+		get { return NativePhysics.Number(Obj, NativePhysics.CharacterWaterPush, 1f); }
+		set { Set(NativePhysics.CharacterWaterPush, value); }
+	}
+
+	/// <summary>How fast it is carried along and shoved now, in metres per second: added to every move it makes.</summary>
+	public Vector3 Pushed => NativePhysics.Vector(Obj, NativePhysics.CharacterPush, Vector3.Zero);
+
+	/// <summary>
+	/// Shoves it at velocity, in metres per second: added to its moves and dying away over a second or so, as a blast,
+	/// a gust or a blow knocks it. Shoves add up.
+	/// <code>
+	/// var away = Vector3.Normalize(player.WorldPosition - blast);
+	/// player.CharacterController.AddPush(away * 8f + Vector3.UnitY * 3f);
+	/// </code>
+	/// </summary>
+	public void AddPush(Vector3 velocity)
+	{
+		NativePhysics.Set(Obj, NativePhysics.CharacterPush, new Vector4(velocity, 0f));
+	}
+
 	/// <summary>Whether it stood on ground it can walk on after its last move.</summary>
 	public bool IsGrounded => NativePhysics.Flag(Obj, NativePhysics.CharacterGrounded);
 

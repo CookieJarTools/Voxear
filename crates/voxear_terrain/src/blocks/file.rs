@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockFaces, BlockMap,
+    block::BlockShape,
     chunk::{AIR, BlockId},
 };
 
@@ -138,6 +139,10 @@ pub struct BlockKind {
     /// where the world is made, as `cutout` is.
     #[serde(skip)]
     pub sways: bool,
+    /// Its shape, as its block says: a cube, a cube with tufts of leaves,
+    /// or a vine. Never written: a kind of the world's own is a cube.
+    #[serde(skip)]
+    pub shape: super::block::BlockShape,
 }
 
 /// An entry as its file says it: one naming a block says which and where it
@@ -229,6 +234,7 @@ impl Default for BlockKind {
             water: false,
             cutout: false,
             sways: false,
+            shape: super::block::BlockShape::Cube,
         }
     }
 }
@@ -299,11 +305,14 @@ impl Default for BlockFile {
     }
 }
 
-/// How one face is drawn: with a material, or else its colour.
+/// How one face is drawn: with a material, or else its colour; and whether
+/// it is a face of leaves or of a vine, which with no picture is drawn as
+/// small leaves in shades of its colour.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceLook {
     pub material: Option<String>,
     pub color: [f32; 3],
+    pub leafy: bool,
 }
 
 /// A key a file's generated ground may still hold, from when ground could
@@ -417,8 +426,8 @@ impl BlockFile {
     /// `block::BlockDef::fill`).
     pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
-        let mut find = |material: &Option<String>, color: [f32; 3]| {
-            let look = FaceLook { material: material.clone(), color };
+        let mut find = |material: &Option<String>, color: [f32; 3], leafy: bool| {
+            let look = FaceLook { material: material.clone(), color, leafy };
             let at = looks.iter().position(|kept| *kept == look).unwrap_or_else(|| {
                 looks.push(look);
                 looks.len() - 1
@@ -431,13 +440,15 @@ impl BlockFile {
                 faces.push(BlockFaces::default());
                 continue;
             }
-            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color);
-            let sides = find(&kind.material, kind.color);
-            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
+            let shape = if kind.water { BlockShape::Cube } else { kind.shape };
+            let leafy = !shape.is_cube();
+            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, leafy);
+            let sides = find(&kind.material, kind.color, leafy);
+            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, leafy);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
             let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
             let drawn = BlockFaces::new(top, sides, bottom);
-            faces.push(BlockFaces { water: kind.water, see_through, sways, color, ..drawn });
+            faces.push(BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn });
         }
         (looks, faces)
     }

@@ -38,7 +38,7 @@ Select a plant in the Project panel and the Inspector shows its settings, under 
 
 | Setting | What it does |
 | --- | --- |
-| `kind` | `broadleaf`, a trunk under a rounded crown of forking branches; `conifer`, rings of branches shorter towards the top; or `bush`, stems from the ground |
+| `kind` | `broadleaf`, a trunk under a rounded crown of forking branches; `conifer`, branches each one way round, each at a height of its own and rising a little, shorter towards the top; or `bush`, stems from the ground |
 | `height` | How tall the trunk is, in blocks, from and to |
 | `trunk`, `taper` | How thick the trunk is at its foot, in blocks, and how much thinner at its top, from 0 to 1 |
 | `branch` | How thick its branches are, in blocks: logs as thin as this, from a quarter of a block |

@@ -659,6 +659,9 @@ pub struct Woods {
     /// The first ring it shows in, by its level: the first past the ones
     /// its plants themselves are drawn on (see [`Woods::first_past`]).
     pub from: u32,
+    /// The world's biomes it keeps to, by their place in its list; none for
+    /// any. A structure's trees keep to its biomes far off too.
+    pub biomes: Vec<usize>,
 }
 
 /// How much of the ground a rule's plants must cover between them, each
@@ -748,19 +751,58 @@ impl FarBuilt for Woods {
                 heights.push(height);
             }
         }
-        // Their climate, asked of the generator at once.
+        // Their climate, asked of the generator at once, and from it their biome where it keeps to any.
         let mut liked = vec![true; wooded.len()];
-        if rule.temperature.is_some() || rule.humidity.is_some() {
+        let biomes = making.generate.placed.as_deref().map(|placed| &placed.biomes).filter(|_| !self.biomes.is_empty());
+        if rule.temperature.is_some() || rule.humidity.is_some() || biomes.is_some() {
             let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
             world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
-            liked = warmth.into_iter().zip(wetness).map(|climate| rule.likes(climate)).collect();
+            liked = (0..xs.len())
+                .map(|at| {
+                    let biome = biomes.is_none_or(|biomes| {
+                        let (above_sea, place) = (heights[at] - world.sea_level(), [xs[at], zs[at]]);
+                        let sunk = super::structure::sunk_at(world, biomes, place, heights[at]);
+                        let climate = crate::generate::biomes::Place {
+                            temperature: warmth[at],
+                            humidity: wetness[at],
+                            above_sea,
+                            sunk,
+                        };
+                        biomes.at(xs[at], zs[at], climate).is_some_and(|biome| self.biomes.contains(&biome))
+                    });
+                    biome && rule.likes((warmth[at], wetness[at]))
+                })
+                .collect();
         }
-        // As high as the plants stand, in whole blocks; in blocks far higher than they are, the top block's place.
+        // Each plant a crown as wide as it is and as high as it stands, in whole blocks: rounded, lower at its
+        // edge, and over a trunk of a column where the blocks are small enough to show one. In blocks far larger
+        // than it is, the top block's place.
         let tall = (self.height / size).round() as i32;
+        let radius = self.width * 0.5 / size;
+        let reach = radius.floor() as i32;
+        // Each column's ground as it was, before any crown is on it.
+        let grounds: Vec<Option<i32>> = (0..side * side).map(|at| ground(at % side, at / side).map(|(top, _)| top)).collect();
         for ((column, top), _) in wooded.into_iter().zip(liked).filter(|(_, liked)| *liked) {
-            match tall >= 1 {
-                true => tile.add(column, top, top + tall, self.block),
-                false => tile.add(column, top - 1, top, self.block),
+            if tall < 1 {
+                tile.add(column, top - 1, top, self.block);
+                continue;
+            }
+            for dz in -reach..=reach {
+                for dx in -reach..=reach {
+                    let out = ((dx * dx + dz * dz) as f32).sqrt();
+                    let at = [column[0] as i32 + dx, column[1] as i32 + dz];
+                    if out > radius.max(0.5) || at.iter().any(|v| !(0..side as i32).contains(v)) {
+                        continue;
+                    }
+                    let at = [at[0] as u32, at[1] as u32];
+                    // Each column of the crown on its own ground, under the sea none.
+                    let Some(ground) = grounds[(at[1] * side + at[0]) as usize] else { continue };
+                    let share = if radius > 0.0 { out / radius } else { 0.0 };
+                    let high = ((tall as f32) * (1.0 - 0.45 * share * share)).round().max(1.0) as i32;
+                    // Its crown starts a third of the way up where it is four blocks or more: a trunk under it.
+                    let low = if tall >= 4 && (dx, dz) != (0, 0) { tall / 3 } else { 0 };
+                    tile.add(at, ground + low.min(high - 1), ground + high, self.block);
+                }
             }
         }
     }
@@ -1173,7 +1215,7 @@ mod tests {
             far_built: Vec::new(),
         };
         let trees = GrowRule { on: vec![1], spacing: 7.0, separation: 4.0, chance: 0.6, ..GrowRule::default() };
-        let wood = Woods { rule: trees.clone(), block: 2, height: 6.5, width: 4.5, from: 3 };
+        let wood = Woods { rule: trees.clone(), block: 2, height: 6.5, width: 4.5, from: 3, biomes: Vec::new() };
         assert!(wood.shows());
         // Trees drawn to 500 m in a world of 128 m stand on its first two rings, and the wood begins with the
         // third; drawn no further than the world's own blocks, with the first ring.

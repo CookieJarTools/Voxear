@@ -449,6 +449,71 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
     sets
 }
 
+/// The structures a world's generator builds, put into its far view's
+/// nearer rings as they stand, in that ring's larger blocks: a tree far
+/// off is the same tree, coarser, its leaves its own colour, and a town its
+/// houses. A cell takes the block most of its built blocks are where a
+/// sixteenth of it is built, so a thin trunk still holds up its crown. Past
+/// [`STRUCTURES_TO`] a house is less than that of a cell, and a world's
+/// trees show as woods (`grow::Woods`).
+#[derive(Clone, Debug)]
+pub struct FarStructures {
+    /// A number for the structures it puts in: when they change, it does.
+    pub stamp: u64,
+}
+
+/// How many of a far cell's blocks must be built for it to show, as a part
+/// of all of them.
+const FAR_BUILT_SHOWS: u64 = 16;
+
+/// The coarsest ring of the far view its structures are put into
+/// themselves, by its level.
+pub const FAR_STRUCTURES_TO: u32 = STRUCTURES_TO;
+
+impl FarBuilt for FarStructures {
+    fn stamp(&self) -> u64 {
+        self.stamp
+    }
+
+    fn from_level(&self) -> u32 {
+        1
+    }
+
+    fn build(&self, making: &BlockMaking, tile: &mut FarTile) {
+        if tile.level == 0 || tile.level > STRUCTURES_TO {
+            return;
+        }
+        let (level, side) = (tile.level, CHUNK as i32);
+        // Each cell's built blocks: how many, and of each block how many.
+        let mut cells: HashMap<[i32; 3], (u64, HashMap<BlockId, u64>)> = HashMap::new();
+        for (at, block) in structures_over(making, tile) {
+            if block == AIR {
+                continue;
+            }
+            let cell = at.map(|v| v >> level);
+            let (count, blocks) = cells.entry(cell).or_default();
+            *count += 1;
+            *blocks.entry(block).or_default() += 1;
+        }
+        let whole = 1u64 << (3 * level);
+        let mut shown: Vec<([i32; 3], BlockId)> = cells
+            .into_iter()
+            .filter(|(_, (count, _))| count * FAR_BUILT_SHOWS >= whole)
+            .filter_map(|(cell, (_, blocks))| {
+                let most = blocks.into_iter().max_by_key(|&(block, count)| (count, std::cmp::Reverse(block)))?;
+                Some((cell, most.0))
+            })
+            .collect();
+        shown.sort_unstable_by_key(|(cell, _)| (cell[1], cell[2], cell[0]));
+        for ([x, y, z], block) in shown {
+            let (x, z) = (x - tile.at[0] * side, z - tile.at[1] * side);
+            if (0..side).contains(&x) && (0..side).contains(&z) {
+                tile.add([x as u32, z as u32], y, y + 1, block);
+            }
+        }
+    }
+}
+
 /// What a structure stands as on one column of the world's own blocks, seen
 /// from above: from its lowest block, `bottom`, up to `top`; its top block
 /// and how many blocks deep that lies, as a roof or a crown does; and the
@@ -955,7 +1020,7 @@ mod tests {
             ..GrowRule::default()
         };
         // Trees six metres tall and five across, drawn as leaves.
-        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1 };
+        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1, biomes: Vec::new() };
         let grows = |edits: Arc<BlockEdits>| MapGround::made(making.clone(), edits).growing(vec![trees.clone()]);
         let plain = map_tile(&MapGround::made(making.clone(), Arc::default()), 0, [0, 0]);
         let tile = map_tile(&grows(Arc::default()), 0, [0, 0]);

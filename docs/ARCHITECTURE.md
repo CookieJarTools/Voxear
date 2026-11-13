@@ -4072,15 +4072,56 @@ Every operation the editor can do should be scriptable.
 - `--stats` on `run` and `render` shows the stats overlay (F1 toggles it in a window).
 
 **Planned.**
-- Project: `vox new`, `vox open`.
+- Project: `vox open`.
 - Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.
 
-**Editor RPC.** A running editor exposes a local JSON-RPC socket, so `vox` can drive it: select, create and modify
-Objs, run play mode, capture the viewport. AI tooling can later sit on the same RPC, for example as an MCP server,
-without changing the engine.
+### The editor link *(implemented)*
+
+A running editor answers calls from other programs on the same computer, so a script, a test or an AI assistant
+can change an open project and see the result, each change a step on the editor's own undo.
+
+- **Transport** (`voxear_engine::local_link`). The editor listens on the loopback address, on a port the system
+  picks, and writes the address and a fresh secret to `<project>/.voxear/Editor` (mode 0600 on Unix; removed on
+  close). A connection sends the secret on its first line, then JSON-RPC 2.0 requests, a line each, answered in
+  order. Each connection has a thread of its own; calls go over a channel to the editor's thread, which runs them
+  in its frame, beside the shortcuts (`Editor::update_link`), so they meet the editor's state as a click does.
+  `link.hello` is answered by the connection's thread, to tell a live link from a file left by an editor that
+  crashed (which the client then removes). A second editor on the project does not open a link. Errors carry a
+  kind (`ErrorKind`: `no_such_obj`, `wrong_value`, `unsaved_conflict`, `refused_while_playing`, `not_allowed`…).
+- **Calls** (`voxear_editor::link`, run in `editor/link_calls.rs`). The calls are not written per feature:
+  - Components and fields go through the Inspector's own `Part`/`Prop` layer (`props::parts`, `props`, `get`,
+    `set`, `pick`, `choices`), so every built-in component and every script field the Inspector shows is
+    reachable.
+  - Commands are the command palette's (`palette::command_list`), scripts' `[Command]`s included.
+  - Files are the Project panel's (`project_files`).
+  - `link::every_part` and `link::asset_kind_id` match their enums whole, so a new component or asset kind does
+    not build until it says how a tool reaches it. A test adds every offered component to an Obj and sets each of
+    its fields back as it is.
+  - Objs are named by scene GUID and `ObjPath`, which survive undo, Play and saving.
+  - A change records an `Edit` as the panels do; `batch` folds its steps into one (`History::group_since`).
+  - Calls that take frames (`play`, `capture`, `scripts.build`, `editor.wait`) answer when done.
+  - The editor setting `tools_may_change` refuses every changing call, and a tool cannot turn it back on.
+  - Each change logs a `[Tools]` line to the Console.
+- **Files changed on disk.** The open scenes, the open level and `voxear.toml` are looked at twice a second. A
+  scene whose file no longer holds what the scene has (`Levels::scene_matches_disk`, so the editor's own saves do
+  not count) is read again with `Levels::reload_scenes` when no edits wait. Undo starts afresh and the selection
+  is kept by Obj path. With edits waiting, the file is left and the status bar says so; `scene.reload` with
+  `discard` reads it anyway. `voxear.toml` is read again into the project and Project Settings.
+- **`vox editor call <call> [name=value…]`** prints the answer as JSON. Exit codes: 0 done, 1 failed, 2 usage,
+  3 no editor open, 4 refused. `--headless` opens an offscreen editor for the call when none is open
+  (`voxear_editor::call_headless`); `batch` with no arguments reads its calls from stdin. `--describe [--json]`
+  lists every call with its arguments, and the open project's components, commands and kinds.
+- **`vox editor serve`** keeps a headless editor answering (`voxear_editor::serve`). A windowed editor opening on
+  the project asks it to save and close, and takes the link (`take_over_from_headless`).
+- **`vox mcp`** serves the calls as Model Context Protocol tools over stdio, hand-written on `serde_json`. Each
+  call is a tool, `.` written `_`, its arguments as the input schema; one `vox` tool runs the other commands.
+  `capture` returns the PNG inline. It uses the open editor, or starts `vox editor serve` and closes it on exit.
+- **Not yet.** Brush tools (terrain sculpt and paint, block placing and digging, plant painting), the generator
+  graph and the Model window are reached only through their files and `files.look`; no pointer or key input;
+  nothing is pushed to a tool (it polls, as `console.read` with `after` does); undo steps carry no tool's name.
 
 ## Debugging and profiling tools
 

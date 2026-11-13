@@ -2741,7 +2741,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - pages read by someone new to Voxear following them step by step, and rewritten where they get stuck
   - Docs Health in the editor holding the line after: pages older than the code they describe, samples that no
     longer build, and APIs with no page
-- Editor RPC for `vox`, and the hook for AI tooling.
+- ~~**Editor RPC for `vox`, and the hook for AI tooling:**~~ done: a running editor answers calls from programs on the
+  same computer (`voxear_engine::local_link`): loopback only, a secret in `.voxear/Editor` only its user reads,
+  JSON-RPC 2.0 a line each. 52 calls (`voxear_editor::link::CALLS`): read the open level, Objs, components and
+  fields as JSON; make, change, copy, move and delete Objs; add, remove and switch components; set any field the
+  Inspector shows by its typed reference; undo, redo and `batch` as one step; select and frame; every command
+  palette command by id; save, open levels and scenes; the Project panel's files; Play, Pause, Step, Stop and the
+  played game's console; the Console's lines; a PNG of the Scene view, Game view or whole editor; script builds
+  with their errors by file and line; settings; the manual's pages. Each change is a step on the editor's undo
+  and a `[Tools]` line in the Console; **Let tools change the project** in Settings makes tools read only. Open
+  scenes and `voxear.toml` written on disk are read again, unless edits wait. `vox editor call` (JSON out, exit
+  codes, `--headless`, `--describe --json`), `vox editor serve` (a headless editor a windowed one takes over
+  from), and `vox mcp`, every call a tool for an AI assistant, with captures sent as pictures. Tests: the link
+  (order, a wrong secret, loopback and 0600, a second editor, a stale file), an editor driven over the socket
+  (make an Obj, set a field, undo, redo, save, capture, the Console), a batch as one step, refusals, scenes
+  changed on disk, every component's fields reached, `vox editor call` and `vox mcp` from outside. Manual: The
+  Command Line, Driving the Editor from a Terminal. Not done: brush tools, the generator graph and the Model
+  window by call rather than by file; pointer and key input; events pushed to tools.
 
 ## M13 — Virtualised geometry (Nanite-style)
 

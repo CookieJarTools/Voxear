@@ -780,6 +780,11 @@ fn mesh_parts(
                 let state = BlockState::from_byte(kind.state);
                 let around = around_of(faces, block, p, &kind);
                 let boxes = part_boxes(kind.shape, state, around, kind.custom.as_ref());
+                // The sides it reaches out to: a pane's run on through, or across, where it joins less.
+                let reaches = match kind.shape {
+                    super::block::BlockShape::Pane => super::shape::pane_joins(around.joins, state.facing),
+                    _ => around.joins,
+                };
                 // How many hanging blocks are over it, to what holds them up; none where nothing does.
                 let hangs = match kind.part & PART_HANGS != 0 {
                     false => 0,
@@ -810,7 +815,7 @@ fn mesh_parts(
                             super::block::BlockShape::Log => Some(usize::from(joined.index())),
                             _ => BlockFacing::AROUND.iter().position(|&way| way == joined),
                         };
-                        if on_side && bit.is_some_and(|bit| around.joins & (1 << bit) != 0) && is_part(faces, block(beyond)) {
+                        if on_side && bit.is_some_and(|bit| reaches & (1 << bit) != 0) && is_part(faces, block(beyond)) {
                             continue;
                         }
                         let (across, up) = ([part.from[u], part.to[u]], [part.from[v], part.to[v]]);
@@ -1825,6 +1830,12 @@ mod part_tests {
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
         let hangs = |at: [u32; 3]| parts_of(&mesh).into_iter().find(|quad| quad.at == at).map(|quad| quad.hangs);
         assert_eq!([hangs([1, 9, 1]), hangs([1, 8, 1]), hangs([6, 1, 6])], [Some(1), Some(2), Some(0)]);
+        // A chain is two sheets crossed through its middle, a face on each side of each, its picture once across.
+        let chain: Vec<_> = parts_of(&mesh).into_iter().filter(|quad| quad.at == [1, 9, 1]).collect();
+        let mut facings: Vec<_> = chain.iter().map(|quad| quad.facing).collect();
+        facings.sort();
+        assert_eq!(facings, [0, 1, 4, 5], "{chain:?}");
+        assert!(chain.iter().all(|quad| quad.plane == 8 && quad.across == [0, 16] && quad.up == [0, 16]), "{chain:?}");
         assert!(!is_ground(&faces, 2) && !is_ground(&faces, 3), "chains and levers are walked through");
         assert!(super::super::keeps_water_out(&faces, 3), "but water keeps out of them");
         assert!(mesh.positions.iter().all(|p| !(p[0] > 1.0 && p[0] < 2.0 && p[1] > 8.0 && p[1] < 10.0)), "no collision");

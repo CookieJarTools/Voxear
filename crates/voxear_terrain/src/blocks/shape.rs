@@ -305,6 +305,7 @@ impl BlockState {
             BlockShape::FenceGate => Self { facing: around(self.facing), open: self.open, ..blank },
             BlockShape::Lever | BlockShape::Button => Self { facing: self.facing, on: self.on, ..blank },
             BlockShape::Boxes => Self { facing: around(self.facing), open: self.open, ..blank },
+            BlockShape::Pane => Self { facing: around(self.facing), ..blank },
             BlockShape::Log => {
                 let size = if self.size == 0 { 0 } else { log_size(f32::from(self.size)) };
                 Self { facing: self.facing.axis(), size, ..blank }
@@ -352,7 +353,8 @@ impl BlockState {
 /// from who puts it down, upside down where put under something or high
 /// on a side; a door stands on the far side, its hinge on the side of the
 /// face it was put nearer; a trap door hangs on the face it is put on; a
-/// lever and a button stand out of it; a block of boxes faces back.
+/// lever and a button stand out of it; a block of boxes faces back; a pane
+/// runs across the way they look.
 pub fn placed_state(shape: BlockShape, normal: [i32; 3], within: [f32; 3], look: [f32; 3]) -> BlockState {
     let base = BlockState::default_for(shape);
     let against = BlockFacing::of_step(normal).map(BlockFacing::opposite);
@@ -383,6 +385,8 @@ pub fn placed_state(shape: BlockShape, normal: [i32; 3], within: [f32; 3], look:
         BlockShape::FenceGate => BlockState { facing: ahead, ..base },
         BlockShape::Lever | BlockShape::Button => BlockState { facing: against.unwrap_or(BlockFacing::Down), ..base },
         BlockShape::Boxes => BlockState { facing: ahead.opposite(), ..base },
+        // Across the way whoever puts it down looks, where nothing beside it says otherwise.
+        BlockShape::Pane => BlockState { facing: ahead, ..base },
         // Along the way out of the face it is put on, as a log lies.
         BlockShape::Log => BlockState { facing: against.unwrap_or(BlockFacing::Up), ..base },
         _ => base,
@@ -431,6 +435,7 @@ impl StateUse {
             BlockShape::FenceGate => Self { facings: 4, open: true, ..none },
             BlockShape::Lever | BlockShape::Button => Self { facings: 6, on: true, ..none },
             BlockShape::Boxes => Self { facings: 4, open: true, ..none },
+            BlockShape::Pane => Self { facings: 4, ..none },
             BlockShape::Log => Self { facings: 3, size: true, ..none },
             _ => none,
         }
@@ -881,7 +886,7 @@ pub fn part_boxes(shape: BlockShape, state: BlockState, around: Around, custom: 
             boxes
         }
         BlockShape::Pane => {
-            let joins = if around.joins == 0 { 0b1111 } else { around.joins };
+            let joins = pane_joins(around.joins, facing);
             let mut boxes = vec![b([7, 0, 7], [9, 16, 9])];
             for (bit, way) in BlockFacing::AROUND.into_iter().enumerate() {
                 if joins & (1 << bit) != 0 {
@@ -932,7 +937,9 @@ pub fn part_boxes(shape: BlockShape, state: BlockState, around: Around, custom: 
             let press = Hinge { pivot: [16, 0, 16], axis: BlockFacing::Down };
             vec![stand_box(PartBox::moving([5, 0, 6], [11, 2, 10], press), facing)]
         }
-        BlockShape::Chain => vec![b([5, 0, 7], [11, 16, 9]), b([7, 0, 5], [9, 16, 11])],
+        // Two sheets crossed through its middle, each its picture once: links in a picture cut out, which a box would
+        // show on all its sides, a side as thin as a link a strip of the picture drawn out across it.
+        BlockShape::Chain => vec![b([0, 0, 8], [16, 16, 8]), b([8, 0, 0], [8, 16, 16])],
         BlockShape::Rope => vec![b([7, 0, 7], [9, 16, 9])],
         BlockShape::Boxes => match custom {
             Some(custom) => custom.boxes().iter().map(|&part| turn_box(part, facing)).collect(),
@@ -940,6 +947,21 @@ pub fn part_boxes(shape: BlockShape, state: BlockState, around: Around, custom: 
         },
         BlockShape::Log => log_boxes(state, around.joins),
         BlockShape::Cube | BlockShape::Bushy | BlockShape::Vine | BlockShape::Sapling => Vec::new(),
+    }
+}
+
+/// Which sides a pane reaches out to, a bit each in [`BlockFacing::AROUND`]'s
+/// order, from those it `joins`: joined on one side alone, it runs on
+/// through to the other, and joined on none, across the way it faces, so
+/// a pane beside a door or between two gates is a whole pane, never half
+/// of one or two crossed.
+pub fn pane_joins(joins: u8, facing: BlockFacing) -> u8 {
+    match joins {
+        0 if facing.axis() == BlockFacing::East => 0b0101,
+        0 => 0b1010,
+        0b0001 | 0b0100 => 0b0101,
+        0b0010 | 0b1000 => 0b1010,
+        _ => joins,
     }
 }
 
@@ -1166,7 +1188,30 @@ mod tests {
         assert!(tall.iter().all(|part| part.to[1] == 24));
         let straight = Around { joins: 0b0101, ..Around::default() };
         assert_eq!(part_boxes(BlockShape::Wall, BlockState::default(), straight, None), vec![PartBox::new([5, 0, 0], [11, 14, 16])]);
-        assert_eq!(part_boxes(BlockShape::Pane, BlockState::default(), Around::default(), None).len(), 5, "alone, a cross");
+        // A pane alone runs across the way it faces; joined on one side, on through to the other; at a corner, round it.
+        let reach = |state: BlockState, joins: u8| {
+            let boxes = part_boxes(BlockShape::Pane, state, Around { joins, ..Around::default() }, None);
+            let low = boxes.iter().map(|part| part.from).fold([16; 3], |a, b| std::array::from_fn(|i| a[i].min(b[i])));
+            let high = boxes.iter().map(|part| part.to).fold([0; 3], |a, b| std::array::from_fn(|i| a[i].max(b[i])));
+            (boxes.len(), low, high)
+        };
+        let facing = |facing: BlockFacing| BlockState { facing, ..BlockState::default() };
+        assert_eq!(reach(BlockState::default(), 0), (3, [0, 0, 7], [16, 16, 9]), "alone, east to west");
+        assert_eq!(reach(facing(BlockFacing::West), 0), (3, [7, 0, 0], [9, 16, 16]), "alone, north to south");
+        assert_eq!(
+            reach(BlockState::default(), 1 << 3),
+            (3, [0, 0, 7], [16, 16, 9]),
+            "beside a door, the door's way too"
+        );
+        assert_eq!(reach(BlockState::default(), 1), (3, [7, 0, 0], [9, 16, 16]));
+        assert_eq!(reach(BlockState::default(), 0b0011), (3, [7, 0, 0], [16, 16, 9]), "round a corner");
+        assert_eq!(
+            BlockState::default().normalized(BlockShape::Pane),
+            facing(BlockFacing::North),
+            "an old pane runs east to west"
+        );
+        let put = placed_state(BlockShape::Pane, [0, 1, 0], [0.5; 3], [1.0, -0.2, 0.1]);
+        assert_eq!(put.facing, BlockFacing::East, "across the way it is put down, looking east");
         assert_eq!(covers(BlockShape::Pane, BlockState::default(), None), 0);
     }
 

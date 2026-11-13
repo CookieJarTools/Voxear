@@ -179,7 +179,7 @@ fn trees_close_up_from_the_side_and_over_their_crowns_behind_a_player_and_far_of
         };
         feet.push(foot);
         let middle = Vec3::new(foot[0] as f32 + 0.5, foot[1] as f32 + 5.0, foot[2] as f32 + 0.5);
-        let views = [("side", middle + Vec3::new(-7.0, 0.0, -7.0)), ("top", middle + Vec3::new(-3.0, 16.0, -3.0))];
+        let views = [("side", middle + Vec3::new(-11.0, 3.0, -11.0)), ("top", middle + Vec3::new(-3.0, 16.0, -3.0))];
         for (view, at) in views {
             picture(&mut game, &mut renderer, format!("{kind} {view}"), at, looking(at, middle + Vec3::Y * 3.0), 40);
             eprintln!("{kind} at {foot:?}: {view} from {at}");

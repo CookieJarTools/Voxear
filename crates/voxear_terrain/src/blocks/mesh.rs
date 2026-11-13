@@ -671,12 +671,18 @@ pub fn around_of(faces: &[BlockFaces], block: &dyn Fn([i32; 3]) -> BlockId, p: [
             Around { corner, ..Around::default() }
         }
         BlockShape::Log => {
-            // Every log of its block beside it across the way it lies, thin or whole.
+            // Each log of its block beside it across the way it lies that its limb runs into: one thicker, the trunk
+            // it leaves, or one lying towards it, the next step of its limb. Two limbs side by side do not join.
             let mut joins = 0;
-            let along = BlockState::from_byte(kind.state).facing.axis();
+            let mine = BlockState::from_byte(kind.state);
             for way in BlockFacing::ALL {
                 let other = faces_of(block(step(way)));
-                if way.axis() != along && kind.family != 0 && other.family == kind.family && !other.water {
+                if way.axis() == mine.facing.axis() || kind.family == 0 || other.family != kind.family || other.water {
+                    continue;
+                }
+                let theirs = BlockState::from_byte(other.state);
+                let whole = other.shape != BlockShape::Log;
+                if whole || theirs.across() > mine.across() || theirs.facing.axis() == way.axis() {
                     joins |= 1 << way.index();
                 }
             }

@@ -277,26 +277,6 @@ impl Random {
     }
 }
 
-/// Sixteen ways along the ground, a turn of a sixteenth apart.
-const ROUND: [[f32; 2]; 16] = [
-    [1.0, 0.0],
-    [0.9239, 0.3827],
-    [0.7071, 0.7071],
-    [0.3827, 0.9239],
-    [0.0, 1.0],
-    [-0.3827, 0.9239],
-    [-0.7071, 0.7071],
-    [-0.9239, 0.3827],
-    [-1.0, 0.0],
-    [-0.9239, -0.3827],
-    [-0.7071, -0.7071],
-    [-0.3827, -0.9239],
-    [0.0, -1.0],
-    [0.3827, -0.9239],
-    [0.7071, -0.7071],
-    [0.9239, -0.3827],
-];
-
 /// Eight ways along the ground, a turn of an eighth apart.
 const AROUND: [[f32; 2]; 8] = [
     [1.0, 0.0],
@@ -669,8 +649,10 @@ impl PlantDef {
     ) {
         let begins = (height - high).max(height * 0.15);
         let branches = self.branches.clamp(0.0, 1.0);
-        let apart = (2.6 - branches * 1.4).max(1.0);
-        let per_ring = if branches > 0.5 { 5 } else { 4 };
+        // Rings far enough apart that two branches one way are two blocks apart and more, so none steps up into
+        // the one over it; each ring's branches at heights of their own between, so the crown is as full.
+        let apart = (3.2 - branches * 1.4).max(2.2);
+        let per_ring = if branches > 0.5 { 4 } else { 3 };
         let leaf = (self.leaf_size * 0.5).clamp(0.6, 1.6);
         let density = self.leaf_density.clamp(0.05, 1.0);
         let mut up = begins;
@@ -683,24 +665,17 @@ impl PlantDef {
         while up < height - 0.5 {
             let share = ((up - begins) / (height - begins).max(1.0)).clamp(0.0, 1.0);
             let reach = width * 0.5 * (1.0 - share) + 0.6;
-            // Each ring turned from the last, its branches spread round it, each a little off its place.
-            let first = (ring * 7 + (random.next() % 3) as usize) % 16;
+            // Four branches round it, one each way along the ground, each leaving at a height of its own between
+            // this ring and the next, so they climb round the trunk rather than cross it at one height; each ring
+            // starting another way round.
             for branch in 0..per_ring {
-                let way = ROUND[(first + branch * 16 / per_ring + (random.next() % 2) as usize) % 16];
-                // Each leaves the trunk at a height of its own, between this ring and the next.
-                let from = trunk_at((up + random.unit() * apart * 0.6).min(height - 0.5));
+                let way = AROUND[((ring % 2) + branch * 2) % 8];
+                let from = trunk_at((up + apart * branch as f32 / per_ring as f32).min(height - 0.5));
                 let long = reach * (0.75 + 0.25 * random.unit());
-                // Out, rising as it goes.
-                let end = [from[0] + way[0] * long, from[1] + long * 0.3, from[2] + way[1] * long];
+                // Straight out, rising a block at most, so it reads as one limb.
+                let rise = (long * 0.15).min(0.9);
+                let end = [from[0] + way[0] * long, from[1] + rise, from[2] + way[1] * long];
                 plant.logs(from, end, self.branch_across(), PlantPart::Branch);
-                // A long one forks two thirds out, a twig reaching on round from it, rising more.
-                if long > 2.5 {
-                    let fork = add(from, [0, 1, 2].map(|k| end[k] - from[k]), 0.66);
-                    let twig = ROUND[(first + branch * 16 / per_ring + 2) % 16];
-                    let tip = [fork[0] + twig[0] * long * 0.35, fork[1] + long * 0.25, fork[2] + twig[1] * long * 0.35];
-                    plant.logs(fork, tip, self.branch_across(), PlantPart::Branch);
-                    plant.clump(tip, leaf * 2.0, density, random);
-                }
                 let clumps = (long / (leaf * 1.2)).ceil().max(1.0) as u32;
                 for clump in 1..=clumps {
                     let at = add(from, [0, 1, 2].map(|k| end[k] - from[k]), clump as f32 / clumps as f32);

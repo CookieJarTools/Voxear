@@ -40,7 +40,7 @@ use crate::{
     passes::{attachment, begin_rendering, bind, set_viewport},
     pipelines::Pipelines,
     scene::{ExtractedFrame, Owner},
-    shadows::{CASCADE_RESOLUTION, CASCADES},
+    shadows::CASCADES,
     terrain::{GpuTerrainSurface, SurfaceLook, surface_flags},
 };
 
@@ -1150,7 +1150,7 @@ pub(crate) fn record_shadows(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     view: &ViewBlocks,
-    atlas: ImageId,
+    (atlas, cascade_size): (ImageId, u32),
 ) {
     if !view.shadows {
         return;
@@ -1158,16 +1158,16 @@ pub(crate) fn record_shadows(
     let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
     let view = view.clone();
     fg.add_pass("Shadows (blocks)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
-        let size = CASCADE_RESOLUTION * 2;
+        let size = cascade_size * 2;
         let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
         bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
         for cascade in 0..CASCADES as u32 {
             let offset = vk::Offset2D {
-                x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                x: (cascade % 2 * cascade_size) as i32,
+                y: (cascade / 2 * cascade_size) as i32,
             };
-            set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+            set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
             draw_runs(ctx, &view, &push, LIST_SHADOW + cascade);
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

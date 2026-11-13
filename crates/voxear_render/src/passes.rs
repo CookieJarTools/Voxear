@@ -34,7 +34,7 @@ use crate::{
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
-    shadows::{CASCADE_RESOLUTION, CASCADES},
+    shadows::CASCADES,
     volumetric,
 };
 
@@ -48,6 +48,8 @@ pub struct Targets {
     pub pyramid_mips: Vec<StorageImageId>,
     pub pyramid_size: [u32; 2],
     pub shadows: Option<ImageId>,
+    /// How many texels a side each of the sun's cascades has in it.
+    pub cascade_size: u32,
     /// The local lights' shadow atlas, with each light's first view and how
     /// many it takes, when any local light casts a shadow this frame.
     pub local_shadows: Option<(ImageId, Vec<(u32, u32)>)>,
@@ -289,18 +291,19 @@ pub fn record(
             cull(ctx, pipelines.cull, &push, LIST_SHADOW, instances, CASCADES as u32);
         });
         meshlet_pass(fg, "Shadow meshlets", &[], [LIST_SHADOW, LIST_SHADOW + CASCADES as u32]);
+        let cascade_size = targets.cascade_size;
         fg.add_pass("Shadows", &[(atlas, ImageAccess::DepthAttachment)], &drawing, move |ctx| {
-            let size = CASCADE_RESOLUTION * 2;
+            let size = cascade_size * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
             let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
             bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
-                    x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                    y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                    x: (cascade % 2 * cascade_size) as i32,
+                    y: (cascade / 2 * cascade_size) as i32,
                 };
-                set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 indirect.draw(ctx, LIST_SHADOW + cascade);
             }
@@ -389,7 +392,7 @@ pub fn record(
         images.extend(caustics.map(|image| (image, ImageAccess::Sampled)));
         images
     };
-    let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
+    let shading_push = Push { size: [targets.cascade_size; 2], ..draw_push };
     let forward = match (mesh, frame.wireframe) {
         (Some(mesh), true) => mesh.wireframe,
         (Some(mesh), false) => mesh.forward,
@@ -463,17 +466,18 @@ pub fn record(
             (draws.dice_patches, BufferAccess::ShaderRead),
             (draws.dice_splits, BufferAccess::ShaderRead),
         ];
+        let cascade_size = targets.cascade_size;
         fg.add_pass("Shadows (diced)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
-            let size = CASCADE_RESOLUTION * 2;
+            let size = cascade_size * 2;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
             bind(ctx, pipelines.shadow_diced, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
                 let offset = vk::Offset2D {
-                    x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
-                    y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                    x: (cascade % 2 * cascade_size) as i32,
+                    y: (cascade / 2 * cascade_size) as i32,
                 };
-                set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 dice.draw(ctx);
             }
@@ -484,7 +488,7 @@ pub fn record(
         crate::terrain::record_shadows(fg, (pipelines, push), terrains, atlas);
     }
     if let (Some(atlas), Some(blocks)) = (targets.shadows, &frame.blocks) {
-        crate::blocks::record_shadows(fg, (pipelines, push), blocks, atlas);
+        crate::blocks::record_shadows(fg, (pipelines, push), blocks, (atlas, targets.cascade_size));
     }
     // The grass round the camera, scattered afresh before anything draws it.
     if let Some(grass) = &frame.grass {

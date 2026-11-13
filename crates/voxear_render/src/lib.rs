@@ -2364,7 +2364,9 @@ impl View {
         let pyramid_desc = pyramid_desc(extent);
         let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
         let shadows = if extracted.has_sun && sun_shadows {
-            let desc = ImageDesc::new(ATLAS_RESOLUTION, ATLAS_RESOLUTION, DEPTH_FORMAT, depth_usage);
+            // A quarter the size through a Portal, whose far side shows in part of the picture.
+            let side = if portal.is_some() { ATLAS_RESOLUTION / 2 } else { ATLAS_RESOLUTION };
+            let desc = ImageDesc::new(side, side, DEPTH_FORMAT, depth_usage);
             // The views through Portals share an atlas of their own: the view they are seen in still reads its
             // own after they are drawn.
             let name = if portal.is_some() { "portal shadow atlas" } else { "shadow atlas" };
@@ -2578,7 +2580,9 @@ impl View {
         let cloudy = frame_data.lighting.clouds.cover > 0.0 && !wireframe;
         let cloud_images = match cloudy {
             true => {
-                let mut images = clouds::CloudImages::new(fg, (gpu, bindless), extent, history)?;
+                // Through a Portal at half the size again: its far side shows in part of the picture.
+                let shrink = if portal.is_some() { 4 } else { 2 };
+                let mut images = clouds::CloudImages::new(fg, (gpu, bindless), (extent, shrink), history)?;
                 // Through a Portal, only the part of the sky its opening shows.
                 images.within = portal.map(|pass| pass.rect);
                 Some(images)
@@ -2825,6 +2829,7 @@ impl View {
             pyramid_mips: (0..pyramid_desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip)).collect(),
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
             shadows,
+            cascade_size: if portal.is_some() { shadows::CASCADE_RESOLUTION / 2 } else { shadows::CASCADE_RESOLUTION },
             local_shadows: local_shadows.map(|atlas| (atlas, extracted.local_shadows.clone())),
             glass_shadows,
         };

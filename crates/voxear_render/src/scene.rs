@@ -825,7 +825,7 @@ pub fn extract(
             frame.cascade_view_proj[i] = cols(cascade.view_proj);
             frame.cascade_planes[i] = cascade.planes;
             frame.cascade_far[i] = cascade.far;
-            frame.cascade_texel[i] = cascade.texel;
+            frame.cascade_texel[i] = cascade.texel * if through.is_some() { 2.0 } else { 1.0 };
         }
     }
 

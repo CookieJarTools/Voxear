@@ -85,17 +85,22 @@ pub struct CloudImages {
 }
 
 impl CloudImages {
-    /// The pictures for a frame drawn `extent` across; `history` says which
-    /// of the two history images this frame writes, as TAA's does.
+    /// The pictures for a frame drawn `extent` across, `shrink` times
+    /// smaller each way; `history` says which of the two history images
+    /// this frame writes, as TAA's does.
     pub fn new(
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
-        extent: vk::Extent2D,
+        (extent, shrink): (vk::Extent2D, u32),
         history: usize,
     ) -> Result<Self> {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let half =
-            ImageDesc::new(extent.width.div_ceil(2).max(1), extent.height.div_ceil(2).max(1), TABLE_FORMAT, usage);
+        let half = ImageDesc::new(
+            extent.width.div_ceil(shrink).max(1),
+            extent.height.div_ceil(shrink).max(1),
+            TABLE_FORMAT,
+            usage,
+        );
         let shadows = ImageDesc::new(SHADOW_SIDE, SHADOW_SIDE, TABLE_FORMAT, usage);
         Ok(Self {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], half)?,

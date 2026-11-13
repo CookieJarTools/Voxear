@@ -516,10 +516,11 @@ pub fn extract(
         .into_iter()
         .filter(|(entity, ..)| on(*entity, Switch::Camera))
         .find(|(entity, ..)| options.camera.is_none_or(|chosen| chosen == *entity))
-        .map(|(_, camera, local, world)| (camera, local, world))
-        .map(|(camera, local, world)| {
+        .map(|(entity, camera, local, placed)| {
             let (_, rotation, position) =
-                world.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+                placed.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
+            // A camera whose view a Portal carries looks from the other side of it.
+            let (position, rotation) = crate::portals::ViewCarry::of(world, entity, position, rotation);
             (*camera, position, rotation)
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));

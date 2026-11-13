@@ -162,7 +162,7 @@ pub use scene::{
     ViewOptions,
     temperature_color,
 };
-pub use portals::{Carry, Portal, PortalFar, PortalPose, PortalSide};
+pub use portals::{CameraFollows, Carry, Portal, PortalFar, PortalPose, PortalSide, PortalTraveller, ViewCarry};
 pub use voxear_rhi::TextureId;
 pub use hot_reload::{CustomCode, compile_custom_shaders, engine_shader_dir};
 
@@ -728,6 +728,27 @@ impl Renderer {
         self.particle_sim.shift_origin(by);
     }
 
+
+    /// Tells the views through `camera` that it went through a Portal:
+    /// it now looks from where `by` takes where it looked from, and the
+    /// picture goes on unbroken, as what it saw through the opening is what
+    /// it sees now.
+    pub fn carry_view(&mut self, camera: voxear_ecs::Entity, by: voxear_core::math::Mat4) {
+        for view in &mut self.views {
+            if view.options.camera.is_none_or(|own| own == camera) {
+                view.carried(by);
+            }
+        }
+    }
+
+    /// Tells every view that `objs` went through Portals, each by its own
+    /// move: they count as having stood still, not as having crossed the
+    /// world in a frame.
+    pub fn carry_objs(&mut self, objs: &[(voxear_ecs::Entity, voxear_core::math::Mat4)]) {
+        for view in &mut self.views {
+            view.carried_objs(objs);
+        }
+    }
 
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
@@ -2062,6 +2083,41 @@ impl View {
         self.foliage.shift(by);
         for child in &mut self.portals {
             child.view.shift_plants(by);
+        }
+    }
+
+    /// The camera went through a Portal (see `Renderer::carry_view`): last
+    /// frame's camera is where `by` takes it, so what was seen through the
+    /// opening keeps its motion and its TAA history. What is kept round the
+    /// camera starts afresh on the far side.
+    fn carried(&mut self, by: voxear_core::math::Mat4) {
+        use voxear_core::math::Mat4;
+        let back = by.inverse();
+        if let Some(before) = self.prev_view_proj.as_mut() {
+            *before = (Mat4::from_cols_array_2d(before) * back).to_cols_array_2d();
+        }
+        if let Some((camera, forward)) = self.prev_camera.as_mut() {
+            (*camera, *forward) = (by.transform_point3(*camera), by.transform_vector3(*forward));
+        }
+        self.cloud_history = None;
+        self.ddgi_history = None;
+        self.fog_history = false;
+        for child in &mut self.portals {
+            child.view.reset_history();
+        }
+    }
+
+    /// Objs that went through a Portal, each by its own move, were last
+    /// frame where that takes where they were.
+    fn carried_objs(&mut self, objs: &[(voxear_ecs::Entity, voxear_core::math::Mat4)]) {
+        use voxear_core::math::Mat4;
+        if objs.is_empty() {
+            return;
+        }
+        for (owner, model) in &mut self.prev_models {
+            if let Some((_, by)) = objs.iter().find(|(entity, _)| *entity == owner.entity) {
+                *model = (*by * Mat4::from_cols_array_2d(model)).to_cols_array_2d();
+            }
         }
     }
 

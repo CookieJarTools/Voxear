@@ -680,6 +680,8 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // Before the frame is drawn: what went through a Portal did not cross the world in a frame.
+        crate::portals::tell_renderer(&mut self.engine.world, renderer.as_deref_mut());
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.

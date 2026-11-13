@@ -510,6 +510,7 @@ impl Engine {
     /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
         self.time.advance(unscaled_delta);
+        crate::portals::begin_frame(&mut self.world);
         self.physics_events.clear();
         self.physics_events_2d.clear();
         // Last frame's debug draw has been seen; its shapes count down.
@@ -571,6 +572,7 @@ impl Engine {
             profile_scope!("FixedUpdate");
             if smoothing {
                 crate::tick_smoothing::before_tick(&mut self.world);
+                crate::portals::look(&mut self.world);
             }
             crate::net::fixed_tick(&mut self.world);
             self.sync_script_time(self.time.fixed_delta);
@@ -578,6 +580,10 @@ impl Engine {
             self.run_stage("FixedUpdate");
             self.flush();
             self.step_physics();
+            // What the tick moved through a Portal's opening comes out of the other.
+            if !self.edit_mode {
+                crate::portals::carry_objs(&mut self.world);
+            }
             crate::net::after_tick(&mut self.world);
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
@@ -591,12 +597,20 @@ impl Engine {
             crate::tick_smoothing::end_ticks(&mut self.world, steps > 0, share);
         }
         self.sync_script_time(self.time.delta);
+        // Where each Obj is shown, for what the frame's scripts move from there.
+        if !self.edit_mode {
+            crate::portals::look(&mut self.world);
+        }
 
         {
             profile_scope!("Update");
             self.run_phase(Phase::Update);
             self.run_stage("Update");
             self.flush();
+            // And what Update moved through one, before anything follows it in LateUpdate.
+            if !self.edit_mode {
+                crate::portals::carry_objs(&mut self.world);
+            }
         }
         {
             // Posed after Update, so LateUpdate sees this frame's bones.
@@ -615,6 +629,10 @@ impl Engine {
             self.run_script_systems(SCRIPT_POSE);
             self.flush();
             crate::animation::attach_to_bones(&mut self.world);
+            // What animation walked through a Portal goes through too.
+            if !self.edit_mode {
+                crate::portals::carry_objs(&mut self.world);
+            }
         }
         self.tell_motion_marks();
         self.tell_particle_hits();
@@ -624,6 +642,9 @@ impl Engine {
             self.run_phase(Phase::LateUpdate);
             self.run_stage("PostUpdate");
             self.flush();
+            // Cameras are where their scripts put them: those with a Portal between them and what they film
+            // look through it.
+            crate::portals::carry_views(&mut self.world);
         }
 
         profile_scope!("End of Frame");

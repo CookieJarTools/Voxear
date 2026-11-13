@@ -776,6 +776,31 @@ impl PhysicsScene {
         objs
     }
 
+    /// Tells physics an Obj was set down somewhere else, turned by `turn`,
+    /// as going through a Portal does: its body or character is put where
+    /// its Obj now is at once, a kinematic body too, which would otherwise
+    /// sweep there, and its speed and spin are turned with it.
+    pub fn teleported(&mut self, world: &World, entity: Entity, turn: Quat) {
+        let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+        if let Some(kept) = self.bodies.get_mut(&entity) {
+            kept.placed = (position, rotation);
+            let body = kept.body;
+            let (linear, angular) = self.world.velocity(body);
+            self.world.set_transform(body, position, rotation);
+            self.world.set_velocity(body, turn * linear, turn * angular);
+        }
+        if let Some(walker) = self.characters.get_mut(&entity) {
+            walker.placed = position;
+            if let Some(state) = walker.state.as_mut() {
+                state.position = position;
+                state.velocity = turn * state.velocity;
+                state.ground_normal = turn * state.ground_normal;
+            }
+            let id = walker.id;
+            self.world.set_character_position(id, position);
+        }
+    }
+
     /// How an Obj's Character Controller's last move went.
     pub fn character_state(&self, entity: Entity) -> Option<CharacterState> {
         self.characters.get(&entity)?.state

@@ -70,6 +70,42 @@ pub struct PortalFar {
 
 impl Component for PortalFar {}
 
+/// Goes through Portals though it is neither a Character Controller nor a
+/// Rigidbody, which go through without one: an Obj a script moves, as a
+/// thrown thing with no body of its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortalTraveller;
+
+impl Component for PortalTraveller {}
+
+/// On a camera's Obj: the Obj the camera films. While a Portal's opening
+/// lies between the two, the camera's view is carried through it, so a
+/// camera that follows something through a Portal goes on seeing it through
+/// the opening until the camera crosses too. A camera under a Character
+/// Controller or a Rigidbody films that without one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CameraFollows(pub Entity);
+
+impl Component for CameraFollows {}
+
+/// On a camera's Obj, set each frame by the engine: its view is carried
+/// through a Portal, so it looks from where this takes its Obj.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewCarry(pub Carry);
+
+impl Component for ViewCarry {}
+
+impl ViewCarry {
+    /// Where a camera's Obj standing at `position`, turned `rotation`,
+    /// looks from: carried, when it has one.
+    pub fn of(world: &World, camera: Entity, position: Vec3, rotation: Quat) -> (Vec3, Quat) {
+        match world.get::<ViewCarry>(camera) {
+            Some(carry) => (carry.0.point(position), carry.0.turn(rotation)),
+            None => (position, rotation),
+        }
+    }
+}
+
 /// Where a Portal stands: its Obj's place and turn in the world, whatever
 /// its scale.
 #[derive(Clone, Copy, Debug, PartialEq)]

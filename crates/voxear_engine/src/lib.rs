@@ -40,6 +40,7 @@ pub mod package_scripts;
 pub mod packages;
 mod mist;
 pub mod particles;
+pub mod portals;
 pub mod smoke;
 pub mod tick_smoothing;
 pub use voxear_localization as localization;

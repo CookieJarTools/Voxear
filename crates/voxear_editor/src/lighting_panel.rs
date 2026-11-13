@@ -1216,7 +1216,7 @@ mod tests {
         let shown = effective(&read(&file)).unwrap();
         assert_eq!(find(&shown, &["weather", "kind"]).and_then(|v| v.as_str()), Some("clear"), "clear unless set");
         let amounts = SETTINGS.iter().filter(|info| info.group == "Weather" && info.path != ["weather", "kind"]);
-        assert!(amounts.clone().count() == 7 && amounts.clone().all(|info| !applies(&shown, info.when)));
+        assert!(amounts.clone().count() == 8 && amounts.clone().all(|info| !applies(&shown, info.when)));
         write_setting(&file, &["weather", "kind"], Some("storm".into())).unwrap();
         assert_eq!(read(&file).resolve().unwrap().weather.kind, WeatherKind::Storm);
         // Custom shows its amounts, and one written is the weather's.

@@ -2324,6 +2324,8 @@ struct TreeLook {
     /// Whether vines hang from its crown and climb its trunk.
     vines: bool,
     wind: Option<f32>,
+    /// Whether the tree grows vines of its own, as a `.voxplant` with `vines` does.
+    grown_vines: bool,
 }
 
 /// A birch of blocks on a field of grass, grown from a seed, seen from `eye` looking `towards`, after one second
@@ -2358,10 +2360,15 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
         leaf_size: 3.4,
         leaf_density: 0.9,
         roots: 0,
+        vines: if look.grown_vines { 1.0 } else { 0.0 },
         ..PlantDef::default()
     };
     for (at, part) in birch.grow(5).parts() {
-        let block = if part == PlantPart::Leaf { leaves } else { wood };
+        let block = match part {
+            PlantPart::Leaf => leaves,
+            PlantPart::Vine => vine,
+            _ => wood,
+        };
         blocks.set([24 + at[0], 4 + at[1], 24 + at[2]], block);
     }
     if look.vines {
@@ -2440,7 +2447,7 @@ fn tree_render(look: TreeLook, eye: Vec3, towards: Vec3) -> Option<([Vec<u8>; 2]
 #[test]
 fn bushy_leaves_reach_out_past_their_blocks_in_tufts_with_a_picture_or_none_and_sway() {
     let (eye, towards) = (Vec3::new(21.0, 10.5, 14.5), Vec3::new(0.3, 0.0, 1.0));
-    let plain = TreeLook { bushy: false, pictured: false, vines: false, wind: None };
+    let plain = TreeLook { bushy: false, pictured: false, vines: false, grown_vines: false, wind: None };
     let Some(([cubes, _], none)) = tree_render(plain, eye, towards) else { return };
     let ([bushy, bushy_later], loose) = tree_render(TreeLook { bushy: true, ..plain }, eye, towards).unwrap();
     let ([pictured, _], _) = tree_render(TreeLook { bushy: true, pictured: true, ..plain }, eye, towards).unwrap();
@@ -2490,7 +2497,7 @@ fn bushy_leaves_reach_out_past_their_blocks_in_tufts_with_a_picture_or_none_and_
 #[test]
 fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free() {
     let (eye, towards) = (Vec3::new(21.0, 8.5, 15.5), Vec3::new(0.3, 0.0, 1.0));
-    let bare = TreeLook { bushy: true, pictured: false, vines: false, wind: None };
+    let bare = TreeLook { bushy: true, pictured: false, vines: false, grown_vines: false, wind: None };
     let Some(([without, _], tufts)) = tree_render(bare, eye, towards) else { return };
     let ([with, later], loose) = tree_render(TreeLook { vines: true, ..bare }, eye, towards).unwrap();
     let ([windy, windy_later], _) = tree_render(TreeLook { vines: true, wind: Some(2.0), ..bare }, eye, towards).unwrap();
@@ -2511,6 +2518,23 @@ fn vines_cling_to_the_trunk_and_hang_from_the_crown_swaying_where_they_hang_free
     let (still, swayed) = (unlike(&with, &later, 0..WIDTH, under.clone()), unlike(&windy, &windy_later, 0..WIDTH, under));
     eprintln!("vines: {shown} shown, {still} moved with no wind, {swayed} in it");
     assert!(still < 0.01 && swayed > still * 3.0 + 0.004, "{swayed} against {still}");
+}
+
+#[test]
+fn a_trees_own_vines_hang_from_its_leaves_seen_from_below_and_from_the_side() {
+    let look = TreeLook { bushy: true, pictured: true, vines: false, grown_vines: true, wind: None };
+    // From under the crown's edge looking up into it, and from the side at the crown's foot, near and further off.
+    let views = [
+        ("below", Vec3::new(21.5, 6.0, 19.0), Vec3::new(0.35, 0.9, 0.6)),
+        ("side", Vec3::new(24.5, 10.0, 15.0), Vec3::new(0.0, 0.05, 1.0)),
+        ("side far", Vec3::new(24.5, 11.0, 2.0), Vec3::new(0.0, 0.02, 1.0)),
+    ];
+    for (name, eye, towards) in views {
+        let Some(([with, _], _)) = tree_render(look, eye, towards) else { return };
+        let ([without, _], _) = tree_render(TreeLook { grown_vines: false, ..look }, eye, towards).unwrap();
+        keep_image(&format!("tree vines {name}.png"), &with);
+        keep_image(&format!("tree vines {name} none.png"), &without);
+    }
 }
 
 #[test]
@@ -2552,6 +2576,30 @@ fn a_look_pack_colours_the_water_of_blocks_and_leaves_the_ground_as_it_was() {
 /// from `eye` looking `towards`; and how many of its blocks are thin logs. `fallen` turns it about its foot, come
 /// loose from the field as a world of its own.
 fn oak_render(logs: bool, eye: Vec3, towards: Vec3, fallen: Option<Quat>) -> Option<(Vec<u8>, usize)> {
+    let oak = voxear_terrain::blocks::plant::PlantDef {
+        height: [11.0, 11.0],
+        trunk: 1.2,
+        taper: 0.75,
+        bend: 0.2,
+        crown_width: [9.0, 9.0],
+        crown_height: [6.0, 6.0],
+        leaf_size: 2.6,
+        leaf_density: 0.6,
+        roots: 3,
+        ..Default::default()
+    };
+    plant_render(&oak, (logs, true), eye, towards, fallen)
+}
+
+/// `plant` grown from a seed on a field of grass, as [`oak_render`] draws an oak, its leaves left out unless
+/// `leaves` says.
+fn plant_render(
+    plant: &voxear_terrain::blocks::plant::PlantDef,
+    (logs, leafy): (bool, bool),
+    eye: Vec3,
+    towards: Vec3,
+    fallen: Option<Quat>,
+) -> Option<(Vec<u8>, usize)> {
     use voxear_terrain::blocks::{
         block::BlockShape,
         file::BlockKind,
@@ -2584,22 +2632,13 @@ fn oak_render(logs: bool, eye: Vec3, towards: Vec3, fallen: Option<Quat>) -> Opt
     file.blocks.push(leaf);
     let leaves = file.blocks.len() as u16;
     let mut blocks = file.make_ground(None);
-    let oak = PlantDef {
-        height: [11.0, 11.0],
-        trunk: 1.2,
-        taper: 0.75,
-        bend: 0.2,
-        crown_width: [9.0, 9.0],
-        crown_height: [6.0, 6.0],
-        leaf_size: 2.6,
-        leaf_density: 0.6,
-        roots: 3,
-        ..PlantDef::default()
-    };
-    let grown = oak.grow(9);
+    let grown = plant.grow(9);
     let thin = grown.blocks.iter().filter(|(_, part, state)| part.is_wood() && state.size != 0).count();
     let mut tree = Vec::new();
     for (at, part, state) in grown.blocks {
+        if !part.is_wood() && !leafy {
+            continue;
+        }
         let block = if part == PlantPart::Leaf { leaves } else { log_number(wood, &numbers, state) };
         // Its roots stay in the ground.
         match fallen.is_some() && at[1] >= 0 {
@@ -2819,4 +2858,31 @@ fn a_sapling_stands_crossed_on_the_ground_and_grows_into_its_tree_stage_by_stage
         })
         .count();
     assert!(leafy > 100, "{leafy} pixels of the first stage's leaves");
+}
+
+#[test]
+fn a_pines_branches_leave_its_trunk_at_many_heights_rising_and_forking_joined_log_to_log() {
+    use voxear_terrain::blocks::plant::{PlantDef, PlantKind};
+    let pine = PlantDef {
+        kind: PlantKind::Conifer,
+        height: [16.0, 16.0],
+        trunk: 1.2,
+        taper: 0.7,
+        branch: 0.25,
+        bend: 0.0,
+        crown_width: [7.0, 7.0],
+        crown_height: [11.0, 11.0],
+        leaf_size: 2.4,
+        ..PlantDef::default()
+    };
+    let (eye, towards) = (Vec3::new(17.0, 16.0, 13.0), Vec3::new(0.55, -0.15, 1.0));
+    let Some((wood, _)) = plant_render(&pine, (true, false), eye, towards, None) else { return };
+    let (whole, _) = plant_render(&pine, (true, true), eye, towards, None).unwrap();
+    let (above, _) = plant_render(&pine, (true, false), Vec3::new(21.0, 30.0, 18.0), Vec3::new(0.5, -1.0, 0.9), None).unwrap();
+    keep_image("pine wood.png", &wood);
+    keep_image("pine wood from above.png", &above);
+    keep_image("pine.png", &whole);
+    // Its wood shows, and its crown hides most of it.
+    let woody = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| i32::from(p[0]) > i32::from(p[1]) + 30 && p[0] > p[2]).count();
+    assert!(woody(&wood) > 600 && woody(&whole) < woody(&wood) / 2, "{} of wood alone, {} under its needles", woody(&wood), woody(&whole));
 }

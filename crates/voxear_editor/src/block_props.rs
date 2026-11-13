@@ -707,6 +707,29 @@ pub(crate) fn number_block_state(
     Some(number)
 }
 
+/// What painting the block at `guid` puts over each of `over`, blocks of
+/// the world on `entity` by their numbers (see
+/// `voxear_engine::blocks::painted`): none for a block left as it is. The
+/// world numbers what it has not held yet, kept in its file.
+pub(crate) fn number_painted(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    guid: AssetGuid,
+    over: &[BlockId],
+) -> Vec<(BlockId, Option<BlockId>)> {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return Vec::new() };
+    let held = file.blocks.len();
+    let painted: Vec<_> = over
+        .iter()
+        .map(|&block| (block, voxear_engine::blocks::painted(&mut game.content, &mut file, guid, block)))
+        .collect();
+    if file.blocks.len() > held {
+        change_file(game, renderer, entity, file);
+    }
+    painted
+}
+
 /// As [`number_block`], in `file`, the world's file about to be changed.
 fn number_into(game: &mut Game, entity: Entity, file: &mut BlockFile, guid: AssetGuid) -> Option<BlockId> {
     if let Some(number) = number_in(game, file, guid) {

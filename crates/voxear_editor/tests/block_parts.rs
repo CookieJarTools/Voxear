@@ -2,8 +2,9 @@
 //! stair down rising away from the view and R turns the next on a quarter,
 //! a door goes down with its upper block and is broken with it, the Use
 //! brush opens it and undo shuts it again; and a block's Inspector offers
-//! every shape, with a door's motion's keys to change. Skips itself
-//! without a GPU.
+//! every shape, with a door's motion's keys to change; and the Paint brush
+//! keeps a painted block's shape, generated ground's slabs and slabs and
+//! stairs put down by hand. Skips itself without a GPU.
 
 use voxear_core::logging::LogCapture;
 use voxear_ecs::Entity;
@@ -388,4 +389,201 @@ fn a_blocks_inspector_offers_every_shape_and_a_doors_motion_keys() {
     let written = std::fs::read_to_string(dir.path().join("Parts/Plain.block")).unwrap();
     let block = voxear_terrain::blocks::block::BlockDef::parse(&written).unwrap();
     assert_eq!(block.motion.expect("its own motion").keys[1].turn, 100.0, "{written}");
+}
+
+const HILLS: &str = "\n[[obj]]\nid = 932\nname = \"Hills\"\n[obj.block_world]\ndata = \"Parts/Hills.blockworld\"\n";
+
+/// The point on screen the Scene view's ray meets the block `at` of
+/// `field` through, at the middle of it, where nothing stands before it.
+fn seen(editor: &voxear_editor::Editor, field: Entity, at: [i32; 3]) -> Option<[f32; 2]> {
+    let camera = editor.scene_camera()?;
+    let corner = editor.game.engine.world.get::<voxear_scene::Transform>(field)?.position;
+    let middle = corner + voxear_core::math::Vec3::new(at[0] as f32 + 0.5, at[1] as f32 + 0.5, at[2] as f32 + 0.5);
+    let point = camera.project(middle)?;
+    let [x, y, w, h] = camera.rect;
+    if point[0] < x + 20.0 || point[0] > x + w - 20.0 || point[1] < y + 20.0 || point[1] > y + h - 20.0 {
+        return None;
+    }
+    let (origin, direction) = camera.ray(point);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field)?;
+    let met =
+        voxear_terrain::blocks::raycast(&blocks.blocks, (origin - corner).to_array(), direction.to_array(), 500.0)?;
+    (met.block == at).then_some(point)
+}
+
+/// Types `text` into the number of the Inspector row labelled `label`.
+fn type_into(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str, text: &str) {
+    let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
+    let input = first_with(&editor.ui, row, "value-input").unwrap_or_else(|| panic!("{label} has a number"));
+    editor.ui.focus(input);
+    editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+    editor.ui.key_down(Key::Char('a'));
+    editor.ui.set_modifiers(Modifiers::default());
+    editor.ui.text_input(text);
+    frame(editor, renderer);
+    editor.ui.blur();
+    frame(editor, renderer);
+}
+
+#[test]
+fn the_paint_brush_keeps_a_slabs_shape_generated_or_put_down_and_a_stairs() {
+    use voxear_engine::blocks::{BlockWorldAsset, block_number_state};
+    use voxear_terrain::blocks::{
+        block::BlockShape,
+        file::{BlockFile, BlockKind},
+        generate::BlockGenerate,
+    };
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    // Generated hills of grass, their top laid in half blocks.
+    let dir = hello_with_parts();
+    let write = |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+    write("Parts/Grass.block", "color = [0.3, 0.55, 0.2]\n");
+    write("Parts/Sand.block", "color = [0.85, 0.75, 0.45]\n");
+    write("Parts/Slab.block", "color = [0.6, 0.6, 0.6]\nshape = \"slab\"\n");
+    write("Parts/Hills.worldgen", &voxear_terrain::generate::Preset::RollingHills.world().to_text());
+    let mut file = BlockFile::default();
+    file.blocks[0] = BlockKind::of("Parts/Grass.block");
+    file.ground.size = [48, 48];
+    file.generate = Some(BlockGenerate {
+        world: Some("Parts/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        slabs: true,
+        ..BlockGenerate::default()
+    });
+    write("Parts/Hills.blockworld", &file.to_text());
+    let day = dir.path().join("Scenes/Day.scene");
+    let scene = std::fs::read_to_string(&day).unwrap();
+    std::fs::write(&day, scene + HILLS).unwrap();
+    // Hello's ground is drawn no more, so the hills under where it lies show.
+    let environment = dir.path().join("Scenes/Environment.scene");
+    let scene = std::fs::read_to_string(&environment).unwrap();
+    let plane = scene.find("[obj.renderer]\nmesh = \"builtin:plane\"").expect("Hello's ground");
+    let end = scene[plane..].find("\n\n").map_or(scene.len(), |end| plane + end);
+    std::fs::write(&environment, format!("{}{}", &scene[..plane], &scene[end..])).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let hills = obj(&editor, "Hills");
+    editor.select(Some(hills));
+    frame(&mut editor, &mut renderer);
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(hills).expect("generated").clone();
+    let grass_slab = asset.file.generate.as_ref().unwrap().halves.as_ref().expect("its slabs numbered")[1];
+    // The hills moved so a grass slab in their middle shows under the bottom middle of the view.
+    let blocks = editor.game.engine.world.get::<BlockWorld>(hills).unwrap().clone();
+    let top = |x: i32, z: i32| (-8..120).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).map(|y| [x, y, z]);
+    let mut slabs: Vec<[i32; 3]> = (8..40)
+        .flat_map(|z| (8..40).map(move |x| (x, z)))
+        .filter_map(|(x, z)| top(x, z))
+        .filter(|&at| blocks.blocks.get(at) == grass_slab)
+        .collect();
+    slabs.sort_by_key(|at| (at[0] - 24).pow(2) + (at[2] - 24).pow(2));
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let (origin, direction) = camera.ray([x + w / 2.0, y + h * 0.7]);
+    let mut found = None;
+    for &slab in &slabs {
+        let middle = voxear_core::math::Vec3::new(slab[0] as f32 + 0.5, slab[1] as f32 + 0.5, slab[2] as f32 + 0.5);
+        editor.game.engine.world.get_mut::<voxear_scene::Transform>(hills).unwrap().position =
+            origin + direction * 14.0 - middle;
+        if let Some(point) = seen(&editor, hills, slab) {
+            found = Some((slab, point));
+            break;
+        }
+    }
+    let (slab, point) = found.expect("a grass slab in sight");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "paint-slabs-before.png");
+    // Painted with sand, three blocks across: the slab is sand's slab, lying as it lay; whole blocks are sand.
+    pick_asset(&mut editor, &mut renderer, "Block", "Sand.block");
+    let brush = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brush's choice");
+    choose(&mut editor, &mut renderer, brush, 2);
+    type_into(&mut editor, &mut renderer, "Size", "3");
+    let sand = editor.game.content.block("Parts/Sand.block").unwrap().0;
+    let before: Vec<([i32; 3], u16)> = {
+        let blocks = editor.game.engine.world.get::<BlockWorld>(hills).unwrap();
+        let mut near = Vec::new();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let at = [slab[0] + dx, slab[1] + dy, slab[2] + dz];
+                    near.push((at, blocks.blocks.get(at)));
+                }
+            }
+        }
+        near
+    };
+    click_scene(&mut editor, &mut renderer, point);
+    frame(&mut editor, &mut renderer);
+    let shape_of = |editor: &voxear_editor::Editor, at: [i32; 3]| {
+        let blocks = editor.game.engine.world.get::<BlockWorld>(hills).unwrap();
+        let id = blocks.blocks.get(at);
+        let asset = editor.game.engine.world.get::<BlockWorldAsset>(hills).unwrap();
+        (id, blocks.faces[usize::from(id)].shape, asset.drawn.guid(id))
+    };
+    let (painted, shape, guid) = shape_of(&editor, slab);
+    assert_eq!((shape, guid), (BlockShape::Slab, Some(sand)), "the generated slab is sand's slab");
+    assert_eq!(state_at(&editor, hills, slab).unwrap().facing, BlockFacing::Down, "lying low");
+    let mut wholes = 0;
+    for &(at, was) in &before {
+        let (now, shape, guid) = shape_of(&editor, at);
+        let was_slab = was == grass_slab;
+        assert_eq!(was == 0, now == 0, "painting puts nothing down and takes nothing away at {at:?}");
+        if was != 0 && (at[0] - slab[0]).pow(2) + (at[1] - slab[1]).pow(2) + (at[2] - slab[2]).pow(2) <= 2 {
+            assert_eq!(guid, Some(sand), "painted at {at:?}");
+            assert_eq!(shape == BlockShape::Slab, was_slab, "a slab stays a slab, a whole block whole, at {at:?}");
+            wholes += usize::from(!was_slab);
+        }
+    }
+    assert!(wholes > 0, "whole blocks painted too");
+    shot(&mut renderer, "paint-slabs-after.png");
+    // Undone, the grass slab is back.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(shape_of(&editor, slab).0, grass_slab, "undone");
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(shape_of(&editor, slab).0, painted, "done again");
+    // An upright slab facing east and a stair, put down by hand on the hills, painted one block at a time: the slab
+    // is sand's slab facing east; the stair, of which sand has no kind, is left a stair.
+    let east = BlockState { facing: BlockFacing::East, ..BlockState::default() };
+    let world = &mut editor.game.engine.world;
+    let upright =
+        block_number_state(world, &mut editor.game.content, hills, "Parts/Slab.block", east.to_byte(), true).unwrap();
+    let stair = block_number_state(world, &mut editor.game.content, hills, "Parts/Stairs.block", 0, true).unwrap();
+    frame(&mut editor, &mut renderer);
+    let mut put = Vec::new();
+    for (dx, dz) in (-6..=6).flat_map(|dx| (-6..=6).map(move |dz| (dx, dz))) {
+        let Some(ground) = top(slab[0] + dx, slab[2] + dz) else { continue };
+        let at = [ground[0], ground[1] + 1, ground[2]];
+        let block = if put.is_empty() { upright } else { stair };
+        if at == [slab[0], slab[1] + 1, slab[2]] || blocks.blocks.get(ground) == grass_slab {
+            continue;
+        }
+        editor.game.engine.world.get_mut::<BlockWorld>(hills).unwrap().set_blocks([(at, block)]);
+        match seen(&editor, hills, at) {
+            Some(point) => put.push((at, point)),
+            None => {
+                editor.game.engine.world.get_mut::<BlockWorld>(hills).unwrap().set_blocks([(at, 0)]);
+            }
+        }
+        if put.len() == 2 {
+            break;
+        }
+    }
+    let [(upright_at, upright_point), (stair_at, stair_point)] = put[..] else {
+        panic!("two blocks in sight: {put:?}")
+    };
+    type_into(&mut editor, &mut renderer, "Size", "1");
+    click_scene(&mut editor, &mut renderer, upright_point);
+    click_scene(&mut editor, &mut renderer, stair_point);
+    frame(&mut editor, &mut renderer);
+    let (_, shape, guid) = shape_of(&editor, upright_at);
+    assert_eq!((shape, guid, state_at(&editor, hills, upright_at).unwrap()), (BlockShape::Slab, Some(sand), east));
+    assert_eq!(shape_of(&editor, stair_at).0, stair, "the stair is left as it was");
+    shot(&mut renderer, "paint-slabs-by-hand.png");
 }

@@ -3614,8 +3614,12 @@ drawn with its block's colour alone is matt (roughness 1). A block has a shape (
 Inspector, `BlockFaces::shape`): a cube, a cube with tufts of leaves (bushy), or a vine. The mesher keeps a chunk's
 **loose quads** after its faces and before its water (`ChunkMesh::loose`, `buckets[FACINGS]`): for each bushy block
 that meets open air three sheets crossed through its middle (`mesh::TUFT_SHEETS`, two upright and one of four that
-lean, picked by a hash of the block's place), and for a vine a sheet against each block of ground beside it or two
-crossed sheets where it hangs free. A loose quad is two words as a face is, its facing 6 or 7 (`TUFT`, `VINE`), its
+lean, picked by a hash of the block's place), and for a vine a sheet against each wall beside it or two crossed
+sheets where it hangs free. A wall is ground that is not leaves (`mesh::climbed`); a block of parts, as a log
+thinner than a block, is climbed where its parts' side is most of a block high, and the sheet keeps how far in that
+side lies (sheet bits 4 to 7) and how far in its edges are (second word bits 10 to 13), so it lies on the bark. A
+vine whose first block over it that is no vine is leaves (`hangs_from_leaves`) clings to nothing and hangs crossed
+its whole length. A loose quad is two words as a face is, its facing 6 or 7 (`TUFT`, `VINE`), its
 sheet where a face has its size, and its four sway bits say which of its corners move: a tuft's with the cube corner
 nearest each, a hanging vine's but where ground holds its head or foot. They are no triangles, so physics and the
 GI's rays never meet them, and a vine is no ground at all (`is_ground`): it hides no face, shades no corner, and

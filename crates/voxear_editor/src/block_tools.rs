@@ -281,7 +281,14 @@ impl BlockTools {
 
     /// Works the brush on `hit` in `entity`'s world, putting down `placed`
     /// where it is a block in a state; the block it worked on.
-    fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush, placed: Option<BlockId>) -> [i32; 3] {
+    fn work(
+        game: &mut Game,
+        renderer: Option<&mut Renderer>,
+        entity: Entity,
+        hit: &BlockHit,
+        brush: BlockBrush,
+        placed: Option<BlockId>,
+    ) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
         // With no block picked, or one the world has no room for, there is nothing to place or paint with.
@@ -323,19 +330,32 @@ impl BlockTools {
         // Ground placed takes water's place, and painting with ground leaves water as it is.
         let faces = blocks.faces.clone();
         let water = |block: BlockId| is_water(&faces, block);
-        let changes: Vec<([i32; 3], BlockId)> = reached(middle, state.size)
+        let reached: Vec<([i32; 3], BlockId)> =
+            reached(middle, state.size).into_iter().map(|at| (at, map.get(at))).collect();
+        // A block painted keeps its shape and the way it stands: a slab becomes the painted block's slab.
+        let mut painted = Vec::new();
+        if brush == BlockBrush::Paint
+            && let Some(guid) = block_props::built_with(game)
+        {
+            let mut over: Vec<BlockId> = reached.iter().map(|&(_, now)| now).filter(|&now| now != AIR).collect();
+            over.sort_unstable();
+            over.dedup();
+            painted = block_props::number_painted(game, renderer, entity, guid, &over);
+        }
+        let paint = |now: BlockId| painted.iter().find(|(over, _)| *over == now).map_or(Some(picked), |(_, to)| *to);
+        let changes: Vec<([i32; 3], BlockId)> = reached
             .into_iter()
-            .filter_map(|at| {
-                let now = map.get(at);
+            .filter_map(|(at, now)| {
                 let wanted = match brush {
                     BlockBrush::Place => (now == AIR || (water(now) && !water(picked))).then_some(picked),
                     BlockBrush::Break => (now != AIR).then_some(AIR),
-                    BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then_some(picked),
+                    BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then(|| paint(now)).flatten(),
                     BlockBrush::Model | BlockBrush::Use | BlockBrush::Link => None,
                 }?;
                 Some((at, wanted))
             })
             .collect();
+        let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return middle };
         blocks.set_blocks(changes);
         middle
     }
@@ -405,7 +425,7 @@ impl BlockTools {
         {
             block_props::number_block(game, Some(renderer), entity, guid);
         }
-        let last = Self::work(game, entity, &hit, brush, placed);
+        let last = Self::work(game, Some(renderer), entity, &hit, brush, placed);
         self.stroke = Some((entity, last, point));
         true
     }
@@ -441,7 +461,7 @@ impl BlockTools {
             BlockBrush::Place => self.placed_number(game, None, entity),
             _ => None,
         };
-        let worked = Self::work(game, entity, &hit, brush, placed);
+        let worked = Self::work(game, None, entity, &hit, brush, placed);
         self.stroke = Some((entity, worked, point));
     }
 

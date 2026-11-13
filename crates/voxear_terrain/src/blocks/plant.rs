@@ -370,11 +370,20 @@ impl Growing {
 
     /// A limb of logs `across` sixteenths thick from `from` to `to`, each
     /// lying along the way it reaches and beside the last face to face.
+    /// Each lies along its step to the next, the last as the one before it,
+    /// so a limb that slants is a staircase of logs joined end to end.
     fn logs(&mut self, from: [f32; 3], to: [f32; 3], across: f32, part: PlantPart) {
-        let facing = lying([0, 1, 2].map(|k| to[k] - from[k]));
-        let state = BlockState { facing, size: log_size(across), ..BlockState::default() };
-        for at in blocks_along(from, to) {
-            self.put_as(at, part, state);
+        let blocks = blocks_along(from, to);
+        let overall = lying([0, 1, 2].map(|k| to[k] - from[k]));
+        let size = log_size(across);
+        for (at, block) in blocks.iter().enumerate() {
+            let step = |a: [i32; 3], b: [i32; 3]| lying([0, 1, 2].map(|k| (b[k] - a[k]) as f32));
+            let facing = match (blocks.get(at + 1), at.checked_sub(1).map(|before| blocks[before])) {
+                (Some(next), _) => step(*block, *next),
+                (None, Some(before)) => step(before, *block),
+                (None, None) => overall,
+            };
+            self.put_as(*block, part, BlockState { facing, size, ..BlockState::default() });
         }
     }
 
@@ -640,29 +649,36 @@ impl PlantDef {
     ) {
         let begins = (height - high).max(height * 0.15);
         let branches = self.branches.clamp(0.0, 1.0);
-        let apart = (2.6 - branches * 1.4).max(1.0);
-        let per_ring = if branches > 0.5 { 8 } else { 4 };
+        // Rings far enough apart that two branches one way are two blocks apart and more, so none steps up into
+        // the one over it; each ring's branches at heights of their own between, so the crown is as full.
+        let apart = (3.2 - branches * 1.4).max(2.2);
+        let per_ring = if branches > 0.5 { 4 } else { 3 };
         let leaf = (self.leaf_size * 0.5).clamp(0.6, 1.6);
         let density = self.leaf_density.clamp(0.05, 1.0);
         let mut up = begins;
-        let mut ring = 0u32;
-        while up < height {
+        let mut ring = 0usize;
+        // Where the trunk is at a height: it leans evenly from its foot to its top.
+        let trunk_at = |y: f32| {
+            let along = y / height.max(1.0);
+            [0.5 + (top[0] - 0.5) * along, y, 0.5 + (top[2] - 0.5) * along]
+        };
+        while up < height - 0.5 {
             let share = ((up - begins) / (height - begins).max(1.0)).clamp(0.0, 1.0);
-            // Where the trunk is at this height: it leans evenly from its foot to its top.
-            let along = up / height.max(1.0);
-            let trunk = [0.5 + (top[0] - 0.5) * along, up, 0.5 + (top[2] - 0.5) * along];
             let reach = width * 0.5 * (1.0 - share) + 0.6;
-            // Every other ring turned an eighth, when it has four branches.
-            let turned = if per_ring == 4 { (ring % 2) as usize } else { 0 };
+            // Four branches round it, one each way along the ground, each leaving at a height of its own between
+            // this ring and the next, so they climb round the trunk rather than cross it at one height; each ring
+            // starting another way round.
             for branch in 0..per_ring {
-                let way = AROUND[(branch * (8 / per_ring) + turned) % 8];
-                let long = reach * (0.8 + 0.2 * random.unit());
-                // Out and a little down.
-                let end = [trunk[0] + way[0] * long, up - long * 0.18, trunk[2] + way[1] * long];
-                plant.logs(trunk, end, self.branch_across(), PlantPart::Branch);
+                let way = AROUND[((ring % 2) + branch * 2) % 8];
+                let from = trunk_at((up + apart * branch as f32 / per_ring as f32).min(height - 0.5));
+                let long = reach * (0.75 + 0.25 * random.unit());
+                // Straight out, rising a block at most, so it reads as one limb.
+                let rise = (long * 0.15).min(0.9);
+                let end = [from[0] + way[0] * long, from[1] + rise, from[2] + way[1] * long];
+                plant.logs(from, end, self.branch_across(), PlantPart::Branch);
                 let clumps = (long / (leaf * 1.2)).ceil().max(1.0) as u32;
                 for clump in 1..=clumps {
-                    let at = add(trunk, [0, 1, 2].map(|k| end[k] - trunk[k]), clump as f32 / clumps as f32);
+                    let at = add(from, [0, 1, 2].map(|k| end[k] - from[k]), clump as f32 / clumps as f32);
                     plant.clump(at, leaf * 2.0, density, random);
                 }
             }
@@ -882,6 +898,34 @@ mod tests {
                     assert!(over.is_some(), "{kind:?} seed {seed}: the wood at {at:?} is open to the sky");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_conifers_branches_leave_its_trunk_at_many_heights_rise_as_they_reach_out_and_join_it() {
+        let pine = PlantDef { kind: PlantKind::Conifer, height: [15.0, 15.0], crown_width: [7.0, 7.0], crown_height: [11.0, 11.0], bend: 0.0, ..PlantDef::default() };
+        for seed in 0..8 {
+            let model = pine.grow(seed);
+            let wood = wood(&model);
+            let trunk: Vec<[i32; 3]> = model.blocks.iter().filter(|(_, p, _)| *p == PlantPart::Trunk).map(|(at, _, _)| *at).collect();
+            // Where branches leave the trunk: branch logs beside it face to face.
+            let mut heights: Vec<i32> = model
+                .blocks
+                .iter()
+                .filter(|(at, p, _)| {
+                    *p == PlantPart::Branch && trunk.iter().any(|t| t[1] == at[1] && (t[0] - at[0]).abs() + (t[2] - at[2]).abs() == 1)
+                })
+                .map(|(at, _, _)| at[1])
+                .collect();
+            heights.sort_unstable();
+            heights.dedup();
+            assert!(heights.len() >= 6, "seed {seed}: branches leave at {heights:?}");
+            // Their ends are higher than where they left: the highest branch log of each side over the lowest.
+            let out = |at: &[i32; 3]| at[0].abs().max(at[2].abs());
+            let far: Vec<_> = model.blocks.iter().filter(|(at, p, _)| *p == PlantPart::Branch && out(at) >= 3).collect();
+            let near_low = model.blocks.iter().filter(|(at, p, _)| *p == PlantPart::Branch && out(at) == 1).map(|(at, _, _)| at[1]).min().unwrap();
+            assert!(far.iter().all(|(at, _, _)| at[1] >= near_low), "seed {seed}");
+            assert!(wood_is_one_piece(&model) && !wood.is_empty(), "seed {seed}");
         }
     }
 

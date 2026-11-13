@@ -73,10 +73,18 @@ enum Waiting {
     Play(Instant),
     /// A view to copy: its node, or the whole window, where to write it,
     /// frames left to settle, and when it was asked for, once it was.
-    Capture { view: Option<voxear_ui::NodeId>, path: PathBuf, settle: u32, asked: Option<Instant> },
+    Capture {
+        view: Option<voxear_ui::NodeId>,
+        path: PathBuf,
+        settle: u32,
+        asked: Option<Instant>,
+    },
     /// The scripts building: the Console's count of lines when it began,
     /// and whether the build has been seen under way.
-    Scripts { from: u64, began: bool },
+    Scripts {
+        from: u64,
+        began: bool,
+    },
 }
 
 /// A call done, or one that answers later.
@@ -97,7 +105,10 @@ impl Editor {
     pub fn serve_link(&mut self, headless: bool) -> anyhow::Result<()> {
         let folder = link::link_folder(&self.game.project.root);
         let server = LinkServer::listen(&folder, link::LINK_FILE, "editor", headless)?;
-        tracing::info!("[Tools] tools can reach this editor: vox editor call --project {}", self.game.project.root.display());
+        tracing::info!(
+            "[Tools] tools can reach this editor: vox editor call --project {}",
+            self.game.project.root.display()
+        );
         self.link.server = Some(server);
         self.link.headless = headless;
         Ok(())
@@ -150,7 +161,10 @@ impl Editor {
     /// Runs one call, as the editor's own panels would.
     fn run_call(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {
         let Some(info) = link::call_info(call) else {
-            return Err(refuse(ErrorKind::NoSuchCall, format!("no call is named `{call}`; `vox editor call --describe` lists them")));
+            return Err(refuse(
+                ErrorKind::NoSuchCall,
+                format!("no call is named `{call}`; `vox editor call --describe` lists them"),
+            ));
         };
         if !args.is_object() && !args.is_null() {
             return Err(bad("a call's arguments are a JSON object"));
@@ -158,7 +172,10 @@ impl Editor {
         let empty = json!({});
         let args = if args.is_null() { &empty } else { args };
         if info.changes && !self.memory.settings.tools_may_change {
-            return Err(refuse(ErrorKind::NotAllowed, "the editor's settings let tools read the project, not change it"));
+            return Err(refuse(
+                ErrorKind::NotAllowed,
+                "the editor's settings let tools read the project, not change it",
+            ));
         }
         if info.changes && call != "undo" && call != "redo" && call != "batch" {
             tracing::info!("[Tools] {call} {}", short(args));
@@ -241,7 +258,10 @@ impl Editor {
             "scene.reload" => {
                 self.refuse_while_playing("read the scenes again")?;
                 if self.unsaved && opt_bool(args, "discard") != Some(true) {
-                    return Err(refuse(ErrorKind::UnsavedConflict, "the scenes have edits not saved; save, or give `discard`"));
+                    return Err(refuse(
+                        ErrorKind::UnsavedConflict,
+                        "the scenes have edits not saved; save, or give `discard`",
+                    ));
                 }
                 let reloaded = self.reload_scenes(None, renderer).map_err(failed)?;
                 done(json!({ "reloaded": reloaded }))
@@ -308,7 +328,10 @@ impl Editor {
                     self.save();
                 }
                 if self.unsaved && opt_bool(args, "discard") != Some(true) {
-                    return Err(refuse(ErrorKind::UnsavedConflict, "the scenes have edits not saved; give `save` or `discard`"));
+                    return Err(refuse(
+                        ErrorKind::UnsavedConflict,
+                        "the scenes have edits not saved; give `save` or `discard`",
+                    ));
                 }
                 self.link.quit = true;
                 done(json!({}))
@@ -334,7 +357,9 @@ impl Editor {
                 }
                 Ok(Outcome::Later(Waiting::Play(began)))
             }
-            Waiting::Capture { view, path, settle, asked } => self.go_on_capturing_for_tool(view, path, settle, asked, renderer),
+            Waiting::Capture { view, path, settle, asked } => {
+                self.go_on_capturing_for_tool(view, path, settle, asked, renderer)
+            }
             Waiting::Scripts { from, began } => {
                 let building = self.describing.is_some() || self.rebuild_scripts;
                 if building || !began {
@@ -421,7 +446,7 @@ impl Editor {
         let selection: Vec<Json> = self.selected_objs().into_iter().map(|e| obj_ref(&self.game, e)).collect();
         json!({
             "project": self.game.project.name(),
-            "root": self.game.project.root.display().to_string(),
+            "root": std::fs::canonicalize(&self.game.project.root).unwrap_or_else(|_| self.game.project.root.clone()).display().to_string(),
             "level": levels.current(),
             "scenes": scenes,
             "active_scene": levels.active_scene(),
@@ -592,7 +617,8 @@ impl Editor {
         };
         let made = made.map_err(failed)?;
         if parent.is_some()
-            && let (Some(at), Some(transform)) = (opt_vector(args, "position")?, self.game.engine.world.get_mut::<voxear_scene::Transform>(made))
+            && let (Some(at), Some(transform)) =
+                (opt_vector(args, "position")?, self.game.engine.world.get_mut::<voxear_scene::Transform>(made))
         {
             transform.position = Vec3::from_array(at);
         }
@@ -678,9 +704,13 @@ impl Editor {
         }
         let modules = self.game.project.modules();
         if let Some(module) = part.module().filter(|module| !modules.has(*module)) {
-            return Err(refuse(ErrorKind::NotAllowed, format!("{} needs the {module:?} module, which the project has off", part.title())));
+            return Err(refuse(
+                ErrorKind::NotAllowed,
+                format!("{} needs the {module:?} module, which the project has off", part.title()),
+            ));
         }
-        let before = ObjState::of(&self.game.engine.world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let before = ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         props::add(&mut self.game, Some(renderer), entity, &part, &types).map_err(failed)?;
         let changed = self.record_change(entity, before);
         done(json!({ "changed": changed }))
@@ -690,12 +720,18 @@ impl Editor {
     fn component_change(
         &mut self,
         args: &Json,
-        change: impl FnOnce(&mut voxear_engine::Game, Entity, &Part, &voxear_engine::script_types::ScriptTypes) -> Result<(), LinkError>,
+        change: impl FnOnce(
+            &mut voxear_engine::Game,
+            Entity,
+            &Part,
+            &voxear_engine::script_types::ScriptTypes,
+        ) -> Result<(), LinkError>,
     ) -> Called {
         let entity = self.obj_arg(args)?;
         let part = link::part_on(&self.game, entity, need_text(args, "component")?)?;
         let types = self.inspector.types().clone();
-        let before = ObjState::of(&self.game.engine.world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let before = ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         change(&mut self.game, entity, &part, &types)?;
         let changed = self.record_change(entity, before);
         done(json!({ "changed": changed }))
@@ -711,7 +747,8 @@ impl Editor {
             other => {
                 let switch = other.switch().ok_or_else(|| bad(format!("{} cannot be switched off", other.title())))?;
                 let world = &mut game.engine.world;
-                let mut state = ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+                let mut state =
+                    ObjState::of(world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
                 state.off.set(switch, !enabled);
                 state.apply(world, entity);
                 Ok(())
@@ -729,7 +766,8 @@ impl Editor {
         let part = link::part_on(&self.game, entity, need_text(args, "component")?)?;
         let types = self.inspector.types().clone();
         let prop = link::resolve_prop(&self.game, &types, entity, &part, need_text(args, "field")?)?;
-        let before = ObjState::of(&self.game.engine.world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let before = ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         change(&mut self.game, &types, entity, &prop);
         let changed = self.record_change(entity, before);
         done(json!({ "changed": changed }))
@@ -743,8 +781,10 @@ impl Editor {
         let prop = link::resolve_prop(&self.game, &types, entity, &part, field)?;
         let now = props::get(&self.game, &types, entity, &prop)
             .ok_or_else(|| refuse(ErrorKind::NoSuchField, format!("`{field}` has no value to set")))?;
-        let setting = link::read_value(&self.game, &now, need(args, "value").or_else(|_| Ok::<_, LinkError>(&Json::Null))?)?;
-        let before = ObjState::of(&self.game.engine.world, entity).ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let setting =
+            link::read_value(&self.game, &now, need(args, "value").or_else(|_| Ok::<_, LinkError>(&Json::Null))?)?;
+        let before = ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
         match setting {
             Setting::Value(value) => {
                 props::set(&mut self.game, Some(renderer), &types, entity, &prop, value);
@@ -887,7 +927,8 @@ impl Editor {
         let (guid, path, kind) = link::resolve_project_asset(&self.game, need(args, "asset")?)?;
         let (kind_id, text) = link::asset_kind_id(kind);
         let file = self.game.content.db().mounts().file(&path);
-        let mut answer = json!({ "guid": guid.to_string(), "path": path, "kind": kind_id, "file": file.display().to_string() });
+        let mut answer =
+            json!({ "guid": guid.to_string(), "path": path, "kind": kind_id, "file": file.display().to_string() });
         if text && let Ok(content) = std::fs::read_to_string(&file) {
             match link::toml_json(&content) {
                 Some(parsed) => answer["content"] = parsed,
@@ -912,7 +953,8 @@ impl Editor {
         let folder = opt_text(args, "folder").unwrap_or_default().trim_matches('/').to_string();
         let root = self.game.project.root.clone();
         if !folder.is_empty() {
-            std::fs::create_dir_all(root.join(&folder)).map_err(|error| refuse(ErrorKind::Failed, format!("making {folder}: {error}")))?;
+            std::fs::create_dir_all(root.join(&folder))
+                .map_err(|error| refuse(ErrorKind::Failed, format!("making {folder}: {error}")))?;
         }
         let namespace = super::script_namespace(&self.game.project);
         let made = project_files::create(&root, &folder, new, &namespace).map_err(failed)?;
@@ -934,7 +976,9 @@ impl Editor {
             "asset.move" => {
                 let folder = need_text(args, "folder")?.trim_matches('/');
                 self.move_in_project(&path, folder, renderer);
-                let moved = if folder.is_empty() { path.rsplit('/').next().unwrap_or(&path).to_string() } else {
+                let moved = if folder.is_empty() {
+                    path.rsplit('/').next().unwrap_or(&path).to_string()
+                } else {
                     format!("{folder}/{}", path.rsplit('/').next().unwrap_or(&path))
                 };
                 Some(moved)
@@ -976,7 +1020,11 @@ impl Editor {
         };
         let limit = args.get("limit").and_then(Json::as_u64).map_or(LINES, |n| n as usize).max(1);
         let after = args.get("after").and_then(Json::as_u64);
-        let log = self.console.log().lock().map_err(|_| refuse(ErrorKind::Failed, "the Console's lines could not be read"))?;
+        let log = self
+            .console
+            .log()
+            .lock()
+            .map_err(|_| refuse(ErrorKind::Failed, "the Console's lines could not be read"))?;
         let first = log.total - log.lines.len() as u64;
         let mut lines: Vec<Json> = Vec::new();
         for (index, line) in log.lines.iter().enumerate() {
@@ -1070,11 +1118,14 @@ impl Editor {
             return waiting(0, asked);
         };
         if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
-            std::fs::create_dir_all(folder).map_err(|error| refuse(ErrorKind::Failed, format!("making {}: {error}", folder.display())))?;
+            std::fs::create_dir_all(folder)
+                .map_err(|error| refuse(ErrorKind::Failed, format!("making {}: {error}", folder.display())))?;
         }
         let picture = image::RgbaImage::from_raw(image.width, image.height, image.rgba)
             .ok_or_else(|| refuse(ErrorKind::Failed, "the capture's size"))?;
-        picture.save(&path).map_err(|error| refuse(ErrorKind::Failed, format!("writing {}: {error}", path.display())))?;
+        picture
+            .save(&path)
+            .map_err(|error| refuse(ErrorKind::Failed, format!("writing {}: {error}", path.display())))?;
         done(json!({ "path": path.display().to_string(), "width": image.width, "height": image.height }))
     }
 
@@ -1092,7 +1143,8 @@ impl Editor {
                     (Some(SettingValue::Color(color)), _) => ("color", json!(format!("#{color:06x}")), None),
                     _ => ("none", Json::Null, None),
                 };
-                let mut shown = json!({ "key": info.key, "title": info.title, "group": info.group, "type": kind, "value": value });
+                let mut shown =
+                    json!({ "key": info.key, "title": info.title, "group": info.group, "type": kind, "value": value });
                 if let Some(options) = options {
                     shown["options"] = json!(options);
                 }
@@ -1104,7 +1156,8 @@ impl Editor {
 
     fn settings_set(&mut self, args: &Json) -> Called {
         let key = need_text(args, "key")?;
-        let info = settings::info(key).ok_or_else(|| bad(format!("no setting has the key `{key}`; `settings.get` lists them")))?;
+        let info = settings::info(key)
+            .ok_or_else(|| bad(format!("no setting has the key `{key}`; `settings.get` lists them")))?;
         let value = need(args, "value")?;
         let wrong = || refuse(ErrorKind::WrongValue, format!("{value} is not a value for {}", info.title));
         let setting = match info.kind {
@@ -1120,7 +1173,8 @@ impl Editor {
             }
         };
         // Tools may let themselves read only, but not give themselves leave to change.
-        if key == "tools_may_change" && setting == SettingValue::Toggle(true) && !self.memory.settings.tools_may_change {
+        if key == "tools_may_change" && setting == SettingValue::Toggle(true) && !self.memory.settings.tools_may_change
+        {
             return Err(refuse(ErrorKind::NotAllowed, "only the person at the editor lets tools change the project"));
         }
         if self.memory.settings.set(key, setting) {
@@ -1133,7 +1187,8 @@ impl Editor {
     }
 
     fn docs_search(&self, args: &Json) -> Json {
-        let words: Vec<String> = opt_text(args, "query").unwrap_or_default().split_whitespace().map(str::to_lowercase).collect();
+        let words: Vec<String> =
+            opt_text(args, "query").unwrap_or_default().split_whitespace().map(str::to_lowercase).collect();
         let limit = args.get("limit").and_then(Json::as_u64).unwrap_or(20) as usize;
         let mut found: Vec<(usize, Json)> = Vec::new();
         for (_, page) in self.docs.library().pages() {
@@ -1154,7 +1209,9 @@ impl Editor {
 
     fn docs_read(&self, reference: &str) -> Called {
         let library = self.docs.library();
-        let id = library.find(reference).ok_or_else(|| bad(format!("no page is `{reference}`; `docs.search` finds them")))?;
+        let id = library
+            .find(reference)
+            .ok_or_else(|| bad(format!("no page is `{reference}`; `docs.search` finds them")))?;
         let page = library.page(id);
         done(json!({ "title": page.title(), "text": page.body }))
     }
@@ -1205,7 +1262,8 @@ impl Editor {
         }
         // A scene whose file holds what it has now was saved by the editor itself.
         let game = &mut self.game;
-        changed_scenes.retain(|(guid, _)| !game.levels.scene_matches_disk(&game.engine, &mut game.content, &root, *guid));
+        changed_scenes
+            .retain(|(guid, _)| !game.levels.scene_matches_disk(&game.engine, &mut game.content, &root, *guid));
         if changed_scenes.is_empty() {
             return;
         }
@@ -1213,7 +1271,9 @@ impl Editor {
             for (_, file) in changed_scenes {
                 if !self.link.told.contains(&file) {
                     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    tracing::warn!("[Tools] {name} changed on disk under edits not saved; saving keeps yours, or a tool can read it again with scene.reload");
+                    tracing::warn!(
+                        "[Tools] {name} changed on disk under edits not saved; saving keeps yours, or a tool can read it again with scene.reload"
+                    );
                     self.notify(&format!("{name} changed on disk; save keeps your edits"));
                     self.link.told.push(file);
                 }
@@ -1233,7 +1293,11 @@ impl Editor {
     /// Reads open scenes again from their files: `only` those, or all.
     /// The selection stays on the same Objs; undo starts afresh, as opening
     /// a level does.
-    fn reload_scenes(&mut self, only: Option<&[voxear_assets::AssetGuid]>, renderer: &mut Renderer) -> anyhow::Result<Vec<String>> {
+    fn reload_scenes(
+        &mut self,
+        only: Option<&[voxear_assets::AssetGuid]>,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<Vec<String>> {
         let open: Vec<(voxear_assets::AssetGuid, String)> =
             self.game.levels.open_scenes().into_iter().map(|(guid, path)| (guid, path.to_string())).collect();
         let scenes: Vec<voxear_assets::AssetGuid> =

@@ -40,7 +40,8 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Offset | Where its corner is in the generator's world, in metres |
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
-| Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
+| Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
+| Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 | Biomes | The [[Biomes|biomes]] its ground has: each place takes its top, under and deep blocks from the biome it is |
 
@@ -49,6 +50,8 @@ Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° 
 The ground's layers follow the pushed ground. The top block is whatever has open air over it, with the under block below, counted down each column, so the under block never shows through where the ground was pushed out. Under an overhang the count starts again on the ground below, and the overhang's underside has no top block.
 
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
+
+Where a cave or a passage cuts under ground that leans out over it, the rock left hanging in the air is cleared: no piece of ground of 256 blocks or fewer stands loose, joined to nothing. Larger ground standing apart, an island in the sky or a slab of rock, is there on purpose and stays. A piece reaching into the chunk column beside is followed on there, so each column clears it alike.
 
 ### Tall worlds
 
@@ -199,6 +202,22 @@ Water flows five blocks a second, the same on every machine, both in play and in
 
 For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it.
 
+### Rivers and currents
+
+A generator with a [[Generator Nodes#Rivers|Rivers]] node, as every land preset has, fills its rivers and lakes with the Sea block too, each column as high as its water stands. A world whose generator has none, as one written before presets had rivers, gets them with its **Rivers** setting on. Where a river drops over a cliff, its waterfall is a curtain of falling water over a pool at its foot.
+
+A river's blocks are sources, so it never runs dry, and each keeps which way its river flows and how high its water stands in it, so its surface comes down in eighths of a block as water placed and running out does, not a block at a time. Its ripples drift the way it flows. Water flows of itself too: water running out sideways flows away from what feeds it, and falling water falls.
+
+Flowing water pushes:
+
+| What | How it goes |
+| --- | --- |
+| A Rigidbody with **Buoyancy** | Floats and drifts with the current |
+| A Rigidbody without | Is dragged along the bed as hard as it lags the water: a crate rolls downstream, a boulder hardly stirs |
+| A Character Controller | Is carried along as much as it is in the water, fully once in up to its middle, as its **Water push** says. Under a waterfall it is pushed down |
+
+Scripts read the flow at a point with `Water.FlowAt`.
+
 In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level; it lies over the ground wherever the ground is under it, however shallow, and its surface runs on a block into the shore, so the waterline is where the ground rises through it, with no gaps. It flows as it does among cubes.
 
 With the camera in the water, the view is the same as under a Pool: the water's own colour thickening with distance, light fading with depth, the surface from below, a waterline across the lens as you come up. The water round the camera is found from the top of its column, as far as that top runs along X and Z, so the ground beside a pond stays dry to look at. The waterline lies level, as the water's top is flat, and the ground under the water is lit as it is from far off, whether the camera is near the water or not.
@@ -295,33 +314,57 @@ For a world of small coloured blocks to sculpt with, make **Block size** small b
 
 ## Plants a world grows
 
-A Block World can grow its own grass, flowers, bushes, rocks and trees. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
+A Block World can grow its own grass, flowers, bushes, rocks and trees, and what lies about among them: sticks, fallen logs, stumps and pebbles. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
 
-The row also offers fourteen **starter plants**, each made of small cubes to sit well among blocks: **Grass Tuft**, **Flower**, **Bush**, **Rock**, **Tree** and **Pine** for dry ground, and eight for the sea's bed. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it:
+The row also offers the **starter plants**, each made of small cubes to sit well among blocks, eight of them for the sea's bed. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it. **All Starter Plants**, at the top of the list, adds every one the world does not grow yet, in one step:
 
 | Plant | Where it grows |
 | --- | --- |
 | Grass Tuft | On more than half the world's top blocks |
-| Flower | In patches about 14 m across |
+| Tall Grass | In patches about 9 m across, where it is not dry |
+| Flower, Daisy, Bluebell | In patches: red flowers anywhere, daisies where it is mild, bluebells where it is cool and wet |
+| Fern | In patches where it is wet |
+| Mushroom | Near trees, where it is cool and wet |
 | Bush | Here and there, about 7 m apart |
-| Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
+| Dry Bush | Where it is hot and dry, on any ground |
 | Tree | Where it is wet enough, on gentle ground, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+| Birch | Where it is mild, drawn and shown far off as the Tree is. Its trunk collides |
 | Pine | Where it is cool, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+| Dead Tree | Rarely, anywhere. Its trunk collides |
+| Stump, Log | Near trees. Both are solid: a stump is stepped onto and a log climbed over |
+| Stick | Near trees, lying any way round |
+| Pebbles | Near rocks and boulders, and as **Shore Pebbles** in patches along the sea |
+| Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
+| Boulder | Rarely, on any ground, three metres across and more. It is solid |
 | Seagrass | Under water one to twelve metres deep, in patches about 18 m across, wherever the sea is above freezing |
 | Kelp | In cool seas, 18 °C and under, in water nine metres deep or more: stalks eight metres tall in forests about 40 m across |
 | Branch Coral, Brain Coral, Table Coral, Fan Coral | In warm seas, 20 °C and over, two to fourteen metres down, all four in the same reefs about 30 m across |
 | Tube Sponge | Three to thirty metres down, where the sea is 8 °C or warmer |
 | Clam | Two to twenty metres down, here and there |
 
-The grass, flowers, bushes and trees bend in the [[Wind]] and away from whoever walks through them; the rock does neither. Seagrass, kelp and the fan coral sway with the water, more under a storm; the other corals, the sponge and the clam stand still.
+The grasses, flowers, ferns, bushes and trees bend in the [[Wind]] and away from whoever walks through them; stones, stumps, logs and sticks do neither. Seagrass, kelp and the fan coral sway with the water, more under a storm; the other corals, the sponge and the clam stand still.
+
+A starter plant that keeps to the world's top block also grows on the tops of the [[Biomes#Starter biomes|starter biomes]] that things grow on, where the project has them: Grass, Moss, Needles Floor, Jungle Floor and Dry Grass. So add the starter biomes first. Sand, snow and rock stay bare but for stones, dry bushes and dead trees.
+
+What grows near something keeps to it by its Foliage's **Near plant** and **Within** (see [[Foliage#Near other plants and blocks]]): the sticks, logs, stumps and mushrooms near the Tree, the Pine and the Birch, and near the leaves of the starter trees of blocks; the pebbles near the Rock and the Boulder. Take the trees away and those have nothing to grow near.
 
 A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
 
 A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn, and from there the far view shows them as woods of their **Far block**: for a starter tree, a block of its leaves' colour made beside its model. A map draws a plant in that block too, each where it grows (see [[Maps and Minimaps]]). A plant goes when the block under it is dug or built over.
 
+Plants grow under leaves: a tree of blocks has grass and flowers on the ground beneath its crown, and none on top of it.
+
+### Trees of blocks
+
+**Starter Trees of Blocks**, on the same row, gives a generated world trees built of its own blocks: an oak, a birch and a pine, each grown afresh at every place so no two are alike, with [[Blocks#Bushy leaves|bushy leaves]] that sway and, on some oaks and birches, [[Blocks#Vines|vines]]. They are [[Structures#Trees of blocks|structures]] the world's generator builds, so they are dug, stood on and built on as the ground is. Their logs and leaves are blocks made in the Blocks folder beside the world, each drawn with a small picture made with it, in a `Pictures` folder there: bark for a log, and cut-out leaves. Paint over a picture, or give a block a material of your own, and every tree of that kind changes with it.
+
+Trees of blocks stand only on the world's own blocks, out to its **View distance**, and the far view does not show them. The starter Tree, Birch and Pine are models, drawn far and shown as woods beyond: use either, or both.
+
 ## How blocks are drawn
 
 The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth.
+
+The sheets of [[Blocks#Bushy leaves|bushy leaves]] and of [[Blocks#Vines|vines]] are kept beside a chunk's faces, two words each as a face is, and drawn from either side while the chunk is within 160 blocks of the camera.
 
 The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
 

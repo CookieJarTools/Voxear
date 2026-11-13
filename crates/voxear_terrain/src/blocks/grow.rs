@@ -3,7 +3,9 @@
 //!
 //! A rule ([`GrowRule`]) says which blocks its plants stand on, the climate
 //! and heights they like, how steep the ground may be, how near two may
-//! stand, and whether they grow everywhere or in patches. Where they stand comes from a grid over the world with one try a
+//! stand, whether they grow everywhere or in patches, and what they keep
+//! near to: another rule's plants, or blocks ([`Near`]), as sticks lie
+//! under trees and pebbles round boulders. Where they stand comes from a grid over the world with one try a
 //! cell (see `crate::generate::structures::Placement`), so a chunk column's
 //! plants are worked out from that column alone ([`grow`]) and are the same
 //! on every machine and every run: the ground of an endless world grows
@@ -77,6 +79,29 @@ pub struct GrowRule {
     /// Whether a plant stands on the middle of its block, turned by quarter
     /// turns, as the blocks are; else anywhere on it, turned any way.
     pub aligned: bool,
+    /// What its plants keep near to; none for anywhere.
+    pub near: Option<Near>,
+}
+
+/// What a rule's plants keep near to: within `within` metres along the
+/// ground of a plant one of `plants` grows, or of a place whose highest
+/// block is one of `blocks`. Sticks and fallen logs near trees, pebbles
+/// near boulders.
+///
+/// Another rule's plants are taken as that rule tries them, by its grid,
+/// its chance, its patches and, on generated ground, the climate and the
+/// height over the sea it likes: not by the blocks they would stand on or
+/// the slope, which only made ground tells. So a few may be near a plant
+/// that never grew. What those rules keep near to themselves is not asked.
+///
+/// Blocks are looked for among the chunk column's own highest blocks, so a
+/// column on its own gives what it gives among its neighbours; on ground
+/// too far off to have blocks, none are found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Near {
+    pub within: f32,
+    pub plants: Vec<GrowRule>,
+    pub blocks: Vec<BlockId>,
 }
 
 impl Default for GrowRule {
@@ -95,6 +120,7 @@ impl Default for GrowRule {
             seed: 0,
             scale: [0.8, 1.2],
             aligned: true,
+            near: None,
         }
     }
 }
@@ -191,17 +217,30 @@ fn patchy(seed: u32, [x, z]: [f32; 2], size: f32) -> f32 {
     along(0) + (along(1) - along(0)) * tz
 }
 
-/// The highest block of each place of one chunk column that is not air: how
-/// high it is, which block, and how full. Read once from the column's
-/// chunks, for every rule that grows on it.
+/// The highest block of each place of one chunk column that is ground to
+/// grow on: how high it is, which block, and how full. Leaves and vines
+/// over it are looked through, so plants grow under a tree of blocks and
+/// not on its crown; which block is the highest of all is kept beside, for
+/// what grows near trees. Read once from the column's chunks, for every
+/// rule that grows on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tops {
     tops: Vec<Option<(i32, BlockId, u8)>>,
+    /// The highest block of each place, leaves and vines too: air for none.
+    over: Vec<BlockId>,
+}
+
+/// Whether block `block` is looked through for the ground under it: a
+/// vine, or leaves (bushy, seen through or swaying).
+fn is_canopy(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| {
+        !faces.water && (!faces.shape.is_cube() || faces.see_through || faces.sways)
+    })
 }
 
 impl Tops {
-    /// Those of chunk column `[cx, cz]` of `blocks`.
-    pub fn of(blocks: &BlockMap, [cx, cz]: [i32; 2]) -> Self {
+    /// Those of chunk column `[cx, cz]` of `blocks`, drawn as `faces` says.
+    pub fn of(blocks: &BlockMap, [cx, cz]: [i32; 2], faces: &[BlockFaces]) -> Self {
         let mut chunks: Vec<(i32, &Chunk)> = blocks
             .chunks()
             .filter(|(key, chunk)| key[0] == cx && key[2] == cz && !chunk.is_air())
@@ -209,21 +248,32 @@ impl Tops {
             .collect();
         chunks.sort_unstable_by_key(|(y, _)| std::cmp::Reverse(*y));
         let mut tops = vec![None; (CHUNK * CHUNK) as usize];
+        let mut over = vec![AIR; tops.len()];
+        // Whether any of the world's blocks is looked through: else a chunk's air alone is.
+        let canopies = faces.iter().any(|faces| !faces.water && (!faces.shape.is_cube() || faces.see_through || faces.sways));
         // Chunk by chunk from the highest, each place's blocks from the top down, until every place has its own.
         let mut left = tops.len();
         for &(cy, chunk) in &chunks {
+            let leafy = canopies && chunk.may_hold(|block| is_canopy(faces, block));
             for z in 0..CHUNK {
                 for x in 0..CHUNK {
-                    let top = &mut tops[(z * CHUNK + x) as usize];
-                    if top.is_some() {
+                    let place = (z * CHUNK + x) as usize;
+                    if tops[place].is_some() {
                         continue;
                     }
                     let mut y = CHUNK;
-                    while y > 0 && chunk.get(x, y - 1, z) == AIR {
+                    loop {
+                        let block = if y > 0 { chunk.get(x, y - 1, z) } else { break };
+                        if block != AIR && over[place] == AIR {
+                            over[place] = block;
+                        }
+                        if block != AIR && !(leafy && is_canopy(faces, block)) {
+                            break;
+                        }
                         y -= 1;
                     }
                     if y > 0 {
-                        *top =
+                        tops[place] =
                             Some((cy * CHUNK as i32 + y as i32 - 1, chunk.get(x, y - 1, z), chunk.fill(x, y - 1, z)));
                         left -= 1;
                     }
@@ -233,7 +283,22 @@ impl Tops {
                 break;
             }
         }
-        Self { tops }
+        Self { tops, over }
+    }
+
+    /// Whether the highest block of any place of the column within
+    /// `within` blocks of block `[x, z]`, the column's own, is one of
+    /// `blocks`.
+    fn near_block(&self, [x, z]: [u32; 2], within: f32, blocks: &[BlockId]) -> bool {
+        let reach = within.max(0.0).ceil() as i32;
+        let (x, z) = (x as i32, z as i32);
+        let side = CHUNK as i32;
+        (z - reach..=z + reach).filter(|bz| (0..side).contains(bz)).any(|bz| {
+            (x - reach..=x + reach).filter(|bx| (0..side).contains(bx)).any(|bx| {
+                let (dx, dz) = ((bx - x) as f32, (bz - z) as f32);
+                dx * dx + dz * dz <= within * within && blocks.contains(&self.over[(bz * side + bx) as usize])
+            })
+        })
     }
 
     /// Whether the column has no block at all.
@@ -292,6 +357,63 @@ fn tries(rule: &GrowRule, (seed, position): (u32, [f32; 2]), size: f32, column: 
     tries
 }
 
+/// Where the plants a rule keeps near to are tried, about chunk column
+/// `column` of a world whose blocks are `size` metres, lying at `position`
+/// in generator `world`'s where one made it: each in metres from the
+/// world's corner. Those of every rule in `near.plants`, out to as far past
+/// the column as `near.within`.
+fn near_sites(near: &Near, world: Option<&WorldGen>, position: [f32; 2], size: f32, column: [i32; 2]) -> Vec<[f32; 2]> {
+    let side = CHUNK as i32;
+    let seed = world.map_or(0, |world| world.seed());
+    let low = [0, 1].map(|axis| position[axis] + (column[axis] * side) as f32 * size);
+    let high = low.map(|v| v + side as f32 * size);
+    let mut sites = Vec::new();
+    for rule in &near.plants {
+        let patch = seed ^ rule.seed.wrapping_mul(0x9E37_79B9);
+        let mut tried: Vec<[f32; 2]> = rule
+            .placement()
+            .tries_near(seed, low, high, near.within.max(0.0) + size)
+            .into_iter()
+            .filter(|site| rule.patches <= 0.0 || patchy(patch, site.at, rule.patches.max(1.0)) >= 0.5)
+            .map(|site| site.at)
+            .collect();
+        // On generated ground, only where it likes the climate and the height over the sea.
+        if let Some(world) = world {
+            let (xs, zs): (Vec<f32>, Vec<f32>) = tried.iter().map(|at| (at[0], at[1])).unzip();
+            let mut heights = vec![0.0; xs.len()];
+            world.heights(&xs, &zs, &mut heights);
+            let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+            world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
+            let sea = world.sea_level();
+            let mut at = 0;
+            tried.retain(|_| {
+                at += 1;
+                let above = heights[at - 1] - sea;
+                above > 0.0 && rule.stands_on(above, 0.0) && rule.likes((warmth[at - 1], wetness[at - 1]))
+            });
+        }
+        sites.extend(tried.into_iter().map(|at| [at[0] - position[0], at[1] - position[1]]));
+    }
+    sites
+}
+
+/// Whether a try is near enough to what its rule keeps near to: one of
+/// `sites` (see [`near_sites`]), or one of the rule's blocks among the
+/// column's highest, where those are known.
+fn is_near(near: &Near, found: &Try, sites: &[[f32; 2]], blocks: Option<(&Tops, f32)>) -> bool {
+    let within = near.within.max(0.0);
+    let by_plant = sites.iter().any(|site| {
+        let (dx, dz) = (site[0] - found.at[0], site[1] - found.at[1]);
+        dx * dx + dz * dz <= within * within
+    });
+    by_plant
+        || blocks.is_some_and(|(tops, size)| {
+            let side = CHUNK as i32;
+            let inside = [found.block[0].rem_euclid(side) as u32, found.block[1].rem_euclid(side) as u32];
+            !near.blocks.is_empty() && tops.near_block(inside, within / size, &near.blocks)
+        })
+}
+
 /// A try's plant with its foot `top` metres up: on the middle of its block
 /// and turned by quarter turns where the rule aligns them, sized by its
 /// site.
@@ -328,7 +450,7 @@ fn liked(rule: &GrowRule, world: Option<&WorldGen>, position: [f32; 2], grown: V
 /// on the highest block of its place, under the open sky, where that block
 /// is ground the rule grows on.
 pub fn grow(rule: &GrowRule, ground: &Ground, column: [i32; 2]) -> Vec<Grown> {
-    grow_on(rule, ground, column, &Tops::of(ground.blocks, column))
+    grow_on(rule, ground, column, &Tops::of(ground.blocks, column, ground.faces))
 }
 
 /// As [`grow`], on the column's highest blocks read already (`Tops::of` its
@@ -360,9 +482,13 @@ pub fn grow_on(rule: &GrowRule, ground: &Ground, column: [i32; 2], blocks: &Tops
             }
         }
     };
+    let near = rule.near.as_ref().map(|near| (near, near_sites(near, world, position, size, column)));
     for found in tries(rule, (seed, position), size, column) {
         let [bx, bz] = found.block;
         let inside = [bx.rem_euclid(side) as u32, bz.rem_euclid(side) as u32];
+        if near.as_ref().is_some_and(|(near, sites)| !is_near(near, &found, sites, Some((blocks, size)))) {
+            continue;
+        }
         if rule.under_water {
             let Some((y, block, water_top, water)) = bed([bx, bz]) else { continue };
             if !(rule.on.is_empty() || rule.on.contains(&block)) {
@@ -421,7 +547,12 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
     let size = ground.file.block_size.max(0.01);
     let side = CHUNK as i32;
     let position = ground.generate.position;
-    let found = tries(rule, (ground.world.seed(), position), size, column);
+    let mut found = tries(rule, (ground.world.seed(), position), size, column);
+    // Only near what the rule keeps near to: other plants, as no blocks are made there to look among.
+    if let Some(near) = &rule.near {
+        let sites = near_sites(near, Some(ground.world), position, size, column);
+        found.retain(|found| is_near(near, found, &sites, None));
+    }
     if found.is_empty() {
         return Vec::new();
     }
@@ -755,6 +886,94 @@ mod tests {
         map.set(second.over(), AIR);
         let lost: Vec<u32> = gone(&grown, &map).iter().collect();
         assert_eq!(lost, vec![0, 1]);
+    }
+
+    #[test]
+    fn sticks_grow_only_near_the_trees_another_rule_grows_and_near_the_leaves_of_trees_of_blocks() {
+        let (file, world, map) = hills();
+        let (_, faces) = file.faces();
+        let ground = ground_of(&file, &world, &map, &faces);
+        let trees = GrowRule { on: vec![1], spacing: 12.0, separation: 6.0, chance: 0.5, ..GrowRule::default() };
+        let anywhere = GrowRule { spacing: 2.0, separation: 1.0, chance: 0.8, aligned: false, ..GrowRule::default() };
+        let near = |within: f32, plants: Vec<GrowRule>, blocks: Vec<BlockId>| GrowRule {
+            near: Some(Near { within, plants, blocks }),
+            ..anywhere.clone()
+        };
+        let sticks = near(4.0, vec![trees.clone()], Vec::new());
+        let grown = |rule: &GrowRule| COLUMNS.iter().flat_map(|&column| grow(rule, &ground, column)).collect::<Vec<_>>();
+        let (stood, lying, everywhere) = (grown(&trees), grown(&sticks), grown(&anywhere));
+        assert!(stood.len() > 10 && lying.len() > 20, "{} trees, {} sticks", stood.len(), lying.len());
+        assert!(lying.len() * 2 < everywhere.len(), "{} of {} places", lying.len(), everywhere.len());
+        // Every stick is one that grows anywhere too, and most trees have some within reach.
+        assert!(lying.iter().all(|stick| everywhere.contains(stick)));
+        let apart = |a: &Grown, b: &Grown| {
+            let (dx, dz) = (a.plant.position[0] - b.plant.position[0], a.plant.position[2] - b.plant.position[2]);
+            (dx * dx + dz * dz).sqrt()
+        };
+        let with_sticks = stood.iter().filter(|tree| lying.iter().any(|stick| apart(tree, stick) <= 4.5)).count();
+        assert!(with_sticks * 10 >= stood.len() * 8, "{with_sticks} of {} trees have sticks under them", stood.len());
+        // And no stick far from where a tree is tried: within reach of a try of the trees' rule on land.
+        let tried: Vec<[f32; 2]> = COLUMNS
+            .iter()
+            .flat_map(|&column| near_sites(sticks.near.as_ref().unwrap(), Some(&world), [300.0, -150.0], 1.0, column))
+            .collect();
+        for stick in &lying {
+            let [x, _, z] = stick.plant.position;
+            let nearest = tried.iter().map(|at| ((at[0] - x).powi(2) + (at[1] - z).powi(2)).sqrt()).fold(f32::MAX, f32::min);
+            assert!(nearest <= 4.0 + 1e-3, "a stick {nearest} m from the nearest tree");
+        }
+        // The same from the generator's heights alone, as far ground grows them.
+        let far = FarGround { file: &file, generate: file.generate.as_ref().unwrap(), world: &world };
+        let far_sticks: Vec<Grown> = COLUMNS.iter().flat_map(|&column| grow_far(&sticks, &far, column, 0)).collect();
+        let matched = lying.iter().filter(|stick| far_sticks.iter().any(|far| far.plant == stick.plant)).count();
+        assert!(matched * 10 >= lying.len() * 9, "{matched} of {} sticks stand the same far off", lying.len());
+        // Nothing to keep near to, nothing grows; a wider reach grows more.
+        assert!(grown(&near(4.0, Vec::new(), Vec::new())).is_empty());
+        assert!(grown(&near(9.0, vec![trees.clone()], Vec::new())).len() > lying.len());
+
+        // A tree of blocks: a trunk of wood (5) with a crown of leaves (6) that sway, three by three, over grass.
+        let mut wooded = map.clone();
+        let mut file = file.clone();
+        file.blocks.push(BlockKind::colored("Log", [0.4, 0.3, 0.2]));
+        file.blocks.push(BlockKind { sways: true, ..BlockKind::colored("Leaves", [0.2, 0.5, 0.2]) });
+        let (_, faces) = file.faces();
+        let top = |map: &BlockMap, x: i32, z: i32| (0..200).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
+        let foot = (40..56)
+            .flat_map(|x| (40..56).map(move |z| (x, z)))
+            .find(|&(x, z)| (-1..=1).all(|dx| (-1..=1).all(|dz| map.get([x + dx, top(&map, x + dx, z + dz), z + dz]) == 1)))
+            .expect("a level patch of grass");
+        let base = top(&map, foot.0, foot.1);
+        for y in base + 1..base + 5 {
+            wooded.set([foot.0, y, foot.1], 5);
+        }
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                wooded.set([foot.0 + dx, base + 5, foot.1 + dz], 6);
+            }
+        }
+        let ground = ground_of(&file, &world, &wooded, &faces);
+        let column = [foot.0.div_euclid(32), foot.1.div_euclid(32)];
+        // Grass grows under the crown, on the ground and not on the leaves; none on the trunk's place.
+        // (On any slope: the trunk beside a block is a wall four blocks high to it.)
+        let grass =
+            GrowRule { on: vec![1], spacing: 1.0, separation: 0.0, chance: 1.0, slope: 89.0, ..GrowRule::default() };
+        let under: Vec<Grown> = grow(&grass, &ground, column)
+            .into_iter()
+            .filter(|tuft| (tuft.ground[0] - foot.0).abs() <= 1 && (tuft.ground[2] - foot.1).abs() <= 1)
+            .collect();
+        assert_eq!(under.len(), 8, "the eight blocks of grass round the trunk");
+        assert!(under.iter().all(|tuft| wooded.get(tuft.ground) == 1 && wooded.get(tuft.over()) == AIR));
+        // Mushrooms that keep near leaves grow within reach of the crown and nowhere else.
+        let mushrooms =
+            GrowRule { spacing: 1.0, separation: 0.0, chance: 1.0, slope: 89.0, ..near(3.0, Vec::new(), vec![6]) };
+        let found = grow(&mushrooms, &ground, column);
+        assert!(found.len() >= 20, "{} mushrooms round the tree", found.len());
+        for mushroom in &found {
+            let (dx, dz) = ((mushroom.ground[0] - foot.0).abs(), (mushroom.ground[2] - foot.1).abs());
+            assert!(dx <= 4 && dz <= 4, "a mushroom {dx}, {dz} blocks from the tree");
+        }
+        // With no such tree, none.
+        assert!(grow(&mushrooms, &ground_of(&file, &world, &map, &faces), column).is_empty());
     }
 
     #[test]

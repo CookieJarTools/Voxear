@@ -163,12 +163,20 @@ pub(crate) struct ChunkDraw {
     pub key: [i32; 4],
     pub bounds: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
+    /// Its loose quads, sheets of bushy leaves and of vines, drawn
+    /// whichever way the view looks while it is near enough.
+    pub loose: [u32; 2],
     pub water: [u32; 2],
     /// Drawn smooth, the cone the ways its triangles face lie within (see
     /// `voxear_terrain::blocks::mesh::ChunkMesh::cone`), [`EVERY_WAY`] where
     /// they face every way; `None` for cubes, kept by the way they face.
     pub cone: Option<[f32; 4]>,
 }
+
+/// How far from the camera a chunk's loose quads are drawn, in blocks
+/// (`BLOCK_LOOSE_REACH` in `shaders/block_quads.slang`, which shrinks a
+/// sheet of leaves away before it).
+pub const LOOSE_REACH: f32 = 160.0;
 
 /// The cone of a smooth chunk whose triangles face every way: wider than
 /// any turn, so never turned away.
@@ -272,6 +280,14 @@ pub(crate) fn pick(
             if count > 0 && toward[facing] {
                 picked.push([first, count]);
             }
+        }
+        // Its sheets of leaves and vines, seen from every side, while the camera is near.
+        let near = |detail: Detail| {
+            let reach = LOOSE_REACH * detail.block_size;
+            (detail.camera.clamp(low, high) - detail.camera).length_squared() <= reach * reach
+        };
+        if level == 0 && chunk.loose[1] > 0 && detail.is_none_or(near) {
+            picked.push(chunk.loose);
         }
     }
     merged(picked)
@@ -530,8 +546,10 @@ impl Pool {
                 let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
                 let (water, count) = held.mesh.water();
                 let water = [held.first as u32 + water, count];
+                let (loose, count) = held.mesh.loose();
+                let loose = [held.first as u32 + loose, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
-                ChunkDraw { key: *key, bounds: held.bounds, facings, water, cone }
+                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, water, cone }
             });
             self.draws = Some(draws.collect());
         }
@@ -1179,6 +1197,7 @@ mod tests {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            loose: [0, 0],
             water: [first + 60, 0],
             cone: None,
         };
@@ -1240,6 +1259,7 @@ mod tests {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            loose: [0, 0],
             water: [first + 60, water],
             cone: None,
         };

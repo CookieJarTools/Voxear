@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 82;
+pub(crate) const API_VERSION: u32 = 83;
 
 /// Engine functions scripts call.
 #[repr(C)]

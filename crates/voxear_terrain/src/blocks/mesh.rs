@@ -20,6 +20,16 @@
 //! too, so a crown of leaves is leaves all the way in. It is ground in
 //! every other way: it closes corners in, and is stood on.
 //!
+//! A block that is bushy (`block::BlockShape::Bushy`) keeps its cube and has
+//! three sheets of leaves besides, crossed through its middle and reaching
+//! out past it, wherever it meets open air; a vine is a sheet against each
+//! block of ground beside it, or two crossed sheets where it hangs free.
+//! These are the chunk's loose quads ([`ChunkMesh::loose`]), kept after its
+//! faces and before its water, seen from both sides and drawn whichever way
+//! the camera looks. A loose quad's facing is [`TUFT`] or [`VINE`], and
+//! where a face has its size it says which sheet it is ([`loose_sheet`]).
+//! They are no triangles: nothing stands on them, and rays pass.
+//!
 //! Water is seen through, so the ground's faces show where it meets water as
 //! where it meets air, and water closes no corners in. Water's own faces show
 //! only where it meets air, merged by surface, and are kept after the
@@ -38,8 +48,7 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
-    flow::Water,
-    hides, is_ground, is_water, sways,
+    hides, is_bushy, is_ground, is_vine, is_water, sways,
 };
 
 /// The ways a face can face, in the order quads are kept: +x, -x, +y, -y,
@@ -52,8 +61,35 @@ pub const FACINGS: usize = 6;
 const AXES: [(usize, bool, usize, usize); FACINGS] =
     [(0, true, 1, 2), (0, false, 2, 1), (1, true, 2, 0), (1, false, 0, 2), (2, true, 0, 1), (2, false, 1, 0)];
 
+/// The facing a loose quad has in place of a way it faces: a sheet of a
+/// bushy block's leaves, or a sheet of a vine.
+pub const TUFT: usize = 6;
+pub const VINE: usize = 7;
+
+/// The sheets of leaves a bushy block has, each by the way it runs across
+/// and the way it runs up, from the block's middle, as `blockTuft` in
+/// `shaders/block_quads.slang` has them: two upright ones from corner to
+/// corner, and four that lean. A block has both upright ones and one that
+/// leans.
+pub const TUFT_SHEETS: [([i32; 3], [i32; 3]); 6] = [
+    ([1, 0, 1], [0, 1, 0]),
+    ([1, 0, -1], [0, 1, 0]),
+    ([1, 0, 0], [0, 1, 1]),
+    ([1, 0, 0], [0, 1, -1]),
+    ([0, 0, 1], [1, 1, 0]),
+    ([0, 0, 1], [-1, 1, 0]),
+];
+
+/// A vine's sheets: against the block beside it along +x, -x, +z and -z,
+/// and the two it hangs free as, from corner to corner.
+pub const VINE_SHEETS: u32 = 6;
+
+/// A vine's sheet at the foot of its vine: no vine hangs on under it.
+pub const VINE_TIP: u32 = 8;
+
 /// A chunk's faces: its quads, kept by facing, `buckets[f]..buckets[f + 1]`
-/// those of facing `f`, and after `buckets[FACINGS]` its water's; its
+/// those of facing `f`, then its loose quads from `buckets[FACINGS]`, and
+/// after `buckets[FACINGS + 1]` its water's; its
 /// ground's faces as triangles, in blocks from the chunk's corner, three
 /// indices a triangle, facing out; which of the chunk's sides see each
 /// other through its air and water (see `sight`); and, drawn smooth, the
@@ -61,7 +97,7 @@ const AXES: [(usize, bool, usize, usize); FACINGS] =
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub quads: Vec<[u32; 2]>,
-    pub buckets: [u32; FACINGS + 1],
+    pub buckets: [u32; FACINGS + 2],
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub sights: u16,
@@ -80,9 +116,43 @@ impl ChunkMesh {
 
     /// Its water's quads: where they start among its quads, and how many.
     pub fn water(&self) -> (u32, u32) {
-        let first = self.buckets[FACINGS];
+        let first = self.buckets[FACINGS + 1];
         (first, self.quads.len() as u32 - first)
     }
+
+    /// Its loose quads, the sheets of bushy leaves and vines: where they
+    /// start among its quads, and how many.
+    pub fn loose(&self) -> (u32, u32) {
+        (self.buckets[FACINGS], self.buckets[FACINGS + 1] - self.buckets[FACINGS])
+    }
+}
+
+/// A loose quad: a sheet of the block at `at` in its chunk, `sheet` of its
+/// kind's (with [`VINE_TIP`] for a vine's foot), drawn with `surface`, as
+/// open or closed in as `open` says from 0 to 3, its corners that sway a
+/// bit each in `free`.
+pub fn pack_loose(at: [u32; 3], kind: usize, sheet: u32, surface: u8, open: u8, free: u32) -> [u32; 2] {
+    let first = at[0] | at[1] << 5 | at[2] << 10 | (sheet & 1023) << 15 | (kind as u32) << 25 | (free & 15) << 28;
+    [first, u32::from(surface) | u32::from(open & 3) << 8]
+}
+
+/// Which sheet a loose quad is, where a face has its size: for a tuft, its
+/// place in [`TUFT_SHEETS`]; for a vine, the side it clings to or the way
+/// it hangs, with [`VINE_TIP`] at the foot of its vine.
+pub fn loose_sheet(quad: [u32; 2]) -> u32 {
+    (quad[0] >> 15) & 1023
+}
+
+/// A number for a block of the world, from whole numbers alone: which of
+/// its sheets of leaves leans, the same wherever its chunk is made.
+fn block_number([x, y, z]: [i32; 3]) -> u32 {
+    let mut h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA77);
+    h ^= (z as u32).wrapping_mul(0xC2B2_AE3D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297A_2D39);
+    h ^ (h >> 15)
 }
 
 /// A quad as two words.
@@ -227,9 +297,69 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         }
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
+    let loose = |faces: &BlockFaces| !faces.shape.is_cube() && !faces.water;
+    if faces.iter().any(loose) && chunk.may_hold(|id| faces.get(usize::from(id)).is_some_and(loose)) {
+        let corner = key.map(|v| v * CHUNK as i32);
+        // A corner of a sheet sways unless a still block touches the corner of its block's cube nearest it.
+        let held = |[x, y, z]: [i32; 3]| (0..8).any(|n| still([x - (n & 1), y - (n >> 1 & 1), z - (n >> 2)]));
+        let beside = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
+        for y in 0..side as i32 {
+            for z in 0..side as i32 {
+                for x in 0..side as i32 {
+                    let p = [x, y, z];
+                    let id = block(p);
+                    let at = p.map(|v| v as u32);
+                    let step = |by: [i32; 3]| [x + by[0], y + by[1], z + by[2]];
+                    if is_bushy(faces, id) {
+                        // Only where it meets open air: one deep in a crown shows none of its tufts.
+                        let around = beside.iter().chain(&[[0, 1, 0], [0, -1, 0]]);
+                        let open = around.filter(|by| !is_ground(faces, block(step(**by)))).count();
+                        if open == 0 {
+                            continue;
+                        }
+                        let open = [0, 0, 1, 2, 2, 3, 3][open];
+                        let number = block_number([0, 1, 2].map(|k| corner[k] + p[k]));
+                        for sheet in [0, 1, 2 + (number % 4) as usize] {
+                            let (across, up) = TUFT_SHEETS[sheet];
+                            let mut free = 0;
+                            if sways(faces, id) {
+                                for (c, (sa, sb)) in [(-1, -1), (1, -1), (1, 1), (-1, 1)].into_iter().enumerate() {
+                                    let nearest = [0, 1, 2].map(|k| p[k] + i32::from(sa * across[k] + sb * up[k] > 0));
+                                    free |= u32::from(!held(nearest)) << c;
+                                }
+                            }
+                            let look = surface(faces, id, 0);
+                            mesh.quads.push(pack_loose(at, TUFT, sheet as u32, look, open, free));
+                        }
+                    } else if is_vine(faces, id) {
+                        let look = surface(faces, id, 0);
+                        let tip = if is_vine(faces, block(step([0, -1, 0]))) { 0 } else { VINE_TIP };
+                        let clings: Vec<u32> =
+                            (0..4).filter(|&s| is_ground(faces, block(step(beside[s as usize])))).collect();
+                        for &sheet in &clings {
+                            mesh.quads.push(pack_loose(at, VINE, sheet | tip, look, 3, 0));
+                        }
+                        if clings.is_empty() {
+                            // Hanging free, its foot and its head sway unless ground holds them.
+                            let (under, over) = (is_ground(faces, block(step([0, -1, 0]))), solid(step([0, 1, 0])));
+                            let free = match sways(faces, id) {
+                                true => u32::from(!under) * 0b0011 | u32::from(!over) * 0b1100,
+                                false => 0,
+                            };
+                            for sheet in 4..VINE_SHEETS {
+                                mesh.quads.push(pack_loose(at, VINE, sheet | tip, look, 3, free));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    mesh.buckets[FACINGS + 1] = mesh.quads.len() as u32;
     if chunk.may_hold(|block| is_water(faces, block)) {
         let made = held(key, made);
-        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| beyond == AIR && made(at)));
+        let open = |beyond: BlockId| beyond == AIR || is_vine(faces, beyond);
+        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| open(beyond) && made(at)));
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
@@ -273,7 +403,22 @@ pub(super) fn held<'a>(key: [i32; 3], made: &'a dyn Fn([i32; 2]) -> bool) -> imp
 /// sixteenths of a block, and the way up (a facing), where any is moved.
 pub fn water_shape(quad: [u32; 2]) -> (u8, u8, Option<usize>) {
     let up = (quad[0] >> 28) & 7;
-    (((quad[1] >> 12) & 15) as u8, ((quad[1] >> 8) & 15) as u8, (up < 6).then_some(up as usize))
+    match up < 6 {
+        true => (((quad[1] >> 12) & 15) as u8, ((quad[1] >> 8) & 15) as u8, Some(up as usize)),
+        false => (0, 0, None),
+    }
+}
+
+/// How the water of a quad of a river's top flows, in metres a second along
+/// x and z, where it flows along a current (see `flow::current_fill`): which
+/// way kept, one more than its number, where a quad's shape keeps how far
+/// its lower corners are raised, which a top has no use for.
+pub fn water_current(quad: [u32; 2]) -> Option<[f32; 2]> {
+    let (up, facing) = ((quad[0] >> 28) & 7, (quad[0] >> 25) & 7);
+    let way = ((quad[1] >> 12) & 15) as usize;
+    let top = facing == 2 && (up == 7 || up == super::flow::UP as u32);
+    let way = super::flow::WAYS.get(way.checked_sub(1).filter(|_| top)?)?;
+    Some(way.map(|v| v * super::flow::RIVER_SPEED))
 }
 
 /// A chunk's water's faces as quads, merged by surface and shape: one
@@ -290,7 +435,7 @@ pub(super) fn water_quads(
     let side = CHUNK as usize;
     let mut quads = Vec::new();
     let mut mask = vec![0u32; side * side];
-    let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| Water::of(fill(p)).height());
+    let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| super::flow::water_height(fill(p)));
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         for layer in 0..side {
             for j in 0..side {
@@ -320,6 +465,12 @@ pub(super) fn water_quads(
                     let across = match up {
                         Some(up) if up / 2 != axis => (p[up / 2] + 1) as u32,
                         _ => 0,
+                    };
+                    // A river's top keeps which way it flows where its lower corners would be raised, which a top's
+                    // never are.
+                    let rise = match (facing, super::flow::current_parts(fill(p))) {
+                        (2, Some((way, _))) => way as u8 + 1,
+                        _ => rise,
                     };
                     let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
                     mask[j * side + i] = (look | shaped | across << 19) + 1;
@@ -364,6 +515,7 @@ fn merge(mask: &mut [u32], side: usize) -> Vec<(usize, usize, usize, usize, u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blocks::flow::Water;
     use crate::blocks::chunk::Chunk;
 
     /// Faces counted one a block: each side of a solid block that meets air.
@@ -447,6 +599,140 @@ mod tests {
     }
 
     #[test]
+    fn bushy_leaves_have_three_sheets_a_block_where_they_meet_air_and_their_corners_sway_with_the_blocks() {
+        use crate::blocks::block::BlockShape;
+        // A floor, a trunk two high on it, and leaves over and round its top: three by three, three high.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        map.set([4, 1, 4], 2);
+        map.set([4, 2, 4], 2);
+        for y in 3..6 {
+            for z in 3..6 {
+                for x in 3..6 {
+                    map.set([x, y, z], 3);
+                }
+            }
+        }
+        let ground = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2)];
+        let leaves = BlockFaces { sways: true, ..BlockFaces::new(3, 3, 3) };
+        let bushy = BlockFaces { shape: BlockShape::Bushy, ..leaves };
+        let plain = mesh_chunk(&map, [0, 0, 0], &[ground[0], ground[1], ground[2], leaves]);
+        let mesh = mesh_chunk(&map, [0, 0, 0], &[ground[0], ground[1], ground[2], bushy]);
+        assert_eq!(plain.loose(), (plain.buckets[FACINGS], 0), "cubes have no sheets");
+        // Its faces and its triangles are a cube's: the sheets come after, and before the water.
+        let faces = |mesh: &ChunkMesh| mesh.quads[..mesh.buckets[FACINGS] as usize].to_vec();
+        assert_eq!(faces(&mesh), faces(&plain));
+        assert_eq!((&mesh.positions, &mesh.indices), (&plain.positions, &plain.indices), "nothing stands on a sheet");
+        let (first, count) = mesh.loose();
+        assert_eq!((first + count, mesh.water().1), (mesh.quads.len() as u32, 0));
+        // Every block of the crown meets air but the one in its middle and the one on the trunk: three sheets each.
+        assert_eq!(count, 25 * 3);
+        let sheets = &mesh.quads[first as usize..];
+        assert!(sheets.iter().all(|&quad| unpack(quad).2 == TUFT && unpack(quad).3 == 3));
+        let closed_in = |at: [u32; 3]| at == [4, 4, 4] || at == [4, 3, 4];
+        assert!(sheets.iter().all(|&quad| !closed_in(unpack(quad).0)), "none for a block closed in");
+        for block in sheets.chunks(3) {
+            let which: Vec<u32> = block.iter().map(|&quad| loose_sheet(quad)).collect();
+            assert!(which[0] == 0 && which[1] == 1 && (2..6).contains(&which[2]), "{which:?}");
+            assert!(block.iter().all(|&quad| unpack(quad).0 == unpack(block[0]).0));
+        }
+        let leaning: std::collections::HashSet<u32> = sheets.chunks(3).map(|block| loose_sheet(block[2])).collect();
+        assert!(leaning.len() >= 3, "blocks lean their third sheet different ways: {leaning:?}");
+        // A sheet's corner sways as the corner of its block's cube nearest it does: held only on the trunk's top.
+        let corner_of = |quad: [u32; 2], c: usize| {
+            let (at, ..) = unpack(quad);
+            let (across, up) = TUFT_SHEETS[loose_sheet(quad) as usize];
+            let (sa, sb) = [(-1, -1), (1, -1), (1, 1), (-1, 1)][c];
+            [0, 1, 2].map(|k| at[k] + u32::from(sa * across[k] + sb * up[k] > 0))
+        };
+        let on_trunk = |corner: [u32; 3]| corner[1] == 3 && (4..=5).contains(&corner[0]) && (4..=5).contains(&corner[2]);
+        let (mut held, mut free) = (0, 0);
+        for &quad in sheets {
+            for c in 0..4 {
+                let sways = swaying_corners(quad) >> c & 1 == 1;
+                assert_eq!(sways, !on_trunk(corner_of(quad, c)), "corner {:?}", corner_of(quad, c));
+                held += u32::from(!sways);
+                free += u32::from(sways);
+            }
+        }
+        assert!(held > 0 && free > held * 10, "{held} held, {free} free");
+        // Leaves that do not sway have sheets that stand still; the same sheets every time.
+        let still = BlockFaces { sways: false, ..bushy };
+        let stood = mesh_chunk(&map, [0, 0, 0], &[ground[0], ground[1], ground[2], still]);
+        assert!(stood.quads.iter().all(|&quad| swaying_corners(quad) == 0));
+        assert_eq!(stood.loose().1, count);
+        assert_eq!(mesh_chunk(&map, [0, 0, 0], &[ground[0], ground[1], ground[2], bushy]), mesh);
+    }
+
+    #[test]
+    fn a_vine_is_a_sheet_on_each_block_beside_it_or_hangs_crossed_and_is_no_ground() {
+        use crate::blocks::block::BlockShape;
+        // A floor, a wall along x at z = 4, three high, and a roof slab reaching out from its top over z = 5 and 6.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        for y in 1..5 {
+            for x in 0..8 {
+                map.set([x, y, 4], 1);
+            }
+        }
+        for z in 5..7 {
+            for x in 0..8 {
+                map.set([x, 4, z], 1);
+            }
+        }
+        let vine = BlockFaces { shape: BlockShape::Vine, sways: true, ..BlockFaces::new(2, 2, 2) };
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), vine];
+        let bare = mesh_chunk(&map, [0, 0, 0], &faces);
+        // A vine down the wall under the roof, and one hanging from the roof's edge, two blocks long.
+        for y in 2..4 {
+            map.set([2, y, 5], 2);
+            map.set([5, y, 6], 2);
+        }
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        // No ground: the wall's and the roof's faces show behind it, no corner is darker for it, nothing stands on it.
+        let ground = |mesh: &ChunkMesh| mesh.quads[..mesh.buckets[FACINGS] as usize].to_vec();
+        assert_eq!(ground(&mesh), ground(&bare));
+        assert_eq!((&mesh.positions, &mesh.indices), (&bare.positions, &bare.indices));
+        assert_eq!(mesh.sights, bare.sights, "and it is seen through");
+        let (first, count) = mesh.loose();
+        let sheets: Vec<_> = mesh.quads[first as usize..(first + count) as usize].to_vec();
+        assert!(sheets.iter().all(|&quad| unpack(quad).2 == VINE && unpack(quad).3 == 2));
+        // The one by the wall clings to it, the wall being towards -z: one sheet a block, the lower its foot.
+        let by_wall: Vec<_> = sheets.iter().filter(|&&quad| unpack(quad).0[0] == 2).collect();
+        assert_eq!(by_wall.len(), 2);
+        assert!(by_wall.iter().all(|&&quad| loose_sheet(quad) & 7 == 3 && swaying_corners(quad) == 0));
+        let foot = |quad: [u32; 2]| loose_sheet(quad) & VINE_TIP != 0;
+        assert!(by_wall.iter().all(|&&quad| foot(quad) == (unpack(quad).0[1] == 2)));
+        // The one out under the roof hangs free: two crossed sheets a block, held at the roof and swaying below.
+        let hanging: Vec<_> = sheets.iter().filter(|&&quad| unpack(quad).0[0] == 5).collect();
+        assert_eq!(hanging.len(), 4);
+        assert!(hanging.iter().all(|&&quad| (4..6).contains(&(loose_sheet(quad) & 7))));
+        for &&quad in &hanging {
+            let top = unpack(quad).0[1] == 3;
+            assert_eq!(swaying_corners(quad), if top { 0b0011 } else { 0b1111 }, "held where it meets the roof");
+            assert_eq!(foot(quad), !top);
+        }
+        // A vine that does not sway hangs still.
+        let stiff = [faces[0], faces[1], BlockFaces { sways: false, ..vine }];
+        assert!(mesh_chunk(&map, [0, 0, 0], &stiff).quads.iter().all(|&quad| swaying_corners(quad) == 0));
+        // Water beside a vine shows its face towards it, as towards air.
+        let mut pond = BlockMap::default();
+        pond.set([1, 0, 1], 3);
+        pond.set([2, 0, 1], 2);
+        let wet = [faces[0], faces[1], vine, BlockFaces::water(5)];
+        let pond = mesh_chunk(&pond, [0, 0, 0], &wet);
+        assert_eq!(pond.water().1, 6, "a block of water alone: every face, the one towards the vine too");
+    }
+
+    #[test]
     fn a_block_seen_through_hides_no_face_and_keeps_its_own_against_its_kind() {
         // A floor of ground, a trunk of wood two high on it, and leaves round its top: three by three, two high.
         let mut map = BlockMap::default();
@@ -520,7 +806,7 @@ mod tests {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
         let (first, count) = mesh.water();
-        assert_eq!(first, mesh.buckets[FACINGS]);
+        assert_eq!(first, mesh.buckets[FACINGS + 1]);
         let water: Vec<_> = mesh.quads[first as usize..].iter().map(|&q| unpack(q)).collect();
         assert_eq!(water.len(), count as usize);
         // Its top and four sides, where it meets air, and nothing against the floor or the pillar.

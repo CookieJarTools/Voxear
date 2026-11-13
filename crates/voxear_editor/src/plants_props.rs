@@ -104,6 +104,11 @@ pub enum PlantsField {
     GrowUnderWater,
     GrowSeed,
     GrowFarBlock,
+    /// What its plants keep near to: the model another Foliage of the
+    /// world grows, a block, and within how many metres.
+    GrowNearPlant,
+    GrowNearBlock,
+    GrowWithin,
 }
 
 use PlantsField as F;
@@ -127,6 +132,10 @@ pub fn props(world: &World, entity: Entity, settings: Vec<Prop>) -> Vec<Prop> {
             fields.extend(grow.height.map(|_| F::GrowHeights));
             fields.extend([F::GrowSteepest, F::GrowSpacing, F::GrowSeparation, F::GrowChance, F::GrowPatches]);
             fields.extend([F::GrowScale, F::GrowAligned, F::GrowSeed, F::GrowFarBlock]);
+            fields.extend([F::GrowNearPlant, F::GrowNearBlock]);
+            if !grow.near_plants.is_empty() || !grow.near_blocks.is_empty() {
+                fields.push(F::GrowWithin);
+            }
         }
         return fields.into_iter().map(Prop::Plants).collect();
     }
@@ -190,6 +199,9 @@ pub fn label(field: PlantsField) -> &'static str {
         F::GrowUnderWater => "Under water",
         F::GrowSeed => "Seed",
         F::GrowFarBlock => "Far block",
+        F::GrowNearPlant => "Near plant",
+        F::GrowNearBlock => "Near block",
+        F::GrowWithin => "Within",
     }
 }
 
@@ -208,7 +220,7 @@ pub fn key(field: PlantsField) -> &'static str {
 pub fn unit(field: PlantsField) -> Option<&'static str> {
     match field {
         F::TrunkRadius | F::TrunkHeight | F::BoxSize | F::BrushSize | F::Spacing => Some("m"),
-        F::GrowSpacing | F::GrowSeparation | F::GrowHeights | F::GrowPatches => Some("m"),
+        F::GrowSpacing | F::GrowSeparation | F::GrowHeights | F::GrowPatches | F::GrowWithin => Some("m"),
         F::Steepest | F::GrowSteepest => Some("°"),
         F::GrowTemperatures => Some("°C"),
         F::Density => Some("per 100 m²"),
@@ -266,6 +278,9 @@ pub fn get(game: &Game, entity: Entity, field: PlantsField) -> Option<Value> {
         F::GrowUnderWater => Value::Toggle(grow()?.under_water),
         F::GrowSeed => Value::Whole(i64::from(grow()?.seed)),
         F::GrowFarBlock => Value::Asset(path_of(game, grow()?.far_block.as_deref())),
+        F::GrowNearPlant => Value::Asset(path_of(game, grow()?.near_plants.first().map(String::as_str))),
+        F::GrowNearBlock => Value::Asset(path_of(game, grow()?.near_blocks.first().map(String::as_str))),
+        F::GrowWithin => Value::Number(grow()?.within),
         F::Trunk => {
             let at = match data.trunk {
                 None => 0,
@@ -396,6 +411,7 @@ fn set_grow(data: &mut voxear_engine::scene_file::FoliageData, field: PlantsFiel
         (F::GrowAligned, Value::Toggle(on)) => grow.aligned = *on,
         (F::GrowUnderWater, Value::Toggle(on)) => grow.under_water = *on,
         (F::GrowSeed, v) => grow.seed = number(v).map_or(grow.seed, |seed| seed.max(0.0) as u32),
+        (F::GrowWithin, v) => grow.within = number(v).unwrap_or(grow.within).clamp(0.0, 1000.0),
         _ => {}
     }
 }
@@ -417,8 +433,9 @@ fn change(world: &mut World, entity: Entity, how: impl FnOnce(&mut voxear_engine
 }
 
 /// What a picker shows: the project's prefabs, for what a plant cut down
-/// becomes, or its blocks, for the block a Foliage grows on and the one its
-/// plants show as far off.
+/// becomes, its blocks, for the block a Foliage grows on, the one its
+/// plants show as far off and the one they keep near to, or its models,
+/// for the plant they keep near to.
 pub fn choices(game: &Game, field: PlantsField) -> Vec<(String, Pick)> {
     match takes(field) {
         Some(kind) => fields::assets_of(game, Some(kind)),
@@ -430,7 +447,8 @@ pub fn choices(game: &Game, field: PlantsField) -> Vec<(String, Pick)> {
 pub fn takes(field: PlantsField) -> Option<AssetKind> {
     match field {
         F::Cut => Some(AssetKind::Prefab),
-        F::GrowOn | F::GrowFarBlock => Some(AssetKind::Block),
+        F::GrowOn | F::GrowFarBlock | F::GrowNearBlock => Some(AssetKind::Block),
+        F::GrowNearPlant => Some(AssetKind::Model),
         _ => None,
     }
 }
@@ -438,7 +456,8 @@ pub fn takes(field: PlantsField) -> Option<AssetKind> {
 /// What a picker calls the kind of asset a value takes.
 pub fn takes_name(field: PlantsField) -> &'static str {
     match field {
-        F::GrowOn | F::GrowFarBlock => "Block",
+        F::GrowOn | F::GrowFarBlock | F::GrowNearBlock => "Block",
+        F::GrowNearPlant => "Model",
         _ => "Prefab",
     }
 }
@@ -461,6 +480,9 @@ pub fn pick(game: &mut Game, entity: Entity, field: PlantsField, choice: &Pick) 
     change(&mut game.engine.world, entity, |data| match (field, data.grow.as_mut()) {
         (F::GrowOn, Some(grow)) => grow.on = reference.into_iter().collect(),
         (F::GrowFarBlock, Some(grow)) => grow.far_block = reference,
+        // The first of those it keeps near to is the one shown: picking sets it, None takes them all out.
+        (F::GrowNearPlant, Some(grow)) => grow.near_plants = reference.into_iter().collect(),
+        (F::GrowNearBlock, Some(grow)) => grow.near_blocks = reference.into_iter().collect(),
         (F::Cut, _) => data.cut = reference,
         _ => {}
     })

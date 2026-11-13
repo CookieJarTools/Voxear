@@ -1,14 +1,15 @@
 //! A Block in the Inspector, laid out as a material's is. Its **Look**: its
 //! colour, the material every face is drawn with and those its top and
-//! bottom have of their own, and which liquid it is (a liquid is drawn in
-//! its colour alone, so its materials go). **Breaking**: how long it takes
+//! bottom have of their own, its shape (a cube, a cube with tufts of leaves,
+//! or a vine), and which liquid it is (a liquid is drawn in its colour
+//! alone, so its materials and its shape go). **Breaking**: how long it takes
 //! by hand, the kind of tool that breaks it fast, and the tier of that tool
 //! that gets its drops. Its **Drops**, each an item, how many and how
 //! often. Its **Sounds**, and the **Data** asset a game gives it. Each
 //! change is saved as it is made, and every world of blocks listing the
 //! block takes it up at once (see `editor::blocks`).
 
-use voxear_terrain::blocks::block::{BlockDef, BlockDrop, BlockHeat, Liquid, MAX_HEAT_REACH};
+use voxear_terrain::blocks::block::{BlockDef, BlockDrop, BlockHeat, BlockShape, Liquid, MAX_HEAT_REACH};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
@@ -120,6 +121,8 @@ pub struct BlockFields {
     unbreakable: NodeId,
     /// Whether it sways in the wind; none for a liquid.
     sways: Option<NodeId>,
+    /// Its shape; none for a liquid.
+    shape: Option<NodeId>,
     tier: NodeId,
     /// Whether it is hot or cold, and how much and how far when it is.
     heat: NodeId,
@@ -168,6 +171,16 @@ impl BlockFields {
                        with a foliage material sways without this";
             ui.set_tooltip(row, tip, None);
             ui.toggle(row, "", block.sways)
+        });
+        let shape = block.liquid.is_none().then(|| {
+            let row = prop(ui, rows, "Shape");
+            let tip = "Cube: a block as most are. Bushy: a cube with tufts of leaves reaching out past it. Vine: thin \
+                       sheets on the blocks beside it, or hanging; walked through";
+            ui.set_tooltip(row, tip, None);
+            let picked = BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or_default();
+            let shape = ui.dropdown(row, &BlockShape::ALL.map(BlockShape::name), picked);
+            ui.add_class(shape, "value-choice");
+            shape
         });
         let row = prop(ui, rows, "Liquid");
         let picked = LIQUIDS.iter().position(|(liquid, _)| *liquid == block.liquid).unwrap_or_default();
@@ -227,6 +240,7 @@ impl BlockFields {
                 hardness,
                 unbreakable,
                 sways,
+                shape,
                 tier,
                 heat,
                 celsius,
@@ -299,6 +313,10 @@ impl BlockFields {
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);
+        }
+        if let Some(shape) = self.shape.filter(|&shape| ui.changed(shape)) {
+            let picked = BlockShape::ALL[ui.selected_option(shape).min(BlockShape::ALL.len() - 1)];
+            (block.shape, typed) = (picked, true);
         }
         if let Some(tier) = changed_number(ui, self.tier) {
             (block.tier, typed) = (tier.round().clamp(0.0, 1000.0) as u32, true);

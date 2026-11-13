@@ -1322,6 +1322,25 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
     phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
     frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
     world's first level sways. The face's picture and its bounced light are read where it stands.
+  - A block has a **Shape** (`block::BlockShape`, a dropdown in its Inspector): Cube, Bushy or Vine.
+    - **Bushy leaves:** a bushy block that meets open air has three sheets of leaves crossed through its middle,
+      nearly twice the block's width, thinning out cell by cell to a ragged edge, so a crown of blocks is a soft
+      mass. They are loose quads in the chunk's own pool (`ChunkMesh::loose`, facing 6), two words each, drawn
+      from both sides by one quad whose corners `loosePoint` takes the other way round from behind; drawn with
+      the block's cut-out picture, or as small square leaves from whole-number hashes (`blockSheetLook`), the
+      cube's own faces alike (`blockLeafShade`). Their corners sway with the cube corner nearest each. Out to 160
+      blocks from the camera.
+    - **Vines:** a vine block is no ground (`is_ground`): a sheet against each block of ground beside it, or two
+      crossed sheets where it hangs free (loose quads of facing 7), strands and leaves with no picture. A biome
+      hangs them under ledges, overhangs and cave roofs (`[vines]` in a `.biome`, a Vines part in its Inspector,
+      `hang_vines`), each column from its own blocks alone; a `.voxplant` with `vines` grows them up its trunk and
+      under its crown. The wet starter biomes have them, of a Vine block made with their ground's.
+    - Tests: the mesher (sheets a block, which corners sway, a vine clinging and hanging, water beside a vine),
+      the block file, the generator (vines only in open air under ground, the same from any column, by amount and
+      depth), a tree's vines, and GPU pictures of a tree of blocks with cube, bushy and pictured leaves and with
+      vines, still and in the wind. Manual: Blocks (Bushy leaves, Vines), Biomes (Vines), Wind.
+    - Not done: climbing a vine (the Character Controller has no ladders), a vine falling when what holds it is
+      dug away, vines in a Voxel Terrain, tufts in the far rings, light through leaves.
   - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
     in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
   - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds
@@ -1619,7 +1638,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   **Dropped** prefab is what it is when it lies in the world, so dropped food cooks. Scripts: `Heat.At`,
   `Heat.Sample` (`HeatSample`), `Heat.AddSource`, `Clock`, `Obj.HeatBody` (`Temperature`, `Feels`,
   `ColdResistance`, `HeatResistance`, `Progress`), `HeatBody.Changed`, `HeatBody.FeelsChanged`, `HeatSource`
-  and `HeatZone`; native API 81. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
+  and `HeatZone`; native API 82. Editor: the four components in Add Component ▸ Heat, a block's Heat, and the
   Scene view's **Heat** shading, the ground round the camera tinted by temperature. Tests: a generated desert
   by day and night, magma blocks, a cave in a hot land and a cold one, raw meat seared on a hot stone and frozen
   in the snow, feelings by resistance. Manual: Heat. Not done: fire that spreads;
@@ -2134,6 +2153,31 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     cut, kept to a mask; a roof at the land's height with holes open to the floor and pillars to it; peaks with
     level land between and narrower tops the sharper; a chasm's floor taking the sunk biome under a roof taking
     the land's; each preset pinned; GPU renders of all four.
+  - ~~**Rivers, lakes, waterfalls and currents in endless worlds:**~~ done: a **Rivers** node finds drainage over a
+    jittered grid of points 64 m apart, each draining the steepest way down and a hollow spilling over the lowest
+    point within two of it whose way does not lead back; catchment counted from the points within half a kilometre
+    up each way, the same whichever tile works it out, so rivers run unbroken through an endless world. Rivers
+    widen and deepen with their catchment, wind, cut their beds and valleys, raise banks where the ground is lower
+    than their water, pour over waterfalls into pools where a stretch drops past Falls, and run into and out of
+    lakes in hollows. The Output's **Water** and **Falls** fill a world of blocks' columns with its Sea block,
+    waterfalls as falling water; a river's blocks keep its current in their fill (`flow::current_fill`), its
+    ripples drift that way, and water pushes: Buoyancy drifts, sunk bodies are dragged along the bed, and a
+    Character Controller is carried as its **Water Push** says (C# `WaterPush`, `AddPush`, `Pushed`). Every land
+    preset runs rivers. Tests: banks hold their water in; water runs downhill; waterfalls over pools; river blocks
+    flowing their way with no water against air; a crate, a boulder and characters in a river.
+  - ~~**Great caves, mouths in hillsides and no loose rock:**~~ done: a Cave Network with no rooms of its own makes
+    great halls (60 to 100 m, pillars, hanging rock, ledges) and chambers by rules, joined by tunnels 12 to 18 m
+    wide; its new **Mouths** makes some ways up the hall itself where the ground falls steeply beside it, set level
+    with the ground below and back into the hill, a wide smooth passage running out level from its floor to the
+    hillside. A world's own Caves over 0 add such a network. Regions look at their diagonal neighbours' rooms too,
+    as great halls reach over corners. Generated chunk columns clear every piece of ground of 256 blocks or fewer
+    left loose in the air, followed into the columns beside where it reaches past the sides. A river's surface
+    steps down in eighths of a block. Tests: halls, wide tunnels and mouths with a level way out; hollows whole
+    where regions meet; no loose ground left; a GPU render from inside a mouth.
+  - ~~**Dungeons break into caves:**~~ done: a dungeon's room nearest a cave room of the world's generator, within its
+    new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
+    caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
+    dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more
@@ -2546,6 +2590,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
   near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
   terrains.
+- ~~**Small details on a Block World:**~~ done: thirteen more starter plants of small cubes
+  (`voxear_render::StarterPlant`: Tall Grass, Daisy, Bluebell, Fern, Dry Bush, Mushroom, Birch, Dead Tree, Stump,
+  Log, Stick, Pebbles, Boulder), the Tree with limbs under its crown, each growing where it suits it by climate,
+  slope and patches (`grown_plants::starter_growth`); stumps, logs and boulders solid. A rule keeps **near**
+  something (`grow::Near`, `near_plants`, `near_blocks` and `within` in `[obj.foliage.grow]`; Near plant, Near
+  block and Within in the Grow tool): within so many metres of the plants another Foliage of the world grows,
+  taken as that rule tries them (grid, chance, patches, and on generated ground climate and height), or of a
+  place whose highest block is a given block. Sticks, logs, stumps and mushrooms keep near the trees, pebbles
+  near rocks and boulders and, as a second Foliage, along the shore. Plants grow under leaves: a column's highest
+  block to grow on looks through leaves and vines (`grow::Tops`), so a tree of blocks has grass beneath it and no
+  rock on its crown. Editor: **All Starter Plants** on a Block World's Add plant row adds every one the world
+  does not grow yet, one step to undo; **Starter Trees of Blocks** makes an oak, a birch and a pine as
+  `.voxplant`s with bushy leaves and vines, their blocks and a structure each, and lists the structures on the
+  world (`starter_trees`, `block_props::list_structures`); each block has a picture drawn there from whole-number
+  hashes, 16 squares a side, and a material for it: bark, or cut-out leaves. Tests: the rule (near another rule's plants, near and
+  far alike, near a tree of blocks, grass under a crown), every starter's model, a GPU picture of each starter
+  and of a world growing them all. Manual: Block Worlds, Foliage, Structures. Not done: far trees for trees of
+  blocks, a list of structures in the Block World's Inspector, near blocks across a chunk column's edge.
 - ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
   is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
   (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing

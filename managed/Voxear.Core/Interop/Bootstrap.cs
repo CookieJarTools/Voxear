@@ -10,7 +10,7 @@ namespace Voxear.Interop;
 /// </summary>
 internal static unsafe class Bootstrap
 {
-	public const uint ApiVersion = 82;
+	public const uint ApiVersion = 83;
 
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static int Initialize(NativeApi* native, ManagedApi* managed)

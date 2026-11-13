@@ -34,6 +34,7 @@ Pick a block, and the Inspector shows:
 | Top | Its top's material |
 | Bottom | Its bottom's material |
 | Sways in wind | Its faces' corners move with the level's wind, as leaves do (see [[Wind#Blocks that sway]]) |
+| Shape | **Cube**, as most blocks are; **Bushy**, a cube with tufts of leaves reaching out of it (see [Bushy leaves](#bushy-leaves)); or **Vine**, thin sheets on the blocks beside it (see [Vines](#vines)) |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour, matt: it shines back nothing of the sky. For a block that shines, such as ice or polished stone, give it a material with a low **Roughness**. A liquid is drawn in its colour alone, so its materials go.
@@ -49,6 +50,39 @@ A block drawn with a material that is **cut out** is see-through: leaves, a grat
 - It is a block in every other way: stood on, built on, dug, and it shades the corners of the blocks round it.
 
 If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Far off, in the coarser rings, it is drawn like any block. Bounced light takes it as solid, and a see-through block is lit as any block is: light does not glow through a leaf from behind.
+
+### Bushy leaves
+
+Set a leaf block's **Shape** to **Bushy** and its leaves reach out past its cube: three sheets of leaves cross through the block's middle, two upright from corner to corner and one that leans, each nearly twice as wide as the block and thinning out to a ragged edge. Leaves overhang the blocks beside and below, and a crown of such blocks is a soft mass of leaves with no straight edge to it.
+
+- With a material that is cut out, the sheets are drawn with the block's leaf picture, clear where the picture is clear.
+- With a colour alone, the sheets and the cube's own faces are drawn as small square leaves in shades of the colour, with dark gaps between them: 16 to a block's side, or as many as the world's **Voxels**.
+- A block has its sheets only where it meets open air, so the inside of a crown costs nothing more.
+- The sheets sway with the block when it **Sways in wind**, held still wherever the block touches wood or ground.
+- They are lit as one soft mass, cast their own ragged shadow, and are drawn out to 160 blocks from the camera, shrinking away before that. The larger blocks of a world's far rings have none.
+
+The block is a cube in every other way: stood on, built on and dug as before, and the sheets are no part of its collision.
+
+In a block's file:
+
+```toml
+color = [0.3, 0.62, 0.16]
+shape = "bushy"
+sways = true
+```
+
+### Vines
+
+A block whose **Shape** is **Vine** is a vine: no cube at all, but a thin sheet against each block of ground beside it, a little off its face. With no ground beside it, a vine hangs free as two crossed sheets, from a roof, from leaves or from the vine above it.
+
+- A vine is no ground. Characters walk through it, nothing stands on it, it hides no face behind it and shades no corner, and physics rays pass it by. `Blocks.Raycast` and the brush do meet a vine, so it is placed and broken as any block.
+- What a vine clings to is read from the blocks round it, so nothing more is saved for it, and it turns to the wall as soon as one is built beside it.
+- With a material that is cut out, each sheet is drawn with the vine's picture, once a block. With a colour alone, a vine is strands running down its whole length with leaves to either side, each strand ending at its own height at the vine's foot.
+- A vine that hangs free sways when it **Sways in wind**, fixed where it meets ground. One against a wall stays still.
+
+Vines grow by themselves in a generated world: a [[Biomes#Vines|biome]] hangs them under its ledges and cave roofs, and a [[Structures#Trees of blocks|tree of blocks]] can have them up its trunk and under its crown.
+
+Vines are not climbed yet: a game's own script can ask which block a character is in (`Blocks.DefinitionAt`) and move the character up while it is a vine.
 
 ### Breaking
 

@@ -66,8 +66,11 @@ Make the Foliage's Obj a child of the Block World's Obj, open the Foliage's **Gr
 | Align to blocks | Stands each plant on the middle of its block, turned by quarter turns, so it sits square with the blocks. Off, a plant stands anywhere on its block, turned any way |
 | Seed | Another seed grows the plants in other places. Give each Foliage of a world its own, or two kinds of plant try the same places |
 | Far block | The block the plants show as far off, where they stand thick enough to be a wood (see below). None for plants that are not seen so far |
+| Near plant | Grows only near another plant of the same world: the model its Foliage grows. None for anywhere |
+| Near block | Grows only near a block: where that block is the highest of its place, as a tree's leaves are |
+| Within | With either, how near, in metres |
 
-A plant stands on the highest block of its place, under the open sky, or with **Under water** on the highest block under the water there, and only on ground the world made: nothing grows on what was built afterwards. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
+A plant stands on the highest block of its place, under the open sky, or with **Under water** on the highest block under the water there, and only on ground the world made: nothing grows on what was built afterwards. Leaves and vines do not count as that highest block, so plants grow on the ground under a tree of blocks. Dig the block from under a plant, change it, or build on the plant's place, and the plant is gone. Put the ground back as it was and the plant is back. Nothing about grown plants is saved: a save keeps the world's blocks, and the plants follow from them.
 
 Plants are grown only as far as they are drawn: a Foliage's grown plants reach its **Draw distance** from the camera. In the editor they grow round where the Scene view looks from.
 
@@ -101,6 +104,24 @@ far_block = "Plants/Tree Leaves.block"   # what a wood of them is made of, far o
 Clicking a grown plant in the Scene view selects its Foliage, as clicking a painted one does.
 
 A plant a script cuts down or removes (see [[Painting and Cutting Plants]]) stays gone, however far the camera goes and comes back. A save of the scene keeps which were taken, and a player joining a game gets them with the blocks' changes (`Blocks.CaptureEdits`).
+
+### Near other plants and blocks
+
+Sticks lie under trees and pebbles round boulders. Give a Foliage a **Near plant**, the model another Foliage under the same Block World grows, and its plants grow only **Within** so many metres of that Foliage's. Give it a **Near block** and they grow only that near a place whose highest block is that block: the leaves of a tree of blocks, say. With both, either will do.
+
+- The other Foliage's plants are taken where its rule tries them: by its Spacing, Chance and Patch size, and on generated ground its climate and height. Whether its ground was the right block or too steep is not asked, so now and then something grows near a plant that is not there.
+- A block is looked for within the plant's own chunk column of 32 blocks, so near the edge of one a tree across it is not seen.
+- In the scene's file both are lists, `near_plants` and `near_blocks`, and a plant may keep near any of several. The Inspector shows and sets the first of each.
+
+```toml
+[obj.foliage.grow]
+spacing = 2.5
+chance = 0.45
+aligned = false
+near_plants = ["Plants/Tree.boxmodel", "Plants/Pine.boxmodel"]
+near_blocks = ["Blocks/Oak Leaves.block"]
+within = 6.0
+```
 
 ## How many
 

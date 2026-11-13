@@ -20,7 +20,7 @@ use super::{
     grid::{Grid, Region, Stand, V3, add, cross, dot, sub, times, unit},
     joins::{BACK, Joins},
     level::Level,
-    made::{DETAIL, Made},
+    made::{DETAIL, Made, RoomRules},
     rooms::{NOTHING, Room, RoomExit, greater, lesser},
 };
 use crate::{
@@ -51,6 +51,25 @@ pub(crate) const NO_LIMIT: f32 = 1.0e6;
 /// How far under a tunnel's middle its floor lies, of half its width.
 const FLOOR: f32 = 0.55;
 
+/// How far a hillside must fall across a mouth for it to be one, as a share
+/// of how high its room is.
+const MOUTH_STEEP: f32 = 0.45;
+
+/// How many places near its own a mouth may stand at, for the steepest.
+const SPOTS: usize = 5;
+
+/// The eight ways round a place, along the ground.
+const RING: [V3; 8] = [
+    [1.0, 0.0, 0.0],
+    [0.707_106_77, 0.0, 0.707_106_77],
+    [0.0, 0.0, 1.0],
+    [-0.707_106_77, 0.0, 0.707_106_77],
+    [-1.0, 0.0, 0.0],
+    [-0.707_106_77, 0.0, -0.707_106_77],
+    [0.0, 0.0, -1.0],
+    [0.707_106_77, 0.0, -0.707_106_77],
+];
+
 /// A network's values, as its kernel reads them.
 #[derive(Clone, Debug)]
 pub(crate) struct Settings {
@@ -70,6 +89,8 @@ pub(crate) struct Settings {
     pub rough: f32,
     pub roof: f32,
     pub entrances: f32,
+    /// How many of the ways up to the surface are great open rooms, a mouth in the ground, 0 to 1.
+    pub mouths: f32,
     pub main: u32,
     pub side: u32,
     /// How many layers of rooms an endless network has, one under another, and how far apart they lie.
@@ -148,6 +169,13 @@ pub(crate) struct Plan {
     /// Where between its least and greatest depth it lies, 0 to 1.
     pub deep: f32,
     pub entrance: bool,
+    /// Whether the room is itself its way up: a great mouth in a hillside, its floor level with the ground below
+    /// it and the hill over the rest of it, its downhill wall open.
+    pub mouth: bool,
+    /// For a mouth, how high its middle lies, where the hillside has been found steep enough for one, and the
+    /// place on the hillside below it its passage comes out at.
+    pub seat: Option<f32>,
+    pub out: Option<V3>,
 }
 
 /// A room in the ground.
@@ -175,6 +203,9 @@ pub(crate) struct Tunnel {
     /// all: a place further off than that is left out of the piece's sums.
     pub near: [(V3, f32); PIECES],
     pub roofed: bool,
+    /// Whether its walls are left smooth: a mouth's passage, whose roughness would break the thin ground over its
+    /// end into loose blocks.
+    pub smooth: bool,
     pub bounds: Bounds,
 }
 
@@ -366,9 +397,12 @@ impl Network {
         let at = |part: i32| share(mix(set.seed, &[region[0], region[1], region[2], part]));
         let loose = set.loose();
         let jitter = [(at(3) * 2.0 - 1.0) * loose, (at(4) * 2.0 - 1.0) * loose];
-        // Only the topmost layer has ways up to the surface.
+        // Only the topmost layer has ways up to the surface; some of them are the room itself, a mouth.
         let entrance = layer == 0 && at(8) < set.entrances;
-        Some(self.planned(grid, region, set.room(at(5)), jitter, links, at(6), entrance))
+        let mouth = entrance && at(9) < set.mouths;
+        let mut plan = self.planned(grid, region, set.room(at(5)), jitter, links, at(6), (entrance, mouth));
+        plan.mouth = mouth;
+        Some(plan)
     }
 
     /// What decides the joins of layer `layer`: the topmost by the network's own seed, as a network of one
@@ -389,7 +423,7 @@ impl Network {
         jitter: [f32; 2],
         links: [bool; SLOTS],
         deep: f32,
-        entrance: bool,
+        (entrance, mouth): (bool, bool),
     ) -> Plan {
         let set = &self.set;
         let stand = grid.stand(region, jitter);
@@ -404,6 +438,11 @@ impl Network {
             unit([dot(away, stand.x), 0.0, dot(away, stand.z)], [1.0, 0.0, 0.0])
         });
         let made = set.rooms[room].rules.map(|rules| {
+            // A mouth hangs no rock from its roof: where its passage opens the roof away, the rock would float.
+            if mouth {
+                let rules = RoomRules { hanging: 0, ..rules };
+                return Arc::new(Made::of(&rules, mix(set.seed, &[region[0], region[1], region[2], 40])));
+            }
             let known = |kept: &(u64, Region, Arc<Made>)| kept.0 == self.id && kept.1 == region;
             let kept = MADE.with_borrow(|kept| kept.iter().find(|kept| known(kept)).map(|kept| kept.2.clone()));
             kept.unwrap_or_else(|| {
@@ -461,7 +500,25 @@ impl Network {
             let has = share(mix(set.seed, &[region[0], region[1], region[2], 16 + at as i32])) < shape.chance;
             present |= u64::from(has) << at;
         }
-        Plan { region, room, stand, turns, mirrored, beside, links, toward, ways, present, made, deep, entrance }
+        let (mouth, seat, out) = (false, None, None);
+        Plan {
+            region,
+            room,
+            stand,
+            turns,
+            mirrored,
+            beside,
+            links,
+            toward,
+            ways,
+            present,
+            made,
+            deep,
+            entrance,
+            mouth,
+            seat,
+            out,
+        }
     }
 
     /// `plan`'s room where the ground over its foot is `ground` metres
@@ -498,6 +555,98 @@ impl Network {
         -self.set.depth * (0.75 + 0.5 * plan.deep) - plan.region[1] as f32 * self.set.layer_depth
     }
 
+    /// The room of `region` in an endless network, a mouth seated in its
+    /// hillside (see `seat_mouths`): none where the region has none.
+    pub fn seated(&self, grid: &Grid, region: Region) -> Option<Plan> {
+        let mut plans = [self.plan(grid, region)];
+        self.seat_mouths(&mut plans);
+        let [plan] = plans;
+        plan
+    }
+
+    /// How far over the ground `ground` metres high at its foot `plan`'s
+    /// room lies: a mouth where it is seated, else as deep as it is sunk.
+    pub fn rise(&self, plan: &Plan, ground: f32) -> f32 {
+        plan.seat.map_or_else(|| self.sunk(plan), |seat| seat - ground)
+    }
+
+    /// Makes each of `plans` that would be a mouth one where the ground
+    /// round it falls away steeply enough on one side, its floor level with
+    /// the ground there and the room moved into the hill; and an ordinary
+    /// room with a way up where it does not.
+    fn seat_mouths(&self, plans: &mut [Option<Plan>]) {
+        let mouth = |at: &usize| plans[*at].as_ref().is_some_and(|plan| plan.mouth);
+        let mouths: Vec<usize> = (0..plans.len()).filter(mouth).collect();
+        if mouths.is_empty() {
+            return;
+        }
+        // The ground at a few places a mouth may stand, each with eight places round it as far out as most of
+        // the room reaches, asked at once.
+        let spots = |plan: &Plan| -> [V3; SPOTS] {
+            let near = self.set.spacing * 0.15;
+            let ways = [[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
+            ways.map(|[x, z]| add(plan.stand.foot, [x * near, 0.0, z * near]))
+        };
+        let ring = |plan: &Plan, spot: V3| -> [V3; 9] {
+            let far = self.room_reach(plan) * 0.8;
+            std::array::from_fn(|k| if k == 0 { spot } else { add(spot, times(RING[k - 1], far)) })
+        };
+        let places: Vec<V3> = mouths
+            .iter()
+            .flat_map(|&at| {
+                let plan = plans[at].as_ref().expect("a mouth");
+                spots(plan).into_iter().flat_map(move |spot| ring(plan, spot))
+            })
+            .collect();
+        let heights = self.grounds(&places);
+        for (n, &at) in mouths.iter().enumerate() {
+            let plan = plans[at].as_mut().expect("a mouth");
+            // The spot where the ground falls furthest to one side, and that side.
+            let mut best: Option<(f32, V3, usize, f32)> = None;
+            for (k, spot) in spots(plan).into_iter().enumerate() {
+                let ground = &heights[(n * SPOTS + k) * 9..(n * SPOTS + k) * 9 + 9];
+                let low = (1..9).min_by(|&a, &b| ground[a].total_cmp(&ground[b])).unwrap_or(1);
+                let fall = ground[0] - ground[low];
+                if best.is_none_or(|(most, ..)| fall > most) {
+                    best = Some((fall, spot, low, ground[low]));
+                }
+            }
+            let tall = self.room_height(plan);
+            let Some((_, spot, low, below)) = best.filter(|(fall, ..)| *fall >= tall * MOUTH_STEEP) else {
+                plan.mouth = false;
+                continue;
+            };
+            // Into the hill, away from where it falls, and level with the ground there.
+            let into = times(RING[low - 1], -self.room_reach(plan) * 0.2);
+            // Kept within the box any room of its region may stand in, so the regions round it find it.
+            let [x, _, z] = plan.region;
+            let (spread, spacing) = (self.set.loose() * 0.5 * self.set.spacing, self.set.spacing);
+            let held = |v: f32, cell: i32| {
+                let middle = (cell as f32 + 0.5) * spacing;
+                v.clamp(middle - spread, middle + spread)
+            };
+            let foot = add(spot, into);
+            plan.stand.foot = [held(foot[0], x), foot[1], held(foot[2], z)];
+            plan.seat = Some(below - self.room_floor(plan));
+            let out = add(spot, times(RING[low - 1], self.room_reach(plan) * 0.8));
+            plan.out = Some([out[0], below, out[2]]);
+        }
+    }
+
+    /// How far over its middle `plan`'s room's floor lies, where it can be
+    /// stood on, in metres.
+    fn room_floor(&self, plan: &Plan) -> f32 {
+        plan.made.as_ref().map_or(0.0, |made| made.stood())
+    }
+
+    /// How high `plan`'s room is, in metres.
+    fn room_height(&self, plan: &Plan) -> f32 {
+        match &plan.made {
+            Some(made) => made.bounds()[1][1],
+            None => self.set.rooms[plan.room].reach(),
+        }
+    }
+
     /// Everything of an endless network that can reach into `region`.
     fn gather(&self, grid: &Grid, region: Region) -> Gathered {
         // The region, the four beside it, and those beside them: each once, in this order. Then the same of
@@ -515,16 +664,22 @@ impl Network {
         let layers = self.set.layers.max(1) as i32;
         let regions: Vec<Region> =
             (0..layers).flat_map(|layer| cells.iter().map(move |&[i, _, j]| [i, layer, j])).collect();
-        // The rooms that can reach into the region itself: its own and the four beside it, of each layer.
-        let within = |at: usize| at % cells.len() < 5;
-        let plans: Vec<Option<Plan>> = regions.iter().map(|&region| self.plan(grid, region)).collect();
+        // The rooms that can reach into the region itself: its own and the eight round it, of each layer. A great
+        // hall near a corner of its region reaches over the corner, into the region across it.
+        let within = |at: usize| {
+            let [i, _, j] = regions[at];
+            (i - region[0]).abs() <= 1 && (j - region[2]).abs() <= 1
+        };
+        let mut plans: Vec<Option<Plan>> = regions.iter().map(|&region| self.plan(grid, region)).collect();
+        self.seat_mouths(&mut plans);
         // The ground over every room, and over where each inner room's entrance comes out, asked at once.
         let mut feet: Vec<V3> = plans.iter().flatten().map(|plan| plan.stand.foot).collect();
         let mouths: Vec<Option<V3>> = plans
             .iter()
             .enumerate()
             .map(|(at, plan)| {
-                plan.as_ref().filter(|plan| within(at) && plan.entrance).map(|plan| self.mouth(grid, plan))
+                let way_up = |plan: &&Plan| within(at) && plan.entrance && !plan.mouth;
+                plan.as_ref().filter(way_up).map(|plan| self.mouth(grid, plan))
             })
             .collect();
         feet.extend(mouths.iter().flatten());
@@ -534,7 +689,8 @@ impl Network {
             .into_iter()
             .map(|plan| {
                 let plan = plan?;
-                let (ground, rise) = (heights.next().unwrap_or(0.0), self.sunk(&plan));
+                let ground = heights.next().unwrap_or(0.0);
+                let rise = self.rise(&plan, ground);
                 Some(self.placed(grid, plan, ground, rise))
             })
             .collect();
@@ -562,6 +718,8 @@ impl Network {
                 gathered.tunnels.push(self.entrance(grid, room, *mouth, ground));
             }
         }
+        // Each mouth's passage out to its hillside: of every room placed, as one may reach two regions off.
+        gathered.tunnels.extend(placed.iter().flatten().filter_map(|room| self.passage(room)));
         gathered.rooms = inner().cloned().collect();
         gathered.bound();
         gathered
@@ -677,6 +835,24 @@ impl Network {
             None => [1.0, 0.0, 0.0],
         };
         (exit, unit([way[0], 0.0, way[2]], [1.0, 0.0, 0.0]))
+    }
+
+    /// A mouth's passage: wide, open and nearly level, from its floor out to
+    /// the hillside below it, so the hall opens in the hill's side.
+    fn passage(&self, room: &Placed) -> Option<Tunnel> {
+        let out = room.plan.out?;
+        let tall = self.room_height(&room.plan);
+        let radius = greater(self.set.radius_to, tall * 0.3);
+        let floor = room.at[1] + self.room_floor(&room.plan);
+        let from = [room.at[0], floor + radius * FLOOR, room.at[2]];
+        // Out past where the hillside comes down to the floor, into the open.
+        let along = unit([out[0] - from[0], 0.0, out[2] - from[2]], [1.0, 0.0, 0.0]);
+        let to = add([out[0], out[1] + radius * FLOOR, out[2]], times(along, radius));
+        let [x, y, z] = room.plan.region;
+        let seed = mix(self.set.seed, &[x, y, z, 11]);
+        let winding = self.set.winding * 0.3;
+        let passage = self.wound((from, along), (to, along), room.axes[1], seed, winding, false, radius, false);
+        Some(Tunnel { smooth: true, ..passage })
     }
 
     /// The way up from `room` to the surface, coming out over `mouth`
@@ -834,7 +1010,7 @@ impl Network {
             let reach = dot(along, along).sqrt() * 0.5 + greater(radii[at], radii[at + 1]) + self.set.rough + 1.0;
             (add(a, times(along, 0.5)), reach * reach)
         });
-        Tunnel { line, up, radius: fattest, radii, floor: radius * FLOOR, near, roofed, bounds }
+        Tunnel { line, up, radius: fattest, radii, floor: radius * FLOOR, near, roofed, smooth: false, bounds }
     }
 }
 
@@ -907,7 +1083,12 @@ impl Gathered {
             }
             let from = sub(p, room.at);
             let own = [dot(from, room.axes[0]), dot(from, room.axes[1]), dot(from, room.axes[2])];
-            roofed = greater(roofed, net.room_inside(&room.plan, own, noise));
+            let inside = net.room_inside(&room.plan, own, noise);
+            // A mouth is open to the sky; every other room keeps under the ground's roof.
+            match room.plan.mouth {
+                true => open = greater(open, inside),
+                false => roofed = greater(roofed, inside),
+            }
         };
         match only {
             Some(only) => only.iter().filter_map(|&at| self.rooms.get(usize::from(at))).for_each(&mut room),
@@ -918,7 +1099,7 @@ impl Gathered {
                 return;
             }
             // A tunnel's walls come in no further than a quarter of its half width.
-            let moved = noise.map_or(0.0, |[lumps, detail]| {
+            let moved = noise.filter(|_| !tunnel.smooth).map_or(0.0, |[lumps, detail]| {
                 greater(lumps * net.set.rough + detail * 0.35, -tunnel.radius * 0.25)
             });
             let hollow = tunnel.inside(p) + moved;

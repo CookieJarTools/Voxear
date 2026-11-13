@@ -225,6 +225,7 @@ pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
             continue;
         };
         let numbered = BiomeBlocks::of(&biome.ground, |named| number_named(content, &mut file, reference, named));
+        let numbered = numbered.with_vines(&biome.vines, |named| number_named(content, &mut file, reference, named));
         list.push((*biome).clone());
         blocks.push(numbered);
     }
@@ -301,7 +302,9 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     named.as_deref().map_or(0, |named| number_named(content, &mut file, plant, named))
                 };
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
-                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves }
+                // A plant that grows no vines numbers no block for them.
+                let vine = if def.vines > 0.0 { number(&def.vine) } else { 0 };
+                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves, vine }
             }
             (None, None) if structure.dungeon.is_some() => {
                 let dungeon = structure.dungeon.as_ref().expect("checked above");
@@ -345,6 +348,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     loops: dungeon.loops,
                     floors: dungeon.floors,
                     floor_gap: dungeon.floor_gap,
+                    caves: dungeon.caves,
                     depth: dungeon.depth,
                     wall,
                     floor,
@@ -693,6 +697,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
             fills_in: 0.0,
             liquid: Default::default(),
             glitter: false,
+            leafy: face.leafy,
         });
     }
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };

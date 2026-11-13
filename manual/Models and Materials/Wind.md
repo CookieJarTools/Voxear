@@ -75,6 +75,8 @@ A low, wide plant bends less for the same number than a tall, thin one, so a tuf
 
 Leaves built of blocks sway too. Turn on a block's **Sways in wind** (see [[Blocks]]), or draw it with a foliage material, and the corners of its faces move a little with the wind, each at its own pace, as gusts cross the crown. A corner that touches a block standing still does not move, so leaves stay fixed to their wood and to the ground, and no gap opens anywhere. A block's corner moves at most about a fifth of a block.
 
+A block of [[Blocks#Bushy leaves|bushy leaves]] sways its tufts with its corners, a little further, as they reach out past the block. A [[Blocks#Vines|vine]] that hangs free sways from where it is fixed, and one against a wall stays still.
+
 Only the world's own blocks sway, not the larger ones of its far rings. Swaying faces are drawn a block at a time, not joined into larger ones, so a forest of swaying leaves is a little more to draw than a still one.
 
 ## Plants from other tools

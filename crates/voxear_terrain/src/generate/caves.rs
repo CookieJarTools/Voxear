@@ -59,6 +59,11 @@ pub struct PlacedRoom {
     pub turns: u8,
     /// Whether it is on a level's main path.
     pub main: bool,
+    /// Whether it is a mouth: a great hall in a hillside, its own way out by
+    /// a wide passage level with its floor; and where that passage comes
+    /// out on the hillside.
+    pub mouth: bool,
+    pub out: Option<[f32; 3]>,
     /// A box that holds it.
     pub bounds: [[f32; 3]; 2],
     /// A place on its floor with room to stand.
@@ -179,9 +184,9 @@ impl Caves {
             return self.rooms().into_iter().find(|room| room.region == region);
         }
         let grid = net.grid();
-        let plan = net.plan(&grid, region)?;
+        let plan = net.seated(&grid, region)?;
         let ground = net.grounds(&[plan.stand.foot])[0];
-        let rise = net.sunk(&plan);
+        let rise = net.rise(&plan, ground);
         let room = net.placed(&grid, plan, ground, rise);
         Some(shown(net, &room, [0.0; 3], None, false, &|_| None))
     }
@@ -272,6 +277,8 @@ fn shown(
         mirrored: room.plan.mirrored,
         turns: room.plan.turns,
         main,
+        mouth: room.plan.mouth,
+        out: room.plan.out.map(|out| add(out, lift)),
         bounds: [add(room.bounds.low, lift), add(room.bounds.high, lift)],
         floor: add(at, out(floor)),
         exits: exits.collect(),

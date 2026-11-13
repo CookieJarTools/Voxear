@@ -19,6 +19,11 @@
 //! sides of it, a round way through at the height of the lower ground,
 //! with the ridge left whole over it.
 //!
+//! A mask wired into Mask keeps the bridges and windows to where it is
+//! high: How Often and Windows are multiplied by it where each would be,
+//! so one is whole or not there at all. A Climate Mask keeps them to one
+//! kind of country.
+//!
 //! It says, a column at a time, between which heights a bridge stands, so
 //! a world of blocks asks about no more air than that, and a far view
 //! shows the bridges.
@@ -82,8 +87,9 @@ impl Default for Arches {
 }
 
 impl Arches {
-    /// Its ground, among its inputs.
+    /// Its ground and its mask, among its inputs.
     pub const GROUND: usize = 0;
+    pub const MASK: usize = 1;
 }
 
 const VALUES: &[ValueSpec] = &[
@@ -96,7 +102,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
 ];
 
-const INPUTS: &[Port] = &[Port::volume("ground", "Ground")];
+const INPUTS: &[Port] = &[Port::volume("ground", "Ground"), Port::field("mask", "Mask")];
 
 const OUTPUTS: &[Port] = &[Port::volume("ground", "Ground")];
 
@@ -152,7 +158,8 @@ impl Kind for Arches {
         if none(self.often) && none(self.windows) {
             return ground;
         }
-        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground()));
+        let mask = cx.input_program(node, Self::MASK);
+        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground(), mask));
         let end = |cx: &mut Compiler, what: u32| {
             let finder = finder.clone();
             cx.column(at, |cx, places| cx.run(Over { finder, what }, &[places.x, places.z]))
@@ -252,6 +259,8 @@ pub(crate) struct Finder {
     set: Arches,
     seed: u32,
     ground: Arc<Program>,
+    /// Where they are, as its Mask says: anywhere with none.
+    mask: Option<Arc<Program>>,
     id: u64,
     /// How wide a region is.
     region: f32,
@@ -272,7 +281,7 @@ pub(crate) struct Near {
 }
 
 impl Finder {
-    fn new(set: &Arches, seed: u32, ground: Arc<Program>) -> Self {
+    fn new(set: &Arches, seed: u32, ground: Arc<Program>, mask: Option<Arc<Program>>) -> Self {
         let mut set = set.clone();
         set.span_from = set.span_from.clamp(8.0, 2000.0);
         set.span_to = set.span_to.clamp(set.span_from, 2000.0);
@@ -282,8 +291,11 @@ impl Finder {
         key.name("arches 2").number(set.span_from).number(set.span_to).number(set.thickness).number(set.often);
         key.number(set.windows);
         key.number(set.width).whole(seed).whole(ground.hash as u32).whole((ground.hash >> 32) as u32);
+        if let Some(mask) = &mask {
+            key.name("mask").whole(mask.hash as u32).whole((mask.hash >> 32) as u32);
+        }
         let region = set.span_to * (1.0 + 2.0 * PAST) + set.width * 2.0 + 16.0;
-        Self { set, seed, ground, id: key.hash(), region }
+        Self { set, seed, ground, mask, id: key.hash(), region }
     }
 
     fn region_of(&self, x: f32, z: f32) -> [i32; 2] {
@@ -296,6 +308,10 @@ impl Finder {
         let set = &self.set;
         let pick = |part: i32| share(mix(self.seed, [region[0], region[1], part]));
         if pick(0) >= set.often || set.often.is_nan() {
+            return None;
+        }
+        let middle = [(region[0] as f32 + 0.5) * self.region, (region[1] as f32 + 0.5) * self.region];
+        if pick(0) >= set.often * super::mask_at(self.mask.as_deref(), middle[0], middle[1]) {
             return None;
         }
         // Every line's places, read of the ground at once.
@@ -351,6 +367,13 @@ impl Finder {
         for at in 0..PANES * PANES {
             let pick = |part: i32| share(mix(self.seed, [region[0], region[1], 1000 + at * 64 + part]));
             if pick(0) >= self.set.windows {
+                continue;
+            }
+            let pane_middle = [
+                (region[0] as f32 + ((at % PANES) as f32 + 0.5) / PANES as f32) * self.region,
+                (region[1] as f32 + ((at / PANES) as f32 + 0.5) / PANES as f32) * self.region,
+            ];
+            if pick(0) >= self.set.windows * super::mask_at(self.mask.as_deref(), pane_middle[0], pane_middle[1]) {
                 continue;
             }
             for tried in 0..WINDOW_TRIES {

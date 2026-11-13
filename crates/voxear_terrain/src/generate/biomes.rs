@@ -22,6 +22,10 @@
 //! shore = "Blocks/Sand.block"    # within `shore_height` metres of the sea
 //! shore_height = 2.0
 //!
+//! [land]                         # the lie of its land: see `land`
+//! form = "tablelands"
+//! height = 110.0
+//!
 //! [vines]
 //! block = "Blocks/Vine.block"    # hangs under ledges, overhangs and cave roofs
 //! amount = 0.3                   # how many of the places one could hang from have one, 0 to 1
@@ -41,6 +45,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::BiomeLand;
 use crate::{
     blocks::chunk::{AIR, BlockId},
     noise,
@@ -66,6 +71,10 @@ pub struct BiomeDef {
     pub sunk: Option<[f32; 2]>,
     /// What its ground is made of.
     pub ground: BiomeGround,
+    /// The lie of its land: the generator's own, or its own hills,
+    /// mountains, tables or pillars.
+    #[serde(skip_serializing_if = "BiomeLand::is_keep")]
+    pub land: BiomeLand,
     /// The vines that hang in it.
     #[serde(skip_serializing_if = "BiomeVines::is_none")]
     pub vines: BiomeVines,
@@ -142,6 +151,7 @@ impl Default for BiomeDef {
             height: None,
             sunk: None,
             ground: BiomeGround::default(),
+            land: BiomeLand::default(),
             vines: BiomeVines::default(),
             tints: BiomeTints::default(),
         }
@@ -438,7 +448,7 @@ impl WorldBiomes {
     /// Whether it makes the ground `other` makes: the same biomes in the
     /// same places, of the same blocks, whatever colours they show on maps.
     pub fn same_ground(&self, other: &Self) -> bool {
-        let lies = |biome: &BiomeDef| (biome.temperature, biome.humidity, biome.height, biome.sunk);
+        let lies = |biome: &BiomeDef| (biome.temperature, biome.humidity, biome.height, biome.sunk, biome.land);
         let (ours, theirs) = (&self.biomes, &other.biomes);
         self.blocks == other.blocks
             && (ours.spreads, ours.wander, ours.wander_size, ours.seed)

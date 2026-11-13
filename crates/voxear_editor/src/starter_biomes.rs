@@ -32,6 +32,13 @@
 //! (`starter_trees`), when it is first given a generator; **Add Showcase
 //! Biomes** lists them on a world that has one.
 //!
+//! Each has land of its own (see `generate::land`): plains in the
+//! Tundra, the Grassland and the Savanna, hills in the Taiga and the
+//! Forest, tablelands in the Desert and pillars of rock in the Rainforest;
+//! the Snow keeps the ground it lies on. Of the showcase biomes the Autumn
+//! Woods are mountains with cliffs and bridges, the Blossom Grove stands
+//! among pillars, and the Volcanic Fields are tablelands.
+//!
 //! The biomes are made in a Biomes folder and their blocks in a Blocks
 //! folder, both beside the world. A biome of a starter's name already
 //! there is listed as it is, and a block of a name the project has
@@ -44,7 +51,7 @@ use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_terrain::{
     blocks::block::{BlockDef, BlockHeat, BlockShape, BlockTint},
-    generate::{BiomeDef, BiomeGround, BiomeTints, BiomeVines},
+    generate::{BiomeDef, BiomeGround, BiomeLand, BiomeTints, BiomeVines, Landform},
     surfaces::Biome,
 };
 
@@ -144,6 +151,7 @@ struct Showcase {
     shore: &'static str,
     vines: f32,
     tints: BiomeTints,
+    land: Landform,
 }
 
 const SHOWCASE: [Showcase; 3] = [
@@ -157,6 +165,7 @@ const SHOWCASE: [Showcase; 3] = [
         shore: "Gravel",
         vines: 0.05,
         tints: tints(Some([1.6, 0.95, 0.4]), Some([1.6, 0.9, 0.6])),
+        land: Landform::Mountains,
     },
     Showcase {
         name: "Blossom Grove",
@@ -168,6 +177,7 @@ const SHOWCASE: [Showcase; 3] = [
         shore: "Sand",
         vines: 0.1,
         tints: tints(Some([0.85, 1.15, 0.6]), Some([1.2, 1.1, 1.1])),
+        land: Landform::Pillars,
     },
     Showcase {
         name: "Volcanic Fields",
@@ -179,6 +189,7 @@ const SHOWCASE: [Showcase; 3] = [
         shore: "Obsidian",
         vines: 0.0,
         tints: tints(None, None),
+        land: Landform::Tablelands,
     },
 ];
 
@@ -208,6 +219,7 @@ pub fn showcase(split: [f32; 2], mut block: impl FnMut(&str) -> String) -> Vec<(
             false => BiomeVines::default(),
         },
         tints: biome.tints,
+        land: BiomeLand::of(biome.land),
     };
     SHOWCASE.iter().zip(warmth).map(|(biome, warmth)| (biome.name, made(biome, warmth, &mut block))).collect()
 }
@@ -266,6 +278,8 @@ struct Starter {
     shore: &'static str,
     vines: f32,
     tints: BiomeTints,
+    /// The lie of its land, as that kind of country comes.
+    land: Landform,
 }
 
 /// Tints of grass and of foliage, white for none.
@@ -284,6 +298,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Gravel",
         vines: 0.0,
         tints: tints(None, None),
+        land: Landform::Keep,
     },
     Starter {
         climate: Biome::Tundra,
@@ -295,6 +310,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Gravel",
         vines: 0.0,
         tints: tints(None, None),
+        land: Landform::Plains,
     },
     Starter {
         climate: Biome::Taiga,
@@ -306,6 +322,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Gravel",
         vines: 0.06,
         tints: tints(None, Some([0.8, 0.95, 1.05])),
+        land: Landform::Hills,
     },
     Starter {
         climate: Biome::Grassland,
@@ -317,6 +334,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Sand",
         vines: 0.08,
         tints: tints(Some([0.75, 1.0, 0.55]), Some([1.1, 1.05, 0.9])),
+        land: Landform::Plains,
     },
     Starter {
         climate: Biome::Forest,
@@ -328,6 +346,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Gravel",
         vines: 0.22,
         tints: tints(Some([0.5, 0.8, 0.42]), Some([0.85, 0.95, 0.85])),
+        land: Landform::Hills,
     },
     Starter {
         climate: Biome::Desert,
@@ -339,6 +358,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Sand",
         vines: 0.0,
         tints: tints(None, None),
+        land: Landform::Tablelands,
     },
     Starter {
         climate: Biome::Savanna,
@@ -350,6 +370,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Sand",
         vines: 0.0,
         tints: tints(Some([1.4, 1.2, 0.75]), Some([1.5, 1.2, 0.9])),
+        land: Landform::Plains,
     },
     Starter {
         climate: Biome::Rainforest,
@@ -361,6 +382,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Sand",
         vines: 0.5,
         tints: tints(Some([0.45, 0.9, 0.4]), Some([0.7, 1.0, 0.7])),
+        land: Landform::Pillars,
     },
 ];
 
@@ -391,6 +413,7 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
                 false => BiomeVines::default(),
             },
             tints: starter.tints,
+            land: BiomeLand::of(starter.land),
         };
         // The heights are snow in any place but a warm one, and low ground never. Snow lies on steeper ground than
         // anything grows on, so a mountain's top is white with rock only in its faces.

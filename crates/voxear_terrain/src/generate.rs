@@ -36,6 +36,7 @@ pub mod caves;
 mod compile;
 mod eval;
 mod graph;
+pub mod land;
 mod landmass;
 pub mod nodes;
 mod starters;
@@ -44,6 +45,7 @@ mod voxels;
 mod world;
 
 pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, WorldBiomes};
+pub use land::{BiomeLand, Landform};
 pub use caves::{
     CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, PlacedSpot, Room, RoomExit, RoomForm, RoomRules,
     RoomSample, RoomShape,

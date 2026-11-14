@@ -12,6 +12,10 @@ internal static unsafe class NativeWorldBudget
 	public const int Upload = 3;
 	public const int ViewDistance = 4;
 	public const int FarDistance = 5;
+	public const int NearDetail = 6;
+	public const int FarDetail = 7;
+	public const int PlantDetail = 8;
+	public const int KeptForMachine = 9;
 
 	public static float Get(int which)
 	{

@@ -1598,7 +1598,24 @@ fn lay(cells: &mut Vec<[i32; 2]>, point: [f32; 2], width: f32) {
 const BEACH: f32 = 2.5;
 
 /// How far from a river's or a lake's water a plant keeps, in metres.
-const BY_WATER: f32 = 6.0;
+pub(crate) const BY_WATER: f32 = 6.0;
+
+/// How high over the sea the plants `structure` grows keep, in metres,
+/// wherever they stand: as high as the shore of any biome they keep to, of
+/// every biome where they keep to none, and over a beach. None for a
+/// structure that is no plant, or a plant that grows by the water. So far
+/// off, where a ring's block may hold a beach and the land behind it, a
+/// wood keeps to the land a tree stands on near.
+pub fn plant_shore(structure: &PlacedStructure, biomes: Option<&WorldBiomes>) -> Option<f32> {
+    let plant = matches!(structure.blocks, StructureBlocks::Plant { .. });
+    if !plant || structure.placement.by_water {
+        return None;
+    }
+    let list = biomes.map_or(&[][..], |biomes| biomes.biomes.list());
+    let kept = |at: &usize| structure.biomes.is_empty() || structure.biomes.contains(at);
+    let shores = list.iter().enumerate().filter(|(at, _)| kept(at)).map(|(_, biome)| biome.ground.shore_height);
+    Some(shores.fold(BEACH, f32::max))
+}
 
 /// The ground under a place, for building: the generator's height there,
 /// in metres in its world.

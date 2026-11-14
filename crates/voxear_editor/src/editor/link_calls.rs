@@ -367,6 +367,8 @@ impl Editor {
                     .map_err(|error| refuse(ErrorKind::Failed, format!("reading voxear.toml: {error}")))?;
                 done(json!({ "project": link::toml_json(&text) }))
             }
+            "world_quality.get" => done(self.world_quality_json()),
+            "world_quality.set" => self.world_quality_set(args),
             "docs.search" => done(self.docs_search(args)),
             "docs.read" => self.docs_read(need_text(args, "reference")?),
             "editor.wait" => {
@@ -1370,6 +1372,80 @@ impl Editor {
         done(json!({ "changed": changed }))
     }
 
+    /// What making worlds of blocks spends now, whether this machine keeps
+    /// its own, and the project's.
+    fn world_quality_json(&self) -> Json {
+        let world = &self.game.engine.world;
+        let mut now = serde_json::to_value(voxear_terrain::WorldBudget::of(world)).unwrap_or_default();
+        now["machine"] = json!(voxear_terrain::MachineBudget::of(world).kept);
+        now["project"] = serde_json::to_value(self.game.project.file.world).unwrap_or_default();
+        now
+    }
+
+    fn world_quality_set(&mut self, args: &Json) -> Called {
+        use voxear_terrain::{WorldBudget, WorldQuality};
+        let quality = match opt_text(args, "quality") {
+            Some(name) => Some(
+                WorldQuality::ALL
+                    .into_iter()
+                    .find(|quality| quality.label().eq_ignore_ascii_case(name))
+                    .ok_or_else(|| bad(format!("no world quality is named `{name}`")))?,
+            ),
+            None => None,
+        };
+        let number = |name: &str| -> Result<Option<f32>, LinkError> {
+            match args.get(name) {
+                None | Some(Json::Null) => Ok(None),
+                Some(value) => match value.as_f64() {
+                    Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n as f32)),
+                    _ => Err(bad(format!("`{name}` is a number, nothing or more"))),
+                },
+            }
+        };
+        let numbers = [
+            "threads",
+            "columns",
+            "upload",
+            "view_distance",
+            "far_distance",
+            "near_detail",
+            "far_detail",
+            "plant_detail",
+        ]
+        .map(number);
+        let mut given = [None; 8];
+        for (at, read) in numbers.into_iter().enumerate() {
+            given[at] = read?;
+        }
+        // Whose it is first: this machine's own kept or forgotten, then the numbers go there.
+        if let Some(keep) = opt_bool(args, "machine") {
+            self.keep_world_budget(keep);
+        }
+        let mut budget = WorldBudget::of(&self.game.engine.world);
+        if let Some(preset) = quality {
+            budget = preset.budget().unwrap_or(WorldBudget { quality: WorldQuality::Custom, ..budget });
+        }
+        if given.iter().any(Option::is_some) {
+            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail] = given;
+            let whole = |n: Option<f32>, was: u32| n.map_or(was, |n| n.round() as u32);
+            budget = WorldBudget {
+                quality: WorldQuality::Custom,
+                threads: whole(threads, budget.threads),
+                columns: whole(columns, budget.columns),
+                upload: whole(upload, budget.upload),
+                view_distance: view.unwrap_or(budget.view_distance),
+                far_distance: far.unwrap_or(budget.far_distance),
+                near_detail: near_detail.unwrap_or(budget.near_detail),
+                far_detail: far_detail.unwrap_or(budget.far_detail),
+                plant_detail: plant_detail.unwrap_or(budget.plant_detail),
+            };
+        }
+        if quality.is_some() || given.iter().any(Option::is_some) {
+            self.set_world_budget(&budget.checked());
+        }
+        done(self.world_quality_json())
+    }
+
     fn settings_json(&self) -> Json {
         let settings = &self.memory.settings;
         let listed: Vec<Json> = settings::SETTINGS
@@ -1577,7 +1653,12 @@ impl Editor {
                 self.project_settings.show(&mut self.ui, &modules);
                 self.project_settings.show_origin(&mut self.ui, &file.floating_origin);
                 self.project_settings.show_quality(&mut self.ui, &file.quality);
-                self.project_settings.show_budget(&mut self.ui, &file.world);
+                // The project's world quality, unless this machine keeps its own.
+                let machine = voxear_terrain::MachineBudget::of(&self.game.engine.world);
+                if !machine.kept {
+                    voxear_terrain::MachineBudget::open(&mut self.game.engine.world, file.world, machine.file);
+                }
+                self.show_world_budget();
                 tracing::info!("[Tools] read voxear.toml again, changed on disk");
             }
             Err(error) => tracing::error!("voxear.toml changed on disk, but could not be read: {error:#}"),

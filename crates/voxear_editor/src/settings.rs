@@ -545,6 +545,12 @@ impl Memory {
         Self::default()
     }
 
+    /// Whether it is kept: else the editor writes nothing of its own, as
+    /// in tests and pictures.
+    pub fn remembers(&self) -> bool {
+        self.path.is_some()
+    }
+
     /// Notes that the palette ran what `key` names, most recent first.
     pub fn ran(&mut self, key: &str) {
         self.recent.retain(|k| k != key);

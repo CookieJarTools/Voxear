@@ -460,6 +460,9 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
 pub struct FarStructures {
     /// A number for the structures it puts in: when they change, it does.
     pub stamp: u64,
+    /// The coarsest ring they are put into, by its level: no further than
+    /// [`FAR_STRUCTURES_TO`] (see `WorldBudget::structure_rings`).
+    pub to: u32,
 }
 
 /// How many of a far cell's blocks must be built for it to show, as a part
@@ -472,7 +475,7 @@ pub const FAR_STRUCTURES_TO: u32 = STRUCTURES_TO;
 
 impl FarBuilt for FarStructures {
     fn stamp(&self) -> u64 {
-        self.stamp
+        self.stamp ^ u64::from(self.to).rotate_left(40)
     }
 
     fn from_level(&self) -> u32 {
@@ -480,7 +483,7 @@ impl FarBuilt for FarStructures {
     }
 
     fn build(&self, making: &BlockMaking, tile: &mut FarTile) {
-        if tile.level == 0 || tile.level > STRUCTURES_TO {
+        if tile.level == 0 || tile.level > self.to.min(STRUCTURES_TO) {
             return;
         }
         let (level, side) = (tile.level, CHUNK as i32);
@@ -1020,7 +1023,15 @@ mod tests {
             ..GrowRule::default()
         };
         // Trees six metres tall and five across, drawn as leaves.
-        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1, biomes: Vec::new() };
+        let trees = Woods {
+            rule: rule.clone(),
+            block: LEAF,
+            height: 6.0,
+            width: 5.0,
+            from: 1,
+            biomes: Vec::new(),
+            shore: None,
+        };
         let grows = |edits: Arc<BlockEdits>| MapGround::made(making.clone(), edits).growing(vec![trees.clone()]);
         let plain = map_tile(&MapGround::made(making.clone(), Arc::default()), 0, [0, 0]);
         let tile = map_tile(&grows(Arc::default()), 0, [0, 0]);

@@ -555,3 +555,42 @@ fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offe
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert!(done(&mut editor, &mut renderer, "blocks.get", at)["block"].is_null(), "one undo takes the block back");
 }
+
+#[test]
+fn a_tool_reads_and_sets_the_world_quality_by_preset_number_and_for_this_machine() {
+    use voxear_terrain::{MachineBudget, WorldBudget, WorldQuality};
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let now = done(&mut editor, &mut renderer, "world_quality.get", json!({}));
+    assert_eq!((now["quality"].as_str(), now["machine"].as_bool()), (Some("high"), Some(false)), "{now}");
+    // A preset, then a detail after it: Custom, written into voxear.toml and taken up at once.
+    let set = done(&mut editor, &mut renderer, "world_quality.set", json!({ "quality": "ultra", "plant_detail": 2.0 }));
+    assert_eq!(
+        (set["quality"].as_str(), set["near_detail"].as_f64(), set["plant_detail"].as_f64()),
+        (Some("custom"), Some(1.5), Some(2.0))
+    );
+    let ultra = WorldQuality::Ultra.budget().unwrap();
+    let custom = WorldBudget { quality: WorldQuality::Custom, plant_detail: 2.0, ..ultra };
+    assert_eq!(WorldBudget::of(&editor.game.engine.world), custom);
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, custom, "voxear.toml has it");
+    // For this machine: its own beside the saves, the project's left as it is.
+    let saves = tempfile::tempdir().unwrap();
+    let file = saves.path().join(voxear_terrain::budget::MACHINE_FILE);
+    MachineBudget::open(&mut editor.game.engine.world, custom, Some(file.clone()));
+    let low = done(&mut editor, &mut renderer, "world_quality.set", json!({ "machine": true, "quality": "low" }));
+    assert_eq!(
+        (low["quality"].as_str(), low["machine"].as_bool(), low["project"]["quality"].as_str()),
+        (Some("low"), Some(true), Some("custom"))
+    );
+    assert!(std::fs::read_to_string(&file).unwrap().contains("quality = \"low\""));
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, custom, "the project's as it was");
+    // Forgotten: the project's back.
+    let back = done(&mut editor, &mut renderer, "world_quality.set", json!({ "machine": false }));
+    assert_eq!((back["quality"].as_str(), back["machine"].as_bool()), (Some("custom"), Some(false)));
+    assert!(!file.exists());
+    let kind = |answer: Answer| answer.unwrap_err().kind;
+    assert_eq!(
+        kind(ask(&mut editor, &mut renderer, "world_quality.set", json!({ "quality": "epic" }))),
+        ErrorKind::BadArguments
+    );
+}

@@ -12,5 +12,9 @@ internal static class WorldBudgetTests
 		World.ViewDistance = 96f;
 		Check.True(World.Quality == WorldQuality.High && World.ColumnsAtOnce == 0, "nothing set without the engine");
 		Check.True(float.IsNaN(World.FarDistance), "a distance reads as NaN");
+		World.NearDetail = 2f;
+		World.SaveQuality();
+		World.ResetQuality();
+		Check.True(float.IsNaN(World.PlantDetail) && !World.QualitySaved, "a detail reads as NaN, and nothing is kept");
 	}
 }

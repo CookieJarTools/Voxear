@@ -40,6 +40,7 @@ voxear_scene.workspace = true
 voxear_ecs.workspace = true
 tracing.workspace = true
 voxear_render.workspace = true
+voxear_terrain.workspace = true
 png.workspace = true
 voxear_assets.workspace = true
 voxear_packages.workspace = true

@@ -1150,7 +1150,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
     let furthest = endless
         .iter()
         .filter_map(|(_, asset, _)| asset.file.generate.as_ref()?.endless)
-        .map(|far| far.far.min(budget.far_distance))
+        .map(|far| budget.far(far.far, budget.near(far.distance)))
         .fold(0.0f32, f32::max);
     world.insert_resource(voxear_render::FarHaze(furthest));
     // The far sides of the Portals near enough to show them are made too, less far.
@@ -1165,9 +1165,12 @@ pub fn stream(world: &mut World, content: &mut Content) {
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();
-        // As many columns at once and as far as the game's budget lets it, and no further than the world's own.
+        // As many columns at once as the game's budget lets it, and as many times as far as the world says as
+        // its details, within its limits. Every ring is as many columns of its own across as the near ones, so
+        // further near or far only widens the rings or adds coarser ones round them.
         streamer.at_once = budget.columns as usize;
-        let distances = (far.distance.min(budget.view_distance), far.far.min(budget.far_distance));
+        let near = budget.near(far.distance);
+        let distances = (near, budget.far(far.far, near));
         let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1 }];
         from.extend(exits.iter().map(|exit| StreamFrom {
             at: [exit.at.x - corner.x, exit.at.z - corner.z],

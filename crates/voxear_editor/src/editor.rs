@@ -502,6 +502,11 @@ impl Editor {
         let mut engine = Engine::new();
         engine.set_edit_mode(true);
         let mut game = Game::new(project, engine)?;
+        // What this machine keeps for the game, as the game itself has it; an editor that remembers nothing keeps
+        // to the project's.
+        if memory.remembers() {
+            game.use_machine_budget(None);
+        }
         game.start(Some(renderer)).context("opening the start level")?;
         let camera = spawn_camera(&mut game);
         renderer.set_view_options(ViewOptions { camera: Some(camera), ..ViewOptions::default() });
@@ -605,8 +610,10 @@ impl Editor {
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
         let (modules, origin) = (game.project.modules(), &game.project.file.floating_origin);
-        let (quality, budget) = (&game.project.file.quality, &game.project.file.world);
+        let quality = &game.project.file.quality;
+        let budget = &voxear_terrain::WorldBudget::of(&game.engine.world);
         let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
+        project_settings.show_machine(&mut ui, voxear_terrain::MachineBudget::of(&game.engine.world).kept);
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);

@@ -474,7 +474,12 @@ impl Gpu {
     }
 
     pub fn read_image(&self, image: vk::Image, desc: ImageDesc, layout: vk::ImageLayout) -> Result<Vec<u8>> {
-        let bytes = u64::from(desc.width) * u64::from(desc.height) * 4;
+        let texel = match desc.format {
+            vk::Format::R16G16B16A16_SFLOAT => 8,
+            vk::Format::R32G32B32A32_SFLOAT => 16,
+            _ => 4,
+        };
+        let bytes = u64::from(desc.width) * u64::from(desc.height) * texel;
         let readback =
             self.create_buffer("readback", bytes, vk::BufferUsageFlags::TRANSFER_DST, MemoryLocation::GpuToCpu)?;
         self.immediate(|cmd| unsafe {

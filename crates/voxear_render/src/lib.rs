@@ -27,6 +27,7 @@ mod glass;
 mod gltf_import;
 mod gpu;
 mod ddgi;
+pub mod display;
 mod graph;
 mod hot_reload;
 mod ies;
@@ -124,7 +125,7 @@ pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Sk
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GlobalIllumination, Reflections,
-    Grading, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
+    Grading, MotionBlur, PostProcess, ScriptPost, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
     MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
@@ -304,8 +305,8 @@ impl OutputId {
 
 enum Target {
     Window(Swapchain),
-    // Destroyed explicitly, which needs the GPU.
-    Offscreen { image: ManuallyDrop<Image>, last: ImageAccess },
+    // Destroyed explicitly, which needs the GPU. `encoding` is what its pixels mean, as a window's would.
+    Offscreen { image: ManuallyDrop<Image>, last: ImageAccess, encoding: display::Encoding },
 }
 
 /// A window or image drawn into each frame, with the UI drawn over it.
@@ -321,6 +322,14 @@ struct Output {
 }
 
 impl Output {
+    /// What its pixels mean: SDR, or an HDR encoding.
+    fn encoding(&self) -> display::Encoding {
+        match &self.target {
+            Target::Window(swapchain) => swapchain.encoding,
+            Target::Offscreen { encoding, .. } => *encoding,
+        }
+    }
+
     fn extent(&self) -> vk::Extent2D {
         match &self.target {
             Target::Window(swapchain) => swapchain.extent,
@@ -438,7 +447,14 @@ pub struct Renderer {
     graph: RenderGraph,
     assets: Option<Assets>,
     pipelines: Pipelines,
+    /// The format the picture and the UI are drawn in: the first window's,
+    /// or with HDR, a display image's, which the encode pass fits to each
+    /// window (see `display`).
     output_format: vk::Format,
+    /// The first window's SDR format, which other windows are made in.
+    window_format: vk::Format,
+    /// What the game asks of the display: HDR or not, paper white and the peak.
+    display: display::DisplaySettings,
     watcher: Option<ShaderWatcher>,
     /// The shaders the pipelines are made from, as built in or as hot
     /// reload compiled them, before a project's custom shaders.
@@ -498,8 +514,34 @@ impl Renderer {
         let gpu = Gpu::new_headless()?;
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
         let image = gpu.create_image("output", ImageDesc::new(width, height, OFFSCREEN_FORMAT, usage))?;
-        let output = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
+        let encoding = display::Encoding::Sdr;
+        let output = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined, encoding };
         Self::build(gpu, output, renderdoc, settings)
+    }
+
+    /// Renders into an image shown as `encoding`, as an HDR window's would
+    /// be: HDR10's 10 bits or scRGB's half floats, read back as they are.
+    /// For testing HDR output on a machine whose display has none.
+    pub fn new_offscreen_hdr(
+        width: u32,
+        height: u32,
+        encoding: display::Encoding,
+        display: display::DisplaySettings,
+        settings: &RendererSettings,
+    ) -> Result<Self> {
+        let renderdoc = attach_renderdoc(settings);
+        let gpu = Gpu::new_headless()?;
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
+        let format = match encoding {
+            display::Encoding::Sdr => OFFSCREEN_FORMAT,
+            display::Encoding::Hdr10 => vk::Format::A2B10G10R10_UNORM_PACK32,
+            display::Encoding::ScRgb => vk::Format::R16G16B16A16_SFLOAT,
+        };
+        let image = gpu.create_image("output", ImageDesc::new(width, height, format, usage))?;
+        let output = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined, encoding };
+        let mut renderer = Self::build(gpu, output, renderdoc, settings)?;
+        renderer.display = display.held();
+        Ok(renderer)
     }
 
     fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
@@ -510,12 +552,15 @@ impl Renderer {
         // Without ray tracing, the GI's rays walk hierarchies of the meshes' triangles in a compute shader.
         let software_rays = settings.software_rays || gpu.acceleration_structure.is_none();
         let assets = Assets::new(&gpu, &mut bindless, software_rays)?;
-        let output_format = match &target {
-            Target::Window(swapchain) => swapchain.format.format,
-            Target::Offscreen { image, .. } => image.desc.format,
+        // Windows after the first, and images added, are SDR, in the first's SDR format.
+        let (window_format, encoding) = match &target {
+            Target::Window(swapchain) => (swapchain.format.format, swapchain.encoding),
+            Target::Offscreen { encoding, .. } if encoding.is_hdr() => (OFFSCREEN_FORMAT, *encoding),
+            Target::Offscreen { image, encoding, .. } => (image.desc.format, *encoding),
         };
+        let output_format = if encoding.is_hdr() { display::DISPLAY_FORMAT } else { window_format };
         let shaders = ShaderSet::embedded();
-        let pipelines = Pipelines::new(&gpu, &bindless, output_format, &shaders)?;
+        let pipelines = Pipelines::new(&gpu, &bindless, (output_format, window_format), &shaders)?;
         let first = View::new(&gpu, 0)?;
         let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
         let main =
@@ -533,6 +578,8 @@ impl Renderer {
             assets: Some(assets),
             pipelines,
             output_format,
+            window_format,
+            display: display::DisplaySettings::default(),
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
             shaders,
             custom: CustomShaders::default(),
@@ -632,6 +679,56 @@ impl Renderer {
         self.views[0].output = output;
     }
 
+    /// Asks the main window for HDR output, or SDR, with how bright paper
+    /// white and the display's peak are, from the next frame. Where the
+    /// display offers none of what is asked, it shows SDR, which
+    /// [`display`](Self::display) tells.
+    pub fn set_display(&mut self, settings: display::DisplaySettings) -> Result<()> {
+        self.display = settings.held();
+        let (hdr, brightness) = (self.display.hdr, (self.display.paper_white, self.display.peak));
+        if let Some(Target::Window(swapchain)) = self.outputs.first_mut().map(|output| &mut output.target) {
+            swapchain.set_hdr(&self.gpu, hdr, brightness)?;
+        }
+        self.match_output_format()
+    }
+
+    /// What is asked of the display, and what the main window shows and its
+    /// display offers.
+    pub fn display(&self) -> (display::DisplaySettings, display::DisplayState) {
+        let state = match self.outputs.first().map(|output| &output.target) {
+            Some(Target::Window(swapchain)) => {
+                display::DisplayState { encoding: swapchain.encoding, offered: swapchain.offered }
+            }
+            Some(Target::Offscreen { encoding, .. }) => {
+                let offered = display::Offered {
+                    hdr10: *encoding == display::Encoding::Hdr10,
+                    scrgb: *encoding == display::Encoding::ScRgb,
+                };
+                display::DisplayState { encoding: *encoding, offered }
+            }
+            None => display::DisplayState::default(),
+        };
+        (self.display, state)
+    }
+
+    /// Draws the picture into display images while any output is HDR, and
+    /// straight into the windows otherwise, making the pipelines again when
+    /// that changes.
+    fn match_output_format(&mut self) -> Result<()> {
+        let hdr = self.outputs.iter().any(|output| output.encoding().is_hdr());
+        let wanted = if hdr { display::DISPLAY_FORMAT } else { self.window_format };
+        if wanted == self.output_format {
+            return Ok(());
+        }
+        self.gpu.wait_idle();
+        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (wanted, self.window_format), &self.shaders)?;
+        self.pipelines.destroy(&self.gpu);
+        self.pipelines = pipelines;
+        self.output_format = wanted;
+        tracing::info!("drawing for {}", if hdr { "HDR output" } else { "SDR output" });
+        Ok(())
+    }
+
     /// Adds a window to draw into as well, as a panel the editor floats on
     /// the desktop has. Its UI is set with [`set_output_ui`](Self::set_output_ui),
     /// and views go there with [`set_more_views_in`](Self::set_more_views_in).
@@ -644,7 +741,7 @@ impl Renderer {
     /// [`remove_output`](Self::remove_output) before the window closes.
     pub unsafe fn add_window_output(&mut self, window: WindowHandles, width: u32, height: u32) -> Result<OutputId> {
         let surface = unsafe { self.gpu.create_surface(window)? };
-        let swapchain = match Swapchain::new_matching(&self.gpu, surface, (width, height), false, self.output_format) {
+        let swapchain = match Swapchain::new_matching(&self.gpu, surface, (width, height), false, self.window_format) {
             Ok(swapchain) => swapchain,
             Err(error) => {
                 unsafe { self.gpu.surface_loader.destroy_surface(surface, None) };
@@ -663,13 +760,14 @@ impl Renderer {
     /// [`read_output_pixels`](Self::read_output_pixels).
     pub fn add_offscreen_output(&mut self, width: u32, height: u32) -> Result<OutputId> {
         let image = self.create_output_image(width, height)?;
-        let target = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined };
+        let encoding = display::Encoding::Sdr;
+        let target = Target::Offscreen { image: ManuallyDrop::new(image), last: ImageAccess::Undefined, encoding };
         Ok(self.push_output(target, Vec::new()))
     }
 
     fn create_output_image(&self, width: u32, height: u32) -> Result<Image> {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
-        self.gpu.create_image("output", ImageDesc::new(width.max(1), height.max(1), self.output_format, usage))
+        self.gpu.create_image("output", ImageDesc::new(width.max(1), height.max(1), self.window_format, usage))
     }
 
     fn push_output(&mut self, target: Target, ready: Vec<vk::Semaphore>) -> OutputId {
@@ -712,7 +810,7 @@ impl Renderer {
         }
         let image = self.create_output_image(width, height)?;
         self.gpu.wait_idle();
-        if let Target::Offscreen { image: old, last } = &mut self.outputs[index].target {
+        if let Target::Offscreen { image: old, last, .. } = &mut self.outputs[index].target {
             self.gpu.destroy_image(unsafe { ManuallyDrop::take(old) });
             (*old, *last) = (ManuallyDrop::new(image), ImageAccess::Undefined);
         }
@@ -1101,7 +1199,7 @@ impl Renderer {
         let Some(result) = self.watcher.as_mut().and_then(ShaderWatcher::poll) else { return };
         let reloaded = result.and_then(|shaders| {
             self.gpu.wait_idle();
-            let pipelines = Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?;
+            let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?;
             Ok((pipelines, shaders))
         });
         match reloaded {
@@ -1146,7 +1244,7 @@ impl Renderer {
     pub fn use_custom_modules(&mut self, modules: &[(String, Vec<u8>)]) -> Result<()> {
         let shaders = self.shaders.replaced(modules);
         self.gpu.wait_idle();
-        let pipelines = Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?;
+        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?;
         self.pipelines.destroy(&self.gpu);
         self.pipelines = pipelines;
         self.custom.state = CustomShaderState::Ready;
@@ -1168,7 +1266,7 @@ impl Renderer {
         let made = compiled.and_then(|modules| {
             let shaders = self.shaders.replaced(&modules);
             self.gpu.wait_idle();
-            Ok((Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?, shaders))
+            Ok((Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?, shaders))
         });
         match made {
             Ok((pipelines, shaders)) => {
@@ -1199,6 +1297,8 @@ impl Renderer {
                 swapchain.recreate(&self.gpu, width, height)?;
             }
         }
+        // A window made again may show otherwise, as on a display without HDR.
+        self.match_output_format()?;
         // A window shrunk to nothing, as when minimised, is left out, the first too.
         let mut drawn: Vec<bool> = self.outputs.iter().map(|o| o.extent().width > 0 && o.extent().height > 0).collect();
         if !drawn.contains(&true) {
@@ -1251,6 +1351,7 @@ impl Renderer {
         self.stats.particles = self.particle_sim.counts();
 
         let recording = profile_marker!("Record Passes").scope();
+        let (output_format, display_settings) = (self.output_format, self.display);
         let Self {
             gpu,
             graph,
@@ -1305,12 +1406,34 @@ impl Renderer {
                         let desc = ImageDesc::new(full.width, full.height, swapchain.format.format, swapchain.usage);
                         (acquired.image, acquired.view, desc, ImageAccess::Undefined)
                     }
-                    (Target::Offscreen { image, last }, _) => (image.handle, image.view, image.desc, *last),
+                    (Target::Offscreen { image, last, .. }, _) => (image.handle, image.view, image.desc, *last),
                     (Target::Window(_), None) => return None,
                 };
                 let name =
                     if output.id == OutputId::MAIN { "output".to_string() } else { format!("output {}", output.id.0) };
                 Some((fg.import_image(&name, (image, view), desc, last), desc))
+            })
+            .collect();
+        // With HDR, the views and the UI draw into a display image of each output, which is fitted to it last.
+        let windows = images.clone();
+        let mut images = images;
+        let hdr = output_format == display::DISPLAY_FORMAT && outputs.iter().any(|output| output.encoding().is_hdr());
+        for (index, image) in images.iter_mut().enumerate() {
+            let Some((_, desc)) = image.filter(|_| hdr) else { continue };
+            let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+            let made = ImageDesc::new(desc.width, desc.height, output_format, usage);
+            let name = if index == 0 { "display".to_string() } else { format!("display {index}") };
+            *image = Some((fg.create_image(gpu, bindless, &name, made)?, made));
+        }
+        // What each output's views fit their picture to: how many times paper white its display shows at most,
+        // and whether they draw into a display image.
+        let fitted: Vec<(f32, bool)> = outputs
+            .iter()
+            .zip(&windows)
+            .zip(&images)
+            .map(|((output, window), drawn)| {
+                let display_image = window.zip(*drawn).is_some_and(|((a, _), (b, _))| a != b);
+                (display_settings.peak_ratio(output.encoding()), display_image)
             })
             .collect();
         // The first view drawn into each output clears around itself, and keeps the view for its UI's backdrop.
@@ -1329,6 +1452,7 @@ impl Renderer {
             let mesh_shaders = *mesh_shaders;
             let software_rays = *software_rays;
             let setup = ViewSetup {
+                fitted: fitted[at],
                 time,
                 delta_time,
                 frame_index,
@@ -1375,7 +1499,8 @@ impl Renderer {
             frames.retire(Retired::Buffer(buffer));
         }
         let sampled: Vec<_> = preview_atlas.into_iter().chain(debugger_view).chain(map_images).collect();
-        let main = images[0];
+        // Captures read RGBA8 as people see it, which a display image is not.
+        let main = images[0].filter(|_| !fitted[0].1);
         if let Some((output, desc)) = main {
             captures.record(&mut fg, gpu, (output, desc), true, frame.slot)?;
         }
@@ -1392,6 +1517,32 @@ impl Renderer {
         if let Some((output, desc)) = main {
             captures.record(&mut fg, gpu, (output, desc), false, frame.slot)?;
         }
+        // Each display image fitted to its window: HDR10's curve, scRGB's scale, or SDR's.
+        for ((output, window), drawn) in outputs.iter().zip(&windows).zip(&images) {
+            let (Some((target, desc)), Some((display, _))) = (*window, *drawn) else { continue };
+            if target == display {
+                continue;
+            }
+            let Some(encode) = pipelines.encoder(desc.format) else {
+                anyhow::bail!("no encode pass for a window in {:?}", desc.format);
+            };
+            let kind = match output.encoding() {
+                display::Encoding::Sdr => 0,
+                display::Encoding::Hdr10 => 1,
+                display::Encoding::ScRgb => 2,
+            };
+            let brightness = [display_settings.paper_white.to_bits(), display_settings.peak.to_bits()];
+            let push = Push {
+                textures: [fg.texture(display).0, 0, 0, 0],
+                output: kind,
+                size: brightness,
+                level: frame_index as u32,
+                ..ui_push
+            };
+            let passes = [(display, ImageAccess::Sampled), (target, ImageAccess::ColorAttachment)];
+            fg.add_pass("Encode", &passes, &[], move |ctx| post_passes::draw(ctx, encode, &push, target, false));
+        }
+        let images = windows;
         for (image, acquired) in images.iter().zip(&acquired) {
             match (image, acquired) {
                 (Some((output, _)), Some(_)) => fg.transition(*output, ImageAccess::Present),
@@ -1568,7 +1719,7 @@ impl Renderer {
     /// Reads back what was last drawn into an offscreen output as RGBA8 (sRGB).
     pub fn read_output_pixels(&mut self, id: OutputId) -> Result<(u32, u32, Vec<u8>)> {
         let output = self.outputs.iter_mut().find(|o| o.id == id).ok_or_else(|| anyhow::anyhow!("no such output"))?;
-        let Target::Offscreen { image, last } = &mut output.target else {
+        let Target::Offscreen { image, last, .. } = &mut output.target else {
             anyhow::bail!("only offscreen renderers can read pixels back");
         };
         ensure!(*last != ImageAccess::Undefined, "nothing has been rendered yet");
@@ -1756,6 +1907,9 @@ struct Sees {
 
 /// What every view's frame shares.
 struct ViewSetup {
+    /// How many times paper white the output's display shows at most, and
+    /// whether the view draws into a display image (see `display`).
+    fitted: (f32, bool),
     time: f32,
     delta_time: f32,
     frame_index: u64,
@@ -2406,6 +2560,7 @@ impl View {
         };
 
         let mut frame_data = extracted.frame;
+        (frame_data.post.display_peak, frame_data.post.display_image) = (setup.fitted.0, u32::from(setup.fitted.1));
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
         // Contact shadows are the sun's, so they go without one, and the wireframe goes without its depth.

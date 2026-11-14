@@ -556,6 +556,11 @@ pub fn extract(
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
     let own_post = worn.map(|worn| worn.post).or_else(|| world.resource::<PostProcess>().copied());
+    // What scripts set is laid over the level's, before post volumes.
+    let own_post = match world.resource::<crate::post::ScriptPost>() {
+        Some(script) => Some(script.over(own_post.unwrap_or_default())),
+        None => own_post,
+    };
     let scene_post = options.post_override.or(own_post).unwrap_or_default();
     // Post volumes blend in where the camera is, unless a view sets its own settings.
     let scene_post = match options.post_override {

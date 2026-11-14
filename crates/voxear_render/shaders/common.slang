@@ -556,7 +556,12 @@ struct Post
     // The look shader the finished picture is drawn with, by its number, 0 for none, and its properties' values
     // (src/looks.rs's LookShader; look_custom.slang).
     uint lookShader;
-    uint3 lookPad;
+    // How many times brighter than paper white the display shows at most: 1 for SDR. Highlights roll off towards it.
+    float displayPeak;
+    // 1 when the picture goes to a display image the encode pass then fits to the window (HDR, or SDR beside it),
+    // which dithers in its place.
+    uint displayImage;
+    uint lookPad;
     float4 lookValues[LOOK_VALUES];
 };
 

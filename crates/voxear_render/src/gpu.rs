@@ -853,7 +853,13 @@ pub struct GpuPost {
     /// The look shader the finished picture is drawn with, by its number,
     /// 0 for none, and its properties' values (`looks::LookShader`).
     pub look_shader: u32,
-    pub _look_pad: [u32; 3],
+    /// How many times brighter than paper white the display shows at most: 1
+    /// for SDR (see `display`).
+    pub display_peak: f32,
+    /// 1 when the picture goes to a display image the encode pass fits to
+    /// the window.
+    pub display_image: u32,
+    pub _look_pad: u32,
     pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 

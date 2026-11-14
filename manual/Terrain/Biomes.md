@@ -66,6 +66,19 @@ A vine starts in open air with ground over it: under a ledge, an overhang, an ar
 
 Only a world's own blocks have vines, not the larger ones of its far rings, and a Voxel Terrain has none.
 
+### Rock Layers
+
+A biome's rock can lie in layers: bands of blocks, one over another, repeating up and down. Cliffs, a canyon's walls and a cave cut through the rock show the bands running level along them, in place of one block from top to bottom. Steep ground shows the layers from its top down; elsewhere they lie under the top and under blocks.
+
+| Setting | What it does |
+| --- | --- |
+| Tilt | How far the layers lean, in degrees, all one way. A degree or two reads as real rock |
+| Wander | How far the layers rise and fall across the land, in metres |
+| Layer | A layer's block, picked from the project's blocks. **Add Layer** puts one over the last; the cross takes it out |
+| Thickness | How thick that layer is, in metres |
+
+The layers are measured from the sea, the first listed lowest. Thick bands of the main rock with thin ones between read best, as hard rock between softer beds does. A world's far view shows them as far as its blocks are no larger than a band; past that a cliff is its rock's first layer.
+
 ### Tints
 
 | Setting | What it does |
@@ -148,6 +161,8 @@ The Grassland, the Forest, the Savanna and the Rainforest are one block of **Gra
 All but the Desert have Stone deep down. Ground steeper than 45° is rock; snow lies on ground up to 58°.
 
 Each has [land](#land) of its own: plains in the Tundra, the Grassland and the Savanna, hills in the Taiga and the Forest, tablelands in the Desert and pillars of rock in the Rainforest. The Snow keeps the ground it lies on.
+
+Their rock lies in layers: Stone with thin bands of Gravel, and the Desert's Sandstone with Red Earth between.
 
 The wet ones have [[Blocks#Vines|vines]], of a **Vine** block made with the rest: thick in the Rainforest, some in the Forest, a few in the Taiga and the Grassland, hanging under ledges and cave roofs down to 40 m under the ground.
 

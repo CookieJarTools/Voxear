@@ -15,6 +15,11 @@
 //! Its **Tints**: what its tinted blocks' colour is multiplied by, its
 //! grass's and its leaves', white for none (see `generate::BiomeTints`).
 //!
+//! Its **Rock Layers**: bands of blocks its rock lies in, shown on cliffs
+//! and walls, each a block and how thick it is, with how far they lean and
+//! wander (see `generate::strata`). **Add Layer** puts one over the last; a
+//! layer's cross takes it out.
+//!
 //! Its **Land**: the lie of its country (see `generate::land`): the
 //! generator's own ground, or its own Plains, Hills, Mountains, Tablelands
 //! or Pillars, each picked with the heights and numbers it comes with, and
@@ -60,6 +65,8 @@ pub enum BiomeRef {
     Shore,
     /// The block its vines are.
     Vine,
+    /// The block of one of its rock layers, by its place in the list.
+    Layer(usize),
 }
 
 impl BiomeRef {
@@ -73,6 +80,7 @@ impl BiomeRef {
             BiomeRef::Steep => ground.steep.as_deref(),
             BiomeRef::Shore => ground.shore.as_deref(),
             BiomeRef::Vine => biome.vines.block.as_deref(),
+            BiomeRef::Layer(at) => ground.rock_layers.layers.get(at)?.block.as_deref(),
         }
     }
 
@@ -89,6 +97,11 @@ impl BiomeRef {
             BiomeRef::Deep => ground.deep = reference,
             BiomeRef::Steep => ground.steep = reference,
             BiomeRef::Shore => ground.shore = reference,
+            BiomeRef::Layer(at) => {
+                if let Some(layer) = ground.rock_layers.layers.get_mut(at) {
+                    layer.block = reference;
+                }
+            }
             BiomeRef::Vine => {}
         }
     }
@@ -140,6 +153,12 @@ pub struct BiomeFields {
     vines: Option<(NodeId, [NodeId; 2], NodeId)>,
     /// Its grass tint's and its foliage tint's parts, and their swatches.
     tints: [([NodeId; 3], NodeId); 2],
+    /// Its rock layers' tilt and wander, each layer's thickness, and the
+    /// button that adds a layer.
+    layers_tilt: NodeId,
+    layers_wander: NodeId,
+    layer_thickness: Vec<NodeId>,
+    add_layer: NodeId,
     /// The kind of country its land is, and its numbers while it has land of
     /// its own: height, size, valleys, overhangs, pillars, pillar height and
     /// bridges.
@@ -196,6 +215,19 @@ impl BiomeFields {
         let steep_slope = number_row(ui, rows, "Steep slope", "°", biome.ground.steep_slope);
         block(ui, rows, BiomeRef::Shore, "Shore");
         let shore_height = number_row(ui, rows, "Shore height", "m", biome.ground.shore_height);
+
+        let rows = part(ui, root, "Rock Layers", "layers");
+        let rock = &biome.ground.rock_layers;
+        let layers_tilt = number_row(ui, rows, "Tilt", "°", rock.tilt);
+        let layers_wander = number_row(ui, rows, "Wander", "m", rock.wander);
+        let mut layer_thickness = Vec::new();
+        for (at, layer) in rock.layers.iter().enumerate() {
+            block(ui, rows, BiomeRef::Layer(at), &format!("Layer {}", at + 1));
+            layer_thickness.push(number_row(ui, rows, "Thickness", "m", layer.thickness));
+        }
+        let row = prop(ui, rows, "");
+        let add_layer = ui.button(row, "Add Layer");
+        ui.set_tooltip(add_layer, "A layer over the last: its block and how thick it is", None);
 
         let rows = part(ui, root, "Vines", "sprout");
         block(ui, rows, BiomeRef::Vine, "Block");
@@ -257,6 +289,10 @@ impl BiomeFields {
             shore_height,
             vines,
             tints,
+            layers_tilt,
+            layers_wander,
+            layer_thickness,
+            add_layer,
             land,
             land_rows,
             slots,
@@ -267,7 +303,16 @@ impl BiomeFields {
 
     /// What was done this frame, the biome changed to match.
     pub fn update(&mut self, ui: &mut Ui) -> Option<BiomeChange> {
+        if ui.clicked(self.add_layer) {
+            self.biome.ground.rock_layers.layers.push(Default::default());
+            return Some(BiomeChange::Shape);
+        }
         for field in &self.slots {
+            // A layer's cross takes the whole layer out.
+            if let (true, BiomeRef::Layer(at)) = (ui.clicked(field.clear), field.which) {
+                self.biome.ground.rock_layers.layers.remove(at);
+                return Some(BiomeChange::Shape);
+            }
             if ui.clicked(field.clear) {
                 field.which.set(&mut self.biome, None);
                 return Some(BiomeChange::Shape);
@@ -344,6 +389,17 @@ impl BiomeFields {
             }
             if let Some(metres) = changed_number(ui, depth) {
                 (biome.vines.depth, typed) = (metres.max(0.0), true);
+            }
+        }
+        if let Some(degrees) = changed_number(ui, self.layers_tilt) {
+            (biome.ground.rock_layers.tilt, typed) = (degrees.clamp(0.0, 45.0), true);
+        }
+        if let Some(metres) = changed_number(ui, self.layers_wander) {
+            (biome.ground.rock_layers.wander, typed) = (metres.clamp(0.0, 200.0), true);
+        }
+        for (layer, &field) in biome.ground.rock_layers.layers.iter_mut().zip(&self.layer_thickness) {
+            if let Some(metres) = changed_number(ui, field) {
+                (layer.thickness, typed) = (metres.clamp(0.1, 1000.0), true);
             }
         }
         if let Some(rows) = self.land_rows {

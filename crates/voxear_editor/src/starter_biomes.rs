@@ -51,7 +51,7 @@ use voxear_engine::Game;
 use voxear_render::Renderer;
 use voxear_terrain::{
     blocks::block::{BlockDef, BlockHeat, BlockShape, BlockTint},
-    generate::{BiomeDef, BiomeGround, BiomeLand, BiomeTints, BiomeVines, Landform},
+    generate::{BiomeDef, BiomeGround, BiomeLand, BiomeTints, BiomeVines, Landform, RockLayer, RockLayers},
     surfaces::Biome,
 };
 
@@ -193,6 +193,24 @@ const SHOWCASE: [Showcase; 3] = [
     },
 ];
 
+/// The layers the rock of the biome called `name` lies in, of the blocks
+/// `block` names: thick bands of its rock between thin ones, so its cliffs
+/// show them. None for the Snow, whose cliffs are the rock of the biome
+/// under it.
+fn rock_layers(name: &str, block: &mut dyn FnMut(&str) -> String) -> RockLayers {
+    let bands: &[(&str, f32)] = match name {
+        "Desert" => &[("Sandstone", 9.0), ("Red Earth", 3.0), ("Sandstone", 5.0), ("Gravel", 2.0)],
+        "Savanna" => &[("Red Earth", 6.0), ("Sandstone", 4.0)],
+        "Autumn Woods" => &[("Stone", 10.0), ("Gravel", 2.0), ("Stone", 5.0), ("Dirt", 1.5)],
+        "Blossom Grove" => &[("Stone", 8.0), ("Sandstone", 3.0)],
+        "Volcanic Fields" => &[("Basalt", 7.0), ("Ash", 2.0), ("Basalt", 4.0), ("Obsidian", 1.0)],
+        "Snow" => &[],
+        _ => &[("Stone", 12.0), ("Gravel", 2.0)],
+    };
+    let layers = bands.iter().map(|&(name, thickness)| RockLayer { block: Some(block(name)), thickness });
+    RockLayers { layers: layers.collect(), ..RockLayers::default() }
+}
+
 /// The showcase biomes, each by its name, parted where it is `split` °C,
 /// the blocks of their ground named as `block` names them (see
 /// [`biomes`]).
@@ -213,6 +231,7 @@ pub fn showcase(split: [f32; 2], mut block: impl FnMut(&str) -> String) -> Vec<(
             steep_slope: biome.steep.1,
             shore: Some(block(biome.shore)),
             shore_height: 2.0,
+            rock_layers: rock_layers(biome.name, block),
         },
         vines: match biome.vines > 0.0 {
             true => BiomeVines { block: Some(block(VINE.0)), amount: biome.vines, ..BiomeVines::default() },
@@ -407,6 +426,7 @@ pub fn biomes(mut block: impl FnMut(&str) -> String) -> Vec<(&'static str, Biome
                 steep_slope: STEEP,
                 shore: Some(block(starter.shore)),
                 shore_height: 2.0,
+                rock_layers: rock_layers(starter.climate.name(), block),
             },
             vines: match starter.vines > 0.0 {
                 true => BiomeVines { block: Some(block(VINE.0)), amount: starter.vines, ..BiomeVines::default() },

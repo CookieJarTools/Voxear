@@ -513,6 +513,7 @@ impl BlockFile {
                 named.extend(
                     [blocks.top, blocks.under, blocks.deep, blocks.steep, blocks.shore, blocks.vine].map(usize::from),
                 );
+                named.extend(blocks.strata.iter().flat_map(|strata| strata.blocks()).map(usize::from));
             }
             named.extend(generate.halves.iter().flat_map(|halves| halves.iter()).map(|&slab| usize::from(slab)));
         }

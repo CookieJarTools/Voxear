@@ -55,7 +55,7 @@ const VERSION: u8 = 1;
 
 /// The way tiles are made, counted up when it changes, so tiles kept on
 /// disk made another way are made again (see `stream::BlockMaking`).
-pub const MADE_AS: u32 = 3;
+pub const MADE_AS: u32 = 4;
 
 /// How the sea of `block`, its top `top` blocks up, stands at block `y` of
 /// a far tile's column whose ground's surface is `surface`: as `Sea::at`
@@ -72,6 +72,10 @@ fn far_sea(block: BlockId, top: f32, y: i32, (smooth, surface): (bool, f32)) -> 
 }
 
 const SIDE: usize = CHUNK as usize;
+
+/// How far under a column's top layers its rock shows its layers, far off,
+/// in the world's own blocks: as deep as a cliff could bare it.
+const LAYERS_SHOWN: i32 = 512;
 
 impl FarTile {
     /// The runs of column `[x, z]`, lowest first.
@@ -227,7 +231,18 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         let layered = column.layers[0].1 + column.layers[1].1 + 3.0;
         let rock_to = ((column.surface - layered).floor() as i32).clamp(low, high.max(low));
         if rock_to > low && column.bottom != AIR {
-            runs.push(Run { from: low, to: rock_to, block: column.bottom });
+            // Rock in layers shows them as far down as a cliff could bare them; under that, its bottom block.
+            let banded = if column.strata.is_some() { (rock_to - LAYERS_SHOWN / scale as i32).max(low) } else { rock_to };
+            if banded > low {
+                runs.push(Run { from: low, to: banded, block: column.bottom });
+            }
+            for y in banded..rock_to {
+                let block = column.bottom_at(y);
+                match runs.last_mut() {
+                    Some(last) if last.to == y && last.block == block => last.to = y + 1,
+                    _ => runs.push(Run { from: y, to: y + 1, block }),
+                }
+            }
         }
         let asked_from = if column.bottom != AIR { rock_to } else { low };
         for y in asked_from..=high {
@@ -284,7 +299,9 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
             // What is thinner than a block of this level is a block still, where it stands clear of the ground.
             let to = if to <= from && top - foot > 0.0 && (top / size).floor() as i32 >= from { from + 1 } else { to };
             if to > from {
-                tile.add(place, from, to - 1, columns[at].bottom);
+                for y in from..to - 1 {
+                    tile.add(place, y, y + 1, columns[at].bottom_at(y));
+                }
                 tile.add(place, to - 1, to, cover);
             }
         }

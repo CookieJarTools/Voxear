@@ -32,6 +32,21 @@ pub(super) struct Column {
     pub layers: [(BlockId, f32); 2],
     pub bottom: BlockId,
     pub vines: Vines,
+    /// Its biome's rock in layers, where it has any: below its top layers,
+    /// or all the way up where its ground is steep, each block is the layer
+    /// at its height in place of its bottom block.
+    pub strata: Option<Layered>,
+}
+
+/// A column's rock layers: the layers, how far they are lifted at the
+/// column, how many metres a block of its level is, and whether its ground
+/// is steep, so the layers show from its top down.
+#[derive(Clone)]
+pub(super) struct Layered {
+    pub strata: std::sync::Arc<crate::generate::Strata>,
+    pub lift: f32,
+    pub size: f32,
+    pub steep: bool,
 }
 
 /// The vines of a column's biome: their block (air for none), how many of
@@ -49,12 +64,26 @@ impl Column {
     /// The block of its layer `depth` blocks under its surface.
     pub fn block(&self, depth: f32) -> BlockId {
         let [(top, top_depth), (under, under_depth)] = self.layers;
+        let layered = self.strata.as_ref().filter(|layered| layered.steep || depth > top_depth + under_depth);
+        if let Some(layered) = layered {
+            // The middle of the block, in metres, less the layers' lift there.
+            return layered.strata.block((self.surface - depth) * layered.size - layered.lift);
+        }
         if depth <= top_depth {
             top
         } else if depth <= top_depth + under_depth {
             under
         } else {
             self.bottom
+        }
+    }
+
+    /// The block of its bottom at block `y` of its level, counted from the
+    /// world's: its layer there, where it has rock layers.
+    pub fn bottom_at(&self, y: i32) -> BlockId {
+        match &self.strata {
+            Some(layered) => layered.strata.block((y as f32 + 0.5) * layered.size - layered.lift),
+            None => self.bottom,
         }
     }
 }
@@ -128,8 +157,14 @@ pub(super) fn columns_at(
             length: blocks.vine_length,
             depth: blocks.vine_depth,
         });
+        // Rock layers, where they are thick enough to show at this level: a band thinner than a block of it is lost.
+        let steep = biome.is_some_and(|blocks| {
+            blocks.steep != AIR && slopes.get(at).is_some_and(|&slope| slope >= blocks.steep_slope)
+        });
+        let strata = biome.and_then(|blocks| blocks.strata.clone()).filter(|strata| strata.thinnest() >= size * 0.75);
+        let strata = strata.map(|strata| Layered { lift: strata.lift(xs[at], zs[at]), strata, size, steep: steep || bare(at) });
         if bare(at) {
-            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom, vines };
+            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom, vines, strata };
         }
         let under_depth = biome.filter(|blocks| blocks.under != AIR).map_or(ground.under_depth, |b| b.under_depth);
         Column {
@@ -137,6 +172,7 @@ pub(super) fn columns_at(
             layers: [top, (or(biome_under, ground.under), under_depth as f32 / scale)],
             bottom,
             vines,
+            strata,
         }
     };
     (0..heights.len()).map(column).collect()

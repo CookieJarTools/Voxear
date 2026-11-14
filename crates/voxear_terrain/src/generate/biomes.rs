@@ -45,7 +45,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::BiomeLand;
+use super::{BiomeLand, RockLayers, Strata};
 use crate::{
     blocks::chunk::{AIR, BlockId},
     noise,
@@ -180,6 +180,10 @@ pub struct BiomeGround {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shore: Option<String>,
     pub shore_height: f32,
+    /// Its rock in layers, shown on cliffs and walls: none for its deep
+    /// block all the way down (see `strata`).
+    #[serde(skip_serializing_if = "RockLayers::is_none")]
+    pub rock_layers: RockLayers,
 }
 
 impl Default for BiomeGround {
@@ -193,6 +197,7 @@ impl Default for BiomeGround {
             steep_slope: 40.0,
             shore: None,
             shore_height: 2.0,
+            rock_layers: RockLayers::default(),
         }
     }
 }
@@ -329,7 +334,7 @@ impl Biomes {
 
 /// The blocks of one of a world's biomes, by the numbers the world gives
 /// them: air for one the biome leaves to the world.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BiomeBlocks {
     pub top: BlockId,
     pub under: BlockId,
@@ -347,6 +352,8 @@ pub struct BiomeBlocks {
     pub vine_amount: f32,
     pub vine_length: [u32; 2],
     pub vine_depth: f32,
+    /// Its rock in layers, where it has any.
+    pub strata: Option<std::sync::Arc<Strata>>,
 }
 
 impl Default for BiomeBlocks {
@@ -364,6 +371,7 @@ impl Default for BiomeBlocks {
             vine_amount: 0.0,
             vine_length: [2, 7],
             vine_depth: 40.0,
+            strata: None,
         }
     }
 }
@@ -385,8 +393,10 @@ impl BiomeBlocks {
     /// A biome's ground with each block it names numbered by `number`: air
     /// for one it does not name or the world cannot number.
     pub fn of(ground: &BiomeGround, mut number: impl FnMut(&str) -> BlockId) -> Self {
+        let strata = Strata::of(&ground.rock_layers, &mut number).map(std::sync::Arc::new);
         let mut block = |named: &Option<String>| named.as_deref().map_or(AIR, &mut number);
         Self {
+            strata,
             top: block(&ground.top),
             under: block(&ground.under),
             under_depth: ground.under_depth,
@@ -416,7 +426,7 @@ impl BiomeBlocks {
 
 /// How much ground at `degrees` rises for every metre along, with sums and
 /// products alone: the tangent, good to a part in a thousand under 80°.
-fn slope_of(degrees: f32) -> f32 {
+pub(crate) fn slope_of(degrees: f32) -> f32 {
     let x = degrees.clamp(0.0, 85.0) * (std::f32::consts::PI / 180.0);
     let x2 = x * x;
     // Sine and cosine by their series, as far as they matter here.

@@ -295,6 +295,63 @@ mod tests {
     }
 
     #[test]
+    fn cliffs_show_their_biomes_rock_in_level_layers_of_its_blocks() {
+        use crate::generate::{BiomeBlocks, BiomeDef, Biomes, RockLayer, RockLayers, Strata, WorldBiomes};
+        use crate::generate::{
+            Graph, NodeKind,
+            nodes::{Noise, Output, Terrace},
+        };
+        let (mut file, _) = generated(0.0, 0.0);
+        // Ground in sheer steps 8 m high, so its rock is bared in walls.
+        let mut graph = Graph::default();
+        let hills = graph.add(NodeKind::Noise(Noise { size: 120.0, octaves: 2, low: 0.0, high: 60.0, ..Noise::default() }), [0.0; 2]);
+        let steps = graph.add(NodeKind::Terrace(Terrace { step: 8.0, sharpness: 0.95 }), [0.0; 2]);
+        let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
+        assert!(graph.connect(hills, 0, steps, 0) && graph.connect(steps, 0, output, Output::HEIGHT));
+        let world = WorldGen::new(5, 1.0, -100.0, graph);
+        file.blocks.truncate(3);
+        for name in ["Sandstone", "Shale"] {
+            file.blocks.push(BlockKind::colored(name, [0.6; 3]));
+        }
+        let layer = |name: &str, thickness| RockLayer { block: Some(name.into()), thickness };
+        let rock = RockLayers { tilt: 0.0, wander: 0.0, layers: vec![layer("Sandstone", 6.0), layer("Shale", 4.0)] };
+        let number = |name: &str| if name == "Sandstone" { 4 } else { 5 };
+        let strata = std::sync::Arc::new(Strata::of(&rock, number).unwrap());
+        let blocks = BiomeBlocks { top: 1, steep: 4, steep_slope: 0.7, strata: Some(strata.clone()), ..BiomeBlocks::default() };
+        let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let biomes = Biomes::new(vec![land], 15.0, 0.3, world.seed());
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(WorldBiomes { biomes, blocks: vec![blocks] }));
+        let map = file.make_ground(Some(&world));
+        let generate = file.generate.as_ref().unwrap();
+        let (mut shown, mut wrong) = ([0usize; 2], 0);
+        for z in 1..63 {
+            for x in 1..63 {
+                let (px, pz) = (generate.position[0] + (x as f32 + 0.5) * 2.0, generate.position[1] + (z as f32 + 0.5) * 2.0);
+                for y in -100..300 {
+                    let block = map.get([x, y, z]);
+                    if block != 4 && block != 5 {
+                        continue;
+                    }
+                    // Every block of rock is the layer at its height.
+                    if block != strata.block((y as f32 + 0.5) * 2.0 - strata.lift(px, pz)) {
+                        wrong += 1;
+                    }
+                    let open = [[1, 0], [-1, 0], [0, 1], [0, -1]].iter().any(|[dx, dz]| map.get([x + dx, y, z + dz]) == AIR);
+                    if open {
+                        shown[usize::from(block - 4)] += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(wrong, 0, "rock not in its layer");
+        // The faces of the steep ground show both layers, not the one block top to bottom.
+        assert!(shown[0] > 100 && shown[1] > 50, "{shown:?} faces of sandstone and shale");
+        // A world without end makes its ground from its blocks as far as the ground is laid with them: the layers'
+        // blocks among them.
+        assert_eq!(file.for_ground().blocks.len(), 5);
+    }
+
+    #[test]
     fn generated_ground_takes_its_blocks_from_the_biome_each_place_is() {
         use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
         let (mut file, world) = generated(0.0, 0.0);

@@ -880,7 +880,8 @@ Done so far:
   the list's count (`localShadowKept`). A light that moves draws its whole shadow each frame. On by default
   (`ViewOptions::local_shadow_cache`; `vox render --no-shadow-cache` to compare). On an RTX 3070, the least of 60
   frames: eight lamps over 64 block pillars 0.165 to 0.014 ms; eight lamps in a hall of 400 Objs, one ball moving
-  by a lamp, 0.132 to 0.058 ms. The frame graph now waits on every way a pass uses a buffer. Unit tests for the
+  by a lamp, 0.132 to 0.058 ms; Sponza's demo at 1440p 0.258 to 0.138 ms, the same picture, its trees' leaves and
+  meadow, which sway in the wind, still drawn each frame. The frame graph now waits on every way a pass uses a buffer. Unit tests for the
   slots; GPU tests: the same picture kept or not, on every culling path, with nothing drawn once all stands still;
   a box moved, gone and the light moved, as drawn whole; a torch's shadow of a pillar gone when the pillar is dug.
 - **Soft shadows from area lights:** a rectangle, disc or tube light's shadow softens as wide as the light,

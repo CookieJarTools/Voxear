@@ -43,6 +43,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
 | Biome size | How far apart its biomes' [[Biomes#Biome regions|regions]] are, in metres: each region is one biome through, with no specks of another. Nothing for each place to take the biome its own climate is nearest, as worlds made before regions do. 768 m for ground newly generated |
+| Levels | Whether its land lies in [[Block Worlds#Levels|levels]]: areas at a few set heights, sheer walls between. Its settings follow when it is on |
 | Land from | How far from where the world starts, in metres, its biomes' [[Biomes#Land|land]] starts to rise: the ground nearer is the generator's own, so a level built there keeps its ground. Past it the land rises over as far again. 0 for none |
 | Slabs | Whether the ground's top is laid in half blocks, so slopes rise half a block at a time (see [[Block Worlds#Half steps|Half steps]]). On for ground newly generated |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
@@ -55,6 +56,22 @@ The ground's layers follow the pushed ground. The top block is whatever has open
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
 Where a cave or a passage cuts under ground that leans out over it, the rock left hanging in the air is cleared: no piece of ground of 256 blocks or fewer stands loose, joined to nothing. Larger ground standing apart, an island in the sky or a slab of rock, is there on purpose and stays. A piece reaching into the chunk column beside is followed on there, so each column clears it alike.
+
+### Levels
+
+With **Levels** on, the land lies at a few set heights, an area at a time, instead of on the generator's own hills and mountains. Each area, a few kilometres across, is level grass at one height, and where two areas of unlike height meet a sheer wall of rock stands between them. You can run across a plain to its edge and look straight down a wall onto another plain far below. The generator still says where the land is and where the sea is; a high area meets the sea in a cliff.
+
+| Setting | What it does |
+| --- | --- |
+| Level count | How many heights there are |
+| Lowest level, Highest level | The lowest area's height and the highest's, in metres. The levels between are evenly spaced |
+| Area size | How wide an area is, in metres. Each area is one biome through, so it reads as one place |
+| Ramps | How much of the walls' length is a ramp instead of a wall, 0 to 1, so a player can climb between levels |
+| Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights (see [[Generator Nodes#Levels|Levels]]): open plain, rolling ground, broad steps, ravines with natural bridges over them, a field of spires, a cluster of lone peaks, or a basin sunk to the lowest level |
+
+A biome's [[Biomes#Land|land]] rolls over its area's floor as much as the area's character says, and its mountains stand as lone massifs over the level, not ranges over all of it. Walls, their rubble and the peaks are bare rock, showing the biome's [[Biomes#Rock Layers|rock layers]] where it has them. A biome that keeps to a height, such as snow, counts that height from its area's floor, so snow lies on the peaks over a high level and not on every high level. With **Land from** set, the area where the world starts is open plain at the lowest level.
+
+There is no limit on how high the levels go. Land standing high costs more to make: a column of ground 330 m high has about four times the chunks of one 40 m high and takes about twice as long. Rock layers under high ground take some memory, since a chunk of one block takes almost none. What you build is saved and sent as it always is, however high the land.
 
 ### Half steps
 

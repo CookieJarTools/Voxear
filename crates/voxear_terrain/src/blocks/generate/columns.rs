@@ -133,10 +133,13 @@ pub(super) fn columns_at(
     let bare = |at: usize| rock.as_ref().is_some_and(|rock| rock[at]);
     // How far the ground is sunk under the land round about, where the generator says and a biome asks.
     let sunk = placed.filter(|placed| placed.any_sunk()).and_then(|_| world.sunk(xs, zs, heights));
+    // Where the land lies in levels, a cover's height counts from the floor of the place's area.
+    let levelled = file.generate.as_ref().and_then(|generate| generate.placed.as_deref());
     let column = |at: usize| -> Column {
         let (height, climate) = (heights[at], (warmth[at], wetness[at]));
+        let over_floor = height - levelled.map_or(0.0, |placed| placed.lift(xs[at], zs[at], height));
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
-            kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
+            kind.cover.filter(|c| c.covers(over_floor, climate)).map(|c| ((at + 1) as BlockId, c.depth))
         });
         // The blocks of the biome the place is, each left to the world's own where the biome names none.
         let above_sea = height - sea_level;

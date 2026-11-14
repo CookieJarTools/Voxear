@@ -514,6 +514,18 @@ impl WorldBiomes {
         self.index_at(x, z, climate).and_then(|biome| self.blocks.get(biome))
     }
 
+    /// How far over the lowest level the floor of the area the place at
+    /// `(x, z)`, `height` metres high, is in stands, in metres, where the
+    /// world's land lies in levels; nothing elsewhere. What keeps to a
+    /// height over the sea, a block's cover or a structure's site, counts
+    /// it from the floor. Never so far that ground over the lowest level is
+    /// counted under it, as a ramp down from a high level is.
+    pub fn lift(&self, x: f32, z: f32, height: f32) -> f32 {
+        let Some(areas) = self.regions.as_ref().and_then(|regions| regions.areas()) else { return 0.0 };
+        let floor = areas.info(areas.area_at(x, z)).0 - areas.plan.low;
+        floor.min(height - areas.plan.low).max(0.0)
+    }
+
     /// Which of them the place at `(x, z)` is, by its place in the list: by
     /// its region where they keep to regions, else by its climate.
     pub fn index_at(&self, x: f32, z: f32, climate: Place) -> Option<usize> {

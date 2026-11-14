@@ -31,6 +31,7 @@
 //! trigonometry or powers, so a seed makes the same ground on every
 //! machine, and a world made from one need only send its seed.
 
+pub mod areas;
 pub mod biomes;
 pub mod caves;
 mod compile;
@@ -49,6 +50,7 @@ mod world;
 pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, WorldBiomes};
 pub use land::{BiomeLand, Landform};
 pub use strata::{RockLayer, RockLayers, Strata};
+pub use areas::{Areas, Character, LevelPlan, Sites};
 pub use regions::Regions;
 pub use caves::{
     CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, PlacedSpot, Room, RoomExit, RoomForm, RoomRules,

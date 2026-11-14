@@ -34,6 +34,14 @@
 //! Peaks, Plateaus, Noise, Spires, Arches and Overhangs, each
 //! kept to its biome by a Climate Mask, so the same shapes can be built by
 //! hand in a generator, and changed there.
+//!
+//! A world whose land lies in levels (see `nodes::levels`) lays a Levels
+//! node over the generator's ground first: level areas at set heights,
+//! walls between. Each biome's land then rolls over its area's floor as
+//! much as the area's character says, in place of rising out of the
+//! generator's own hills, and its mountains stand as lone massifs over the
+//! level, not ranges over all of it. Spires stand in areas of spires and
+//! natural bridges span the ravines of areas of canyons.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::curve::Curve;
@@ -41,8 +49,8 @@ use voxear_core::curve::Curve;
 use super::{
     BiomeDef, Graph, NodeId, NodeKind,
     nodes::{
-        Arches, Blend, ClimateMask, Falloff, RegionOf, FalloffShape, Math, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
-        Remap, Rivers, SlopeMask, Spires, Terrace,
+        Arches, Blend, ClimateMask, Constant, Falloff, FalloffShape, Levels, Math, Noise, Operation, Output, Overhangs, Peaks,
+        Plateaus, RegionOf, Remap, Rivers, SlopeMask, Spires, Terrace,
     },
 };
 use crate::noise::NoiseStyle;
@@ -163,6 +171,8 @@ pub struct Shaped {
     masks: Vec<(usize, NodeId)>,
     height: Option<NodeId>,
     open: Option<NodeId>,
+    /// The Levels node, where the land lies in levels.
+    levels: Option<NodeId>,
 }
 
 /// Ground round a place the land keeps clear of: its middle, in metres in
@@ -176,7 +186,7 @@ pub struct Clear {
 
 impl Shaped {
     pub fn is_empty(&self) -> bool {
-        self.masks.is_empty()
+        self.masks.is_empty() && self.levels.is_none()
     }
 }
 
@@ -191,15 +201,20 @@ impl Shaped {
 /// Where the world keeps its biomes to `regions`, each biome's land lies
 /// where its regions do, blended over their border, in place of where its
 /// climate is.
+///
+/// Where its land lies in `levels`, a Levels node is laid over the ground
+/// first, its areas the regions' where the regions have levels, and each
+/// biome's land rolls over the levels' floors.
 pub fn add_land(
     graph: &mut Graph,
     biomes: &[BiomeDef],
     sea_level: f32,
     clear: Option<Clear>,
     regions: Option<&std::sync::Arc<super::Regions>>,
+    levels: Option<&Levels>,
 ) -> Shaped {
     let mut shaped = Shaped::default();
-    if biomes.iter().all(|biome| biome.land.is_keep()) {
+    if levels.is_none() && biomes.iter().all(|biome| biome.land.is_keep()) {
         return shaped;
     }
     let Some(output) = graph.output().map(|node| (node.id, node.at)) else { return shaped };
@@ -236,7 +251,18 @@ pub fn add_land(
         None => rising,
     };
 
-    let mut height = (base.from, base.output);
+    // The levels: their floors, walls between, and how much each place's land rolls.
+    let level = levels.map(|levels| {
+        g.next();
+        let areas = regions.and_then(|regions| regions.areas().cloned());
+        let node = g.add(NodeKind::Levels(Levels { areas, ..levels.clone() }));
+        g.wire(base.from, base.output, node, Levels::GROUND);
+        shaped.levels = Some(node);
+        (node, g.add(NodeKind::Constant(Constant { value: 0.0 })))
+    });
+    // Where the land lies in levels, each biome's land is made from level ground and rolls over its floor.
+    let made_from = level.map_or((base.from, base.output), |(_, zero)| (zero, 0));
+    let mut height = made_from;
     // Where a place is within the ranges of two biomes, the narrower is the one it is (see `biomes`): so the widest
     // is blended in first, and each narrower over it.
     let mut order: Vec<usize> = (0..biomes.len()).collect();
@@ -270,12 +296,52 @@ pub fn add_land(
         if biome.land.form == Landform::Keep {
             continue;
         }
-        let land = g.land(&biome.land, (base.from, base.output), rising, sea_level);
+        let land = match level {
+            Some(_) => g.land(&biome.land, made_from, rising, 0.0, true),
+            None => g.land(&biome.land, made_from, rising, sea_level, false),
+        };
         let blend = g.add(NodeKind::Blend(Blend::default()));
         g.wire(height.0, height.1, blend, Blend::A);
         g.wire(land, 0, blend, Blend::B);
         g.wire(mask, 0, blend, Blend::MASK);
         height = (blend, 0);
+    }
+    if let Some((levels, _)) = level {
+        // The floors, and each biome's land over them as much as its area rolls; the generator's own ground within
+        // the world's start.
+        g.next();
+        let rolls = g.math2(Operation::Multiply, height, (levels, Levels::RELIEF));
+        let ground = g.math2(Operation::Add, (levels, Levels::HEIGHT), (rolls, 0));
+        height = match shaped.open {
+            Some(open) => {
+                let blend = g.add(NodeKind::Blend(Blend::default()));
+                g.wire(base.from, base.output, blend, Blend::A);
+                g.wire(ground, 0, blend, Blend::B);
+                g.wire(open, 0, blend, Blend::MASK);
+                (blend, 0)
+            }
+            None => (ground, 0),
+        };
+        // The climate cools with the height over each area's floor, not with the floor's own, so a high level is as
+        // green as a low one and only what rises over it is cold.
+        let climate = g.graph.link_into(output.0, Output::TEMPERATURE).map(|link| link.from);
+        if let Some(climate) = climate.filter(|&node| g.graph.node(node).is_some_and(|node| matches!(node.kind, NodeKind::Climate(_)))) {
+            let over = g.math2(Operation::Subtract, height, (levels, Levels::FLOOR));
+            let low = levels_low(&g.graph, levels);
+            let over = g.math(Operation::Add, (over, 0), low);
+            g.graph.disconnect(climate, super::Climate::HEIGHT_IN);
+            g.wire(over, 0, climate, super::Climate::HEIGHT_IN);
+        }
+        // The walls and their rubble are bare rock, with whatever else the generator says is.
+        let rock = match g.graph.link_into(output.0, Output::ROCK).copied() {
+            Some(link) => {
+                let both = g.math2(Operation::Max, (link.from, link.output), (levels, Levels::WALLS));
+                g.graph.disconnect(output.0, Output::ROCK);
+                (both, 0)
+            }
+            None => (levels, Levels::WALLS),
+        };
+        g.wire(rock.0, rock.1, output.0, Output::ROCK);
     }
     if height.0 != base.from {
         g.graph.disconnect(into.0, into.1);
@@ -283,6 +349,14 @@ pub fn add_land(
         shaped.height = Some(height.0);
     }
     shaped
+}
+
+/// The lowest level's height of the Levels node `levels` in `graph`.
+fn levels_low(graph: &Graph, levels: NodeId) -> f32 {
+    match graph.node(levels).map(|node| &node.kind) {
+        Some(NodeKind::Levels(levels)) => levels.areas.as_ref().map_or(levels.low, |areas| areas.plan.low),
+        _ => 0.0,
+    }
 }
 
 /// Stands each biome's pillars and bridges on the ground of `graph`, and
@@ -381,6 +455,36 @@ pub fn add_land_volume(graph: &mut Graph, biomes: &[BiomeDef], shaped: &Shaped) 
                 ground = (overhangs, 0);
             }
         }
+        if let Some(levels) = shaped.levels {
+            // Fields of spires in the areas of spires, and natural bridges over the ravines of the areas of canyons.
+            g.next();
+            let spires = Spires {
+                size_from: 16.0,
+                size_to: 55.0,
+                height_from: 60.0,
+                height_to: 210.0,
+                spacing: 150.0,
+                often: 0.75,
+                seed: 0x1E7E_5917,
+                ..Spires::default()
+            };
+            let spires = g.add(NodeKind::Spires(spires));
+            g.wire(ground.0, ground.1, spires, Spires::GROUND);
+            g.wire(levels, Levels::SPIRES, spires, Spires::MASK);
+            let arches = Arches {
+                span_from: 40.0,
+                span_to: 180.0,
+                thickness: 11.0,
+                width: 22.0,
+                often: 1.0,
+                windows: 0.3,
+                seed: 0x1E7E_A2C4,
+            };
+            let arches = g.add(NodeKind::Arches(arches));
+            g.wire(spires, 0, arches, Arches::GROUND);
+            g.wire(levels, Levels::BRIDGES, arches, Arches::MASK);
+            ground = (arches, 0);
+        }
         for (to, input) in fed {
             g.graph.disconnect(to, input);
             g.wire(ground.0, ground.1, to, input);
@@ -478,8 +582,9 @@ impl Adder<'_> {
     }
 
     /// The height of `land` made from the ground `base`, risen out of it
-    /// by `rising` (0 at the coast, 1 inland).
-    fn land(&mut self, land: &BiomeLand, base: (NodeId, usize), rising: NodeId, sea_level: f32) -> NodeId {
+    /// by `rising` (0 at the coast, 1 inland). Where the land lies in
+    /// levels, `levelled`, its mountains stand as lone massifs, not ranges.
+    fn land(&mut self, land: &BiomeLand, base: (NodeId, usize), rising: NodeId, sea_level: f32, levelled: bool) -> NodeId {
         let height = land.height.clamp(0.0, 4000.0);
         let size = land.size.clamp(20.0, 20000.0);
         let raised = match land.form {
@@ -543,6 +648,31 @@ impl Adder<'_> {
                 self.wire(stepped, 0, cliffs, Blend::B);
                 self.wire(bands, 0, cliffs, Blend::MASK);
                 let peaks = self.math2(Operation::Multiply, (cliffs, 0), (rising, 0));
+                let peaks = match levelled {
+                    // Lone massifs, where a broad pattern is high, and level ground between.
+                    true => {
+                        let broad = self.add(NodeKind::Noise(Noise {
+                            style: NoiseStyle::Fractal,
+                            size: size * 1.6,
+                            octaves: 2,
+                            low: 0.0,
+                            high: 1.0,
+                        }));
+                        let massifs = self.add(NodeKind::Curve(Remap {
+                            curve: Curve::new(&[[0.0, 0.0], [0.56, 0.0], [0.7, 1.0], [1.0, 1.0]]),
+                            low: 0.0,
+                            high: 1.0,
+                        }));
+                        self.wire(broad, 0, massifs, 0);
+                        // Cut down, not scaled: the peaks' own jagged tops rise out of the level ground, no dome.
+                        let gone = self.add(NodeKind::Math(Math { operation: Operation::Subtract, a: 1.0, b: 0.0 }));
+                        self.wire(massifs, 0, gone, 1);
+                        let gone = self.math(Operation::Multiply, (gone, 0), height);
+                        let cut = self.math2(Operation::Subtract, (peaks, 0), (gone, 0));
+                        self.math(Operation::Max, (cut, 0), 0.0)
+                    }
+                    false => peaks,
+                };
                 self.math2(Operation::Add, base, (peaks, 0))
             }
             Landform::Rim => {
@@ -665,7 +795,7 @@ mod tests {
         let (world, xs, zs) = hills(100, 60.0);
         let (biomes, warmth, middle) = split(&world, &xs, &zs, 0.5, BiomeLand::of(Landform::Mountains));
         let mut graph = world.graph().clone();
-        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None);
+        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None, None);
         assert!(!shaped.is_empty());
         let landed = world.with_graph(graph);
         assert!(landed.faults().is_empty(), "{:?}", landed.faults());
@@ -694,7 +824,7 @@ mod tests {
         let land = BiomeLand::of(Landform::Rim);
         let biome = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], land, ..BiomeDef::default() };
         let mut graph = world.graph().clone();
-        add_land(&mut graph, std::slice::from_ref(&biome), world.sea_level(), None, None);
+        add_land(&mut graph, std::slice::from_ref(&biome), world.sea_level(), None, None, None);
         let rimmed = world.with_graph(graph);
         // Rows 4 m apart over 6 km of land: where the ground drops most over 8 m.
         let (mut sheer, mut level, mut inland) = (0, 0, 0);
@@ -730,7 +860,7 @@ mod tests {
         let world = std::sync::Arc::new(world);
         let regions = std::sync::Arc::new(Regions::new(600.0, 96.0, Biomes::new(biomes.to_vec(), 15.0, 0.3, 7), world.clone()));
         let mut graph = world.graph().clone();
-        add_land(&mut graph, &biomes, world.sea_level(), None, Some(&regions));
+        add_land(&mut graph, &biomes, world.sea_level(), None, Some(&regions), None);
         let landed = world.with_graph(graph);
         let (before, after) = (heights(&world, &xs, &zs), heights(&landed, &xs, &zs));
         let inland = |at: usize| before[at] > world.sea_level() + COAST + RISE;
@@ -763,7 +893,7 @@ mod tests {
         let warm = BiomeDef { temperature: [middle, 60.0], humidity: [0.0, 1.0], land, ..BiomeDef::default() };
         let biomes = [cold, warm];
         let mut graph = world.graph().clone();
-        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None);
+        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None, None);
         assert!(graph.add_voxels(OwnVoxels { overhangs: 0.0, caves: 0.0, roof: 0.0 }, false));
         assert!(add_land_volume(&mut graph, &biomes, &shaped));
         let landed = world.with_graph(graph);
@@ -787,5 +917,42 @@ mod tests {
         assert!(cold_places > 500 && warm_places > 500, "{cold_places} cold places, {warm_places} warm");
         assert_eq!(cold, 0, "pillars where the biome without them lies");
         assert!(warm * 100 > warm_places, "pillars over {warm} of {warm_places} warm places");
+    }
+
+    #[test]
+    fn where_the_land_lies_in_levels_a_high_level_is_as_warm_as_a_low_one() {
+        let (world, xs, zs) = hills(80, 150.0);
+        let levels = Levels {
+            size: 900.0,
+            levels: 3,
+            low: 10.0,
+            high: 610.0,
+            rolling: 0.0,
+            steps: 0.0,
+            canyons: 0.0,
+            spires: 0.0,
+            peaks: 0.0,
+            basins: 0.0,
+            ..Levels::default()
+        };
+        let biomes = [BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() }];
+        let mut graph = world.graph().clone();
+        add_land(&mut graph, &biomes, world.sea_level(), None, None, Some(&levels));
+        let landed = world.with_graph(graph);
+        assert!(landed.faults().is_empty(), "{:?}", landed.faults());
+        let now = heights(&landed, &xs, &zs);
+        let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
+        landed.climates(&xs, &zs, &now, &mut warmth, &mut wetness);
+        let mean = |floor: f32| {
+            let on: Vec<f32> = (0..xs.len()).filter(|&at| (now[at] - floor).abs() < 2.0).map(|at| warmth[at]).collect();
+            (on.iter().sum::<f32>() / on.len().max(1) as f32, on.len())
+        };
+        let ((low, lows), (high, highs)) = (mean(10.0), mean(610.0));
+        assert!(lows > 100 && highs > 100, "{lows} places low, {highs} high");
+        // Without counting from the floor, 600 m higher would be several degrees colder.
+        let (cold, _) = world.climate(xs[0], zs[0], 610.0);
+        let (warm, _) = world.climate(xs[0], zs[0], 10.0);
+        assert!(warm - cold > 3.0, "the generator cools with height: {warm} against {cold}");
+        assert!((high - low).abs() < 2.5, "high {high} °C against low {low} °C");
     }
 }

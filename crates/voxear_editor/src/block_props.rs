@@ -436,6 +436,23 @@ pub enum BlockField {
     /// How far apart its biomes' regions are, each one biome through:
     /// nothing for each place to take the biome its climate is nearest.
     BiomeSize,
+    /// Whether its generated land lies in levels: areas at a few set
+    /// heights with sheer walls between, how many, from what height to
+    /// what, how wide an area is, how much of the walls are ramps, and how
+    /// often each character of area comes.
+    Levels,
+    LevelCount,
+    LevelLow,
+    LevelHigh,
+    AreaSize,
+    Ramps,
+    Plains,
+    Rolling,
+    Steps,
+    Canyons,
+    Spires,
+    Peaks,
+    Basins,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -533,7 +550,27 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
                     fields.extend([F::Rivers, F::Slabs]);
-                    fields.extend([F::Biomes, F::BiomeSize, F::LandFrom]);
+                    fields.push(F::Biomes);
+                    // Where the land lies in levels, its areas are the biomes' regions.
+                    match generate.levels {
+                        Some(_) => fields.extend([
+                            F::Levels,
+                            F::LevelCount,
+                            F::LevelLow,
+                            F::LevelHigh,
+                            F::AreaSize,
+                            F::Ramps,
+                            F::Plains,
+                            F::Rolling,
+                            F::Steps,
+                            F::Canyons,
+                            F::Spires,
+                            F::Peaks,
+                            F::Basins,
+                        ]),
+                        None => fields.extend([F::BiomeSize, F::Levels]),
+                    }
+                    fields.push(F::LandFrom);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
@@ -576,6 +613,19 @@ pub fn label(field: BlockField) -> &'static str {
         F::Slabs => "Slabs",
         F::LandFrom => "Land from",
         F::BiomeSize => "Biome size",
+        F::Levels => "Levels",
+        F::LevelCount => "Level count",
+        F::LevelLow => "Lowest level",
+        F::LevelHigh => "Highest level",
+        F::AreaSize => "Area size",
+        F::Ramps => "Ramps",
+        F::Plains => "Plains",
+        F::Rolling => "Rolling",
+        F::Steps => "Steps",
+        F::Canyons => "Canyons",
+        F::Spires => "Spires",
+        F::Peaks => "Peaks",
+        F::Basins => "Basins",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -615,9 +665,10 @@ pub fn unit(field: BlockField) -> Option<&'static str> {
         | F::ViewDistance
         | F::FarDistance
         | F::LandFrom
-        | F::BiomeSize => {
-            Some("m")
-        }
+        | F::BiomeSize
+        | F::LevelLow
+        | F::LevelHigh
+        | F::AreaSize => Some("m"),
         F::Temperatures => Some("°C"),
         _ => None,
     }
@@ -626,7 +677,8 @@ pub fn unit(field: BlockField) -> Option<&'static str> {
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(field: BlockField) -> Option<[f32; 2]> {
     match field {
-        F::Caves => Some([0.0, 1.0]),
+        F::Caves | F::Ramps => Some([0.0, 1.0]),
+        F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => Some([0.0, 4.0]),
         _ => None,
     }
 }
@@ -822,6 +874,16 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
         F::LandFrom => Value::Number(file()?.generate.as_ref()?.land_from),
         F::BiomeSize => Value::Number(file()?.generate.as_ref()?.biome_size),
+        F::Levels => Value::Toggle(file()?.generate.as_ref()?.levels.is_some()),
+        F::LevelCount => Value::Whole(file()?.generate.as_ref()?.levels.as_ref()?.levels.into()),
+        F::LevelLow => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.low),
+        F::LevelHigh => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.high),
+        F::AreaSize => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.size),
+        F::Ramps => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.ramps),
+        F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => {
+            let levels = file()?.generate.as_ref()?.levels.as_ref()?;
+            Value::Number(levels.characters()[character_of(field)?])
+        }
         F::Slabs => Value::Toggle(file()?.generate.as_ref()?.slabs),
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
@@ -886,6 +948,12 @@ fn set_cover(cover: &mut BlockCover, field: BlockField, value: &Value) {
         (F::CoverDepth, v) => cover.depth = number(v).unwrap_or(1.0).round().clamp(1.0, 64.0) as u32,
         _ => {}
     }
+}
+
+/// Which of a level world's characters a field weighs, by its place among
+/// them.
+fn character_of(field: BlockField) -> Option<usize> {
+    [F::Plains, F::Rolling, F::Steps, F::Canyons, F::Spires, F::Peaks, F::Basins].iter().position(|&f| f == field)
 }
 
 fn number(value: &Value) -> Option<f32> {
@@ -985,6 +1053,42 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             // Nothing, or regions at least 64 m apart.
             let size = number(v).unwrap_or(generate.biome_size);
             generate.biome_size = if size <= 0.0 { 0.0 } else { size.clamp(64.0, 20_000.0) };
+        }
+        (F::Levels, Value::Toggle(on)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.levels = on.then(|| generate.levels.clone().unwrap_or_default());
+        }
+        (
+            F::LevelCount
+            | F::LevelLow
+            | F::LevelHigh
+            | F::AreaSize
+            | F::Ramps
+            | F::Plains
+            | F::Rolling
+            | F::Steps
+            | F::Canyons
+            | F::Spires
+            | F::Peaks
+            | F::Basins,
+            v,
+        ) => {
+            let Some(levels) = file.generate.as_mut().and_then(|generate| generate.levels.as_mut()) else { return false };
+            let Some(n) = number(v) else { return false };
+            match field {
+                F::LevelCount => levels.levels = n.round().clamp(1.0, 12.0) as u32,
+                F::LevelLow => levels.low = n.clamp(-500.0, 5000.0),
+                F::LevelHigh => levels.high = n.clamp(-500.0, 8000.0),
+                F::AreaSize => levels.size = n.clamp(200.0, 50_000.0),
+                F::Ramps => levels.ramps = n.clamp(0.0, 1.0),
+                F::Plains => levels.plains = n.clamp(0.0, 10.0),
+                F::Rolling => levels.rolling = n.clamp(0.0, 10.0),
+                F::Steps => levels.steps = n.clamp(0.0, 10.0),
+                F::Canyons => levels.canyons = n.clamp(0.0, 10.0),
+                F::Spires => levels.spires = n.clamp(0.0, 10.0),
+                F::Peaks => levels.peaks = n.clamp(0.0, 10.0),
+                _ => levels.basins = n.clamp(0.0, 10.0),
+            }
         }
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };

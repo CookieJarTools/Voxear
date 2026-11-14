@@ -435,8 +435,18 @@ fn biomes_read(content: &mut Content, file: &BlockFile) -> BlockFile {
     // Biomes a region at a time, where the world keeps them to regions: each region's from its generator's own
     // climate, not as its biomes' land shapes it.
     let raw = generate.world.as_ref().and_then(|reference| content.world_gen(reference));
-    let regions = raw.filter(|_| generate.biome_size > 0.0).map(|raw| {
-        Arc::new(voxear_terrain::generate::Regions::new(generate.biome_size, REGION_BORDER, biomes.clone(), raw))
+    // Where the land lies in levels, the regions are its areas, as wide as they are, and each is one level.
+    let levels = generate.levels.as_ref();
+    let spacing = levels.map_or(generate.biome_size, |levels| levels.size);
+    let regions = raw.filter(|_| spacing > 0.0).map(|raw| {
+        let regions = voxear_terrain::generate::Regions::new(spacing, REGION_BORDER, biomes.clone(), raw);
+        Arc::new(match levels {
+            Some(levels) => {
+                let keep = (generate.land_from > 0.0).then_some(generate.position);
+                regions.with_levels(voxear_terrain::generate::LevelPlan { keep, ..levels.plan() })
+            }
+            None => regions,
+        })
     });
     if let Some(generate) = file.generate.as_mut() {
         generate.placed = Some(Arc::new(WorldBiomes { regions, biomes, blocks }));

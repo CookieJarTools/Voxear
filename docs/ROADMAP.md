@@ -2381,6 +2381,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - ~~**Rock layers:**~~ done: a biome's rock lies in bands of blocks, each its own thickness, leaning and
     wandering a little (`generate::strata`), shown along cliffs, walls and caves, near and in the far view; the
     starter and showcase biomes have their own. Tests: every block of rock in its layer, faces of both layers.
+  - ~~**A world of levels:**~~ done: a Block World's **Levels** lays its land at a few set heights, an area a few
+    kilometres across at a time, each level grass, with sheer walls of rock where two areas of unlike height meet,
+    rubble at their feet and ramps here and there; a high area meets the sea in a cliff. A new **Levels** node
+    (`generate::nodes::levels`) does it from areas shared with the biome regions (`generate::areas`), so each area
+    is one biome through. Each area has a character, by weights: plains, rolling, steps, canyons (ravines with
+    natural bridges), spires, a cluster of peaks, or a basin; now and then a lone peak stands at a high area's end.
+    A biome's land rolls over its area's floor as much as its character says, and its mountains stand as lone
+    massifs. Snow counts its height from the floor, the world's start is open plain at the lowest level, and the
+    starter biomes stay green up to 60°. Tests: areas at every level and character, neighbours mostly alike; level
+    land at set heights with sheer walls; bare walls, ravines and bridges; a block world's columns on its floors
+    over flattened mountains; renders of a real project's endless world.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

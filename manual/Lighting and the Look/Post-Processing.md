@@ -83,8 +83,58 @@ A look stands in for a preset. If a scene names both, the preset's post-processi
 
 The level uses the post-processing of its active scene (see [[Scenes and Levels]]).
 
-> [!NOTE]
-> The editor has no settings for post-processing yet. Change the scene file in a text editor, then open the level again to see it.
+## In the editor
+
+Every post-processing setting is on the **Lighting** page, which the sun on the left-hand rail opens, in the tabs **Exposure**, **Colour**, **Bloom**, **Fog**, **Shading**, **Lens** and **Quality** (see [[Lighting Settings]]). A change lights the scene at once, and **Ctrl+Z** takes it back, a step for each change. The page changes lighting settings, not a scene's own `[post]`: for a scene lit by none, click **New Lighting Settings**, which carries its `[post]` over into a new set.
+
+| Tab | Settings |
+| --- | --- |
+| Exposure | Auto exposure, compensation, its limits and speeds, how dark night stays, and the part of the picture it meters |
+| Colour | The tonemapper, white balance, contrast and saturation, lift, gamma and gain, the lookup table and how much of it shows, the vignette and colour fringes |
+| Bloom | Bloom, its intensity, scatter and tint |
+| Fog | Fog, its density, height, colour and glow, and light shafts |
+| Shading | Bounced light, ambient occlusion with its tint and quality, contact shadows, reflections and shimmer reduction |
+| Lens | Depth of field and motion blur |
+| Quality | Anti-aliasing, render scale, sharpening, and TAA's history and jitter |
+
+A setting that does nothing as the others stand is hidden until it would: occlusion's while there is none, TAA's while anti-aliasing is FXAA or off.
+
+## From scripts
+
+`Post` changes the post-processing while the game runs, as a settings menu or a moment of the game does. What a script changes is laid over the level's own settings, a setting at a time, so a level's look still shows through what it leaves alone, and it stays through level changes until `Post.Reset()`. Post volumes still blend in over it.
+
+The easy way is a preset, or a look's post-processing, to start from:
+
+```csharp
+Post.UsePreset(PostPreset.Cinematic);
+Post.UsePreset(PostPreset.GoldenHour);
+```
+
+The full way reaches every setting, by its section, as the scene file has them:
+
+```csharp
+Post.Change(post =>
+{
+	post.AntiAliasing.RenderScale = 0.67f;
+	post.AmbientOcclusion.Quality = AmbientOcclusionQuality.High;
+	post.Bloom.Intensity = 0.1f;
+	post.Grading.Lut = Texture.Load("Looks/Warm.png");
+});
+```
+
+Only what the change sets differently is laid over the level, so `Post.Change` can be called from several places. A choice that does not exist, such as a quality of 9, is reported in the Console, and nothing changes. Numbers are taken as given, as in a scene file.
+
+| Member | What it does |
+| --- | --- |
+| `Post.Current` | Every setting as a frame is drawn with it now, but for post volumes: a `PostSettings` with a section each, `AmbientOcclusion`, `ContactShadows`, `GlobalIllumination`, `Reflections`, `AntiAliasing`, `Bloom`, `Exposure`, `Tonemap`, `Grading`, `Vignette`, `Fog`, `DepthOfField` and `MotionBlur`, and `ChromaticAberration` |
+| `Post.Change(change)` | Changes settings over the level's |
+| `Post.Set(settings)` | Sets every setting as given |
+| `Post.UsePreset(preset)` | Starts afresh from a preset or a look |
+| `Post.Reset()` | Takes off what scripts changed |
+| `Post.IsChanged`, `Post.ChangesToJson()` | Whether scripts changed anything, and what, as the scene file would write it |
+| `settings.ToJson()`, `PostSettings.FromJson(json)` | A whole set of settings as text, for a game's own options file |
+
+For HDR output, see [[HDR Displays]].
 
 ## Every post-processing setting
 
@@ -272,6 +322,8 @@ exposure = { compensation = -0.5 }
 grading = { temperature = -0.3, saturation = 0.8 }
 fog = { density = 0.03 }
 ```
+
+The Inspector shows them under **Settings**, in the same tabs as the Lighting page. Each row is empty where the volume leaves the setting to the level; fill it to change it there, and empty it, or pick the level's own from its menu, to leave it to the level again. Colours are typed as red, green and blue. **Ctrl+Z** takes back a change, as for any of the Obj's settings.
 
 As the camera comes into the volume, numbers and colours blend smoothly from the scene's settings to the volume's. Switches, such as `enabled`, and choices, such as the tonemapper, change once the camera is more than halfway into the blend. A volume cannot change the lookup table.
 

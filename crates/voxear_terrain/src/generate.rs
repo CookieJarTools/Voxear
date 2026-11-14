@@ -46,6 +46,7 @@ mod starters;
 pub mod structures;
 mod voxels;
 mod world;
+pub(crate) mod written_land;
 
 pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, BiomeTints, BiomeVines, Biomes, WorldBiomes};
 pub use land::{BiomeLand, Landform};
@@ -57,7 +58,7 @@ pub use caves::{
     RoomSample, RoomShape,
 };
 pub use compile::Fault;
-pub use graph::{Exposed, Graph, Link, Node, NodeId};
+pub use graph::{Comment, Exposed, Graph, Link, Node, NodeId};
 pub use landmass::{Climate, Erosion, Field, Landmass, Preset, Sample, Warp, smooth};
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
 pub use starters::{Starter, starters};

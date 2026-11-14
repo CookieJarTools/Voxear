@@ -331,14 +331,25 @@ fn a_generators_graph_is_opened_edited_undone_and_exposed_and_the_ground_follows
     assert_eq!(higher.as_landmass().map(|land| land.height), Some(300.0));
     assert!(higher.hash() != rolling.hash() && follows(&editor, field, &higher));
 
-    // A context click on the canvas opens the search, with the kinds of node in their folders; one picked is
-    // added where it was asked for, picked, and shown in the Inspector.
+    // A context click on the canvas opens its menu, whose Add Node opens the search, with the kinds of node in
+    // their folders; one picked is added where it was asked for, picked, and shown in the Inspector.
     let canvas = first_with(&editor.ui, panel, "graph-canvas").expect("the canvas");
     let [left, top, _, tall] = editor.ui.rect(canvas);
     let corner = (left + 60.0, top + tall - 50.0);
     editor.ui.pointer_move(corner.0, corner.1);
     editor.ui.pointer_secondary(true);
     editor.ui.pointer_secondary(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let root = editor.ui.root();
+    let menu = first_with(&editor.ui, root, "menu-popup").expect("the canvas's menu");
+    let add =
+        editor.ui.children(menu).into_iter().find(|&row| editor.ui.has_class(row, "menu-item")).expect("Add Node");
+    let (x, y) = middle(&editor.ui, add);
+    editor.ui.pointer_move(x, y);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(editor.picker_open());

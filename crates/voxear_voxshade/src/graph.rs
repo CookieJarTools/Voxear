@@ -124,6 +124,20 @@ pub struct Link {
     pub input: usize,
 }
 
+/// A frame on the canvas, drawn behind the nodes: its number in the graph,
+/// its top left corner and size, its title and the lines under it. It has
+/// no part in the shader.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Comment {
+    pub id: u32,
+    pub at: [f32; 2],
+    pub size: [f32; 2],
+    pub title: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+}
+
 /// A shader made of nodes: what its properties struct is named, how it is
 /// drawn, its properties, nodes and wires. Or a sub-graph: nodes other
 /// graphs use as one, with inputs and outputs in place of properties.
@@ -157,6 +171,9 @@ pub struct Graph {
     pub nodes: Vec<Node>,
     #[serde(rename = "link", skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<Link>,
+    /// Frames saying what its nodes do.
+    #[serde(rename = "comment", skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Comment>,
 }
 
 fn is_none(value: &f32) -> bool {
@@ -275,6 +292,10 @@ impl Graph {
                 bail!("two nodes are numbered {}", node.id.0);
             }
         }
+        let mut numbers = std::collections::HashSet::new();
+        if let Some(twice) = self.comments.iter().find(|comment| !numbers.insert(comment.id)) {
+            bail!("two comments are numbered {}", twice.id);
+        }
         let mut fed = std::collections::HashSet::new();
         for link in &self.links {
             let (Some(from), Some(to)) = (self.node(link.from), self.node(link.to)) else {
@@ -331,6 +352,25 @@ impl Graph {
             node.literals.retain(|literal| literal.input != input);
             node.literals.push(Literal { input, value });
         }
+    }
+
+    /// Adds a comment, with a number none has had: its number.
+    pub fn add_comment(&mut self, at: [f32; 2], size: [f32; 2], title: &str, text: &str) -> u32 {
+        let id = self.comments.iter().map(|comment| comment.id).max().unwrap_or(0) + 1;
+        let (title, text) = (title.to_string(), text.to_string());
+        self.comments.push(Comment { id, at, size, title, text });
+        id
+    }
+
+    pub fn comment_mut(&mut self, id: u32) -> Option<&mut Comment> {
+        self.comments.iter_mut().find(|comment| comment.id == id)
+    }
+
+    /// Takes away a comment: whether it had one so numbered.
+    pub fn remove_comment(&mut self, id: u32) -> bool {
+        let before = self.comments.len();
+        self.comments.retain(|comment| comment.id != id);
+        self.comments.len() != before
     }
 
     /// Takes a node away, and the wires to and from it.

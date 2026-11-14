@@ -3,7 +3,11 @@
 //!
 //! Under Settings, while the world's generator makes no overhangs and caves
 //! of its own, **Move to Generator** moves the world's into it (see
-//! `block_props::move_to_generator`).
+//! `block_props::move_to_generator`). While the world lays land into its
+//! generator as it makes ground (its levels, its biomes' land), **Write Land
+//! into Generator** writes those nodes into the generator's graph, each part
+//! in a comment, and the world lays none in from then on (see
+//! `block_props::write_land`).
 //!
 //! Among the Settings of generated ground, under its generator's rows, the
 //! **Biomes** the ground has: each by its colour and name, dragged into
@@ -41,6 +45,8 @@ pub struct BlockPanel {
     tools: NodeId,
     /// Move to Generator, where the world's overhangs and caves can move.
     move_out: Option<NodeId>,
+    /// Write Land into Generator, where the world lays land into its generator.
+    write_land: Option<NodeId>,
     biomes: Option<Biomes>,
     signature: u64,
 }
@@ -54,6 +60,7 @@ fn signature(game: &Game, entity: Entity) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     state.tool.hash(&mut hasher);
     block_props::generator_has_volume(world, entity).hash(&mut hasher);
+    block_props::can_write_land(game, entity).hash(&mut hasher);
     if let Some(asset) = world.get::<BlockWorldAsset>(entity) {
         asset.file.generate.as_ref().and_then(|generate| generate.world.as_ref()).hash(&mut hasher);
     }
@@ -84,8 +91,17 @@ impl BlockPanel {
             ui.set_tooltip(button, "Moves Overhangs and Caves into the generator, as nodes of its graph", None);
             move_out = Some(button);
         }
+        let mut write_land = None;
+        if state.tool == BlockTool::Settings && block_props::can_write_land(game, entity) {
+            let button = ui.button(rows, "Write Land into Generator");
+            ui.add_class(button, "block-move-to-generator");
+            ui.add_class(button, "block-write-land");
+            let tip = "Writes the levels and biome land laid in at load into the generator, as nodes in comments";
+            ui.set_tooltip(button, tip, None);
+            write_land = Some(button);
+        }
         let signature = signature(game, entity);
-        Self { tools, move_out, biomes: None, signature }
+        Self { tools, move_out, write_land, biomes: None, signature }
     }
 
     /// The list of the world's biomes, under the rows made so far.
@@ -159,6 +175,15 @@ impl BlockPanel {
         }
         if self.move_out.is_some_and(|button| ui.clicked(button)) {
             return block_props::move_to_generator(game, renderer, entity);
+        }
+        if self.write_land.is_some_and(|button| ui.clicked(button)) {
+            return match block_props::write_land(game, renderer, entity) {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::error!("Could not write the land into the generator: {error}");
+                    false
+                }
+            };
         }
         let Some(biomes) = &self.biomes else { return false };
         if biomes.starters.is_some_and(|button| ui.clicked(button)) {

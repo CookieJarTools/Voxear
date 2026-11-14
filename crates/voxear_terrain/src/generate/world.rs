@@ -67,6 +67,9 @@ struct Made {
     faults: Vec<Fault>,
     /// Every node's outputs, compiled when first asked for.
     previews: OnceLock<(Program, Vec<(NodeId, usize)>)>,
+    /// Its climate with every Climate node cooled by the ground asked about,
+    /// compiled when first asked for (see [`WorldGen::sea_climate`]).
+    sea_climate: OnceLock<Program>,
 }
 
 /// What one output of one node makes over the places asked about.
@@ -341,6 +344,8 @@ struct File {
     links: Vec<WrittenLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     exposed: Vec<WrittenExposed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    comments: Vec<super::graph::Comment>,
 }
 
 fn one() -> u32 {
@@ -407,7 +412,7 @@ impl WorldGen {
             sea_level,
             graph,
             preview: PreviewArea::default(),
-            made: Arc::new(Made { compiled, hash, faults, previews: OnceLock::new() }),
+            made: Arc::new(Made { compiled, hash, faults, previews: OnceLock::new(), sea_climate: OnceLock::new() }),
             land: None,
         }
     }
@@ -493,6 +498,14 @@ impl WorldGen {
         Self::new(self.seed, self.scale, self.sea_level, graph).with_preview_area(self.preview)
     }
 
+    /// With these comments in place of its own: the same generator
+    /// otherwise, not compiled again, since comments make nothing.
+    pub fn with_comments(&self, comments: Vec<super::graph::Comment>) -> Self {
+        let mut world = self.clone();
+        world.graph.comments = comments;
+        world
+    }
+
     /// With exposed row `row` set to `value`: none where it has no such
     /// row, or the row takes no such value.
     pub fn with_exposed(&self, row: usize, value: Value) -> Option<Self> {
@@ -542,6 +555,22 @@ impl WorldGen {
     pub fn climate(&self, x: f32, z: f32, height: f32) -> (f32, f32) {
         let (mut warmth, mut wetness) = ([0.0], [0.0]);
         self.climates(&[x], &[z], &[height], &mut warmth, &mut wetness);
+        (warmth[0], wetness[0])
+    }
+
+    /// How warm and wet it is at `(x, z)` at the sea's height, with every
+    /// Climate node cooled by that height whatever is wired into its
+    /// Height: the climate a place has before any land shaped by its
+    /// height cools it, which is what a world's biome regions are read
+    /// from.
+    pub fn sea_climate(&self, x: f32, z: f32) -> (f32, f32) {
+        let program = self.made.sea_climate.get_or_init(|| {
+            let world = World { seed: self.seed, scale: self.scale, sea_level: self.sea_level };
+            compile::sea_climate(&self.graph, world)
+        });
+        let (mut warmth, mut wetness) = ([0.0], [0.0]);
+        let given = Givens { x: &[x], z: &[z], ground: &[self.sea_level], ..Givens::default() };
+        program.run(1, given, &mut [&mut warmth, &mut wetness]);
         (warmth[0], wetness[0])
     }
 
@@ -653,15 +682,16 @@ impl WorldGen {
             return Ok(Landmass::parse(text)?.into());
         }
         let file: File = toml::from_str(text)?;
-        let graph = Graph::read(Written { nodes: file.nodes, links: file.links, exposed: file.exposed })?;
+        let written = Written { nodes: file.nodes, links: file.links, exposed: file.exposed, comments: file.comments };
+        let graph = Graph::read(written)?;
         Ok(Self::new(file.seed, file.scale, file.sea_level, graph).with_preview_area(file.preview))
     }
 
     /// As a `.worldgen` file's text.
     pub fn to_text(&self) -> String {
-        let Written { nodes, links, exposed } = self.graph.written();
+        let Written { nodes, links, exposed, comments } = self.graph.written();
         let (seed, scale, sea_level, preview) = (self.seed, self.scale, self.sea_level, self.preview);
-        let file = File { seed, scale, sea_level, preview, nodes, links, exposed };
+        let file = File { seed, scale, sea_level, preview, nodes, links, exposed, comments };
         toml::to_string(&file).unwrap_or_default()
     }
 }
@@ -1163,5 +1193,33 @@ cooling = 6.5
         assert!(land.set_value(8, Value::Number(5.0)), "sharpness, held to 1");
         assert_eq!(land.value(8), Some(Value::Number(1.0)));
         assert_eq!(land.value(Land::PRESET), Some(Value::Choice(5)), "its shape its own now");
+    }
+
+    #[test]
+    fn comments_are_kept_in_the_file_and_make_no_ground() {
+        let world = Preset::RollingHills.world();
+        let old = world.to_text();
+        assert!(!old.contains("comments"), "a graph with none writes none");
+        assert!(WorldGen::parse(&old).unwrap().graph().comments.is_empty(), "an older file reads with none");
+        let mut graph = world.graph().clone();
+        let first = graph.add_comment([-40.0, -60.0], [520.0, 300.0], "Hills", "Rolling hills\nand their climate.");
+        let second = graph.add_comment([600.0, 0.0], [200.0, 120.0], "Output", "");
+        assert_eq!((first, second), (1, 2));
+        let commented = world.with_comments(graph.comments.clone());
+        assert_eq!(commented.hash(), world.hash(), "comments make nothing");
+        assert_ne!(commented, world, "but are a change to the generator");
+        let text = commented.to_text();
+        let read = WorldGen::parse(&text).unwrap();
+        assert_eq!(read.graph().comments, graph.comments);
+        assert_eq!(read, commented);
+        // Numbers are never given twice, and one taken away is gone.
+        assert!(graph.remove_comment(first) && !graph.remove_comment(first));
+        assert_eq!(graph.add_comment([0.0; 2], [100.0; 2], "Again", ""), 3);
+        graph.comment_mut(3).unwrap().title = "Renamed".into();
+        assert_eq!(graph.comments.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["Output", "Renamed"]);
+        // Two comments of one number are a file that does not read.
+        let twice = text.replace("[[comments]]\nid = 2", "[[comments]]\nid = 1");
+        assert_ne!(twice, text);
+        assert!(WorldGen::parse(&twice).is_err(), "{twice}");
     }
 }

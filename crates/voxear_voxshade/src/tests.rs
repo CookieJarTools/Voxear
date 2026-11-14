@@ -506,3 +506,23 @@ fn a_picture_goes_by_wire_into_a_sample_and_into_a_sub_graph() {
     );
     assert_eq!(Graph::from_toml(&sub.to_toml()).unwrap(), sub);
 }
+
+#[test]
+fn comments_are_kept_in_the_file_and_change_nothing_compiled() {
+    let (mut g, ids) = graph(vec![NodeKind::Constant { ty: Ty::Float, value: [2.0; 4] }]);
+    let plain = g.to_toml();
+    assert!(!plain.contains("comment"), "a graph with none writes none");
+    assert!(Graph::from_toml(&plain).unwrap().comments.is_empty(), "an older file reads with none");
+    let before = compile(&g).map(|compiled| compiled.source).ok();
+    let id = g.add_comment([-20.0, -40.0], [300.0, 200.0], "Tint", "Two lines\nof what it does.");
+    assert_eq!(id, 1);
+    let _ = ids;
+    let read = Graph::from_toml(&g.to_toml()).unwrap();
+    assert_eq!(read, g);
+    assert_eq!(read.comments[0].text, "Two lines\nof what it does.");
+    assert_eq!(compile(&g).map(|compiled| compiled.source).ok(), before, "the shader is the same");
+    g.comment_mut(id).unwrap().title = "Renamed".into();
+    assert!(g.remove_comment(id) && !g.remove_comment(id));
+    let twice = format!("{}\n[[comment]]\nid = 4\n\n[[comment]]\nid = 4\n", plain);
+    assert!(Graph::from_toml(&twice).is_err());
+}

@@ -32,7 +32,7 @@ mod columns;
 pub mod far;
 pub mod tints;
 
-pub use cells::{CAVE_ROOF, landed};
+pub use cells::{CAVE_ROOF, landed, lays_land, write_land};
 pub use columns::column_chunks;
 
 /// How a world of blocks' ground is generated: by the world generator
@@ -99,6 +99,12 @@ pub struct BlockGenerate {
     /// biome. None for the generator's own hills and mountains.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub levels: Option<crate::generate::nodes::Levels>,
+    /// Whether its levels and its biomes' land, with the rivers and caves
+    /// laid in with them, are written into its generator as nodes (see
+    /// `cells::write_land`): it lays none in itself then, and its levels
+    /// and biomes say only where its biomes lie.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub land_written: bool,
     /// Its biomes as read, with their blocks by this world's numbers: filled
     /// in by whoever has the project's files, before ground is made.
     #[serde(skip)]
@@ -141,6 +147,7 @@ impl Default for BlockGenerate {
             land_from: 0.0,
             biome_size: 0.0,
             levels: None,
+            land_written: false,
             placed: None,
             structures: Vec::new(),
             built: None,

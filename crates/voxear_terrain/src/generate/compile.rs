@@ -173,6 +173,9 @@ pub(crate) struct Compiler<'a> {
     pub world: World,
     /// Whether it is given the height of the ground asked about.
     grounded: bool,
+    /// Whether every Climate node is cooled by the ground it is given,
+    /// whatever is wired into its Height (see [`sea_climate`]).
+    pub cooled_by_given: bool,
     /// In a program run once a cell: the program run once a column beside
     /// it, and the rows of that carried up to the cells.
     carry: Option<Box<Carry<'a>>>,
@@ -231,6 +234,7 @@ impl<'a> Compiler<'a> {
             graph,
             world,
             grounded,
+            cooled_by_given: false,
             carry: None,
             ground_from: None,
             carving: true,
@@ -701,6 +705,26 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
 }
 
 /// Compiles `graph` in `world`, adding what is wrong with it to `faults`.
+/// The climate the Output's Temperature and Humidity make on the ground
+/// they are given, every Climate node cooled by that ground and not by
+/// what is wired into its Height: so a world's biome regions are read from
+/// the climate at the sea's height, not as land shaped from it (such as by
+/// levels) cools it.
+pub(crate) fn sea_climate(graph: &Graph, world: World) -> Program {
+    let output = graph.output().map(|node| node.id);
+    let mut cx = Compiler::new(graph, world, true);
+    cx.cooled_by_given = true;
+    let at = cx.places();
+    let warmth = output.and_then(|output| cx.input(output, Output::TEMPERATURE, at));
+    let warmth = warmth.unwrap_or_else(|| {
+        let ground = cx.given(Given::Ground);
+        cx.run(Mild, &[ground])
+    });
+    let wetness = output.and_then(|output| cx.input(output, Output::HUMIDITY, at));
+    let wetness = wetness.unwrap_or_else(|| cx.constant(0.5));
+    cx.finish(&[warmth, wetness]).0
+}
+
 pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Compiled {
     let output = graph.output().map(|node| node.id);
     let mut cx = Compiler::new(graph, world, false);

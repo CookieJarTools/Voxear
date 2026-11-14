@@ -16,6 +16,7 @@ mod docs_pictures;
 mod docs_steps;
 mod drawer;
 mod framing;
+mod graph_calls;
 mod gun_handlings;
 mod world_gens;
 mod generators;

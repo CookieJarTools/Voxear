@@ -16,10 +16,11 @@ Double-click the `.voxshade` file, or press **Open** in its Inspector, to open i
 
 The graph fills the middle. Down the side are the picked node's values, the shader's properties and its own settings. The bar along the top shows what each stage of the shader costs.
 
-- **Add a node:** right-click on the canvas, press **Space**, or click **Add Node**, then type to search. The nodes are in folders: Inputs, Values, Properties, Math, Logic, Vectors, Noise and Outputs.
+- **Add a node:** right-click on the canvas and choose **Add Node**, press **Space**, or click **Add Node**, then type to search. The nodes are in folders: Inputs, Values, Properties, Math, Logic, Vectors, Noise and Outputs.
 - **Wire nodes:** drag from an output on a node's right to an input on another's left. Let go over empty canvas and the search opens, to add a node on the end of the wire. Drag from a wired input to pull its wire off.
 - **Pick and move:** click a node to pick it. Shift-click or Ctrl-click to pick more, or drag a box round them. Drag picked nodes to move them.
 - **Look round:** the mouse wheel zooms. Drag with the middle button, or with Alt held, to move the view. **F** or **Frame** fits the whole graph in view.
+- **Comments:** pick nodes, right-click and choose **Add Comment Round Picked** to frame them with a title and a few lines saying what they do. Drag a comment's title bar to move it with the nodes in it, drag its corner to resize it, and double-click it to change its words. Comments change nothing the shader makes. They work as a generator graph's do (see [[Generator Graphs#Comments]]).
 - **Delete**, **Ctrl+D** duplicates, **Ctrl+C** and **Ctrl+V** copy and paste, with the wires between the nodes copied. **Ctrl+Z** and **Ctrl+Y** undo and redo while the panel is the one you last clicked in.
 
 Each change is saved as you make it, and the shader compiles into the engine's own in the background, as a `.shader` does when it is saved. Every material using it changes a few seconds later.

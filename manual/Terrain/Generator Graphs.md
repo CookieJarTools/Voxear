@@ -21,7 +21,8 @@ The panel has the graph on its canvas, and beside it the ground the whole graph 
 | Drag over empty canvas | Pick the nodes the box touches |
 | Drag from a port to a port | Wire them |
 | Drag from an input that has a wire | Pull the wire off: let go over another input to move it there, or over empty canvas to take it away |
-| Right-click, or press Space | Open the search, to add a node there |
+| Right-click | Open the canvas's menu: **Add Node**, **Add Comment**, and on a comment **Edit Comment** and **Delete Comment** |
+| Press Space | Open the search, to add a node there |
 | Delete | Take the picked nodes out, with their wires |
 | Ctrl+D | Make another of each picked node beside it |
 | Ctrl+C, Ctrl+V | Copy the picked nodes, and put the copies under the pointer |
@@ -29,6 +30,20 @@ The panel has the graph on its canvas, and beside it the ground the whole graph 
 | Ctrl+Z, Ctrl+Y | Undo and redo |
 
 **Add Node** and **Frame** above the canvas do what Space and F do.
+
+## Comments
+
+A comment is a frame drawn behind the nodes, with a title and a few lines under it, to say what a part of the graph does. Pick the nodes it is about, right-click and choose **Add Comment Round Picked**: the comment goes round them, its title ready to type. With nothing picked, **Add Comment** puts one where you right-clicked.
+
+| Do this | To |
+| --- | --- |
+| Type, then Enter | Name it, then go on to the lines under the title. Escape or a press elsewhere ends it |
+| Double-click it, or right-click it and choose Edit Comment | Change its title and text |
+| Drag its title bar | Move it with every node and comment inside it |
+| Drag its bottom right corner | Make it larger or smaller |
+| Press its title bar, then Delete | Take it out. Its nodes stay |
+
+Comments are saved with the graph, and make no difference to the ground: changing one makes nothing again. A tool reaches them through `graph.comments` and `graph.comment.add`, `.set` and `.remove` (see [[Driving the Editor from a Terminal]]).
 
 ## Nodes and wires
 

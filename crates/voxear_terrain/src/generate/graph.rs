@@ -5,7 +5,9 @@
 //! another, so wires and noise seeds stay with it whatever is added or
 //! removed round it; and a place on the graph editor's canvas. A wire runs
 //! from one node's output to another's input, one at most into each input,
-//! and never round in a loop.
+//! and never round in a loop. A comment is a frame on the canvas with a
+//! title and a few lines saying what the nodes in it do: it has no part in
+//! the ground the graph makes.
 
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
@@ -47,12 +49,26 @@ pub struct Exposed {
     pub label: String,
 }
 
-/// A generator's nodes, wires and exposed values.
+/// A frame on the canvas, drawn behind the nodes: its number in the graph,
+/// its top left corner and size, its title and the lines under it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Comment {
+    pub id: u32,
+    pub at: [f32; 2],
+    pub size: [f32; 2],
+    pub title: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+}
+
+/// A generator's nodes, wires, exposed values and comments.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub links: Vec<Link>,
     pub exposed: Vec<Exposed>,
+    pub comments: Vec<Comment>,
 }
 
 /// The numbers the nodes of a graph made from a landmass have.
@@ -74,6 +90,25 @@ impl Graph {
         let id = NodeId(self.nodes.iter().map(|node| node.id.0).max().unwrap_or(0) + 1);
         self.nodes.push(Node { id, at, kind });
         id
+    }
+
+    /// Adds a comment, with a number none has had: its number.
+    pub fn add_comment(&mut self, at: [f32; 2], size: [f32; 2], title: &str, text: &str) -> u32 {
+        let id = self.comments.iter().map(|comment| comment.id).max().unwrap_or(0) + 1;
+        let (title, text) = (title.to_string(), text.to_string());
+        self.comments.push(Comment { id, at, size, title, text });
+        id
+    }
+
+    pub fn comment_mut(&mut self, id: u32) -> Option<&mut Comment> {
+        self.comments.iter_mut().find(|comment| comment.id == id)
+    }
+
+    /// Takes away a comment: whether it had one so numbered.
+    pub fn remove_comment(&mut self, id: u32) -> bool {
+        let before = self.comments.len();
+        self.comments.retain(|comment| comment.id != id);
+        self.comments.len() != before
     }
 
     /// Removes a node, with its wires and the rows it showed.
@@ -230,6 +265,7 @@ impl Graph {
                     label: exposed.label.clone(),
                 })
                 .collect(),
+            comments: self.comments.clone(),
         }
     }
 
@@ -278,6 +314,12 @@ impl Graph {
             };
             graph.expose(NodeId(exposed.node), value, &exposed.label);
         }
+        for comment in written.comments {
+            if graph.comments.iter().any(|kept| kept.id == comment.id) {
+                bail!("two comments are numbered {}", comment.id);
+            }
+            graph.comments.push(comment);
+        }
         Ok(graph)
     }
 }
@@ -290,6 +332,8 @@ pub(crate) struct Written {
     pub links: Vec<WrittenLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exposed: Vec<WrittenExposed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Comment>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

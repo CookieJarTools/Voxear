@@ -16,14 +16,22 @@
 //!   or on a node with one; let go over empty canvas it asks for the
 //!   search, to add a node on its end. A drag from a wired input pulls the
 //!   wire off it.
-//! - A context click asks for the search.
+//! - A context click opens the canvas's menu: Add Node asks for the search,
+//!   Add Comment asks for a comment round the picked nodes (or where the
+//!   menu opened), and on a comment Edit Comment and Delete Comment.
+//! - A comment is a frame drawn behind the nodes, with a title and a few
+//!   lines of text. A press on its title bar picks it, and a drag moves it
+//!   with every node and comment inside it; a drag of its bottom right
+//!   corner resizes it; a double click on it edits its title and text in
+//!   place, Enter going from the title to the text and Escape or a press
+//!   elsewhere ending it.
 //!
 //! The UI cannot scale a subtree and has no curve, so the canvas is drawn:
 //! each node is an element placed by hand whose box, header and ports are
 //! shapes, with labels and a picture from a pool laid over them at a font
 //! size that follows the zoom, and each wire is a run of short lines.
 
-use voxear_ui::{Color, ImageRef, NodeId, Overflow, Shape, Style, Ui};
+use voxear_ui::{Color, ImageRef, MenuItem, NodeId, Overflow, Shape, Style, Ui};
 
 /// How large the view can be, least to most; it starts at 1.
 const ZOOMS: [f32; 11] = [0.25, 0.35, 0.5, 0.6, 0.7, 0.85, 1.0, 1.2, 1.4, 1.7, 2.0];
@@ -57,6 +65,15 @@ const LABELS_FROM: f32 = 0.5;
 const TITLES_FROM: f32 = 0.35;
 /// Below this zoom only every fifth line of the grid is drawn.
 const FINE_GRID_FROM: f32 = 0.7;
+/// A comment's title bar, the corner that resizes it, the least it can be, how large a new one is, and the room it
+/// leaves round the nodes it is made round, in canvas units.
+const COMMENT_BAR: f32 = 34.0;
+const CORNER: f32 = 18.0;
+const COMMENT_LEAST: [f32; 2] = [160.0, 90.0];
+const COMMENT_NEW: [f32; 2] = [360.0, 200.0];
+const COMMENT_ROOM: f32 = 30.0;
+/// How much larger a comment's title is than a node's.
+const COMMENT_TITLE: f32 = 1.35;
 
 /// One end of a wire: an input or an output of a node, by its place among them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,17 +113,54 @@ pub struct CanvasWire {
     pub to: (u64, usize),
 }
 
+/// A comment as the canvas draws it: its top left corner and size on the
+/// canvas, its title and its text.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanvasComment {
+    pub id: u64,
+    pub at: [f32; 2],
+    pub size: [f32; 2],
+    pub title: String,
+    pub text: String,
+}
+
+impl CanvasComment {
+    /// Whether a place on the canvas is within it.
+    fn holds(&self, at: [f32; 2]) -> bool {
+        (self.at[0]..self.at[0] + self.size[0]).contains(&at[0])
+            && (self.at[1]..self.at[1] + self.size[1]).contains(&at[1])
+    }
+
+    /// Whether a box (left, top, right, bottom) lies wholly within it.
+    fn encloses(&self, bounds: [f32; 4]) -> bool {
+        bounds[0] >= self.at[0]
+            && bounds[1] >= self.at[1]
+            && bounds[2] <= self.at[0] + self.size[0]
+            && bounds[3] <= self.at[1] + self.size[1]
+    }
+
+    fn bounds(&self) -> [f32; 4] {
+        [self.at[0], self.at[1], self.at[0] + self.size[0], self.at[1] + self.size[1]]
+    }
+}
+
 /// A graph as the canvas draws it, with a line to show over its corner.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasGraph {
     pub nodes: Vec<CanvasNode>,
     pub wires: Vec<CanvasWire>,
+    /// Drawn behind the nodes, the last on top.
+    pub comments: Vec<CanvasComment>,
     pub notice: String,
 }
 
 impl CanvasGraph {
     pub fn node(&self, id: u64) -> Option<&CanvasNode> {
         self.nodes.iter().find(|node| node.id == id)
+    }
+
+    pub fn comment(&self, id: u64) -> Option<&CanvasComment> {
+        self.comments.iter().find(|comment| comment.id == id)
     }
 }
 
@@ -139,6 +193,24 @@ pub enum CanvasEvent {
     Copy(Vec<u64>),
     /// What was copied wanted at this place.
     Paste([f32; 2]),
+    /// Comments are being dragged, with the nodes in them: where each
+    /// comment is now. A drag that moved them ends in [`CanvasEvent::MoveEnded`].
+    CommentsMoved(Vec<(u64, [f32; 2])>),
+    /// A comment is being resized: how large it is now.
+    CommentResized(u64, [f32; 2]),
+    /// A comment asked for, with its top left corner here and this large,
+    /// for the owner to add and then hand [`GraphCanvas::edit_comment`].
+    AddComment {
+        at: [f32; 2],
+        size: [f32; 2],
+    },
+    /// A comment's title or text typed in.
+    CommentEdited {
+        id: u64,
+        title: String,
+        text: String,
+    },
+    DeleteComments(Vec<u64>),
 }
 
 /// What a key asks of the canvas (see [`GraphCanvas::key`]).
@@ -151,6 +223,8 @@ pub enum CanvasKey {
     /// Shows the picked nodes, or all of them with none picked.
     Frame,
     Search,
+    /// A comment round the picked nodes, or under the pointer with none.
+    Comment,
 }
 
 /// What of the canvas the view shows: the place at its top left corner, and how large.
@@ -238,6 +312,10 @@ pub fn port_at(node: &CanvasNode, output: bool, index: usize) -> [f32; 2] {
 pub enum Hit {
     Port(PortRef),
     Node(u64),
+    /// A comment's title bar.
+    Comment(u64),
+    /// The corner of a comment that resizes it.
+    Corner(u64),
     Nothing,
 }
 
@@ -263,8 +341,50 @@ pub fn hit(graph: &CanvasGraph, order: &[usize], at: [f32; 2], grab: f32) -> Hit
         (node.at[0]..node.at[0] + width).contains(&at[0]) && (node.at[1]..node.at[1] + height).contains(&at[1])
     };
     let on = order.iter().rev().filter_map(|&index| graph.nodes.get(index)).find(|node| inside(node));
-    on.map_or(Hit::Nothing, |node| Hit::Node(node.id))
+    if let Some(node) = on {
+        return Hit::Node(node.id);
+    }
+    // A comment's corner and title bar take hold of it; inside it, a drag picks nodes as over empty canvas.
+    for comment in graph.comments.iter().rev() {
+        let [right, bottom] = [comment.at[0] + comment.size[0], comment.at[1] + comment.size[1]];
+        if comment.holds(at) && at[0] >= right - CORNER && at[1] >= bottom - CORNER {
+            return Hit::Corner(comment.id);
+        }
+        if comment.holds(at) && at[1] < comment.at[1] + COMMENT_BAR {
+            return Hit::Comment(comment.id);
+        }
+    }
+    Hit::Nothing
 }
+
+/// The comment a place on the canvas is within, the one on top where several are.
+pub fn comment_at(graph: &CanvasGraph, at: [f32; 2]) -> Option<u64> {
+    graph.comments.iter().rev().find(|comment| comment.holds(at)).map(|comment| comment.id)
+}
+
+/// The nodes and comments wholly within comment `id`, which go where it goes.
+pub fn within(graph: &CanvasGraph, id: u64) -> (Vec<u64>, Vec<u64>) {
+    let Some(comment) = graph.comment(id) else { return (Vec::new(), Vec::new()) };
+    let nodes = graph.nodes.iter().filter(|node| {
+        let [width, height] = node_size(node);
+        comment.encloses([node.at[0], node.at[1], node.at[0] + width, node.at[1] + height])
+    });
+    let comments = graph.comments.iter().filter(|other| other.id != id && comment.encloses(other.bounds()));
+    (nodes.map(|node| node.id).collect(), comments.map(|other| other.id).collect())
+}
+
+/// Where a comment round these nodes goes, with room round them and its
+/// title bar over them, and how large it is: none for no nodes.
+pub fn comment_round(graph: &CanvasGraph, ids: &[u64]) -> Option<([f32; 2], [f32; 2])> {
+    let [left, top, right, bottom] = bounds(graph, ids).filter(|_| !ids.is_empty())?;
+    let corner = snapped([left - COMMENT_ROOM, top - COMMENT_ROOM - COMMENT_BAR]);
+    let far = [right + COMMENT_ROOM, bottom + COMMENT_ROOM];
+    let size = [(far[0] - corner[0]).max(COMMENT_LEAST[0]), (far[1] - corner[1]).max(COMMENT_LEAST[1])];
+    Some((corner, snapped(size)))
+}
+
+/// How large a comment is when nothing gives it a size.
+pub const NEW_COMMENT_SIZE: [f32; 2] = COMMENT_NEW;
 
 /// The points a wire is drawn through from an output at `from` to an input at `to`: a curve that
 /// leaves and arrives level.
@@ -293,12 +413,15 @@ pub fn boxed(graph: &CanvasGraph, a: [f32; 2], b: [f32; 2]) -> Vec<u64> {
     graph.nodes.iter().filter(|node| touches(node)).map(|node| node.id).collect()
 }
 
-/// The box round these nodes, or round every node when `ids` is empty: left, top, right, bottom.
+/// The box round these nodes, or round every node and comment when `ids` is empty: left, top, right, bottom.
 pub fn bounds(graph: &CanvasGraph, ids: &[u64]) -> Option<[f32; 4]> {
     let among = graph.nodes.iter().filter(|node| ids.is_empty() || ids.contains(&node.id));
-    among.fold(None, |found: Option<[f32; 4]>, node| {
+    let boxes = among.map(|node| {
         let [width, height] = node_size(node);
-        let own = [node.at[0], node.at[1], node.at[0] + width, node.at[1] + height];
+        [node.at[0], node.at[1], node.at[0] + width, node.at[1] + height]
+    });
+    let comments = graph.comments.iter().filter(|_| ids.is_empty()).map(CanvasComment::bounds);
+    boxes.chain(comments).fold(None, |found: Option<[f32; 4]>, own| {
         Some(found.map_or(own, |b| [b[0].min(own[0]), b[1].min(own[1]), b[2].max(own[2]), b[3].max(own[3])]))
     })
 }
@@ -320,6 +443,29 @@ enum Drag {
     Marquee { from: [f32; 2], kept: Vec<u64> },
     /// The view, by the pointer, from where it last was on screen.
     Pan { last: [f32; 2] },
+    /// On a comment's title bar: the picked comments, with the nodes and comments in them, follow the pointer
+    /// once it has moved, each from where it was.
+    Comments { from: [f32; 2], comments: Vec<(u64, [f32; 2])>, nodes: Vec<(u64, [f32; 2])>, moved: bool },
+    /// On a comment's corner: its size follows the pointer, from what it was.
+    Resize { id: u64, from: [f32; 2], start: [f32; 2], moved: bool },
+}
+
+/// What a choice in the canvas's menu does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MenuAction {
+    AddNode,
+    AddComment,
+    EditComment(u64),
+    DeleteComment(u64),
+}
+
+/// A comment being edited in place: its fields, and whether either has had focus yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Editing {
+    id: u64,
+    focused: bool,
+    /// How many frames it has been given focus without taking it.
+    tries: u8,
 }
 
 /// The canvas's colours, for a dark theme or a light one. They are whole colours, not faint ones
@@ -336,6 +482,9 @@ struct Colors {
     picked: Color,
     fault: Color,
     marquee: Color,
+    comment: Color,
+    comment_bar: Color,
+    comment_edge: Color,
 }
 
 impl Colors {
@@ -351,8 +500,18 @@ impl Colors {
             picked: pick(0x7988ff, 0x5e6ad2),
             fault: Color::hex(0xe5484d),
             marquee: pick(0x8b93ff, 0x5e6ad2),
+            comment: pick(0x171a1f, 0xf6f7f9),
+            comment_bar: pick(0x22262d, 0xe4e7ec),
+            comment_edge: pick(0x2b3038, 0xcfd3da),
         }
     }
+}
+
+/// One comment's elements, from the pool: its panel, title and text.
+struct DrawnComment {
+    panel: NodeId,
+    title: NodeId,
+    text: NodeId,
 }
 
 /// One node's elements, from the pool: its panel, title, the labels of its ports, its picture and
@@ -369,16 +528,28 @@ struct Drawn {
 pub struct GraphCanvas {
     /// The view: it clips what is drawn in it, and takes the pointer and the wheel.
     viewport: NodeId,
-    /// Under the nodes, the grid and the wires; the nodes; and over them the wire or box being
-    /// dragged, the notice, and the place a search opens from.
+    /// Under the nodes, the grid and the comments, and the wires; the nodes; and over them the wire
+    /// or box being dragged, the fields a comment is edited in, the notice, and the place a search
+    /// opens from.
+    frames: NodeId,
     wires: NodeId,
     nodes: NodeId,
     over: NodeId,
     notice: NodeId,
     anchor: NodeId,
     pool: Vec<Drawn>,
+    comment_pool: Vec<DrawnComment>,
+    /// The fields a comment's title and text are edited in, and the comment being edited.
+    title_field: NodeId,
+    text_field: NodeId,
+    editing: Option<Editing>,
+    /// A comment to edit once the graph has it.
+    to_edit: Option<u64>,
+    /// The canvas's menu, while it is open: where on the canvas it opened, and what its items do.
+    menu: Option<([f32; 2], Vec<MenuAction>)>,
     view: View,
     picked: Vec<u64>,
+    picked_comments: Vec<u64>,
     drag: Option<Drag>,
     /// Whether the buttons were down last frame, and where the pointer was, in the view.
     was_pressed: bool,
@@ -402,6 +573,8 @@ struct Look {
     view: View,
     size: [f32; 2],
     picked: Vec<u64>,
+    picked_comments: Vec<u64>,
+    editing: Option<u64>,
     hovered: Hit,
     drag: Option<Drag>,
     pointer: Option<[f32; 2]>,
@@ -421,7 +594,19 @@ impl GraphCanvas {
             ui.add_class(layer, class);
             layer
         };
+        let frames = layer(ui, "graph-frames");
         let (wires, nodes, over) = (layer(ui, "graph-wires"), layer(ui, "graph-nodes"), layer(ui, "graph-over"));
+        let field = |ui: &mut Ui, class: &str| {
+            let field = ui.text_field(over, "");
+            ui.add_class(field, "graph-comment-field");
+            ui.add_class(field, class);
+            ui.set_visible(field, false);
+            field
+        };
+        let (title_field, text_field) = (field(ui, "graph-comment-title-field"), field(ui, "graph-comment-text-field"));
+        ui.set_multiline(text_field, true);
+        ui.set_placeholder(title_field, "Title");
+        ui.set_placeholder(text_field, "What these nodes do");
         let notice = ui.add_label(over, "");
         ui.add_class(notice, "graph-notice");
         ui.set_visible(notice, false);
@@ -430,14 +615,22 @@ impl GraphCanvas {
         let anchor = ui.panel(over, hidden);
         Self {
             viewport,
+            frames,
             wires,
             nodes,
             over,
             notice,
             anchor,
             pool: Vec::new(),
+            comment_pool: Vec::new(),
+            title_field,
+            text_field,
+            editing: None,
+            to_edit: None,
+            menu: None,
             view: View::default(),
             picked: Vec::new(),
+            picked_comments: Vec::new(),
             drag: None,
             was_pressed: false,
             pointer: None,
@@ -468,6 +661,30 @@ impl GraphCanvas {
     /// Picks these nodes, the last the one on top.
     pub fn pick(&mut self, ids: Vec<u64>) {
         self.picked = ids;
+    }
+
+    /// The comments picked, the last the one pressed last.
+    pub fn picked_comments(&self) -> &[u64] {
+        &self.picked_comments
+    }
+
+    pub fn pick_comments(&mut self, ids: Vec<u64>) {
+        self.picked_comments = ids;
+    }
+
+    /// Edits comment `id`'s title and text in place, from the next frame the graph has it: as for
+    /// one just added.
+    pub fn edit_comment(&mut self, id: u64) {
+        self.to_edit = Some(id);
+    }
+
+    /// The comment being edited in place, and the fields its title and text are in.
+    pub fn editing(&self) -> Option<u64> {
+        self.editing.map(|editing| editing.id)
+    }
+
+    pub fn comment_fields(&self) -> (NodeId, NodeId) {
+        (self.title_field, self.text_field)
     }
 
     pub fn view(&self) -> View {
@@ -509,6 +726,18 @@ impl GraphCanvas {
     pub fn port_point(&self, ui: &Ui, graph: &CanvasGraph, port: PortRef) -> Option<(f32, f32)> {
         let [x, y, ..] = ui.rect(self.viewport);
         let at = self.view.to_screen(port_at(graph.node(port.node)?, port.output, port.index));
+        Some((x + at[0], y + at[1]))
+    }
+
+    /// A point on a comment's title bar in the window, and one on its corner: for a test to press on.
+    pub fn comment_point(&self, ui: &Ui, graph: &CanvasGraph, id: u64, corner: bool) -> Option<(f32, f32)> {
+        let [x, y, ..] = ui.rect(self.viewport);
+        let comment = graph.comment(id)?;
+        let place = match corner {
+            true => [comment.at[0] + comment.size[0] - CORNER / 2.0, comment.at[1] + comment.size[1] - CORNER / 2.0],
+            false => [comment.at[0] + comment.size[0] / 2.0, comment.at[1] + COMMENT_BAR / 2.0],
+        };
+        let at = self.view.to_screen(place);
         Some((x + at[0], y + at[1]))
     }
 
@@ -557,7 +786,9 @@ impl GraphCanvas {
         let (primary, middle) = (ui.is_pressed(self.viewport), ui.is_middle_pressed(self.viewport));
         let pressed = primary || middle;
         let modifiers = ui.modifiers();
-        if pressed && !self.was_pressed {
+        // A press in the fields a comment is edited in is theirs.
+        let on_fields = self.editing.is_some() && (ui.is_hovered(self.title_field) || ui.is_hovered(self.text_field));
+        if pressed && !self.was_pressed && !on_fields {
             if let Some(point) = pointer {
                 let at = self.view.to_canvas(point);
                 self.drag = Some(if middle || self.panning {
@@ -571,7 +802,7 @@ impl GraphCanvas {
                             match (adding, was_picked) {
                                 (true, true) => self.picked.retain(|&other| other != id),
                                 (true, false) => self.picked.push(id),
-                                (false, false) => self.picked = vec![id],
+                                (false, false) => (self.picked, self.picked_comments) = (vec![id], Vec::new()),
                                 (false, true) => {}
                             }
                             events.push(CanvasEvent::Picked);
@@ -580,9 +811,34 @@ impl GraphCanvas {
                             let alone = (!adding && was_picked && self.picked.len() > 1).then_some(id);
                             Drag::Nodes { from: at, starts, moved: false, alone }
                         }
+                        Hit::Comment(id) => {
+                            let adding = modifiers.shift || modifiers.control;
+                            let was_picked = self.picked_comments.contains(&id);
+                            match (adding, was_picked) {
+                                (true, true) => self.picked_comments.retain(|&other| other != id),
+                                (true, false) => self.picked_comments.push(id),
+                                (false, false) => (self.picked_comments, self.picked) = (vec![id], Vec::new()),
+                                (false, true) => {}
+                            }
+                            events.push(CanvasEvent::Picked);
+                            self.comment_drag(graph, at)
+                        }
+                        Hit::Corner(id) => {
+                            (self.picked_comments, self.picked) = (vec![id], Vec::new());
+                            events.push(CanvasEvent::Picked);
+                            let start = graph.comment(id).map_or(COMMENT_LEAST, |comment| comment.size);
+                            Drag::Resize { id, from: at, start, moved: false }
+                        }
                         Hit::Nothing => {
-                            let kept =
-                                if modifiers.shift || modifiers.control { self.picked.clone() } else { Vec::new() };
+                            let adding = modifiers.shift || modifiers.control;
+                            let kept = if adding { self.picked.clone() } else { Vec::new() };
+                            if !adding && !self.picked_comments.is_empty() {
+                                self.picked_comments.clear();
+                                // The box tells of its own picks where nodes were picked.
+                                if self.picked.is_empty() {
+                                    events.push(CanvasEvent::Picked);
+                                }
+                            }
                             Drag::Marquee { from: at, kept }
                         }
                     }
@@ -612,12 +868,25 @@ impl GraphCanvas {
 
         let middle_of = self.view.to_canvas([width / 2.0, height / 2.0]);
         let here = over.map_or(middle_of, |point| self.view.to_canvas(point));
-        if ui.context_clicked(self.viewport) && self.drag.is_none() {
-            self.search(ui, here, None, &mut events);
+        // A double click on a comment edits it in place.
+        if ui.double_clicked(self.viewport) && !on_fields {
+            let on = match hit(graph, &order, here, grab) {
+                Hit::Comment(id) | Hit::Corner(id) => Some(id),
+                Hit::Nothing => comment_at(graph, here),
+                Hit::Node(_) | Hit::Port(_) => None,
+            };
+            if let Some(id) = on {
+                self.begin_editing(ui, graph, id);
+            }
         }
+        self.update_menu(ui, graph, &order, here, grab, &mut events);
         for key in std::mem::take(&mut self.keys) {
             let picked = self.picked.clone();
+            if key == CanvasKey::Delete && !self.picked_comments.is_empty() {
+                events.push(CanvasEvent::DeleteComments(self.picked_comments.clone()));
+            }
             match key {
+                CanvasKey::Comment => events.push(self.new_comment(graph, here)),
                 CanvasKey::Delete if !picked.is_empty() => events.push(CanvasEvent::Delete(picked)),
                 CanvasKey::Duplicate if !picked.is_empty() => events.push(CanvasEvent::Duplicate(picked)),
                 CanvasKey::Copy if !picked.is_empty() => events.push(CanvasEvent::Copy(picked)),
@@ -631,17 +900,21 @@ impl GraphCanvas {
                 CanvasKey::Delete | CanvasKey::Duplicate | CanvasKey::Copy => {}
             }
         }
-        // Nodes that went are picked no longer.
-        let before = self.picked.len();
+        // Nodes and comments that went are picked no longer.
+        let before = self.picked.len() + self.picked_comments.len();
         self.picked.retain(|id| graph.node(*id).is_some());
-        if self.picked.len() != before {
+        self.picked_comments.retain(|id| graph.comment(*id).is_some());
+        if self.picked.len() + self.picked_comments.len() != before {
             events.push(CanvasEvent::Picked);
         }
+        self.update_editing(ui, graph, &mut events);
 
         let look = Look {
             view: self.view,
             size,
             picked: self.picked.clone(),
+            picked_comments: self.picked_comments.clone(),
+            editing: self.editing.map(|editing| editing.id),
             hovered: self.hovered,
             drag: self.drag.clone(),
             pointer: self.pointer.filter(|_| self.drag.is_some()),
@@ -652,6 +925,136 @@ impl GraphCanvas {
             self.drawn = Some((graph.clone(), look));
         }
         events
+    }
+
+    /// The drag a press on a comment's title bar begins: the picked comments, with every node and
+    /// comment within them, from where each is.
+    fn comment_drag(&self, graph: &CanvasGraph, at: [f32; 2]) -> Drag {
+        let (mut comments, mut nodes) = (Vec::new(), Vec::new());
+        for &id in &self.picked_comments {
+            let (inner_nodes, inner_comments) = within(graph, id);
+            for comment in std::iter::once(id).chain(inner_comments) {
+                if !comments.contains(&comment) {
+                    comments.push(comment);
+                }
+            }
+            nodes.extend(inner_nodes.into_iter().filter(|node| !nodes.contains(node)).collect::<Vec<_>>());
+        }
+        let comments =
+            comments.into_iter().filter_map(|id| graph.comment(id).map(|comment| (id, comment.at))).collect();
+        let nodes = nodes.into_iter().filter_map(|id| graph.node(id).map(|node| (id, node.at))).collect();
+        Drag::Comments { from: at, comments, nodes, moved: false }
+    }
+
+    /// A comment asked for round the picked nodes, or with its corner at `at` with none.
+    fn new_comment(&self, graph: &CanvasGraph, at: [f32; 2]) -> CanvasEvent {
+        let (at, size) = comment_round(graph, &self.picked).unwrap_or((snapped(at), COMMENT_NEW));
+        CanvasEvent::AddComment { at, size }
+    }
+
+    /// Opens the canvas's menu on a context click, and carries out what is chosen from it.
+    fn update_menu(
+        &mut self,
+        ui: &mut Ui,
+        graph: &CanvasGraph,
+        order: &[usize],
+        here: [f32; 2],
+        grab: f32,
+        events: &mut Vec<CanvasEvent>,
+    ) {
+        if let Some((at, actions)) = self.menu.take() {
+            match ui.menu_choice(self.viewport) {
+                Some(choice) => match actions.get(choice).copied() {
+                    Some(MenuAction::AddNode) => self.search(ui, at, None, events),
+                    Some(MenuAction::AddComment) => events.push(self.new_comment(graph, at)),
+                    Some(MenuAction::EditComment(id)) => self.begin_editing(ui, graph, id),
+                    Some(MenuAction::DeleteComment(id)) => events.push(CanvasEvent::DeleteComments(vec![id])),
+                    None => {}
+                },
+                None if ui.is_menu_open(self.viewport) => self.menu = Some((at, actions)),
+                None => {}
+            }
+        }
+        if !ui.context_clicked(self.viewport) || self.drag.is_some() {
+            return;
+        }
+        let on = match hit(graph, order, here, grab) {
+            Hit::Comment(id) | Hit::Corner(id) => Some(id),
+            Hit::Nothing => comment_at(graph, here),
+            Hit::Node(_) | Hit::Port(_) => None,
+        };
+        let picked = if self.picked.is_empty() { "Add Comment" } else { "Add Comment Round Picked" };
+        let mut items = vec![MenuItem::new("Add Node"), MenuItem::new(picked)];
+        let mut actions = vec![MenuAction::AddNode, MenuAction::AddComment];
+        if let Some(id) = on {
+            items.extend([MenuItem::separator(), MenuItem::new("Edit Comment"), MenuItem::new("Delete Comment")]);
+            // A separator is an item of the menu too, though it does nothing.
+            actions.extend([MenuAction::AddNode, MenuAction::EditComment(id), MenuAction::DeleteComment(id)]);
+        }
+        let [left, top, ..] = ui.rect(self.viewport);
+        let point = self.view.to_screen(here);
+        ui.open_menu(self.viewport, (left + point[0], top + point[1]), &items);
+        self.menu = Some((here, actions));
+    }
+
+    /// Shows the fields comment `id` is edited in, with its title and text, the title to be typed in.
+    fn begin_editing(&mut self, ui: &mut Ui, graph: &CanvasGraph, id: u64) {
+        let Some(comment) = graph.comment(id) else { return };
+        ui.set_text(self.title_field, &comment.title);
+        ui.set_text(self.text_field, &comment.text);
+        ui.set_visible(self.title_field, true);
+        ui.set_visible(self.text_field, true);
+        self.picked_comments = vec![id];
+        ui.focus(self.title_field);
+        ui.select_all_text(self.title_field);
+        let focused = ui.focused() == Some(self.title_field);
+        self.editing = Some(Editing { id, focused, tries: 0 });
+        // Placed over the comment at once, so a press there lands in them.
+        self.drawn = None;
+    }
+
+    /// A comment being edited: what is typed told of, Enter in its title going on to its text, and
+    /// the editing ended by Escape, a press elsewhere, or the comment going.
+    fn update_editing(&mut self, ui: &mut Ui, graph: &CanvasGraph, events: &mut Vec<CanvasEvent>) {
+        if let Some(id) = self.to_edit.filter(|&id| graph.comment(id).is_some()) {
+            self.to_edit = None;
+            self.begin_editing(ui, graph, id);
+        }
+        let Some(mut editing) = self.editing else { return };
+        let (title, text) = (self.title_field, self.text_field);
+        if ui.changed(title) || ui.changed(text) {
+            events.push(CanvasEvent::CommentEdited { id: editing.id, title: ui.text(title), text: ui.text(text) });
+        }
+        if ui.submitted(title) {
+            ui.focus(text);
+            ui.caret_to_end(text);
+        }
+        let ours = |ui: &Ui| matches!(ui.focused(), Some(field) if field == title || field == text);
+        if !editing.focused {
+            if ours(ui) {
+                editing.focused = true;
+                ui.select_all_text(title);
+            } else {
+                ui.focus(title);
+                editing.tries += 1;
+            }
+        }
+        let escaped = ui.escaped(title) || ui.escaped(text);
+        let left = editing.focused && !ours(ui) && !ui.submitted(title);
+        if graph.comment(editing.id).is_none() || escaped || left || editing.tries > 10 {
+            self.end_editing(ui);
+        } else {
+            self.editing = Some(editing);
+        }
+    }
+
+    fn end_editing(&mut self, ui: &mut Ui) {
+        self.editing = None;
+        ui.set_visible(self.title_field, false);
+        ui.set_visible(self.text_field, false);
+        if matches!(ui.focused(), Some(field) if field == self.title_field || field == self.text_field) {
+            ui.blur();
+        }
     }
 
     /// The drag a press on a port begins: a wire from it, or from the far end of the wire into it,
@@ -697,6 +1100,36 @@ impl GraphCanvas {
                     events.push(CanvasEvent::Picked);
                 }
             }
+            Some(Drag::Comments { from, comments, nodes, moved }) => {
+                let by = [at[0] - from[0], at[1] - from[1]];
+                if !*moved && by[0].hypot(by[1]) * self.view.zoom() < DRAG_START {
+                    return;
+                }
+                *moved = true;
+                let shift = |places: &[(u64, [f32; 2])]| -> Vec<(u64, [f32; 2])> {
+                    places.iter().map(|&(id, start)| (id, snapped([start[0] + by[0], start[1] + by[1]]))).collect()
+                };
+                let (comments, nodes) = (shift(comments), shift(nodes));
+                let stays = comments.iter().all(|(id, place)| graph.comment(*id).is_some_and(|c| c.at == *place));
+                if !stays {
+                    events.push(CanvasEvent::CommentsMoved(comments));
+                    if !nodes.is_empty() {
+                        events.push(CanvasEvent::Moved(nodes));
+                    }
+                }
+            }
+            Some(Drag::Resize { id, from, start, moved }) => {
+                let by = [at[0] - from[0], at[1] - from[1]];
+                if !*moved && by[0].hypot(by[1]) * self.view.zoom() < DRAG_START {
+                    return;
+                }
+                *moved = true;
+                let size = snapped([start[0] + by[0], start[1] + by[1]]);
+                let size = [size[0].max(COMMENT_LEAST[0]), size[1].max(COMMENT_LEAST[1])];
+                if graph.comment(*id).is_some_and(|comment| comment.size != size) {
+                    events.push(CanvasEvent::CommentResized(*id, size));
+                }
+            }
             Some(Drag::Wire { .. }) | None => {}
         }
     }
@@ -714,7 +1147,9 @@ impl GraphCanvas {
         events: &mut Vec<CanvasEvent>,
     ) {
         match drag {
-            Drag::Nodes { moved: true, .. } => events.push(CanvasEvent::MoveEnded),
+            Drag::Nodes { moved: true, .. } | Drag::Comments { moved: true, .. } | Drag::Resize { moved: true, .. } => {
+                events.push(CanvasEvent::MoveEnded)
+            }
             Drag::Nodes { alone: Some(id), .. } => {
                 self.picked = vec![id];
                 events.push(CanvasEvent::Picked);
@@ -733,7 +1168,9 @@ impl GraphCanvas {
                         events.push(CanvasEvent::Connect { from, to });
                     }
                     (None, Some(to)) => events.push(CanvasEvent::Disconnect { to }),
-                    (None, None) if hit(graph, order, at, GRAB / self.view.zoom()) == Hit::Nothing => {
+                    (None, None)
+                        if !matches!(hit(graph, order, at, GRAB / self.view.zoom()), Hit::Node(_) | Hit::Port(_)) =>
+                    {
                         // Not a wire at all when it was let go where it began.
                         let start = graph.node(from.node).map(|node| port_at(node, from.output, from.index));
                         let far = start.is_none_or(|start| (start[0] - at[0]).hypot(start[1] - at[1]) > GRAB * 2.0);
@@ -744,7 +1181,11 @@ impl GraphCanvas {
                     (None, None) => {}
                 }
             }
-            Drag::Nodes { .. } | Drag::Marquee { .. } | Drag::Pan { .. } => {}
+            Drag::Nodes { .. }
+            | Drag::Marquee { .. }
+            | Drag::Pan { .. }
+            | Drag::Comments { .. }
+            | Drag::Resize { .. } => {}
         }
     }
 
@@ -769,7 +1210,7 @@ impl GraphCanvas {
                 let fits: Vec<PortRef> = ports.filter(|&port| allows(from, port)).collect();
                 fits.iter().copied().find(|port| port.output || !wired(port)).or(fits.first().copied())
             }
-            Hit::Nothing => None,
+            Hit::Comment(_) | Hit::Corner(_) | Hit::Nothing => None,
         }
     }
 
@@ -791,6 +1232,8 @@ impl GraphCanvas {
             grid(&mut shapes, view, look.size, spacing, colors.grid);
         }
         grid(&mut shapes, view, look.size, spacing * 5.0, colors.grid_major);
+        ui.set_shapes(self.frames, std::mem::take(&mut shapes));
+        self.draw_comments(ui, graph, look, &colors);
         // The wire being dragged leaves the input it was pulled off bare.
         let taken = match &look.drag {
             Some(Drag::Wire { taken, .. }) => *taken,
@@ -869,6 +1312,107 @@ impl GraphCanvas {
         ui.set_visible(self.notice, !graph.notice.is_empty());
         if ui.text(self.notice) != graph.notice {
             ui.set_text(self.notice, &graph.notice);
+        }
+    }
+
+    /// Each comment behind the nodes, its title and text on it, and the fields over the one being
+    /// edited.
+    fn draw_comments(&mut self, ui: &mut Ui, graph: &CanvasGraph, look: &Look, colors: &Colors) {
+        let (view, zoom) = (look.view, look.view.zoom());
+        while self.comment_pool.len() < graph.comments.len() {
+            let mut style = Style::default().at(0.0, 0.0);
+            style.pickable = false;
+            let panel = ui.panel(self.frames, style);
+            ui.add_class(panel, "graph-comment");
+            let label = |ui: &mut Ui, class: &str| {
+                let label = ui.add_label(panel, "");
+                ui.add_class(label, class);
+                label
+            };
+            let (title, text) = (label(ui, "graph-comment-title"), label(ui, "graph-comment-text"));
+            self.comment_pool.push(DrawnComment { panel, title, text });
+        }
+        for (place, drawn) in self.comment_pool.iter().enumerate() {
+            ui.set_visible(drawn.panel, place < graph.comments.len());
+        }
+        for (comment, drawn) in graph.comments.iter().zip(&self.comment_pool) {
+            let [x, y] = view.to_screen(comment.at);
+            let [width, height] = comment.size.map(|side| side * zoom);
+            ui.set_inline_style(
+                drawn.panel,
+                &format!("left: {x:.1}px; top: {y:.1}px; width: {width:.1}px; height: {height:.1}px"),
+            );
+            let picked = look.picked_comments.contains(&comment.id);
+            let (bar, radius) = (COMMENT_BAR * zoom, RADIUS * zoom);
+            let edge = if picked { 2.0 } else { 1.0 };
+            let mut shapes = vec![
+                Shape::Rect {
+                    rect: [-edge, -edge, width + edge * 2.0, height + edge * 2.0],
+                    radius: radius + edge,
+                    fill: if picked { colors.picked } else { colors.comment_edge },
+                },
+                Shape::Rect { rect: [0.0, 0.0, width, height], radius, fill: colors.comment },
+                Shape::Rect { rect: [0.0, 0.0, width, bar], radius, fill: colors.comment_bar },
+                Shape::Rect { rect: [0.0, bar / 2.0, width, bar / 2.0], radius: 0.0, fill: colors.comment_bar },
+            ];
+            // Three short lines across the corner that resizes it.
+            let corner = [width - 4.0 * zoom, height - 4.0 * zoom];
+            for step in 1..=3 {
+                let reach = step as f32 * 4.0 * zoom;
+                let from = [corner[0] - reach, corner[1]];
+                let to = [corner[0], corner[1] - reach];
+                shapes.push(Shape::Line { from, to, width: 1.0, color: colors.comment_edge });
+            }
+            ui.set_shapes(drawn.panel, shapes);
+            let editing = look.editing == Some(comment.id);
+            let titled = zoom >= TITLES_FROM && !editing;
+            let pad = PAD * zoom;
+            let title_size = (TEXT * COMMENT_TITLE * zoom).clamp(6.0, 30.0);
+            show(
+                ui,
+                drawn.title,
+                titled,
+                &comment.title,
+                &format!(
+                    "left: {pad:.1}px; top: {:.1}px; font-size: {title_size:.2}px; width: {:.1}px",
+                    (bar - title_size * 1.3) / 2.0,
+                    (width - pad * 2.0).max(1.0)
+                ),
+            );
+            show(
+                ui,
+                drawn.text,
+                zoom >= LABELS_FROM && !editing && !comment.text.is_empty(),
+                &comment.text,
+                &format!(
+                    "left: {pad:.1}px; top: {:.1}px; font-size: {:.2}px; width: {:.1}px",
+                    bar + pad / 2.0,
+                    (TEXT * zoom).clamp(6.0, 22.0),
+                    (width - pad * 2.0).max(1.0)
+                ),
+            );
+        }
+        // The fields over the comment being edited: the title in its bar, the text under it.
+        if let Some(comment) = look.editing.and_then(|id| graph.comment(id)) {
+            let [x, y] = view.to_screen(comment.at);
+            let [width, height] = comment.size.map(|side| side * zoom);
+            let (bar, pad) = (COMMENT_BAR * zoom, 4.0 * zoom);
+            let font = (TEXT * zoom).clamp(8.0, 22.0);
+            let place = |left: f32, top: f32, wide: f32, high: f32, font: f32| {
+                format!(
+                    "position: absolute; left: {left:.1}px; top: {top:.1}px; width: {:.1}px; height: {:.1}px; \
+                     font-size: {font:.2}px",
+                    wide.max(20.0),
+                    high.max(12.0)
+                )
+            };
+            let title_font = (TEXT * COMMENT_TITLE * zoom).clamp(8.0, 30.0);
+            ui.set_inline_style(
+                self.title_field,
+                &place(x + pad, y + pad, width - pad * 2.0, bar - pad * 2.0, title_font),
+            );
+            let body = place(x + pad, y + bar + pad, width - pad * 2.0, height - bar - pad * 2.0, font);
+            ui.set_inline_style(self.text_field, &body);
         }
     }
 
@@ -1069,7 +1613,7 @@ fn show(ui: &mut Ui, label: NodeId, visible: bool, text: &str, place: &str) {
 
 #[cfg(test)]
 mod tests {
-    use voxear_ui::Modifiers;
+    use voxear_ui::{Key, Modifiers};
 
     use super::*;
 
@@ -1097,6 +1641,7 @@ mod tests {
                 node(3, [500.0, 40.0], "Output", &["Height", "Temperature"], &[]),
             ],
             wires: vec![CanvasWire { from: (1, 0), to: (2, 0) }],
+            comments: Vec::new(),
             notice: String::new(),
         }
     }
@@ -1138,6 +1683,31 @@ mod tests {
                         self.graph.nodes.retain(|node| !ids.contains(&node.id));
                         self.graph.wires.retain(|wire| !ids.contains(&wire.from.0) && !ids.contains(&wire.to.0));
                     }
+                    CanvasEvent::AddComment { at, size } => {
+                        let id = self.graph.comments.iter().map(|comment| comment.id).max().unwrap_or(0) + 1;
+                        let title = "Comment".to_string();
+                        self.graph.comments.push(CanvasComment {
+                            id,
+                            at: *at,
+                            size: *size,
+                            title,
+                            text: String::new(),
+                        });
+                        self.canvas.edit_comment(id);
+                    }
+                    CanvasEvent::CommentsMoved(places) => {
+                        for (id, at) in places {
+                            self.comment_mut(*id).at = *at;
+                        }
+                    }
+                    CanvasEvent::CommentResized(id, size) => self.comment_mut(*id).size = *size,
+                    CanvasEvent::CommentEdited { id, title, text } => {
+                        let comment = self.comment_mut(*id);
+                        (comment.title, comment.text) = (title.clone(), text.clone());
+                    }
+                    CanvasEvent::DeleteComments(ids) => {
+                        self.graph.comments.retain(|comment| !ids.contains(&comment.id))
+                    }
                     _ => {}
                 }
             }
@@ -1174,6 +1744,55 @@ mod tests {
 
         fn at(&self, id: u64) -> [f32; 2] {
             self.graph.node(id).unwrap().at
+        }
+
+        fn comment_mut(&mut self, id: u64) -> &mut CanvasComment {
+            self.graph.comments.iter_mut().find(|comment| comment.id == id).unwrap()
+        }
+
+        /// A click with the secondary button, which opens the canvas's menu: what it asks for at once.
+        fn context_click(&mut self, point: (f32, f32)) -> Vec<CanvasEvent> {
+            self.to(point);
+            self.ui.pointer_secondary(true);
+            self.ui.pointer_secondary(false);
+            self.frame()
+        }
+
+        /// The open menu's items' labels.
+        fn menu(&self) -> Vec<String> {
+            self.menu_rows().into_iter().map(|(label, _)| label).collect()
+        }
+
+        fn menu_rows(&self) -> Vec<(String, NodeId)> {
+            fn with_class(ui: &Ui, node: NodeId, class: &str) -> Option<NodeId> {
+                if ui.has_class(node, class) && ui.is_visible(node) {
+                    return Some(node);
+                }
+                ui.children(node).into_iter().find_map(|child| with_class(ui, child, class))
+            }
+            let Some(popup) = with_class(&self.ui, self.ui.root(), "menu-popup") else { return Vec::new() };
+            let rows = self.ui.children(popup).into_iter().filter(|&row| self.ui.has_class(row, "menu-item"));
+            let label =
+                |row: NodeId| self.ui.children(row).into_iter().map(|part| self.ui.text(part)).collect::<String>();
+            rows.map(|row| (label(row), row)).collect()
+        }
+
+        /// Clicks the open menu's item with this label: every event heard until the canvas has carried it out.
+        fn choose(&mut self, label: &str) -> Vec<CanvasEvent> {
+            let rows = self.menu_rows();
+            let row = rows.iter().find(|(named, _)| named == label).unwrap_or_else(|| panic!("{label} in {rows:?}")).1;
+            let [x, y, width, height] = self.ui.rect(row);
+            self.to((x + width / 2.0, y + height / 2.0));
+            self.ui.pointer_button(true);
+            let mut events = self.frame();
+            self.ui.pointer_button(false);
+            events.extend(self.frame());
+            events.extend(self.frame());
+            events
+        }
+
+        fn comment(&self, id: u64, corner: bool) -> (f32, f32) {
+            self.canvas.comment_point(&self.ui, &self.graph, id, corner).unwrap()
         }
     }
 
@@ -1418,12 +2037,12 @@ mod tests {
     fn a_context_click_a_key_or_a_wire_let_go_on_nothing_asks_for_the_search() {
         let mut bench = Bench::new();
         let [x, y, ..] = bench.ui.rect(bench.canvas.viewport());
-        bench.to((x + 420.0, y + 400.0));
-        bench.ui.pointer_secondary(true);
-        bench.ui.pointer_secondary(false);
-        let [CanvasEvent::Search { at, wire: None }] = bench.frame()[..] else { panic!("a search") };
+        assert!(bench.context_click((x + 420.0, y + 400.0)).is_empty(), "it opens the menu");
+        assert_eq!(bench.menu(), ["Add Node", "Add Comment"]);
+        // Its Add Node asks for the search where the menu opened, wherever the pointer went since.
+        let [CanvasEvent::Search { at, wire: None }] = bench.choose("Add Node")[..] else { panic!("a search") };
         assert_eq!(at, snapped(bench.canvas.view().to_canvas([420.0, 400.0])));
-        bench.frame();
+        assert!(bench.menu().is_empty(), "a choice closes it");
         let [ax, ay, ..] = bench.ui.rect(bench.canvas.anchor());
         assert!((ax - x - 420.0).abs() < 1.0 && (ay - y - 400.0).abs() < 1.0, "the anchor is where it was asked");
 
@@ -1442,7 +2061,8 @@ mod tests {
         let mut bench = Bench::new();
         let shapes = |bench: &Bench, layer: NodeId| bench.ui.shapes(layer).len();
         let lines = shapes(&bench, bench.canvas.wires);
-        assert!(lines > SEGMENTS, "the grid and a wire: {lines}");
+        assert_eq!(lines, SEGMENTS, "a wire");
+        assert!(shapes(&bench, bench.canvas.frames) > 10, "the grid under the comments");
         // Each node has its box from the pool, with its title and its ports' labels.
         let panels: Vec<NodeId> = bench.ui.children(bench.canvas.nodes);
         assert_eq!(panels.iter().filter(|&&panel| bench.ui.is_visible(panel)).count(), 3);
@@ -1486,5 +2106,105 @@ mod tests {
         bench.frame();
         bench.frame();
         assert_eq!(shapes(&bench, bench.canvas.over), 0);
+    }
+
+    #[test]
+    fn a_comment_is_added_round_the_picked_nodes_and_moves_them_resizes_is_edited_and_deleted() {
+        let mut bench = Bench::new();
+        let (first, last) = (bench.node(1), bench.node(2));
+        bench.drag((first.0 - 100.0, first.1 - 20.0), (last.0, last.1 + 30.0));
+        assert_eq!(bench.canvas.picked(), [1, 2]);
+        let [x, y, ..] = bench.ui.rect(bench.canvas.viewport());
+        bench.context_click((x + 420.0, y + 420.0));
+        assert_eq!(bench.menu(), ["Add Node", "Add Comment Round Picked"]);
+        let events = bench.choose("Add Comment Round Picked");
+        let Some(CanvasEvent::AddComment { at, size }) = events.first().cloned() else { panic!("{events:?}") };
+        let [left, top, right, bottom] = bounds(&bench.graph, &[1, 2]).unwrap();
+        assert!(at[0] < left && at[1] + COMMENT_BAR < top, "{at:?} round {left} {top}");
+        assert!(at[0] + size[0] > right && at[1] + size[1] > bottom, "{size:?}");
+        assert_eq!(within(&bench.graph, 1), (vec![1, 2], Vec::new()), "the third node is left out");
+
+        // It is edited in place at once: typing in its title, then Enter and typing in its text.
+        bench.frame();
+        assert_eq!(bench.canvas.editing(), Some(1));
+        let (title, text) = bench.canvas.comment_fields();
+        assert!(bench.ui.is_visible(title) && bench.ui.focused() == Some(title));
+        bench.ui.text_input("Where the land rises");
+        bench.frame();
+        bench.ui.key_down(Key::Enter);
+        bench.frame();
+        assert_eq!(bench.ui.focused(), Some(text));
+        bench.ui.text_input("Two noises, added");
+        let events = bench.frame();
+        assert!(events.iter().any(|event| matches!(event, CanvasEvent::CommentEdited { id: 1, .. })), "{events:?}");
+        let comment = bench.graph.comment(1).unwrap().clone();
+        assert_eq!((comment.title.as_str(), comment.text.as_str()), ("Where the land rises", "Two noises, added"));
+        bench.ui.key_down(Key::Escape);
+        bench.frame();
+        bench.frame();
+        assert_eq!(bench.canvas.editing(), None);
+        assert!(!bench.ui.is_visible(title));
+        // Drawn, with its title and text on it.
+        let panel = bench.canvas.comment_pool[0].panel;
+        assert!(bench.ui.is_visible(panel));
+        assert_eq!(bench.ui.text(bench.canvas.comment_pool[0].title), "Where the land rises");
+
+        // A drag of its title bar takes the nodes in it along, on the grid, and no others.
+        let before = (bench.at(1), bench.at(2), bench.at(3), comment.at);
+        let from = bench.comment(1, false);
+        let events = bench.drag(from, (from.0 + 53.0, from.1 + 78.0));
+        assert_eq!(events.last(), Some(&CanvasEvent::MoveEnded));
+        assert_eq!(bench.canvas.picked_comments(), [1]);
+        let by =
+            [bench.graph.comment(1).unwrap().at[0] - before.3[0], bench.graph.comment(1).unwrap().at[1] - before.3[1]];
+        assert!(by[0] > 0.0 && by[1] > 0.0, "{by:?}");
+        assert_eq!(bench.at(1), [before.0[0] + by[0], before.0[1] + by[1]]);
+        assert_eq!(bench.at(2), [before.1[0] + by[0], before.1[1] + by[1]]);
+        assert_eq!(bench.at(3), before.2);
+
+        // A drag of its corner makes it larger, and no smaller than the least.
+        let size = bench.graph.comment(1).unwrap().size;
+        let corner = bench.comment(1, true);
+        let events = bench.drag(corner, (corner.0 + 120.0, corner.1 + 60.0));
+        assert!(events.iter().any(|event| matches!(event, CanvasEvent::CommentResized(1, _))), "{events:?}");
+        let grown = bench.graph.comment(1).unwrap().size;
+        assert!(grown[0] > size[0] && grown[1] > size[1], "{grown:?} from {size:?}");
+        // Framing all of the graph takes in the comments too, here its corner that went off the view.
+        bench.canvas.key(CanvasKey::Frame);
+        bench.frame();
+        bench.frame();
+        let corner = bench.comment(1, true);
+        let [_, _, width, height] = bench.ui.rect(bench.canvas.viewport());
+        assert!(corner.0 < x + width && corner.1 < y + height, "{corner:?}");
+        bench.drag(corner, (x + 2.0, y + 2.0));
+        assert_eq!(bench.graph.comment(1).unwrap().size, COMMENT_LEAST);
+
+        // On it the menu has Edit and Delete; Delete takes it out, the nodes staying.
+        let on = bench.comment(1, false);
+        bench.context_click(on);
+        assert_eq!(bench.menu(), ["Add Node", "Add Comment", "Edit Comment", "Delete Comment"]);
+        assert_eq!(bench.choose("Delete Comment").first(), Some(&CanvasEvent::DeleteComments(vec![1])));
+        assert!(bench.graph.comments.is_empty() && bench.graph.nodes.len() == 3);
+        bench.frame();
+        assert!(!bench.ui.is_visible(panel));
+
+        // One added with nothing picked is where the menu opened; the Delete key takes out a picked one.
+        bench.canvas.pick(Vec::new());
+        let at = (x + 300.0, y + 380.0);
+        bench.context_click(at);
+        let [CanvasEvent::AddComment { at: corner, size }, ..] = bench.choose("Add Comment")[..] else { panic!() };
+        assert_eq!(size, COMMENT_NEW);
+        assert_eq!(corner, snapped(bench.canvas.view().to_canvas([300.0, 380.0])));
+        bench.ui.key_down(Key::Escape);
+        bench.frame();
+        bench.frame();
+        let on = bench.comment(1, false);
+        bench.to(on);
+        bench.ui.pointer_button(true);
+        bench.frame();
+        bench.ui.pointer_button(false);
+        bench.frame();
+        bench.canvas.key(CanvasKey::Delete);
+        assert_eq!(bench.frame(), [CanvasEvent::DeleteComments(vec![1])]);
     }
 }

@@ -98,6 +98,11 @@ impl Regions {
         self.areas.as_ref()
     }
 
+    /// How many biomes it lays out.
+    pub fn biome_count(&self) -> usize {
+        self.biomes.list().len()
+    }
+
     pub fn spacing(&self) -> f32 {
         self.spacing
     }
@@ -186,8 +191,9 @@ impl Regions {
             return kept;
         }
         let [x, z] = self.site(cell);
-        let sea = self.world.sea_level();
-        let (temperature, humidity) = self.world.climate(x, z, sea);
+        // At the sea's height, every Climate node cooled by that height: land shaped from the climate never moves
+        // the regions it is shaped by.
+        let (temperature, humidity) = self.world.sea_climate(x, z);
         let biome = self.biomes.of_region(Place { temperature, humidity, above_sea: 0.0, sunk: 0.0 });
         SITES.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {

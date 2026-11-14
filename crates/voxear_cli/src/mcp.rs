@@ -284,6 +284,8 @@ fn schema(kind: ArgKind) -> Value {
         ArgKind::Whole => json!({ "type": "integer" }),
         ArgKind::Toggle => json!({ "type": "boolean" }),
         ArgKind::Vector => json!({ "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }),
+        ArgKind::Pair => json!({ "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }),
+        ArgKind::Wholes => json!({ "type": "array", "items": { "type": "integer", "minimum": 0 } }),
         ArgKind::Choice(options) => json!({ "type": "string", "enum": options }),
         ArgKind::Calls => json!({
             "type": "array",

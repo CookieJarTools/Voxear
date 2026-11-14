@@ -119,6 +119,8 @@ A field takes its value in the same form `obj.get` shows it:
 | `toggle` | `true`, `false` |
 | `text` | `"Hello"` |
 | `vector` | `[0, 2, 0]` |
+| `pair` | `[120, -40]`: a place or a size on a graph's canvas |
+| `wholes` | `[1, 4, 5]`: a graph's nodes, by the numbers its file gives them |
 | `color` | `[1, 0.7, 0.4]`, from 0 to 1, or `"#ffb060"` |
 | `choice` | one of its options, as `"Spot"` |
 | `obj` | an Obj, as above, or `null` for none |
@@ -182,6 +184,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `select`, `frame` | Select Objs, and show them in the Scene view |
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
 | `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
+| `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
+| `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |
@@ -247,14 +251,26 @@ Without `obj`, every Block World there is changed, as a script's `Blocks.Set` do
 
 A `[Command]` your scripts add, run with `command.run`, can change blocks too: on the level being edited it has the same `Blocks` and `Block.Load` as a game playing.
 
+## Comments in graphs
+
+A generator's graph (`.worldgen`) and a VoxShade shader (`.voxshade`) can hold comments: frames behind their nodes with a title and a few lines saying what a part does (see [[Generator Graphs#Comments]]). `graph.comments` lists them, each with its number. Frame some nodes with a comment, by the numbers the file gives them:
+
+```bash
+vox editor call graph.comment.add asset=Worlds/Island.worldgen title="Coast" text="Where the land meets the sea" around=[3,4,7]
+```
+
+`graph.comment.set` changes a comment's title, text, place or size, and `graph.comment.remove` takes it out. Where the graph is open in its panel, each call is a step of the panel's undo and is saved as the panel saves; otherwise the file is written. Comments make no difference to the ground or the shader.
+
+`block_world.write_land obj=…` writes the levels and biome land a Block World lays into its generator into the generator's graph, each part in a comment, as **Write Land into Generator** does (see [[Block Worlds#Writing the land into the generator]]).
+
 ## What tools cannot do yet
 
 Some of the editor's work is done with brushes and canvases rather than fields:
 
 - sculpting and painting terrain
 - painting plants
-- editing a World Generator's graph
-- editing a VoxShade shader
+- editing a World Generator's graph's nodes and wires (its comments have calls)
+- editing a VoxShade shader's nodes and wires (the same)
 - building a box model in the Model window
 
 For these, a tool can write the files themselves (the `.terrain`, `.worldgen` or `.voxshade` file) and call `files.look`. A VoxShade shader read with `asset.get` comes back as JSON, its nodes, wires and properties as its file has them, and one written and looked at compiles into the project's shaders as one saved in its panel does. Calls for them come later.

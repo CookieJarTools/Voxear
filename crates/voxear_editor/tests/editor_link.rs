@@ -555,3 +555,66 @@ fn a_command_on_the_edited_level_puts_blocks_and_the_engines_behaviours_are_offe
     done(&mut editor, &mut renderer, "undo", json!({}));
     assert!(done(&mut editor, &mut renderer, "blocks.get", at)["block"].is_null(), "one undo takes the block back");
 }
+
+#[test]
+fn a_tool_adds_changes_and_takes_out_a_graphs_comments_and_a_world_without_land_is_told_so() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(&mut editor, &mut renderer, "asset.create", json!({ "kind": "World Generator" }));
+    let asset = made["asset"].clone();
+    let path = asset["path"].as_str().unwrap().to_string();
+    let file = dir.path().join(&path);
+    let comments = |editor: &mut Editor, renderer: &mut Renderer| {
+        done(editor, renderer, "graph.comments", json!({ "asset": asset }))["comments"].as_array().unwrap().clone()
+    };
+    assert!(comments(&mut editor, &mut renderer).is_empty());
+
+    // Not open in its panel: written into its file. Round two of its nodes, it frames them.
+    let added = done(
+        &mut editor,
+        &mut renderer,
+        "graph.comment.add",
+        json!({ "asset": asset, "title": "Hills", "text": "Two noises", "around": [1, 2] }),
+    );
+    assert_eq!(added["comment"], 1);
+    let listed = comments(&mut editor, &mut renderer);
+    assert_eq!((listed[0]["title"].as_str(), listed[0]["text"].as_str()), (Some("Hills"), Some("Two noises")));
+    let size = listed[0]["size"].as_array().unwrap();
+    assert!(size[0].as_f64().unwrap() >= 160.0, "{listed:?}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("[[comments]]") && text.contains("Hills"), "{text}");
+
+    let set = json!({ "asset": asset, "comment": 1, "title": "Rolling hills", "at": [-500, -400], "size": [400, 300] });
+    assert_eq!(done(&mut editor, &mut renderer, "graph.comment.set", set)["changed"], true);
+    let listed = comments(&mut editor, &mut renderer);
+    assert_eq!(listed[0]["at"], json!([-500.0, -400.0]));
+    assert_eq!(listed[0]["title"], "Rolling hills");
+    let missing = ask(&mut editor, &mut renderer, "graph.comment.remove", json!({ "asset": asset, "comment": 7 }));
+    assert!(missing.is_err(), "{missing:?}");
+    let not_a_graph = ask(&mut editor, &mut renderer, "graph.comments", json!({ "asset": "voxear.toml" }));
+    assert!(not_a_graph.is_err());
+
+    // Open in its panel: changed there, a step to undo, and saved as the panel saves.
+    assert!(editor.open_generator(&path));
+    frames(&mut editor, &mut renderer, 2);
+    done(&mut editor, &mut renderer, "graph.comment.add", json!({ "asset": asset, "title": "Seas" }));
+    frames(&mut editor, &mut renderer, 2);
+    let drawn = editor.generator().drawn().unwrap().comments.clone();
+    assert_eq!(drawn.iter().map(|comment| comment.title.as_str()).collect::<Vec<_>>(), ["Rolling hills", "Seas"]);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("Seas"), "saved");
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(comments(&mut editor, &mut renderer).len(), 1);
+    done(&mut editor, &mut renderer, "graph.comment.remove", json!({ "asset": asset, "comment": 1 }));
+    frames(&mut editor, &mut renderer, 2);
+    assert!(comments(&mut editor, &mut renderer).is_empty());
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("[[comments]]"));
+
+    // A Block World with no land laid in: nothing to write, and why.
+    let world =
+        done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Blocks" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": world, "component": "block_world" }));
+    let refused = ask(&mut editor, &mut renderer, "block_world.write_land", json!({ "obj": world }));
+    let error = refused.expect_err("nothing to write");
+    assert!(error.to_string().contains("not written"), "{error}");
+}

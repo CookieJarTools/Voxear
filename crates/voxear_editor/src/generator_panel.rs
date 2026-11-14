@@ -31,7 +31,8 @@ use crate::{
     asset_inspector::part,
     generator_previews::Previews,
     graph_canvas::{
-        CanvasEvent, CanvasGraph, CanvasKey, CanvasNode, CanvasPort, CanvasWire, GraphCanvas, PortRef, node_size,
+        CanvasComment, CanvasEvent, CanvasGraph, CanvasKey, CanvasNode, CanvasPort, CanvasWire, GraphCanvas, PortRef,
+        node_size,
     },
     inspector::number,
     world_gen_inspector::{NodeEdit, ValueRow},
@@ -66,6 +67,8 @@ pub enum EditKey {
     Value(GraphNode, usize),
     /// The generator's own rows, in its Inspector.
     Own,
+    /// One comment's title and text.
+    Comment(u32),
 }
 
 /// The generators an open graph has been, to go back to and forward again.
@@ -590,6 +593,7 @@ impl GeneratorPanel {
         let mut graph = open.world.graph().clone();
         let mut key = None;
         let mut picked = None;
+        let mut added = None;
         let id = |node: u64| GraphNode(node as u32);
         for event in done {
             match event {
@@ -631,11 +635,44 @@ impl GeneratorPanel {
                         picked = Some(self.copied.paste(&mut graph, [at[0] - corner[0], at[1] - corner[1]]));
                     }
                 }
+                CanvasEvent::CommentsMoved(places) => {
+                    for (comment, at) in places {
+                        if let Some(comment) = graph.comment_mut(comment as u32) {
+                            comment.at = at;
+                        }
+                    }
+                    key = Some(EditKey::Move);
+                }
+                CanvasEvent::CommentResized(comment, size) => {
+                    if let Some(comment) = graph.comment_mut(comment as u32) {
+                        comment.size = size;
+                    }
+                    key = Some(EditKey::Move);
+                }
+                CanvasEvent::AddComment { at, size } => added = Some(graph.add_comment(at, size, "Comment", "")),
+                CanvasEvent::CommentEdited { id: comment, title, text } => {
+                    if let Some(comment) = graph.comment_mut(comment as u32) {
+                        (comment.title, comment.text) = (title, text);
+                    }
+                    key = Some(EditKey::Comment(comment as u32));
+                }
+                CanvasEvent::DeleteComments(comments) => {
+                    comments.into_iter().for_each(|comment| _ = graph.remove_comment(comment as u32))
+                }
             }
         }
         if graph != *open.world.graph() {
-            let world = open.world.with_graph(graph);
+            // Comments alone make no ground, and so need no compiling.
+            let mut others = graph.clone();
+            others.comments.clone_from(&open.world.graph().comments);
+            let world = match others == *open.world.graph() {
+                true => open.world.with_comments(graph.comments),
+                false => open.world.with_graph(graph),
+            };
             self.change(world, key);
+        }
+        if let Some(comment) = added {
+            self.canvas.edit_comment(u64::from(comment));
         }
         if let Some(made) = picked {
             self.pick(&made);
@@ -714,6 +751,16 @@ fn port_color(kind: PortKind) -> Color {
     })
 }
 
+/// Where a comment round `nodes` of `graph` goes and how large it is, as
+/// the canvas makes one round the nodes picked: none where none of them is
+/// in the graph.
+pub fn comment_round(graph: &Graph, nodes: &[GraphNode]) -> Option<([f32; 2], [f32; 2])> {
+    let drawn = CanvasGraph { nodes: graph.nodes.iter().map(describe_node).collect(), ..CanvasGraph::default() };
+    let ids: Vec<u64> =
+        nodes.iter().filter(|node| graph.node(**node).is_some()).map(|node| u64::from(node.0)).collect();
+    crate::graph_canvas::comment_round(&drawn, &ids)
+}
+
 /// A node as the canvas draws it, without its picture.
 fn describe_node(node: &Node) -> CanvasNode {
     let ports = |ports: &[voxear_terrain::generate::Port]| -> Vec<CanvasPort> {
@@ -762,7 +809,19 @@ fn describe(world: &WorldGen, previews: &Previews) -> CanvasGraph {
         from: (u64::from(link.from.0), link.output),
         to: (u64::from(link.to.0), link.input),
     };
-    CanvasGraph { nodes, wires: graph.links.iter().map(wire).collect(), notice: notices.join("  ") }
+    let comments = graph.comments.iter().map(|comment| CanvasComment {
+        id: u64::from(comment.id),
+        at: comment.at,
+        size: comment.size,
+        title: comment.title.clone(),
+        text: comment.text.clone(),
+    });
+    CanvasGraph {
+        nodes,
+        wires: graph.links.iter().map(wire).collect(),
+        comments: comments.collect(),
+        notice: notices.join("  "),
+    }
 }
 
 /// A number short enough for a node's small text: fewer decimals the larger it is.

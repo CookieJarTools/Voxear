@@ -78,11 +78,13 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let voxels = world.volume().is_some();
     // The biomes' own land: their hills, mountains, tables and pillars, where any has some.
     let biomes = biomes_of(generate);
-    let landed = shapes_land(generate);
-    if voxels && !rivered && !landed {
+    let landed = shapes_land(generate) && !holds_written_land(graph);
+    // Nodes written out of a world's land that keep to its regions, given them here where they are not yet.
+    let attaching = regions_of(generate).filter(|_| keeps_to_world(graph));
+    if voxels && !rivered && !landed && attaching.is_none() {
         return Source::Own(world);
     }
-    let lands = if landed { lands_hash(generate) } else { 0 };
+    let lands = if landed || attaching.is_some() { lands_hash(generate) } else { 0 };
     let own = OwnVoxels {
         overhangs: generate.overhangs.max(0.0),
         caves: generate.caves.clamp(0.0, 1.0),
@@ -97,11 +99,15 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         return made(found.clone());
     }
     let mut graph = graph.clone();
+    if let Some(regions) = attaching {
+        attach(&mut graph, regions);
+    }
     if graph.output().is_none() {
         graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
     }
     // Shaped by the land already where the generator came so (see `landed`).
     let shaped = match world.land() {
+        _ if !landed => crate::generate::land::Shaped::default(),
         Some((hash, shaped)) if *hash == lands => shaped.clone(),
         _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref()),
     };
@@ -139,7 +145,12 @@ static LANDED: Mutex<Landed> = Mutex::new(Vec::new());
 /// twice.
 pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> {
     let biomes = biomes_of(generate);
-    if !shapes_land(generate) || world.land().is_some() {
+    if world.land().is_some() {
+        return world.clone();
+    }
+    let attaching = regions_of(generate).filter(|_| keeps_to_world(world.graph()));
+    let lays = shapes_land(generate) && !holds_written_land(world.graph());
+    if !lays && attaching.is_none() {
         return world.clone();
     }
     let lands = lands_hash(generate);
@@ -149,7 +160,20 @@ pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> 
         return found.clone();
     }
     let mut graph = world.graph().clone();
-    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref());
+    if let Some(regions) = attaching {
+        attach(&mut graph, regions);
+    }
+    let shaped = match lays {
+        true => crate::generate::land::add_land(
+            &mut graph,
+            biomes,
+            world.sea_level(),
+            clear_of(generate),
+            regions_of(generate),
+            generate.levels.as_ref(),
+        ),
+        false => crate::generate::land::Shaped::default(),
+    };
     let made = Arc::new(world.with_graph(graph).with_land(lands, shaped));
     if landed.len() >= MOVED_KEPT {
         landed.remove(0);
@@ -161,7 +185,138 @@ pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> 
 /// Whether `generate`'s ground is shaped as it is made: by its biomes'
 /// land, or by its levels.
 fn shapes_land(generate: &BlockGenerate) -> bool {
-    generate.levels.is_some() || biomes_of(generate).iter().any(|biome| !biome.land.is_keep())
+    !generate.land_written
+        && (generate.levels.is_some() || biomes_of(generate).iter().any(|biome| !biome.land.is_keep()))
+}
+
+/// Whether `generate` lays land into its generator's graph as it makes
+/// ground: its levels or its biomes' land, not yet written into the
+/// generator (see [`write_land`]).
+pub fn lays_land(generate: &BlockGenerate) -> bool {
+    shapes_land(generate)
+}
+
+/// Whether `graph` holds land written out of a world's (see [`write_land`]):
+/// nodes that keep to the biome regions of the world it makes ground for,
+/// given them or not. Land is not laid into it again, as when the world's
+/// own step that wrote it is undone and the generator stays as written.
+fn holds_written_land(graph: &crate::generate::Graph) -> bool {
+    graph.nodes.iter().any(|node| match &node.kind {
+        NodeKind::ClimateMask(mask) => mask.world_biome > 0,
+        NodeKind::Levels(levels) => levels.world_areas,
+        _ => false,
+    })
+}
+
+/// Whether `graph` has nodes that keep to the biome regions of the world of
+/// blocks it makes ground for and are not yet given them: Climate Masks of
+/// a world's biome, and Levels whose areas are the world's.
+fn keeps_to_world(graph: &crate::generate::Graph) -> bool {
+    graph.nodes.iter().any(|node| match &node.kind {
+        NodeKind::ClimateMask(mask) => mask.world_biome > 0 && mask.region.is_none(),
+        NodeKind::Levels(levels) => levels.world_areas && levels.areas.is_none(),
+        _ => false,
+    })
+}
+
+/// Gives the nodes of `graph` that keep to a world's biome regions those
+/// of `regions`: each Climate Mask its biome's regions, each Levels node
+/// the regions' areas.
+fn attach(graph: &mut crate::generate::Graph, regions: &Arc<crate::generate::Regions>) {
+    let count = regions.biome_count();
+    for node in &mut graph.nodes {
+        match &mut node.kind {
+            NodeKind::ClimateMask(mask) if mask.world_biome > 0 && (mask.world_biome as usize) <= count => {
+                let biome = mask.world_biome as usize - 1;
+                mask.region = Some(crate::generate::nodes::RegionOf { regions: regions.clone(), biome });
+            }
+            NodeKind::Levels(levels) if levels.world_areas => levels.areas = regions.areas().cloned(),
+            _ => {}
+        }
+    }
+}
+
+/// The nodes of `graph` given a world's regions as it shaped its land, as
+/// a file keeps them in their place: each Climate Mask the number of the
+/// biome whose regions it keeps to, and each Levels node that its areas are
+/// the world's.
+fn detach(graph: &mut crate::generate::Graph) {
+    for node in &mut graph.nodes {
+        match &mut node.kind {
+            NodeKind::ClimateMask(mask) => {
+                if let Some(region) = mask.region.take() {
+                    mask.world_biome = region.biome as u32 + 1;
+                }
+            }
+            NodeKind::Levels(levels) => {
+                if levels.areas.take().is_some() {
+                    levels.world_areas = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The graph of `world`, the generator a world of blocks' ground is made
+/// by as its file has it, with the land `generate` lays into it as it
+/// makes ground written in as nodes of its own: its levels, its biomes'
+/// land, the rivers and its own overhangs and caves where it lays them in,
+/// and its biomes' pillars, bridges and overhangs. The nodes are those the
+/// world lays in, numbered as it numbers them, so the ground is the same
+/// once the world lays none in itself (`BlockGenerate::land_written`); they
+/// are laid out under the graph's own, each part in a comment saying what
+/// it does. `names` are the biomes' names, in the order `generate` lists
+/// them. None where the world lays no land in.
+pub fn write_land(
+    generate: &BlockGenerate,
+    world: &WorldGen,
+    block_size: f32,
+    names: &[String],
+) -> Option<crate::generate::Graph> {
+    use crate::generate::{land, written_land};
+    if !shapes_land(generate) || holds_written_land(world.graph()) {
+        return None;
+    }
+    let biomes = biomes_of(generate);
+    let mut graph = world.graph().clone();
+    let watered = graph.output().is_some_and(|output| graph.link_into(output.id, Output::WATER).is_some());
+    let rivered = generate.rivers && !watered;
+    let voxels = world.volume().is_some();
+    let own = OwnVoxels {
+        overhangs: generate.overhangs.max(0.0),
+        caves: generate.caves.clamp(0.0, 1.0),
+        roof: CAVE_ROOF * block_size,
+    };
+    // As `source` lays them in, step by step, noting which nodes each step adds.
+    let mut steps = written_land::Steps::default();
+    let mark = |graph: &crate::generate::Graph| graph.nodes.iter().map(|node| node.id).max().map_or(0, |id| id.0);
+    if graph.output().is_none() {
+        graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
+    }
+    let first = mark(&graph);
+    let shaped = land::add_land(
+        &mut graph,
+        biomes,
+        world.sea_level(),
+        clear_of(generate),
+        regions_of(generate),
+        generate.levels.as_ref(),
+    );
+    steps.land = (first, mark(&graph));
+    if rivered {
+        crate::generate::nodes::add_rivers(&mut graph);
+    }
+    steps.rivers = (steps.land.1, mark(&graph));
+    if !voxels {
+        graph.add_voxels(own, false);
+    }
+    steps.voxels = (steps.rivers.1, mark(&graph));
+    land::add_land_volume(&mut graph, biomes, &shaped);
+    steps.volume = (steps.voxels.1, mark(&graph));
+    detach(&mut graph);
+    written_land::lay_out(&mut graph, &steps, biomes, names, generate.levels.is_some());
+    Some(graph)
 }
 
 /// The regions `generate`'s biomes keep to, where they keep to any.
@@ -327,3 +482,7 @@ pub(super) fn cell(
         None
     }
 }
+
+#[cfg(test)]
+#[path = "written_tests.rs"]
+mod written_tests;

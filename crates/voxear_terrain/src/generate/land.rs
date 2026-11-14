@@ -280,6 +280,7 @@ pub fn add_land(
             temperature_feather: TEMPERATURE_FEATHER,
             humidity_feather: HUMIDITY_FEATHER,
             region,
+            world_biome: 0,
         }));
         if let Some((from, output)) = temperature {
             g.wire(from, output, mask, ClimateMask::TEMPERATURE);

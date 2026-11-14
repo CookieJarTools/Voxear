@@ -81,7 +81,8 @@ impl Kind for Climate {
         if port == Self::HUMIDITY_OUT {
             return cx.run(Wetness { climate, world }, &[at.x, at.z]);
         }
-        let ground = cx.input(node, Self::HEIGHT_IN, at).unwrap_or_else(|| cx.ground(node));
+        let wired = if cx.cooled_by_given { None } else { cx.input(node, Self::HEIGHT_IN, at) };
+        let ground = wired.unwrap_or_else(|| cx.ground(node));
         cx.run(Warmth { climate, world }, &[at.x, at.z, ground])
     }
 }

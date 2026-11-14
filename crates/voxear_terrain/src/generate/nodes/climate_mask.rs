@@ -41,6 +41,16 @@ pub struct ClimateMask {
     /// it shapes its generator's ground; never kept in a file.
     #[serde(skip)]
     pub region: Option<RegionOf>,
+    /// Kept in a file in its place: which of the biomes of a world of
+    /// blocks the generator makes ground for this mask keeps to the regions
+    /// of, counted from 1, so the world gives it its regions as it loads.
+    /// 0 for a mask that keeps to its climate.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub world_biome: u32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// A biome's regions, for a Climate Mask that keeps to them.
@@ -65,7 +75,7 @@ impl ClimateMask {
     /// surfaces ease theirs, over 3 °C and 0.08 of humidity.
     pub fn of(biome: Biome) -> Self {
         let (temperature, humidity) = Self::ranges(biome);
-        Self { temperature, humidity, temperature_feather: 3.0, humidity_feather: 0.08, region: None }
+        Self { temperature, humidity, temperature_feather: 3.0, humidity_feather: 0.08, region: None, world_biome: 0 }
     }
 
     /// A biome's ranges as rows keep them: any temperature as coldest to
@@ -92,6 +102,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("humidity_max", "Humidity max", 0.0, 1.0, ""),
     ValueSpec::number("temperature_feather", "Temperature feather", 0.0, HOTTEST, "°C").advanced(),
     ValueSpec::number("humidity_feather", "Humidity feather", 0.0, 1.0, "").advanced(),
+    ValueSpec::whole("world_biome", "World's Biome", 0, 256).advanced(),
 ];
 
 const INPUTS: &[Port] = &[Port::field("temperature", "Temperature"), Port::field("humidity", "Humidity")];
@@ -125,6 +136,7 @@ impl Kind for ClimateMask {
             4 => Value::Number(self.humidity[1]),
             5 => Value::Number(self.temperature_feather),
             6 => Value::Number(self.humidity_feather),
+            7 => Value::Whole(self.world_biome),
             _ => return None,
         })
     }
@@ -143,6 +155,7 @@ impl Kind for ClimateMask {
             (4, Value::Number(number)) => self.humidity[1] = number,
             (5, Value::Number(number)) => self.temperature_feather = number,
             (6, Value::Number(number)) => self.humidity_feather = number,
+            (7, Value::Whole(whole)) => self.world_biome = whole,
             _ => {}
         }
     }

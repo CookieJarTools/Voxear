@@ -77,7 +77,7 @@ pub(super) struct Link {
 }
 
 /// A call that answers once frames have gone by.
-enum Waiting {
+pub(super) enum Waiting {
     Frames(u32),
     Play(Instant),
     /// A view to copy: its node, or the whole window, where to write it,
@@ -97,14 +97,14 @@ enum Waiting {
 }
 
 /// A call done, or one that answers later.
-enum Outcome {
+pub(super) enum Outcome {
     Done(Json),
     Later(Waiting),
 }
 
-type Called = Result<Outcome, LinkError>;
+pub(super) type Called = Result<Outcome, LinkError>;
 
-fn done(value: Json) -> Called {
+pub(super) fn done(value: Json) -> Called {
     Ok(Outcome::Done(value))
 }
 
@@ -276,6 +276,15 @@ impl Editor {
             "view.set" => self.view_set(args),
             "blocks.get" => self.blocks_get(args),
             "blocks.set" | "blocks.fill" => self.blocks_set(call, args, renderer),
+            "graph.comments" => self.graph_comments(args),
+            "graph.comment.add" | "graph.comment.set" | "graph.comment.remove" => {
+                self.refuse_while_playing("change a graph")?;
+                self.graph_comment(call, args, renderer)
+            }
+            "block_world.write_land" => {
+                self.refuse_while_playing("write a world's land into its generator")?;
+                self.block_world_write_land(args, renderer)
+            }
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -433,7 +442,7 @@ impl Editor {
         }
     }
 
-    fn refuse_while_playing(&self, what: &str) -> Result<(), LinkError> {
+    pub(super) fn refuse_while_playing(&self, what: &str) -> Result<(), LinkError> {
         match self.is_playing() {
             true => Err(refuse(ErrorKind::RefusedWhilePlaying, format!("stop playing to {what}"))),
             false => Ok(()),
@@ -460,7 +469,7 @@ impl Editor {
 
     /// Records the change from `before` to the Obj as it is now, and shows
     /// it in the Inspectors and Hierarchies.
-    fn record_change(&mut self, entity: Entity, before: ObjState) -> bool {
+    pub(super) fn record_change(&mut self, entity: Entity, before: ObjState) -> bool {
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return false };
         let changed = before != after;
         if changed && !self.holds_data(entity) {

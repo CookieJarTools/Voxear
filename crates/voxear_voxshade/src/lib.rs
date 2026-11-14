@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 pub use cost::{NodeCost, StageCost};
-pub use graph::{Graph, Link, Literal, Node, NodeId, Property, PropertyId, PropertyKind};
+pub use graph::{Comment, Graph, Link, Literal, Node, NodeId, Property, PropertyId, PropertyKind};
 pub use hoist::Derived;
 pub use lower::{CompileError, Library};
 pub use nodes::{CompareOp, Component, Input, MathOp, NodeKind, Pin, Port, PortTy, Stage};

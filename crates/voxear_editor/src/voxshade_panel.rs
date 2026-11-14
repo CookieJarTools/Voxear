@@ -32,7 +32,8 @@ use voxear_voxshade::{
 use crate::{
     asset_inspector::part,
     graph_canvas::{
-        CanvasEvent, CanvasGraph, CanvasKey, CanvasNode, CanvasPort, CanvasWire, GraphCanvas, PortRef, node_size,
+        CanvasComment, CanvasEvent, CanvasGraph, CanvasKey, CanvasNode, CanvasPort, CanvasWire, GraphCanvas, PortRef,
+        node_size,
     },
     inspector::{prop, read_numbers, write_numbers},
 };
@@ -49,6 +50,8 @@ const BESIDE: f32 = 30.0;
 enum EditKey {
     Move,
     Row(Field),
+    /// One comment's title and text.
+    Comment(u32),
 }
 
 /// The graphs an open one has been, to go back to and forward again.
@@ -621,6 +624,7 @@ impl VoxShadePanel {
         let mut graph = open.graph.clone();
         let mut key = None;
         let mut picked = None;
+        let mut added = None;
         let id = |node: u64| GraphNode(node as u32);
         for event in done {
             match event {
@@ -657,10 +661,37 @@ impl VoxShadePanel {
                         picked = Some(self.copied.paste(&mut graph, [at[0] - corner[0], at[1] - corner[1]]));
                     }
                 }
+                CanvasEvent::CommentsMoved(places) => {
+                    for (comment, at) in places {
+                        if let Some(comment) = graph.comment_mut(comment as u32) {
+                            comment.at = at;
+                        }
+                    }
+                    key = Some(EditKey::Move);
+                }
+                CanvasEvent::CommentResized(comment, size) => {
+                    if let Some(comment) = graph.comment_mut(comment as u32) {
+                        comment.size = size;
+                    }
+                    key = Some(EditKey::Move);
+                }
+                CanvasEvent::AddComment { at, size } => added = Some(graph.add_comment(at, size, "Comment", "")),
+                CanvasEvent::CommentEdited { id: comment, title, text } => {
+                    if let Some(comment) = graph.comment_mut(comment as u32) {
+                        (comment.title, comment.text) = (title, text);
+                    }
+                    key = Some(EditKey::Comment(comment as u32));
+                }
+                CanvasEvent::DeleteComments(comments) => {
+                    comments.into_iter().for_each(|comment| _ = graph.remove_comment(comment as u32))
+                }
             }
         }
         if graph != open.graph {
             self.change_by(graph, key);
+        }
+        if let Some(comment) = added {
+            self.canvas.edit_comment(u64::from(comment));
         }
         if let Some(made) = picked {
             self.pick(&made);
@@ -1624,6 +1655,17 @@ fn title(graph: &Graph, kind: &NodeKind) -> String {
     }
 }
 
+/// Where a comment round `nodes` of `graph` goes and how large it is, as
+/// the canvas makes one round the nodes picked: none where none of them is
+/// in the graph.
+pub fn comment_round(graph: &Graph, nodes: &[GraphNode]) -> Option<([f32; 2], [f32; 2])> {
+    let drawn = graph.nodes.iter().map(|node| describe_node(graph, node)).collect();
+    let drawn = CanvasGraph { nodes: drawn, ..CanvasGraph::default() };
+    let ids: Vec<u64> =
+        nodes.iter().filter(|node| graph.node(**node).is_some()).map(|node| u64::from(node.0)).collect();
+    crate::graph_canvas::comment_round(&drawn, &ids)
+}
+
 /// A node as the canvas draws it, without its cost.
 fn describe_node(graph: &Graph, node: &Node) -> CanvasNode {
     let ports = |ports: Vec<voxear_voxshade::Port>| -> Vec<CanvasPort> {
@@ -1671,7 +1713,14 @@ fn describe(graph: &Graph, compiled: &Result<Compiled, Vec<voxear_voxshade::Comp
         from: (u64::from(link.from.0), link.output),
         to: (u64::from(link.to.0), link.input),
     };
-    CanvasGraph { nodes, wires: graph.links.iter().map(wire).collect(), notice }
+    let comments = graph.comments.iter().map(|comment| CanvasComment {
+        id: u64::from(comment.id),
+        at: comment.at,
+        size: comment.size,
+        title: comment.title.clone(),
+        text: comment.text.clone(),
+    });
+    CanvasGraph { nodes, wires: graph.links.iter().map(wire).collect(), comments: comments.collect(), notice }
 }
 
 /// Instructions and pictures read, as a node's small text or the bar shows them.

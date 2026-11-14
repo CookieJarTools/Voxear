@@ -139,6 +139,14 @@ The nodes are wired into the **Volume** of the graph's Output, which is the grou
 
 What a Subtract takes away counts as caves: the far rings are made without it, the sea does not flood it, and the ground's layers run through it. A Volume is read up to 64 m over the generator's ground and no higher.
 
+### Writing the land into the generator
+
+A world with Levels on, or with biomes that have land of their own, lays nodes into its generator's graph each time it makes ground: the Levels node, each biome's land masked to where the biome is, its mountains cut to massifs, its climate counted from the floor, spires and arches, rivers, and its Overhangs and Caves. None of them shows in the Generator panel. **Write Land into Generator**, above the settings, writes them into the generator as ordinary nodes, so you can see the whole of what makes the ground and change any of it.
+
+The nodes are laid out under the graph's own, a part at a time, and each part is framed by a comment saying what it is: **Where the Land Rises**, **Levels**, one **Land** frame for each biome, **Mountains Cut to Massifs** inside a biome's, **Floors and Walls**, **Climate Counted from the Floor**, **Rivers**, **Overhangs and Caves**, **Spires and Arches**, and **Pillars, Bridges and Overhangs**. From then on the world lays nothing in itself, and its own Overhangs and Caves rows go, as they do after Move to Generator. Its ground is exactly what it was.
+
+The written nodes still keep to the world: a Climate Mask of a biome is that biome's regions in this world, and the Levels node's areas are the world's regions (see [[Generator Nodes#Levels|Levels]] and [[Generator Nodes#Climate Mask|Climate Mask]]). Another world on the same generator makes its ground from the written graph too, so write the land of a world whose generator is its own. A generator that holds written land is never laid into again, so undoing the step, which brings back the world's own settings but not the generator's file, leaves the ground as it is; take the written nodes out in the Generator panel, or undo there, to have the world lay its land in once more. A tool does the same as the button with `block_world.write_land`.
+
 ## Without end
 
 Generated ground can go on **without end**: tick **Endless** under its generator's settings, and its ground is made round the camera as it goes, from its generator, a column of chunks at a time on threads of their own, the nearest first.

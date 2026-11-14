@@ -234,6 +234,91 @@ pub fn move_to_generator(game: &mut Game, renderer: Option<&mut Renderer>, entit
     change_file(game, renderer, entity, file)
 }
 
+/// Whether the land the world lays into its generator's graph as it makes
+/// ground (its levels, its biomes' land) can be written into the generator:
+/// it lays some in, and its generator can be read.
+pub fn can_write_land(game: &Game, entity: Entity) -> bool {
+    let world = &game.engine.world;
+    let Some(generate) = world.get::<BlockWorldAsset>(entity).and_then(|asset| asset.file.generate.as_ref()) else {
+        return false;
+    };
+    let guid = generate.world.as_ref().and_then(|r| game.content.parse(r).ok()).and_then(|parsed| parsed.guid());
+    voxear_terrain::blocks::generate::lays_land(generate)
+        && guid.is_some_and(|guid| game.content.db().get(guid).is_some())
+}
+
+/// What [`write_land`] wrote: the generator, by path, and how many nodes
+/// and comments it gained.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WrittenLand {
+    pub path: String,
+    pub nodes: usize,
+    pub comments: usize,
+}
+
+/// Writes the land the world lays into its generator's graph as it makes
+/// ground into the generator itself, as nodes of its graph laid out under
+/// its own, each part in a comment: its levels, its biomes' land, the
+/// rivers, its own overhangs and caves, and its biomes' pillars, bridges
+/// and overhangs. The world lays none in from then on and has no Overhangs
+/// or Caves of its own, so its ground is what it was, and every node that
+/// makes it can be seen and changed in the graph. The generator is saved,
+/// and every world it makes ground for is made again from it.
+pub fn write_land(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<WrittenLand, String> {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return Err("it is not a Block World".into()) };
+    let block_size = file.block_size;
+    let Some(generate) = file.generate.as_mut() else { return Err("its ground is not generated".into()) };
+    if !voxear_terrain::blocks::generate::lays_land(generate) {
+        return Err("it lays no land into its generator: no Levels and no biome with land of its own".into());
+    }
+    let Some(reference) = generate.world.clone() else { return Err("it has no generator".into()) };
+    let guid = game.content.parse(&reference).ok().and_then(|parsed| parsed.guid());
+    let path = guid.and_then(|guid| game.content.db().get(guid).map(|entry| entry.path.clone()));
+    let (Some(guid), Some(path)) = (guid, path) else {
+        return Err(format!("its generator {reference} is not in the project"));
+    };
+    // As its file has it, as Move to Generator reads it.
+    let at = game.project.root.join(&path);
+    let text = std::fs::read_to_string(&at).map_err(|error| format!("could not read {path}: {error}"))?;
+    let raw = voxear_terrain::generate::WorldGen::parse(&text)
+        .map_err(|error| format!("could not read {path}: {error:#}"))?;
+    // The biomes' names, as the world lists those it found.
+    let db = game.content.db();
+    let names: Vec<String> = generate
+        .biomes
+        .iter()
+        .filter_map(|reference| {
+            let guid = game.content.parse(reference).ok()?.guid()?;
+            let entry = db.get(guid).filter(|entry| entry.kind == AssetKind::Biome)?;
+            Some(file_stem(&entry.path).to_string())
+        })
+        .collect();
+    let Some(graph) = voxear_terrain::blocks::generate::write_land(generate, &raw, block_size, &names) else {
+        return Err(format!("{path} holds land written out of a world already"));
+    };
+    let written = WrittenLand {
+        path: path.clone(),
+        nodes: graph.nodes.len() - raw.graph().nodes.len(),
+        comments: graph.comments.len() - raw.graph().comments.len(),
+    };
+    let text = format!("{}{}", crate::project_files::NEW_WORLD_GEN, raw.with_graph(graph).to_text());
+    std::fs::write(&at, text).map_err(|error| format!("could not save {path}: {error}"))?;
+    if game.engine.world.resource::<WrittenGenerators>().is_none() {
+        game.engine.world.insert_resource(WrittenGenerators::default());
+    }
+    game.engine.world.resource_mut::<WrittenGenerators>().expect("inserted above").0.push(path);
+    // Its own overhangs and caves are nodes of the graph now, where it had them.
+    generate.land_written = true;
+    (generate.overhangs, generate.caves) = (0.0, 0.0);
+    if game.content.forget_world_gen(guid) {
+        crate::terrain_props::regenerate(game, guid);
+        regenerate(game, guid);
+    }
+    see_generators(game);
+    change_file(game, renderer, entity, file);
+    Ok(written)
+}
+
 /// Holds changes to worlds' files from now on while `dragging`, a number
 /// dragged by its label; once it is not, makes each world held again from
 /// its last file. The Inspector calls it each frame before it reads its

@@ -142,7 +142,7 @@ Land at a few set heights, an area at a time. Each area, a few kilometres across
 | Ramps | How much of the walls' length is a ramp instead, 0 to 1 |
 | Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights: see below |
 
-Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before an area stands at its full height, so a high area meets the sea in a cliff) and **Seed**.
+Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before an area stands at its full height, so a high area meets the sea in a cliff), **Seed**, and **Areas**: **Its Own**, laid out by the node, or **The World's Regions**, the biome regions of the world of blocks the generator makes ground for, so each area is one biome's.
 
 Each area has a character:
 
@@ -162,7 +162,7 @@ The ground wired into **Ground** says only where the land is and where the sea i
 
 **In:** Ground. **Out:** Height, Walls (1 on walls, rubble and the peaks' rock, for an Output's Rock), Relief (how much of a biome's land rolls here, by its area's character), Spires and Bridges (masks of the areas of spires and of canyons, for a Spires and an Arches node).
 
-A world of blocks whose land lies in [[Block Worlds#Levels|levels]] lays this node for itself.
+A world of blocks whose land lies in [[Block Worlds#Levels|levels]] lays this node for itself, with its areas the world's regions. **Write Land into Generator** writes it into the graph as an ordinary node, to see and change (see [[Block Worlds#Writing the land into the generator]]).
 
 ### Chasms
 
@@ -317,6 +317,8 @@ Where it is as warm and as wet as its rows say. Wire a Climate node's Temperatur
 | Temperature min, Temperature max | The temperatures it covers, in °C |
 | Humidity min, Humidity max | The humidities it covers, from 0 for dry to 1 for wet |
 | Temperature feather, Humidity feather | How far outside each range it eases to nothing |
+
+Under Advanced, **World's Biome**: 0 for a mask by its ranges, or a biome's place in the list of the world of blocks the generator makes ground for, from 1, for a mask of that biome's regions there. A world that keeps its biomes to regions writes its land with masks of this kind.
 
 **In:** Temperature, Humidity. **Out:** Mask.
 

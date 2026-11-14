@@ -67,6 +67,12 @@ pub struct Levels {
     /// biomes' regions. Never kept in a file.
     #[serde(skip)]
     pub areas: Option<Arc<Areas>>,
+    /// Kept in a file in place of its areas: that its areas are the biome
+    /// regions of the world of blocks the generator makes ground for, which
+    /// the world gives it as it loads. Elsewhere it lays out areas of its
+    /// own.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub world_areas: bool,
 }
 
 impl Default for Levels {
@@ -88,6 +94,7 @@ impl Default for Levels {
             basins: 0.25,
             seed: 0,
             areas: None,
+            world_areas: false,
         }
     }
 }
@@ -129,7 +136,11 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("peaks", "Peaks", 0.0, 10.0, ""),
     ValueSpec::number("basins", "Basins", 0.0, 10.0, ""),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
+    ValueSpec::choice("areas", "Areas", AREAS).advanced(),
 ];
+
+/// Whose areas it lays its levels in.
+const AREAS: &[&str] = &["Its Own", "The World's Regions"];
 
 const INPUTS: &[Port] = &[Port::field("ground", "Ground")];
 
@@ -169,6 +180,7 @@ impl Kind for Levels {
             6 => Value::Number(self.coast),
             7..=13 => Value::Number(self.characters()[at - 7]),
             14 => Value::Whole(self.seed),
+            15 => Value::Choice(usize::from(self.world_areas)),
             _ => return None,
         })
     }
@@ -190,6 +202,7 @@ impl Kind for Levels {
             (12, Value::Number(number)) => self.peaks = number,
             (13, Value::Number(number)) => self.basins = number,
             (14, Value::Whole(whole)) => self.seed = whole,
+            (15, Value::Choice(choice)) => self.world_areas = choice == 1,
             _ => {}
         }
     }

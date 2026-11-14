@@ -60,6 +60,10 @@ pub enum ArgKind {
     Toggle,
     /// Three numbers.
     Vector,
+    /// Two numbers: a place or a size on a graph's canvas.
+    Pair,
+    /// A list of whole numbers, such as a graph's nodes.
+    Wholes,
     /// One of these words.
     Choice(&'static [&'static str]),
     /// Calls, each `{ "call": "…", "args": { … } }`.
@@ -82,6 +86,8 @@ impl ArgKind {
                 ArgKind::Whole => "whole",
                 ArgKind::Toggle => "toggle",
                 ArgKind::Vector => "vector",
+                ArgKind::Pair => "pair",
+                ArgKind::Wholes => "wholes",
                 ArgKind::Calls => "calls",
                 ArgKind::Choice(_) => unreachable!(),
             } }),
@@ -400,6 +406,58 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "graph.comments",
+        about: "The comments of a graph, a generator (.worldgen) or a VoxShade shader (.voxshade): each its number, its top left corner and size on the canvas, its title and its text.",
+        args: &[arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade.")],
+        changes: false,
+        returns: "{ comments: [{ id, at, size, title, text }] }",
+    },
+    CallInfo {
+        name: "graph.comment.add",
+        about: "Adds a comment to a graph: a frame drawn behind its nodes, with a title and a few lines of text. Round `around`'s nodes, as the canvas's Add Comment Round Picked makes one, or at `at`. A step to undo where the graph is open in its panel.",
+        args: &[
+            arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade."),
+            arg("title", ArgKind::Text, ""),
+            maybe("text", ArgKind::Text, "Lines under the title."),
+            maybe("around", ArgKind::Wholes, "The nodes it frames, by number, as the file numbers them."),
+            maybe("at", ArgKind::Pair, "Its top left corner on the canvas; the graph's corner when left out."),
+            maybe("size", ArgKind::Pair, "How wide and high it is."),
+        ],
+        changes: true,
+        returns: "{ comment }",
+    },
+    CallInfo {
+        name: "graph.comment.set",
+        about: "Changes a comment of a graph: its title, its text, where it is or how large. Moving it does not move the nodes in it, as dragging it does.",
+        args: &[
+            arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade."),
+            arg("comment", ArgKind::Whole, "Its number, as `graph.comments` gives it."),
+            maybe("title", ArgKind::Text, ""),
+            maybe("text", ArgKind::Text, ""),
+            maybe("at", ArgKind::Pair, ""),
+            maybe("size", ArgKind::Pair, ""),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
+        name: "graph.comment.remove",
+        about: "Takes a comment out of a graph, leaving its nodes.",
+        args: &[
+            arg("asset", ArgKind::Asset, "A .worldgen or a .voxshade."),
+            arg("comment", ArgKind::Whole, "Its number."),
+        ],
+        changes: true,
+        returns: "{ removed }",
+    },
+    CallInfo {
+        name: "block_world.write_land",
+        about: "Writes the land a Block World lays into its generator as it makes ground (its Levels, its biomes' land, the rivers, its Overhangs and Caves) into the generator's graph, as the Inspector's Write Land into Generator does: ordinary nodes laid out under the graph's own, each part in a comment. The world then lays none in itself, so its ground is what it was.",
+        args: &[arg("obj", ArgKind::Obj, "The Block World.")],
+        changes: true,
+        returns: "{ generator, nodes, comments }",
+    },
+    CallInfo {
         name: "commands",
         about: "Every command the command palette runs: the editor's own, those code adds, and the scripts' [Command] methods.",
         args: &[],
@@ -676,6 +734,20 @@ pub fn opt_vector(args: &Json, name: &str) -> Result<Option<[f32; 3]>, LinkError
     let Some(value) = args.get(name).filter(|value| !value.is_null()) else { return Ok(None) };
     let numbers = numbers(value).filter(|n| n.len() == 3).ok_or_else(|| bad(format!("`{name}` is three numbers")))?;
     Ok(Some([numbers[0], numbers[1], numbers[2]]))
+}
+
+pub fn opt_pair(args: &Json, name: &str) -> Result<Option<[f32; 2]>, LinkError> {
+    let Some(value) = args.get(name).filter(|value| !value.is_null()) else { return Ok(None) };
+    let numbers = numbers(value).filter(|n| n.len() == 2).ok_or_else(|| bad(format!("`{name}` is two numbers")))?;
+    Ok(Some([numbers[0], numbers[1]]))
+}
+
+pub fn opt_wholes(args: &Json, name: &str) -> Result<Option<Vec<u32>>, LinkError> {
+    let Some(value) = args.get(name).filter(|value| !value.is_null()) else { return Ok(None) };
+    let wholes = value.as_array().and_then(|list| {
+        list.iter().map(|n| n.as_u64().and_then(|n| u32::try_from(n).ok())).collect::<Option<Vec<u32>>>()
+    });
+    wholes.map(Some).ok_or_else(|| bad(format!("`{name}` is a list of whole numbers")))
 }
 
 fn numbers(value: &Json) -> Option<Vec<f32>> {

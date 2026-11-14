@@ -2392,6 +2392,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     starter biomes stay green up to 60°. Tests: areas at every level and character, neighbours mostly alike; level
     land at set heights with sheer walls; bare walls, ravines and bridges; a block world's columns on its floors
     over flattened mountains; renders of a real project's endless world.
+  - ~~**Comments in graphs, and a world's land written into its generator:**~~ done: a generator's graph and a
+    VoxShade shader hold comments (`Graph::comments`: a frame's corner, size, title and text), saved with the graph,
+    old files reading with none, out of the hash and the compiled shader. The canvas draws them behind the nodes:
+    its right-click opens a menu (Add Node, Add Comment, Add Comment Round Picked, and on a comment Edit and Delete);
+    a drag of a comment's title bar carries every node and comment inside it, its corner resizes it, a double click
+    edits its title and text in place; each change is a step of the panel's undo. `graph.comments` and
+    `graph.comment.add`, `.set` and `.remove` reach them from `vox editor call` and `vox mcp`. A Block World's
+    **Write Land into Generator** (and `block_world.write_land`) writes the nodes it laid into its generator at load
+    (Levels, each biome's land, massifs, climate from the floor, spires and arches, rivers, its own overhangs and
+    caves) into the file as ordinary nodes, numbered as the world numbers them so the ground is the same, laid out a
+    part at a time each in a comment; the world then lays none in (`land_written`). Climate Masks and Levels keep to
+    the world's regions by saved markers (World's Biome, Areas), and regions read the climate at sea level, so the
+    written land cannot move them. Tests: comments saved and read in both kinds of graph; the canvas's menu, a
+    comment round picked nodes, edited, moved with its nodes, resized and deleted; the calls on a generator closed
+    and open in its panel, with undo; a world with levels, biome land, rivers and caves written out and read back
+    making the same heights, climate and blocks to the bit.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

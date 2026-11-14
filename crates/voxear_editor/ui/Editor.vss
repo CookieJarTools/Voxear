@@ -4500,3 +4500,17 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     font-size: 9px;
     color: var(--vx-muted);
 }
+
+.graph-comment-title {
+    color: var(--vx-text);
+    font-weight: 600;
+    position: absolute;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.graph-comment-text {
+    color: var(--vx-text-2);
+    position: absolute;
+    pointer-events: none;
+}

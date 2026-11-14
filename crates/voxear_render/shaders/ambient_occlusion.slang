@@ -13,6 +13,7 @@
 
 #include "common.slang"
 #include "ddgi_sample.slang"
+#include "reflection_probes.slang"
 
 // The largest search radius on screen, in pixels at 1080p: wider searches
 // thrash the texture cache for little change.
@@ -430,15 +431,38 @@ float2 reflectionPixel(Frame* frame, float3 point, float2 size)
     return (ndc * 0.5 + 0.5) * size;
 }
 
-// Screen-space reflections, at full resolution: from each pixel, its
-// mirror ray marched through the depth buffer, in steps that grow with
-// distance. Where it meets something, the colour there comes from last
-// frame's finished picture (TAA's history), found where that point was on
-// screen then, as this frame's is not shaded yet. Writes the colour and how
-// sure the hit is, which fades towards the screen's edges and the ray's
-// end. A pixel too rough to show a reflection, as the depth passes wrote
-// its roughness, traces nothing. textures: x depth, y last frame's
-// picture, z the surface: normal and roughness.
+// The levels of the nearest-depth pyramid screen-space reflections step
+// through (src/ambient_occlusion.rs builds it): cells up to 64 pixels across.
+static const uint REFLECTION_PYRAMID_LEVELS = 7;
+
+// A world position from a point on the screen, in pixels, at a depth.
+float3 worldAtPixel(Frame* frame, float2 pixel, float depth)
+{
+    float2 uv = pixel / float2(frame->viewport);
+    float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));
+    return world.xyz / world.w;
+}
+
+// Screen-space reflections, at full resolution: from each pixel, its mirror
+// ray walked through the nearest-depth pyramid (after Uludag, "Hi-Z
+// Screen-Space Cone-Traced Reflections", 2014). On screen, with reverse-Z,
+// a ray's depth changes evenly from pixel to pixel, so it can step a whole
+// cell of a coarse level at once wherever it passes in front of the nearest
+// thing in that cell, and drops to finer levels only where it reaches it,
+// down to the pixel it meets. Unlike steps of a set length, it misses
+// nothing it passes, and a surface seen edge on, a few pixels thick on
+// screen, is met where the ray crosses it.
+//
+// Where it meets something, the colour comes from last frame's finished
+// picture (TAA's history), found where that point was on screen then, as
+// this frame's is not shaded yet. Where it finds nothing, or leaves the
+// screen, the reflection is what the surroundings show (reflectionFallback):
+// the reflection probes round the surface, then the GI's probes as seen from
+// as far as the ray got, then the sky. Writes the reflection and how much of
+// it the ray found, which fades towards the screen's edges and the ray's
+// end. A pixel too rough to show a reflection, as the depth passes wrote its
+// roughness, traces nothing. textures: x depth, y last frame's picture, z
+// the surface (normal and roughness), w the nearest-depth pyramid.
 [shader("fragment")]
 float4 reflectionsFragment(AoOut input) : SV_Target
 {
@@ -457,78 +481,156 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     // its flat triangles, each a flat mirror showing one place, so a chrome ball's reflection broke into blocks a
     // triangle wide; and while two of its LODs crossfade, dithered, the depth's neighbours are on either one, and
     // its reflection broke into speckles.
-    float3 normal = normalize(transform(frame->view, float4(octDecode(surface.rg * 2.0 - 1.0), 0.0)).xyz);
-    normal = dot(normal, centre) > 0.0 ? -normal : normal;
+    float3 worldNormal = octDecode(surface.rg * 2.0 - 1.0);
+    float3 normal = normalize(transform(frame->view, float4(worldNormal, 0.0)).xyz);
+    float facing = dot(normal, centre) > 0.0 ? -1.0 : 1.0;
+    normal *= facing;
+    worldNormal *= facing;
     float3 ray = reflect(normalize(centre), normal);
+    // The same in the world, for what the ray finds when it finds nothing on screen.
+    float3 position = worldAtPixel(frame, float2(pixel) + 0.5, depth);
+    float3 worldRay = reflect(normalizeOr(position - frame->cameraPosition, frame->cameraForward), worldNormal);
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 outside = position + worldNormal * ddgiSpacing(frame, 0);
+    float3 around = reflectionAmbient(frame, outside, worldNormal, atmosphere);
+
     // Rays back towards the camera find only what is behind it, off screen. They fade out on the way there: cut off
     // at once, a chrome ball's lower half showed a sharp ring where they gave way to the sky's ground colour.
     float towards = smoothstep(-0.2, 0.0, ray.z);
-    if (towards <= 0.0)
-    {
-        return 0.0;
-    }
     float2 size = float2(frame->viewport);
     float pixelSpan = abs(frame->post.aoUnproject.y) * 2.0 / size.y * centre.z;
     float3 start = centre + normal * (2.0 * pixelSpan);
-    uint steps = max(frame->post.reflectionSteps, 1);
-    float jitter = aoNoise(pixel, frame->frameIndex).y;
     float reach = frame->post.reflectionDistance;
-    float2 hit = -1.0;
-    float travelled = 0.0;
-    float lastInFront = 0.0;
-    float lastBehind = -1.0;
-    for (uint i = 1; i <= steps; i++)
+    // Stopped short of the near plane, so its depth stays finite.
+    if (start.z + ray.z * reach < frame->near * 1.5)
     {
-        float t = (float(i) - jitter) / float(steps);
-        float distance = reach * t * t;
-        float3 along = start + ray * distance;
-        if (along.z <= frame->near)
+        reach = (frame->near * 1.5 - start.z) / ray.z;
+    }
+    float3 finish = start + ray * max(reach, 0.0);
+    // The ray on screen: pixels across and down, and depth, each changing evenly along it.
+    float3 from = float3(reflectionPixel(frame, start, size), frame->near / start.z);
+    float3 to = float3(reflectionPixel(frame, finish, size), frame->near / finish.z);
+    float3 span = to - from;
+    // Cut where it leaves the screen.
+    float2 leave = select(span.xy > 0.0, (size - 0.5 - from.xy) / span.xy, (0.5 - from.xy) / span.xy);
+    leave = select(abs(span.xy) < 1e-4, float2(1.0), leave);
+    float last = saturate(min(1.0, min(leave.x, leave.y)));
+
+    uint pyramid = push.textures.w;
+    uint iterations = max(frame->post.reflectionSteps, 4);
+    int level = 0;
+    // A pixel and a half along, off the surface it leaves, and a little more by noise, so neighbouring rays do not
+    // band together.
+    float along = length(span.xy) > 1e-3 ? (1.5 + aoNoise(pixel, frame->frameIndex).y) / length(span.xy) : 1.0;
+    float t = along;
+    bool found = false;
+    for (uint i = 0; i < iterations && t < last; i++)
+    {
+        float3 at = from + span * t;
+        float cellSize = float(1 << level);
+        float2 cell = floor(at.xy / cellSize);
+        // Where the ray leaves this cell, a hair past its side.
+        float2 side = (cell + select(span.xy > 0.0, float2(1.0), float2(0.0))) * cellSize;
+        float2 crossing = select(abs(span.xy) < 1e-6, float2(1e9), (side - from.xy) / span.xy);
+        float leaves = min(crossing.x, crossing.y) + 0.01 / max(length(span.xy), 1e-3);
+        float nearest = textures[NonUniformResourceIndex(pyramid)].Load(int3(int2(cell), level)).r;
+        if (at.z > nearest)
         {
-            break;
-        }
-        float2 at = reflectionPixel(frame, along, size);
-        if (any(at < 0.0) || any(at >= size))
-        {
-            break;
-        }
-        float behind = along.z - frame->near / max(loadDepth(depthTexture, int2(at)), 1e-7);
-        // Thicker the farther it has gone, as its steps are longer there. A step that has just gone from in
-        // front of the depth to behind it may have crossed a surface seen edge on, so it is refined too, and
-        // kept only if the crossing it finds lies on the surface.
-        float thickness = frame->post.reflectionThickness + distance * 0.05;
-        if (behind > 0.0 && (behind < thickness || lastBehind < 0.0))
-        {
-            // Between the last step in front and this one behind, halve the gap to find where it crossed.
-            float front = lastInFront;
-            float back = distance;
-            for (uint halving = 0; halving < 5; halving++)
+            // In front of everything in the cell: on to its side, or, where the ray reaches the nearest depth inside
+            // it, down a level from there.
+            float reaches = span.z < 0.0 ? (nearest - from.z) / span.z : 1e9;
+            if (reaches >= leaves)
             {
-                float middle = (front + back) * 0.5;
-                float3 point = start + ray * middle;
-                float2 there = reflectionPixel(frame, point, size);
-                bool past = point.z > frame->near / max(loadDepth(depthTexture, int2(there)), 1e-7);
-                back = past ? middle : back;
-                front = past ? front : middle;
+                t = leaves;
+                level = min(level + 1, int(REFLECTION_PYRAMID_LEVELS) - 1);
+                continue;
             }
-            float3 crossing = start + ray * back;
-            float2 there = reflectionPixel(frame, crossing, size);
-            float off = crossing.z - frame->near / max(loadDepth(depthTexture, int2(there)), 1e-7);
-            // Far crossings, found from long steps, are looser.
-            if (abs(off) < thickness + back * 0.1)
+            t = max(t, reaches);
+            // Within a single pixel, where it reaches the depth is where it meets what is there.
+            if (level == 0)
             {
-                hit = there;
-                travelled = t;
+                found = true;
                 break;
             }
+            level--;
+            continue;
         }
-        lastInFront = behind < 0.0 ? distance : lastInFront;
-        lastBehind = behind;
+        if (level > 0)
+        {
+            level--;
+            continue;
+        }
+        // At or behind the depth of this pixel: met, if not too far behind it; else it passes behind something,
+        // and goes on beyond it.
+        float sceneZ = frame->near / max(nearest, 1e-7);
+        float rayZ = frame->near / max(at.z, 1e-7);
+        float thickness = frame->post.reflectionThickness * (1.0 + 0.02 * sceneZ);
+        if (rayZ - sceneZ < thickness)
+        {
+            found = true;
+            break;
+        }
+        t = leaves;
     }
-    if (hit.x < 0.0)
+    // Out of cells to visit before the ray's end, as along a floor seen low down, whose nearer rows fill every
+    // coarse cell the ray passes over and keep it to the finest levels: the rest of the way in a few long steps,
+    // each that crosses behind the depth halved down to where it did.
+    if (!found && t < last)
     {
-        return 0.0;
+        static const uint LONG_STEPS = 12;
+        float stride = (last - t) / float(LONG_STEPS);
+        float front = t;
+        for (uint i = 1; i <= LONG_STEPS && !found; i++)
+        {
+            float next = t + stride * float(i);
+            float3 at = from + span * next;
+            float sceneDepth = loadDepth(depthTexture, int2(at.xy));
+            if (at.z > sceneDepth)
+            {
+                front = next;
+                continue;
+            }
+            float back = next;
+            for (uint halving = 0; halving < 6; halving++)
+            {
+                float middle = (front + back) * 0.5;
+                float3 point = from + span * middle;
+                bool behind = point.z <= loadDepth(depthTexture, int2(point.xy));
+                back = behind ? middle : back;
+                front = behind ? front : middle;
+            }
+            float3 crossing = from + span * back;
+            float sceneZ = frame->near / max(loadDepth(depthTexture, int2(crossing.xy)), 1e-7);
+            float rayZ = frame->near / max(crossing.z, 1e-7);
+            // Looser than a pixel's walk, by how far a long step goes.
+            float thickness = frame->post.reflectionThickness * (1.0 + 0.02 * sceneZ) + 0.1 * stride * length(span.xy) * abs(frame->post.aoUnproject.y) * 2.0 / size.y * sceneZ;
+            if (abs(rayZ - sceneZ) < thickness)
+            {
+                found = true;
+                t = back;
+            }
+            else
+            {
+                front = next;
+            }
+        }
+        t = found ? t : last;
+    }
+    t = min(t, last);
+    float3 ended = from + span * t;
+
+    // How far along the ray it got, in the world: the free stretch the GI's probes are looked up at the end of.
+    float3 endView = viewPosition(ended.xy, ended.z);
+    float travelled = length(endView - start);
+    float3 end = position + worldRay * max(travelled - ddgiSpacing(frame, 0) * 0.5, 0.0);
+    end = travelled > ddgiSpacing(frame, 0) ? end : outside;
+    float3 surroundings = reflectionFallback(frame, position, end, -worldRay, worldRay, roughness, around, atmosphere, true);
+    if (!found)
+    {
+        return float4(surroundings, 0.0);
     }
     // Where the point it met was last frame.
+    float2 hit = ended.xy;
     float2 uv = hit / size;
     float hitDepth = loadDepth(depthTexture, int2(hit));
     float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, hitDepth, 1.0));
@@ -536,10 +638,10 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     float2 previousUv = before.xy / before.w * 0.5 + 0.5;
     if (before.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
     {
-        return 0.0;
+        return float4(surroundings, 0.0);
     }
     float3 colour = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).rgb;
     float2 border = min(uv, 1.0 - uv);
-    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled) * 4.0) * towards;
-    return float4(colour, sure);
+    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled / max(reach, 1e-3)) * 4.0) * towards;
+    return float4(lerp(surroundings, colour, sure), sure);
 }

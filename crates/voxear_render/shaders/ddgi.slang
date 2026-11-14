@@ -478,11 +478,12 @@ float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction
 // wherever the GPU has ray queries, GI or not: from each pixel smooth enough
 // to reflect, at full resolution, its mirror ray into the scene; the surface
 // it meets is lit as the GI's rays light theirs (by the sky alone without the
-// GI), or where it meets nothing, the sky shows.
+// GI), or where it meets nothing, the reflection probes round the surface or
+// the sky show.
 // Unlike screen-space reflections, they show what is off screen, behind the
 // camera and behind other things: a chrome ball mirrors the whole room.
-// Writes the colour and 1, as sure as can be. textures: x depth, z the
-// surface: normal and roughness.
+// Writes the reflection, and 1 where the ray met something, 0 where it went
+// out. textures: x depth, z the surface: normal and roughness.
 [shader("fragment")]
 float4 rayReflectionsFragment(AoOut input) : SV_Target
 {
@@ -532,7 +533,9 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     }
     if (!hit.found)
     {
-        return float4(surroundingsReflection(frame, position, normal, direction, 0.0, 0.0, atmosphere), 1.0);
+        // Out to the sky, or what the reflection probes round the surface show of it, as rough as the surface.
+        float3 around = reflectionAmbient(frame, position + normal * ddgiSpacing(frame, 0), normal, atmosphere);
+        return float4(reflectionFallback(frame, position, origin, normal, direction, roughness, around, atmosphere, false), 0.0);
     }
     // The back of anything else shows lit as its front: a curtain or a card of ivy is a sheet, not the outside of
     // something, and black there left dark patches all over a chrome ball.

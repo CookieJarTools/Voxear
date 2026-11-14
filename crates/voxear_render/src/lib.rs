@@ -2750,6 +2750,11 @@ impl View {
         if let Some(probes) = &setup.probes {
             frame_data.reflection_probes = probes.gpu;
         }
+        // Screen-space reflections walk through a pyramid of the nearest depth.
+        let reflection_pyramid = match reflections.is_some() && !traced_reflections {
+            true => Some(fg.create_image(gpu, bindless, "reflection depth pyramid", ambient_occlusion::pyramid_desc(extent))?),
+            false => None,
+        };
         // The first camera's own view captures this frame's reflection probe, through the scene its GI or
         // reflections trace, or one built for it.
         let probe_job = setup.probes.filter(|_| self.number == 0 && portal.is_none() && !wireframe);
@@ -3190,6 +3195,7 @@ impl View {
             contact_shadows,
             surface,
             reflections,
+            reflection_pyramid,
             atmosphere,
             clouds: cloud_images,
             volume,

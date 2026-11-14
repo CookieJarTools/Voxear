@@ -131,13 +131,14 @@ pub struct Reflections {
     /// Surfaces rougher than this, from 0 to 1, show no screen-space
     /// reflections, fading out towards it.
     pub max_roughness: f32,
-    /// Advanced: the steps each ray takes.
+    /// Advanced: how many cells of the depth pyramid a screen-space ray
+    /// visits at most, a pixel's or a larger cell's.
     pub steps: u32,
 }
 
 impl Default for Reflections {
     fn default() -> Self {
-        Self { enabled: true, max_distance: 30.0, thickness: 0.3, max_roughness: 0.6, steps: 32 }
+        Self { enabled: true, max_distance: 30.0, thickness: 0.3, max_roughness: 0.6, steps: 64 }
     }
 }
 
@@ -653,7 +654,7 @@ impl PostProcess {
             reflection_texture: crate::gpu::NO_TEXTURE,
             reflection_distance: self.reflections.max_distance.max(0.1),
             reflection_thickness: self.reflections.thickness.max(0.01),
-            reflection_steps: self.reflections.steps.clamp(4, 128),
+            reflection_steps: self.reflections.steps.clamp(4, 256),
             reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
             exposure_low_percent: self.exposure.low_percent.clamp(0.0, 99.0),
             exposure_high_percent: self.exposure.high_percent.clamp(1.0, 100.0),

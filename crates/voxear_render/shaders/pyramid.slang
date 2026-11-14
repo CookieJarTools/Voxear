@@ -18,13 +18,13 @@ void reduceMain(uint3 id : SV_DispatchThreadID)
 }
 
 // Builds one level of the nearest-depth pyramid that screen-space
-// reflections step through: each texel the largest (nearest, with reverse-Z)
-// depth under it. Unlike the culling pyramid, it starts at the depth
-// buffer's own size and each level is half the last rounded up, so every
-// pixel is under one texel of each level; where the level above has an odd
-// count, its last texel takes the extra row or column too.
-// push.texture: the depth for the first level, else the level above as
-// storage; push.textures.xy: the level above's size; push.output: this level.
+// reflections walk through: each texel the largest (nearest, with reverse-Z)
+// depth of the 2x2 under it. Unlike the culling pyramid, its first level is
+// the depth buffer's own size, rounded up so each level halves exactly
+// (src/ambient_occlusion.rs's pyramid_desc), with nothing past the depth's
+// edge. push.texture: the depth for the first level, else the level above as
+// storage; push.textures.xy: the size of what it reads; push.output: this
+// level.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void nearestMain(uint3 id : SV_DispatchThreadID)
@@ -35,19 +35,12 @@ void nearestMain(uint3 id : SV_DispatchThreadID)
     }
     if (push.level == 0)
     {
-        storageImagesR32f[push.output][id.xy] = textures[push.texture].Load(int3(id.xy, 0)).r;
+        bool inside = all(id.xy < push.textures.xy);
+        storageImagesR32f[push.output][id.xy] = inside ? textures[push.texture].Load(int3(id.xy, 0)).r : 0.0;
         return;
     }
-    uint2 above = push.textures.xy;
-    uint2 first = id.xy * 2;
-    uint2 last = min(first + 1 + uint2(id.xy == push.size - 1) * (above & 1), above - 1);
-    float nearest = 0.0;
-    for (uint y = first.y; y <= last.y; y++)
-    {
-        for (uint x = first.x; x <= last.x; x++)
-        {
-            nearest = max(nearest, storageImagesR32f[push.texture][uint2(x, y)]);
-        }
-    }
+    RWTexture2D<float> above = storageImagesR32f[push.texture];
+    uint2 at = id.xy * 2;
+    float nearest = max(max(above[at], above[at + uint2(1, 0)]), max(above[at + uint2(0, 1)], above[at + uint2(1, 1)]));
     storageImagesR32f[push.output][id.xy] = nearest;
 }

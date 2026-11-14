@@ -246,3 +246,115 @@ fn a_probe_captured_once_stays_the_same_until_it_is_captured_again() {
 fn renderer_again() -> Option<Renderer> {
     renderer(false)
 }
+
+/// TAA for screen-space reflections, which read its history, without
+/// sharpening.
+fn reflecting_post() -> PostProcess {
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.reflections.enabled = true;
+    post.ambient_occlusion.enabled = false;
+    post
+}
+
+/// Five thin red poles, each about a pixel and a half wide where it stands,
+/// from twelve to twenty-four metres off, on a mirror floor, its reflections
+/// on or off, traced on screen.
+fn poles_render(reflecting: bool) -> Option<Vec<u8>> {
+    // Rays traced in software, so reflections are screen-space.
+    let mut renderer = renderer(true)?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.2, 0.0), Quat::from_rotation_x(0.12), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let mut material = |base_color: [f32; 4], metallic: f32, roughness: f32, emissive: [f32; 3]| {
+        renderer
+            .add_material(&MaterialDesc { base_color, metallic, roughness, emissive, ..MaterialDesc::default() })
+            .unwrap()
+    };
+    let mirror = material([0.95, 0.95, 0.95, 1.0], 1.0, 0.02, [0.0; 3]);
+    let red = material([0.9, 0.1, 0.1, 1.0], 0.0, 0.9, [3.0, 0.1, 0.1]);
+    let place = |centre: Vec3, size: Vec3| Transform::new(centre, Quat::IDENTITY, size);
+    world.spawn((MeshRenderer::new(cube, mirror), place(Vec3::new(0.0, -0.1, 20.0), Vec3::new(60.0, 0.2, 60.0))));
+    for i in 0..5 {
+        let z = 12.0 + 3.0 * i as f32;
+        let x = -3.0 + 1.5 * i as f32;
+        world.spawn((MeshRenderer::new(cube, red), place(Vec3::new(x, 1.5, z), Vec3::new(0.08 * z / 12.0, 3.0, 0.08))));
+    }
+    let mut post = reflecting_post();
+    post.reflections.enabled = reflecting;
+    world.insert_resource(post);
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 16);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn screen_space_reflections_find_thin_poles_far_off() {
+    let (Some(plain), Some(mirrored)) = (poles_render(false), poles_render(true)) else { return };
+    keep_image("thin poles without reflections.png", &plain);
+    keep_image("thin poles in a mirror floor.png", &mirrored);
+    let red = |pixels: &[u8]| {
+        let reddish = |(x, y): (u32, u32)| {
+            let [r, g, b] = rgb(pixels, x, y);
+            r > g + 25 && r > b + 25
+        };
+        (0..HEIGHT).flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&at| reddish(at)).count()
+    };
+    // The poles themselves show either way; with reflections, the floor mirrors them below their feet, about as
+    // many pixels again.
+    let (poles, both) = (red(&plain), red(&mirrored));
+    assert!(poles > 100, "the poles show: {poles} red pixels");
+    assert!(both * 10 > poles * 16, "the floor mirrors the poles: {both} red pixels with reflections, {poles} without");
+}
+
+#[test]
+fn what_screen_space_reflections_miss_comes_from_the_probe() {
+    // Rays traced in software, so reflections are screen-space; a chrome ball in the room looks back past the
+    // camera at the near wall, which is red and nowhere on screen.
+    let mirrored = |probe: bool| -> Option<Vec<u8>> {
+        let mut renderer = renderer(true)?;
+        let mut room = build_room(&mut renderer);
+        let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+        let cube = renderer.primitive(Primitive::Cube).unwrap();
+        let chrome = renderer
+            .add_material(&MaterialDesc {
+                base_color: [0.95; 4],
+                metallic: 1.0,
+                roughness: 0.02,
+                ..MaterialDesc::default()
+            })
+            .unwrap();
+        let near_wall = Transform::new(Vec3::new(0.0, 2.0, -3.95), Quat::IDENTITY, Vec3::new(8.0, 4.0, 0.1));
+        room.world.spawn((MeshRenderer::new(cube, room.red), near_wall));
+        let ball = Transform::new(Vec3::new(SPLIT, 1.0, 0.0), Quat::IDENTITY, Vec3::splat(1.2));
+        room.world.spawn((MeshRenderer::new(sphere, chrome), ball));
+        if probe {
+            add_probe(&mut room.world, true);
+        }
+        room.world.insert_resource(reflecting_post());
+        let mut time = 0.0;
+        run(&mut renderer, &room.world, &mut time, SETTLE);
+        Some(renderer.read_pixels().unwrap().2)
+    };
+    let (Some(without), Some(with)) = (mirrored(false), mirrored(true)) else { return };
+    keep_image("chrome ball off screen without a probe.png", &without);
+    keep_image("chrome ball off screen with a probe.png", &with);
+    // Where the ball is on screen, the middle of it: a few pixels round its centre.
+    let ball_centre = |pixels: &[u8]| {
+        let found: Vec<(u32, u32)> = (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb(pixels, x, y);
+                r > g + 50 && r > b + 50
+            })
+            .collect();
+        found
+    };
+    let redness = |pixels: &[u8]| ball_centre(pixels).len();
+    assert!(
+        redness(&with) > redness(&without) + 200,
+        "with a probe the ball mirrors the red wall behind the camera: {} red pixels, {} without",
+        redness(&with),
+        redness(&without)
+    );
+}

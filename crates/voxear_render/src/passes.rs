@@ -134,6 +134,9 @@ pub struct Frame {
     /// Screen-space reflections' image, and last frame's finished picture
     /// they read, when they are on; they need the depth drawn first too.
     pub reflections: Option<(ImageId, ImageId)>,
+    /// The nearest-depth pyramid screen-space reflections walk through,
+    /// when they are not traced (see `ambient_occlusion::pyramid_desc`).
+    pub reflection_pyramid: Option<ImageId>,
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
@@ -704,9 +707,18 @@ pub fn record(
             if let Some((target, history)) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
-                let traced = frame.traced_reflections.then_some(frame.probes);
-                let maps = &shadow_maps;
-                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, traced, maps);
+                let tracing = (frame.traced_reflections, frame.reflection_pyramid);
+                let sampled = (shadow_maps.as_slice(), tables.as_slice());
+                ambient_occlusion::record_reflections(
+                    fg,
+                    (pipelines, push),
+                    images,
+                    history,
+                    target,
+                    tracing,
+                    frame.probes,
+                    sampled,
+                );
             }
             // After what reads the depth for the view's own world, and before any of it is shaded.
             portal_surfaces(fg);

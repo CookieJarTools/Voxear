@@ -301,12 +301,13 @@ float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, floa
     // chrome ball, the probes round it are inside it or have it in their way, and its reflection was smudged dark
     // wherever they fell, smudges that moved as the camera did.
     float3 outside = position + normal * ddgiSpacing(frame, 0);
-    return reflectionFallback(frame, position, outside, normal, direction, roughness, ambient, atmosphere);
+    return reflectionFallback(frame, position, outside, normal, direction, roughness, ambient, atmosphere, true);
 }
 
-// As surroundingsReflection, with screen-space reflections over it where
-// they found something and the surface is smooth enough to show them.
-// `found` is how much of the result came from those reflections.
+// As surroundingsReflection, with the reflections pass's over it where the
+// surface is smooth enough to show them: what its ray found, on screen or
+// traced, and what the surroundings show along it where it found nothing.
+// `found` is how much of the result the ray itself found.
 float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere, out float found)
 {
     found = 0.0;
@@ -316,13 +317,13 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
         return reflected;
     }
     float2 uv = pixel / float2(frame->viewport);
-    float4 screen = textures[NonUniformResourceIndex(frame->post.reflectionTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
-    // Up to half the roughness past which they stop, the reflection found on screen or by rays alone; fading to
-    // the surroundings over the rest. Blended in all the way down, a little of the surroundings' blotchier light
+    float4 traced = textures[NonUniformResourceIndex(frame->post.reflectionTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
+    // Up to half the roughness past which they stop, the reflection along the ray alone; fading to the
+    // surroundings over the rest. Blended in all the way down, a little of the surroundings' blotchier light
     // showed through a chrome ball's mirror as dark smudges.
     float smooth = saturate(2.0 - 2.0 * roughness / frame->post.reflectionMaxRoughness);
-    found = saturate(screen.a) * smooth;
-    return lerp(reflected, screen.rgb, found);
+    found = saturate(traced.a) * smooth;
+    return lerp(reflected, traced.rgb, smooth);
 }
 
 // Where a point lies in the sun's shadow map: its cascade's tile of the

@@ -124,7 +124,12 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
 /// Given `traced`, where the GPU has ray queries and the scene's top level
 /// was built, it traces each pixel's mirror ray through the scene instead
 /// (`ray_reflections`), lighting what it meets as the GI's rays do: by the
-/// GI's probes, when the GI is on and they are given, or else by the sky.
+/// GI's probes, when the GI is on, or else by the sky. Otherwise it walks
+/// the ray through `pyramid`, a nearest-depth pyramid of the depth it
+/// builds first (see [`pyramid_desc`]).
+///
+/// Where a ray finds nothing, the reflection probes, the GI's `probes` and
+/// the sky (through `tables`, under the atmosphere) show instead.
 ///
 /// Every pixel traces its own ray, unlike GTAO's half-resolution passes. At
 /// half resolution, each 2×2 from a different pixel every frame, a curved
@@ -132,16 +137,22 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
 /// clamp lets through: still, it showed dots cycling with TAA's jitter;
 /// moving, even blended over frames, it broke into blocks and smears. Full
 /// resolution costs about 0.6 ms more at 1080p in the Sponza demo.
+#[allow(clippy::too_many_arguments)]
 pub fn record_reflections(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     (depth, surface): (ImageId, ImageId),
     history: ImageId,
     target: ImageId,
-    traced: Option<Option<Probes>>,
-    shadow_maps: &[ImageId],
+    (traced, pyramid): (bool, Option<ImageId>),
+    probes: Option<Probes>,
+    (shadow_maps, tables): (&[ImageId], &[ImageId]),
 ) {
-    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, 0];
+    if let Some(pyramid) = pyramid.filter(|_| !traced) {
+        record_pyramid(fg, (pipelines, push), depth, pyramid);
+    }
+    let pyramid_texture = pyramid.filter(|_| !traced).map_or(0, |pyramid| fg.texture(pyramid).0);
+    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, pyramid_texture];
     let push = Push { textures, level: 0, ..push };
     let mut images = vec![
         (depth, ImageAccess::Sampled),
@@ -149,17 +160,61 @@ pub fn record_reflections(
         (surface, ImageAccess::Sampled),
         (target, ImageAccess::ColorAttachment),
     ];
-    // What rays meet is lit by local lights through their shadows, and through glass.
-    images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
-    let pipeline = match traced.zip(pipelines.ray_reflections) {
-        Some((probes, pipeline)) => {
-            let maps = probes.iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]);
-            images.extend(maps.map(|map| (map, ImageAccess::Sampled)));
-            pipeline
-        }
+    images.extend(pyramid.filter(|_| !traced).map(|pyramid| (pyramid, ImageAccess::Sampled)));
+    // What rays meet is lit by local lights through their shadows, and through glass; what they miss, by the GI
+    // and the sky.
+    images.extend(shadow_maps.iter().chain(tables).map(|&map| (map, ImageAccess::Sampled)));
+    let maps = probes.iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]);
+    images.extend(maps.map(|map| (map, ImageAccess::Sampled)));
+    let pipeline = match pipelines.ray_reflections.filter(|_| traced) {
+        Some(pipeline) => pipeline,
         None => pipelines.reflections,
     };
     fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipeline, &push, target));
+}
+
+/// The levels of the nearest-depth pyramid screen-space reflections walk
+/// through, as `REFLECTION_PYRAMID_LEVELS` in the shaders: cells up to 64
+/// pixels across.
+pub const REFLECTION_PYRAMID_LEVELS: u32 = 7;
+
+/// The nearest-depth pyramid for a view `extent` pixels across: its first
+/// level as large as the depth, rounded up so that every level halves
+/// exactly and each pixel is under one texel of each.
+pub fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
+    let cell = 1 << (REFLECTION_PYRAMID_LEVELS - 1);
+    let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
+    let (width, height) = (extent.width.div_ceil(cell) * cell, extent.height.div_ceil(cell) * cell);
+    ImageDesc { mip_levels: REFLECTION_PYRAMID_LEVELS, ..ImageDesc::new(width, height, crate::pipelines::PYRAMID_FORMAT, usage) }
+}
+
+/// Builds the nearest-depth pyramid from the depth, a level at a time.
+fn record_pyramid(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), depth: ImageId, pyramid: ImageId) {
+    let desc = fg.image_desc(pyramid);
+    let depth_size = fg.image_desc(depth).extent();
+    let depth_texture = fg.texture(depth).0;
+    let levels: Vec<u32> = (0..desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip).0).collect();
+    let images = [(depth, ImageAccess::Sampled), (pyramid, ImageAccess::StorageWrite)];
+    fg.add_pass("Reflection depth pyramid", &images, &[], move |ctx| {
+        for (level, output) in levels.iter().enumerate() {
+            let size = [desc.width >> level, desc.height >> level];
+            let (texture, above) = match level {
+                0 => (depth_texture, [depth_size.width, depth_size.height]),
+                _ => (levels[level - 1], [desc.width >> (level - 1), desc.height >> (level - 1)]),
+            };
+            let push =
+                Push { texture, output: *output, size, level: level as u32, textures: [above[0], above[1], 0, 0], ..push };
+            crate::passes::bind(ctx, pipelines.nearest_pyramid, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
+            let barrier = [vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ | vk::AccessFlags2::SHADER_SAMPLED_READ)];
+            let dependency = vk::DependencyInfo::default().memory_barriers(&barrier);
+            unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &dependency) };
+        }
+    });
 }
 
 /// A fullscreen pass that writes every pixel of `target`.

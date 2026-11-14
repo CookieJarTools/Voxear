@@ -83,7 +83,10 @@ float3 probeLocal(ReflectionProbe probe, float3 point)
 // distance outside.
 float probeWeight(ReflectionProbe probe, float3 local)
 {
-    float outside = length(max(abs(local) - probe.halfSize, 0.0));
+    // A few centimetres' grace, as a floor on the box's bottom side, its place found again from the depth, can
+    // come out a hair below it.
+    static const float GRACE = 0.05;
+    float outside = length(max(abs(local) - probe.halfSize - GRACE, 0.0));
     if (outside <= 0.0)
     {
         return 1.0;
@@ -143,13 +146,24 @@ float3 probeReflection(Frame* frame, float3 position, float3 direction, float ro
     return light;
 }
 
+// The light from all round a surface facing `normal`, as the reflection
+// passes guess it for a rough surface's reflection to blur towards: the
+// GI's, looked up at `outside`, a little off the surface, or the sky's
+// towards the normal.
+float3 reflectionAmbient(Frame* frame, float3 outside, float3 normal, bool atmosphere)
+{
+    float3 sky = reflectedSky(frame, normal, atmosphere);
+    return frame->ddgi.enabled != 0 ? ddgiIrradianceAlong(frame, outside, normal, normal, sky) : sky;
+}
+
 // What a reflection takes where it finds nothing of its own: the reflection
-// probes round the surface at `position`, then for what they leave the GI's
-// probes, looked up at `end`, as far as the ray got before it stopped, back
-// towards where it came from (`end` is the surface's own `outside` point
-// when it got nowhere), then the sky. A surface as rough as `blur` turns
-// the GI's and sky's share towards `ambient`, the light from all round.
-float3 reflectionFallback(Frame* frame, float3 position, float3 end, float3 away, float3 direction, float roughness, float3 ambient, bool atmosphere)
+// probes round the surface at `position`, then for what they leave, given
+// `gi`, the GI's probes looked up at `end`, as far as the ray got before it
+// stopped, from the side `away` it came from, then the sky. A ray traced
+// through the scene that met nothing went out to the sky, so it takes no
+// light from the GI's probes. The rougher the surface, the more the GI's and
+// sky's share turns towards `ambient`, the light from all round.
+float3 reflectionFallback(Frame* frame, float3 position, float3 end, float3 away, float3 direction, float roughness, float3 ambient, bool atmosphere, bool gi)
 {
     float left;
     float3 probes = probeReflection(frame, position, direction, roughness, left);
@@ -162,7 +176,7 @@ float3 reflectionFallback(Frame* frame, float3 position, float3 end, float3 away
     if (blur < 1.0)
     {
         float3 sky = reflectedSky(frame, direction, atmosphere);
-        if (frame->ddgi.enabled != 0)
+        if (gi && frame->ddgi.enabled != 0)
         {
             sky = ddgiIrradianceAlong(frame, end, direction, away, sky);
         }

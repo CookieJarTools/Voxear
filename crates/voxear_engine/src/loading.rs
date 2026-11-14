@@ -430,6 +430,7 @@ fn gather(
                 | AssetKind::InputActions
                 | AssetKind::Strings
                 | AssetKind::AssetTable
+                | AssetKind::Font
                 | AssetKind::Paths
                 | AssetKind::Data
                 | AssetKind::PromptIcons

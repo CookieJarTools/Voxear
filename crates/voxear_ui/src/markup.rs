@@ -55,6 +55,16 @@ pub fn style_sources(markup: &str) -> Result<Vec<String>, UiError> {
     Ok(styles.filter_map(|node| node.attribute("src")).map(String::from).collect())
 }
 
+/// The names a document gives its elements that show text (labels,
+/// buttons, toggles, foldouts and text fields), in the order written, for
+/// what sets one's text to pick from.
+pub fn text_element_names(markup: &str) -> Result<Vec<String>, UiError> {
+    const SHOW_TEXT: &[&str] = &["Label", "Button", "Toggle", "Foldout", "TextField"];
+    let document = Document::parse(markup).map_err(|e| UiError(e.to_string()))?;
+    let named = document.descendants().filter(|node| SHOW_TEXT.iter().any(|tag| node.has_tag_name(*tag)));
+    Ok(named.filter_map(|node| node.attribute("name")).map(String::from).collect())
+}
+
 struct Builder<'a, 'd> {
     source: &'a str,
     document: &'d Document<'d>,

@@ -112,6 +112,10 @@ internal static unsafe class NativePhysics
 	public const int VehicleFirstGear = 216;
 	public const int VehicleTopGear = 217;
 	public const int VehicleAntiRoll = 218;
+	public const int VehicleDebug = 219;
+
+	/// <summary>Whether every Vehicle draws its debug view, on no Obj.</summary>
+	public const int DebugVehicles = 199;
 
 	public const int WheelHas = 220;
 	public const int WheelAdd = 221;
@@ -127,6 +131,22 @@ internal static unsafe class NativePhysics
 	public const int WheelHandbrake = 231;
 	public const int WheelGrip = 232;
 	public const int WheelSideGrip = 233;
+	public const int WheelTouching = 234;
+	public const int WheelContactPoint = 235;
+	public const int WheelContactNormal = 236;
+	public const int WheelCompression = 237;
+	public const int WheelSlip = 238;
+	public const int WheelSlipAngle = 239;
+	public const int WheelSpin = 240;
+
+	/// <summary>
+	/// A Vehicle's torque curve and a Wheel's friction curves, read as words through NativeComponent's texts of the
+	/// Vehicle kind, plus CurveChange to set one. Keys a line each, where then what.
+	/// </summary>
+	public const int TorqueCurve = 0;
+	public const int FrictionCurve = 1;
+	public const int SideFrictionCurve = 2;
+	public const int CurveChange = 10;
 
 	public const int Gravity2D = 160;
 

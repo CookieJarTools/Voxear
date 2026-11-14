@@ -207,19 +207,20 @@ impl Text {
     /// Shaped at physical size, so hinting and line breaks match the pixels
     /// it is drawn at, its lines' heights rounded to whole pixels there when
     /// `whole_pixels`.
-    pub fn shaped(
+    pub(crate) fn shaped(
         &mut self,
         fonts: &mut FontContext,
         layouts: &mut LayoutContext<u16>,
         (scale, whole_pixels): (f32, bool),
+        stack: &crate::fonts::FontStack,
     ) -> &mut Layout<u16> {
         if self.shaped.as_ref().is_none_or(|(at, _)| *at != (scale, whole_pixels)) {
             let mut builder = layouts.ranged_builder(fonts, &self.content, scale, whole_pixels);
             builder.push_default(StyleProperty::FontSize(self.style.size));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
-            builder.push_default(StyleProperty::FontFamily(self.style.family.source().into()));
+            builder.push_default(StyleProperty::FontFamily(stack.families(self.style.family)));
             builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
-            crate::rich::push_spans(&mut builder, &self.spans, &self.style);
+            crate::rich::push_spans(&mut builder, &self.spans, &self.style, stack);
             self.shaped = Some(((scale, whole_pixels), builder.build(&self.content)));
         }
         &mut self.shaped.as_mut().expect("shaped above").1
@@ -241,6 +242,12 @@ pub struct Ui {
     /// Laid out right to left, as the game's language reads.
     pub(crate) rtl: bool,
     pub(crate) fonts: FontContext,
+    /// The language's fonts its text falls back to, and the project's
+    /// fonts registered in `fonts` so far, by the family each draws as,
+    /// as of the count of fonts given (see [`crate::fonts`]).
+    pub(crate) font_stack: crate::fonts::FontStack,
+    pub(crate) registered_fonts: HashSet<String>,
+    pub(crate) fonts_given: u64,
     pub(crate) layouts: LayoutContext<u16>,
     pub(crate) atlas: GlyphAtlas,
     /// Logical size and display scale of the last frame.
@@ -334,7 +341,10 @@ impl Ui {
     /// finding the system's fonts afresh takes a while, which a UI made
     /// often, as a panel in the world is, should not.
     pub fn sharing_fonts(&self) -> Self {
-        Self::with_fonts(self.fonts.clone())
+        let mut ui = Self::with_fonts(self.fonts.clone());
+        (ui.registered_fonts, ui.fonts_given) = (self.registered_fonts.clone(), self.fonts_given);
+        ui.font_stack = self.font_stack.clone();
+        ui
     }
 
     fn with_fonts(fonts: FontContext) -> Self {
@@ -352,6 +362,9 @@ impl Ui {
             root,
             rtl: false,
             fonts,
+            font_stack: Default::default(),
+            registered_fonts: HashSet::new(),
+            fonts_given: 0,
             layouts: LayoutContext::new(),
             atlas: GlyphAtlas::new(),
             viewport: (0.0, 0.0, 0.0),
@@ -1018,6 +1031,7 @@ impl Ui {
     /// forgotten after this. What is shown in desktop windows of its own is
     /// left out, for [`window_frame`](Self::window_frame) to draw.
     pub fn frame(&mut self, width: u32, height: u32, scale: f32) -> UiFrame {
+        self.take_new_fonts();
         if !self.restyles.is_empty() {
             self.cascade();
         }
@@ -1136,13 +1150,60 @@ impl Ui {
             let style = taffy::Style { size, ..self.tree.style(self.root).cloned().unwrap_or_default() };
             let _ = self.tree.set_style(self.root, style);
         }
-        let (fonts, layouts) = (&mut self.fonts, &mut self.layouts);
+        let (fonts, layouts, stack) = (&mut self.fonts, &mut self.layouts, &self.font_stack);
         let space = Size { width: AvailableSpace::Definite(viewport.0), height: AvailableSpace::Definite(viewport.1) };
         let shaping = (scale, self.whole_pixels);
         let measured = self.tree.compute_layout_with_measure(self.root, space, |input, _, element, style| {
-            measure(input, element, style, fonts, layouts, shaping)
+            measure(input, element, style, fonts, layouts, shaping, stack)
         });
         measured.expect("the root is in this tree");
+    }
+
+    /// Registers the project's fonts given since the last frame, and shapes
+    /// every text again when there were any, as some may draw in them now.
+    fn take_new_fonts(&mut self) {
+        let given = crate::fonts::given();
+        if given == self.fonts_given {
+            return;
+        }
+        self.fonts_given = given;
+        let fresh = crate::fonts::unregistered(&self.registered_fonts);
+        for (data, family) in fresh {
+            if !crate::fonts::add_to(&mut self.fonts, &data, &family) {
+                self.warnings.push(format!("a font has no faces Voxear can read; its text draws in another"));
+            }
+            self.registered_fonts.insert(family);
+        }
+        self.fonts_changed();
+    }
+
+    /// Draws text in the project's fonts `faces`, in order, for the letters
+    /// an element's own font has not got, before Voxear's faces and the
+    /// system's: as the game's language names them, so Japanese or Arabic
+    /// text draws in a font with its letters. Every text is shaped again.
+    pub fn set_language_fonts(&mut self, faces: &[crate::fonts::FontFace]) {
+        if self.font_stack.language != faces {
+            self.font_stack.language = faces.to_vec();
+            self.fonts_changed();
+        }
+    }
+
+    /// The fonts the language names, as [`set_language_fonts`](Self::set_language_fonts) gave them.
+    pub fn language_fonts(&self) -> &[crate::fonts::FontFace] {
+        &self.font_stack.language
+    }
+
+    /// Shapes every text again, and lays every text field out again, with
+    /// the fonts as they are now.
+    fn fonts_changed(&mut self) {
+        self.reshape(self.root);
+        for field in self.fields.clone() {
+            if let Some(crate::controls::Control::TextField(edit)) =
+                self.tree.get_node_context_mut(field).and_then(|element| element.control.as_mut())
+            {
+                edit.forget_layout();
+            }
+        }
     }
 
     /// Text is shaped for the display scale, so a new scale shapes it again.

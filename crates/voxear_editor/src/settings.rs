@@ -54,7 +54,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 25] = [
+pub const SETTINGS: [SettingInfo; 26] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -83,6 +83,7 @@ pub const SETTINGS: [SettingInfo; 25] = [
     SettingInfo { key: "show_stats", title: "Show stats", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_axis_gizmo", title: "Show axis gizmo", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo { key: "show_gizmos", title: "Show gizmos", group: "Scene view", kind: SettingKind::Toggle },
+    SettingInfo { key: "vehicle_gizmos", title: "Vehicle debug", group: "Scene view", kind: SettingKind::Toggle },
     SettingInfo {
         key: "scene_shading",
         title: "Shading",
@@ -228,6 +229,9 @@ pub struct Settings {
     pub light_gizmos: bool,
     pub camera_gizmos: bool,
     pub audio_gizmos: bool,
+    /// Every Vehicle's wheels drawn while playing: their suspension,
+    /// contacts and slip.
+    pub vehicle_gizmos: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -316,6 +320,7 @@ impl Default for Settings {
             light_gizmos: true,
             camera_gizmos: true,
             audio_gizmos: true,
+            vehicle_gizmos: false,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
@@ -360,6 +365,7 @@ impl Settings {
             "show_stats" => SettingValue::Toggle(self.show_stats),
             "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
             "show_gizmos" => SettingValue::Toggle(self.show_gizmos),
+            "vehicle_gizmos" => SettingValue::Toggle(self.vehicle_gizmos),
             "scene_shading" => SettingValue::Choice(self.scene_shading),
             "prefab_parts" => SettingValue::Toggle(self.prefab_parts),
             "start_paused" => SettingValue::Toggle(self.start_paused),
@@ -394,6 +400,7 @@ impl Settings {
             ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
             ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
             ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
+            ("vehicle_gizmos", SettingValue::Toggle(on)) => self.vehicle_gizmos = on,
             ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(4),
             ("prefab_parts", SettingValue::Toggle(on)) => self.prefab_parts = on,
             ("tools_may_change", SettingValue::Toggle(on)) => self.tools_may_change = on,

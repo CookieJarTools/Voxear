@@ -406,6 +406,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::TexturePack
         | AssetKind::Shader
         | AssetKind::VoxShade
+        | AssetKind::Font
         | AssetKind::PromptIcons => false,
     }
 }
@@ -494,7 +495,7 @@ fn usage_sets(
             let needed = named.contains(&e.guid) || code_roots.iter().any(rooted);
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
-            // each language's asset with it. The project's shaders all ship, as they are compiled in together. So
+            // each language's asset with it, and every font, which styles and languages name. The project's shaders all ship, as they are compiled in together. So
             // do its blocks: any world can hold any of them, and scripts place them by name. And its look packs,
             // which a player picks from a list of all there are. A package's levels,
             // prefabs, UI documents and blocks ship only when the game uses them, so a package of many ships what
@@ -509,13 +510,14 @@ fn usage_sets(
                         | AssetKind::InputActions
                         | AssetKind::Strings
                         | AssetKind::AssetTable
+                        | AssetKind::Font
                         | AssetKind::Shader
                         | AssetKind::VoxShade
                         | AssetKind::Block
                         | AssetKind::LookPack
                         | AssetKind::TexturePack
                 ),
-                Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
+                Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable | AssetKind::Font),
             } || matches(&settings.include, &e.path);
             needed || (blanket && !matches(&settings.exclude, &e.path))
         })
@@ -700,6 +702,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         AssetKind::Texture
         | AssetKind::LookPack
         | AssetKind::Strings
+        | AssetKind::Font
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Shader

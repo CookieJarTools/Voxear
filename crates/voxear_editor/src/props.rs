@@ -108,6 +108,8 @@ pub enum Part {
     UiPanel,
     /// A Screen UI: a UI document shown over the game's view.
     ScreenUi,
+    /// A Localized Text: a string table key's text in an element of either.
+    LocalizedText,
     /// A Map: the world of blocks as a minimap and a map on the screen.
     Map,
     /// A Map Marker: its Obj marked on every map.
@@ -186,6 +188,7 @@ impl Part {
             Part::Mist => "mist".into(),
             Part::UiPanel => "ui_panel".into(),
             Part::ScreenUi => "screen_ui".into(),
+            Part::LocalizedText => "localized_text".into(),
             Part::Map => "map".into(),
             Part::MapMarker => "map_marker".into(),
             Part::Climate => "climate".into(),
@@ -262,6 +265,7 @@ impl Part {
             Part::Mist => "Mist",
             Part::UiPanel => "UI Panel",
             Part::ScreenUi => "Screen UI",
+            Part::LocalizedText => "Localized Text",
             Part::Map => "Map",
             Part::MapMarker => "Map Marker",
             Part::Climate => "Climate",
@@ -350,6 +354,7 @@ impl Part {
             Part::Smoke => "particles",
             Part::Mist => "particles",
             Part::UiPanel | Part::ScreenUi => "panels",
+            Part::LocalizedText => "globe",
             Part::Map => "globe",
             Part::MapMarker => "map-pin",
             Part::Climate => "globe",
@@ -532,6 +537,11 @@ pub enum Prop {
     UiPanelClickable,
     ScreenUiDocument,
     ScreenUiOrder,
+    /// A Localized Text's key, the element it shows in, and a value its
+    /// key's text names, by name.
+    LocalizedKey,
+    LocalizedElement,
+    LocalizedValue(String),
     MapMinimap,
     MapCorner,
     MapSize,
@@ -875,6 +885,10 @@ pub enum Prop {
     FirstGear,
     TopGear,
     AntiRoll,
+    /// The engine's torque against its revs, and whether its wheels' debug
+    /// view is drawn while playing.
+    TorqueCurve,
+    VehicleDebug,
     /// A Wheel's size, suspension, steering, drive and brakes.
     WheelRadius,
     WheelWidth,
@@ -887,6 +901,9 @@ pub enum Prop {
     Handbrake,
     Grip,
     SideGrip,
+    /// Its tyre's friction against its slip, forwards and sideways.
+    WheelFriction,
+    WheelSideFriction,
     /// A script field, or a value inside one: its behaviour's type name,
     /// and the path to it from the field.
     Field {
@@ -1015,6 +1032,7 @@ impl Prop {
             | Prop::UiPanelTwoSided
             | Prop::UiPanelClickable => Part::UiPanel,
             Prop::ScreenUiDocument | Prop::ScreenUiOrder => Part::ScreenUi,
+            Prop::LocalizedKey | Prop::LocalizedElement | Prop::LocalizedValue(_) => Part::LocalizedText,
             Prop::MapMinimap
             | Prop::MapCorner
             | Prop::MapSize
@@ -1238,7 +1256,9 @@ impl Prop {
             | Prop::Gears
             | Prop::FirstGear
             | Prop::TopGear
-            | Prop::AntiRoll => Part::Vehicle,
+            | Prop::AntiRoll
+            | Prop::TorqueCurve
+            | Prop::VehicleDebug => Part::Vehicle,
             Prop::WheelRadius
             | Prop::WheelWidth
             | Prop::Suspension
@@ -1249,7 +1269,9 @@ impl Prop {
             | Prop::WheelBrake
             | Prop::Handbrake
             | Prop::Grip
-            | Prop::SideGrip => Part::Wheel,
+            | Prop::SideGrip
+            | Prop::WheelFriction
+            | Prop::WheelSideFriction => Part::Wheel,
             Prop::Field { behaviour, .. } => Part::Behaviour(behaviour.clone()),
         }
     }
@@ -1378,6 +1400,9 @@ impl Prop {
             Prop::UiPanelClickable => "clickable",
             Prop::ScreenUiDocument => "document",
             Prop::ScreenUiOrder => "order",
+            Prop::LocalizedKey => "key",
+            Prop::LocalizedElement => "element",
+            Prop::LocalizedValue(name) => return format!("values.{name}"),
             Prop::MapMinimap => "minimap",
             Prop::MapCorner => "corner",
             Prop::MapSize => "size",
@@ -1625,6 +1650,8 @@ impl Prop {
             Prop::FirstGear => "first_gear",
             Prop::TopGear => "top_gear",
             Prop::AntiRoll => "anti_roll",
+            Prop::TorqueCurve => "torque_curve",
+            Prop::VehicleDebug => "debug",
             Prop::WheelRadius => "radius",
             Prop::WheelWidth => "width",
             Prop::Suspension => "suspension",
@@ -1636,6 +1663,8 @@ impl Prop {
             Prop::Handbrake => "handbrake",
             Prop::Grip => "grip",
             Prop::SideGrip => "side_grip",
+            Prop::WheelFriction => "friction",
+            Prop::WheelSideFriction => "side_friction",
             Prop::Field { path, .. } => match path.first() {
                 Some(crate::fields::Step::Key(field)) => return field.clone(),
                 _ => "",
@@ -1711,6 +1740,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<voxear_engine::screen_ui::ScreenUi>(entity) {
         parts.push(Part::ScreenUi);
+    }
+    if world.has::<voxear_engine::localized_text::LocalizedText>(entity) {
+        parts.push(Part::LocalizedText);
     }
     if world.has::<voxear_engine::map::Map>(entity) {
         parts.push(Part::Map);
@@ -1937,6 +1969,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::UiPanelClickable,
         ],
         Part::ScreenUi => vec![Prop::ScreenUiDocument, Prop::ScreenUiOrder],
+        // Its key, its element, then a field for each value the key's text names.
+        Part::LocalizedText => {
+            let mut props = vec![Prop::LocalizedKey, Prop::LocalizedElement];
+            let key = world.get::<voxear_engine::localized_text::LocalizedText>(entity).map(|text| text.key.clone());
+            let localization = world.resource::<voxear_engine::localization::Localization>();
+            let words = key.and_then(|key| Some(localization?.find(&key)?.to_string())).unwrap_or_default();
+            props.extend(voxear_localization::message::names(&words).into_iter().map(Prop::LocalizedValue));
+            props
+        }
         Part::Map => vec![
             Prop::MapMinimap,
             Prop::MapCorner,
@@ -2291,6 +2332,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::FirstGear,
             Prop::TopGear,
             Prop::AntiRoll,
+            Prop::TorqueCurve,
+            Prop::VehicleDebug,
         ],
         Part::Wheel => vec![
             Prop::WheelRadius,
@@ -2304,6 +2347,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::Handbrake,
             Prop::Grip,
             Prop::SideGrip,
+            Prop::WheelFriction,
+            Prop::WheelSideFriction,
         ],
         // Each level's Objs and a place to add another, then where it ends, which the last has only when the
         // group hides past it.
@@ -2460,6 +2505,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::UiPanelClickable => "Clickable",
         Prop::ScreenUiDocument => "Document",
         Prop::ScreenUiOrder => "Order",
+        Prop::LocalizedKey => "Key",
+        Prop::LocalizedElement => "Element",
+        Prop::LocalizedValue(name) => return nice_name(name),
         Prop::MapMinimap => "Minimap",
         Prop::MapCorner => "Corner",
         Prop::MapSize => "Size",
@@ -2716,6 +2764,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::FirstGear => "First gear",
         Prop::TopGear => "Top gear",
         Prop::AntiRoll => "Anti-roll",
+        Prop::TorqueCurve => "Torque by RPM",
+        Prop::VehicleDebug => "Debug view",
         Prop::WheelRadius => "Radius",
         Prop::WheelWidth => "Width",
         Prop::Suspension => "Suspension",
@@ -2727,6 +2777,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::Handbrake => "Handbrake",
         Prop::Grip => "Grip",
         Prop::SideGrip => "Side grip",
+        Prop::WheelFriction => "Grip by slip",
+        Prop::WheelSideFriction => "Side grip by angle",
         Prop::Field { path, .. } => {
             return match path.last() {
                 Some(Step::Key(name)) => nice_name(name),
@@ -2890,6 +2942,9 @@ pub fn add(
         Part::ScreenUi => {
             world.insert(entity, voxear_engine::screen_ui::ScreenUi::default());
         }
+        Part::LocalizedText => {
+            world.insert(entity, voxear_engine::localized_text::LocalizedText::default());
+        }
         Part::Map => {
             world.insert(entity, voxear_engine::map::Map::default());
         }
@@ -3019,6 +3074,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_engine::screen_ui::ScreenUi>(entity);
             world.remove::<voxear_engine::screen_ui::ScreenDocument>(entity);
         }
+        Part::LocalizedText => drop(world.remove::<voxear_engine::localized_text::LocalizedText>(entity)),
         Part::Map => {
             world.remove::<voxear_engine::map::Map>(entity);
         }
@@ -3170,6 +3226,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::FirstGear => Value::Number(vehicle()?.first_gear),
         Prop::TopGear => Value::Number(vehicle()?.top_gear),
         Prop::AntiRoll => Value::Number(vehicle()?.anti_roll),
+        Prop::TorqueCurve => Value::Curve(vehicle()?.torque_curve),
+        Prop::VehicleDebug => Value::Toggle(vehicle()?.debug),
         Prop::WheelRadius => Value::Number(wheel()?.radius),
         Prop::WheelWidth => Value::Number(wheel()?.width),
         Prop::Suspension => Value::Number(wheel()?.suspension),
@@ -3181,6 +3239,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Handbrake => Value::Number(wheel()?.handbrake),
         Prop::Grip => Value::Number(wheel()?.grip),
         Prop::SideGrip => Value::Number(wheel()?.side_grip),
+        Prop::WheelFriction => Value::Curve(wheel()?.friction),
+        Prop::WheelSideFriction => Value::Curve(wheel()?.side_friction),
         Prop::ColliderShape => {
             let shape = collider()?.shape;
             let index = ColliderShape::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -3422,6 +3482,23 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Asset(document.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
         }
         Prop::ScreenUiOrder => Value::Whole(i64::from(world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?.order)),
+        Prop::LocalizedKey => {
+            let key = &world.get::<voxear_engine::localized_text::LocalizedText>(entity)?.key;
+            Value::Asset(if key.is_empty() { "None".into() } else { key.clone() })
+        }
+        Prop::LocalizedElement => {
+            let element = world.get::<voxear_engine::localized_text::LocalizedText>(entity)?.element.clone();
+            let mut options = vec![FIRST_LABEL.to_string()];
+            options.extend(document_text_elements(game, entity));
+            if !element.is_empty() && !options.contains(&element) {
+                options.push(element.clone());
+            }
+            Value::Choice(options.iter().position(|name| *name == element).unwrap_or(0), options)
+        }
+        Prop::LocalizedValue(name) => {
+            let text = world.get::<voxear_engine::localized_text::LocalizedText>(entity)?;
+            Value::Text(text.values.get(name).cloned().unwrap_or_default())
+        }
         Prop::MapMinimap => Value::Toggle(world.get::<voxear_engine::map::Map>(entity)?.minimap),
         Prop::MapCorner => {
             use voxear_engine::map::MapCorner;
@@ -3805,7 +3882,8 @@ pub fn set(
             | Prop::LightProfile
             | Prop::UiPanelDocument
             | Prop::ScreenUiDocument
-            | Prop::MapOpenAction,
+            | Prop::MapOpenAction
+            | Prop::LocalizedKey,
             Value::Asset(label),
         )
         | (
@@ -4070,6 +4148,10 @@ pub fn pick(
                 },
             };
             with(&mut game.engine.world, entity, |screen: &mut voxear_engine::screen_ui::ScreenUi| screen.document = document)
+        }
+        (Prop::LocalizedKey, Pick::Key(choice)) => {
+            let key = choice.clone().unwrap_or_default();
+            with(&mut game.engine.world, entity, |text: &mut voxear_engine::localized_text::LocalizedText| text.key = key)
         }
         (Prop::MapOpenAction, Pick::Key(choice)) => {
             with(&mut game.engine.world, entity, |map: &mut voxear_engine::map::Map| map.open_action = choice.clone())
@@ -4343,6 +4425,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
         Prop::MapOpenAction => return fields::action_choices(game),
+        Prop::LocalizedKey => return fields::key_choices(game),
         Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
         Prop::ParticleEffect => {
             // None, the starters, then the project's own.
@@ -4479,6 +4562,21 @@ pub(crate) fn mesh_choices(game: &Game) -> Vec<(String, Pick)> {
     found
 }
 
+/// What a Localized Text's Element shows with none picked: the document's
+/// first label.
+const FIRST_LABEL: &str = "First label";
+
+/// The names of the elements that show text in the document of an Obj's UI
+/// Panel or Screen UI, as its file writes them, for a Localized Text to pick.
+fn document_text_elements(game: &Game, entity: Entity) -> Vec<String> {
+    let world = &game.engine.world;
+    let panel = world.get::<voxear_render::UiPanel>(entity).and_then(|panel| panel.document);
+    let screen = || world.get::<voxear_engine::screen_ui::ScreenUi>(entity).and_then(|screen| screen.document);
+    let Some(entry) = panel.or_else(screen).and_then(|guid| game.content.db().get(guid)) else { return Vec::new() };
+    let markup = std::fs::read_to_string(game.content.db().file(&entry.path)).unwrap_or_default();
+    voxear_ui::markup::text_element_names(&markup).unwrap_or_default()
+}
+
 pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
     match prop {
         Prop::Mesh | Prop::DryMesh => "Mesh".into(),
@@ -4488,6 +4586,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::LightProfile => "IES profile".into(),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => "UI Document".into(),
         Prop::MapOpenAction => "Input Action".into(),
+        Prop::LocalizedKey => "String Key".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::PortalTo => "Portal".into(),
@@ -4589,6 +4688,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::FirstGear, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.first_gear = n.max(0.1)),
         (Prop::TopGear, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.top_gear = n.max(0.1)),
         (Prop::AntiRoll, Value::Number(n)) => with(world, entity, |v: &mut Vehicle| v.anti_roll = n.max(0.0)),
+        (Prop::TorqueCurve, Value::Curve(curve)) => with(world, entity, |v: &mut Vehicle| v.torque_curve = curve),
+        (Prop::VehicleDebug, Value::Toggle(on)) => with(world, entity, |v: &mut Vehicle| v.debug = on),
         (Prop::WheelRadius, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.radius = n.max(0.01)),
         (Prop::WheelWidth, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.width = n.max(0.01)),
         (Prop::Suspension, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.suspension = n.max(0.01)),
@@ -4600,6 +4701,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::Handbrake, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.handbrake = n.max(0.0)),
         (Prop::Grip, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.grip = n.max(0.0)),
         (Prop::SideGrip, Value::Number(n)) => with(world, entity, |w: &mut Wheel| w.side_grip = n.max(0.0)),
+        (Prop::WheelFriction, Value::Curve(curve)) => with(world, entity, |w: &mut Wheel| w.friction = curve),
+        (Prop::WheelSideFriction, Value::Curve(curve)) => with(world, entity, |w: &mut Wheel| w.side_friction = curve),
         (Prop::ColliderShape, Value::Choice(index, _)) => with(world, entity, |c: &mut Collider| {
             c.shape = ColliderShape::ALL[index.min(ColliderShape::ALL.len() - 1)];
         }),
@@ -4951,6 +5054,16 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::MapMarker => {
             with(world, entity, |marker: &mut voxear_engine::map::MapMarker| set_marker(marker, prop, value))
+        }
+        (Prop::LocalizedElement, Value::Choice(index, options)) => {
+            let element = options.get(index).filter(|_| index > 0).cloned().unwrap_or_default();
+            with(world, entity, |text: &mut voxear_engine::localized_text::LocalizedText| text.element = element)
+        }
+        (Prop::LocalizedValue(name), Value::Text(value)) => {
+            with(world, entity, |text: &mut voxear_engine::localized_text::LocalizedText| match value.is_empty() {
+                true => drop(text.values.remove(name.as_str())),
+                false => drop(text.values.insert(name.clone(), value)),
+            })
         }
         (Prop::ScreenUiOrder, Value::Whole(order)) => {
             let order = order.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
@@ -5771,6 +5884,36 @@ fn season_key(season: Season) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Localized Text shows its key, its element and a field for each
+    /// value its key's text names; and the vehicle's curves and debug view
+    /// show beside their other settings.
+    #[test]
+    fn a_localized_text_offers_a_field_for_each_value_its_key_names() {
+        use voxear_engine::{localization::Localization, localized_text::LocalizedText};
+        let mut world = World::new();
+        let mut localization = Localization::new(&["en".into()]);
+        let table = "[[entry]]\nkey = \"loot\"\nen = \"{player} found {count, plural, one {# coin} other {# coins}}\"\n";
+        localization.add_table(&voxear_engine::localization::StringTable::parse(table).unwrap());
+        world.insert_resource(localization);
+        let sign = world.spawn_empty();
+        world.insert(sign, LocalizedText { key: "loot".into(), ..LocalizedText::default() });
+        let types = ScriptTypes::default();
+        assert!(parts(&world, sign).contains(&Part::LocalizedText));
+        let shown = props(&world, sign, &Part::LocalizedText, &types);
+        let values = [Prop::LocalizedValue("player".into()), Prop::LocalizedValue("count".into())];
+        assert_eq!(shown, [&[Prop::LocalizedKey, Prop::LocalizedElement][..], &values].concat());
+        assert_eq!(Prop::LocalizedValue("count".into()).lock_key(), "values.count");
+        assert_eq!(label(&Prop::LocalizedValue("player".into())), "Player");
+
+        let car = world.spawn_empty();
+        world.insert(car, Vehicle::default());
+        world.insert(car, Wheel::default());
+        let vehicle = props(&world, car, &Part::Vehicle, &types);
+        assert!(vehicle.ends_with(&[Prop::TorqueCurve, Prop::VehicleDebug]), "{vehicle:?}");
+        let wheel = props(&world, car, &Part::Wheel, &types);
+        assert!(wheel.ends_with(&[Prop::WheelFriction, Prop::WheelSideFriction]), "{wheel:?}");
+    }
 
     /// A gun drawn by a skinned model of two bones, its bolt 4.5 cm up,
     /// with a part under it: the part's Bone menu and the sockets' Put on

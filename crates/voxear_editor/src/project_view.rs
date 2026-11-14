@@ -253,6 +253,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Sound) => "audio",
                 FileKind::Asset(AssetKind::InputActions) => "gamepad",
                 FileKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
+                FileKind::Asset(AssetKind::Font) => "edit",
                 FileKind::Asset(AssetKind::Paths) => "branch",
                 FileKind::Asset(AssetKind::LightProfile) => "light",
                 FileKind::Asset(AssetKind::Shader) => "shader",

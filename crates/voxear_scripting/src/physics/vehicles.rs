@@ -1,11 +1,17 @@
 //! Vehicles and their wheels for C#'s `Vehicle` and `Wheel`: their settings
 //! read and set, what drives a vehicle set each frame, and how it goes
-//! (its speed, rpm and gear) read, by codes from 200 on `physics_value`.
+//! (its speed, rpm and gear) read, by codes from 200 on `physics_value`;
+//! what each wheel touches and how it slips; and their curves as words
+//! through `kind_text` (see [`curve_texts`]).
 
+use voxear_core::curve::Curve;
 use voxear_ecs::{Entity, World};
-use voxear_physics::scene::{Vehicle, VehicleKind, Wheel};
+use voxear_physics::scene::{Vehicle, VehicleKind, Wheel, WheelContact};
 
-use super::{change, flag, number};
+use super::{change, flag, number, vector};
+
+/// Whether every Vehicle draws its debug view, on no Obj.
+pub(super) const DEBUG_VEHICLES: i32 = 199;
 
 pub(super) const VEHICLE_HAS: i32 = 200;
 const VEHICLE_ADD: i32 = 201;
@@ -26,6 +32,7 @@ const VEHICLE_GEARS: i32 = 215;
 const VEHICLE_FIRST_GEAR: i32 = 216;
 const VEHICLE_TOP_GEAR: i32 = 217;
 const VEHICLE_ANTI_ROLL: i32 = 218;
+const VEHICLE_DEBUG: i32 = 219;
 const WHEEL_HAS: i32 = 220;
 const WHEEL_ADD: i32 = 221;
 const WHEEL_REMOVE: i32 = 222;
@@ -40,6 +47,20 @@ const WHEEL_BRAKE: i32 = 230;
 const WHEEL_HANDBRAKE: i32 = 231;
 const WHEEL_GRIP: i32 = 232;
 const WHEEL_SIDE_GRIP: i32 = 233;
+const WHEEL_TOUCHING: i32 = 234;
+const WHEEL_CONTACT_POINT: i32 = 235;
+const WHEEL_CONTACT_NORMAL: i32 = 236;
+const WHEEL_COMPRESSION: i32 = 237;
+const WHEEL_SLIP: i32 = 238;
+const WHEEL_SLIP_ANGLE: i32 = 239;
+const WHEEL_SPIN: i32 = 240;
+
+/// The curves `kind_text` reads, and with [`CHANGE`] added sets, as keys a
+/// line each, where then what.
+const TORQUE_CURVE: i32 = 0;
+const FRICTION: i32 = 1;
+const SIDE_FRICTION: i32 = 2;
+const CHANGE: i32 = 10;
 
 pub(super) fn read(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if what >= WHEEL_HAS {
@@ -67,6 +88,7 @@ pub(super) fn read(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]>
         VEHICLE_FIRST_GEAR => number(vehicle()?.first_gear),
         VEHICLE_TOP_GEAR => number(vehicle()?.top_gear),
         VEHICLE_ANTI_ROLL => number(vehicle()?.anti_roll),
+        VEHICLE_DEBUG => flag(vehicle()?.debug),
         _ => return None,
     })
 }
@@ -86,6 +108,19 @@ fn read_wheel(world: &World, entity: Entity, what: i32) -> Option<[f32; 4]> {
         WHEEL_HANDBRAKE => number(wheel()?.handbrake),
         WHEEL_GRIP => number(wheel()?.grip),
         WHEEL_SIDE_GRIP => number(wheel()?.side_grip),
+        WHEEL_TOUCHING..=WHEEL_SPIN => {
+            wheel()?;
+            let contact = world.get::<WheelContact>(entity).copied().unwrap_or_default();
+            match what {
+                WHEEL_TOUCHING => flag(contact.touching),
+                WHEEL_CONTACT_POINT => vector(contact.point),
+                WHEEL_CONTACT_NORMAL => vector(contact.normal),
+                WHEEL_COMPRESSION => number(contact.compression),
+                WHEEL_SLIP => number(contact.slip),
+                WHEEL_SLIP_ANGLE => number(contact.slip_angle),
+                _ => number(contact.spin),
+            }
+        }
         _ => return None,
     })
 }
@@ -116,6 +151,7 @@ pub(super) fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4
         VEHICLE_FIRST_GEAR => change(world, entity, |v: &mut Vehicle| v.first_gear = n.max(0.1)),
         VEHICLE_TOP_GEAR => change(world, entity, |v: &mut Vehicle| v.top_gear = n.max(0.1)),
         VEHICLE_ANTI_ROLL => change(world, entity, |v: &mut Vehicle| v.anti_roll = n.max(0.0)),
+        VEHICLE_DEBUG => change(world, entity, |v: &mut Vehicle| v.debug = on),
         WHEEL_ADD => {
             if !world.has::<Wheel>(entity) {
                 world.insert(entity, Wheel::default());
@@ -135,5 +171,58 @@ pub(super) fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4
         WHEEL_GRIP => change(world, entity, |w: &mut Wheel| w.grip = n.max(0.0)),
         WHEEL_SIDE_GRIP => change(world, entity, |w: &mut Wheel| w.side_grip = n.max(0.0)),
         _ => false,
+    }
+}
+
+/// Reads a Vehicle's torque curve or a Wheel's friction curves as keys, a
+/// line each of where then what, or with [`CHANGE`] added sets one from
+/// them; `None` when the Obj has no such component, or the words are not
+/// keys.
+pub fn curve_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    if !world.is_alive(entity) {
+        return None;
+    }
+    let (which, setting) = if what >= CHANGE { (what - CHANGE, true) } else { (what, false) };
+    let curve = match which {
+        TORQUE_CURVE => &mut world.get_mut::<Vehicle>(entity)?.torque_curve,
+        FRICTION => &mut world.get_mut::<Wheel>(entity)?.friction,
+        SIDE_FRICTION => &mut world.get_mut::<Wheel>(entity)?.side_friction,
+        _ => return None,
+    };
+    if !setting {
+        let lines: Vec<String> = curve.keys().iter().map(|[at, value]| format!("{at} {value}")).collect();
+        return Some(lines.join("\n"));
+    }
+    *curve = Curve::new(&keys(text)?);
+    Some(String::new())
+}
+
+/// Keys from words, a line each of two numbers.
+fn keys(text: &str) -> Option<Vec<[f32; 2]>> {
+    let key = |line: &str| -> Option<[f32; 2]> {
+        let numbers: Vec<f32> = line.split_whitespace().map(|n| n.parse().ok().filter(|n: &f32| n.is_finite())).collect::<Option<_>>()?;
+        numbers.try_into().ok()
+    };
+    text.lines().filter(|line| !line.trim().is_empty()).map(key).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curves_read_and_set_as_lines_of_keys() {
+        let mut world = World::new();
+        let car = world.spawn_empty();
+        world.insert(car, Vehicle::default());
+        let read = curve_texts(&mut world, car, TORQUE_CURVE, "").unwrap();
+        assert_eq!(read, "0 0.8\n0.66 1\n1 0.8", "Jolt's own engine");
+        assert_eq!(curve_texts(&mut world, car, TORQUE_CURVE + CHANGE, "0 1\n1 0.5\n"), Some(String::new()));
+        assert_eq!(world.get::<Vehicle>(car).unwrap().torque_curve, Curve::new(&[[0.0, 1.0], [1.0, 0.5]]));
+        assert_eq!(curve_texts(&mut world, car, TORQUE_CURVE + CHANGE, "0 one"), None, "not keys");
+        assert_eq!(curve_texts(&mut world, car, FRICTION, ""), None, "a Vehicle has no tyre");
+        world.insert(car, Wheel::default());
+        assert_eq!(curve_texts(&mut world, car, SIDE_FRICTION + CHANGE, "0 0\n0.5 2"), Some(String::new()));
+        assert_eq!(world.get::<Wheel>(car).unwrap().side_friction.at(0.25), Some(1.0));
     }
 }

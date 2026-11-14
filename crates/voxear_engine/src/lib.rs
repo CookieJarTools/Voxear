@@ -65,6 +65,7 @@ pub mod remote_console;
 pub mod saplings;
 pub mod scene_file;
 pub mod screen_ui;
+pub mod localized_text;
 pub mod script_types;
 pub mod scripts;
 pub mod shaders;

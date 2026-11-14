@@ -31,6 +31,7 @@ mod ffi;
 pub mod scene;
 
 use glam::{Quat, Vec3};
+use voxear_core::curve::Curve;
 
 /// A shape, kept by its world until released.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +107,28 @@ pub struct WheelDesc {
     /// How hard the tyre holds, forwards and sideways, as a share of Jolt's
     /// own tyre: 1 as it is, 2 twice as hard.
     pub grip: (f32, f32),
+    /// The tyre's friction against how much it slips: forwards against the
+    /// slip ratio from 0 (rolling) to 1 (locked or spinning), and sideways
+    /// against the slip angle from 0 to 90 degrees, as 0 to 1. Empty keeps
+    /// Jolt's own; `grip` scales either.
+    pub friction: (Curve, Curve),
+}
+
+/// What a vehicle's wheel touches and how it slips, after the last step:
+/// the point and the ground's normal there, in the world; how long its
+/// suspension is now, in metres; its slip ratio forwards and its slip
+/// angle sideways in degrees; the suspension's push over the step, in
+/// newton-seconds; and how fast it spins, in radians a second.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WheelContact {
+    pub touching: bool,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub suspension: f32,
+    pub slip: f32,
+    pub slip_angle: f32,
+    pub load: f32,
+    pub spin: f32,
 }
 
 /// A vehicle: what drives it, its engine's most torque in Nm and its range
@@ -124,6 +147,9 @@ pub struct VehicleDesc {
     pub wheels: Vec<WheelDesc>,
     pub gears: (u32, f32, f32),
     pub anti_roll: f32,
+    /// The engine's torque, as a share of `max_torque`, against its
+    /// revolutions as a share of the most; empty keeps Jolt's own.
+    pub torque_curve: Curve,
 }
 
 /// How a vehicle is going: its engine's revolutions a minute, its gear (-1
@@ -698,6 +724,10 @@ impl PhysicsWorld {
                 powered: u32::from(wheel.powered),
                 grip: wheel.grip.0,
                 side_grip: wheel.grip.1,
+                friction: points(&wheel.friction.0).0,
+                friction_count: points(&wheel.friction.0).1,
+                side_friction: points(&wheel.friction.1).0,
+                side_friction_count: points(&wheel.friction.1).1,
             })
             .collect();
         let kind = match desc.kind {
@@ -718,6 +748,8 @@ impl PhysicsWorld {
             first_gear: desc.gears.1,
             top_gear: desc.gears.2,
             anti_roll: desc.anti_roll,
+            torque: points(&desc.torque_curve).0,
+            torque_count: points(&desc.torque_curve).1,
         };
         let vehicle = unsafe { ffi::vx_vehicle_add(self.world, body.0, &raw) };
         (vehicle != 0).then_some(VehicleId(vehicle))
@@ -753,6 +785,32 @@ impl PhysicsWorld {
         };
         (Vec3::from(position), Quat::from_array(rotation))
     }
+
+    /// What a vehicle's wheel touches and how it slips, after the last step.
+    pub fn vehicle_contact(&self, vehicle: VehicleId, wheel: usize) -> WheelContact {
+        let mut raw = ffi::VxWheelContact::default();
+        unsafe { ffi::vx_vehicle_contact(self.world, vehicle.0, wheel as u32, &mut raw) };
+        WheelContact {
+            touching: raw.touching != 0,
+            point: Vec3::from(raw.point),
+            normal: Vec3::from(raw.normal),
+            suspension: raw.suspension,
+            slip: raw.slip,
+            slip_angle: raw.slip_angle,
+            load: raw.load,
+            spin: raw.spin,
+        }
+    }
+}
+
+/// A curve's keys as the shim takes them: `[where, what]` pairs one after
+/// another, and how many.
+fn points(curve: &Curve) -> ([f32; 16], u32) {
+    let mut flat = [0.0; 16];
+    for (at, key) in curve.keys().iter().enumerate() {
+        flat[at * 2..at * 2 + 2].copy_from_slice(key);
+    }
+    (flat, curve.keys().len() as u32)
 }
 
 #[cfg(test)]
@@ -802,6 +860,7 @@ mod tests {
             handbrake: if z < 0.0 { 4000.0 } else { 0.0 },
             powered: true,
             grip: (1.0, 1.0),
+            friction: (Curve::default(), Curve::default()),
         };
         let wheels = match kind {
             VehicleType::Tank => vec![wheel(-1.2, 0.9), wheel(1.2, 0.9), wheel(-1.2, -0.9), wheel(1.2, -0.9)],
@@ -816,6 +875,7 @@ mod tests {
             wheels,
             gears: (5, 2.66, 0.74),
             anti_roll: 1000.0,
+            torque_curve: Curve::default(),
         };
         tune(&mut desc);
         (body, world.add_vehicle(body, &desc).expect("a vehicle"))
@@ -876,6 +936,49 @@ mod tests {
             desc.gears = (1, 3.0, 3.0);
         });
         assert_eq!(only, 1, "a box of one gear stays in it");
+    }
+
+    #[test]
+    fn curves_shape_the_engine_and_the_tyres() {
+        // Its speed after three seconds flat out.
+        let race = |tune: &dyn Fn(&mut VehicleDesc)| {
+            let mut world = PhysicsWorld::new(1024);
+            let (_, car) = tuned_vehicle(&mut world, VehicleType::Car, tune);
+            drive(&mut world, car, 0.0, 0.0, 1.0);
+            drive(&mut world, car, 1.0, 0.0, 3.0);
+            world.vehicle_state(car).speed
+        };
+        let plain = race(&|_| {});
+        let jolts_own = Curve::new(&[[0.0, 0.8], [0.66, 1.0], [1.0, 0.8]]);
+        let same = race(&|desc| desc.torque_curve = jolts_own);
+        assert!((same - plain).abs() < 0.05, "Jolt's own curve, given, goes as none: {same} against {plain}");
+        let weak = race(&|desc| desc.torque_curve = Curve::flat(0.2));
+        assert!(weak < plain * 0.8, "a fifth of the torque pulls away slower: {weak} against {plain}");
+        let icy = race(&|desc| {
+            let ice = Curve::flat(0.05);
+            desc.wheels.iter_mut().for_each(|wheel| wheel.friction = (ice, ice));
+        });
+        assert!(icy < plain * 0.5, "tyres that hardly hold spin: {icy} against {plain}");
+    }
+
+    #[test]
+    fn a_wheel_tells_what_it_touches_and_how_it_slips() {
+        let mut world = PhysicsWorld::new(1024);
+        let (_, car) = vehicle(&mut world, VehicleType::Car);
+        drive(&mut world, car, 0.0, 0.0, 1.0);
+        let resting = world.vehicle_contact(car, 0);
+        assert!(resting.touching && resting.normal.y > 0.95, "on the ground: {resting:?}");
+        assert!(resting.point.y.abs() < 0.05 && resting.suspension > 0.0, "the ground's top is at 0: {resting:?}");
+        assert!(resting.slip.abs() < 0.05 && resting.load > 0.0, "standing, it does not slip: {resting:?}");
+        let mut most = 0.0f32;
+        for _ in 0..30 {
+            world.drive_vehicle(car, 1.0, 0.0, 0.0, 0.0);
+            world.step(1.0 / 60.0, 1);
+            most = most.max(world.vehicle_contact(car, 0).slip);
+        }
+        assert!(most > 0.05, "flat out from a stand the tyres spin: {most}");
+        assert!(world.vehicle_contact(car, 0).spin.abs() > 1.0, "and turn");
+        assert!(!world.vehicle_contact(car, 9).touching, "no such wheel touches nothing");
     }
 
     #[test]

@@ -324,6 +324,9 @@ pub struct Editor {
     script_handles: ScriptHandles,
     /// The Obj under the pointer in the Scene view in use, for gizmos.
     hovered_obj: Option<Entity>,
+    /// Whether the Gizmos menu's Vehicle Debug was on when last given to
+    /// the playing game.
+    vehicle_debug_shown: bool,
     /// Behaviours' gizmo lines, each with its Obj, for a click to select.
     gizmo_lines: scene_gizmos::GizmoLines,
     /// What the Heat shading has looked at.
@@ -677,6 +680,7 @@ impl Editor {
             field_drag_start: None,
             script_handles: ScriptHandles::default(),
             hovered_obj: None,
+            vehicle_debug_shown: false,
             gizmo_lines: Default::default(),
             heat_view: Default::default(),
             hovered_handle: None,
@@ -762,6 +766,7 @@ impl Editor {
             link: Default::default(),
             layout_checked: Instant::now(),
         };
+        editor.show_language_fonts();
         editor.restore_layout();
         Ok(editor)
     }
@@ -1223,6 +1228,7 @@ impl Editor {
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
                 self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
+                self.game.load_fonts();
                 self.game.load_strings();
                 // A shader may have come or gone, which numbers the rest afresh.
                 self.game.apply_custom_shaders(renderer);
@@ -2756,6 +2762,9 @@ impl Editor {
                 (PickFor::PlantRef { plant, field }, Chosen::Value(pick)) => self.pick_plant_ref(&plant, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
+                (PickFor::LanguageFont { language, at }, Chosen::Value(pick)) => {
+                    self.pick_language_font(&language, at, &pick);
+                }
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }

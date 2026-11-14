@@ -12,6 +12,8 @@
 
 mod vehicles;
 
+pub use vehicles::curve_texts as vehicle_curve_texts;
+
 use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::{
@@ -291,6 +293,10 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     if what == GRAVITY_2D {
         return Some(flat(world.resource::<PhysicsScene2D>().map_or(Vec2::new(0.0, -9.81), |s| s.gravity())));
     }
+    if what == vehicles::DEBUG_VEHICLES {
+        let every = world.resource::<voxear_physics::scene::VehicleDebug>().is_some_and(|debug| debug.0);
+        return Some(flag(every));
+    }
     if !world.is_alive(entity) {
         return None;
     }
@@ -505,6 +511,10 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
     }
     if what == GRAVITY_2D {
         with_scene_2d(world, |_, scene| scene.set_gravity(Vec2::new(value[0], value[1])));
+        return true;
+    }
+    if what == vehicles::DEBUG_VEHICLES {
+        world.insert_resource(voxear_physics::scene::VehicleDebug(value[0] != 0.0));
         return true;
     }
     if !world.is_alive(entity) {

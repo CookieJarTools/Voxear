@@ -803,6 +803,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "Rigidbody" => |world, entity| world.has::<Rigidbody>(entity),
         "Rigidbody2D" => |world, entity| world.has::<Rigidbody2D>(entity),
         "ScreenUi" => |world, entity| world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
+        "LocalizedText" => |world, entity| world.has::<voxear_engine::localized_text::LocalizedText>(entity),
         "Smoke" => |world, entity| world.has::<voxear_render::Smoke>(entity),
         "UiPanel" => |world, entity| world.has::<voxear_render::UiPanel>(entity),
         "Vehicle" => |world, entity| world.has::<Vehicle>(entity),

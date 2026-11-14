@@ -486,7 +486,8 @@ impl Surface {
     /// Shows each element bound to a key that key's text in the game's
     /// language: every one when the language or the text changed since the
     /// last call, or any bound since. The UI is laid out right to left when
-    /// the language reads that way.
+    /// the language reads that way, and its text falls back to the fonts
+    /// the language names.
     pub fn follow_language(&mut self, localization: Option<&Localization>) {
         let Some(localization) = localization else { return };
         let added = self.ui.take_text_keys_added();
@@ -495,6 +496,9 @@ impl Surface {
         }
         self.language = Some(localization.version());
         self.ui.set_right_to_left(voxear_localization::is_right_to_left(localization.language()));
+        // The fonts the language names draw the letters the styles' own fonts have not got.
+        let faces: Vec<voxear_ui::fonts::FontFace> = localization.fonts().into_iter().map(voxear_ui::fonts::face).collect();
+        self.ui.set_language_fonts(&faces);
         for (node, key) in self.ui.text_keys() {
             self.ui.set_text(node, &localization.text(&key));
         }
@@ -813,6 +817,21 @@ impl GameUi {
     /// The element named `name` in a document, as a number scripts hold.
     pub fn find(&mut self, document: u32, name: &str) -> Option<u32> {
         self.surface(document)?.find(document, name)
+    }
+
+    /// A document's first label, in the order written, as a number scripts
+    /// hold.
+    pub fn first_label(&mut self, document: u32) -> Option<u32> {
+        let surface = self.surface(document)?;
+        let root = surface.numbers.root(document)?;
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if surface.ui.kind(node) == Some(voxear_ui::Kind::Label) {
+                return Some(surface.numbers.number(node));
+            }
+            stack.extend(surface.ui.children(node).into_iter().rev());
+        }
+        None
     }
 
     /// Makes an element at the end of `parent`: see [`UiNumbers::create`].

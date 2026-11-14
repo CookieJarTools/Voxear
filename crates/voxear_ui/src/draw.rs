@@ -41,6 +41,7 @@ pub(crate) fn measure(
     fonts: &mut FontContext,
     layouts: &mut LayoutContext<u16>,
     (scale, whole_pixels): (f32, bool),
+    stack: &crate::fonts::FontStack,
 ) -> LayoutOutput {
     let Some(element) = element else {
         return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
@@ -64,7 +65,7 @@ pub(crate) fn measure(
                     AvailableSpace::Definite(width) => Some(width),
                     _ => None,
                 });
-                edit.sync(text_style, (scale, whole_pixels), width.map(|w| w * scale));
+                edit.sync(text_style, (scale, whole_pixels), width.map(|w| w * scale), stack);
                 let height = edit.editor.layout(fonts, layouts).height() / scale;
                 // Like CSS's inputs: a set width when there is room, but able to shrink.
                 let natural = if available.width == AvailableSpace::MinContent { FIELD_MIN_WIDTH } else { FIELD_WIDTH };
@@ -90,7 +91,7 @@ pub(crate) fn measure(
                 AvailableSpace::MinContent => Some(0.0),
                 AvailableSpace::MaxContent => None,
             };
-            let layout = text.shaped(fonts, layouts, (scale, whole_pixels));
+            let layout = text.shaped(fonts, layouts, (scale, whole_pixels), stack);
             layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
                 width: known.width.unwrap_or(layout.width() / scale),

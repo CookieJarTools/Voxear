@@ -633,6 +633,10 @@ pub enum ComponentKind {
     /// An opening onto the place another Portal stands in, and the Objs
     /// that went through any.
     Portal = 25,
+    /// A Vehicle's torque curve and its Wheels' friction curves, as words.
+    Vehicle = 26,
+    /// Text in the world or on a document shown from a string table's key.
+    LocalizedText = 27,
 }
 
 /// The most kinds `kind_value` answers.

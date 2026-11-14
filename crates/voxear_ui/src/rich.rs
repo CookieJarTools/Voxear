@@ -111,7 +111,12 @@ impl From<&str> for RichText {
 /// Gives each span its style while shaping. Each gets its own brush, its
 /// index plus one, so the runs split at every span and drawing can tell
 /// which span a run belongs to.
-pub(crate) fn push_spans(builder: &mut RangedBuilder<'_, u16>, spans: &[Span], style: &TextStyle) {
+pub(crate) fn push_spans(
+    builder: &mut RangedBuilder<'_, u16>,
+    spans: &[Span],
+    style: &TextStyle,
+    stack: &crate::fonts::FontStack,
+) {
     for (index, span) in spans.iter().enumerate() {
         let range = span.range.clone();
         builder.push(StyleProperty::Brush(index as u16 + 1), range.clone());
@@ -123,7 +128,7 @@ pub(crate) fn push_spans(builder: &mut RangedBuilder<'_, u16>, spans: &[Span], s
             builder.push(StyleProperty::FontStyle(FontStyle::Italic), range.clone());
         }
         if marks.code {
-            builder.push(StyleProperty::FontFamily(crate::Family::Mono.source().into()), range.clone());
+            builder.push(StyleProperty::FontFamily(stack.families(crate::Family::Mono)), range.clone());
             builder.push(StyleProperty::FontSize(style.size * 0.92), range.clone());
         }
         if marks.strike {

@@ -19,7 +19,7 @@
 //! (`visible`, `hidden`, or `scroll`/`auto`), `scrollbar-color`, and for
 //! text fields `selection-color` and `caret-color`. Text,
 //! which children inherit: `color`, `font-size`, `font-weight`,
-//! `font-family` (`sans` or `mono`), `line-height` (`16px` or `normal`),
+//! `font-family` (`sans`, `mono`, or a project's font, `url("Fonts/Title.ttf")`), `line-height` (`16px` or `normal`),
 //! `text-align`, `white-space` (`normal`, or `nowrap` to keep a line
 //! whole), `direction` (`ltr`, or `rtl` to lay out right to left, as a
 //! key map keeps `ltr` in a right-to-left game), and for rich text `link-color`, `code-background` and
@@ -257,15 +257,7 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
             ];
             text.align = keyword(input, &aligns)?;
         }
-        "font-family" => {
-            let families = [
-                ("sans", Family::Sans),
-                ("sans-serif", Family::Sans),
-                ("mono", Family::Mono),
-                ("monospace", Family::Mono),
-            ];
-            text.family = keyword(input, &families)?;
-        }
+        "font-family" => text.family = font_family(input)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -426,6 +418,20 @@ fn backdrop(input: &mut Parser) -> Parsed<f32> {
             cssparser::ParseErrorKind::Custom(message) => message,
             _ => "expected blur(16px)".to_string(),
         })
+}
+
+/// `font-family: sans` or `mono`, Voxear's own faces, or one of the
+/// project's fonts by path or GUID, `url("Fonts/Title.ttf")` (see
+/// [`crate::fonts`]).
+fn font_family(input: &mut Parser) -> Parsed<Family> {
+    let families = [("sans", Family::Sans), ("sans-serif", Family::Sans), ("mono", Family::Mono), ("monospace", Family::Mono)];
+    if let Ok(family) = input.try_parse(|input| keyword(input, &families)) {
+        return Ok(family);
+    }
+    match shader(input)? {
+        Some(reference) => Ok(Family::Face(crate::fonts::face(&reference))),
+        None => Ok(Family::Sans),
+    }
 }
 
 /// `shader: shimmer`, a built-in effect, `shader: url("Shaders/Glow.shader")`,
@@ -704,6 +710,8 @@ mod tests {
         assert_eq!(text.weight, 600.0);
         let (_, text) = applied("font-family", "mono").unwrap();
         assert_eq!(text.family, Family::Mono);
+        let (_, text) = applied("font-family", "url(\"Fonts/Title.ttf\")").unwrap();
+        assert_eq!(text.family, Family::Face(crate::fonts::face("Fonts/Title.ttf")), "a project's font, by path");
         let (_, text) = applied("line-height", "16px").unwrap();
         assert_eq!(text.line_height, 16.0);
     }

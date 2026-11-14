@@ -252,6 +252,10 @@ impl Editor {
         // are, with every change.
         let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
+        let fonts = changed.iter().any(|path| {
+            let lower = path.to_ascii_lowercase();
+            lower.ends_with(".ttf") || lower.ends_with(".otf")
+        });
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
         let looks = changed.iter().any(|path| path.ends_with(".lookpack"));
         let texture_packs = changed.iter().any(|path| path.ends_with(".texturepack"));
@@ -290,6 +294,9 @@ impl Editor {
         if came_or_went {
             self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         } else {
+            if fonts {
+                self.game.load_fonts();
+            }
             if tables {
                 self.game.content.forget_kind(voxear_assets::AssetKind::Strings);
                 self.game.content.forget_kind(voxear_assets::AssetKind::AssetTable);

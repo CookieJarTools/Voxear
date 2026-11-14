@@ -43,6 +43,7 @@ mod dock;
 mod drag;
 mod draw;
 mod fields;
+pub mod fonts;
 mod icons;
 mod input;
 mod keymap;

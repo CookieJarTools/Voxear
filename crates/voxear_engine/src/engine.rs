@@ -83,6 +83,7 @@ impl Engine {
         crate::portals::register();
         crate::ui_panels::register();
         crate::screen_ui::register();
+        crate::localized_text::register();
         crate::map::register();
         crate::heat::scripts::register();
         crate::storms::scripts::register();
@@ -97,6 +98,7 @@ impl Engine {
         crate::animation::register_bone_attachments();
         crate::animation::register_mob_motion();
         crate::block_mob::register();
+        voxear_scripting::set_kind_texts(voxear_scripting::ComponentKind::Vehicle, voxear_scripting::vehicle_curve_texts);
         let mut world = World::new();
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
@@ -612,6 +614,8 @@ impl Engine {
         // Where each Obj is shown, for what the frame's scripts move from there.
         if !self.edit_mode {
             crate::portals::look(&mut self.world);
+            // Vehicles asked to show how their wheels touch, slip and ride, as the last step left them.
+            voxear_physics::scene::draw_vehicle_debug(&self.world);
         }
 
         {

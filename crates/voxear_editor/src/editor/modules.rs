@@ -1,12 +1,19 @@
 //! Project Settings: switching the project's modules on and off, its
-//! quality settings, its floating origin and its block worlds' budget. Each
-//! choice is written into `voxear.toml` at once; a module, a quality setting
-//! and the budget are put into effect at once, the floating origin the next
-//! time the game plays.
+//! quality settings, its floating origin, its block worlds' budget and its
+//! languages' fonts. Each choice is written into `voxear.toml` at once; a
+//! module, a quality setting, the budget and the fonts are put into effect
+//! at once, the floating origin the next time the game plays.
 
+use voxear_assets::AssetKind;
 use voxear_engine::modules::Module;
+use voxear_ui::NodeId;
 
 use super::Editor;
+use crate::{
+    fields::{self, Pick},
+    object_picker::{self, PickFor},
+    project_settings::FontAction,
+};
 
 impl Editor {
     pub(super) fn update_modules(&mut self) {
@@ -28,6 +35,82 @@ impl Editor {
         if let Some(module) = self.inspector.module_wanted(&self.ui) {
             self.set_module(module, true);
         }
+        match self.project_settings.font_action(&self.ui) {
+            Some(FontAction::Pick { language, at, anchor }) => self.browse_language_font(&language, at, anchor),
+            Some(FontAction::Remove { language, at }) => {
+                let mut fonts = self.language_fonts(&language);
+                if at < fonts.len() {
+                    fonts.remove(at);
+                    self.set_language_fonts(&language, &fonts);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The fonts a language's text falls back to, by GUID or path, in order.
+    fn language_fonts(&self, language: &str) -> Vec<String> {
+        self.game.project.file.localization.fonts.get(language).cloned().unwrap_or_default()
+    }
+
+    /// Sets the fonts a language's text falls back to, by GUID or path, in
+    /// order, saved in `voxear.toml` and drawn in at once.
+    pub fn set_language_fonts(&mut self, language: &str, fonts: &[String]) {
+        if let Err(error) = self.game.project.set_language_fonts(language, fonts) {
+            return self.notify(&format!("Could not save the fonts: {error:#}"));
+        }
+        self.files_seen();
+        self.game.load_strings();
+        self.show_language_fonts();
+    }
+
+    /// Shows each of the project's languages with its fonts on the
+    /// Localization tab of Project Settings, each by its file's name.
+    pub(super) fn show_language_fonts(&mut self) {
+        let localization = &self.game.project.file.localization;
+        let mut languages = localization.languages.clone();
+        if languages.is_empty() {
+            languages.push("en".to_string());
+        }
+        // A language with fonts that is no longer listed still shows, so its fonts can be taken out.
+        languages.extend(localization.fonts.keys().filter(|code| !localization.languages.contains(code)).cloned());
+        let db = self.game.content.db();
+        let name = |reference: &String| {
+            let path = reference.parse().ok().and_then(|guid| db.get(guid)).map(|entry| entry.path.clone());
+            let path = path.unwrap_or_else(|| reference.clone());
+            path.rsplit('/').next().unwrap_or(&path).to_string()
+        };
+        let rows: Vec<(String, Vec<String>)> = languages
+            .into_iter()
+            .map(|code| {
+                let fonts = localization.fonts.get(&code).map(|fonts| fonts.iter().map(name).collect());
+                (code, fonts.unwrap_or_default())
+            })
+            .collect();
+        self.project_settings.show_language_fonts(&mut self.ui, &rows);
+    }
+
+    /// Opens the object picker under `anchor` for a language's font, in
+    /// place of the one at `at`, or to add.
+    fn browse_language_font(&mut self, language: &str, at: Option<usize>, anchor: NodeId) {
+        let choices = object_picker::decorate(&self.game, fields::assets_of(&self.game, Some(AssetKind::Font)));
+        let target = PickFor::LanguageFont { language: language.to_string(), at };
+        self.picker.open(&mut self.ui, (target, anchor), "Select Font", choices, "");
+    }
+
+    /// Puts the font picked among a language's, by its GUID: in place of
+    /// the one at `at`, or after the rest; None takes the one at `at` out.
+    pub(super) fn pick_language_font(&mut self, language: &str, at: Option<usize>, pick: &Pick) {
+        let Pick::Asset(choice) = pick else { return };
+        let guid = choice.as_deref().and_then(|path| self.game.content.db().guid_of(path)).map(|guid| guid.to_string());
+        let mut fonts = self.language_fonts(language);
+        match (guid, at) {
+            (Some(guid), Some(at)) if at < fonts.len() => fonts[at] = guid,
+            (Some(guid), _) if !fonts.contains(&guid) => fonts.push(guid),
+            (None, Some(at)) if at < fonts.len() => drop(fonts.remove(at)),
+            _ => return,
+        }
+        self.set_language_fonts(language, &fonts);
     }
 
     /// Sets when and how far the world's middle moves with the camera while

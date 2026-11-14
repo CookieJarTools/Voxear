@@ -128,6 +128,8 @@ pub enum PickFor {
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.
     InputPromptIcons,
+    /// A font of a language's, in place of the one at `at`, or added.
+    LanguageFont { language: String, at: Option<usize> },
     /// The graph open in the Generator panel, for a node to add to it.
     GraphNode,
     /// The graph open in the VoxShade panel, for a node to add to it.
@@ -558,6 +560,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Sound) => "audio",
         Some(AssetKind::InputActions) => "gamepad",
         Some(AssetKind::Strings | AssetKind::AssetTable) => "globe",
+        Some(AssetKind::Font) => "edit",
         Some(AssetKind::Paths) => "branch",
         Some(AssetKind::LightProfile) => "light",
         Some(AssetKind::Shader) => "shader",

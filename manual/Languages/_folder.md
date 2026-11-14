@@ -6,3 +6,5 @@ Your game's text can be in several languages, and players see it in theirs. Each
 
 1. [[Translating Your Game]]: your project's languages, string tables, and text from scripts
 2. [[Localized UI Text]]: elements built in code that show keys' text, with typed keys such as `Strings.Menu.Play`
+3. [[Localized Text]]: a component that shows a key's text on a UI Panel in the world or a Screen UI, with no script
+4. [[Fonts]]: fonts of your own, in style sheets and for each language's letters

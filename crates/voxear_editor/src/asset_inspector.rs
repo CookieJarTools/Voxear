@@ -632,6 +632,7 @@ impl AssetView {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
             }
+            ItemKind::Asset(AssetKind::Font) => font_sample(ui, root, game, &item.path),
             ItemKind::Asset(AssetKind::Strings) => {
                 let read = std::fs::read_to_string(&file).map_err(anyhow::Error::from);
                 match read.and_then(|text| StringTable::parse(&text)) {
@@ -1209,6 +1210,31 @@ fn box_model_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     text_row(ui, rows, "Boxes", &boxes.to_string());
 }
 
+/// A font's languages, those whose text falls back to it, and lines in
+/// it, as the game draws them.
+fn font_sample(ui: &mut Ui, root: NodeId, game: &Game, path: &str) {
+    let guid = game.content.db().guid_of(path).map(|guid| guid.to_string()).unwrap_or_default();
+    let fonts = &game.project.file.localization.fonts;
+    let languages: Vec<&str> = (fonts.iter())
+        .filter(|(_, faces)| faces.iter().any(|face| *face == guid || face == path))
+        .map(|(language, _)| language.as_str())
+        .collect();
+    let rows = part(ui, root, "Font", "edit");
+    let face = voxear_ui::fonts::face(path);
+    text_row(ui, rows, "Read", if face.is_loaded() { "Yes" } else { "No" });
+    text_row(ui, rows, "Languages", &if languages.is_empty() { "None".to_string() } else { languages.join(", ") });
+    let sample = ui.panel(root, Style::column());
+    ui.add_class(sample, "font-sample");
+    let sheet = format!(
+        ".font-sample > Label {{ font-family: url(\"{path}\"); font-size: 22px; padding: 4px 12px; }}\n\
+         .font-sample > Label.small {{ font-size: 14px; }}"
+    );
+    ui.add_sheet(sample, voxear_ui::StyleSheet::parse("Font.vss", &sheet));
+    ui.add_label(sample, "The quick brown fox jumps over the lazy dog");
+    let small = ui.add_label(sample, "ABCDEFGHIJKLM nopqrstuvwxyz 0123456789 ?!&@");
+    ui.add_class(small, "small");
+}
+
 fn text_row(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {
     let row = prop(ui, rows, label);
     let value = ui.add_label(row, value);
@@ -1764,6 +1790,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Sound) => "Sound",
         ItemKind::Asset(AssetKind::InputActions) => "Input actions",
         ItemKind::Asset(AssetKind::Strings) => "String table",
+        ItemKind::Asset(AssetKind::Font) => "Font",
         ItemKind::Asset(AssetKind::AssetTable) => "Asset table",
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
@@ -1803,6 +1830,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::InputActions) => "gamepad",
         ItemKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         ItemKind::Asset(AssetKind::Paths) => "branch",
+        ItemKind::Asset(AssetKind::Font) => "edit",
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::LookPack) => "eye",

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 
 namespace Voxear;
@@ -99,6 +100,23 @@ public readonly struct Curve : IEquatable<Curve>
 			hash.Add(key);
 		}
 		return hash.ToHashCode();
+	}
+
+	/// <summary>Its keys as the engine reads them in words: a line each, where then what.</summary>
+	internal string ToWords()
+	{
+		return string.Join('\n', Keys.ToArray().Select(key => string.Create(CultureInfo.InvariantCulture, $"{key.Time} {key.Value}")));
+	}
+
+	/// <summary>A curve from keys in words, a line each; lines that are not two numbers are left out.</summary>
+	internal static Curve FromWords(string? words)
+	{
+		var keys = (words ?? string.Empty)
+			.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+			.Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+			.Where(numbers => numbers.Length == 2)
+			.Select(numbers => (float.Parse(numbers[0], CultureInfo.InvariantCulture), float.Parse(numbers[1], CultureInfo.InvariantCulture)));
+		return new Curve([.. keys]);
 	}
 
 	public override string ToString()

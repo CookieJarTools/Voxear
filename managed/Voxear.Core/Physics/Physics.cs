@@ -28,6 +28,16 @@ public static class Physics
 	}
 
 	/// <summary>
+	/// Whether every Vehicle's debug view is drawn while the game plays, as the editor's Gizmos menu draws it: each
+	/// wheel's suspension, contact and slip. A Vehicle's ShowDebug draws its own alone.
+	/// </summary>
+	public static bool DebugVehicles
+	{
+		get { return NativePhysics.Flag(Obj.None, NativePhysics.DebugVehicles); }
+		set { NativePhysics.Set(Obj.None, NativePhysics.DebugVehicles, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>
 	/// Which way and how hard things fall at a point: Gravity, the same everywhere.
 	/// <code>
 	/// falling += Physics.GravityAt(Obj.WorldPosition) * Time.Delta;

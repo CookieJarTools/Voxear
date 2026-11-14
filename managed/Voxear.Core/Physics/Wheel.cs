@@ -14,6 +14,12 @@ public readonly struct Wheel : IEquatable<Wheel>, IObjComponent
 {
 	public static readonly Wheel None = default;
 
+	/// <summary>An ordinary tyre's friction forwards against its slip ratio: most at 0.06, a little less once it slides.</summary>
+	public static readonly Curve DefaultFriction = new((0f, 0f), (0.06f, 1.2f), (0.2f, 1f));
+
+	/// <summary>And sideways against its slip angle, 0 to 90 degrees as 0 to 1: most at 3 degrees, a little less from 20.</summary>
+	public static readonly Curve DefaultSideFriction = new((0f, 0f), (3f / 90f, 1.2f), (20f / 90f, 1f));
+
 	internal Wheel(Obj obj)
 	{
 		Obj = obj;
@@ -110,6 +116,48 @@ public readonly struct Wheel : IEquatable<Wheel>, IObjComponent
 		set { Set(NativePhysics.WheelSideGrip, value); }
 	}
 
+	/// <summary>
+	/// How hard its tyre holds forwards, against its slip ratio: 0 rolling with the ground, 1 locked or spinning in
+	/// place. DefaultFriction to start with; Grip scales it.
+	/// <code>
+	/// // A tyre that holds on, then lets go all at once.
+	/// wheel.Friction = new Curve((0f, 0f), (0.1f, 1.4f), (0.15f, 0.6f));
+	/// </code>
+	/// </summary>
+	public Curve Friction
+	{
+		get { return ReadCurve(NativePhysics.FrictionCurve, DefaultFriction); }
+		set { Tell(NativePhysics.FrictionCurve, value); }
+	}
+
+	/// <summary>How hard its tyre holds sideways, against its slip angle from 0 to 90 degrees as 0 to 1; SideGrip scales it.</summary>
+	public Curve SideFriction
+	{
+		get { return ReadCurve(NativePhysics.SideFrictionCurve, DefaultSideFriction); }
+		set { Tell(NativePhysics.SideFrictionCurve, value); }
+	}
+
+	/// <summary>Whether its tyre touches the ground, after the last physics step.</summary>
+	public bool IsGrounded => NativePhysics.Flag(Obj, NativePhysics.WheelTouching);
+
+	/// <summary>Where its tyre touches the ground, in the world, while IsGrounded: where a skid mark goes.</summary>
+	public Vector3 ContactPoint => NativePhysics.Vector(Obj, NativePhysics.WheelContactPoint, Vector3.Zero);
+
+	/// <summary>Which way the ground faces where its tyre touches it.</summary>
+	public Vector3 ContactNormal => NativePhysics.Vector(Obj, NativePhysics.WheelContactNormal, Vector3.UnitY);
+
+	/// <summary>How far its suspension is pressed in, from 0 hanging to 1 against its stop.</summary>
+	public float Compression => NativePhysics.Number(Obj, NativePhysics.WheelCompression, 0f);
+
+	/// <summary>How much its tyre slips forwards: 0 rolling with the ground, 1 locked or spinning in place.</summary>
+	public float Slip => NativePhysics.Number(Obj, NativePhysics.WheelSlip, 0f);
+
+	/// <summary>How far its tyre slides sideways, as the angle between where it rolls and where it goes, in degrees.</summary>
+	public float SlipAngle => NativePhysics.Number(Obj, NativePhysics.WheelSlipAngle, 0f);
+
+	/// <summary>How fast it spins, in radians a second.</summary>
+	public float Spin => NativePhysics.Number(Obj, NativePhysics.WheelSpin, 0f);
+
 	public void Remove()
 	{
 		NativePhysics.Set(Obj, NativePhysics.WheelRemove, Vector4.Zero);
@@ -143,6 +191,19 @@ public readonly struct Wheel : IEquatable<Wheel>, IObjComponent
 	public override string ToString()
 	{
 		return $"{Obj}'s Wheel";
+	}
+
+	private Curve ReadCurve(int which, Curve missing)
+	{
+		return Native.IsConnected ? Curve.FromWords(NativeComponent.Text(NativeComponent.Vehicle, Obj, which)) : missing;
+	}
+
+	private void Tell(int which, Curve curve)
+	{
+		if (!NativeComponent.Tell(NativeComponent.Vehicle, Obj, which + NativePhysics.CurveChange, curve.ToWords()) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Wheel; give it one with AddWheel.");
+		}
 	}
 
 	private void Set(int what, float value)

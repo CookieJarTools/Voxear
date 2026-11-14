@@ -219,6 +219,7 @@ pub fn put(
     set::<crate::screen_ui::ScreenUi>(world, entity, obj.screen_ui);
     set::<crate::map::Map>(world, entity, obj.map);
     set::<crate::map::MapMarker>(world, entity, obj.map_marker);
+    set::<crate::localized_text::LocalizedText>(world, entity, obj.localized_text);
     set::<crate::heat::Climate>(world, entity, obj.climate);
     set::<crate::storms::StormRules>(world, entity, obj.storms);
     set::<crate::heat::HeatSource>(world, entity, obj.heat_source);

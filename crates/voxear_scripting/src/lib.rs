@@ -48,7 +48,7 @@ pub use interop::{
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
-pub use physics::{ParticleHitData, PhysicsEventData};
+pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};
 pub use hostfxr::{DotnetInstall, find_dotnet};

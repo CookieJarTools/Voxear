@@ -88,3 +88,49 @@ bindings = ["Keyboard/Enter", "Gamepad/South"]
 name = "Cancel"
 id = "47caec6f8cec231b0c32acef53046515"
 bindings = ["Keyboard/Escape", "Gamepad/East"]
+
+# Driving a Vehicle: on while the player drives, which turns Player and UI
+# off. `Vehicle.DriveWithInput()` reads Throttle, Brake, Steer and
+# Handbrake; Brake reverses once stopped. Look shares its name with
+# Player's, so it is read as "Driving/Look".
+[[map]]
+name = "Driving"
+excludes = ["Player", "UI"]
+
+[[map.action]]
+name = "Throttle"
+id = "dfbcd3c932f0bb08f710b5fafb720d0d"
+type = "value"
+bindings = ["Keyboard/W", "Keyboard/ArrowUp", "Gamepad/RightTrigger"]
+
+[[map.action]]
+name = "Brake"
+id = "d77db668369b881f415d00cc50f45bc4"
+type = "value"
+bindings = ["Keyboard/S", "Keyboard/ArrowDown", "Gamepad/LeftTrigger"]
+
+[[map.action]]
+name = "Steer"
+id = "c5423323e2721d350cd09b1e4025e7ab"
+type = "value"
+bindings = [
+    { negative = "Keyboard/A", positive = "Keyboard/D" },
+    { negative = "Keyboard/ArrowLeft", positive = "Keyboard/ArrowRight" },
+    "Gamepad/LeftStickX",
+]
+
+[[map.action]]
+name = "Handbrake"
+id = "1909f35fca64fa1de076087fbcd03781"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Look"
+id = "1bc6b5e7519291bdd2e2dcf86de091a3"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Exit"
+id = "f24ea91eff2b1b4ca7308f65cd8bcee8"
+bindings = ["Keyboard/E", "Gamepad/North"]

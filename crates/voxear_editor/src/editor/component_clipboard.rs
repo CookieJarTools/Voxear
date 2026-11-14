@@ -42,6 +42,7 @@ pub(super) enum Copied {
     Mist(voxear_render::Mist),
     UiPanel(voxear_render::UiPanel),
     ScreenUi(voxear_engine::screen_ui::ScreenUi),
+    LocalizedText(voxear_engine::localized_text::LocalizedText),
     Map(voxear_engine::map::Map),
     MapMarker(voxear_engine::map::MapMarker),
     Climate(voxear_engine::heat::Climate),
@@ -104,6 +105,9 @@ impl Copied {
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
             Part::UiPanel => Self::UiPanel(*world.get::<voxear_render::UiPanel>(entity)?),
             Part::ScreenUi => Self::ScreenUi(*world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?),
+            Part::LocalizedText => {
+                Self::LocalizedText(world.get::<voxear_engine::localized_text::LocalizedText>(entity)?.clone())
+            }
             Part::Map => Self::Map(world.get::<voxear_engine::map::Map>(entity)?.clone()),
             Part::MapMarker => Self::MapMarker(world.get::<voxear_engine::map::MapMarker>(entity)?.clone()),
             Part::Climate => Self::Climate(*world.get::<voxear_engine::heat::Climate>(entity)?),
@@ -161,6 +165,7 @@ impl Copied {
             Self::Mist(mist) => drop(world.insert(entity, *mist)),
             Self::UiPanel(panel) => drop(world.insert(entity, *panel)),
             Self::ScreenUi(screen) => drop(world.insert(entity, *screen)),
+            Self::LocalizedText(text) => drop(world.insert(entity, text.clone())),
             Self::Map(map) => drop(world.insert(entity, map.clone())),
             Self::MapMarker(marker) => drop(world.insert(entity, marker.clone())),
             Self::Climate(climate) => drop(world.insert(entity, *climate)),

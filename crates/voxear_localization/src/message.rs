@@ -137,6 +137,66 @@ fn when(value: &str) -> Option<(Date<icu_calendar::Iso>, Option<Time>)> {
     Some((date, time))
 }
 
+/// The names of the values a text takes, each once, in the order written:
+/// `player` and `count` for `{player} found {count, plural, one {# coin}
+/// other {# coins}}`, and any named inside a plural's or a select's words.
+pub fn names(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut found = Vec::new();
+    names_in(&chars, &mut 0, &mut found);
+    found
+}
+
+/// Reads a message from `at` to the brace that closes it, or the end,
+/// adding the names of its arguments.
+fn names_in(chars: &[char], at: &mut usize, found: &mut Vec<String>) {
+    while *at < chars.len() {
+        match chars[*at] {
+            '}' => return,
+            '{' => {
+                *at += 1;
+                argument_names(chars, at, found);
+            }
+            _ => *at += 1,
+        }
+    }
+}
+
+/// Reads an argument after its opening brace, past its closing one.
+fn argument_names(chars: &[char], at: &mut usize, found: &mut Vec<String>) {
+    let word = |at: &mut usize| {
+        let start = *at;
+        while *at < chars.len() && !matches!(chars[*at], ',' | '{' | '}') {
+            *at += 1;
+        }
+        chars[start..*at].iter().collect::<String>().trim().to_string()
+    };
+    let name = word(at);
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') && !found.contains(&name) {
+        found.push(name);
+    }
+    if chars.get(*at) == Some(&',') {
+        *at += 1;
+        let kind = word(at);
+        if matches!(kind.as_str(), "plural" | "select" | "selectordinal") && chars.get(*at) == Some(&',') {
+            *at += 1;
+            // Each branch: its selector, then its words in braces.
+            while *at < chars.len() && chars[*at] != '}' {
+                if chars[*at] == '{' {
+                    *at += 1;
+                    names_in(chars, at, found);
+                }
+                *at += 1;
+            }
+        } else {
+            while *at < chars.len() && chars[*at] != '}' {
+                *at += 1;
+            }
+        }
+    }
+    *at += 1;
+}
+
 /// `text` with the values it names filled in, in `language`'s ways.
 pub fn format(text: &str, values: &[(&str, &str)], language: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -323,6 +383,13 @@ mod tests {
     use super::*;
 
     const COINS: &str = "{player} found {count, plural, =0 {no coins} one {# coin} other {# coins}}";
+
+    #[test]
+    fn a_text_says_which_values_it_takes() {
+        assert_eq!(names("{player} found {count, plural, one {# coin} other {# coins}}"), ["player", "count"]);
+        assert_eq!(names("{who, select, female {{name} lost hers} other {{name} lost theirs}} {when, date}"), ["who", "name", "when"]);
+        assert!(names("No values here").is_empty());
+    }
 
     #[test]
     fn plurals_follow_each_languages_rules() {

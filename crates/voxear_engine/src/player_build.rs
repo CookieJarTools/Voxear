@@ -239,6 +239,7 @@ pub fn build(
         layers: project.file.layers.names.clone(),
         ignore: project.file.physics.ignore.clone(),
         languages: project.file.localization.languages.clone(),
+        language_fonts: project.file.localization.fonts.clone(),
         headphones: project.file.audio.headphones,
         reverb: project.file.audio.reverb,
         reverb_mode: project.file.audio.reverb_mode,

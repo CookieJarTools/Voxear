@@ -61,6 +61,7 @@ pub struct ObjState {
     pub mist: Option<Box<voxear_render::Mist>>,
     pub ui_panel: Option<Box<voxear_render::UiPanel>>,
     pub screen_ui: Option<voxear_engine::screen_ui::ScreenUi>,
+    pub localized_text: Option<Box<voxear_engine::localized_text::LocalizedText>>,
     pub map: Option<Box<voxear_engine::map::Map>>,
     pub map_marker: Option<Box<voxear_engine::map::MapMarker>>,
     pub climate: Option<voxear_engine::heat::Climate>,
@@ -178,6 +179,7 @@ impl ObjState {
             mist: world.get::<voxear_render::Mist>(entity).copied().map(Box::new),
             ui_panel: world.get::<voxear_render::UiPanel>(entity).copied().map(Box::new),
             screen_ui: world.get::<voxear_engine::screen_ui::ScreenUi>(entity).copied(),
+            localized_text: world.get::<voxear_engine::localized_text::LocalizedText>(entity).cloned().map(Box::new),
             map: world.get::<voxear_engine::map::Map>(entity).cloned().map(Box::new),
             map_marker: world.get::<voxear_engine::map::MapMarker>(entity).cloned().map(Box::new),
             climate: world.get::<voxear_engine::heat::Climate>(entity).copied(),
@@ -280,6 +282,7 @@ impl ObjState {
         put(world, entity, self.mist.as_deref().copied());
         put(world, entity, self.ui_panel.as_deref().copied());
         put(world, entity, self.screen_ui);
+        put(world, entity, self.localized_text.as_deref().cloned());
         put(world, entity, self.map.as_deref().cloned());
         put(world, entity, self.map_marker.as_deref().cloned());
         put(world, entity, self.climate);

@@ -65,6 +65,23 @@ internal static class PhysicsTests
 		Check.True(car.Gears == 5 && car.AntiRoll == 0f && wheel.Grip == 1f && wheel.SideGrip == 1f, "Jolt's own box and tyres");
 		Check.Near(2.66f, car.FirstGear);
 		Check.Near(0.74f, car.TopGear);
+		Check.True(car.TorqueCurve == Vehicle.DefaultTorqueCurve && !car.ShowDebug && !Physics.DebugVehicles, "Jolt's own engine, no debug view");
+		Check.True(wheel.Friction == Wheel.DefaultFriction && wheel.SideFriction == Wheel.DefaultSideFriction, "and tyres");
+		Check.Near(1.2f, wheel.SideFriction.Evaluate(3f / 90f));
+		Check.True(!wheel.IsGrounded && wheel.Slip == 0f && wheel.ContactNormal == Vector3.UnitY, "touching nothing");
+		car.TorqueCurve = Curve.Flat(1f);
+		car.DriveWithInput();
+		Check.True(car.Throttle == 0f && car.Steering == 0f, "no input without the engine");
+	}
+
+	[Test]
+	private static void ACurveGoesToTheEngineAsWordsAndBack()
+	{
+		var curve = new Curve((0f, 0.8f), (0.66f, 1f), (1f, 0.8f));
+		Check.True(curve.ToWords() == "0 0.8\n0.66 1\n1 0.8", curve.ToWords());
+		Check.True(Curve.FromWords(curve.ToWords()) == curve, "read back the same");
+		Check.True(Curve.FromWords("0 1\nnot a key\n") == new Curve((0f, 1f)), "lines that are not keys are left out");
+		Check.True(Curve.FromWords(null).IsEmpty, "nothing, no keys");
 	}
 
 	[Test]

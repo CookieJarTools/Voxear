@@ -690,7 +690,7 @@ Later:
 - Native plugins (Rust or C libraries a package loads into the engine, behind the same consent).
 - A place to browse packages with pictures and ratings, as Unity's Asset Store.
 
-## M4 — Input, localization, audio and physics (in progress)
+## M4 — Input, localization, audio and physics ✅ (done)
 
 - Input:
   - [x] actions in maps, from the project's `.inputactions` file or Voxear's own: buttons, values and vectors;
@@ -737,7 +737,9 @@ Later:
   - [x] keys' text on elements made in code: a `LocalizedString` for a label's, button's, toggle's or foldout's
     text, `Localize(key, values)`, tooltips, placeholders and dropdown options from keys, and typed keys made
     from each table by a source generator (`Strings.Menu.Play`)
-  - [ ] a `LocalizedText` component, once there is text in the world
+  - [x] a `LocalizedText` component: a key's text, with its values, shown in an element of its Obj's UI Panel in
+    the world or Screen UI, following the language; its key picked from the tables, its element from the
+    document's, in the Inspector, scene files (`[obj.localized_text]`) and C#
   - [x] CSV export, and import from a file with what it adds, changes and takes away shown first (`vox loc export` and
     `vox loc import`)
   - [x] CSV export and import from the editor: Export CSV and Import CSV under a string table in the Inspector, with
@@ -755,7 +757,10 @@ Later:
     the game, loaded when it is there; Voxear ships none
   - [x] RTL mirroring: a game in a language written right to left lays its UI out that way, rows from the right,
     sides swapped and text from the right; `direction: ltr` keeps a part as it is, as key maps do
-  - [ ] per-language fonts, once fonts are assets of a project's own
+  - [x] fonts as assets (`.ttf`, `.otf`), shipped with every build, named in style sheets as
+    `font-family: url("Fonts/Title.ttf")` and shown in the Inspector; per-language fonts picked on Project
+    Settings' Localization tab (`[localization.fonts]`), falling back from the element's own font to the
+    language's, then the languages it falls back to, Voxear's faces and the system's
 - Audio:
   - [x] a Rust mixer on cpal: music and effects buses under a master volume, and voices that play, loop, pause and
     stop, with long music streamed
@@ -810,8 +815,13 @@ Later:
     `Brake`, `Handbrake`, `Speed`, `Rpm` and `Gear` in C#; in the Inspector, scene files and the Scene view
   - [x] the advanced path, first part: a gearbox of so many gears from first's ratio to top's, anti-roll bars across
     each axle, and each tyre's grip forwards and sideways, in the Inspector, scene files and C#
-  - [ ] tyre friction curves and the engine's torque curve, once Voxear has a curve field
-  - input bindings for driving, and a debug view of wheel contacts, slip and suspension
+  - [x] tyre friction curves, forwards by slip ratio and sideways by slip angle, and the engine's torque curve by
+    its revs, starting as Jolt's own, in the Inspector's curve fields, scene files and C#
+  - [x] input bindings for driving: a Driving map in Voxear's own actions (Throttle, Brake, Steer, Handbrake,
+    Look, Exit) that turns Player off, and `Vehicle.DriveWithInput()`
+  - [x] a debug view of wheel contacts, slip and suspension, drawn while playing for a Vehicle's Debug view, the
+    Gizmos menu's Vehicle Debug, `ShowDebug` and `Physics.DebugVehicles`; each Wheel's contact point and normal,
+    compression, slip, slip angle and spin read by scripts
 
 ## M5 — Lighting (in progress)
 

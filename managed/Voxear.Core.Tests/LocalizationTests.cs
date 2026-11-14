@@ -19,6 +19,18 @@ internal static class LocalizationTests
 	}
 
 	[Test]
+	private static void ALocalizedTextReadsAsNoneWithoutTheEngine()
+	{
+		var sign = Obj.None.LocalizedText;
+		Check.True(!sign.IsValid && sign == LocalizedText.None, "no Localized Text on None");
+		Check.True(!sign.Key.IsSet && sign.Element == string.Empty && sign.Text == string.Empty, "no key, no element, no text");
+		sign.Key = "sign.tavern";
+		sign.SetValue("count", 3);
+		Check.True(sign.GetValue("count") == string.Empty, "nothing is kept away from the engine");
+		sign.ClearValues();
+	}
+
+	[Test]
 	private static void MoneyAndAKeptTextReadWithoutTheEngine()
 	{
 		Check.True(new Money(4.99m, Currency.GBP).ToString() == "4.99 GBP", "an amount, then its code");

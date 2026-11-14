@@ -1321,6 +1321,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Sound => "sound",
             AssetKind::InputActions => "input",
             AssetKind::Strings => "strings",
+            AssetKind::Font => "font",
             AssetKind::Paths => "paths",
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",

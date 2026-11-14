@@ -94,6 +94,9 @@ pub struct PlayerSettings {
     /// The project's languages, the one it is written in first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub languages: Vec<String>,
+    /// The fonts each language's text falls back to, by GUID or path.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub language_fonts: std::collections::BTreeMap<String, Vec<String>>,
     /// Whether 3D sounds start out heard as through headphones.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub headphones: bool,
@@ -236,7 +239,10 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             content: ContentSettings::default(),
             layers: LayerSettings { names: settings.layers.clone() },
             physics: PhysicsSettings { ignore: settings.ignore.clone() },
-            localization: LocalizationSettings { languages: settings.languages.clone() },
+            localization: LocalizationSettings {
+                languages: settings.languages.clone(),
+                fonts: settings.language_fonts.clone(),
+            },
             audio: AudioSettings {
                 headphones: settings.headphones,
                 reverb: settings.reverb,

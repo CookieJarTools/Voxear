@@ -44,10 +44,13 @@ use std::{
 
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
+use voxear_core::curve::Curve;
 use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Layer, Layers, Parent, Plant, PlantSet, Plants, Transform, Trunk, WorldTransform};
 
 mod vehicles;
+
+pub use vehicles::draw_vehicle_debug;
 
 use crate::{
     BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
@@ -322,7 +325,10 @@ impl VehicleKind {
 /// Its gearbox has `gears` forward gears, from `first_gear`'s ratio down to
 /// `top_gear`'s, each the same step from the one before; `anti_roll` is the
 /// stiffness of a bar across each pair of wheels side by side, in N/m, to
-/// keep it from leaning out of turns (0 for none).
+/// keep it from leaning out of turns (0 for none). `torque_curve` is how
+/// much of `max_torque` the engine gives as it revs, against its rpm as a
+/// share of `max_rpm`. With `debug` on, each wheel's contact, slip and
+/// suspension are drawn while the game plays (see [`WheelContact`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Vehicle {
@@ -346,6 +352,10 @@ pub struct Vehicle {
     pub top_gear: f32,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub anti_roll: f32,
+    #[serde(default = "torque_curve", skip_serializing_if = "is_torque_curve")]
+    pub torque_curve: Curve,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub debug: bool,
     #[serde(skip)]
     pub throttle: f32,
     #[serde(skip)]
@@ -374,6 +384,8 @@ impl Default for Vehicle {
             first_gear: first_gear(),
             top_gear: top_gear(),
             anti_roll: 0.0,
+            torque_curve: torque_curve(),
+            debug: false,
             throttle: 0.0,
             steering: 0.0,
             brake: 0.0,
@@ -398,6 +410,7 @@ impl Vehicle {
             first_gear: self.first_gear,
             top_gear: self.top_gear,
             anti_roll: self.anti_roll,
+            torque_curve: self.torque_curve,
             ..Self::default()
         }
     }
@@ -412,8 +425,12 @@ impl Component for Vehicle {}
 /// that does not), whether the engine drives it, and its brake's and hand
 /// brake's torque in Nm; and how hard its tyre grips, forwards and
 /// sideways, as a share of an ordinary tyre's (2 holds twice as hard, as a
-/// racing tyre; 0.3 slides, as on ice). While the game plays, physics turns
-/// and drops its Obj as the wheel rolls, steers and rides its suspension.
+/// racing tyre; 0.3 slides, as on ice). Its tyre's `friction` is how hard
+/// it holds forwards against its slip ratio, from 0 rolling to 1 locked or
+/// spinning, and `side_friction` sideways against its slip angle, from 0 to
+/// 90 degrees as 0 to 1; grip scales both. While the game plays, physics
+/// turns and drops its Obj as the wheel rolls, steers and rides its
+/// suspension.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Wheel {
@@ -439,6 +456,10 @@ pub struct Wheel {
     pub grip: f32,
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub side_grip: f32,
+    #[serde(default = "friction", skip_serializing_if = "is_friction")]
+    pub friction: Curve,
+    #[serde(default = "side_friction", skip_serializing_if = "is_side_friction")]
+    pub side_friction: Curve,
 }
 
 impl Default for Wheel {
@@ -455,11 +476,71 @@ impl Default for Wheel {
             handbrake: 0.0,
             grip: 1.0,
             side_grip: 1.0,
+            friction: friction(),
+            side_friction: side_friction(),
         }
     }
 }
 
 impl Component for Wheel {}
+
+/// What a Wheel's tyre touches and how it slips, written beside it after
+/// each physics step while its Vehicle drives, for scripts and the debug
+/// view: the point it touches and the ground's normal there, in the world;
+/// how far its suspension is pressed in, from 0 hanging to 1 against its
+/// stop; its slip ratio forwards and its slip angle sideways in degrees;
+/// and how fast it spins, in radians a second. None of it is saved.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WheelContact {
+    pub touching: bool,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub compression: f32,
+    pub slip: f32,
+    pub slip_angle: f32,
+    pub spin: f32,
+    /// Where its suspension is fixed, in the world, and where the wheel's
+    /// middle is now.
+    pub fixed_at: Vec3,
+    pub middle: Vec3,
+}
+
+impl Component for WheelContact {}
+
+/// Whether every Vehicle's debug view is drawn, as the editor's Gizmos
+/// menu and `Physics.DebugVehicles` in scripts ask, beside those whose own
+/// `debug` is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VehicleDebug(pub bool);
+
+/// A tyre's friction forwards as Jolt's own tyre has it: most at a slip
+/// ratio of 0.06, a little less once it slides.
+pub fn friction() -> Curve {
+    Curve::new(&[[0.0, 0.0], [0.06, 1.2], [0.2, 1.0]])
+}
+
+fn is_friction(curve: &Curve) -> bool {
+    *curve == friction()
+}
+
+/// And sideways: most at 3 degrees, a little less from 20.
+pub fn side_friction() -> Curve {
+    Curve::new(&[[0.0, 0.0], [3.0 / 90.0, 1.2], [20.0 / 90.0, 1.0]])
+}
+
+fn is_side_friction(curve: &Curve) -> bool {
+    *curve == side_friction()
+}
+
+/// An engine's torque as Jolt's own engine gives it: most at two thirds of
+/// its revs, four fifths of that at either end.
+pub fn torque_curve() -> Curve {
+    Curve::new(&[[0.0, 0.8], [0.66, 1.0], [1.0, 0.8]])
+}
+
+fn is_torque_curve(curve: &Curve) -> bool {
+    *curve == torque_curve()
+}
 
 /// How a Joint holds its Obj.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

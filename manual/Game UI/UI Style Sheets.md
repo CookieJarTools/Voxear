@@ -71,7 +71,7 @@ To centre a menu on screen, centre what the document holds:
 | `box-shadow: 0 4px 12px #00000080` | A shadow |
 | `opacity: 0.5` | See-through |
 | `color`, `font-size: 16px`, `font-weight: bold`, `text-align: center` | Text |
-| `font-family: mono` | `sans` (the default) or `mono` |
+| `font-family: mono` | `sans` (the default), `mono`, or a font of your own, `url("Fonts/Title.ttf")`. See [[Fonts]] |
 | `backdrop-filter: blur(8px)` | Blurs the game behind the element |
 | `shader: shimmer` | Draws the background with a shader: a built-in effect, or `url("Shaders/Glow.shader")` for one of your own. See [[UI Shaders]] |
 | `pointer-events: none` | Lets clicks pass through to the game |

@@ -5,13 +5,13 @@
 //! settings, its wheels or its body change; before each step it takes what
 //! its Vehicle asks (throttle, steering and the brakes), and after it, its
 //! wheels' Objs are moved where physics put the wheels, and its speed, rpm
-//! and gear written back for scripts.
+//! and gear written back for scripts, with each wheel's [`WheelContact`].
 
 use glam::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{Destroying, Parent, Transform};
 
-use super::{PhysicsScene, Vehicle, VehicleKind, Wheel};
+use super::{PhysicsScene, Vehicle, VehicleKind, Wheel, WheelContact};
 use crate::{BodyId, VehicleDesc, VehicleId, VehicleType, WheelDesc};
 
 /// How far above the top of its travel a wheel's suspension is fixed, in
@@ -114,6 +114,7 @@ impl PhysicsScene {
                 handbrake: wheel.handbrake.max(0.0),
                 powered: wheel.powered,
                 grip: (wheel.grip.max(0.0), wheel.side_grip.max(0.0)),
+                friction: (wheel.friction, wheel.side_friction),
             }
         });
         let kind = match key.vehicle.kind {
@@ -130,6 +131,7 @@ impl PhysicsScene {
             wheels: wheels.collect(),
             gears: (key.vehicle.gears.min(16), key.vehicle.first_gear, key.vehicle.top_gear),
             anti_roll: key.vehicle.anti_roll.max(0.0),
+            torque_curve: key.vehicle.torque_curve,
         }
     }
 
@@ -141,9 +143,25 @@ impl PhysicsScene {
             if let Some(vehicle) = world.get_mut::<Vehicle>(*entity) {
                 (vehicle.speed, vehicle.rpm, vehicle.gear) = (state.speed, state.rpm, state.gear);
             }
-            let parent = voxear_scene::world_matrix(world, *entity).inverse();
-            for (at, (wheel, _)) in ride.key.wheels.iter().enumerate() {
+            let placed = voxear_scene::world_matrix(world, *entity);
+            let parent = placed.inverse();
+            for (at, (wheel, settings)) in ride.key.wheels.iter().enumerate() {
                 let (position, rotation) = self.world.vehicle_wheel(ride.id, at);
+                let touch = self.world.vehicle_contact(ride.id, at);
+                let rest = self.wheels_at_rest.get(wheel).copied().unwrap_or_default();
+                let travel = settings.suspension.max(0.01);
+                let contact = WheelContact {
+                    touching: touch.touching,
+                    point: touch.point,
+                    normal: touch.normal,
+                    compression: (1.0 - (touch.suspension - CLEARANCE) / travel).clamp(0.0, 1.0),
+                    slip: touch.slip,
+                    slip_angle: touch.slip_angle,
+                    spin: touch.spin,
+                    fixed_at: placed.transform_point3(rest + Vec3::Y * (travel * 0.5 + CLEARANCE)),
+                    middle: position,
+                };
+                world.insert(*wheel, contact);
                 let local = parent * Mat4::from_rotation_translation(rotation, position);
                 let (_, rotation, position) = local.to_scale_rotation_translation();
                 if let Some(transform) = world.get_mut::<Transform>(*wheel) {
@@ -163,5 +181,50 @@ impl PhysicsScene {
                 self.world.remove_vehicle(ride.id);
             }
         }
+    }
+}
+
+/// Draws each Vehicle's wheels as debug draw lines, while the game plays,
+/// where its `debug` is on or [`VehicleDebug`](super::VehicleDebug) asks
+/// for every one: each suspension from where it is fixed to the wheel's
+/// middle, green hanging to red against its stop; the point each tyre
+/// touches, with the ground's normal; its slip forwards in yellow and
+/// sideways in magenta, an arrow a metre long for a slip ratio of 0.5 or a
+/// slip angle of 45 degrees; and the numbers beside it.
+pub fn draw_vehicle_debug(world: &World) {
+    use voxear_core::debug_draw::{self, LineStyle};
+    let every = world.resource::<super::VehicleDebug>().is_some_and(|debug| debug.0);
+    let style = LineStyle { on_top: true, width: 2.0, ..LineStyle::default() };
+    let shown: Vec<Entity> = world
+        .query_ref::<(Entity, &Vehicle)>()
+        .into_iter()
+        .filter(|(_, vehicle)| every || vehicle.debug)
+        .map(|(entity, _)| entity)
+        .collect();
+    if shown.is_empty() {
+        return;
+    }
+    for (wheel, contact, parent) in world.query_ref::<(Entity, &WheelContact, &Parent)>() {
+        if !shown.contains(&parent.0) || !world.has::<Wheel>(wheel) {
+            continue;
+        }
+        let (_, turn, _) = voxear_scene::world_matrix(world, parent.0).to_scale_rotation_translation();
+        let squeeze = contact.compression;
+        let spring = [0.36 + 0.64 * squeeze, 0.9 - 0.63 * squeeze, 0.42 - 0.15 * squeeze, 1.0];
+        debug_draw::line(contact.fixed_at, contact.middle, spring, 0.0, style);
+        debug_draw::sphere(contact.middle, 0.04, spring, 0.0, style);
+        let mut words = format!("{:.0}%", squeeze * 100.0);
+        if contact.touching {
+            debug_draw::sphere(contact.point, 0.06, debug_draw::WHITE, 0.0, style);
+            debug_draw::arrow(contact.point, contact.point + contact.normal * 0.5, debug_draw::CYAN, 0.0, style);
+            let forward = (turn * Vec3::Z).reject_from(contact.normal).normalize_or_zero();
+            let side = (turn * Vec3::X).reject_from(contact.normal).normalize_or_zero();
+            let ahead = forward * (contact.slip * 2.0).clamp(0.0, 2.0);
+            let across = side * (contact.slip_angle / 45.0).clamp(0.0, 2.0);
+            debug_draw::arrow(contact.point, contact.point + ahead, debug_draw::YELLOW, 0.0, style);
+            debug_draw::arrow(contact.point, contact.point + across, debug_draw::MAGENTA, 0.0, style);
+            words = format!("slip {:.2}  {:.0}°  {words}", contact.slip, contact.slip_angle);
+        }
+        debug_draw::text(contact.middle + Vec3::Y * 0.6, &words, debug_draw::WHITE, 0.0);
     }
 }

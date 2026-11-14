@@ -135,6 +135,18 @@ impl Editor {
     /// Draws this frame's gizmos, after debug draw counted down the last
     /// frame's, so they show in the frame they are drawn for.
     pub(super) fn draw_scene_gizmos(&mut self) {
+        // The Gizmos menu's Vehicle Debug draws every Vehicle's wheels while playing, as scripts' Physics.DebugVehicles does.
+        if self.is_playing() {
+            let every = self.memory.settings.vehicle_gizmos;
+            let world = &mut self.game.engine.world;
+            let shown = world.resource::<voxear_engine::physics::VehicleDebug>().copied().unwrap_or_default();
+            if every != self.vehicle_debug_shown {
+                world.insert_resource(voxear_engine::physics::VehicleDebug(every));
+                self.vehicle_debug_shown = every;
+            } else if every && !shown.0 {
+                world.insert_resource(voxear_engine::physics::VehicleDebug(true));
+            }
+        }
         let start = debug_draw::line_count();
         let answer = self.ask_scene_gizmos();
         if let Some(Err(error)) = &answer {

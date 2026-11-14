@@ -860,6 +860,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Mist
             | Part::UiPanel
             | Part::ScreenUi
+            | Part::LocalizedText
             | Part::Map
             | Part::MapMarker
             | Part::Climate
@@ -1191,6 +1192,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Sound => ("sound", false),
         AssetKind::InputActions => ("inputactions", true),
         AssetKind::Strings => ("strings", true),
+        AssetKind::Font => ("font", false),
         AssetKind::Paths => ("paths", false),
         AssetKind::AssetTable => ("assettable", true),
         AssetKind::LightProfile => ("lightprofile", true),

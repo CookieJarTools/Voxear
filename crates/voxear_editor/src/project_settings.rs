@@ -7,7 +7,9 @@
 //! far out it goes first, and how far it moves; and what making worlds of
 //! blocks may spend: a Quality preset, and the threads, chunk columns at
 //! once, megabytes uploaded a frame and distances under it, a number
-//! changed by hand making it Custom.
+//! changed by hand making it Custom. Localization holds each language's
+//! fonts, in the order its text falls back to them, each picked from the
+//! project's `.ttf` and `.otf` files.
 
 use voxear_engine::{
     modules::{Module, Modules},
@@ -41,9 +43,30 @@ struct BudgetRows {
     far: NodeId,
 }
 
+/// What the Localization tab asks of the editor: a font picked for a
+/// language, in place of the one at `at` or added after the rest, or one
+/// taken out.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FontAction {
+    Pick { language: String, at: Option<usize>, anchor: NodeId },
+    Remove { language: String, at: usize },
+}
+
+/// A button on the Localization tab, and what it asks.
+struct FontButton {
+    node: NodeId,
+    language: String,
+    at: Option<usize>,
+    remove: bool,
+}
+
 pub struct ProjectSettingsPanel {
     /// Each tab and the body it shows.
     tabs: Vec<(NodeId, NodeId)>,
+    /// The Localization tab's body, built again as its fonts change, and
+    /// its buttons.
+    fonts_body: NodeId,
+    font_buttons: Vec<FontButton>,
     rows: Vec<ModuleRow>,
     origin: OriginRows,
     budget: BudgetRows,
@@ -120,8 +143,58 @@ impl ProjectSettingsPanel {
         let heading = ui.add_label(body, "Particles");
         ui.add_class(heading, "settings-group");
         let particles = number(ui, body, "Budget", quality.particles as f32, "");
-        let tabs = vec![(modules_tab, modules_body), (quality_tab, body), (world_tab, world_body)];
-        Self { tabs, rows, origin, budget, particles }
+        let quality_body = body;
+
+        let (localization_tab, fonts_body) = section(ui, tab_bar, view, "Localization");
+        ui.set_visible(fonts_body, false);
+        let tabs = vec![
+            (modules_tab, modules_body),
+            (quality_tab, quality_body),
+            (world_tab, world_body),
+            (localization_tab, fonts_body),
+        ];
+        Self { tabs, fonts_body, font_buttons: Vec::new(), rows, origin, budget, particles }
+    }
+
+    /// Shows each language's fonts on the Localization tab, `languages`
+    /// giving each code with its fonts' names in order: a button for each,
+    /// which opens the picker, with one to take it out, and Add Font.
+    pub fn show_language_fonts(&mut self, ui: &mut Ui, languages: &[(String, Vec<String>)]) {
+        for child in ui.children(self.fonts_body) {
+            ui.remove(child);
+        }
+        self.font_buttons.clear();
+        let heading = ui.add_label(self.fonts_body, "Fonts");
+        ui.add_class(heading, "settings-group");
+        for (language, fonts) in languages {
+            for (at, font) in fonts.iter().enumerate() {
+                let row = setting(ui, self.fonts_body, if at == 0 { language } else { "" });
+                let holder = ui.panel(row, Style::row());
+                ui.add_class(holder, "prop-value");
+                let picker = ui.button(holder, font);
+                ui.add_class(picker, "value-picker");
+                ui.set_name(picker, &format!("font-{language}-{at}"));
+                let remove = ui.icon_button(holder, "close");
+                ui.add_class(remove, "icon-button");
+                let button = |node, remove| FontButton { node, language: language.clone(), at: Some(at), remove };
+                self.font_buttons.extend([button(picker, false), button(remove, true)]);
+            }
+            let row = setting(ui, self.fonts_body, if fonts.is_empty() { language } else { "" });
+            let add = ui.button(row, "Add Font");
+            ui.add_class(add, "settings-button");
+            ui.set_name(add, &format!("add-font-{language}"));
+            self.font_buttons.push(FontButton { node: add, language: language.clone(), at: None, remove: false });
+        }
+    }
+
+    /// A font button clicked on the Localization tab this frame.
+    pub fn font_action(&self, ui: &Ui) -> Option<FontAction> {
+        let button = self.font_buttons.iter().find(|button| ui.clicked(button.node))?;
+        let language = button.language.clone();
+        Some(match (button.remove, button.at) {
+            (true, Some(at)) => FontAction::Remove { language, at },
+            _ => FontAction::Pick { language, at: button.at, anchor: button.node },
+        })
     }
 
     /// Shows the tab clicked this frame, its body in place of the others'.

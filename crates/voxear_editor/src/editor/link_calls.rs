@@ -1587,6 +1587,9 @@ impl Editor {
                 self.project_settings.show_origin(&mut self.ui, &file.floating_origin);
                 self.project_settings.show_quality(&mut self.ui, &file.quality);
                 self.project_settings.show_budget(&mut self.ui, &file.world);
+                // Languages and their fonts may have changed too.
+                self.game.load_strings();
+                self.show_language_fonts();
                 tracing::info!("[Tools] read voxear.toml again, changed on disk");
             }
             Err(error) => tracing::error!("voxear.toml changed on disk, but could not be read: {error:#}"),

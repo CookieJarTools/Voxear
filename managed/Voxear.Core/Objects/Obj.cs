@@ -383,6 +383,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new ScreenUi(this);
 	}
 
+	/// <summary>The Obj's Localized Text, which shows a key's text in its UI document. Not valid when it has none.</summary>
+	public LocalizedText LocalizedText => new LocalizedText(this);
+
+	/// <summary>Gives the Obj a Localized Text, unless it has one, and returns it.</summary>
+	public LocalizedText AddLocalizedText()
+	{
+		NativeComponent.Set(NativeComponent.LocalizedText, this, NativeComponent.Add, Vector4.Zero);
+		return new LocalizedText(this);
+	}
+
 	/// <summary>The Obj's Map, which shows the Block World as a minimap and a map. Not valid when it has none.</summary>
 	public Map Map => new Map(this);
 

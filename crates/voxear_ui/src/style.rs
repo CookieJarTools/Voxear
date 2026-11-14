@@ -273,23 +273,15 @@ impl Style {
     }
 }
 
-/// Which typeface: the UI's sans-serif, or monospaced for numbers and code.
+/// Which typeface: the UI's sans-serif, monospaced for numbers and code, or
+/// one of the project's own fonts (see [`crate::fonts`]), which falls back
+/// to the sans-serif for letters it has not got.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Family {
     #[default]
     Sans,
     Mono,
-}
-
-impl Family {
-    /// What each asks the system for, best first. Inter, the editor's face,
-    /// is used whenever it is installed.
-    pub(crate) fn source(self) -> &'static str {
-        match self {
-            Family::Sans => "Inter, \"Noto Sans\", \"DejaVu Sans\", sans-serif",
-            Family::Mono => "\"JetBrains Mono\", \"Noto Sans Mono\", \"DejaVu Sans Mono\", monospace",
-        }
-    }
+    Face(crate::fonts::FontFace),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

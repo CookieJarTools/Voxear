@@ -664,6 +664,27 @@ mod tests {
         assert!(!input.state(aim).held, "nor the frame after, with nothing pressed again");
     }
 
+    #[test]
+    fn voxears_driving_actions_start_off_and_drive_once_on() {
+        let mut input = Input::without_gamepads();
+        assert!(input.map_enabled("Player") && !input.map_enabled("Driving"), "on foot to begin with");
+        let (throttle, steer) = (input.action("Throttle").unwrap(), input.action("Steer").unwrap());
+        let handbrake = input.action("Handbrake").unwrap();
+        input.devices_mut().set_key("W", true);
+        input.devices_mut().set_key("D", true);
+        input.update(0.016);
+        assert_eq!(input.state(throttle).value[0], 0.0, "W walks while Driving is off");
+        input.set_map_enabled("Driving", true);
+        assert!(!input.map_enabled("Player") && !input.map_enabled("UI"), "driving turns walking and menus off");
+        input.devices_mut().set_key("Space", true);
+        input.update(0.016);
+        assert_eq!((input.state(throttle).value[0], input.state(steer).value[0]), (1.0, 1.0));
+        assert!(input.state(handbrake).held);
+        let space = input.action("Jump").unwrap();
+        assert!(input.conflicts(handbrake, "Keyboard/Space").iter().all(|other| *other != space), "Jump is never on with it");
+        assert_ne!(input.action("Driving/Look"), input.action("Look"), "Look alone stays Player's");
+    }
+
     fn pad(id: u64, south: f32) -> Pad {
         let mut pad = Pad { id, name: format!("Pad {id}"), ..Pad::default() };
         pad.buttons.insert("South", south);

@@ -32,7 +32,8 @@
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
 //! hears the game from it (see [`crate::audio`]). `[obj.ui_panel]` shows a
 //! UI document on a rectangle in the world (see [`crate::ui_panels`]), and
-//! `[obj.screen_ui]` one over the game's view (see [`crate::screen_ui`]). `[obj.lod_group]` is a
+//! `[obj.screen_ui]` one over the game's view (see [`crate::screen_ui`]), and `[obj.localized_text]` a string
+//! table key's text in an element of either (see [`crate::localized_text`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
 //! [`crate::lod_groups`]). `layer = 3` puts an Obj on a layer by its
 //! number, which stays the same when the project renames it; a file
@@ -298,6 +299,9 @@ pub struct ObjData {
     /// A Map Marker, which marks its Obj on every map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_marker: Option<crate::map::MapMarker>,
+    /// A Localized Text, which shows a key's text in its UI document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub localized_text: Option<crate::localized_text::LocalizedText>,
     /// A LOD Group, which shows one of its levels' Objs at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lod_group: Option<LodGroupData>,
@@ -468,6 +472,7 @@ impl ObjData {
             screen_ui: None,
             map: None,
             map_marker: None,
+            localized_text: None,
             layer: None,
             collider: None,
             wind_zone: None,
@@ -1759,6 +1764,9 @@ fn capture_instance(
     if root.map_marker.is_some() && root.map_marker != prefab_root.map_marker {
         instance.map_marker = root.map_marker.clone();
     }
+    if root.localized_text.is_some() && root.localized_text != prefab_root.localized_text {
+        instance.localized_text = root.localized_text.clone();
+    }
     if root.lod_group.is_some() && root.lod_group != prefab_root.lod_group {
         instance.lod_group = root.lod_group.clone();
     }
@@ -1985,6 +1993,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(map) = actual.map.as_ref().filter(|m| Some(*m) != expected.map.as_ref()) {
         put("map", toml::Value::Table(map.changes_from(expected.map.as_ref())));
+    }
+    if let Some(text) = actual.localized_text.as_ref().filter(|t| Some(*t) != expected.localized_text.as_ref()) {
+        put("localized_text", toml::Value::Table(text.changes_from(expected.localized_text.as_ref())));
     }
     if let Some(marker) = actual.map_marker.as_ref().filter(|m| Some(*m) != expected.map_marker.as_ref()) {
         put("map_marker", toml::Value::Table(marker.changes_from(expected.map_marker.as_ref())));
@@ -2348,6 +2359,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.screen_ui = world.get::<crate::screen_ui::ScreenUi>(entity).map(crate::screen_ui::screen_ui_data);
     obj.map = world.get::<crate::map::Map>(entity).map(crate::map::map_data);
     obj.map_marker = world.get::<crate::map::MapMarker>(entity).cloned();
+    obj.localized_text = world.get::<crate::localized_text::LocalizedText>(entity).cloned();
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();

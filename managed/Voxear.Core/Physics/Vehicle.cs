@@ -9,16 +9,23 @@ namespace Voxear;
 /// differentials: a car, a tank on its tracks, or a motorbike. The Obj faces its +Z. Get it with Obj.Vehicle, or give
 /// an Obj one with Obj.AddVehicle; it needs a Collider and a Rigidbody beside it.
 /// <code>
-/// var car = Obj.Vehicle;
+/// // Voxear's own Driving actions: W and S or the triggers, A and D or the stick, Space or South.
+/// Input.EnableMap("Driving");
+/// car.DriveWithInput();
+/// speedometer.Text = $"{car.Speed * 3.6f:0} km/h";
+///
+/// // Or by hand, from actions of the game's own.
 /// car.Throttle = Input.Value("Accelerate");
 /// car.Steering = Input.Vector2("Move").X;
 /// car.Handbrake = Input.Held("Handbrake") ? 1f : 0f;
-/// speedometer.Text = $"{car.Speed * 3.6f:0} km/h";
 /// </code>
 /// </summary>
 public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 {
 	public static readonly Vehicle None = default;
+
+	/// <summary>How an ordinary engine's torque goes as it revs: most at two thirds of MaxRpm, four fifths at either end.</summary>
+	public static readonly Curve DefaultTorqueCurve = new((0f, 0.8f), (0.66f, 1f), (1f, 0.8f));
 
 	internal Vehicle(Obj obj)
 	{
@@ -103,6 +110,30 @@ public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 		set { Set(NativePhysics.VehicleAntiRoll, value); }
 	}
 
+	/// <summary>
+	/// How much of MaxTorque its engine gives as it revs, against how fast it turns as a share of MaxRpm, from 0 to
+	/// 1. DefaultTorqueCurve to start with; a diesel's peaks early, a racing engine's late.
+	/// <code>
+	/// truck.TorqueCurve = new Curve((0f, 0.9f), (0.3f, 1f), (1f, 0.6f));
+	/// </code>
+	/// </summary>
+	public Curve TorqueCurve
+	{
+		get { return Native.IsConnected ? Curve.FromWords(NativeComponent.Text(NativeComponent.Vehicle, Obj, NativePhysics.TorqueCurve)) : DefaultTorqueCurve; }
+		set { Tell(NativePhysics.TorqueCurve, value); }
+	}
+
+	/// <summary>
+	/// Whether its debug view is drawn while the game plays: each wheel's suspension, green hanging to red pressed
+	/// in, the point its tyre touches with the ground's normal, and its slip forwards in yellow and sideways in
+	/// magenta. Physics.DebugVehicles draws every Vehicle's.
+	/// </summary>
+	public bool ShowDebug
+	{
+		get { return NativePhysics.Flag(Obj, NativePhysics.VehicleDebug); }
+		set { Set(NativePhysics.VehicleDebug, value ? 1f : 0f); }
+	}
+
 	/// <summary>How far down the accelerator is, from -1 for full reverse to 1 for full ahead.</summary>
 	public float Throttle
 	{
@@ -140,6 +171,21 @@ public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 	/// <summary>The gear it is in: -1 reverse, 0 neutral, 1 first and so on.</summary>
 	public int Gear => (int)NativePhysics.Number(Obj, NativePhysics.VehicleGear, 0f);
 
+	/// <summary>
+	/// Drives it from Voxear's own Driving actions, once a frame: Throttle, Brake (and reverse once nearly stopped),
+	/// Steer and Handbrake. Turn the Driving map on as the player gets in, which turns Player off, and Player back
+	/// on as they get out.
+	/// </summary>
+	public void DriveWithInput()
+	{
+		var (throttle, brake) = (Input.Value("Driving/Throttle"), Input.Value("Driving/Brake"));
+		var reversing = brake > 0f && throttle <= 0f && Speed < 1f;
+		Throttle = reversing ? -brake : throttle;
+		Brake = reversing ? 0f : brake;
+		Steering = Input.Value("Driving/Steer");
+		Handbrake = Input.Value("Driving/Handbrake");
+	}
+
 	/// <summary>Takes the Vehicle off its Obj, which then rolls as an ordinary Rigidbody.</summary>
 	public void Remove()
 	{
@@ -174,6 +220,14 @@ public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 	public override string ToString()
 	{
 		return $"{Obj}'s Vehicle";
+	}
+
+	private void Tell(int what, Curve curve)
+	{
+		if (!NativeComponent.Tell(NativeComponent.Vehicle, Obj, what + NativePhysics.CurveChange, curve.ToWords()) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Vehicle; give it one with AddVehicle.");
+		}
 	}
 
 	private void Set(int what, float value)

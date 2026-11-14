@@ -83,6 +83,10 @@ pub struct VxWheelDesc {
     pub powered: u32,
     pub grip: f32,
     pub side_grip: f32,
+    pub friction: [f32; 16],
+    pub friction_count: u32,
+    pub side_friction: [f32; 16],
+    pub side_friction_count: u32,
 }
 
 #[repr(C)]
@@ -100,6 +104,8 @@ pub struct VxVehicleDesc {
     pub first_gear: f32,
     pub top_gear: f32,
     pub anti_roll: f32,
+    pub torque: [f32; 16],
+    pub torque_count: u32,
 }
 
 #[repr(C)]
@@ -108,6 +114,19 @@ pub struct VxVehicleState {
     pub rpm: f32,
     pub gear: i32,
     pub speed: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VxWheelContact {
+    pub touching: u32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+    pub suspension: f32,
+    pub slip: f32,
+    pub slip_angle: f32,
+    pub load: f32,
+    pub spin: f32,
 }
 
 unsafe extern "C" {
@@ -212,4 +231,5 @@ unsafe extern "C" {
     pub fn vx_vehicle_drive(world: *mut VxWorld, vehicle: u32, forward: f32, right: f32, brake: f32, handbrake: f32);
     pub fn vx_vehicle_state(world: *mut VxWorld, vehicle: u32, out: *mut VxVehicleState);
     pub fn vx_vehicle_wheel(world: *mut VxWorld, vehicle: u32, wheel: u32, position: *mut f32, rotation: *mut f32);
+    pub fn vx_vehicle_contact(world: *mut VxWorld, vehicle: u32, wheel: u32, out: *mut VxWheelContact);
 }

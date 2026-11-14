@@ -13,6 +13,10 @@
 //! `{count, plural, one {# coin} other {# coins}}` follows each language's
 //! plural rules. [`Localization::format`] fills them in (see [`message`]).
 //!
+//! A language may name fonts with its letters ([`Localization::set_fonts`]),
+//! which its text falls back to, as Japanese's and Arabic's: the game's
+//! language's first, then those of the languages it falls back to.
+//!
 //! Pseudo-localisation ([`Localization::set_pseudo`]) shows every text
 //! accented, a third longer and in brackets, as `[Ƥļåý !!!]`, so text that
 //! is not in the tables, and text that will not fit once translated, show
@@ -46,6 +50,8 @@ pub struct Localization {
     texts: HashMap<String, HashMap<String, String>>,
     /// Each asset table key's asset, as a reference, by language.
     assets: HashMap<String, HashMap<String, String>>,
+    /// The fonts each language names, as references, in order.
+    fonts: HashMap<String, Vec<String>>,
     mark_missing: bool,
     pseudo: bool,
     /// Counts each change of language or text, for text shown from it to
@@ -63,6 +69,7 @@ impl Clone for Localization {
             chain: self.chain.clone(),
             texts: self.texts.clone(),
             assets: self.assets.clone(),
+            fonts: self.fonts.clone(),
             mark_missing: self.mark_missing,
             pseudo: self.pseudo,
             version: self.version,
@@ -93,6 +100,7 @@ impl Localization {
             languages,
             texts: HashMap::new(),
             assets: HashMap::new(),
+            fonts: HashMap::new(),
             mark_missing: true,
             pseudo: false,
             version: 0,
@@ -177,6 +185,32 @@ impl Localization {
     pub fn nearest(&self, wanted: &str) -> Option<String> {
         let near = near(&normalize(wanted));
         near.iter().find_map(|code| self.languages.iter().find(|language| language.eq_ignore_ascii_case(code)).cloned())
+    }
+
+    /// Names the fonts each language's text falls back to, by language
+    /// code, each font by its path or GUID, in order.
+    pub fn set_fonts<'a>(&mut self, fonts: impl IntoIterator<Item = (&'a String, &'a Vec<String>)>) {
+        let fonts: HashMap<String, Vec<String>> =
+            fonts.into_iter().map(|(language, faces)| (normalize(language), faces.clone())).collect();
+        if fonts != self.fonts {
+            self.fonts = fonts;
+            self.version += 1;
+        }
+    }
+
+    /// The fonts the game's text falls back to now: the language's own,
+    /// then those of each language it falls back to, as `pt-BR`'s, then
+    /// `pt`'s, then the project's own language's, each once.
+    pub fn fonts(&self) -> Vec<&str> {
+        let mut found: Vec<&str> = Vec::new();
+        for faces in self.chain.iter().filter_map(|language| self.fonts.get(language)) {
+            for face in faces {
+                if !found.contains(&face.as_str()) {
+                    found.push(face);
+                }
+            }
+        }
+        found
     }
 
     /// Whether a key that no language has shows as `⟦key⟧`, as while the
@@ -418,6 +452,27 @@ mod tests {
         assert_eq!(texts.asset("voice.intro"), Some("Sounds/Intro_pt.wav"), "Brazil hears Portugal's recording");
         assert_eq!(texts.asset("menu.play"), None);
         assert!(!texts.has("voice.intro"), "an asset is not text");
+    }
+
+    #[test]
+    fn a_languages_fonts_come_first_then_those_it_falls_back_to() {
+        let mut texts = Localization::new(&["en".into(), "pt".into(), "pt-BR".into(), "ja".into()]);
+        let fonts = std::collections::BTreeMap::from([
+            ("en".to_string(), vec!["Fonts/Title.ttf".to_string()]),
+            ("pt".to_string(), vec!["Fonts/Accents.otf".to_string(), "Fonts/Title.ttf".to_string()]),
+            ("ja".to_string(), vec!["Fonts/NotoSansJP.otf".to_string()]),
+        ]);
+        let before = texts.version();
+        texts.set_fonts(&fonts);
+        assert!(texts.version() > before, "text shown is shown again in them");
+        assert_eq!(texts.fonts(), ["Fonts/Title.ttf"]);
+        texts.set_language("pt-BR");
+        assert_eq!(texts.fonts(), ["Fonts/Accents.otf", "Fonts/Title.ttf"], "pt's, then the project's own, each once");
+        texts.set_language("ja");
+        assert_eq!(texts.fonts(), ["Fonts/NotoSansJP.otf", "Fonts/Title.ttf"]);
+        let version = texts.version();
+        texts.set_fonts(&fonts);
+        assert_eq!(texts.version(), version, "the same fonts again change nothing");
     }
 
     #[test]

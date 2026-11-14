@@ -566,13 +566,14 @@ fn gizmo_types(types: &ScriptTypes) -> Vec<(String, String)> {
     listed
 }
 
-/// The Gizmos menu: lights, cameras and each behaviour type with gizmos,
-/// ticked while they show.
+/// The Gizmos menu: lights, cameras, Audio Sources, the vehicles' debug
+/// view and each behaviour type with gizmos, ticked while they show.
 fn gizmos_menu(settings: &Settings, types: &[(String, String)]) -> Vec<MenuItem> {
     let mut items = vec![
         MenuItem::new("Lights").checked(settings.light_gizmos),
         MenuItem::new("Cameras").checked(settings.camera_gizmos),
         MenuItem::new("Audio Sources").checked(settings.audio_gizmos),
+        MenuItem::new("Vehicle Debug").checked(settings.vehicle_gizmos),
         MenuItem::separator(),
     ];
     for (name, label) in types {
@@ -591,8 +592,9 @@ fn toggle_gizmos(settings: &mut Settings, types: &[(String, String)], choice: us
         0 => settings.light_gizmos = !settings.light_gizmos,
         1 => settings.camera_gizmos = !settings.camera_gizmos,
         2 => settings.audio_gizmos = !settings.audio_gizmos,
+        3 => settings.vehicle_gizmos = !settings.vehicle_gizmos,
         _ => {
-            let Some((name, _)) = types.get(choice - 4) else { return false };
+            let Some((name, _)) = types.get(choice - 5) else { return false };
             match settings.hidden_gizmos.iter().position(|hidden| hidden == name) {
                 Some(index) => _ = settings.hidden_gizmos.remove(index),
                 None => settings.hidden_gizmos.push(name.clone()),

@@ -845,6 +845,12 @@ struct VxWheelDesc {
 	uint32_t powered;
 	float grip; // Jolt's tyre friction, scaled, forwards
 	float side_grip; // and sideways
+	// Each tyre's friction against its slip, as [where, what] pairs: forwards against the slip ratio from 0 to 1,
+	// sideways against the slip angle from 0 to 90 degrees as 0 to 1. No points keeps Jolt's own.
+	float friction[16];
+	uint32_t friction_count;
+	float side_friction[16];
+	uint32_t side_friction_count;
 };
 
 struct VxVehicleDesc {
@@ -861,12 +867,28 @@ struct VxVehicleDesc {
 	float first_gear;
 	float top_gear;
 	float anti_roll; // N/m, between wheels side by side; 0 for none
+	// The engine's torque, as a share of its most, against its revolutions as a share of its most; no points keeps
+	// Jolt's own.
+	float torque[16];
+	uint32_t torque_count;
 };
 
 struct VxVehicleState {
 	float rpm;
 	int32_t gear;
 	float speed; // m/s, forward
+};
+
+// What a wheel touches and how it slips, after the last step.
+struct VxWheelContact {
+	uint32_t touching;
+	float point[3];
+	float normal[3];
+	float suspension; // how long its suspension is now, in metres
+	float slip; // the slip ratio, forwards
+	float slip_angle; // degrees, sideways
+	float load; // the suspension's push, in newton-seconds over the step
+	float spin; // radians a second
 };
 
 }
@@ -881,6 +903,18 @@ void scale_friction(LinearCurve &curve, float grip) {
 	for (LinearCurve::Point &point : curve.mPoints) {
 		point.mY *= grip;
 	}
+}
+
+// A curve from [where, what] pairs, `scale_x` times where; left as it is with none.
+void fill_curve(LinearCurve &curve, const float *points, uint32_t count, float scale_x) {
+	if (count == 0) {
+		return;
+	}
+	curve.Clear();
+	for (uint32_t at = 0; at < count && at < 8; ++at) {
+		curve.AddPoint(points[at * 2] * scale_x, points[at * 2 + 1]);
+	}
+	curve.Sort();
 }
 
 void fill_wheel(WheelSettings &wheel, const VxWheelDesc &desc) {
@@ -939,6 +973,7 @@ std::vector<std::pair<int, int>> pairs_side_by_side(const VxVehicleDesc &desc, b
 // differential, each with an equal share of the engine.
 void fill_wheeled(WheeledVehicleControllerSettings &controller, const VxVehicleDesc &desc) {
 	controller.mEngine.mMaxTorque = desc.max_torque;
+	fill_curve(controller.mEngine.mNormalizedTorque, desc.torque, desc.torque_count, 1.0f);
 	controller.mEngine.mMinRPM = desc.min_rpm;
 	controller.mEngine.mMaxRPM = std::max(desc.max_rpm, desc.min_rpm + 1.0f);
 	controller.mTransmission.mMode = desc.automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
@@ -980,6 +1015,7 @@ uint32_t vx_vehicle_add(VxWorld *world, uint32_t body, const VxVehicleDesc *desc
 	if (desc->kind == 1) {
 		auto controller = new TrackedVehicleControllerSettings();
 		controller->mEngine.mMaxTorque = desc->max_torque;
+		fill_curve(controller->mEngine.mNormalizedTorque, desc->torque, desc->torque_count, 1.0f);
 		controller->mEngine.mMinRPM = desc->min_rpm;
 		controller->mEngine.mMaxRPM = std::max(desc->max_rpm, desc->min_rpm + 1.0f);
 		controller->mTransmission.mMode = desc->automatic ? ETransmissionMode::Auto : ETransmissionMode::Manual;
@@ -1021,6 +1057,8 @@ uint32_t vx_vehicle_add(VxWorld *world, uint32_t body, const VxVehicleDesc *desc
 			wheel->mMaxSteerAngle = desc->wheels[at].max_steer;
 			wheel->mMaxBrakeTorque = desc->wheels[at].max_brake;
 			wheel->mMaxHandBrakeTorque = desc->wheels[at].max_handbrake;
+			fill_curve(wheel->mLongitudinalFriction, desc->wheels[at].friction, desc->wheels[at].friction_count, 1.0f);
+			fill_curve(wheel->mLateralFriction, desc->wheels[at].side_friction, desc->wheels[at].side_friction_count, 90.0f);
 			scale_friction(wheel->mLongitudinalFriction, desc->wheels[at].grip);
 			scale_friction(wheel->mLateralFriction, desc->wheels[at].side_grip);
 			if (desc->kind == 2) {
@@ -1137,6 +1175,35 @@ void vx_vehicle_wheel(VxWorld *world, uint32_t vehicle, uint32_t wheel, float po
 	rotation[1] = turn.GetY();
 	rotation[2] = turn.GetZ();
 	rotation[3] = turn.GetW();
+}
+
+// What a wheel touches now, where, and how it slips.
+void vx_vehicle_contact(VxWorld *world, uint32_t vehicle, uint32_t wheel, VxWheelContact *out) {
+	*out = VxWheelContact {};
+	Vehicle *found = vehicle_of(world, vehicle);
+	if (found == nullptr || wheel >= found->constraint->GetWheels().size()) {
+		return;
+	}
+	const Wheel *on = found->constraint->GetWheel(wheel);
+	out->suspension = on->GetSuspensionLength();
+	out->spin = on->GetAngularVelocity();
+	out->load = on->GetSuspensionLambda();
+	if (on->HasContact()) {
+		out->touching = 1;
+		RVec3 at = on->GetContactPosition();
+		Vec3 normal = on->GetContactNormal();
+		out->point[0] = float(at.GetX());
+		out->point[1] = float(at.GetY());
+		out->point[2] = float(at.GetZ());
+		out->normal[0] = normal.GetX();
+		out->normal[1] = normal.GetY();
+		out->normal[2] = normal.GetZ();
+	}
+	if (found->kind != 1) {
+		auto rolling = static_cast<const WheelWV *>(on);
+		out->slip = rolling->mLongitudinalSlip;
+		out->slip_angle = RadiansToDegrees(rolling->mLateralSlip);
+	}
 }
 
 } // extern "C"

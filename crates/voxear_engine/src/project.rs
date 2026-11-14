@@ -157,16 +157,23 @@ pub(crate) enum ReverbModeName {
 }
 
 /// The languages the game is in, by their codes, the one it is written in
-/// first. Its text is in string tables (see `voxear_localization`).
+/// first. Its text is in string tables (see `voxear_localization`). A
+/// language may name fonts, by GUID or path, that its text falls back to
+/// for the letters a style's own font has not got: its own, then those of
+/// the languages it falls back to, then Voxear's faces, then the system's.
 ///
 /// ```toml
 /// [localization]
-/// languages = ["en", "fr", "pt-BR"]
+/// languages = ["en", "fr", "pt-BR", "ja"]
+///
+/// [localization.fonts]
+/// ja = ["Fonts/NotoSansJP-Regular.otf"]
 /// ```
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LocalizationSettings {
     pub languages: Vec<String>,
+    pub fonts: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// The project's layers' names, by number from layer 0, as Unity's Tags
@@ -324,6 +331,49 @@ impl Project {
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.layers.names = if only_default { Vec::new() } else { names };
         self.file.physics.ignore = ignore;
+        Ok(())
+    }
+
+    /// Writes the fonts a language's text falls back to into `voxear.toml`,
+    /// each by GUID or path in order, under `[localization.fonts]`; none
+    /// takes the language's line out, and the table with its last. The rest
+    /// of the file is kept as it is, comments and all.
+    pub fn set_language_fonts(&mut self, language: &str, fonts: &[String]) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let localization = document.entry("localization").or_insert_with(toml_edit::table);
+        let Some(localization) = localization.as_table_like_mut() else {
+            anyhow::bail!("[localization] in {} is not a table", path.display());
+        };
+        if fonts.is_empty() {
+            let emptied = localization.get_mut("fonts").and_then(|t| t.as_table_like_mut()).is_some_and(|table| {
+                table.remove(language);
+                table.is_empty()
+            });
+            if emptied {
+                localization.remove("fonts");
+            }
+        } else {
+            let table = localization.entry("fonts").or_insert_with(|| {
+                let mut table = toml_edit::Table::new();
+                table.set_implicit(false);
+                toml_edit::Item::Table(table)
+            });
+            let Some(table) = table.as_table_like_mut() else {
+                anyhow::bail!("[localization.fonts] in {} is not a table", path.display());
+            };
+            table.insert(language, toml_edit::value(toml_edit::Array::from_iter(fonts.iter())));
+        }
+        if localization.is_empty() {
+            document.remove("localization");
+        }
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        match fonts.is_empty() {
+            true => drop(self.file.localization.fonts.remove(language)),
+            false => drop(self.file.localization.fonts.insert(language.to_string(), fonts.to_vec())),
+        }
         Ok(())
     }
 
@@ -503,6 +553,25 @@ fn set_key(document: &mut toml_edit::DocumentMut, table: &str, key: &str, value:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_languages_fonts_are_written_under_localization_and_taken_out_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# My game\n[project]\nname = \"Fonts\"\n\n[localization]\nlanguages = [\"en\", \"ja\"]\n";
+        std::fs::write(dir.path().join(PROJECT_FILE), text).unwrap();
+        let mut project = Project::open(dir.path()).unwrap();
+        let fonts = vec!["Fonts/NotoSansJP.otf".to_string(), "0123456789abcdef0123456789abcdef".to_string()];
+        project.set_language_fonts("ja", &fonts).unwrap();
+        let written = std::fs::read_to_string(dir.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.starts_with("# My game") && written.contains("languages = [\"en\", \"ja\"]"), "{written}");
+        assert!(written.contains("[localization.fonts]\nja = [\"Fonts/NotoSansJP.otf\""), "{written}");
+        assert_eq!(Project::open(dir.path()).unwrap().file.localization.fonts["ja"], fonts, "read back");
+        assert_eq!(project.file.localization.fonts["ja"], fonts, "and kept");
+        project.set_language_fonts("ja", &[]).unwrap();
+        let written = std::fs::read_to_string(dir.path().join(PROJECT_FILE)).unwrap();
+        assert!(!written.contains("fonts") && written.contains("languages"), "{written}");
+        assert!(project.file.localization.fonts.is_empty());
+    }
 
     #[test]
     fn switching_a_module_writes_every_modules_choice_and_keeps_the_rest_of_the_file() {

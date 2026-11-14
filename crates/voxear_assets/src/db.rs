@@ -109,6 +109,9 @@ pub enum AssetKind {
     /// A `.voxshade` file: a custom shader made of nodes, compiled into
     /// the Slang a `.shader` holds, which materials pick as they pick one.
     VoxShade,
+    /// A `.ttf` or `.otf` file: a font, which UI styles name and languages
+    /// list for the letters they need.
+    Font,
 }
 
 impl AssetKind {
@@ -124,6 +127,7 @@ impl AssetKind {
             "vui" => Self::Ui,
             "wav" | "ogg" | "flac" | "mp3" => Self::Sound,
             "inputactions" => Self::InputActions,
+            "ttf" | "otf" => Self::Font,
             "strings" => Self::Strings,
             "paths" => Self::Paths,
             "assettable" => Self::AssetTable,

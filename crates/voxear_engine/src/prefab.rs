@@ -405,6 +405,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.map.is_some() {
         root.map = instance.map.clone();
     }
+    if instance.localized_text.is_some() {
+        root.localized_text = instance.localized_text.clone();
+    }
     if instance.map_marker.is_some() {
         root.map_marker = instance.map_marker.clone();
     }
@@ -506,6 +509,7 @@ pub struct TemplateObj {
     pub screen_ui: Option<crate::screen_ui::ScreenUi>,
     pub map: Option<crate::map::Map>,
     pub map_marker: Option<crate::map::MapMarker>,
+    pub localized_text: Option<crate::localized_text::LocalizedText>,
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
@@ -688,6 +692,9 @@ impl Template {
             }
             if let Some(map) = obj.map.clone() {
                 world.insert(entity, map);
+            }
+            if let Some(text) = obj.localized_text.clone() {
+                world.insert(entity, text);
             }
             if let Some(marker) = obj.map_marker.clone() {
                 world.insert(entity, marker);
@@ -1335,6 +1342,7 @@ pub(crate) fn resolve_obj(
         screen_ui: data.screen_ui.as_ref().map(|screen| crate::screen_ui::screen_ui(content, screen)).transpose()?,
         map: data.map.as_ref().map(crate::map::map_of),
         map_marker: data.map_marker.clone(),
+        localized_text: data.localized_text.clone(),
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,

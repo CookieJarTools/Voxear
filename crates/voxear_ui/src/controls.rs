@@ -169,8 +169,21 @@ impl Editing {
         self.top = -self.scroll_y.round();
     }
 
+    /// Has the next [`sync`](Self::sync) set its font again, as after the
+    /// fonts changed.
+    pub(crate) fn forget_layout(&mut self) {
+        self.synced = None;
+        self.placeholder.shaped = None;
+    }
+
     /// Brings the editor's font, scale and wrapping width up to date.
-    pub fn sync(&mut self, style: TextStyle, (scale, whole_pixels): (f32, bool), width: Option<f32>) {
+    pub fn sync(
+        &mut self,
+        style: TextStyle,
+        (scale, whole_pixels): (f32, bool),
+        width: Option<f32>,
+        stack: &crate::fonts::FontStack,
+    ) {
         let width = if self.multiline { width } else { None };
         if self.synced == Some((style, (scale, whole_pixels), width)) {
             return;
@@ -178,7 +191,7 @@ impl Editing {
         let styles = self.editor.edit_styles();
         styles.insert(StyleProperty::FontSize(style.size));
         styles.insert(StyleProperty::FontWeight(FontWeight::new(style.weight)));
-        styles.insert(StyleProperty::FontFamily(style.family.source().into()));
+        styles.insert(StyleProperty::FontFamily(stack.families(style.family)));
         styles.insert(StyleProperty::LineHeight(style.parley_line_height()));
         self.editor.set_scale(scale);
         self.editor.set_quantize(whole_pixels);
@@ -478,11 +491,11 @@ impl Ui {
         let shaping = (scale, self.whole_pixels);
         let now = self.input.time;
         let [_, _, width, height] = self.content_box(field);
-        let Ui { tree, fonts, layouts, .. } = self;
+        let Ui { tree, fonts, layouts, font_stack, .. } = self;
         let Some(element) = tree.get_node_context_mut(field.0) else { return };
         let style = element.text_style;
         let Some(Control::TextField(edit)) = &mut element.control else { return };
-        edit.sync(style, shaping, Some(width * scale));
+        edit.sync(style, shaping, Some(width * scale), font_stack);
         let before = (edit.editor.raw_text().to_string(), edit.caret());
         let mut driver = edit.editor.driver(fonts, layouts);
         command(&mut driver);
@@ -762,11 +775,11 @@ impl Ui {
         let shaping = (scale, self.whole_pixels);
         for field in self.fields.clone() {
             let [_, _, width, height] = self.content_box(NodeId(field));
-            let Ui { tree, fonts, layouts, .. } = self;
+            let Ui { tree, fonts, layouts, font_stack, .. } = self;
             let Some(element) = tree.get_node_context_mut(field) else { continue };
             let style = element.text_style;
             let Some(Control::TextField(edit)) = &mut element.control else { continue };
-            edit.sync(style, shaping, Some(width * scale));
+            edit.sync(style, shaping, Some(width * scale), font_stack);
             let text_height = edit.editor.layout(fonts, layouts).height();
             // A multiline field keeps where it was scrolled to, so the wheel can leave the caret.
             if edit.multiline {
@@ -776,7 +789,7 @@ impl Ui {
                 edit.keep_caret_visible(width * scale, height * scale);
             }
             if !edit.placeholder.content.is_empty() {
-                let layout = edit.placeholder.shaped(fonts, layouts, shaping);
+                let layout = edit.placeholder.shaped(fonts, layouts, shaping, font_stack);
                 layout.break_all_lines(None);
             }
         }

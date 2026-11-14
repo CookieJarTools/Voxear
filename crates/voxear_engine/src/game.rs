@@ -150,6 +150,7 @@ impl Game {
         game.audio.reverb = game.project.file.audio.reverb;
         game.audio.reverb_mode = game.project.file.audio.reverb_mode;
         game.load_input_actions();
+        game.load_fonts();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
         crate::modules::put(&mut game.engine.world, game.project.modules());
@@ -248,6 +249,7 @@ impl Game {
             }
         };
         localization.clear();
+        localization.set_fonts(&self.project.file.localization.fonts);
         let db = self.content.db();
         let tables =
             |kind: AssetKind| db.entries().filter(move |e| e.kind == kind).map(move |e| (e.path.clone(), e.guid, kind));
@@ -263,6 +265,22 @@ impl Game {
             }
         }
         self.engine.world.insert_resource(localization);
+    }
+
+    /// Reads every font of the project's and its packages', `.ttf` and
+    /// `.otf`, for UI text to draw in, named by its path or its GUID (see
+    /// `voxear_ui::fonts`); a font read already and unchanged is kept.
+    pub fn load_fonts(&mut self) {
+        let fonts: Vec<(String, AssetGuid)> = (self.content.db().entries())
+            .filter(|entry| entry.kind == AssetKind::Font)
+            .map(|entry| (entry.path.clone(), entry.guid))
+            .collect();
+        for (path, guid) in fonts {
+            match self.content.read(&path) {
+                Ok(data) => drop(voxear_ui::fonts::register(&[&path, &guid.to_string()], std::sync::Arc::new(data))),
+                Err(error) => tracing::error!("{path}: {error:#}"),
+            }
+        }
     }
 
     /// Rebuilds the scripts when they change and reloads them into the
@@ -847,6 +865,8 @@ impl Game {
             self.prepare_post(renderer);
         }
         self.ui.follow_language(self.engine.world.resource::<Localization>());
+        // Localized Texts show their keys' text in their documents, once Screen UIs have loaded theirs.
+        self.ui.show_localized_texts(&self.engine.world, self.engine.world.resource::<Localization>());
         if let Some(renderer) = renderer.as_deref_mut() {
             self.prompt_icons.follow(&self.input, &mut self.content, renderer);
         }

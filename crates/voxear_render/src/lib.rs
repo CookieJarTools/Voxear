@@ -12,6 +12,7 @@ mod alloc;
 mod ambient_occlusion;
 mod assets;
 mod atmosphere;
+pub use atmosphere::FarHaze;
 mod box_model;
 mod bvh;
 mod capture;

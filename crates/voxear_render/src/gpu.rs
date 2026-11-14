@@ -744,7 +744,10 @@ pub struct GpuAtmosphere {
     /// Distances in the scene count as this many times as far for the haze
     /// over them, as aerial perspective is too faint at a game's scale.
     pub aerial_scale: f32,
-    pub _pad: [f32; 2],
+    /// How far off, in metres, the haze lets almost nothing through: 0 for
+    /// no limit.
+    pub visibility: f32,
+    pub _pad: f32,
 }
 
 /// Post-processing settings as shaders read them. Mirrors `Post` in

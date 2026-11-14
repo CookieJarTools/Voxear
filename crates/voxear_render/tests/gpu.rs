@@ -1626,6 +1626,59 @@ fn atmosphere_render(elevation: f32, looking: Vec3) -> Option<Vec<u8>> {
     Some(renderer.read_pixels().unwrap().2)
 }
 
+/// A dark ridge `height` metres high and `away` metres off, under the
+/// atmosphere's sky with `distance_haze`, the haze closing in `far_haze`
+/// metres off (none at 0), seen from head height looking along `looking`.
+fn far_ridge_render((away, height): (f32, f32), (distance_haze, far_haze): (f32, f32), looking: Vec3) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, FarHaze, PostProcess, Sky, SkyMode};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let camera = Quat::from_rotation_arc(Vec3::Z, looking.normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.7, 0.0), camera, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.3, 0.6, 0.4).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = MaterialDesc { base_color: [0.08, 0.08, 0.09, 1.0], ..MaterialDesc::default() };
+    let rock = renderer.add_material(&dark).unwrap();
+    let ridge = Transform::new(Vec3::new(0.0, height * 0.5, away), Quat::IDENTITY, Vec3::new(away * 1.5, height, 200.0));
+    world.spawn((MeshRenderer::new(cube, rock), ridge));
+    world.insert_resource(Sky { mode: SkyMode::Atmosphere, distance_haze, ..Sky::default() });
+    if far_haze > 0.0 {
+        world.insert_resource(FarHaze(far_haze));
+    }
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn far_land_fades_into_the_sky_where_the_view_ends_and_past_the_hazes_table() {
+    let looking = bearing(2.0, 0.0);
+    let renders = [
+        far_ridge_render((3000.0, 160.0), (2.0, 0.0), looking),
+        far_ridge_render((3000.0, 160.0), (2.0, 3300.0), looking),
+        far_ridge_render((24_000.0, 1500.0), (10.0, 0.0), looking),
+    ];
+    let [Some(clear), Some(closed), Some(beyond)] = renders else { return };
+    keep_image("far ridge clear.png", &clear);
+    keep_image("far ridge in far haze.png", &closed);
+    keep_image("far ridge past the haze table.png", &beyond);
+    // The ridge's face a degree up, against the sky as high up beside its end.
+    let contrast = |pixels: &[u8], up: f32| {
+        let ridge = rgb_at(pixels, sky_pixel(looking, bearing(up, -28.0)));
+        let sky = rgb_at(pixels, sky_pixel(looking, bearing(up, -42.0)));
+        (0..3).map(|c| (ridge[c] - sky[c]).abs()).sum::<i32>()
+    };
+    let (before, after) = (contrast(&clear, 1.0), contrast(&closed, 1.0));
+    assert!(before > 60, "a dark ridge against the sky, in light haze: {before}");
+    assert!(after * 5 < before, "faded into the sky where the view ends: {after} against {before}");
+    // 24 km off, past the haze table's last slice at the usual haze, the air goes on as it was.
+    let far = contrast(&beyond, 1.5);
+    assert!(far * 5 < before, "lost in the haze so far off: {far}");
+}
+
 /// The pixel a direction lands on, seen from a camera looking along `looking`.
 fn sky_pixel(looking: Vec3, direction: Vec3) -> (u32, u32) {
     use voxear_core::math::{Mat4, camera::lh::proj::vulkan};

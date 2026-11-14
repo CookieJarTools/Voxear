@@ -381,7 +381,31 @@ float4 aerialPerspectiveAt(Frame* frame, float2 screenUv, float metres)
     float4 a = table.SampleLevel(clamped, float2((first * AERIAL_SLICES + inSlice.x) / width, inSlice.y / AERIAL_SLICES), 0);
     float4 b = table.SampleLevel(clamped, float2((second * AERIAL_SLICES + inSlice.x) / width, inSlice.y / AERIAL_SLICES), 0);
     float4 haze = lerp(a, b, slice - first) * weight;
-    return float4(haze.rgb, 1.0 - haze.a);
+    // The colour the air tends to looking this way, as a long enough stretch of it would show: the last slice's
+    // light over how much it hides.
+    float4 last = table.SampleLevel(clamped, float2(((AERIAL_SLICES - 1.0) * AERIAL_SLICES + inSlice.x) / width, inSlice.y / AERIAL_SLICES), 0);
+    float3 endless = last.rgb / max(last.a, 1e-4);
+    float through = 1.0 - haze.a;
+    // Past the last slice the air goes on as it was: what it lets through falls off as over the last slice's
+    // distance, towards the colour it tends to, rather than stopping at the last slice's haze.
+    float lastShare = (AERIAL_SLICES - 0.5) / AERIAL_SLICES;
+    float lastKm = lastShare * lastShare * AERIAL_KM_PER_SLICE * AERIAL_SLICES;
+    if (kilometres > lastKm && last.a > 1e-4)
+    {
+        float further = pow(max(1.0 - last.a, 1e-6), (kilometres - lastKm) / lastKm);
+        haze.rgb += through * (1.0 - further) * endless;
+        through *= further;
+    }
+    // Within the visibility, the last of the land fades into the sky: no more than 2% of it shows through at that
+    // distance.
+    float visibility = frame->lighting.atmosphere.visibility;
+    if (visibility > 0.0)
+    {
+        float kept = exp(-3.912 * metres / visibility);
+        haze.rgb += through * (1.0 - kept) * endless;
+        through *= kept;
+    }
+    return float4(haze.rgb, through);
 }
 
 // The light a surface gets from the sky and the ground round it, facing up

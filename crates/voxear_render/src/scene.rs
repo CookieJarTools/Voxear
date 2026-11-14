@@ -541,6 +541,7 @@ pub fn extract(
     let worn = world.resource::<crate::looks::WornLook>().copied();
     let own_sky = worn.map(|worn| worn.sky).or_else(|| world.resource::<Sky>().copied()).unwrap_or_default();
     let mut sky = weather.sky(own_sky);
+    let far_haze = world.resource::<crate::atmosphere::FarHaze>().map_or(0.0, |haze| haze.0);
     // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
     // sky light as it is worked out.
     let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
@@ -653,7 +654,7 @@ pub fn extract(
                 SkyMode::Gradient => SKY_GRADIENT,
                 SkyMode::Atmosphere => SKY_ATMOSPHERE,
             },
-            atmosphere: crate::atmosphere::of_sky(&sky),
+            atmosphere: crate::atmosphere::of_sky(&sky, far_haze),
             clouds: crate::clouds::gpu(&sky.clouds),
             sun_cookie: NO_TEXTURE,
             transmittance: NO_TEXTURE,

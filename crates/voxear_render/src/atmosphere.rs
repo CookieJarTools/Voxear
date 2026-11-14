@@ -60,12 +60,14 @@ pub fn earth() -> GpuAtmosphere {
         // A game's views reach a few hundred metres, where real haze barely
         // shows; counting distances as ten times as far gives it its look.
         aerial_scale: 10.0,
-        _pad: [0.0; 2],
+        visibility: 0.0,
+        _pad: 0.0,
     }
 }
 
-/// Earth's air with a scene's sky's haze and sun.
-pub fn of_sky(sky: &crate::Sky) -> GpuAtmosphere {
+/// Earth's air with a scene's sky's haze and sun, and the haze closing in
+/// `visibility` metres off where that is over nothing (see [`FarHaze`]).
+pub fn of_sky(sky: &crate::Sky, visibility: f32) -> GpuAtmosphere {
     let earth = earth();
     let haze = sky.haze.max(0.0);
     let tint = sky.haze_tint.max(voxear_core::math::Vec3::ZERO).to_array();
@@ -79,9 +81,17 @@ pub fn of_sky(sky: &crate::Sky) -> GpuAtmosphere {
         mie_g: sky.haze_glow.clamp(0.0, 0.95),
         sun_cos_radius: (sky.sun_size.clamp(0.05, 20.0) * 0.5).to_radians().cos(),
         aerial_scale: sky.distance_haze.max(0.0),
+        visibility: if visibility.is_finite() { visibility.max(0.0) } else { 0.0 },
         ..earth
     }
 }
+
+/// How far a scene's view reaches, in metres, where it has land that far
+/// off to show, such as a world of blocks' far view: the haze closes in
+/// there, so the last of the land fades into the sky rather than standing
+/// dark against it. The engine sets it from the worlds it streams.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FarHaze(pub f32);
 
 /// One frame's tables.
 #[derive(Clone, Copy)]

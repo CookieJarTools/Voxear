@@ -71,6 +71,8 @@ haze_glow = 0.85
 distance_haze = 16.0
 ```
 
+However far the view reaches, the haze goes on building with distance, so the furthest hills are the palest. Where a level has a [[Endless Worlds|world without end]], the haze also closes in where its far view ends: no more than a fiftieth of the land there shows through. The last ridges fade into the sky rather than standing dark against it, or stopping at an edge. Ridges a third and two thirds of the way out keep about a quarter and a twentieth of their contrast, so the land reads in layers to the horizon. A longer far distance (see [[Block Worlds]]) pushes the haze further out.
+
 ## Clouds
 
 A sky can have clouds: heaped clouds in a layer over the level, which drift with the wind. The sun lights them, bright where it reaches them and grey underneath, gold and red as it sets, and the moon lights them at night. Their shadows cross the ground, the water and everything else the sun lights, and where the level has fog with light shafts, the shafts fall between them.

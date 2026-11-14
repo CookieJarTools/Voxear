@@ -1131,10 +1131,18 @@ pub fn stream(world: &mut World, content: &mut Content) {
         .collect();
     if endless.is_empty() {
         world.remove_resource::<Streams>();
+        world.remove_resource::<voxear_render::FarHaze>();
         return;
     }
     let Some(viewer) = crate::terrain::viewer(world) else { return };
     let budget = voxear_terrain::WorldBudget::of(world);
+    // The haze closes in where the furthest far view ends, so its last land fades into the sky.
+    let furthest = endless
+        .iter()
+        .filter_map(|(_, asset, _)| asset.file.generate.as_ref()?.endless)
+        .map(|far| far.far.min(budget.far_distance))
+        .fold(0.0f32, f32::max);
+    world.insert_resource(voxear_render::FarHaze(furthest));
     // The far sides of the Portals near enough to show them are made too, less far.
     let exits = crate::portals::exits(world);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();

@@ -578,7 +578,11 @@ struct Atmosphere
     float topRadius;
     float sunCosRadius;
     float aerialScale;
-    float2 pad;
+    // How far off, in metres, the haze lets almost nothing through (0 for no
+    // limit): the far view's edge, where the last of the land fades into the
+    // sky.
+    float visibility;
+    float pad;
 };
 
 // The sky's clouds (clouds.slang); mirrors GpuClouds in src/gpu.rs. No cover, no clouds.

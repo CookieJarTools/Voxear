@@ -753,6 +753,14 @@ impl Renderer {
         }
     }
 
+    /// Makes each image the renderer keeps from frame to frame start out
+    /// holding NaN wherever it holds floats, as memory a GPU has used for a
+    /// while may: for tests, so that a pass reading what nothing wrote shows
+    /// in the picture rather than reading the zeros fresh memory often holds.
+    pub fn fill_new_images_with_nan(&mut self, fill: bool) {
+        self.graph.fill_new_with_nan = fill;
+    }
+
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
     pub fn reset_history(&mut self) {

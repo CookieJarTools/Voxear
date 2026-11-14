@@ -738,5 +738,10 @@ float4 cloudsFragment(LutOut input) : SV_Target0
         return seen;
     }
     float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], was, 0.0);
+    // Nothing that is not a number is kept: it would stay from frame to frame.
+    if (any(isnan(kept)) || any(isinf(kept)))
+    {
+        return seen;
+    }
     return lerp(seen, kept, CLOUD_KEPT);
 }

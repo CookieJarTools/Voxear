@@ -372,6 +372,131 @@ fn two_views_of_different_sizes_each_show_the_far_side_in_their_openings() {
     assert!(black < 20, "{black} black pixels in the second view");
 }
 
+#[test]
+fn a_camera_right_up_against_an_opening_sees_the_far_side_with_no_black() {
+    let Some(mut renderer) = renderer() else { return };
+    let places = places(&mut renderer, 0.4);
+    let mut world = places.world;
+    // With the post-processing a game has, whose anti-aliasing and bloom spread any pixel gone wrong.
+    world.insert_resource(PostProcess::default());
+    // Ever nearer the opening, as a camera that follows a player round comes right up to a Portal: straight on and
+    // turned aside, off its middle towards a side, on its plane, a hair past it before it is carried through, and
+    // beside the opening along its plane. The opening's plane is z = 6, its sides x = -1 and 1, its foot y = 0.
+    let poses = [
+        (Vec3::new(0.0, 1.5, 5.0), 0.0f32, 0.0f32),
+        (Vec3::new(0.0, 1.5, 5.88), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 5.95), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 5.98), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 5.999), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 6.0), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 6.001), 0.0, 0.0),
+        (Vec3::new(0.0, 1.5, 6.02), 0.0, 0.0),
+        (Vec3::new(0.6, 1.5, 5.95), 0.5, 0.3),
+        (Vec3::new(-0.7, 1.5, 5.98), -0.8, -0.2),
+        (Vec3::new(0.9, 2.8, 5.92), 1.2, 0.4),
+        (Vec3::new(0.0, 1.5, 5.9), 1.45, 0.0),
+        (Vec3::new(0.0, 1.5, 5.9), -1.55, 0.1),
+        (Vec3::new(0.95, 1.5, 6.0), -1.2, 0.0),
+        (Vec3::new(1.05, 1.5, 6.0), -1.4, 0.0),
+        (Vec3::new(1.3, 1.5, 5.97), -0.6, 0.0),
+        (Vec3::new(0.0, 2.99, 5.97), 0.0, 1.0),
+        (Vec3::new(0.0, 0.05, 5.97), 0.0, -0.9),
+    ];
+    let mut black_shots = Vec::new();
+    for (shot, &(eye, yaw, pitch)) in poses.iter().enumerate() {
+        let turn = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+        *world.get_mut::<Transform>(places.camera).unwrap() = Transform::new(eye, turn, Vec3::ONE);
+        let pixels = frames(&mut renderer, &world, 6);
+        keep_image(&format!("portal against {shot}.png"), &pixels);
+        let black = pixels.chunks(4).filter(|p| p[..3].iter().all(|&c| c < 6)).count();
+        if black > 20 {
+            black_shots.push((shot, black));
+        }
+    }
+    assert!(black_shots.is_empty(), "black pixels (shot, pixels): {black_shots:?}");
+}
+
+#[test]
+fn a_second_view_from_another_camera_leaves_the_first_views_far_side_as_it_was() {
+    use voxear_render::ViewOptions;
+    let Some(mut renderer) = renderer() else { return };
+    let places = places(&mut renderer, 0.4);
+    let mut world = places.world;
+    let alone = frames(&mut renderer, &world, 3);
+    keep_image("portal first view alone.png", &alone);
+    let rect = opening(&world, places.camera, places.near, 2);
+    // The editor's Scene view beside its Game view, from a camera of its own: looking at the Portal from off to one
+    // side, from behind it, and away from it.
+    let poses = [
+        (Vec3::new(-4.0, 2.5, 1.0), looking(Vec3::new(-4.0, 2.5, 1.0), Vec3::new(0.0, 1.5, 6.0))),
+        (Vec3::new(1.0, 2.0, 11.0), looking(Vec3::new(1.0, 2.0, 11.0), Vec3::new(0.0, 1.5, 6.0))),
+        (Vec3::new(5.0, 3.0, -4.0), Quat::from_rotation_y(2.5)),
+    ];
+    let scene_camera = world.spawn((Camera::default(), Transform::new(poses[0].0, poses[0].1, Vec3::ONE)));
+    let [sx, sy, sw, sh] = [0u32, 0, 240, 150];
+    let options = ViewOptions { camera: Some(scene_camera), ..ViewOptions::default() };
+    renderer.set_more_views(&[([sx, sy, sw, sh], options)]).unwrap();
+    let mut changed = Vec::new();
+    for (pose, &(at, turn)) in poses.iter().enumerate() {
+        *world.get_mut::<Transform>(scene_camera).unwrap() = Transform::new(at, turn, Vec3::ONE);
+        let both = frames(&mut renderer, &world, 3);
+        keep_image(&format!("portal first view with another {pose}.png"), &both);
+        let (mut all, mut differ) = (0, 0);
+        for y in rect[1]..rect[3] {
+            for x in rect[0]..rect[2] {
+                if x < sx + sw + 2 && y < sy + sh + 2 {
+                    continue;
+                }
+                all += 1;
+                let (p, q) = (pixel(&alone, x, y), pixel(&both, x, y));
+                differ += usize::from(p.iter().zip(q).any(|(p, q)| p.abs_diff(q) > 12));
+            }
+        }
+        assert!(all > 2000, "{all} pixels of the first view's opening to judge");
+        if differ * 100 >= all {
+            changed.push((pose, differ, all));
+        }
+    }
+    renderer.set_more_views(&[]).unwrap();
+    assert!(changed.is_empty(), "the first view's opening changed (pose, pixels, of): {changed:?}");
+}
+
+#[test]
+fn a_far_side_under_clouds_shows_no_black_where_its_images_start_out_holding_nan() {
+    use voxear_render::{Clouds, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    // As on a GPU that has been running a while, whose memory holds whatever it held, NaN among it.
+    renderer.fill_new_images_with_nan(true);
+    let places = places(&mut renderer, 0.4);
+    let mut world = places.world;
+    world.insert_resource(Sky { clouds: Clouds::covering(0.5), ..Sky::default() });
+    // With the post-processing a game has, whose anti-aliasing and bloom spread a pixel gone wrong.
+    world.insert_resource(PostProcess::default());
+    // Looking through each of the pair from its own side, turning a little each frame as a player looks round, so
+    // the clouds read last frame's picture outside the opening.
+    let far = PortalPose::of_obj(&world, places.far).unwrap();
+    let sides = [
+        (Vec3::new(0.0, 1.6, 2.5), Vec3::new(0.0, 1.6, 6.0)),
+        (far.position + far.rotation * Vec3::new(0.0, 1.6, -3.5), far.position + Vec3::new(0.0, 1.6, 0.0)),
+    ];
+    let mut black_shots = Vec::new();
+    for (side, &(eye, target)) in sides.iter().enumerate() {
+        let looks = looking(eye, target);
+        let mut pixels = Vec::new();
+        for frame in 0..12 {
+            let turn = Quat::from_rotation_y(0.04 * frame as f32 - 0.2) * looks;
+            *world.get_mut::<Transform>(places.camera).unwrap() = Transform::new(eye, turn, Vec3::ONE);
+            pixels = frames(&mut renderer, &world, 1);
+        }
+        keep_image(&format!("portal under clouds {side}.png"), &pixels);
+        let black = pixels.chunks(4).filter(|p| p[..3].iter().all(|&c| c < 6)).count();
+        if black > 20 {
+            black_shots.push((side, black));
+        }
+    }
+    assert!(black_shots.is_empty(), "black pixels (side, pixels): {black_shots:?}");
+}
+
 /// A world of blocks with two fields 20 km apart, each with a Portal that
 /// leads to the other: the first plain grass with a stone pillar; the second
 /// with a pit of water, a tall pillar of dirt and steps of stone. The

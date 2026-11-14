@@ -31,6 +31,7 @@ mod falloff;
 mod gullies;
 mod height_mask;
 mod landmass;
+mod levels;
 mod math;
 mod noise;
 mod output;
@@ -71,6 +72,7 @@ pub use falloff::{Falloff, FalloffShape};
 pub use gullies::Gullies;
 pub use height_mask::HeightMask;
 pub use landmass::Land;
+pub use levels::Levels;
 pub use math::{Math, Operation};
 pub use noise::Noise;
 pub use output::Output;
@@ -335,6 +337,7 @@ pub enum NodeKind {
     Falloff(Falloff),
     Terrace(Terrace),
     Plateaus(Plateaus),
+    Levels(Levels),
     Chasms(Chasms),
     Rivers(Rivers),
     Clamp(Clamp),
@@ -391,6 +394,7 @@ macro_rules! each_kind {
             NodeKind::Falloff($kind) => $do,
             NodeKind::Terrace($kind) => $do,
             NodeKind::Plateaus($kind) => $do,
+            NodeKind::Levels($kind) => $do,
             NodeKind::Chasms($kind) => $do,
             NodeKind::Rivers($kind) => $do,
             NodeKind::Clamp($kind) => $do,
@@ -437,6 +441,7 @@ impl NodeKind {
             NodeKind::Curve(Remap::default()),
             NodeKind::Terrace(Terrace::default()),
             NodeKind::Plateaus(Plateaus::default()),
+            NodeKind::Levels(Levels::default()),
             NodeKind::Chasms(Chasms::default()),
             NodeKind::Rivers(Rivers::default()),
             NodeKind::Clamp(Clamp::default()),

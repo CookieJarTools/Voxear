@@ -93,6 +93,12 @@ pub struct BlockGenerate {
     /// each place to take the biome its own climate is nearest.
     #[serde(skip_serializing_if = "is_nothing")]
     pub biome_size: f32,
+    /// Where its land lies in levels: areas at a few set heights, sheer
+    /// walls between (see `crate::generate::nodes::Levels`). Its biomes'
+    /// regions are then its areas, as wide as they are, so each area is one
+    /// biome. None for the generator's own hills and mountains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub levels: Option<crate::generate::nodes::Levels>,
     /// Its biomes as read, with their blocks by this world's numbers: filled
     /// in by whoever has the project's files, before ground is made.
     #[serde(skip)]
@@ -134,6 +140,7 @@ impl Default for BlockGenerate {
             biomes: Vec::new(),
             land_from: 0.0,
             biome_size: 0.0,
+            levels: None,
             placed: None,
             structures: Vec::new(),
             built: None,
@@ -329,6 +336,68 @@ mod tests {
             }
         }
         assert!(seen.len() >= 2, "{seen:?}");
+    }
+
+    #[test]
+    fn where_the_land_lies_in_levels_it_stands_level_at_set_heights_with_walls_between_and_the_mountains_are_gone() {
+        use crate::generate::{
+            BiomeBlocks, BiomeDef, Biomes, Graph, LevelPlan, NodeKind, Regions, WorldBiomes,
+            nodes::{Levels, Noise, Output},
+        };
+        let (mut file, _) = generated(0.0, 0.0);
+        // Mountains from 20 m to 300 m, all of it over the sea.
+        let mut graph = Graph::default();
+        let hills = graph.add(NodeKind::Noise(Noise { size: 200.0, octaves: 3, low: 20.0, high: 300.0, ..Noise::default() }), [0.0; 2]);
+        let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
+        assert!(graph.connect(hills, 0, output, Output::HEIGHT));
+        let world = WorldGen::new(5, 1.0, 0.0, graph);
+        file.blocks.truncate(3);
+        file.blocks.push(BlockKind::colored("Grass", [0.3, 0.5, 0.2]));
+        // Snow over 20 m, which counts from each area's floor: none on the level ground at 34 m and 64 m.
+        let cover = BlockCover { temperature: None, humidity: None, height: Some([20.0, 10_000.0]), depth: 1 };
+        file.blocks.push(BlockKind { cover: Some(cover), ..BlockKind::colored("Snow", [0.95; 3]) });
+        // Areas 90 m across at three levels, 4 m to 64 m, open plains alone: level ground over the Alpine mountains.
+        let levels = Levels {
+            size: 90.0,
+            levels: 3,
+            low: 4.0,
+            high: 64.0,
+            rolling: 0.0,
+            steps: 0.0,
+            canyons: 0.0,
+            spires: 0.0,
+            peaks: 0.0,
+            basins: 0.0,
+            coast: 0.5,
+            ..Levels::default()
+        };
+        let list = vec![BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() }];
+        let biomes = Biomes::new(list, 15.0, 0.3, world.seed());
+        let regions = Regions::new(90.0, 16.0, biomes.clone(), std::sync::Arc::new(world.clone()));
+        let regions = std::sync::Arc::new(regions.with_levels(LevelPlan { keep: None, ..levels.plan() }));
+        let blocks = vec![BiomeBlocks { top: 4, ..BiomeBlocks::default() }];
+        let generate = file.generate.as_mut().unwrap();
+        generate.levels = Some(levels);
+        generate.placed = Some(std::sync::Arc::new(WorldBiomes { regions: Some(regions), biomes, blocks }));
+        let map = file.make_ground(Some(&world));
+        let top = |x: i32, z: i32| (-100..400).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
+        let tops: Vec<i32> = (0..64 * 64).map(|k| top(k % 64, k / 64)).collect();
+        // The floors in blocks of 2 m: 4 m, 34 m and 64 m are blocks 1, 16 and 31, the top block the one under each.
+        let floors = [1, 16, 31];
+        let level = tops.iter().filter(|&&y| floors.iter().any(|&f: &i32| (y - (f - 1)).abs() <= 1)).count();
+        let mut counts = std::collections::BTreeMap::new();
+        tops.iter().for_each(|&y| *counts.entry(y).or_insert(0) += 1);
+        assert!(level * 10 > tops.len() * 7, "{level} of {} columns level: {counts:?}, sea {}", tops.len(), world.sea_level());
+        let seen = floors.iter().filter(|&&f| tops.iter().any(|&y| (y - (f - 1)).abs() <= 1)).count();
+        assert!(seen >= 2, "more than one level in 128 m");
+        // Walls: columns side by side 20 m and more apart in height.
+        let walls = (0..63 * 64).filter(|&k| (tops[k] - tops[k + 1]).abs() >= 10 && (k + 1) % 64 != 0).count();
+        assert!(walls > 0, "a wall between two levels");
+        let high = (0..64 * 64).filter(|&k| (tops[k] - 15).abs() <= 1 || (tops[k] - 30).abs() <= 1).collect::<Vec<_>>();
+        assert!(!high.is_empty(), "some of the higher levels");
+        let snowed = high.iter().filter(|&&k| map.get([k as i32 % 64, tops[k], k as i32 / 64]) == 5).count();
+        let where_: Vec<(usize, i32)> = high.iter().filter(|&&k| map.get([k as i32 % 64, tops[k], k as i32 / 64]) == 5).map(|&k| (k, tops[k])).take(12).collect();
+        assert_eq!(snowed, 0, "snow on a higher level's floor: {where_:?}");
     }
 
     #[test]

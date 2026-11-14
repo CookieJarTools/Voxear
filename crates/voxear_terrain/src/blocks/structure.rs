@@ -1761,7 +1761,9 @@ impl<'a> SiteFits<'a> {
             .map(|at| {
                 let (rise_east, rise_north) = (east[at] - height[at], north[at] - height[at]);
                 let slope = (rise_east * rise_east + rise_north * rise_north).sqrt() / size;
-                let ground = SiteGround { above_sea: height[at] - world.sea_level(), slope, biome: biome_of[at] };
+                // Where the land lies in levels, a site's height counts from the floor of its area.
+                let lift = self.biomes.map_or(0.0, |biomes| biomes.lift(xs[at], zs[at], height[at]));
+                let ground = SiteGround { above_sea: height[at] - lift - world.sea_level(), slope, biome: biome_of[at] };
                 structure.placement.fits(ground, |b| structure.biomes.contains(&b))
             })
             .collect();

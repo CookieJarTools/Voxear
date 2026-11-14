@@ -3285,7 +3285,7 @@ fn a_biomes_own_land_rises_in_mountains_pillars_and_tablelands() {
         let biome =
             BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], land: BiomeLand::of(form), ..BiomeDef::default() };
         let mut graph = hills.graph().clone();
-        add_land(&mut graph, std::slice::from_ref(&biome), hills.sea_level(), None, None);
+        add_land(&mut graph, std::slice::from_ref(&biome), hills.sea_level(), None, None, None);
         let landed = hills.with_graph(graph);
         // The highest of its land over a few kilometres, looked at from a corner of the ground round it.
         let (xs, zs): (Vec<f32>, Vec<f32>) =

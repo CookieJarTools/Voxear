@@ -129,6 +129,41 @@ A mask wired into **Ramps** keeps the ramps to where it is over a half.
 
 **In:** Ramps. **Out:** Height, Walls (1 on walls and rubble), Floor (1 on the lowest level, clear of the walls).
 
+### Levels
+
+Land at a few set heights, an area at a time. Each area, a few kilometres across, is level ground at one of the heights, and where two areas of unlike height meet a sheer wall stands between them, with rubble at its foot and now and then a ramp up it. From the edge of a high area you look down a wall onto the next area's land, far below. Areas near one another tend to stand at like heights, with one here and there a level above or below.
+
+| Row | What it does |
+| --- | --- |
+| Size | How wide an area is, in metres |
+| Levels | How many heights there are, 1 to 12 |
+| Lowest, Highest | The lowest area's height and the highest's, in metres. The levels between are evenly spaced |
+| Wall | How steep the walls stand |
+| Ramps | How much of the walls' length is a ramp instead, 0 to 1 |
+| Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights: see below |
+
+Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before an area stands at its full height, so a high area meets the sea in a cliff) and **Seed**.
+
+Each area has a character:
+
+| Character | What it is |
+| --- | --- |
+| Plains | Open ground, nearly level |
+| Rolling | Ground that rolls as its biome's land does |
+| Steps | Broad steps, each about 26 m high |
+| Canyons | Ravines 70 to 140 m deep cut through it, with natural bridges over them |
+| Spires | A field of rock spires |
+| Peaks | A cluster of lone peaks, 160 to 310 m high |
+| Basins | Sunk to the lowest level, so walls stand round it |
+
+About a third of the areas also have a lone peak standing at their end, back from the wall down to a lower area.
+
+The ground wired into **Ground** says only where the land is and where the sea is: its hills and mountains are not kept.
+
+**In:** Ground. **Out:** Height, Walls (1 on walls, rubble and the peaks' rock, for an Output's Rock), Relief (how much of a biome's land rolls here, by its area's character), Spires and Bridges (masks of the areas of spires and of canyons, for a Spires and an Arches node).
+
+A world of blocks whose land lies in [[Block Worlds#Levels|levels]] lays this node for itself.
+
 ### Chasms
 
 The ground wired in, cut open by rifts and sinkholes: sheer-walled, hundreds of metres deep if you like, with ground at their floors as open to the sky as any other. A chasm's floor takes its column's layers, its biome, plants and structures as the land over it does.
@@ -418,7 +453,7 @@ An arch's top, an island's, a spire's, a fin's and a roof's take the top block o
 
 What the generator makes. With nothing wired into Height the ground lies at the sea level; with no climate wired in it is 15 °C by the sea, cooler higher up, and half wet. With nothing wired into Volume a world of blocks makes the ground under the height solid, with the world's own Overhangs and Caves.
 
-**Rock** takes a mask of where the ground is bare. Where it is over a half, a world of blocks leaves the top and under blocks off the column and shows its base block, so walls and crags are rock and not striped with soil. Wire a Slope Mask into it, or a Plateaus node's Walls.
+**Rock** takes a mask of where the ground is bare. Where it is over a half, a world of blocks leaves the top and under blocks off the column and shows its base block, so walls and crags are rock and not striped with soil. Wire a Slope Mask into it, or a Plateaus or Levels node's Walls.
 
 **Sunk** takes how far under the land round about the ground lies, in metres: a Chasms node's Sunk. A world's biomes can keep to ground sunk so far (see [[Block Worlds#Deep ground|Deep ground]]), so a chasm's floor or a cavern's grows country of its own.
 

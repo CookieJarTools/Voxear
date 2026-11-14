@@ -30,32 +30,9 @@ use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use super::{
     WorldGen,
+    areas::{Areas, LevelPlan, Sites, border_distance},
     biomes::{Biomes, Place},
 };
-use crate::noise;
-
-/// How far a site may be moved from its place in the grid, as a share of
-/// the spacing: under a third, so the nine sites round a place's own cell
-/// always hold the nearest.
-const JITTER: f32 = 0.3;
-
-/// The warp that makes borders wander: how far it moves a place, as a share
-/// of the spacing, and how far apart its rises and falls are, as a number of
-/// spacings. Gentle enough over its length that it never folds.
-const WARP: f32 = 0.22;
-const WARP_SIZE: f32 = 2.5;
-
-/// A second, nearer warp that bends each border along its length, so none
-/// runs straight from corner to corner: a share of the spacing, over a
-/// spacing or so.
-const BEND: f32 = 0.13;
-const BEND_SIZE: f32 = 1.3;
-
-/// A finer warp, so a border is ragged up close: how far, in metres, and
-/// over how many metres. Under a third of a metre for every metre along, so
-/// it never folds either.
-const FINE_WARP: f32 = 6.0;
-const FINE_SIZE: f32 = 64.0;
 
 /// How many sites' biomes a thread keeps before it lets them all go.
 const KEPT: usize = 16384;
@@ -64,7 +41,10 @@ const KEPT: usize = 16384;
 pub struct Regions {
     spacing: f32,
     border: f32,
-    seed: u32,
+    sites: Sites,
+    /// Where the world's land lies in levels: its areas, the same as the
+    /// regions, and the level of each.
+    areas: Option<Arc<Areas>>,
     biomes: Biomes,
     /// The world's generator, whose climate at each site picks its biome.
     world: Arc<WorldGen>,
@@ -99,7 +79,23 @@ impl Regions {
         key.extend(seed.to_le_bytes());
         key.extend(lie.into_bytes());
         let id = crate::layers::stable_hash(&key);
-        Self { spacing, border, seed, biomes, world, id }
+        Self { spacing, border, sites: Sites::new(spacing, seed), areas: None, biomes, world, id }
+    }
+
+    /// These regions with the world's land in levels by `plan`, each region
+    /// an area at a level of its own.
+    pub fn with_levels(mut self, plan: LevelPlan) -> Self {
+        let areas = Areas::new(self.sites, plan);
+        let mut key = self.id.to_le_bytes().to_vec();
+        key.extend(format!("{:?}", areas.plan).into_bytes());
+        self.id = crate::layers::stable_hash(&key);
+        self.areas = Some(Arc::new(areas));
+        self
+    }
+
+    /// The areas of the world's levels, where its land lies in levels.
+    pub fn areas(&self) -> Option<&Arc<Areas>> {
+        self.areas.as_ref()
     }
 
     pub fn spacing(&self) -> f32 {
@@ -119,7 +115,16 @@ impl Regions {
     /// world, with `climate` there: a biome that keeps to a height or to
     /// sunk ground where the place is within all its ranges, else its
     /// region's.
-    pub fn at(&self, x: f32, z: f32, climate: Place) -> Option<usize> {
+    ///
+    /// Where the land lies in levels, a place's height counts from its
+    /// area's floor, so the snow lies on what rises over a level and not on
+    /// every high level.
+    pub fn at(&self, x: f32, z: f32, mut climate: Place) -> Option<usize> {
+        if let Some(areas) = &self.areas {
+            let floor = areas.info(areas.area_at(x, z)).0 - areas.plan.low;
+            let over_lowest = climate.above_sea + self.world.sea_level() - areas.plan.low;
+            climate.above_sea -= floor.min(over_lowest).max(0.0);
+        }
         self.biomes.over(climate).or_else(|| self.region(x, z))
     }
 
@@ -155,51 +160,23 @@ impl Regions {
         t * t * (3.0 - 2.0 * t)
     }
 
-    /// The place at `(x, z)` moved by the warps.
+    /// The place at `(x, z)` moved by the warps: the areas' own, where the
+    /// land lies in levels, so a region's border is its level's wall.
     fn warped(&self, x: f32, z: f32) -> [f32; 2] {
-        let size = self.spacing * WARP_SIZE;
-        let (u, v) = (x / size, z / size);
-        let wide = self.spacing * WARP;
-        let (fu, fv) = (x / FINE_SIZE, z / FINE_SIZE);
-        let bend_size = self.spacing * BEND_SIZE;
-        let (bu, bv) = (x / bend_size, z / bend_size);
-        let bend = self.spacing * BEND;
-        let dx = wide * noise::gradient(u, v, self.seed ^ 0x11)
-            + bend * noise::gradient(bu, bv, self.seed ^ 0x55)
-            + FINE_WARP * noise::gradient(fu, fv, self.seed ^ 0x33);
-        let dz = wide * noise::gradient(u, v, self.seed ^ 0x22)
-            + bend * noise::gradient(bu, bv, self.seed ^ 0x66)
-            + FINE_WARP * noise::gradient(fu, fv, self.seed ^ 0x44);
-        [x + dx, z + dz]
+        match &self.areas {
+            Some(areas) => areas.place(x, z),
+            None => self.sites.warped(x, z),
+        }
     }
 
     /// The site nearest `at`, and the nine round it.
     fn nearest(&self, at: [f32; 2]) -> ([i32; 2], [[i32; 2]; 9]) {
-        let cell = [(at[0] / self.spacing).floor() as i32, (at[1] / self.spacing).floor() as i32];
-        let mut sites = [[0; 2]; 9];
-        let mut best = (cell, f32::MAX);
-        for (k, site) in sites.iter_mut().enumerate() {
-            *site = [cell[0] + (k % 3) as i32 - 1, cell[1] + (k / 3) as i32 - 1];
-            let place = self.site(*site);
-            let (dx, dz) = (place[0] - at[0], place[1] - at[1]);
-            let away = dx * dx + dz * dz;
-            if away < best.1 {
-                best = (*site, away);
-            }
-        }
-        (best.0, sites)
+        self.sites.nearest(at)
     }
 
     /// Where site `cell` lies, in metres.
     fn site(&self, cell: [i32; 2]) -> [f32; 2] {
-        let pick = |part: u32| {
-            let hash = mix(self.seed, cell, part);
-            (hash >> 8) as f32 / (1u32 << 24) as f32 - 0.5
-        };
-        [
-            (cell[0] as f32 + 0.5 + 2.0 * JITTER * pick(0)) * self.spacing,
-            (cell[1] as f32 + 0.5 + 2.0 * JITTER * pick(1)) * self.spacing,
-        ]
+        self.sites.site(cell)
     }
 
     /// The biome of site `cell`'s region: the one its climate at the sea's
@@ -232,28 +209,6 @@ impl PartialEq for Regions {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.border == other.border
     }
-}
-
-/// How far `at` is from the border between the region of the site at `own`,
-/// which it is in, and that of the site at `other`, in metres: the border
-/// halfway between them, square to the line joining them.
-fn border_distance(at: [f32; 2], own: [f32; 2], other: [f32; 2]) -> f32 {
-    let (bx, bz) = (other[0] - own[0], other[1] - own[1]);
-    let apart = (bx * bx + bz * bz).sqrt().max(1e-3);
-    let away = |site: [f32; 2]| (at[0] - site[0]) * (at[0] - site[0]) + (at[1] - site[1]) * (at[1] - site[1]);
-    (away(other) - away(own)) / (2.0 * apart)
-}
-
-/// A hash of `seed`, a cell and a part, the same on every machine.
-fn mix(seed: u32, [x, z]: [i32; 2], part: u32) -> u32 {
-    let mut h = seed ^ 0x9E37_79B9;
-    for v in [x as u32, z as u32, part] {
-        h = (h ^ v).wrapping_mul(0x85EB_CA6B);
-        h ^= h >> 13;
-        h = h.wrapping_mul(0xC2B2_AE35);
-        h ^= h >> 16;
-    }
-    h
 }
 
 #[cfg(test)]

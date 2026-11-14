@@ -78,7 +78,7 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     let voxels = world.volume().is_some();
     // The biomes' own land: their hills, mountains, tables and pillars, where any has some.
     let biomes = biomes_of(generate);
-    let landed = biomes.iter().any(|biome| !biome.land.is_keep());
+    let landed = shapes_land(generate);
     if voxels && !rivered && !landed {
         return Source::Own(world);
     }
@@ -103,7 +103,7 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     // Shaped by the land already where the generator came so (see `landed`).
     let shaped = match world.land() {
         Some((hash, shaped)) if *hash == lands => shaped.clone(),
-        _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate)),
+        _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref()),
     };
     if rivered {
         crate::generate::nodes::add_rivers(&mut graph);
@@ -139,7 +139,7 @@ static LANDED: Mutex<Landed> = Mutex::new(Vec::new());
 /// twice.
 pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> {
     let biomes = biomes_of(generate);
-    if biomes.iter().all(|biome| biome.land.is_keep()) || world.land().is_some() {
+    if !shapes_land(generate) || world.land().is_some() {
         return world.clone();
     }
     let lands = lands_hash(generate);
@@ -149,13 +149,19 @@ pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> 
         return found.clone();
     }
     let mut graph = world.graph().clone();
-    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate));
+    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref());
     let made = Arc::new(world.with_graph(graph).with_land(lands, shaped));
     if landed.len() >= MOVED_KEPT {
         landed.remove(0);
     }
     landed.push((key, made.clone()));
     made
+}
+
+/// Whether `generate`'s ground is shaped as it is made: by its biomes'
+/// land, or by its levels.
+fn shapes_land(generate: &BlockGenerate) -> bool {
+    generate.levels.is_some() || biomes_of(generate).iter().any(|biome| !biome.land.is_keep())
 }
 
 /// The regions `generate`'s biomes keep to, where they keep to any.
@@ -179,6 +185,7 @@ fn lands_hash(generate: &BlockGenerate) -> u64 {
     let clear = clear_of(generate).map(|clear| [clear.middle[0], clear.middle[1], clear.radius].map(f32::to_bits));
     clear.hash(&mut hasher);
     regions_of(generate).map(|regions| regions.id()).hash(&mut hasher);
+    generate.levels.as_ref().map(|levels| format!("{levels:?}")).hash(&mut hasher);
     for biome in biomes_of(generate) {
         let land = biome.land;
         let numbers = [land.height, land.size, land.valleys, land.overhangs, land.pillars, land.pillar_height];

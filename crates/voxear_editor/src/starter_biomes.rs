@@ -65,9 +65,10 @@ pub const SNOW_LINE: f32 = 260.0;
 const SNOW_UP_TO: f32 = 14.0;
 
 /// How steep ground is rock in place of what lies on it, in degrees: under
-/// anything that grows, and under snow.
-const STEEP: f32 = 45.0;
-const SNOW_STEEP: f32 = 58.0;
+/// anything that grows, and under snow. Hillsides stay green; walls, crags
+/// and the steepest flanks of peaks are rock.
+const STEEP: f32 = 60.0;
+const SNOW_STEEP: f32 = 62.0;
 
 /// The folders the starters' biomes and blocks go in, beside the world.
 const BIOMES_FOLDER: &str = "Biomes";

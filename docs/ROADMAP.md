@@ -1126,7 +1126,9 @@ Done so far:
     warm one open; the swell in two metres of water calmer than in deep water and never down to the floor; a
     rolling grid keeping its cells; the grids' layout for the shaders; the server's storms reaching a player as
     they join, as they change and with its clock, and a player joining later; the weather's sounds made without a
-    seam, as loud as the weather, muffled under a roof, thunder after lightning, and silent at **Sounds** 0.
+    seam, as loud as the weather, muffled under a roof, thunder after lightning, and silent at **Sounds** 0; a C# system turning
+    the sounds down and reading what a storm left on the ground; GPU pictures of breakers running in to a beach,
+    a sea part frozen in floes, and a roof keeping the ground under it dry and sheltered rain off it.
   - Not done: lightning drawn as a bolt; drifting snow and puddles; ice made into blocks a player can cut; wet
     and snow sent between machines (each works them out from the same storms).
 - **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the

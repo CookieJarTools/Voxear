@@ -4675,7 +4675,8 @@ fn under_the_sea_a_plant_sways_with_the_swell_without_a_wind() {
     let (tip, root) = (on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -2.3, 0.0)), on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -7.7, 0.0)));
     let moved = (column(&now, tip.1) - column(&later, tip.1)).abs();
     assert!(moved > 4, "its tip sways: {moved} pixels in two and a half seconds");
-    assert!((column(&now, root.1) - column(&later, root.1)).abs() <= 2, "its root stays");
+    let (root_now, root_later) = (column(&now, root.1), column(&later, root.1));
+    assert!((root_now - root_later).abs() <= 2, "its root stays: at {root_now} and then {root_later}");
 }
 
 #[test]

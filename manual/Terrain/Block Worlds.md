@@ -282,6 +282,18 @@ The level's **Storms** component (see [[Storms#Storms that come by themselves|St
 
 From scripts these are `Sea.Look`, `Sea.SwellHeight`, `Sea.StormWhirlpools`, `Sea.Maelstroms` and `Sea.Glow`.
 
+### Shallows and shores
+
+The swell calms as the sea grows shallow, and never draws the water down to its floor. Where a rough sea is a few metres deep or less, it breaks: lines of white water run in to the shore at the swell's pace, bent along the coast, the water drawn down before each as it rises and foam left behind it, and the shore's edge washes white as each comes in. A steep shore has them close together, a gentle beach far apart. What floats rides the calmer swell of the shallows as it is drawn.
+
+The depth is read from the blocks every few metres over the 250 metres round the camera; further out the sea is taken to be deep.
+
+### Frozen seas
+
+Where the air over the sea is two degrees below freezing or colder (see [[Temperature]]), the sea freezes over, in a few minutes, and thaws again in a few once the air is above freezing. A sea that is that cold when the level loads is frozen from the start. Where it is part frozen it lies in floes, a block or a few across, more of them the colder it has been; frozen hard, it is ice all over, white where snow lies on it.
+
+Frozen sea holds still in any storm, and it bears weight: players, characters and anything that falls on it stand on it, and slide, for it grips as little as ice does. It is still water under the ice, and no block changes. `Storms.At(position).Ground.Frozen` tells how much of the sea there is frozen.
+
 ### Whirlpools
 
 A whirlpool draws the sea down into a funnel of steps with white arms that turn. Its water runs round its middle and in, fastest a little way out from it, and down at the middle itself, so what floats is carried round, drawn in and pulled under.

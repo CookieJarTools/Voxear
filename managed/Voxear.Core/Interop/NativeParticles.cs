@@ -56,6 +56,7 @@ internal static unsafe class NativeParticles
 	public const int TrailTime = 43;
 	public const int TrailWidth = 44;
 	public const int HitEvents = 45;
+	public const int Sheltered = 46;
 
 	/// <summary>What is asked in words, through NativeComponent's texts: the effect a system plays, read and set.</summary>
 	public const int Effect = 0;

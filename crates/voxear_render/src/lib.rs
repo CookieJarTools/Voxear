@@ -81,6 +81,7 @@ mod volumetric;
 mod water;
 pub mod water_bodies;
 pub mod weather;
+pub mod weather_maps;
 mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
@@ -380,6 +381,8 @@ struct FrameBuffers {
     blocks: Buffer,
     /// The openings of the Portals this view sees (see `portals`).
     portal_quads: Buffer,
+    /// The weather's grids round the viewer (see `weather_maps`).
+    weather_maps: Buffer,
     /// This view's grass: its jobs and draws, its draws' indirect commands,
     /// and its blades (see `grass`).
     grass: Buffer,
@@ -1886,6 +1889,7 @@ impl View {
                 terrain,
                 blocks,
                 portal_quads,
+                weather_maps,
                 grass,
                 grass_args,
                 grass_blades,
@@ -1917,6 +1921,7 @@ impl View {
                 terrain,
                 blocks,
                 portal_quads,
+                weather_maps,
                 grass,
                 grass_args,
                 grass_blades,
@@ -2719,6 +2724,7 @@ impl View {
                 particle_trails: setup.simulated.1,
                 particle_hits: particle_step.map_or(0, |step| step.hits_address),
                 portal_quads: buffers.portal_quads.address,
+                weather_maps: buffers.weather_maps.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2771,6 +2777,12 @@ impl View {
         };
         buffers.mists.write(0, &mists);
         buffers.mist_points.write(0, &mist_points);
+        // The weather's grids, none through a Portal: what lies on the far side is the level's weather alone.
+        let maps = match portal {
+            Some(_) => vec![0u32; 16],
+            None => world.resource::<weather_maps::WeatherMaps>().map_or_else(|| vec![0u32; 16], |maps| maps.words()),
+        };
+        buffers.weather_maps.write(0, &maps);
 
         let push = Push {
             frame: buffers.frame.address,
@@ -3322,6 +3334,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         portal_quads: gpu.create_buffer(
             &format!("{prefix}portal openings {slot}"),
             (portals::MAX_PORTAL_QUADS * size_of::<portals::GpuPortalQuad>()) as u64,
+            storage,
+            host,
+        )?,
+        weather_maps: gpu.create_buffer(
+            &format!("{prefix}weather maps {slot}"),
+            (weather_maps::WORDS * 4) as u64,
             storage,
             host,
         )?,

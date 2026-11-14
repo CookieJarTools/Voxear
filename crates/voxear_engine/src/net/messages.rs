@@ -53,6 +53,9 @@ pub enum Message {
     Claim(NetId),
     /// An Obj's new owner, from the server.
     Owner { id: NetId, owner: Option<PlayerId> },
+    /// The server's storms: their clock, those scripts made and the
+    /// whirlpools, as `storms::StormsSaved::to_bytes` gives them.
+    Storms(Vec<u8>),
 }
 
 /// The most bytes an RPC's arguments take.
@@ -80,6 +83,9 @@ const RPC: u32 = 9;
 const FIELDS_MESSAGE: u32 = 10;
 const CLAIM: u32 = 11;
 const OWNER: u32 = 12;
+const STORMS: u32 = 13;
+/// The most bytes a message of storms takes.
+pub const MOST_STORM_BYTES: usize = 65536;
 /// Bits a message's kind takes.
 pub const KIND_BITS: u32 = 4;
 
@@ -108,6 +114,11 @@ impl Message {
                 w.write_bits(LEVEL, KIND_BITS);
                 w.write_varint(level.len() as u64);
                 w.write_bytes(level.as_bytes());
+            }
+            Message::Storms(bytes) => {
+                w.write_bits(STORMS, KIND_BITS);
+                w.write_varint(bytes.len() as u64);
+                w.write_bytes(bytes);
             }
             Message::Inputs { first, commands, behind } => {
                 w.write_bits(INPUTS, KIND_BITS);
@@ -217,6 +228,15 @@ impl Message {
                 let mut text = vec![0u8; length];
                 r.read_bytes(&mut text)?;
                 Message::Level(String::from_utf8(text).ok()?)
+            }
+            STORMS => {
+                let length = r.read_varint()? as usize;
+                if length > MOST_STORM_BYTES {
+                    return None;
+                }
+                let mut bytes = vec![0u8; length];
+                r.read_bytes(&mut bytes)?;
+                Message::Storms(bytes)
             }
             INPUTS => {
                 let first = r.read_varint()?;
@@ -337,6 +357,7 @@ mod tests {
             Message::Inputs { first: 99, commands: vec![vec![jump, look], vec![ActionState::default(); 2]], behind: 4.5 },
             Message::Sync { tick: 5, ahead: -3 },
             Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
+            Message::Storms(b"STM1 and the rest".to_vec()),
         ];
         for message in messages {
             let sent = message.encode(I64Vec3::ZERO);

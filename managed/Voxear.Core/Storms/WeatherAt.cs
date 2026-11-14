@@ -2,12 +2,13 @@ namespace Voxear;
 
 /// <summary>
 /// The weather at a place, as <see cref="Storms.At"/> gives it: what it adds there, what that is called, the storm
-/// that blows hardest there and how hard, and how warm and wet the open air is.
+/// that blows hardest there and how hard, how warm and wet the open air is, and what it has left on the ground.
 /// </summary>
 public readonly struct WeatherAt
 {
-	internal WeatherAt(WeatherAmounts amounts, StormWeather kind, float strength, Storm storm, float celsius, float humidity)
+	internal WeatherAt(WeatherAmounts amounts, StormWeather kind, float strength, Storm storm, float celsius, float humidity, WeatherGround ground)
 	{
+		Ground = ground;
 		Amounts = amounts;
 		Kind = kind;
 		Strength = strength;
@@ -33,6 +34,9 @@ public readonly struct WeatherAt
 
 	/// <summary>How wet the climate is there, from 0 to 1.</summary>
 	public float Humidity { get; }
+
+	/// <summary>What the weather has left on the ground there: how wet, how much snow, and how much of the sea is frozen.</summary>
+	public WeatherGround Ground { get; }
 
 	/// <summary>Whether a storm blows there.</summary>
 	public bool InStorm => Strength > 0f;

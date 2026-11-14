@@ -1078,24 +1078,57 @@ Done so far:
     faces.
   - **Whirlpools:** a stepped funnel with turning arms whose water runs round, in and down: under strong storms
     over deep water, standing at seeded places in a generated sea, and from scripts.
+  - **What the weather leaves, by place** (`voxear_engine::weather_maps`, the renderer's `WeatherMaps`): three
+    grids round the viewer, filled a share a frame. *Lying*, 32 m cells over a kilometre: how wet, how much snow
+    lies and has fallen lately, how much of the sea is frozen, and the open air's temperature at the cell's height,
+    from `weather_at` and `heat::open_air`; rain soaks and dries sooner where warm and dry, snow keeps below
+    freezing and melts above it, lies always where it is bitter, and each surface keeps the snow its own height
+    suits, so a storm leaves the peak white and the valley wet (`weatherSurface`). *Cover*, half-metre cells over
+    48 m: the highest ground block of every world of blocks (each chunk's column tops kept while the chunk is the
+    same) and what a ray down meets of colliders that do not move; nothing lies under it, and a Particle System
+    that is **Sheltered**, as the weather's rain and snow are, is not drawn under it. *Sea floor*, 4 m cells over
+    256 m: how deep a world of blocks' sea is.
+  - **Shallows and shores:** the swell calms with depth and never sinks the water to the floor; where a rough sea
+    is a few metres deep, breakers run in to the shore at the swell's pace, spaced by how the floor slopes, with
+    the water drawn down before each, foam behind and the shore's edge washed (`seaBreakers`); `SeaSampler`
+    follows the calmer swell.
+  - **Frozen seas:** where the air over the sea is 2 °C below freezing the sea freezes over in minutes and thaws
+    above 0.5 °C; frozen from the start where it is that cold as the level loads. Part frozen, floes a block or a
+    few across; frozen hard, ice all over, cracked along some blocks' edges and white under snow
+    (`blockIceLit`), still in any storm, and bearing weight: slabs of ice with box colliders under the cells
+    round the viewer and every character.
+  - **Over the network:** the server sends its storms' bytes (`Message::Storms`) to each player as they join,
+    whenever its made storms or whirlpools change and every five seconds for the clock; a client takes them in,
+    its clock moved on by half the round trip.
+  - **Sounds** (`voxear_engine::storm_sounds`): rain, wind and a rough sea's surf as loops as loud as the weather
+    where the listener is, and thunder after each stroke of lightning, later and lower the further off; made from
+    filtered noise as the game first needs them, nothing shipped. Under a roof the rain is muffled and the wind
+    drops. **Sounds** on the Storms component sets how loud.
   - **Life on the sea's bed:** a growing rule may be **Under water** (`GrowRule::under_water`), its height then a
     depth; eight starter plants of small cubes, seagrass, kelp, branch, brain, table and fan coral, a tube sponge
     and a clam, each with the depth and sea temperature it grows in. Weed sways with the water, more under a
     storm. Warm seas glow at night where the water breaks.
   - **Scripts:** `Storms.Start`, `Storms.At` (`WeatherAt`, `StormWeather`), `Storms.All`, `Storms.Arrived`,
     `Storms.Left`, `Storm` (`Position`, `Radius`, `Strength`, `Kind`, `Velocity`, `MoveAlong`, `Eye`, `Lifetime`,
-    `Stop`), `Sea.Look`, `Sea.SwellHeight`, `Sea.AddWhirlpool`, `Sea.WhirlpoolAt`, `Sea.Swallowed`. A save of the
-    scene keeps the clock and the made storms; `Storms.CaptureState` and `ApplyState` give them as bytes for a
-    host to send. Editor: a **Storms** component, and **Under water** on a Foliage's Grow tool.
+    `Stop`), `Sea.Look`, `Sea.SwellHeight`, `Sea.AddWhirlpool`, `Sea.WhirlpoolAt`, `Sea.Swallowed`, `Storms.Sounds`, and `WeatherAt.Ground` (a
+    `WeatherGround`: `Wet`, `Snow`, `Frozen`, `Sheltered`); `ParticleSystem.Sheltered`. A save of the scene keeps
+    the clock and the made storms; `Storms.CaptureState` and `ApplyState` give them as bytes. Editor: a **Storms**
+    component with **Sounds**, **Sheltered** on a Particle System, and **Under water** on a Foliage's Grow tool.
   - Tests: a storm's kind by temperature, its life and its path; natural storms the same from the same seed and
     clock; the swell flat when calm, the same wherever the world's middle is, and a whirlpool's pull; plants of
     the bed by depth; an engine test of a storm crossing a sea without end, and of a reef and a kelp forest
     grown; a C# system starting, changing, keeping and putting back a storm; GPU pictures of the three sea
     looks, a whirlpool, a storm and a sandstorm far off, and the sea plants; the sky seen from a whirlpool's
-    funnel and a trough, and the view under water from under the funnel's water.
-  - Not done: the sea freezing where it is cold; swell that calms in the
-    shallows and breaks on shores; wet ground and snow by place; storms sent between machines by the engine
-    itself (a game sends `CaptureState` in its own RPC); rain kept out from under roofs; sounds.
+    funnel and a trough, and the view under water from under the funnel's water. What lies: rain soaking and
+    drying, snow settling, keeping in the cold, melting and lasting where bitter, the sea freezing and thawing;
+    snow by height in a cell; a roof keeping the rain off what is under it and the yard beside it wet; a storm
+    wetting only the ground under it, which dries after; a frozen sea still in a storm and bearing a crate, and a
+    warm one open; the swell in two metres of water calmer than in deep water and never down to the floor; a
+    rolling grid keeping its cells; the grids' layout for the shaders; the server's storms reaching a player as
+    they join, as they change and with its clock, and a player joining later; the weather's sounds made without a
+    seam, as loud as the weather, muffled under a roof, thunder after lightning, and silent at **Sounds** 0.
+  - Not done: lightning drawn as a bolt; drifting snow and puddles; ice made into blocks a player can cut; wet
+    and snow sent between machines (each works them out from the same storms).
 - **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the
   `[sky]`, `[sun]` and `[post]` of a `.lighting` file, with `[blocks]` for every Block World's small cubes, laid
   over whatever lighting a level has rather than in place of it. The level's own sky, sun look and

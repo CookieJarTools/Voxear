@@ -1063,7 +1063,7 @@ reflections. The renderer adds up the drift along the Wind Zone's direction and 
 so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
 passes.
 
-**Weather** *(implemented; roofs and sound planned)*. `voxear_render::weather::Weather`
+**Weather** *(implemented)*. `voxear_render::weather::Weather`
 is a resource: a kind, the `WeatherAmounts` it is turning from and to, and how far through the turn it is. It
 changes no other state. `scene::extract` reads what it adds this moment and lays it over what it extracts:
 `WeatherAmounts::sky` on the `Sky` (cloud cover, density, thickness and shadows, haze, a gradient's colours),
@@ -1094,7 +1094,7 @@ publishes the weather's state before scripts run, and takes the last `Weather.Se
 raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
 frame's.
 
-**Storms** *(implemented; frozen seas and the engine sending storms itself planned)*. `voxear_engine::storms` keeps
+**Storms** *(implemented)*. `voxear_engine::storms` keeps
 the level's `Storms`, a resource: a clock in seconds that turns while the game plays, the storms and whirlpools
 scripts made, and each frame every storm near the viewer. A `Storm` is a middle in metres from the level's middle
 (so it keeps its place as the world's origin moves), a reach, a strength at its height, a drift or a path, an eye,
@@ -1142,6 +1142,34 @@ writing that depth. `wavySurface` gives the sea's height there as drawn, so the 
 and the wet lens start where the swell's water does, not at the faces. `sea::SeaSampler` is
 the same function on the CPU with a sine made of sums and products, and `water::sample` takes its `sunk`, slope
 and flow for a point in the sea, so Buoyancy and scripts follow what is drawn.
+
+**What the weather leaves, by place.** `weather_maps::update`, after the weather's, keeps three grids round the
+viewer, each held to whole cells of the level so a cell keeps what it holds as the viewer moves, and works out a
+share of their cells each frame, those not yet known first (`Rolling`). The lying grid's 32 m cells each run
+`lie` on the weather `weather_at` gives at the cell's ground height and the open air over the sea: wet, snow,
+what has fallen lately, sea ice, and the temperature at that height. The cover grid's half-metre cells hold the
+highest of every world of blocks' ground there, read a chunk at a time from each chunk's column tops (kept while
+the chunk's `Arc` is the same), and what a ray down meets of colliders that do not move. The sea floor's 4 m cells
+hold how deep a block sea is, from its top to its highest ground block. The renderer's `WeatherMaps` takes them,
+corners in the world's space, and writes them each frame into one buffer the shaders read through
+`Buffers::weatherMaps` (`lyingAt`, `coverAt`, `seaFloorDepth`, `seaIceAmount` in `common.slang` and `water.slang`):
+`weatherSurface` blends the lying cells' wet and snow at the surface's own height over the level's own, and skips a
+surface under cover read a little out along its normal; a particle of a system with `PARTICLES_SHELTERED` is not
+drawn under cover; `seaSunk` stills the swell by the ice, calms it by depth and adds `seaBreakers`, lines of white
+water whose phase is the distance from the shore (depth over the floor's slope) plus the longest wave's beat; and
+`blockWaterFragment` draws a frozen block of sea as ice (`blockIceLit`), floes by a noise against the ice amount.
+`SeaSampler::with_maps` gives the CPU sea the same depth and ice. Frozen cells near the viewer and every
+character get a slab of ice, an Obj of the engine's own with a box collider, so physics bears what stands on them.
+
+**Storms over the network.** `net::storms` sends `Message::Storms`, the `StormsSaved` bytes, reliably: to each
+player owed them since joining, and to all when the bytes but the clock differ from what was last sent or five
+seconds have passed. A client restores them in `frame_begin`, its clock moved on by half the round trip.
+
+**Weather's sounds.** `storm_sounds::StormSounds`, kept by `GameAudio` and run at the end of its update, makes its
+sounds once from filtered noise (`Maker`: rain, wind, surf, near and far thunder), a loop's end laid over its start,
+and keeps three looping voices eased to `heard_at` the listener: the weather's rain and wind, the sea's roughness
+near its top, all by the Storms component's `sounds`, muffled under cover. A rise of `Weather::flash` from nothing
+queues a peal a few seconds on, nearer the sooner it comes.
 
 Scripts reach storms through one native call, `storm_call(what, id, numbers)`, and `storm_state` for the bytes
 of `StormsSaved`; a save of the scene keeps those bytes beside the blocks' edits.

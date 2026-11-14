@@ -357,6 +357,9 @@ pub struct StormRules {
     pub maelstroms: bool,
     /// How much warm seas glow at night where the water breaks, from 0.
     pub glow: f32,
+    /// How loud the weather's sounds are, rain, wind, surf and thunder,
+    /// from 0 for none to 1 (`crate::storm_sounds`).
+    pub sounds: f32,
 }
 
 impl Default for StormRules {
@@ -372,6 +375,7 @@ impl Default for StormRules {
             whirlpools: true,
             maelstroms: true,
             glow: 0.6,
+            sounds: 1.0,
         }
     }
 }
@@ -387,6 +391,12 @@ pub struct MadeWhirlpool {
     pub middle: [f64; 2],
     pub radius: f32,
     pub depth: f32,
+}
+
+/// The level's storm rules as they are: its first Storms component's,
+/// else what scripts last asked for, else the usual with no natural storms.
+pub fn rules(world: &World) -> StormRules {
+    scripts::rules(world)
 }
 
 /// What scripts hear of.

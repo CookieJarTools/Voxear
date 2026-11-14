@@ -528,6 +528,8 @@ impl Engine {
         crate::storms::update(&mut self.world, self.time.delta, !self.edit_mode);
         // The weather turns, and its rain and snow fall round the viewer.
         crate::weather::update(&mut self.world, self.time.delta);
+        // What the weather leaves lying by place, what keeps it off, and how deep the sea is round the viewer.
+        crate::weather_maps::update(&mut self.world, self.time.delta, !self.edit_mode);
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
         // The look pack worn is laid over the level's lighting as it is now.

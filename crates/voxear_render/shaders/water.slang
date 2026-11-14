@@ -3443,12 +3443,83 @@ float seaRough(Frame* frame, float2 xz)
     return rough;
 }
 
+// How much of a world of blocks' sea is frozen over at `xz`, from 0 to 1, blended between the lying grid's cells.
+float seaIceAmount(float2 xz)
+{
+    uint side;
+    float cell;
+    float2 corner;
+    uint start;
+    if (!weatherGrid(0, side, cell, corner, start))
+    {
+        return 0.0;
+    }
+    float2 at = (xz - corner) / cell;
+    if (any(at < 0.0) || any(at >= float(side)))
+    {
+        return 0.0;
+    }
+    float2 low = floor(at - 0.5);
+    float2 part = at - 0.5 - low;
+    float ice[4];
+    for (uint n = 0; n < 4; n++)
+    {
+        int2 c = clamp(int2(low) + int2(n & 1, n >> 1), 0, int(side) - 1);
+        ice[n] = float(buffers()->weatherMaps[start + (uint(c.y) * side + uint(c.x)) * 3] >> 24) / 255.0;
+    }
+    return lerp(lerp(ice[0], ice[1], part.x), lerp(ice[2], ice[3], part.x), part.y);
+}
+
+// Whether the block of sea at `xz` is frozen over: where the sea is part frozen, floes a block or a few across, more
+// of them the more of it is ice, and all of it frozen where it all is. `corner` is its world's corner along x and z.
+bool seaFrozen(Frame* frame, float2 xz, float2 corner, float blockSize)
+{
+    float ice = seaIceAmount(xz);
+    if (ice <= 0.0)
+    {
+        return false;
+    }
+    int2 block = int2(floor((xz - corner) / blockSize));
+    float2 level = levelXZ(frame, xz, 4096.0);
+    float noise = 0.6 * seaNoise(level / 6.0 + 311.0) + 0.4 * seaGrain(block + 911);
+    return ice > noise * 0.85 + 0.1;
+}
+
+// Breakers on a shore: where a rough sea is a few metres deep or less, lines of white water that run in to the shore
+// a swell's beat apart, the water drawn down before each as it rises and foam left behind it, and the shore's edge
+// washed white as each comes in. A breaker's face is white whatever the sea's patches: `crest` is more than 1 there.
+void seaBreakers(Frame* frame, float2 xz, float depth, float rough, inout float crest, inout float sunk)
+{
+    float reach = 1.6 * max(1.0, 0.8 * frame->sea.height * rough + 0.6);
+    if (rough <= 0.0 || depth >= reach)
+    {
+        return;
+    }
+    // How far out from the shore, as the floor slopes there.
+    float e = 2.0;
+    float2 slope = float2(seaFloorDepth(xz + float2(e, 0.0)) - seaFloorDepth(xz - float2(e, 0.0)),
+        seaFloorDepth(xz + float2(0.0, e)) - seaFloorDepth(xz - float2(0.0, e))) / (2.0 * e);
+    float out = depth / max(length(slope), 0.02);
+    // They come in at the pace of the swell's longest wave, bent about along the shore.
+    float beat = frame->sea.waves[0].z / (2.0 * PI);
+    float bend = seaNoise(levelXZ(frame, xz, 4096.0) / 23.0) * 0.6;
+    float b = frac(out / 14.0 + beat + bend);
+    float zone = rough * smoothstep(reach, reach * 0.5, depth);
+    float face = smoothstep(0.82, 0.94, b) * (1.0 - smoothstep(0.94, 1.0, b));
+    float left = 1.0 - smoothstep(0.0, 0.3, b);
+    crest = max(crest, zone * max(face * 1.6, left * 1.1));
+    sunk += zone * smoothstep(0.5, 0.85, b) * (1.0 - smoothstep(0.85, 0.94, b)) * min(depth, frame->sea.height) * 0.5;
+    float wash = rough * (1.0 - smoothstep(0.1, 0.6, depth)) * (0.5 + 0.5 * cos((beat + bend) * 2.0 * PI));
+    crest = max(crest, wash * 1.2);
+}
+
 // How far under its faces the sea stands at `xz`, in metres (src/sea.rs): nothing at a swell's crest, and in a
 // trough as much as the sea is rough there; drawn down into a whirlpool's funnel besides. `crest` is how near a
 // crest it is, from 0 to 1, and `rough` how rough the sea is there.
 float seaSunk(Frame* frame, float2 xz, out float crest, out float rough)
 {
-    rough = seaRough(frame, xz);
+    // Ice holds the sea still under it (src/weather_maps.rs).
+    rough = seaRough(frame, xz) * (1.0 - seaIceAmount(xz));
     float2 at = levelXZ(frame, xz, 4096.0);
     float swell = 0.0;
     for (uint i = 0; i < SEA_WAVES; i++)
@@ -3462,6 +3533,14 @@ float seaSunk(Frame* frame, float2 xz, out float crest, out float rough)
     // few hundredths of the sea (SeaSampler::sunk).
     crest = saturate((swell - 0.12) / 0.65);
     float sunk = frame->sea.height * rough * (1.0 - crest);
+    // In the shallows the swell calms, never drawing the water down to the floor, and breaks on the shore.
+    float depth = seaFloorDepth(xz);
+    if (depth < WEATHER_FLOOR_REACH)
+    {
+        sunk *= smoothstep(0.0, 2.0 * frame->sea.height + 0.5, depth);
+        seaBreakers(frame, xz, depth, rough, crest, sunk);
+        sunk = min(sunk, depth * 0.6);
+    }
     for (uint j = 0; j < frame->sea.whirlpools; j++)
     {
         float4 pool = frame->sea.pools[j];
@@ -3943,6 +4022,50 @@ BlockWaterLook blockWaterLook(BlockWorld world, uint surface)
     return look;
 }
 
+// A frozen sea's top where the view meets it, at `input`'s face: ice a block at a time, pale and a little different
+// block to block, cracked along some blocks' edges, and white where snow lies on it; from `below`, its underside, dim
+// with the little light that comes through.
+FragmentOut blockIceLit(Frame* frame, BlockWaterOut input, float2 corner, float blockSize, bool below)
+{
+    float3 at = input.world;
+    float3 v = normalize(frame->cameraPosition - at);
+    int2 block = int2(floor((at.xz - corner) / blockSize));
+    float2 level = levelXZ(frame, at.xz, 4096.0);
+    float3 albedo = lerp(float3(0.58, 0.72, 0.83), float3(0.85, 0.9, 0.95), seaNoise(level / 9.0 + 77.0));
+    albedo *= 0.9 + 0.1 * seaGrain(block + 4111);
+    float2 within = frac((at.xz - corner) / blockSize);
+    float edge = min(min(within.x, 1.0 - within.x), min(within.y, 1.0 - within.y));
+    float crack = (1.0 - smoothstep(0.0, 0.05, edge)) * step(0.55, seaGrain(block * 3 + 5));
+    albedo *= 1.0 - 0.3 * crack;
+    float4 lying = lyingAt(at);
+    float snow = below ? 0.0 : saturate(lying.y * 1.4) * lying.w;
+    albedo = lerp(albedo, float3(0.86, 0.88, 0.91), snow);
+    float3 n = float3(0.0, below ? -1.0 : 1.0, 0.0);
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = sunShadow(frame, at, float3(0.0, 1.0, 0.0));
+    Surface s;
+    s.normal = n;
+    s.view = v;
+    s.roughness = lerp(0.22, 0.6, snow);
+    s.diffuse = 0.0;
+    s.f0 = 0.02;
+    float3 ambient = ambientLight(frame, at, s, sunLight, atmosphere);
+    float3 color = below ? albedo * (ambient * 0.3 + sunLight * shadow * saturate(l.y) * 0.08 / PI)
+                         : albedo * (ambient + sunLight * shadow * saturate(dot(n, l)) / PI) + shade(s, l, sunLight) * shadow * (1.0 - snow);
+    float2 pixel = input.position.xy;
+    if (atmosphere && !below)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(at - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
 // A world of blocks' water seen through one of its faces. From the air: its top as a Pool's still water, its ripples
 // showing the sky and what stands round it, what lies under it bent and dimmed by as much water as the view goes
 // through, as far as the ground behind it or where the view leaves the water, and a line of foam where it meets the
@@ -3966,6 +4089,10 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float rough = 0.0;
     bool swollen = false;
     bool sea = abs(input.world.y - world.corner.y - world.seaTop) < 0.02 * world.blockSize || world.seaTop < -1.0e8;
+    if (face.y > 0.5 && sea && seaFrozen(frame, input.world.xz, world.corner.xz, world.blockSize))
+    {
+        return blockIceLit(frame, input, world.corner.xz, world.blockSize, v.y < 0.0);
+    }
     if (face.y > 0.5 && sea && blockSeaMoves(frame))
     {
         if (v.y < 0.0 && blockSeaAround(frame) >= 0)

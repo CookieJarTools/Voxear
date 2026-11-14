@@ -590,3 +590,51 @@ fn with_shared_authority_a_player_far_out_moves_their_own_obj_where_the_server_s
     let at = server.get::<voxear_scene::Transform>(crate_).unwrap().position.x;
     assert!((at - 50_003.0).abs() < 0.3, "the server follows its owner from the level's middle: {at}");
 }
+
+#[test]
+fn the_servers_storms_reach_every_player_as_they_join_as_they_change_and_with_its_clock() {
+    use crate::storms::{Storm, Storms};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    // Storms the server's scripts made before anyone joined.
+    let mut storms = Storms::default();
+    storms.clock = 500.0;
+    let first = storms.start(Storm { middle: [100.0, -40.0], radius: 300.0, velocity: [2.0, 0.0], ..Storm::default() });
+    let pool = storms.add_whirlpool([10.0, 20.0], 30.0, 5.0);
+    server.insert_resource(storms);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let theirs = clients[0].resource::<Storms>().expect("the server's storms");
+    let ours = server.resource::<Storms>().unwrap();
+    assert_eq!(theirs.made.iter().map(|storm| storm.id).collect::<Vec<_>>(), vec![first]);
+    assert_eq!((theirs.made[0].middle, theirs.whirlpools[0].id), ([100.0, -40.0], pool));
+    assert!((theirs.clock - ours.clock).abs() < 1.0, "the clock with it: {} and {}", theirs.clock, ours.clock);
+
+    // A storm started on the server reaches the player within a frame or two, and so does one stopped.
+    let second = server.resource_mut::<Storms>().unwrap().start(Storm { middle: [-900.0, 0.0], ..Storm::default() });
+    for _ in 0..3 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    assert!(clients[0].resource::<Storms>().unwrap().get(second).is_some());
+    // One a player made for themself lasts only until the server's next arrive.
+    clients[0].resource_mut::<Storms>().unwrap().start(Storm::default());
+    server.resource_mut::<Storms>().unwrap().stop(first, 0.0);
+    for _ in 0..3 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let theirs = clients[0].resource::<Storms>().unwrap();
+    assert_eq!(theirs.made.len(), 2);
+    assert!(theirs.get(first).unwrap().lasts.is_finite(), "stopped there too");
+
+    // A player joining later is sent them at once, with no change to wait for.
+    let transport = network.bind("10.0.1.9:5000".parse().unwrap());
+    let mut late = World::new();
+    connect_on(&mut late, settings(Conditions::PERFECT), "10.0.0.1:7777".parse().unwrap(), Box::new(transport)).unwrap();
+    clients.push(late);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let late = clients[1].resource::<Storms>().expect("sent as they joined");
+    assert_eq!(late.saved().made, server.resource::<Storms>().unwrap().saved().made);
+}

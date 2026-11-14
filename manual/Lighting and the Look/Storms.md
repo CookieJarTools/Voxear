@@ -31,6 +31,7 @@ Add a **Storms** component to any Obj of the level, such as the one that holds i
 | Standing Storms | Great storms that never leave their place, each a wall of weather round a calm eye. They stand at seeded places, never within 2.5 km of the level's middle |
 | Seed | Another seed gives the level other storms |
 | Sea Look, Swell Height, Storm Whirlpools, Maelstroms, Night Glow | The sea under the weather: see [[Block Worlds#Rough seas]] |
+| Sounds | How loud the weather's own rain, wind, surf and thunder are, from 0 for none to 1 (see [[Weather#Sounds]]) |
 
 A natural storm lives five to twelve minutes, drifts at 3 to 9 m/s, mostly the way the level's weather comes from, and comes on and dies away over the first and last third of its life.
 
@@ -97,12 +98,29 @@ public sealed class Traveller : Behaviour
 | Member | What it is |
 | --- | --- |
 | `Storms.Start(position, radius, strength, kind, comesOver)` | Starts a storm and gives it back. 400 m, full strength, by temperature and a minute to come on, unless you say |
-| `Storms.At(position)` | The weather at a point, as a `WeatherAt`: `Kind` (a `StormWeather`: `None`, `Rain`, `Thunderstorm`, `Sleet`, `Snow`, `Blizzard`, `Sandstorm` or `Fog`), `Strength`, `Storm`, `InStorm`, `Amounts`, `Celsius` and `Humidity` |
+| `Storms.At(position)` | The weather at a point, as a `WeatherAt`: `Kind` (a `StormWeather`: `None`, `Rain`, `Thunderstorm`, `Sleet`, `Snow`, `Blizzard`, `Sandstorm` or `Fog`), `Strength`, `Storm`, `InStorm`, `Amounts`, `Celsius`, `Humidity`, and `Ground`, what the weather has left there (below) |
 | `Storms.All` | Every storm near the viewer, natural and made, the nearest first, then every other made one |
 | `Storms.Arrived`, `Storms.Left` | Events, raised with the storm as it reaches the viewer and as it leaves or dies |
-| `Storms.Natural`, `Frequency`, `Largest`, `Standing` | The Storms component's settings. With no Storms component in the level they are kept for the level all the same |
+| `Storms.Natural`, `Frequency`, `Largest`, `Standing`, `Sounds` | The Storms component's settings. With no Storms component in the level they are kept for the level all the same |
 | `Storms.Clock` | The storms' clock, in seconds |
 | `Storms.CaptureState()`, `Storms.ApplyState(bytes)` | The clock and the made storms as bytes, and back (see below) |
+
+## What a storm leaves
+
+A storm wets the ground it passes over and leaves the rest dry, and its snow lies where the air is cold enough to keep it, which can be the peak and not the valley under it (see [[Weather#What the weather leaves behind]]). A sea frozen over stays still under it (see [[Block Worlds#Frozen seas]]). `Storms.At(position).Ground` is a `WeatherGround`:
+
+| Member | What it is |
+| --- | --- |
+| `Wet` | How wet the ground is, from 0 to 1 |
+| `Snow` | How much snow lies there, from 0 to 1. `Snowy` is more than a little |
+| `Frozen` | How much of the sea there is frozen over, from 0 to 1. `Iced` is frozen hard enough to stand on |
+| `Sheltered` | Whether something overhead keeps the weather off. Under a roof, `Wet` and `Snow` are 0 |
+
+```csharp
+// Footsteps that crunch in snow and splash in the wet.
+var ground = Storms.At(Transform.Position).Ground;
+var step = ground.Snowy ? crunch : ground.Wet > 0.5f ? splash : tread;
+```
 
 ## Changing a storm
 
@@ -132,17 +150,9 @@ storm.Lifetime = 600f;
 
 A save of the scene keeps the storms' clock and the storms and whirlpools scripts made, and loading puts them back (see [[Saving the Game]]). It is sixteen bytes for the clock and fifty-six for each made storm.
 
-In a networked game the host sends the same bytes to a player who joins, and again whenever it starts, changes or stops a storm:
+In a networked game the engine sends the storms itself. The server sends its clock, the storms its scripts made and its whirlpools to each player as they join, again within a frame whenever a script starts, changes or stops one, and every five seconds besides, so every player's clock keeps with the server's. With the same clock every player has the same natural storms too, and the same swell on the sea. In a session the server's storms are the storms: one a player's own script starts lasts only until the server's next arrive, so start them on the server.
 
-```csharp
-// On the host, in an RPC to the player who joined.
-var state = Storms.CaptureState();
-
-// On the player who joined.
-Storms.ApplyState(state);
-```
-
-With the same clock every player has the same natural storms too, and the same swell on the sea.
+`Storms.CaptureState()` and `Storms.ApplyState(bytes)` give the same bytes to a script, for a game that keeps or sends them some other way.
 
 > [!NOTE]
-> Wet ground and settled snow follow the viewer: they are one amount for the whole level, so ground a storm has not reached looks as wet as the ground under it. Rain and snow still fall through roofs. Lightning lights the sky without a bolt, and the engine ships no thunder: play your own from `Weather.Struck`. The engine does not send storms between machines by itself: send `CaptureState` in an RPC of your own.
+> Lightning lights the sky without a bolt. What lies on the ground is worked out on each machine for itself, from the same storms, so it is near enough the same everywhere but is not sent.

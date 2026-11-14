@@ -48,6 +48,11 @@ fn sea_floor() -> Landmass {
 /// [`SEA`] metres up, with a camera just over the water, and the level's
 /// storm rules as `rules` writes them.
 fn sea_without_end(rules: &str) -> tempfile::TempDir {
+    sea_over(sea_floor(), rules)
+}
+
+/// As [`sea_without_end`], over land shaped as `land` says.
+fn sea_over(land: Landmass, rules: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let mut file = BlockFile::default();
     file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.03, 0.3, 0.42]) });
@@ -73,7 +78,7 @@ fn sea_without_end(rules: &str) -> tempfile::TempDir {
         ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Sea.scene\"\n".into()),
         ("Scenes/Sea.scene", scene),
         ("Blocks/Sea.blockworld", file.to_text()),
-        ("Worlds/Sea.worldgen", WorldGen::from(sea_floor()).to_text()),
+        ("Worlds/Sea.worldgen", WorldGen::from(land).to_text()),
     ];
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -349,6 +354,120 @@ fn a_warm_shallow_sea_grows_a_reef_on_its_bed_and_a_cool_deep_one_a_forest_of_ke
         assert_eq!(count(&forest, none), 0, "{none}: {forest:?}");
     }
     assert!(count(&forest, "Clam") > 0 && count(&forest, "Tube Sponge") > 0, "{forest:?}");
+}
+
+/// A sea whose floor lies `depth` metres under its top everywhere, in a
+/// climate `celsius` warm at the sea's height.
+fn sea_of(depth: f32, celsius: f32) -> Landmass {
+    let climate = voxear_terrain::generate::Climate { temperature: celsius, temperature_range: 0.0, ..Default::default() };
+    Landmass { coast: voxear_core::curve::Curve::flat(-depth / 60.0), climate, ..sea_floor() }
+}
+
+/// Starts the game of `dir`, settled: its blocks made, and the weather's grids round the camera worked out.
+fn started(dir: &tempfile::TempDir) -> Game {
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game);
+    for _ in 0..200 {
+        game.tick(1.0 / 60.0, None);
+        if voxear_engine::weather_maps::settled(&game.engine.world) {
+            return game;
+        }
+    }
+    panic!("the weather's grids were never all worked out");
+}
+
+#[test]
+fn a_sea_under_freezing_air_is_frozen_over_holds_still_in_a_storm_and_bears_what_falls_on_it() {
+    use voxear_engine::weather_maps;
+    let dir = sea_over(sea_of(30.0, -10.0), "[obj.storms]\nnatural = false\n");
+    let mut game = started(&dir);
+    let (blocks, eye) = (find(&game.engine.world, "Blocks"), find(&game.engine.world, "Eye"));
+    let world = &game.engine.world;
+    let top = world.get::<Transform>(blocks).unwrap().position.y + world.get::<SeaLevel>(blocks).unwrap().0;
+    let at = Vec3::new(8.0, top, 8.0);
+    let ground = weather_maps::ground_at(world, at);
+    assert_eq!(ground.ice, 1.0, "frozen from the first: {ground:?}");
+    let maps = world.resource::<weather_maps::WeatherMaps>().unwrap();
+    assert_eq!(maps.sea_depth(8.0, 8.0), Some(weather_maps::FLOOR_REACH), "deep");
+    // A slab of ice under the camera, its top the sea's.
+    let slabs: Vec<Vec3> = world
+        .query_ref::<(&Name, &Transform)>()
+        .into_iter()
+        .filter(|(name, _)| name.0 == "Sea Ice")
+        .map(|(_, transform)| transform.position)
+        .collect();
+    assert_eq!(slabs.len(), 9, "the camera's cell and those round it");
+    assert!(slabs.iter().all(|slab| (slab.y - (top - 0.3)).abs() < 1e-3));
+
+    // A storm over it: the sky is wild, and the ice holds the sea still.
+    let id = storms::start(&mut game.engine.world, Vec3::new(8.0, 0.0, 8.0), 400.0, 1.0, StormKind::ByTemperature);
+    game.engine.world.resource_mut::<Storms>().unwrap().made_mut(id).unwrap().grows = 0.0;
+    for _ in 0..120 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let world = &game.engine.world;
+    let sea = &world.resource::<SeaNow>().expect("a storm's sea").0;
+    let point = sea.at(8.0, 8.0);
+    assert!(point.rough == 0.0 && point.sunk == 0.0 && point.ice == 1.0, "{point:?}");
+    assert_eq!(storms::weather_at(world, at).falling, Falling::Blizzard, "it snows on the ice");
+
+    // A crate dropped on the ice comes to rest on it.
+    let world = &mut game.engine.world;
+    let dropped = world.spawn((
+        Name("Crate".into()),
+        Transform::from_position(Vec3::new(12.0, top + 3.0, 12.0)),
+        voxear_engine::physics::Collider::default(),
+        voxear_engine::physics::Rigidbody::default(),
+    ));
+    for _ in 0..180 {
+        game.tick(1.0 / 60.0, None);
+    }
+    let rests = game.engine.world.get::<Transform>(dropped).unwrap().position.y;
+    assert!((rests - (top + 0.5)).abs() < 0.1, "on the ice at {rests}, the sea's top {top}");
+    let _ = eye;
+
+    // A warm sea is open water, with no ice to stand on.
+    let warm = sea_over(sea_of(30.0, 12.0), "[obj.storms]\nnatural = false\n");
+    let game = started(&warm);
+    let world = &game.engine.world;
+    assert_eq!(weather_maps::ground_at(world, at).ice, 0.0);
+    assert!(world.query_ref::<&Name>().into_iter().all(|name| name.0 != "Sea Ice"));
+}
+
+#[test]
+fn the_swell_calms_in_the_shallows_and_never_draws_the_water_down_to_the_floor() {
+    use voxear_engine::weather_maps;
+    // The deepest trough under the same storm, over the floor `depth` metres down.
+    let deepest = |depth: f32| {
+        let dir = sea_over(sea_of(depth, 14.0), "[obj.storms]\nnatural = false\nswell = 4.0\n");
+        let mut game = started(&dir);
+        let blocks = find(&game.engine.world, "Blocks");
+        let world = &game.engine.world;
+        let top = world.get::<Transform>(blocks).unwrap().position.y + world.get::<SeaLevel>(blocks).unwrap().0;
+        let floor = world.resource::<weather_maps::WeatherMaps>().unwrap().sea_depth(8.0, 8.0).unwrap();
+        let id = storms::start(&mut game.engine.world, Vec3::new(8.0, 0.0, 8.0), 400.0, 1.0, StormKind::Rain);
+        game.engine.world.resource_mut::<Storms>().unwrap().made_mut(id).unwrap().grows = 0.0;
+        let mut lowest = 0.0f32;
+        for frame in 0..(12 * 60) {
+            game.tick(1.0 / 60.0, None);
+            if frame % 6 == 0 {
+                let sea = &game.engine.world.resource::<SeaNow>().unwrap().0;
+                for step in 0..16 {
+                    lowest = lowest.max(sea.at(8.0 + step as f32 * 3.0, 8.0).sunk);
+                }
+            }
+        }
+        let _ = top;
+        (floor, lowest)
+    };
+    let (deep_floor, deep) = deepest(30.0);
+    let (shallow_floor, shallow) = deepest(2.0);
+    assert_eq!(deep_floor, weather_maps::FLOOR_REACH);
+    assert!((1.0..3.0).contains(&shallow_floor), "a floor two metres or so down: {shallow_floor}");
+    assert!(deep > 2.0, "troughs in deep water: {deep}");
+    assert!(shallow <= shallow_floor * 0.6 + 1e-3, "never down to the floor: {shallow} over {shallow_floor}");
+    assert!(shallow < deep * 0.25, "calmer in the shallows: {shallow} against {deep}");
 }
 
 /// Pictures of storms over the sea of a project of blocks named by `VOXEAR_STORMS_PROJECT`, kept in

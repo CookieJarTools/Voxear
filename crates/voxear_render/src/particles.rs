@@ -287,6 +287,12 @@ pub struct ParticleSystem {
     /// hiss and shells that should clink where they land.
     #[serde(skip_serializing_if = "is_false")]
     pub hit_events: bool,
+    /// Kept out from under roofs: a particle under anything that stops
+    /// rain, as the weather's cover near the viewer says
+    /// (`weather_maps`), is not drawn, so rain and snow end on a roof and
+    /// never fall indoors. Only near the viewer, where the cover is known.
+    #[serde(skip_serializing_if = "is_false")]
+    pub sheltered: bool,
     /// How much of its speed along what it meets it loses each time: 0
     /// slides on, 1 stops.
     #[serde(skip_serializing_if = "is_friction")]
@@ -476,6 +482,7 @@ impl Default for ParticleSystem {
             collision: ParticleCollision::Off,
             bounce: BOUNCE,
             hit_events: false,
+            sheltered: false,
             friction: FRICTION,
             life_lost: 0.0,
             forces: 0.0,
@@ -1121,6 +1128,8 @@ const RIBBON_FED: u32 = 2048;
 const MESH: u32 = 4096;
 /// Its particles' strikes are written out for the CPU.
 pub(crate) const HITS: u32 = 8192;
+/// Its particles are not drawn under anything that stops rain.
+const SHELTERED: u32 = 16384;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -1145,6 +1154,7 @@ pub(crate) fn gpu(
         (system.animate, ANIMATE),
         (system.mesh.is_some(), MESH),
         (system.hit_events && system.collision != ParticleCollision::Off, HITS),
+        (system.sheltered, SHELTERED),
         (system.trails == ParticleTrails::Particles, TRAILS),
         (system.trails == ParticleTrails::Ribbon, RIBBON),
         (system.trails == ParticleTrails::Ribbon && sending(system, time - started, playback.stopped.map(|s| s - started)), RIBBON_FED),

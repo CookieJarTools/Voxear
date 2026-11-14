@@ -36,16 +36,25 @@ Each kind is eight amounts, each from 0 for none to 1:
 | **Lightning** | How often lightning strikes: at 1, every eight seconds or so. A strike lights the sky and the level under it for a moment, in two or three flickers |
 | **Dust** | Blown sand in the air: fog of the sand's own colour, a third thicker than fog, and a dun sky |
 
-Rain and snow are the starter Rain and Snow effects (see [[Particle Systems]]), the snow's flakes made bigger, falling from a box 24 metres wide that stays over the camera. They land on what the camera can see, and the wind blows them. In the editor they fall round the Scene view's camera.
+Rain and snow are the starter Rain and Snow effects (see [[Particle Systems]]), the snow's flakes made bigger, falling from a box 24 metres wide that stays over the camera. They land on what the camera can see, and the wind blows them. In the editor they fall round the Scene view's camera. They end on roofs: none falls under anything that would keep it off, a roof of blocks, a tree, an overhang or any collider that does not move.
 
 ## What the weather leaves behind
 
 Rain and snow stay a while after they fall:
 
 - **Rain soaks the level.** Every surface darkens and shines, what faces up most. Dry ground is soaked in about half a minute of rain, and dries over three minutes once the rain stops.
-- **Snow settles** on whatever faces up: in patches at first, then over everything, in a minute and a half of steady snow. It melts over four minutes once the snow stops, and in well under one if it rains.
+- **Snow settles** on whatever faces up: in patches at first, then over everything, in a minute and a half of steady snow. Below freezing it stays. Above freezing it melts, over four minutes at a degree or two and sooner the warmer it is, and in well under one if it rains. The melt leaves the ground wet.
 
 A level that starts in rain or snow, from its lighting settings, starts already wet or snowed over, as if the weather had been there a while. Weather a script turns to starts on dry ground.
+
+What lies is worked out place by place, from the weather there and how warm the air is (see [[Temperature]]):
+
+- **A storm wets only what it passes over.** The ground it has left dries as it goes on, and ground it never reached stays dry.
+- **Snow lies by height.** One storm can leave the peaks white and the valley under them wet: each surface keeps the snow that suits the air at its own height.
+- **Where it is bitter,** about four degrees below freezing or colder, snow lies whatever the weather.
+- **Nothing lies under a roof.** Floors indoors, the ground under trees and the back of a cave stay dry and clear of snow. A wall that faces the open still gets wet.
+
+This is kept in cells about thirty metres across over the kilometre round the camera, and in half-metre cells for what is overhead over the fifty metres round it. Further off, the level's own weather counts everywhere. `Storms.At(position).Ground` tells what lies at a point.
 
 ## Setting the weather
 
@@ -93,8 +102,8 @@ public sealed class StormFront : Behaviour
 | `Weather.Kind` | The kind it is, or is turning to. Setting it turns the weather at once |
 | `Weather.Amounts` | What it adds this moment where the viewer is: part way between two kinds while it turns, with whatever a storm overhead adds |
 | `Weather.IsTurning` | Whether it is still turning |
-| `Weather.Wetness` | How wet the rain has left the level, from 0 to 1 |
-| `Weather.SnowCover` | How much snow has settled, from 0 to 1 |
+| `Weather.Wetness` | How wet the level's own rain has left it, from 0 to 1. For a place, `Storms.At(position).Ground` |
+| `Weather.SnowCover` | How much of the level's own snow has settled, from 0 to 1 |
 | `Weather.Flash` | How bright lightning is this moment, 0 between strikes |
 | `Weather.Changed` | An event, raised with the new kind when the weather is set to another, by a script or by lighting settings |
 | `Weather.Struck` | An event, raised as lightning strikes |
@@ -105,7 +114,11 @@ Amounts of your own make weather no kind has, such as a light drizzle under a br
 Weather.Set(new WeatherAmounts { Cloud = 0.4f, Rain = 0.25f }, 20f);
 ```
 
-The engine ships no sounds for weather. Play your own: thunder from `Weather.Struck`, and rain as loud as `Weather.Amounts.Rain`:
+## Sounds
+
+The weather has sounds of its own: rain, wind, the surf of a rough sea near you, and thunder after each stroke of lightning, a second or a few later and lower the further off it is. Each is as loud as the weather where the listener is. Under a roof the rain drums muffled overhead and the wind drops. They are made by the engine, so nothing ships for them, and they play on the Effects bus.
+
+**Sounds** on the [[Storms#Storms that come by themselves|Storms]] component, or `Storms.Sounds` from a script, says how loud they all are: 0 for none. Turn them down to play your own as well, such as thunder from `Weather.Struck`:
 
 ```csharp
 public sealed class Thunder : Behaviour
@@ -129,4 +142,4 @@ public sealed class Thunder : Behaviour
 ```
 
 > [!NOTE]
-> Nothing knows what is under a roof: rain and snow fall through roofs the camera cannot see the top of, and floors indoors get wet and snowed on with the rest. Lightning lights the whole sky, without a bolt. In a networked game each machine turns its own weather: set it on every machine at the same time. [[Storms]] are the same on every machine by themselves.
+> Lightning lights the whole sky, without a bolt. In a networked game each machine turns the level's own weather: set it on every machine at the same time. [[Storms]] are sent between machines by themselves.

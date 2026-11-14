@@ -326,6 +326,16 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.HitEvents, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// Kept out from under roofs: a particle under anything that stops rain is not drawn, so rain and snow end on a
+	/// roof and never fall indoors. Only near the viewer, where what is overhead is known.
+	/// </summary>
+	public bool Sheltered
+	{
+		get { return Number(NativeParticles.Sheltered) != 0f; }
+		set { Set(NativeParticles.Sheltered, value ? 1f : 0f); }
+	}
+
 	/// <summary>How wide each is over its life, times how wide it started: with keys, in place of growing or shrinking to SizeEnd.</summary>
 	public Curve SizeCurve
 	{

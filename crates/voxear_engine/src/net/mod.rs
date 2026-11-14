@@ -23,6 +23,7 @@ mod replication;
 mod rewind;
 mod rpcs;
 mod scripts;
+mod storms;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -265,6 +266,8 @@ pub struct NetSession {
     authority: authority::Authority,
     /// The client's own commands, by tick, for predicted ticks to run again.
     commands: VecDeque<(u64, Command)>,
+    /// The storms, as the server sends them and a client takes them in.
+    storms: storms::StormSync,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -305,6 +308,7 @@ impl NetSession {
             rewind: rewind::Rewind::default(),
             authority: authority::Authority::default(),
             commands: VecDeque::new(),
+            storms: storms::StormSync::default(),
         }
     }
 
@@ -496,6 +500,7 @@ impl NetSession {
             self.send(client, Channel::RELIABLE, &Message::Level(level));
         }
         self.send_all(&Message::Joined(player), None);
+        self.storms.owe(client);
         self.by_client.insert(client, player);
         self.players.push(player);
         self.buffers.insert(player, InputBuffer::default());
@@ -536,6 +541,7 @@ impl NetSession {
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
                 Message::Level(level) => self.level_request = Some(level),
+                Message::Storms(bytes) => self.storms.arrived(bytes, rtt),
                 Message::Sync { tick, ahead } if ahead != messages::UNHEARD => self.keep_pace(tick, i64::from(ahead), rtt),
                 Message::Spawn { id, owner, origin, tick, state, fields } => {
                     self.replication.note(id, tick, state);
@@ -953,6 +959,7 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
         session.replication.show(world, &theirs);
     }
     authority::take_in(world, &mut session);
+    storms::take_in(world, &mut session);
     world.insert_resource(session);
 }
 
@@ -972,6 +979,7 @@ pub fn frame_end(world: &mut World) {
     let smoothed = crate::tick_smoothing::hide(world);
     authority::send_owned(world, &mut session);
     session.replicate(world);
+    storms::send(world, &mut session);
     session.flush();
     if smoothed {
         crate::tick_smoothing::show(world);

@@ -43,6 +43,7 @@ internal static unsafe class StormCalls
 	public const uint Whirlpools = 6;
 	public const uint Maelstroms = 7;
 	public const uint Glow = 8;
+	public const uint Sounds = 9;
 
 	/// <summary>Asks <paramref name="what"/> of <paramref name="id"/> with the numbers given, which the answer overwrites.</summary>
 	public static int Call(int what, uint id, Span<float> numbers)

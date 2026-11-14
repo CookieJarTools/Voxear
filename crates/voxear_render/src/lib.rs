@@ -73,6 +73,7 @@ mod previews;
 mod scene;
 pub mod sea;
 mod seasons;
+mod shadow_cache;
 mod shadows;
 mod texture_codec;
 mod ui_pass;
@@ -1686,6 +1687,8 @@ struct View {
     warned_meshlets: bool,
     /// The views through the Portals it sees, kept from frame to frame.
     portals: Vec<PortalChild>,
+    /// What stands still in its local lights' reach, whose shadows they keep.
+    shadow_cache: shadow_cache::ShadowCache,
 }
 
 /// A view through a Portal, kept by the view it is seen in for as long as
@@ -1855,6 +1858,7 @@ impl View {
             ddgi_history: None,
             warned_meshlets: false,
             portals: Vec::new(),
+            shadow_cache: shadow_cache::ShadowCache::default(),
         })
     }
 
@@ -2308,6 +2312,37 @@ impl View {
                 posed.apply(instance);
             }
         }
+        // The local lights' slots of their atlases, and what of the shadows of what stands still they keep.
+        let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let shadowing = !extracted.shadow_lights.is_empty();
+        let caching = shadowing && self.options.local_shadow_cache;
+        let [atlas_width, atlas_height] = gpu::LOCAL_SHADOW_ATLAS;
+        let atlas_desc = ImageDesc::new(atlas_width, atlas_height, DEPTH_FORMAT, depth_usage);
+        let local_shadows = match shadowing {
+            true => Some(fg.shared_image(gpu, bindless, "local shadow atlas", atlas_desc)?),
+            false => None,
+        };
+        let kept_shadows = match caching {
+            true => Some(fg.history_image(gpu, bindless, "kept local shadows", atlas_desc)?),
+            false => None,
+        };
+        let lamps = if shadowing {
+            if caching {
+                self.shadow_cache.mark_still(&mut extracted, opaque_count, assets);
+                self.shadow_cache.note_blocks(&setup.blocks);
+            } else {
+                self.shadow_cache.forget();
+            }
+            let fresh = kept_shadows.is_some_and(|kept| fg.is_new(kept));
+            let lights = std::mem::take(&mut extracted.shadow_lights);
+            let parts = (&mut extracted.frame.local_shadows, extracted.lights.as_mut_slice());
+            let (lamps, views) = self.shadow_cache.give_slots(&lights, parts, (caching, fresh, setup.frame_index));
+            extracted.local_shadows = views;
+            lamps
+        } else {
+            self.shadow_cache.forget();
+            shadow_cache::Lamps::default()
+        };
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
         let taa_reset = self.taa_history != Some(extent);
         self.taa_history = taa.then_some(extent);
@@ -2344,8 +2379,13 @@ impl View {
             terrain::gather(terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
-        let view_blocks =
-            blocks::gather(&setup.blocks, &extracted, &buffers.blocks, (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows));
+        let view_blocks = blocks::gather(
+            &setup.blocks,
+            &extracted,
+            &buffers.blocks,
+            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows),
+            &lamps,
+        );
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let gathered = grass::gather(terrains, &extracted.frame, extracted.origin, &buffers.grass);
@@ -2362,7 +2402,6 @@ impl View {
             }
         });
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let (hdr, velocity, depth) = match portal {
             Some(pass) => (pass.hdr, pass.velocity, pass.depth),
             None => {
@@ -2386,14 +2425,6 @@ impl View {
             Some(fg.shared_image(gpu, bindless, name, desc)?)
         } else {
             None
-        };
-        let local_shadows = match extracted.local_shadows.is_empty() {
-            true => None,
-            false => {
-                let [width, height] = gpu::LOCAL_SHADOW_ATLAS;
-                let desc = ImageDesc::new(width, height, DEPTH_FORMAT, depth_usage);
-                Some(fg.shared_image(gpu, bindless, "local shadow atlas", desc)?)
-            }
         };
 
         let history = (setup.frame_index % 2) as usize;
@@ -2632,6 +2663,10 @@ impl View {
         frame_data.hiz_mips = pyramid_desc.mip_levels;
         frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
         frame_data.local_shadows.texture = local_shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
+        frame_data.local_shadows.cache = kept_shadows.map_or(NO_TEXTURE, |kept| fg.texture(kept).0);
+        // A lamp with moving blocks in its reach reads what is drawn over its kept views.
+        let moving_blocks = view_blocks.as_ref().map_or(0, |blocks| blocks.moving_for_lamps(&lamps));
+        frame_data.local_shadows.cached |= moving_blocks << gpu::KEPT_MOVING_SHIFT;
         frame_data.delta_time = setup.delta_time;
         frame_data.frame_index = setup.frame_index as u32;
         frame_data.taa_reset = u32::from(taa_reset);
@@ -2845,7 +2880,12 @@ impl View {
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
             shadows,
             cascade_size: if portal.is_some() { shadows::CASCADE_RESOLUTION / 2 } else { shadows::CASCADE_RESOLUTION },
-            local_shadows: local_shadows.map(|atlas| (atlas, extracted.local_shadows.clone())),
+            local_shadows: local_shadows.map(|atlas| passes::LocalShadows {
+                atlas,
+                kept: kept_shadows,
+                views: extracted.local_shadows.clone(),
+                lamps: lamps.clone(),
+            }),
             glass_shadows,
         };
         let draws = passes::Draws {

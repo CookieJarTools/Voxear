@@ -126,6 +126,148 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
     assert!(foot < open, "darker at the pillar's foot: {foot} against {open}");
 }
 
+/// A field of blocks at night, 64 a side and 4 up, with stone pillars two
+/// blocks square where `pillars` says, `high` blocks up from the grass, and
+/// a torch at each of `torches`, seen straight down from 40 m over its
+/// middle. Returns the world and its world of blocks.
+fn torchlit_field(
+    renderer: &mut Renderer,
+    pillars: &[[i32; 2]],
+    high: i32,
+    torches: &[Vec3],
+) -> (World, voxear_ecs::Entity) {
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    let mut blocks = file.make_ground(None);
+    for &[x, z] in pillars {
+        for y in 4..4 + high {
+            for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                blocks.set([x + dx, y, z + dz], 3);
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+    };
+    let field = world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+    for &at in torches {
+        world.spawn((Light::point(Vec3::new(1.0, 0.85, 0.6), 80.0, 14.0), Transform::from_position(at)));
+    }
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    world.insert_resource(post);
+    (world, field)
+}
+
+fn renderer_caching(caching: bool) -> Option<Renderer> {
+    let mut renderer = renderer()?;
+    renderer.set_view_options(voxear_render::ViewOptions { local_shadow_cache: caching, ..Default::default() });
+    Some(renderer)
+}
+
+#[test]
+fn a_torch_shadows_the_blocks_round_it_and_the_shadow_follows_a_block_edit() {
+    let torch = Vec3::new(28.0, 7.0, 33.0);
+    let Some(mut renderer) = renderer_caching(true) else { return };
+    let (mut world, field) = torchlit_field(&mut renderer, &[[32, 32]], 8, &[torch]);
+    let before = render(&mut renderer, &world, 24);
+    keep_image("torch and pillar.png", &before);
+    let brightness = |pixels: &[u8], x: f32, z: f32| {
+        let (px, py) = from_above(40.0, x, z);
+        rgb_at(pixels, px, py).iter().sum::<i32>()
+    };
+    // As far from the torch to its west as the pillar's shadow is to its east, where nothing is in the way.
+    let (shadowed, open) = (brightness(&before, 35.5, 33.0), brightness(&before, 20.5, 33.0));
+    assert!(open > 40, "the torch lights the grass: {open}");
+    assert!(shadowed * 3 < open, "the pillar shadows the grass behind it from the torch: {shadowed} against {open}");
+
+    // The pillar dug away: its shadow goes the frame its chunk's faces come.
+    let dug: Vec<([i32; 3], u16)> =
+        (4..12).flat_map(|y| [(32, 32), (33, 32), (32, 33), (33, 33)].map(|(x, z)| ([x, y, z], 0))).collect();
+    world.get_mut::<BlockWorld>(field).unwrap().set_blocks(dug);
+    let after = render(&mut renderer, &world, 3);
+    keep_image("torch, the pillar dug away.png", &after);
+    let lit = brightness(&after, 35.5, 33.0);
+    assert!(lit * 4 > open * 3, "lit where the pillar's shadow was: {lit} against {open}");
+    // Drawn whole, with no pillar ever there.
+    let Some(mut whole) = renderer_caching(false) else { return };
+    let (never, _) = torchlit_field(&mut whole, &[], 8, &[torch]);
+    let expected = render(&mut whole, &never, 3);
+    let apart = after.iter().zip(&expected).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+    assert!(apart <= 3, "as with no pillar, but for the dither: {apart} apart");
+}
+
+/// The local shadow passes' GPU time over a field of 64 pillars lit by
+/// eight torches, each pass's least over 60 frames, summed. Not run with the
+/// rest: `cargo test -p voxear_render --test blocks -- --ignored --nocapture torch_shadow_timings`.
+fn torch_shadow_time(caching: bool) -> Option<(f32, Vec<(String, f32)>)> {
+    let mut renderer = renderer_caching(caching)?;
+    let pillars: Vec<[i32; 2]> = (0..8).flat_map(|i| (0..8).map(move |j| [4 + i * 7, 4 + j * 7])).collect();
+    let torches: Vec<Vec3> =
+        (0..8).map(|t| Vec3::new(8.5 + (t % 4) as f32 * 14.0, 7.0, 15.5 + (t / 4) as f32 * 28.0)).collect();
+    let (world, _) = torchlit_field(&mut renderer, &pillars, 6, &torches);
+    let mut time = 0.0;
+    let mut least: Vec<(String, f32)> = Vec::new();
+    for frame in 0..100 {
+        time += 1.0 / 60.0;
+        renderer.render(&world, time).expect("frame renders");
+        if frame < 40 {
+            continue;
+        }
+        for (name, ms) in renderer.timings() {
+            match least.iter_mut().find(|(known, _)| known == name) {
+                Some((_, kept)) => *kept = kept.min(*ms),
+                None => least.push((name.clone(), *ms)),
+            }
+        }
+    }
+    let local: Vec<(String, f32)> = least.into_iter().filter(|(name, _)| name.contains("ocal shadow")).collect();
+    Some((local.iter().map(|(_, ms)| ms).sum(), local))
+}
+
+#[test]
+#[ignore]
+fn torch_shadow_timings() {
+    let (Some((whole, whole_passes)), Some((kept, kept_passes))) = (torch_shadow_time(false), torch_shadow_time(true))
+    else {
+        return;
+    };
+    println!("drawn whole every frame: {whole:.3} ms {whole_passes:?}");
+    println!("what stands still kept:  {kept:.3} ms {kept_passes:?}");
+}
+
 #[test]
 fn a_world_too_large_to_upload_in_a_frame_comes_over_several_the_old_one_drawn_till_it_is_whole() {
     use voxear_terrain::blocks::BlockMap;

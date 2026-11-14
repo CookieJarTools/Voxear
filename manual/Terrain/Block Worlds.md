@@ -22,7 +22,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Ground height | With flat ground, how many blocks high it is |
 | Top block, Under block, Base block | The blocks its ground is made of, each picked from the project's blocks: its top, the layers under that, and the rest. None for air |
 | Under depth | How many layers of the under block there are |
-| Cast shadows | Whether its blocks cast the sun's shadows |
+| Cast shadows | Whether its blocks cast shadows, the sun's and lamps' |
 
 A change to its ground makes its blocks again at once, what you built on it kept. Each change is one step to undo, and is written to the asset when you save the level.
 
@@ -435,7 +435,7 @@ The blocks are kept in chunks of 32 a side, only the chunks with blocks in them,
 
 The sheets of [[Blocks#Bushy leaves|bushy leaves]] and of [[Blocks#Vines|vines]] are kept beside a chunk's faces, two words each as a face is, and drawn from either side while the chunk is within 160 blocks of the camera.
 
-The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
+The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face, and so do lamps': a torch by a pillar leaves the ground behind it dark. A lamp keeps its shadow of the blocks round it, and draws it again only when a block in its reach is placed or dug out (see [[Lights]]). Leaves do not sway in lamps' shadows. Blocks light the world round them too, as the GI's rays see them.
 
 Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side, flowing water as high as it stands. Water casts no shadow, and the GI's rays pass through it.
 

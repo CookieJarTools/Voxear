@@ -35,7 +35,10 @@ use crate::{
     MaterialHandle, MeshHandle,
     alloc::{RangeAllocator, SlotAllocator},
     assets::Assets,
-    gpu::{GpuInstance, INSTANCE_RAYS_ONLY, LIST_COUNT, LIST_EARLY, LIST_SHADOW, Push},
+    gpu::{
+        GpuInstance, INSTANCE_RAYS_ONLY, LIST_COUNT, LIST_EARLY, LIST_LOCAL_SHADOW, LIST_SHADOW, LOCAL_SHADOW_LIGHTS,
+        Push,
+    },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     mesh::{MeshData, NO_WIND_MASKS, Vertex},
     passes::{attachment, begin_rendering, bind, set_viewport},
@@ -383,6 +386,27 @@ pub(crate) fn pick(
     seen: Option<&HashSet<[i32; 3]>>,
     shown: Option<&HashSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
+    pick_parts(chunks, planes, (facing, detail), (seen, shown), Parts::With)
+}
+
+/// Which of a chunk's quads a list draws: all, all but its blocks of
+/// parts, or those alone, as a lamp's kept shadow draws the rest once and
+/// them, which may move, each frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Parts {
+    With,
+    Without,
+    Only,
+}
+
+/// As [`pick`], with only the quads `parts` says.
+fn pick_parts(
+    chunks: &[ChunkDraw],
+    planes: &[[f32; 4]],
+    (facing, detail): (Facing, Option<Detail>),
+    (seen, shown): (Option<&HashSet<[i32; 3]>>, Option<&HashSet<[i32; 3]>>),
+    parts: Parts,
+) -> Vec<[u32; 2]> {
     // Turned towards the light, the faces whose way out goes against it.
     let lit = match facing {
         Facing::Light(way) => [way.x <= 0.0, way.x >= 0.0, way.y <= 0.0, way.y >= 0.0, way.z <= 0.0, way.z >= 0.0],
@@ -402,6 +426,13 @@ pub(crate) fn pick(
             continue;
         }
         let [low, high] = chunk.bounds;
+        // Its blocks of parts, their boxes' faces turned every way, and some moving.
+        if level == 0 && chunk.cone.is_none() && chunk.parts[1] > 0 && parts != Parts::Without {
+            picked.push(chunk.parts);
+        }
+        if parts == Parts::Only {
+            continue;
+        }
         // A smooth chunk is drawn whole at one of its levels, unless every triangle in it is turned away.
         if let Some(cone) = chunk.cone {
             let [first, count] = chunk.facings[detail.map_or(0, |detail| detail.level(chunk))];
@@ -434,10 +465,6 @@ pub(crate) fn pick(
         };
         if level == 0 && chunk.loose[1] > 0 && detail.is_none_or(near) {
             picked.push(chunk.loose);
-        }
-        // Its blocks of parts, their boxes' faces turned every way, and some moving.
-        if level == 0 && chunk.parts[1] > 0 {
-            picked.push(chunk.parts);
         }
     }
     merged(picked)
@@ -1225,11 +1252,18 @@ pub struct BlockCounts {
 /// their sides from `sights` are drawn: the camera, or for a view through a
 /// Portal, where the Portal it looks out of stands, as all it sees, it sees
 /// through there, and its camera may stand inside the ground behind it.
+///
+/// Each lamp casting a shadow takes the chunks in its reach, their faces
+/// turned towards it: for one that keeps what stands still (see
+/// `shadow_cache`), all but the blocks of parts, which may move, only when
+/// it draws its kept views, and those each frame; for any other, all of
+/// them each frame.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
     (offset, sights, shadows): (Vec3, Option<Vec3>, bool),
+    lamps: &crate::shadow_cache::Lamps,
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
@@ -1303,7 +1337,7 @@ pub(crate) fn gather(
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
         let local = back * (camera - corner);
-        let mut lists = vec![Vec::new(); LIST_COUNT as usize];
+        let mut lists = vec![Vec::new(); LAMP_KEPT as usize + LOCAL_SHADOW_LIGHTS];
         let planes = turned_planes(&frame.planes, corner, back);
         // What the world shows from the place nearest the camera, where it is seen from more than one.
         let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
@@ -1339,6 +1373,28 @@ pub(crate) fn gather(
                 lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
             }
         }
+        let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
+        for (slot, (at, reach)) in lit.filter(|_| blocks.cast_shadows) {
+            let planes = turned_planes(&reach_planes(at, reach), corner, back);
+            let from = back * (at - corner);
+            // What the world shows from the place nearest the lamp, so its shadow is the same wherever the camera is.
+            let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
+                (place.at[0] - from.x).powi(2) + (place.at[1] - from.z).powi(2)
+            };
+            let shown =
+                blocks.places.iter().min_by(|a, b| nearest(a).total_cmp(&nearest(b))).map(|place| &place.columns);
+            let picked =
+                |parts| pick_parts(&blocks.chunks, &planes, (Facing::Camera(from), None), (None, shown), parts);
+            let list = LIST_LOCAL_SHADOW as usize + slot;
+            if blocks.turn.is_none() && lamps.is_cached(slot) {
+                if lamps.redraws(slot) {
+                    lists[LAMP_KEPT as usize + slot] = picked(Parts::Without);
+                }
+                lists[list] = picked(Parts::Only);
+            } else {
+                lists[list] = picked(Parts::With);
+            }
+        }
         runs.push((number as u32, blocks.smooth, lists));
     }
     buffer.write(0, &records);
@@ -1346,6 +1402,56 @@ pub(crate) fn gather(
     let shadows = runs.iter().any(|(_, _, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
     Some(ViewBlocks { runs, water, pools, shadows })
+}
+
+/// Where a world's lists of what a lamp keeps of it start, beyond the lists
+/// the GPU fills: one a lamp, by its slot.
+const LAMP_KEPT: u32 = LIST_COUNT;
+
+/// The planes, inward, round a lamp's reach.
+fn reach_planes(at: Vec3, reach: f32) -> [[f32; 4]; 6] {
+    [
+        [1.0, 0.0, 0.0, reach - at.x],
+        [-1.0, 0.0, 0.0, reach + at.x],
+        [0.0, 1.0, 0.0, reach - at.y],
+        [0.0, -1.0, 0.0, reach + at.y],
+        [0.0, 0.0, 1.0, reach - at.z],
+        [0.0, 0.0, -1.0, reach + at.z],
+    ]
+}
+
+impl ViewBlocks {
+    /// The lamps' slots, a bit each, for which a world draws something
+    /// each frame over what they keep.
+    pub fn moving_for_lamps(&self, lamps: &crate::shadow_cache::Lamps) -> u32 {
+        let moving =
+            |slot: usize| self.runs.iter().any(|(_, _, lists)| !lists[LIST_LOCAL_SHADOW as usize + slot].is_empty());
+        (0..lamps.slots.len())
+            .filter(|&slot| lamps.is_cached(slot) && moving(slot))
+            .fold(0, |bits, slot| bits | 1 << slot)
+    }
+
+    /// Whether any world draws anything into a lamp's views: what it keeps
+    /// of them (`kept`), or what it draws each frame.
+    pub fn draws_for_lamp(&self, slot: u32, kept: bool) -> bool {
+        let stored = if kept { LAMP_KEPT + slot } else { LIST_LOCAL_SHADOW + slot };
+        draws(self, stored)
+    }
+}
+
+/// Each world's quads a lamp's slot draws into its view `view`: what it
+/// keeps of them (`kept`), or what it draws each frame, as `draw_runs`
+/// draws a list.
+pub(crate) fn draw_lamp_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, slot: u32, kept: bool, at: u32) {
+    let stored = if kept { LAMP_KEPT + slot } else { LIST_LOCAL_SHADOW + slot };
+    let list = LIST_LOCAL_SHADOW + slot;
+    for (number, smooth, lists) in &view.runs {
+        for &[first, count] in &lists[stored as usize] {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, source: at, ..*push });
+            let vertices = if *smooth { count / 2 } else { count * 6 };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+        }
+    }
 }
 
 /// Each world's quads list `list` draws: six vertices a quad (drawn

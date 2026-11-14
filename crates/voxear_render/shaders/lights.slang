@@ -410,10 +410,98 @@ bool localShadowAt(Frame* frame, Light light, float3 position, float3 normal, ou
     return all(abs(ndc.xy) <= 1.0) && ndc.z <= 1.0;
 }
 
+// Points on a disc spread evenly by the golden angle, turned by `angle`.
+float2 vogelDisc(uint index, uint count, float angle)
+{
+    float radius = sqrt((float(index) + 0.5) / float(count));
+    float theta = float(index) * 2.39996323 + angle;
+    return radius * float2(cos(theta), sin(theta));
+}
+
+// Whether a light's shadow is read from the view's kept atlas of what stands
+// still (src/shadow_cache.rs): it keeps one, and nothing moving was drawn
+// for it this frame over a copy in the atlas.
+bool localShadowKept(Frame* frame, uint slot)
+{
+    uint cached = frame->localShadows.cached;
+    if (frame->localShadows.cache == NO_TEXTURE || ((cached >> slot) & 1) == 0 || ((cached >> (KEPT_MOVING_SHIFT + slot)) & 1) != 0)
+    {
+        return false;
+    }
+    return buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] == 0;
+}
+
+// Few taps, turned each frame and pixel, as TAA averages them: an area
+// light's soft shadow.
+static const uint LOCAL_PCSS_BLOCKER_TAPS = 12;
+static const uint LOCAL_PCSS_FILTER_TAPS = 16;
+// The widest, in texels of a view, its soft edge grows, which its search
+// for blockers keeps within too.
+static const float LOCAL_PCSS_MAX_TEXELS = 24.0;
+
+// How far from a light, along its view's axis, a depth its view holds lies.
+float localShadowDistance(Light light, float depth)
+{
+    return light.shadowNear / max(1.0 - depth * (light.shadowFar - light.shadowNear) / light.shadowFar, 1e-6);
+}
+
+// An area light's shadow at `uv` in its view, at a depth of `depth`: the
+// blockers within the light's sight of the point found first, then a
+// filter as wide as the light seen past them, its taps turned each frame
+// and pixel. `texelMetres` is how wide a texel of the view is at the point.
+float localSoftShadow(Frame* frame, Light light, Texture2D atlas, float2 uv, float depth, float2 low, float2 high,
+    float texelMetres, float3 position)
+{
+    float2 texelUv = 1.0 / float2(LOCAL_SHADOW_ATLAS);
+    float receiver = localShadowDistance(light, depth);
+    float angle = frac(52.9829189 * frac(dot(position.xz * 37.0 + position.y * 11.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI;
+    angle += float(frame->frameIndex % 64) * 2.39996323;
+    // A blocker as near the light as its shape is wide still lies within the light's sight of the point this far
+    // round it, in metres there.
+    float nearest = max(light.shadowNear, light.shadowRadius);
+    float sight = light.shadowRadius * max(receiver - nearest, 0.0) / nearest;
+    float searchTexels = clamp(sight / texelMetres, 1.0, LOCAL_PCSS_MAX_TEXELS);
+    float blockers = 0.0;
+    float blockerDistance = 0.0;
+    for (uint i = 0; i < LOCAL_PCSS_BLOCKER_TAPS; i++)
+    {
+        float2 at = clamp(uv + vogelDisc(i, LOCAL_PCSS_BLOCKER_TAPS, angle) * searchTexels * texelUv, low, high);
+        float found = atlas.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], at, 0.0).r;
+        if (found < depth)
+        {
+            blockers += 1.0;
+            blockerDistance += localShadowDistance(light, found);
+        }
+    }
+    // Nothing round it is in the way, or everything is: wholly lit or wholly shaded, with no edge to soften.
+    if (blockers == 0.0)
+    {
+        return 1.0;
+    }
+    if (blockers == float(LOCAL_PCSS_BLOCKER_TAPS))
+    {
+        return 0.0;
+    }
+    // The light seen past the blockers, as wide as it is over how far they stand from it.
+    float blocker = max(blockerDistance / blockers, 1e-3);
+    float penumbra = light.shadowRadius * max(receiver - blocker, 0.0) / blocker;
+    float filterTexels = clamp(penumbra / texelMetres, 1.0, LOCAL_PCSS_MAX_TEXELS);
+    float lit = 0.0;
+    for (uint i = 0; i < LOCAL_PCSS_FILTER_TAPS; i++)
+    {
+        float2 at = clamp(uv + vogelDisc(i, LOCAL_PCSS_FILTER_TAPS, angle) * filterTexels * texelUv, low, high);
+        lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], at, depth);
+    }
+    return lit / float(LOCAL_PCSS_FILTER_TAPS);
+}
+
 // How much of a local light reaches `position` past what its shadow holds in
 // the way: 1 for a light that casts none. Nine taps of hardware 2x2
-// filtering soften the edge, kept inside the view.
-float localShadow(Frame* frame, Light light, float3 position, float3 normal)
+// filtering soften the edge, kept inside the view. A light with a shape,
+// with `soft`, softens it as wide as its shape makes it: percentage-closer
+// soft shadows (Fernando 2005), so shadows stay sharp where things touch
+// and soften away from them.
+float localShadow(Frame* frame, Light light, float3 position, float3 normal, bool soft = true)
 {
     if (light.shadow == NO_SHADOW || frame->localShadows.texture == NO_TEXTURE)
     {
@@ -432,7 +520,13 @@ float localShadow(Frame* frame, Light light, float3 position, float3 normal)
     float2 high = (corner + tile - 1.5) / float2(LOCAL_SHADOW_ATLAS);
     float2 uv = (corner + (ndc.xy * 0.5 + 0.5) * tile) / float2(LOCAL_SHADOW_ATLAS);
     float2 texel = 1.0 / float2(LOCAL_SHADOW_ATLAS);
-    Texture2D atlas = textures[NonUniformResourceIndex(frame->localShadows.texture)];
+    bool kept = localShadowKept(frame, light.shadow / LOCAL_SHADOW_SLOT_VIEWS);
+    uint texture = kept ? frame->localShadows.cache : frame->localShadows.texture;
+    Texture2D atlas = textures[NonUniformResourceIndex(texture)];
+    if (soft && light.shadowRadius > 0.0)
+    {
+        return localSoftShadow(frame, light, atlas, uv, ndc.z, low, high, texelMetres, position);
+    }
     float lit = 0.0;
     for (int y = -1; y <= 1; y++)
     {
@@ -476,7 +570,7 @@ float3 localGlass(Frame* frame, Light light, float3 position, float3 normal)
 // its middle for an area or tube light, and its colour as it arrives,
 // after distance, a spot's cone, its cookie and profile, its shadow and any
 // glass in the way.
-LightInput localLightInput(Light light, float3 position, float3 normal)
+LightInput localLightInput(Light light, float3 position, float3 normal, bool soft = true)
 {
     float3 toLight = light.position - position;
     float distanceSquared = max(dot(toLight, toLight), 1e-4);
@@ -499,15 +593,15 @@ LightInput localLightInput(Light light, float3 position, float3 normal)
     {
         attenuation *= profileAt(light, -toLight);
     }
-    float shadow = localShadow(push.frame, light, position, normal);
+    float shadow = localShadow(push.frame, light, position, normal, soft);
     color *= attenuation * shadow * localGlass(push.frame, light, position, normal);
     LightInput input = { toLight, color, float3(0.0) };
     return input;
 }
 
-float3 shadeLocalLight(Surface s, Light light, float3 position)
+float3 shadeLocalLight(Surface s, Light light, float3 position, bool soft = true)
 {
-    float shadow = localShadow(push.frame, light, position, s.normal);
+    float shadow = localShadow(push.frame, light, position, s.normal, soft);
     if (shadow <= 0.0)
     {
         return 0.0;

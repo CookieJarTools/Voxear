@@ -337,6 +337,9 @@ enum Commands {
         /// Draw whole LODs rather than culling each draw's meshlets, to compare.
         #[arg(long)]
         no_meshlet_culling: bool,
+        /// Draw local lights' shadows whole every frame rather than keeping what stands still, to compare.
+        #[arg(long)]
+        no_shadow_cache: bool,
         /// Cull meshlets with a compute pass and indirect draws even where the GPU has mesh shaders, to compare.
         #[arg(long)]
         no_mesh_shaders: bool,
@@ -523,6 +526,7 @@ fn main() -> Result<()> {
             overlays,
             stats,
             no_meshlet_culling,
+            no_shadow_cache,
             no_mesh_shaders,
             render_scale,
             every,
@@ -545,8 +549,15 @@ fn main() -> Result<()> {
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let meshlet_culling = !no_meshlet_culling;
-            let options =
-                ViewOptions { debug_view, post_override, meshlet_culling, render_scale, ..ViewOptions::default() };
+            let local_shadow_cache = !no_shadow_cache;
+            let options = ViewOptions {
+                debug_view,
+                post_override,
+                meshlet_culling,
+                render_scale,
+                local_shadow_cache,
+                ..ViewOptions::default()
+            };
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let mesh_shaders = !no_mesh_shaders;
             let delta = 1.0 / rate.clamp(1.0, 1000.0);

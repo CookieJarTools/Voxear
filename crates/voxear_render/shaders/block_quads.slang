@@ -283,7 +283,10 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     }
     if (facing >= BLOCK_TUFT && loose)
     {
-        return loosePoint(world, quad, vertexId % 6, push.frame->cameraPosition);
+        // A lamp's shadow is kept from frame to frame, so its sheets are as its lamp sees them, wherever the camera is.
+        bool lamp = push.list >= LIST_LOCAL_SHADOW && push.list < LIST_COUNT;
+        float3 eye = lamp ? push.frame->localShadows.casters[push.list - LIST_LOCAL_SHADOW].xyz : push.frame->cameraPosition;
+        return loosePoint(world, quad, vertexId % 6, eye);
     }
     uint4 shades = (uint4(quad.y) >> uint4(8, 10, 12, 14)) & 3;
     bool flip = shades.x + shades.z < shades.y + shades.w;

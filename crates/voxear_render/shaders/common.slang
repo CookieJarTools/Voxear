@@ -295,6 +295,8 @@ static const uint INSTANCE_NO_SHADOW = 4;
 static const uint INSTANCE_IMPOSTOR = 16;
 // Only rays see it: a terrain's coarse mesh for the GI (src/terrain.rs).
 static const uint INSTANCE_RAYS_ONLY = 32;
+// Stood still long enough for local lights to keep its shadow (src/shadow_cache.rs).
+static const uint INSTANCE_STILL = 64;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
@@ -320,7 +322,11 @@ struct Light
     uint profile;
     // Its first view in the local shadow atlas, or NO_SHADOW: a spot light's one, or a cube's six faces.
     uint shadow;
-    uint3 pad;
+    // Where its shadow's views start and end, in metres from it.
+    float shadowNear;
+    float shadowFar;
+    // How far its shape reaches round its middle, which softens its shadow's edge; 0 for a hard one.
+    float shadowRadius;
 };
 
 static const uint NO_SHADOW = 0xFFFFFFFF;
@@ -328,6 +334,8 @@ static const uint NO_SHADOW = 0xFFFFFFFF;
 // Local lights' shadows; mirrors GpuLocalShadows in src/gpu.rs. Views are
 // LOCAL_SHADOW_TILE square, LOCAL_SHADOW_COLUMNS to a row of the atlas.
 static const uint LOCAL_SHADOW_VIEWS = 48;
+// Each light's slot: a cube's six views, a spot light's in the first.
+static const uint LOCAL_SHADOW_SLOT_VIEWS = 6;
 static const uint LOCAL_SHADOW_TILE = 512;
 static const uint LOCAL_SHADOW_COLUMNS = 8;
 static const uint2 LOCAL_SHADOW_ATLAS = uint2(4096, 3072);
@@ -457,8 +465,13 @@ struct LocalShadows
     float4 casters[LOCAL_SHADOW_LIGHTS];
     uint texture;
     uint count;
-    uint2 pad;
+    // The atlas of what stands still (src/shadow_cache.rs), or NO_TEXTURE.
+    uint cache;
+    // The slots whose still part is kept there, a bit each, and above KEPT_MOVING_SHIFT those with moving blocks.
+    uint cached;
 };
+
+static const uint KEPT_MOVING_SHIFT = 8;
 
 // Post-processing settings; mirrors GpuPost in src/gpu.rs.
 // How many properties a look shader's values hold (src/looks.rs's LOOK_VALUES).

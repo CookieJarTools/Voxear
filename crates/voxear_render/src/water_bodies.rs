@@ -618,7 +618,9 @@ pub(crate) fn lava_lights(bodies: &crate::water::WaterBodies, camera: Vec3) -> V
             cookie: NO_TEXTURE,
             profile: NO_TEXTURE,
             shadow: NO_SHADOW,
-            _pad: [0; 3],
+            shadow_near: 0.0,
+            shadow_far: 0.0,
+            shadow_radius: 0.0,
         }
     };
     let layered = bodies.pools as usize + bodies.streams.len();

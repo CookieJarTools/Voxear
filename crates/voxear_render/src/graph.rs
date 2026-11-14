@@ -577,10 +577,18 @@ impl<'a> FrameGraph<'a> {
         }
 
         let mut memory = None::<(vk::PipelineStageFlags2, vk::AccessFlags2, vk::PipelineStageFlags2, vk::AccessFlags2)>;
+        // A buffer the pass uses more than one way waits for what came before in each of them.
+        let mut waited = Vec::new();
         for &(id, access) in &pass.buffers {
             let buffer = &mut self.buffers[id.0];
             let (stage, flags) = access.state();
-            if writes(buffer.access) || writes(flags) {
+            if let (Some(m), true) = (memory.as_mut(), waited.contains(&id.0)) {
+                m.2 |= stage;
+                m.3 |= flags;
+                buffer.stage |= stage;
+                buffer.access |= flags;
+            } else if writes(buffer.access) || writes(flags) {
+                waited.push(id.0);
                 let m = memory.get_or_insert((vk::PipelineStageFlags2::NONE, vk::AccessFlags2::NONE, stage, flags));
                 m.0 |= buffer.stage;
                 m.1 |= buffer.access;

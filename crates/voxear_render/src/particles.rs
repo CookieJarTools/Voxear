@@ -1342,7 +1342,9 @@ pub(crate) fn lights(world: &World, camera: Vec3, time: f32) -> Vec<crate::gpu::
                 cookie: NO_TEXTURE,
                 profile: NO_TEXTURE,
                 shadow: NO_SHADOW,
-                _pad: [0; 3],
+                shadow_near: 0.0,
+                shadow_far: 0.0,
+                shadow_radius: 0.0,
             };
             found.push((position.distance_squared(camera), light));
         }

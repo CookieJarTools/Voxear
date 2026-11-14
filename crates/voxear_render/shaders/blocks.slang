@@ -842,7 +842,8 @@ struct BlockShadowOut
     nointerpolation uint world : WORLD;
 };
 
-// A vertex in a sun cascade's view (push.list), placed as the camera's view places it.
+// A vertex in a sun cascade's view (push.list), placed as the camera's view places it; or in the view of a local
+// light's list that push.source names.
 [shader("vertex")]
 BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
 {
@@ -850,9 +851,14 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
     // Its picture stays on its face as the face sways, and on a moving part where it rests.
     float3 stands = b.world - b.posedBy;
-    b.world += blockSway(push.frame, world, b, push.frame->time);
+    // A lamp keeps its shadow of what stands still from frame to frame (src/shadow_cache.rs): it leaves out the sway.
+    bool lamp = push.list >= LIST_LOCAL_SHADOW;
+    if (!lamp)
+    {
+        b.world += blockSway(push.frame, world, b, push.frame->time);
+    }
     BlockShadowOut o;
-    o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
+    o.position = transform(shadowViewProj(push.frame, push.list, lamp ? push.source : 0), float4(b.world, 1.0));
     o.place = stands - world.corner;
     o.normal = b.normal;
     o.across = b.across;

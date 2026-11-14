@@ -198,6 +198,10 @@ pub const INSTANCE_IMPOSTOR: u32 = 16;
 /// as they draw the ground itself.
 pub const INSTANCE_RAYS_ONLY: u32 = 32;
 
+/// An instance that has stood still long enough for local lights to keep
+/// its shadow from frame to frame (see `shadow_cache`).
+pub const INSTANCE_STILL: u32 = 64;
+
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
 /// Area lights, shining from one face along their direction.
@@ -233,7 +237,13 @@ pub struct GpuLight {
     /// light's one, or the six faces of a cube round any other kind, in
     /// `CUBE_FACES`' order.
     pub shadow: u32,
-    pub _pad: [u32; 3],
+    /// Where its shadow's views start and end, in metres from it, which
+    /// their depths are measured over.
+    pub shadow_near: f32,
+    pub shadow_far: f32,
+    /// How far its shape reaches round its middle, which its shadow's edge
+    /// softens by; 0 for a hard edge.
+    pub shadow_radius: f32,
 }
 
 /// A light that casts no shadow, or none this frame.
@@ -245,6 +255,9 @@ pub const NO_SHADOW: u32 = u32::MAX;
 /// `LOCAL_SHADOW_COLUMNS`.
 pub const LOCAL_SHADOW_LIGHTS: usize = 8;
 pub const LOCAL_SHADOW_VIEWS: usize = 48;
+/// Each light's slot in the atlas: a cube's six views, a spot light using
+/// the first, so a light keeps its place from frame to frame.
+pub const LOCAL_SHADOW_SLOT_VIEWS: u32 = (LOCAL_SHADOW_VIEWS / LOCAL_SHADOW_LIGHTS) as u32;
 pub const LOCAL_SHADOW_TILE: u32 = 512;
 pub const LOCAL_SHADOW_COLUMNS: u32 = 8;
 pub const LOCAL_SHADOW_ATLAS: [u32; 2] = [
@@ -265,12 +278,21 @@ pub struct GpuLocalShadows {
     /// The atlas, or `NO_TEXTURE` while no local light casts a shadow.
     pub texture: u32,
     pub count: u32,
-    pub _pad: [u32; 2],
+    /// The view's atlas of what stands still (see `shadow_cache`), or
+    /// `NO_TEXTURE`.
+    pub cache: u32,
+    /// The slots whose still part is kept there, a bit each; and above
+    /// `KEPT_MOVING_SHIFT`, those of them with moving blocks drawn this
+    /// frame, which read the atlas.
+    pub cached: u32,
 }
+
+/// Where `GpuLocalShadows::cached` keeps which slots have moving blocks.
+pub const KEPT_MOVING_SHIFT: u32 = 8;
 
 impl Default for GpuLocalShadows {
     fn default() -> Self {
-        Self { texture: NO_TEXTURE, ..bytemuck::Zeroable::zeroed() }
+        Self { texture: NO_TEXTURE, cache: NO_TEXTURE, ..bytemuck::Zeroable::zeroed() }
     }
 }
 
@@ -1350,7 +1372,7 @@ mod tests {
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;
-        // Each view's matrix, each list's light, then the atlas and count.
+        // Each view's matrix, each list's light, then the atlases, count and kept slots.
         let local_shadows = 64 * LOCAL_SHADOW_VIEWS + 16 * LOCAL_SHADOW_LIGHTS + 16;
         // Each Track Maker's path and size, then the map's corners and four words.
         let tracks = 32 * crate::tracks::MAX_TRACK_MAKERS + 32;

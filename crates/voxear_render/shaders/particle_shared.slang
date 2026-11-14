@@ -101,7 +101,7 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     for (uint i = 0; i < buffers()->clusters[base]; i++)
     {
         Light lamp = buffers()->lights[buffers()->clusters[base + 1 + i]];
-        lit += localLightInput(lamp, world, normalizeOr(lamp.position - world, toCamera)).color;
+        lit += localLightInput(lamp, world, normalizeOr(lamp.position - world, toCamera), false).color;
     }
     // A ball lit from one side takes half its light, spread over it.
     return ambient + lit * 0.5 / PI;
@@ -137,7 +137,7 @@ void particleLightSix(Frame* frame, float3 world, float4 clip, float3 right, flo
     {
         Light lamp = buffers()->lights[buffers()->clusters[base + 1 + i]];
         float3 toLamp = normalizeOr(lamp.position - world, front);
-        float3 lit = localLightInput(lamp, world, toLamp).color / PI;
+        float3 lit = localLightInput(lamp, world, toLamp, false).color / PI;
         for (uint side = 0; side < 6; side++)
         {
             six[side] += lit * saturate(dot(toLamp, sides[side]));

@@ -67,6 +67,7 @@ pub const LOCAL_SHADOW_BORDER: f32 = 2.0;
 /// A local light as its shadow is drawn: where it is, how far its shadow
 /// reaches, and how near to it things start to cast (past its own shape and
 /// the glass or flame round it).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocalLight {
     pub position: Vec3,
     pub rotation: Quat,
@@ -76,12 +77,17 @@ pub struct LocalLight {
     pub cone_degrees: Option<f32>,
 }
 
+/// How far a local light's shadow views reach, which their depths run to.
+pub fn local_far(light: &LocalLight) -> f32 {
+    light.range.max(light.near * 2.0)
+}
+
 /// The views a local light's shadow is drawn in: one along a spot light's
 /// cone, or the six faces of a cube in `CUBE_FACES`' order.
 pub fn local_views(light: &LocalLight) -> Vec<Mat4> {
     let size = crate::gpu::LOCAL_SHADOW_TILE as f32;
     let grow = (size + 2.0 * LOCAL_SHADOW_BORDER) / size;
-    let far = light.range.max(light.near * 2.0);
+    let far = local_far(light);
     let projection = |tan_half: f32| vulkan::perspective(2.0 * (tan_half * grow).atan(), 1.0, light.near, far);
     match light.cone_degrees {
         Some(cone) => {

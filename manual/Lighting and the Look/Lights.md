@@ -34,6 +34,7 @@ Select the light, and the Inspector shows:
 | Width, Height | A rectangle's size, in metres |
 | Radius | A disc's or a tube's radius, in metres |
 | Length | A tube's length, end to end, in metres |
+| Soft shadows | For a rectangle, disc or tube: whether its shadow softens as wide as the light is. On by default: see below |
 | Cookie | A picture the light shines through, for a spot or directional light |
 | Cookie size | How many metres a directional light's cookie covers before it repeats |
 | IES profile | How bright a real light fitting is in each direction, for a point or spot light |
@@ -92,7 +93,11 @@ Each light that casts shadows draws what is round it again, so they cost more th
 - A **spot light** draws its shadow once, along its cone.
 - Any other light draws it six times, once for each side of a cube round it.
 
-In each frame, the eight lights nearest the camera that ask for shadows cast them, as long as their views fit the shadow atlas (48 views, so up to eight spot lights, or eight point lights). Any more light without a shadow until the camera comes nearer.
+In each frame, the eight lights nearest the camera that ask for shadows cast them. Any more light without a shadow until the camera comes nearer.
+
+A light keeps its shadow of what stands still from one frame to the next, and each frame draws only what moves over it. Walls, floors, worlds of blocks and Objs that have stood still for 16 frames are drawn into a light's shadow once; a character walking past is drawn each frame. A light draws what stands still again only when it moves, or when something in its reach changes: an Obj stops, starts moving, appears or goes, or a block is placed or dug out. You do not have to mark anything: the engine sees what moves. A lamp carried around draws its whole shadow each frame while it moves, as it would without the cache.
+
+`vox render --no-shadow-cache` draws every light's shadow whole each frame, to compare.
 
 Nothing within 10 centimetres of a light casts its shadow, or just past its own shape for an area or tube light, so a flame or bulb drawn round a light does not shut its light in. Glass casts no dark shadow, but colours the light through it, as the sun's. An opaque shade does, as a real one would: the light comes out of its open end.
 
@@ -101,6 +106,20 @@ Nothing within 10 centimetres of a light casts its shadow, or just past its own 
 type = "point"
 temperature = 1900
 shadows = false
+```
+
+### Soft shadows from area lights
+
+A rectangle, disc or tube light is as wide as its shape, so its shadows soften as a real panel or window light's do: sharp where things touch and softer the farther they fall from what casts them, and softer for a larger light. A point or spot light's shadows have hard edges.
+
+Turn a light's **Soft shadows** off for hard edges. Its shadow then costs less to shade, which helps where many area lights overlap.
+
+```toml
+[obj.light]
+type = "rectangle"
+width = 1.2
+height = 0.6
+soft_shadows = false
 ```
 
 ## The sun
@@ -180,6 +199,7 @@ protected override void Update()
 | `Intensity`, `Range` | How bright it is, and how far it reaches in metres |
 | `InnerSpotAngle`, `OuterSpotAngle` | A spot light's cone, in degrees |
 | `Shadows` | Whether it casts shadows |
+| `SoftShadows` | Whether a rectangle's, disc's or tube's shadow softens as wide as it is |
 | `Size`, `Radius`, `Length` | A rectangle's size, a disc's or tube's radius, and a tube's length, in metres |
 | `Softness` | How wide the sun looks, in degrees, for soft shadows |
 | `Remove()` | Takes the Light off its Obj |

@@ -25,6 +25,7 @@ const SIZE: i32 = 10;
 const RADIUS: i32 = 11;
 const LENGTH: i32 = 12;
 const SOFTNESS: i32 = 13;
+const SOFT_SHADOWS: i32 = 14;
 
 /// As `LightKind` in Voxear.Core numbers them.
 const KINDS: [LightKind; 6] =
@@ -78,6 +79,7 @@ fn read(light: &Light, what: i32) -> Option<[f32; 4]> {
         RADIUS => number(light.radius),
         LENGTH => number(light.length),
         SOFTNESS => number(light.softness),
+        SOFT_SHADOWS => flag(light.soft_shadows),
         _ => return None,
     })
 }
@@ -92,6 +94,7 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
                 temperature: was.temperature,
                 intensity: was.intensity,
                 shadows: was.shadows,
+                soft_shadows: was.soft_shadows,
                 ..default_light(kind_of(x))
             };
         }
@@ -108,6 +111,7 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
         RADIUS => light.radius = x.max(0.001),
         LENGTH => light.length = x.max(0.0),
         SOFTNESS => light.softness = x.clamp(0.0, 10.0),
+        SOFT_SHADOWS => light.soft_shadows = x != 0.0,
         _ => {}
     }
 }
@@ -147,6 +151,9 @@ mod tests {
         let tube = *world.get::<Light>(lamp).unwrap();
         assert_eq!((tube.kind, tube.intensity), (LightKind::Tube, 7.0), "a tube now, as bright");
         assert!(tube.length > 0.0, "with a tube's length");
+        assert_eq!(values(&mut world, lamp, SOFT_SHADOWS, None), Some(flag(true)), "soft by default");
+        values(&mut world, lamp, SOFT_SHADOWS, Some(flag(false)));
+        assert!(!world.get::<Light>(lamp).unwrap().soft_shadows);
         values(&mut world, lamp, TEMPERATURE, Some(number(2700.0)));
         assert_eq!(world.get::<Light>(lamp).unwrap().temperature, Some(2700.0));
         values(&mut world, lamp, TEMPERATURE, Some(number(0.0)));

@@ -241,7 +241,7 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
         Light lamp = buffers()->lights[i];
         if (distance(lamp.position, position) < lamp.range + 2.0 * max(lamp.size.x, lamp.size.y))
         {
-            lit += shadeLocalLight(s, lamp, position);
+            lit += shadeLocalLight(s, lamp, position, false);
         }
     }
     // Last frame's light round it, so light bounces again.

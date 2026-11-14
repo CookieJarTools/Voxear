@@ -61,6 +61,9 @@ pub struct Pipelines {
     /// it, is clipped away rather than flattened onto it, where it would
     /// shade everything.
     pub local_shadow: vk::Pipeline,
+    /// A view of the kept atlas of what stands still copied into the local
+    /// shadow atlas, for what moves to be drawn over (see `shadow_cache`).
+    pub kept_copy: vk::Pipeline,
     pub forward: vk::Pipeline,
     /// The opaque lists as depth alone, drawn first when ambient occlusion
     /// is on, so it can work from the frame's whole depth.
@@ -184,6 +187,8 @@ pub struct Pipelines {
     pub block_forward_on_depth: vk::Pipeline,
     pub block_wireframe: vk::Pipeline,
     pub block_shadow: vk::Pipeline,
+    /// As `block_shadow`, into local lights' views, without clamping depth.
+    pub block_local_shadow: vk::Pipeline,
     /// Grass (see `grass`): each draw's command made afresh, the blades
     /// scattered, the counts kept within their room; then drawn as depth,
     /// shaded writing depth, and shaded over the depth passes'.
@@ -386,6 +391,12 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 ..GraphicsPipelineDesc::depth_only("Local shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
+            })?,
+            kept_copy: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_compare: vk::CompareOp::ALWAYS,
+                fragment_entry: Some(c"keptCopyFragment"),
+                ..GraphicsPipelineDesc::depth_only("Kept local shadows", shadow, c"keptCopyVertex", DEPTH_FORMAT)
             })?,
             forward: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
@@ -752,6 +763,12 @@ impl Pipelines {
                 fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
+            block_local_shadow: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                fragment_entry: Some(c"blockShadowFragment"),
+                ..GraphicsPipelineDesc::depth_only("Local shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
+            })?,
             grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,
             grass_scatter: create_compute_pipeline(gpu, layout, "Grass scatter", grass, c"grassScatter")?,
             grass_clamp: create_compute_pipeline(gpu, layout, "Grass clamp", grass, c"grassClamp")?,
@@ -953,6 +970,7 @@ impl Pipelines {
             self.pyramid,
             self.shadow,
             self.local_shadow,
+            self.kept_copy,
             self.forward,
             self.depth,
             self.forward_on_depth,
@@ -1039,6 +1057,7 @@ impl Pipelines {
             self.block_forward_on_depth,
             self.block_wireframe,
             self.block_shadow,
+            self.block_local_shadow,
             self.grass_reset,
             self.grass_scatter,
             self.grass_clamp,

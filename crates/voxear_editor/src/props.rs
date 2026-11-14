@@ -410,6 +410,8 @@ pub enum Prop {
     LightProfile,
     /// Whether a local light casts shadows.
     LightShadows,
+    /// Whether a shaped light's shadow softens as wide as it is.
+    LightSoftShadows,
     LightSoftness,
     LightShadowTint,
     LightBody,
@@ -921,6 +923,7 @@ impl Prop {
             | Prop::LightCookieSize
             | Prop::LightProfile
             | Prop::LightShadows
+            | Prop::LightSoftShadows
             | Prop::LightSoftness
             | Prop::LightShadowTint
             | Prop::LightBody => {
@@ -1282,6 +1285,7 @@ impl Prop {
             Prop::LightCookieSize => "cookie_size",
             Prop::LightProfile => "profile",
             Prop::LightShadows => "shadows",
+            Prop::LightSoftShadows => "soft_shadows",
             Prop::LightSoftness => "softness",
             Prop::LightShadowTint => "shadow_tint",
             Prop::LightBody => "body",
@@ -1889,6 +1893,9 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 LightKind::Disc => props.push(Prop::LightRadius),
                 LightKind::Tube => props.extend([Prop::LightLength, Prop::LightRadius]),
             }
+            if kind.has_shape() {
+                props.push(Prop::LightSoftShadows);
+            }
             props
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
@@ -2363,6 +2370,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightCookieSize => "Cookie size",
         Prop::LightProfile => "IES profile",
         Prop::LightShadows => "Shadows",
+        Prop::LightSoftShadows => "Soft shadows",
         Prop::LightSoftness => "Shadow softness",
         Prop::LightShadowTint => "Shadow tint",
         Prop::LightBody => "Sky body",
@@ -3286,6 +3294,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ModelParts => Value::Fixed(world.get::<ModelRenderer>(entity)?.parts.len().to_string()),
         Prop::LightSoftness => Value::Number(light()?.softness),
         Prop::LightShadows => Value::Toggle(light()?.shadows),
+        Prop::LightSoftShadows => Value::Toggle(light()?.soft_shadows),
         Prop::LightShadowTint => Value::Color(srgb(light()?.shadow_tint.to_array()).map(round3)),
         Prop::LightBody => {
             let body = light()?.body;
@@ -4721,6 +4730,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             light.body = SKY_BODY_ORDER[index.min(SKY_BODY_ORDER.len() - 1)];
         }),
         (Prop::LightShadows, Value::Toggle(on)) => with(world, entity, |light: &mut Light| light.shadows = on),
+        (Prop::LightSoftShadows, Value::Toggle(on)) => with(world, entity, |light: &mut Light| light.soft_shadows = on),
         (Prop::LightSoftness, Value::Number(n)) => {
             with(world, entity, |light: &mut Light| light.softness = n.clamp(0.0, 20.0))
         }

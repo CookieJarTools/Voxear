@@ -7,6 +7,9 @@
 // - Shadows (LIST_SHADOW + cascade): casters inside each cascade.
 // - Local shadows (LIST_LOCAL_SHADOW + light): casters within each local
 //   light's reach that casts a shadow, drawn into each of its views.
+//   A light whose still part is kept (src/shadow_cache.rs) lists only what
+//   moves; with push.level LOCAL_CULL_STILL, its list takes only what stands
+//   still, for the lights push.output names, to draw into the kept atlas.
 //
 // Each draw also picks the coarsest LOD whose error stays under a pixel. When
 // an instance's LOD changes, both LODs are drawn for a moment with
@@ -205,8 +208,12 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
     count(STAT_SHADOW_DRAWS);
 }
 
+// The local shadow cull that lists only what stands still, for the kept atlas.
+static const uint LOCAL_CULL_STILL = 1;
+
 // Casters within a local light's shadow, at the LOD a view of its atlas
-// would pick where they stand.
+// would pick where they stand: what stands still or what moves, where the
+// light keeps the still part, or all of them.
 void cullLocalShadow(Frame* frame, uint light, uint instance, Mesh mesh, float3 center, float radius, float scale)
 {
     if (!insideLocalShadow(frame, light, center, radius))
@@ -214,6 +221,18 @@ void cullLocalShadow(Frame* frame, uint light, uint instance, Mesh mesh, float3 
         return;
     }
     Instance drawn = buffers()->instances[instance];
+    bool still = (drawn.flags & INSTANCE_STILL) != 0;
+    if (push.level == LOCAL_CULL_STILL)
+    {
+        if (!still || ((push.output >> light) & 1) == 0)
+        {
+            return;
+        }
+    }
+    else if (still && ((frame->localShadows.cached >> light) & 1) != 0)
+    {
+        return;
+    }
     bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
     float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
     // A cube face's view is 90 degrees across, so its texels per metre at a distance are half its size over it.

@@ -310,6 +310,43 @@ impl Biomes {
         best.map(|(at, ..)| at)
     }
 
+    /// Which biome a region whose climate is `climate` is: the one it is
+    /// nearest, as [`Biomes::of`] says, among those that do not keep to a
+    /// height or to sunk ground, which lie over regions rather than making
+    /// their own (see `regions`). Among all where every one keeps to some.
+    pub fn of_region(&self, climate: Place) -> Option<usize> {
+        let own = |biome: &BiomeDef| biome.height.is_none() && biome.sunk.is_none();
+        if !self.list.iter().any(own) {
+            return self.of(climate);
+        }
+        let mut best: Option<(usize, f32, f32)> = None;
+        for (at, biome) in self.list.iter().enumerate().filter(|(_, biome)| own(biome)) {
+            let (away, reach) = (biome.away(climate, self.spreads), biome.reach(self.spreads));
+            let nearer = best.is_none_or(|(_, least, narrowest)| away < least || (away == least && reach < narrowest));
+            if nearer {
+                best = Some((at, away, reach));
+            }
+        }
+        best.map(|(at, ..)| at)
+    }
+
+    /// The biome keeping to a height or to sunk ground that a place with
+    /// `climate` is within every range of, where there is one: the
+    /// narrowest such, as among biomes a place is equally within.
+    pub fn over(&self, climate: Place) -> Option<usize> {
+        let mut best: Option<(usize, f32)> = None;
+        for (at, biome) in self.list.iter().enumerate() {
+            if biome.height.is_none() && biome.sunk.is_none() || biome.away(climate, self.spreads) > 0.0 {
+                continue;
+            }
+            let reach = biome.reach(self.spreads);
+            if best.is_none_or(|(_, narrowest)| reach < narrowest) {
+                best = Some((at, reach));
+            }
+        }
+        best.map(|(at, _)| at)
+    }
+
     /// Which biome the place at `(x, z)`, in metres in the generator's
     /// world, is, with the generator's `climate` there: read a little off
     /// by noise, so borders wander.
@@ -440,6 +477,10 @@ pub(crate) fn slope_of(degrees: f32) -> f32 {
 pub struct WorldBiomes {
     pub biomes: Biomes,
     pub blocks: Vec<BiomeBlocks>,
+    /// Where they keep to regions, the regions: one biome across each
+    /// (see `regions`). None, and each place is the biome its climate is
+    /// nearest.
+    pub regions: Option<std::sync::Arc<super::Regions>>,
 }
 
 impl WorldBiomes {
@@ -464,12 +505,22 @@ impl WorldBiomes {
             && (ours.spreads, ours.wander, ours.wander_size, ours.seed)
                 == (theirs.spreads, theirs.wander, theirs.wander_size, theirs.seed)
             && ours.list.iter().map(lies).eq(theirs.list.iter().map(lies))
+            && self.regions == other.regions
     }
 
     /// The blocks of the biome the place at `(x, z)` is, with `climate`
     /// there; none where the world lists no biomes.
     pub fn at(&self, x: f32, z: f32, climate: Place) -> Option<&BiomeBlocks> {
-        self.biomes.at(x, z, climate).and_then(|biome| self.blocks.get(biome))
+        self.index_at(x, z, climate).and_then(|biome| self.blocks.get(biome))
+    }
+
+    /// Which of them the place at `(x, z)` is, by its place in the list: by
+    /// its region where they keep to regions, else by its climate.
+    pub fn index_at(&self, x: f32, z: f32, climate: Place) -> Option<usize> {
+        match &self.regions {
+            Some(regions) => regions.at(x, z, climate),
+            None => self.biomes.at(x, z, climate),
+        }
     }
 }
 
@@ -568,6 +619,7 @@ mod tests {
     #[test]
     fn a_worlds_biomes_make_the_same_ground_whatever_their_colours_and_other_ground_once_they_lie_elsewhere() {
         let of = |list: Vec<BiomeDef>, top: BlockId| WorldBiomes {
+            regions: None,
             blocks: list.iter().map(|_| BiomeBlocks { top, ..BiomeBlocks::default() }).collect(),
             biomes: Biomes::new(list, 15.0, 0.3, 1),
         };

@@ -33,8 +33,8 @@
 //! Biomes** lists them on a world that has one.
 //!
 //! Each has land of its own (see `generate::land`): plains in the
-//! Tundra, the Grassland and the Savanna, hills in the Taiga and the
-//! Forest, tablelands in the Desert and pillars of rock in the Rainforest;
+//! Tundra and the Savanna, wide upland plains ending in a sheer rim over
+//! the valley below in the Grassland, hills in the Taiga and the Forest, tablelands in the Desert and pillars of rock in the Rainforest;
 //! the Snow keeps the ground it lies on. Of the showcase biomes the Autumn
 //! Woods are mountains with cliffs and bridges, the Blossom Grove stands
 //! among pillars, and the Volcanic Fields are tablelands.
@@ -353,7 +353,7 @@ const STARTERS: [Starter; 8] = [
         shore: "Sand",
         vines: 0.08,
         tints: tints(Some([0.75, 1.0, 0.55]), Some([1.1, 1.05, 0.9])),
-        land: Landform::Plains,
+        land: Landform::Rim,
     },
     Starter {
         climate: Biome::Forest,

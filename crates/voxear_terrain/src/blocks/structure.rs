@@ -43,7 +43,7 @@ use super::{
     plant::{PlantDef, PlantPart},
 };
 use crate::generate::{
-    Biomes, WorldGen,
+    Biomes, WorldBiomes, WorldGen,
     biomes::Place,
     structures::{Placement, Site, SiteGround},
 };
@@ -1606,7 +1606,7 @@ struct Ground<'a> {
     world: &'a WorldGen,
     size: f32,
     position: [f32; 2],
-    biomes: Option<&'a Biomes>,
+    biomes: Option<&'a WorldBiomes>,
     /// Whether its top is laid in half blocks (see `generate::BlockGenerate::slabs`).
     halved: bool,
 }
@@ -1637,8 +1637,8 @@ impl Ground<'_> {
             (self.position[0] + (x as f32 + 0.5) * self.size, self.position[1] + (z as f32 + 0.5) * self.size);
         let height = self.world.height_at(px, pz);
         let (temperature, humidity) = self.world.climate(px, pz, height);
-        let sunk = sunk_at(self.world, biomes, [px, pz], height);
-        biomes.at(px, pz, Place { temperature, humidity, above_sea: height - self.world.sea_level(), sunk })
+        let sunk = sunk_at(self.world, &biomes.biomes, [px, pz], height);
+        biomes.index_at(px, pz, Place { temperature, humidity, above_sea: height - self.world.sea_level(), sunk })
     }
 
     /// Whether the ground in column `(x, z)` lies under its generator's sea.
@@ -1658,7 +1658,7 @@ impl Ground<'_> {
 /// the water there.
 struct SiteFits<'a> {
     world: &'a WorldGen,
-    biomes: Option<&'a Biomes>,
+    biomes: Option<&'a WorldBiomes>,
     size: f32,
     /// What tells each structure's answers from every other's: its world,
     /// biomes and placement.
@@ -1672,7 +1672,7 @@ static FITS: std::sync::LazyLock<Vec<Fits>> = std::sync::LazyLock::new(|| (0..16
 const FITS_KEPT: usize = 1 << 16;
 
 impl<'a> SiteFits<'a> {
-    fn new(world: &'a WorldGen, biomes: Option<&'a Biomes>, size: f32, structures: &WorldStructures) -> Self {
+    fn new(world: &'a WorldGen, biomes: Option<&'a WorldBiomes>, size: f32, structures: &WorldStructures) -> Self {
         let lie = biomes.map_or(0, |biomes| crate::layers::stable_hash(format!("{biomes:?}").as_bytes()));
         let keys = structures
             .list
@@ -1740,6 +1740,7 @@ impl<'a> SiteFits<'a> {
                 let (mut warmth, mut wetness) = (vec![0.0; count], vec![0.0; count]);
                 world.climates(xs, zs, height, &mut warmth, &mut wetness);
                 let sunk = biomes
+                    .biomes
                     .list()
                     .iter()
                     .any(|biome| biome.sunk.is_some())
@@ -1750,7 +1751,7 @@ impl<'a> SiteFits<'a> {
                         let above_sea = height[at] - world.sea_level();
                         let sunk = sunk.as_ref().map_or(0.0, |sunk| sunk[at]);
                         let place = Place { temperature: warmth[at], humidity: wetness[at], above_sea, sunk };
-                        biomes.at(xs[at], zs[at], place)
+                        biomes.index_at(xs[at], zs[at], place)
                     })
                     .collect()
             }
@@ -1770,7 +1771,7 @@ impl<'a> SiteFits<'a> {
             return fits;
         }
         for (at, fits) in fits.iter_mut().enumerate() {
-            let biome = biome_of[at].and_then(|b| self.biomes?.list().get(b));
+            let biome = biome_of[at].and_then(|b| self.biomes?.biomes.list().get(b));
             let shore = biome.map_or(0.0, |biome| biome.ground.shore_height);
             if height[at] - world.sea_level() < shore.max(BEACH) {
                 *fits = false;
@@ -1814,7 +1815,7 @@ pub fn build(
     chunks: &mut Vec<([i32; 3], Chunk)>,
     structures: &WorldStructures,
     world: &WorldGen,
-    biomes: Option<&Biomes>,
+    biomes: Option<&WorldBiomes>,
     at: (f32, [f32; 2], i32, bool),
     [cx, cz]: [i32; 2],
     under: BlockId,
@@ -1835,7 +1836,7 @@ pub fn build_over(
     set: &mut dyn FnMut([i32; 3], BlockId),
     structures: &WorldStructures,
     world: &WorldGen,
-    biomes: Option<&Biomes>,
+    biomes: Option<&WorldBiomes>,
     at: (f32, [f32; 2], i32, bool),
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
@@ -1880,7 +1881,7 @@ fn build_looking(
     set: &mut dyn FnMut([i32; 3], BlockId),
     structures: &WorldStructures,
     world: &WorldGen,
-    biomes: Option<&Biomes>,
+    biomes: Option<&WorldBiomes>,
     (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     (first, end): ([i32; 2], [i32; 2]),
     under: BlockId,
@@ -2782,6 +2783,7 @@ mod tests {
         let cool = BiomeDef { temperature: [-60.0, split], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let warm = BiomeDef { temperature: [split, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![cool, warm], 15.0, 0.3, world.seed());
+        let biomes = WorldBiomes { regions: None, biomes, blocks: Vec::new() };
         let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes), halved: false };
         let base = village();
         let piece = |wall: BlockId| TownPiece {

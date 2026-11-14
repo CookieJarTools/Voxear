@@ -428,7 +428,7 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
     let (file, generate) = (&making.file, &making.generate);
     let built = generate.built.as_deref().filter(|built| !built.list.is_empty());
     let Some(built) = built.filter(|_| far.level <= STRUCTURES_TO) else { return sets };
-    let biomes = generate.placed.as_deref().map(|placed| &placed.biomes).filter(|biomes| !biomes.is_empty());
+    let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
     let under = file.ground.under;
     let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };
     let (level, side) = (far.level, CHUNK as i32);

@@ -932,7 +932,7 @@ pub fn column_chunks(
     }
     let built = generate.built.as_deref().filter(|built| !built.list.is_empty());
     if let Some(built) = built.filter(|_| level == 0) {
-        let biomes = generate.placed.as_deref().map(|placed| &placed.biomes).filter(|biomes| !biomes.is_empty());
+        let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
         // Built up under with the world's own under block.
         let under = file.ground.under;
         let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };

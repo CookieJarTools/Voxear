@@ -103,7 +103,7 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     // Shaped by the land already where the generator came so (see `landed`).
     let shaped = match world.land() {
         Some((hash, shaped)) if *hash == lands => shaped.clone(),
-        _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate)),
+        _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate)),
     };
     if rivered {
         crate::generate::nodes::add_rivers(&mut graph);
@@ -149,13 +149,18 @@ pub fn landed(generate: &BlockGenerate, world: &Arc<WorldGen>) -> Arc<WorldGen> 
         return found.clone();
     }
     let mut graph = world.graph().clone();
-    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate));
+    let shaped = crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate));
     let made = Arc::new(world.with_graph(graph).with_land(lands, shaped));
     if landed.len() >= MOVED_KEPT {
         landed.remove(0);
     }
     landed.push((key, made.clone()));
     made
+}
+
+/// The regions `generate`'s biomes keep to, where they keep to any.
+fn regions_of(generate: &BlockGenerate) -> Option<&Arc<crate::generate::Regions>> {
+    generate.placed.as_ref()?.regions.as_ref()
 }
 
 /// The ground round where `generate`'s world lies that its biomes' land
@@ -173,6 +178,7 @@ fn lands_hash(generate: &BlockGenerate) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let clear = clear_of(generate).map(|clear| [clear.middle[0], clear.middle[1], clear.radius].map(f32::to_bits));
     clear.hash(&mut hasher);
+    regions_of(generate).map(|regions| regions.id()).hash(&mut hasher);
     for biome in biomes_of(generate) {
         let land = biome.land;
         let numbers = [land.height, land.size, land.valleys, land.overhangs, land.pillars, land.pillar_height];

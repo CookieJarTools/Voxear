@@ -4,7 +4,9 @@
 //! raise ranges of sharp peaks with deep valleys between and leaning,
 //! overhanging cliffs; Tablelands raise the ground in level tables with
 //! sheer walls between them; Pillars raise tall towers of rock over low
-//! rolling ground. Any of them can have natural bridges spanning between
+//! rolling ground; a Rim raises wide upland plains that end in a sheer wall
+//! over the valley below, a lip along the top hiding the drop until one
+//! stands at it. Any of them can have natural bridges spanning between
 //! high places, and overhangs pushed out of their steep faces.
 //!
 //! ```toml
@@ -39,7 +41,7 @@ use voxear_core::curve::Curve;
 use super::{
     BiomeDef, Graph, NodeId, NodeKind,
     nodes::{
-        Arches, Blend, ClimateMask, Falloff, FalloffShape, Math, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
+        Arches, Blend, ClimateMask, Falloff, RegionOf, FalloffShape, Math, Noise, Operation, Output, Overhangs, Peaks, Plateaus,
         Remap, Rivers, SlopeMask, Spires, Terrace,
     },
 };
@@ -57,16 +59,19 @@ pub enum Landform {
     Mountains,
     Tablelands,
     Pillars,
+    /// Wide upland plains that end in a sheer wall over the valley below.
+    Rim,
 }
 
 impl Landform {
-    pub const ALL: [Landform; 6] = [
+    pub const ALL: [Landform; 7] = [
         Landform::Keep,
         Landform::Plains,
         Landform::Hills,
         Landform::Mountains,
         Landform::Tablelands,
         Landform::Pillars,
+        Landform::Rim,
     ];
 
     pub fn name(self) -> &'static str {
@@ -77,6 +82,7 @@ impl Landform {
             Landform::Mountains => "Mountains",
             Landform::Tablelands => "Tablelands",
             Landform::Pillars => "Pillars",
+            Landform::Rim => "Rim",
         }
     }
 }
@@ -129,6 +135,7 @@ impl BiomeLand {
             Landform::Hills => land(70.0, 500.0, 0.45, 0.0, 0.0, 0.0, 0.0),
             Landform::Mountains => land(420.0, 1400.0, 0.55, 10.0, 0.0, 0.0, 0.35),
             Landform::Tablelands => land(110.0, 320.0, 0.0, 4.0, 0.25, 70.0, 0.5),
+            Landform::Rim => land(260.0, 1800.0, 0.0, 4.0, 0.06, 130.0, 0.15),
             Landform::Pillars => land(35.0, 400.0, 0.3, 6.0, 0.7, 140.0, 0.5),
         }
     }
@@ -181,7 +188,16 @@ impl Shaped {
 /// has no ground wired in.
 ///
 /// Within `clear`, where there is one, the ground is the generator's own.
-pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: Option<Clear>) -> Shaped {
+/// Where the world keeps its biomes to `regions`, each biome's land lies
+/// where its regions do, blended over their border, in place of where its
+/// climate is.
+pub fn add_land(
+    graph: &mut Graph,
+    biomes: &[BiomeDef],
+    sea_level: f32,
+    clear: Option<Clear>,
+    regions: Option<&std::sync::Arc<super::Regions>>,
+) -> Shaped {
     let mut shaped = Shaped::default();
     if biomes.iter().all(|biome| biome.land.is_keep()) {
         return shaped;
@@ -191,8 +207,12 @@ pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: O
     let Some(base) = graph.link_into(into.0, into.1).copied() else { return shaped };
     let mut g = Adder { graph, at: [output.1[0] - 1400.0, output.1[1] + 900.0], row: 0.0 };
 
-    // The climate as it is over the ground before it is shaped, so a biome's land does not move itself.
-    let (temperature, humidity) = g.climate(output.0, base.from, base.output);
+    // The climate as it is over the ground before it is shaped, so a biome's land does not move itself: where the
+    // biomes keep to regions, none is needed.
+    let (temperature, humidity) = match regions {
+        Some(_) => (None, None),
+        None => g.climate(output.0, base.from, base.output),
+    };
     let rising = g.add(NodeKind::Curve(Remap {
         curve: Curve::new(&[[0.0, 0.0], [0.5, 0.3], [1.0, 1.0]]),
         low: sea_level + COAST,
@@ -227,11 +247,13 @@ pub fn add_land(graph: &mut Graph, biomes: &[BiomeDef], sea_level: f32, clear: O
             continue;
         }
         g.next();
+        let region = regions.map(|regions| RegionOf { regions: regions.clone(), biome: at });
         let mask = g.add(NodeKind::ClimateMask(ClimateMask {
             temperature: biome.temperature,
             humidity: biome.humidity,
             temperature_feather: TEMPERATURE_FEATHER,
             humidity_feather: HUMIDITY_FEATHER,
+            region,
         }));
         if let Some((from, output)) = temperature {
             g.wire(from, output, mask, ClimateMask::TEMPERATURE);
@@ -523,6 +545,28 @@ impl Adder<'_> {
                 let peaks = self.math2(Operation::Multiply, (cliffs, 0), (rising, 0));
                 self.math2(Operation::Add, base, (peaks, 0))
             }
+            Landform::Rim => {
+                // Two levels: an upland and the valley it overlooks, nearly half the land, and between them a wall
+                // standing almost sheer over a slope of fallen rock, a lip along its top that hides the drop until
+                // one stands at it, and a ramp up it here and there.
+                let rim = self.add(NodeKind::Plateaus(Plateaus {
+                    size,
+                    levels: 2,
+                    low: 0.0,
+                    high: height,
+                    wall: 12.0,
+                    ramps: 0.08,
+                    rim: 3.0,
+                    talus: (height * 0.3).min(150.0),
+                    valleys: 0.45,
+                    river: 0.0,
+                    canyon: 0.0,
+                    wander: 0.7,
+                    ..Plateaus::default()
+                }));
+                let rim = self.math2(Operation::Multiply, (rim, Plateaus::HEIGHT), (rising, 0));
+                self.math2(Operation::Add, base, (rim, 0))
+            }
             Landform::Tablelands => {
                 let tables = self.add(NodeKind::Plateaus(Plateaus {
                     size,
@@ -621,7 +665,7 @@ mod tests {
         let (world, xs, zs) = hills(100, 60.0);
         let (biomes, warmth, middle) = split(&world, &xs, &zs, 0.5, BiomeLand::of(Landform::Mountains));
         let mut graph = world.graph().clone();
-        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None);
+        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None);
         assert!(!shaped.is_empty());
         let landed = world.with_graph(graph);
         assert!(landed.faults().is_empty(), "{:?}", landed.faults());
@@ -645,6 +689,63 @@ mod tests {
     }
 
     #[test]
+    fn a_rim_is_level_upland_ending_in_a_sheer_wall_over_the_valley() {
+        let (world, _, _) = hills(1, 1.0);
+        let land = BiomeLand::of(Landform::Rim);
+        let biome = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], land, ..BiomeDef::default() };
+        let mut graph = world.graph().clone();
+        add_land(&mut graph, std::slice::from_ref(&biome), world.sea_level(), None, None);
+        let rimmed = world.with_graph(graph);
+        // Rows 4 m apart over 6 km of land: where the ground drops most over 8 m.
+        let (mut sheer, mut level, mut inland) = (0, 0, 0);
+        for row in 0..30 {
+            let z = row as f32 * 200.0 - 3000.0;
+            let xs: Vec<f32> = (0..1500).map(|i| i as f32 * 4.0 - 3000.0).collect();
+            let zs = vec![z; xs.len()];
+            let (before, after) = (heights(&world, &xs, &zs), heights(&rimmed, &xs, &zs));
+            for i in 2..xs.len() {
+                if before[i] < world.sea_level() + COAST + RISE {
+                    continue;
+                }
+                inland += 1;
+                let drop = (after[i] - after[i - 2]).abs();
+                if drop > land.height * 0.2 {
+                    sheer += 1;
+                } else if (after[i] - after[i - 1]).abs() - (before[i] - before[i - 1]).abs() < 0.5 {
+                    level += 1;
+                }
+            }
+        }
+        assert!(sheer > 10, "{sheer} places a wall drops over a fifth of the rim's height in 8 m");
+        assert!(level * 10 > inland * 7, "{level} of {inland} inland places as level as the ground was");
+    }
+
+    #[test]
+    fn where_biomes_keep_to_regions_their_land_does_too_one_land_until_the_next() {
+        use crate::generate::{Biomes, Regions};
+        let (world, xs, zs) = hills(120, 50.0);
+        let mountains = BiomeLand::of(Landform::Mountains);
+        // Half the world's warmth each, as regions 600 m apart.
+        let (biomes, ..) = split(&world, &xs, &zs, 0.5, mountains);
+        let world = std::sync::Arc::new(world);
+        let regions = std::sync::Arc::new(Regions::new(600.0, 96.0, Biomes::new(biomes.to_vec(), 15.0, 0.3, 7), world.clone()));
+        let mut graph = world.graph().clone();
+        add_land(&mut graph, &biomes, world.sea_level(), None, Some(&regions));
+        let landed = world.with_graph(graph);
+        let (before, after) = (heights(&world, &xs, &zs), heights(&landed, &xs, &zs));
+        let inland = |at: usize| before[at] > world.sea_level() + COAST + RISE;
+        let weight = |at: usize| regions.weight(xs[at], zs[at], 1);
+        // Inside the mountains' regions they rise; inside the others the ground is as it was, but where a river runs.
+        let within: Vec<usize> = (0..xs.len()).filter(|&at| weight(at) > 0.999 && inland(at)).collect();
+        let without: Vec<usize> = (0..xs.len()).filter(|&at| weight(at) < 0.001).collect();
+        assert!(within.len() > 200 && without.len() > 200, "{} in, {} out", within.len(), without.len());
+        let risen = within.iter().filter(|&&at| after[at] - before[at] > 5.0).count();
+        assert!(risen * 3 > within.len(), "{risen} of {} risen in the mountains' regions", within.len());
+        let kept = without.iter().filter(|&&at| (after[at] - before[at]).abs() < 0.5).count();
+        assert!(kept * 10 > without.len() * 9, "{kept} of {} kept outside them", without.len());
+    }
+
+    #[test]
     fn a_biomes_pillars_and_bridges_stand_where_it_lies_and_nowhere_else() {
         // The coldest and warmest of the land a good way round, and a patch of close places round each.
         let (world, xs, zs) = hills(60, 200.0);
@@ -662,7 +763,7 @@ mod tests {
         let warm = BiomeDef { temperature: [middle, 60.0], humidity: [0.0, 1.0], land, ..BiomeDef::default() };
         let biomes = [cold, warm];
         let mut graph = world.graph().clone();
-        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None);
+        let shaped = add_land(&mut graph, &biomes, world.sea_level(), None, None);
         assert!(graph.add_voxels(OwnVoxels { overhangs: 0.0, caves: 0.0, roof: 0.0 }, false));
         assert!(add_land_volume(&mut graph, &biomes, &shaped));
         let landed = world.with_graph(graph);

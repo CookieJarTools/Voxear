@@ -100,6 +100,7 @@ A biome shapes its own country, not only the blocks laid over it. **Form** picks
 | Mountains | Ranges of sharp peaks with level land between, bands of cliff across their flanks, deep valleys, overhanging faces and natural bridges |
 | Tablelands | Level tables at a few heights with sheer walls between, some pillars and bridges |
 | Pillars | Low rolling ground with tall towers of rock standing out of it, grown over on top, and bridges between high places |
+| Rim | Wide upland plains that end in a sheer wall a few hundred metres over the valley below, a slope of fallen rock at its foot, a lip along its top that hides the drop until you stand at it, and a ramp up it here and there |
 
 | Setting | What it does |
 | --- | --- |
@@ -128,6 +129,15 @@ A block whose **Tint** says so (see [[Blocks]]) takes its colour from the biome 
 How it fades: the world keeps its tints on a lattice, a point every 4 blocks. Each point takes the tints of the biome there averaged with those of the points 3 each way round it, so 28 blocks across, and each face reads between the four points round it. A point's tints come from where it is alone, so the colour is the same on every machine and in every chunk.
 
 Tints are kept round where the world is seen from, a little over 500 blocks each way, worked out a few tiles a frame, the nearest first; past that, a face takes the tint at their edge. A world drawn smooth is untinted. A block's colour is its own wherever its world has no biomes, or its biomes no tints.
+
+## Biome regions
+
+A world can keep its biomes to regions: one biome across a whole region, a few hundred metres to a couple of kilometres across, until you cross into the next. There are no specks or thin bands of another biome inside a region, as there are where every place takes the biome its own climate is nearest. Set a Block World's **Biome size** (see [[Block Worlds]]) to how far apart the regions are; nothing turns them off. A world given generated ground in the editor starts with regions 768 m apart.
+
+- **Where the regions lie.** The world is shared out among points about the Biome size apart, each moved a little by the seed. Every place belongs to the nearest, measured after a smooth warp. Borders wander and bend rather than running straight, and no region is ever broken in two.
+- **Which biome a region is.** The one its climate is nearest, read once at its middle at the sea's height, by the biomes' usual rules. A cold region is cold country through, a dry one dry. Neighbouring regions of the same biome read as one large one.
+- **Snow and other biomes that keep to a height or sunk ground** are not regions of their own. They lie over whichever region they are in, where a place's own climate, height and sinking are within all their ranges, as before: snow on the mountains of any cold region, a chasm's floor wherever there is one.
+- **At the border** blocks change along a ragged line. Grass and leaves fade from one biome's tint to the next over a few dozen blocks, and each biome's [land](#land) blends into the next over about 96 m. So one kind of land goes on until the next, as one biome does.
 
 ## How a place picks its biome
 
@@ -160,7 +170,7 @@ The Grassland, the Forest, the Savanna and the Rainforest are one block of **Gra
 
 All but the Desert have Stone deep down. Ground steeper than 45° is rock; snow lies on ground up to 58°.
 
-Each has [land](#land) of its own: plains in the Tundra, the Grassland and the Savanna, hills in the Taiga and the Forest, tablelands in the Desert and pillars of rock in the Rainforest. The Snow keeps the ground it lies on.
+Each has [land](#land) of its own: plains in the Tundra and the Savanna, upland plains ending in a sheer rim over the valley below in the Grassland, hills in the Taiga and the Forest, tablelands in the Desert and pillars of rock in the Rainforest. The Snow keeps the ground it lies on.
 
 Their rock lies in layers: Stone with thin bands of Gravel, and the Desert's Sandstone with Red Earth between.
 

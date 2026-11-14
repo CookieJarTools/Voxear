@@ -432,11 +432,21 @@ fn biomes_read(content: &mut Content, file: &BlockFile) -> BlockFile {
     }
     // How far a world's climate strays, for weighing temperature against humidity: a generator's usual spread.
     let biomes = Biomes::new(list, 15.0, 0.3, seed);
+    // Biomes a region at a time, where the world keeps them to regions: each region's from its generator's own
+    // climate, not as its biomes' land shapes it.
+    let raw = generate.world.as_ref().and_then(|reference| content.world_gen(reference));
+    let regions = raw.filter(|_| generate.biome_size > 0.0).map(|raw| {
+        Arc::new(voxear_terrain::generate::Regions::new(generate.biome_size, REGION_BORDER, biomes.clone(), raw))
+    });
     if let Some(generate) = file.generate.as_mut() {
-        generate.placed = Some(Arc::new(WorldBiomes { biomes, blocks }));
+        generate.placed = Some(Arc::new(WorldBiomes { regions, biomes, blocks }));
     }
     file
 }
+
+/// How wide the strip is over which one biome region's land blends into the
+/// next's, in metres.
+const REGION_BORDER: f32 = 96.0;
 
 /// The number `file` gives the block `named`, which `owner` names: the one
 /// it has, or the next after those it has, `file` growing to hold it. Air,

@@ -2367,6 +2367,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     gain a Mask. A Block World's **Land from** keeps the generator's ground round its start. The starter and
     showcase biomes come with land of their own. Tests: mountains rise where their biome is and the ground
     elsewhere is left; pillars stand only in their biome; GPU renders of mountains, pillars and tablelands.
+  - ~~**Biomes one region at a time:**~~ done: a Block World's **Biome size** (768 m for ground newly generated)
+    shares the world out among regions round jittered sites, each place the nearest after a smooth warp that never
+    folds, so borders wander and no region breaks in two; a region's biome is chosen once from its climate at the
+    sea's height (`generate::regions`). Biomes that keep to a height or sunk ground lie over regions where a place
+    is within them, as snow on cold mountains. Blocks, plants, structures and tints follow the regions, and each
+    biome's land is blended over a 96 m border by its region's weight. Tests: no place alone among others, pieces
+    at least a small region, snow over regions, weights whole inside and eased across, columns their region's
+    biome, land following regions; maps of a real project's biomes by climate and by region.
+  - ~~**Rim land:**~~ done: a biome's new Rim land is wide upland plains ending in a near-sheer wall over a valley,
+    nearly half the land, with fallen rock at the foot, a lip that hides the drop until one stands at it, and a
+    ramp here and there; the starter Grassland is a Rim. Tests: sheer walls and level ground either side; renders.
+  - ~~**Rock layers:**~~ done: a biome's rock lies in bands of blocks, each its own thickness, leaning and
+    wandering a little (`generate::strata`), shown along cliffs, walls and caves, near and in the far view; the
+    starter and showcase biomes have their own. Tests: every block of rock in its layer, faces of both layers.
+  - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
+    has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
+    (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.
   - ~~**Endless worlds that load fast:**~~ done: a project's endless world with biome land, continents, rivers,
     dungeons and trees took over a minute to show its own blocks round the start and several to fill its view;
     now the ground within 64 m shows in about 1.5 s and the 256 m view in about 9 s, the far view settled in about

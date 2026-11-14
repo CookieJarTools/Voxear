@@ -1029,7 +1029,7 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
         (biome([12.0, 60.0], [0.6, 1.0]), of(jungle)),
     ];
     let (defs, blocks): (Vec<_>, Vec<_>) = list.into_iter().unzip();
-    let placed = WorldBiomes { biomes: Biomes::new(defs, 16.0, 0.45, world.seed()), blocks };
+    let placed = WorldBiomes { regions: None, biomes: Biomes::new(defs, 16.0, 0.45, world.seed()), blocks };
     file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
     let (looks, faces) = file.faces();
     let surfaces: Vec<SurfaceLook> = looks
@@ -1845,7 +1845,7 @@ fn generated_view_with(
         (generate.slabs, generate.halves) = (true, Some(Arc::new(halves)));
     }
     if !defs.is_empty() {
-        let placed = WorldBiomes { biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
+        let placed = WorldBiomes { regions: None, biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
         file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
     }
     let (looks, faces) = file.faces();
@@ -3279,12 +3279,13 @@ fn a_biomes_own_land_rises_in_mountains_pillars_and_tablelands() {
         (Landform::Mountains, "land mountains.png", [0.36, 0.5, 0.26]),
         (Landform::Pillars, "land pillars.png", [0.42, 0.56, 0.24]),
         (Landform::Tablelands, "land tablelands.png", [0.72, 0.5, 0.34]),
+        (Landform::Rim, "land rim.png", [0.42, 0.56, 0.24]),
     ];
     for (form, name, colour) in forms {
         let biome =
             BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], land: BiomeLand::of(form), ..BiomeDef::default() };
         let mut graph = hills.graph().clone();
-        add_land(&mut graph, std::slice::from_ref(&biome), hills.sea_level(), None);
+        add_land(&mut graph, std::slice::from_ref(&biome), hills.sea_level(), None, None);
         let landed = hills.with_graph(graph);
         // The highest of its land over a few kilometres, looked at from a corner of the ground round it.
         let (xs, zs): (Vec<f32>, Vec<f32>) =

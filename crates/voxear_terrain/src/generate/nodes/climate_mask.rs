@@ -34,6 +34,20 @@ pub struct ClimateMask {
     pub humidity: [f32; 2],
     pub temperature_feather: f32,
     pub humidity_feather: f32,
+    /// Where a world of blocks keeps its biomes to regions and shapes a
+    /// biome's land by them, the regions and the biome: the mask is then how
+    /// much each place is of that biome's region, eased over the regions'
+    /// border, in place of its climate (see `regions`). Set by the world as
+    /// it shapes its generator's ground; never kept in a file.
+    #[serde(skip)]
+    pub region: Option<RegionOf>,
+}
+
+/// A biome's regions, for a Climate Mask that keeps to them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegionOf {
+    pub regions: std::sync::Arc<crate::generate::Regions>,
+    pub biome: usize,
 }
 
 impl Default for ClimateMask {
@@ -51,7 +65,7 @@ impl ClimateMask {
     /// surfaces ease theirs, over 3 °C and 0.08 of humidity.
     pub fn of(biome: Biome) -> Self {
         let (temperature, humidity) = Self::ranges(biome);
-        Self { temperature, humidity, temperature_feather: 3.0, humidity_feather: 0.08 }
+        Self { temperature, humidity, temperature_feather: 3.0, humidity_feather: 0.08, region: None }
     }
 
     /// A biome's ranges as rows keep them: any temperature as coldest to
@@ -134,6 +148,9 @@ impl Kind for ClimateMask {
     }
 
     fn compile(&self, cx: &mut Compiler, node: NodeId, _: usize, at: Places) -> V {
+        if let Some(region) = &self.region {
+            return cx.run(InRegion(region.clone()), &[at.x, at.z]);
+        }
         let warmth = cx.input(node, Self::TEMPERATURE, at);
         let wetness = cx.input(node, Self::HUMIDITY, at);
         let range = |[low, high]: [f32; 2], feather: f32| Range { low, high, feather };
@@ -143,6 +160,24 @@ impl Kind for ClimateMask {
             (Some(warm), Some(wet)) => cx.run(Both, &[warm, wet]),
             (Some(only), None) | (None, Some(only)) => only,
             (None, None) => cx.constant(1.0),
+        }
+    }
+}
+
+/// How much each place, from rows of its x and z, is of a biome's region.
+#[derive(Debug)]
+struct InRegion(RegionOf);
+
+impl Kernel for InRegion {
+    fn key(&self, key: &mut Key) {
+        let id = self.0.regions.id();
+        key.name("in region").whole(id as u32).whole((id >> 32) as u32).whole(self.0.biome as u32);
+        key.number(self.0.regions.border());
+    }
+
+    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
+        for (at, out) in out.iter_mut().enumerate() {
+            *out = self.0.regions.weight(inputs[0][at], inputs[1][at], self.0.biome);
         }
     }
 }

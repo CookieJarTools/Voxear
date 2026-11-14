@@ -753,7 +753,7 @@ impl FarBuilt for Woods {
         }
         // Their climate, asked of the generator at once, and from it their biome where it keeps to any.
         let mut liked = vec![true; wooded.len()];
-        let biomes = making.generate.placed.as_deref().map(|placed| &placed.biomes).filter(|_| !self.biomes.is_empty());
+        let biomes = making.generate.placed.as_deref().filter(|_| !self.biomes.is_empty());
         if rule.temperature.is_some() || rule.humidity.is_some() || biomes.is_some() {
             let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
             world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
@@ -761,14 +761,14 @@ impl FarBuilt for Woods {
                 .map(|at| {
                     let biome = biomes.is_none_or(|biomes| {
                         let (above_sea, place) = (heights[at] - world.sea_level(), [xs[at], zs[at]]);
-                        let sunk = super::structure::sunk_at(world, biomes, place, heights[at]);
+                        let sunk = super::structure::sunk_at(world, &biomes.biomes, place, heights[at]);
                         let climate = crate::generate::biomes::Place {
                             temperature: warmth[at],
                             humidity: wetness[at],
                             above_sea,
                             sunk,
                         };
-                        biomes.at(xs[at], zs[at], climate).is_some_and(|biome| self.biomes.contains(&biome))
+                        biomes.index_at(xs[at], zs[at], climate).is_some_and(|biome| self.biomes.contains(&biome))
                     });
                     biome && rule.likes((warmth[at], wetness[at]))
                 })

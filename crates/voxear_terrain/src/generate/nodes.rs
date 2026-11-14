@@ -63,7 +63,7 @@ pub use cells::Cellular;
 pub use chasms::{ChasmKind, Chasms};
 pub use rivers::{NO_WATER, Rivers, add_rivers};
 pub use clamp::Clamp;
-pub use climate_mask::ClimateMask;
+pub use climate_mask::{ClimateMask, RegionOf};
 pub use constant::Constant;
 pub use curvature::Curvature;
 pub use curve::Remap;

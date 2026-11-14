@@ -433,6 +433,9 @@ pub enum BlockField {
     /// How far from its start its biomes' own land starts to rise: the
     /// ground nearer is the generator's own.
     LandFrom,
+    /// How far apart its biomes' regions are, each one biome through:
+    /// nothing for each place to take the biome its climate is nearest.
+    BiomeSize,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -530,7 +533,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
                     fields.extend([F::Rivers, F::Slabs]);
-                    fields.extend([F::Biomes, F::LandFrom]);
+                    fields.extend([F::Biomes, F::BiomeSize, F::LandFrom]);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
@@ -572,6 +575,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Rivers => "Rivers",
         F::Slabs => "Slabs",
         F::LandFrom => "Land from",
+        F::BiomeSize => "Biome size",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -604,7 +608,14 @@ pub fn key(field: BlockField) -> &'static str {
 
 pub fn unit(field: BlockField) -> Option<&'static str> {
     match field {
-        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance | F::LandFrom => {
+        F::BlockSize
+        | F::Offset
+        | F::Overhangs
+        | F::Heights
+        | F::ViewDistance
+        | F::FarDistance
+        | F::LandFrom
+        | F::BiomeSize => {
             Some("m")
         }
         F::Temperatures => Some("°C"),
@@ -810,6 +821,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
         F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
         F::LandFrom => Value::Number(file()?.generate.as_ref()?.land_from),
+        F::BiomeSize => Value::Number(file()?.generate.as_ref()?.biome_size),
         F::Slabs => Value::Toggle(file()?.generate.as_ref()?.slabs),
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
@@ -927,7 +939,12 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Ground, Value::Choice(at, _)) => {
             // Ground newly generated has rivers, and its top laid in half blocks.
             let fresh =
-                || voxear_terrain::blocks::generate::BlockGenerate { rivers: true, slabs: true, ..Default::default() };
+                || voxear_terrain::blocks::generate::BlockGenerate {
+                    rivers: true,
+                    slabs: true,
+                    biome_size: 768.0,
+                    ..Default::default()
+                };
             let generate = file.generate.clone().unwrap_or_else(fresh);
             file.generate = (*at == 1).then_some(generate);
         }
@@ -962,6 +979,12 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::LandFrom, v) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.land_from = number(v).unwrap_or(generate.land_from).clamp(0.0, 100_000.0);
+        }
+        (F::BiomeSize, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            // Nothing, or regions at least 64 m apart.
+            let size = number(v).unwrap_or(generate.biome_size);
+            generate.biome_size = if size <= 0.0 { 0.0 } else { size.clamp(64.0, 20_000.0) };
         }
         (F::Endless, Value::Toggle(on)) => {
             let Some(generate) = &mut file.generate else { return false };

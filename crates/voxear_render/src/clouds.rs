@@ -131,6 +131,26 @@ pub fn shadow_middle(camera: [f32; 2], drift: [f32; 2]) -> [f32; 2] {
 /// the atmosphere, which light the clouds and haze them.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clouds: CloudImages, tables: &[ImageId]) {
     let CloudImages { previous, current, shadows, within } = clouds;
+    // Drawn only in part, each picture is cleared first when it is made: what lies outside that part is read as
+    // last frame's where the sky has turned into it, and a new image holds whatever its memory held, NaN among it,
+    // which the blend would keep from frame to frame.
+    if within.is_some() {
+        let new: Vec<ImageId> = [previous, current].into_iter().filter(|&image| fg.is_new(image)).collect();
+        for image in new {
+            fg.add_pass("Clouds cleared", &[(image, ImageAccess::ColorAttachment)], &[], move |ctx| {
+                let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } };
+                let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                let color = [vk::RenderingAttachmentInfo::default()
+                    .image_view(ctx.view(image))
+                    .image_layout(layout)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(clear)];
+                begin_rendering(ctx, ctx.extent(image), &color, None);
+                unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+            });
+        }
+    }
     fg.add_pass("Cloud shadows", &[(shadows, ImageAccess::ColorAttachment)], &[], move |ctx| {
         draw(ctx, pipelines.cloud_shadows, &push, shadows);
     });

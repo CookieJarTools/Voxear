@@ -153,11 +153,13 @@ struct Transient {
 pub struct RenderGraph {
     transients: HashMap<String, Transient>,
     timer: GpuTimer,
+    /// Whether each kept image of floats it makes starts out holding NaN.
+    pub(crate) fill_new_with_nan: bool,
 }
 
 impl RenderGraph {
     pub fn new(gpu: &Gpu, slots: usize) -> Result<Self> {
-        Ok(Self { transients: HashMap::new(), timer: GpuTimer::new(gpu, slots)? })
+        Ok(Self { transients: HashMap::new(), timer: GpuTimer::new(gpu, slots)?, fill_new_with_nan: false })
     }
 
     /// Starts recording a frame's passes. Call after the slot's fence wait.
@@ -170,6 +172,7 @@ impl RenderGraph {
             buffers: Vec::new(),
             passes: Vec::new(),
             prefix: String::new(),
+            filled: Vec::new(),
         }
     }
 
@@ -248,6 +251,9 @@ pub struct FrameGraph<'a> {
     /// Put before the name of each image the graph keeps from now on, so a
     /// second 3D view's images are its own rather than the first's.
     prefix: String,
+    /// The kept images made this frame and filled with NaN, which are new
+    /// though the filling touched them.
+    filled: Vec<String>,
 }
 
 /// What a pass sees while recording.
@@ -375,7 +381,10 @@ impl<'a> FrameGraph<'a> {
     ) -> Result<ImageId> {
         let prefixed = format!("{}{name}", self.prefix);
         let name = prefixed.as_str();
-        let desc = ImageDesc { usage: desc.usage | vk::ImageUsageFlags::TRANSFER_SRC, ..desc };
+        // Floats a kept image starts out holding NaN when asked, to be cleared from there.
+        let fill = self.graph.fill_new_with_nan && persistent && format!("{:?}", desc.format).contains("FLOAT");
+        let fill_usage = if fill { vk::ImageUsageFlags::TRANSFER_DST } else { vk::ImageUsageFlags::empty() };
+        let desc = ImageDesc { usage: desc.usage | vk::ImageUsageFlags::TRANSFER_SRC | fill_usage, ..desc };
         let stale = self.graph.transients.get(name).is_some_and(|t| t.image.desc != desc);
         if stale {
             // A resize: rare enough that waiting for the GPU is simpler than deferring.
@@ -383,7 +392,8 @@ impl<'a> FrameGraph<'a> {
             let old = self.graph.transients.remove(name).expect("checked above");
             release(gpu, bindless, old);
         }
-        if !self.graph.transients.contains_key(name) {
+        let made = !self.graph.transients.contains_key(name);
+        if made {
             let image = gpu.create_image(name, desc)?;
             let texture = if desc.usage.contains(vk::ImageUsageFlags::STORAGE) {
                 bindless.add_texture_in(gpu, image.view, vk::ImageLayout::GENERAL)
@@ -400,14 +410,29 @@ impl<'a> FrameGraph<'a> {
             self.graph.transients.insert(name.to_string(), transient);
         }
         self.images.push(GraphImage::Transient { name: name.to_string(), first_use: true });
-        Ok(ImageId(self.images.len() - 1))
+        let id = ImageId(self.images.len() - 1);
+        if made && fill {
+            self.filled.push(name.to_string());
+            self.add_pass("Fill with NaN", &[(id, ImageAccess::TransferDst)], &[], move |ctx| {
+                let nan = vk::ClearColorValue { float32: [f32::NAN; 4] };
+                let all = vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(vk::REMAINING_MIP_LEVELS)
+                    .layer_count(vk::REMAINING_ARRAY_LAYERS);
+                let layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+                unsafe { ctx.gpu.device.cmd_clear_color_image(ctx.cmd, ctx.image(id), layout, &nan, &[all]) };
+            });
+        }
+        Ok(id)
     }
 
     /// Whether a graph-owned image has not been used yet, as a kept one has
     /// not in the frame it is made: for what is drawn into it only once.
     pub fn is_new(&self, id: ImageId) -> bool {
         match &self.images[id.0] {
-            GraphImage::Transient { name, .. } => self.graph.transients[name].state == UNTOUCHED,
+            GraphImage::Transient { name, .. } => {
+                self.graph.transients[name].state == UNTOUCHED || self.filled.contains(name)
+            }
             GraphImage::Imported { .. } => false,
         }
     }

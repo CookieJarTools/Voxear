@@ -3487,7 +3487,11 @@ bool seaFrozen(Frame* frame, float2 xz, float2 corner, float blockSize)
 
 // Breakers on a shore: where a rough sea is a few metres deep or less, lines of white water that run in to the shore
 // a swell's beat apart, the water drawn down before each as it rises and foam left behind it, and the shore's edge
-// washed white as each comes in. A breaker's face is white whatever the sea's patches: `crest` is more than 1 there.
+// washed white as each comes in. One breaker to every BREAKER_DEPTH metres of depth, so a gentle beach has them far
+// apart and a steep shore close together; the depth is smoothed over a few cells, as a floor of blocks rises in
+// steps. A breaker's face is white whatever the sea's patches: `crest` is more than 1 there.
+static const float BREAKER_DEPTH = 2.0;
+
 void seaBreakers(Frame* frame, float2 xz, float depth, float rough, inout float crest, inout float sunk)
 {
     float reach = 1.6 * max(1.0, 0.8 * frame->sea.height * rough + 0.6);
@@ -3495,20 +3499,18 @@ void seaBreakers(Frame* frame, float2 xz, float depth, float rough, inout float 
     {
         return;
     }
-    // How far out from the shore, as the floor slopes there.
-    float e = 2.0;
-    float2 slope = float2(seaFloorDepth(xz + float2(e, 0.0)) - seaFloorDepth(xz - float2(e, 0.0)),
-        seaFloorDepth(xz + float2(0.0, e)) - seaFloorDepth(xz - float2(0.0, e))) / (2.0 * e);
-    float out = depth / max(length(slope), 0.02);
+    float e = 4.0;
+    float smoothed = (4.0 * depth + seaFloorDepth(xz + float2(e, 0.0)) + seaFloorDepth(xz - float2(e, 0.0))
+        + seaFloorDepth(xz + float2(0.0, e)) + seaFloorDepth(xz - float2(0.0, e))) / 8.0;
     // They come in at the pace of the swell's longest wave, bent about along the shore.
     float beat = frame->sea.waves[0].z / (2.0 * PI);
     float bend = seaNoise(levelXZ(frame, xz, 4096.0) / 23.0) * 0.6;
-    float b = frac(out / 14.0 + beat + bend);
+    float b = frac(smoothed / BREAKER_DEPTH + beat + bend);
     float zone = rough * smoothstep(reach, reach * 0.5, depth);
-    float face = smoothstep(0.82, 0.94, b) * (1.0 - smoothstep(0.94, 1.0, b));
-    float left = 1.0 - smoothstep(0.0, 0.3, b);
-    crest = max(crest, zone * max(face * 1.6, left * 1.1));
-    sunk += zone * smoothstep(0.5, 0.85, b) * (1.0 - smoothstep(0.85, 0.94, b)) * min(depth, frame->sea.height) * 0.5;
+    float face = smoothstep(0.78, 0.92, b) * (1.0 - smoothstep(0.95, 1.0, b));
+    float left = 1.0 - smoothstep(0.0, 0.25, b);
+    crest = max(crest, zone * max(face * 2.0, left * 1.1));
+    sunk += zone * smoothstep(0.45, 0.8, b) * (1.0 - smoothstep(0.8, 0.92, b)) * min(depth, frame->sea.height) * 0.5;
     float wash = rough * (1.0 - smoothstep(0.1, 0.6, depth)) * (0.5 + 0.5 * cos((beat + bend) * 2.0 * PI));
     crest = max(crest, wash * 1.2);
 }

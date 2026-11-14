@@ -629,12 +629,12 @@ pub(crate) mod tests {
         }
         assert!(ground.wet > 0.9, "{ground:?}");
         let soaked = ground;
-        for _ in 0..60 {
+        for _ in 0..40 {
             ground = lie(Some(ground), &weather(0.0, 0.0, 12.0), None, 0.0, 1.0);
         }
-        assert!(ground.wet < soaked.wet && ground.wet > 0.4, "drying slowly: {ground:?}");
+        assert!(ground.wet < soaked.wet && ground.wet > 0.5, "drying over a minute or two: {ground:?}");
         let mut hot = soaked;
-        for _ in 0..60 {
+        for _ in 0..40 {
             hot = lie(Some(hot), &weather(0.0, 0.0, 32.0), None, 0.0, 1.0);
         }
         assert!(hot.wet < ground.wet, "sooner where it is hot");

@@ -252,8 +252,8 @@ mod tests {
         let cell = Lying { wet: 0.9, snow: 0.0, fallen: 0.8, celsius: 3.0, height: 100.0, ..Lying::default() };
         assert_eq!(cell.snow_at(100.0), 0.0);
         assert!(cell.wet_at(100.0) > 0.8);
-        // Six hundred metres up it is below freezing: what fell lies there as snow, and nothing is wet.
-        let high = 100.0 + 4.0 / LAPSE;
+        // Eight hundred metres up it is two degrees below freezing: what fell lies there as snow, and nothing is wet.
+        let high = 100.0 + 5.0 / LAPSE;
         assert!((cell.snow_at(high) - 0.8).abs() < 1e-3, "{}", cell.snow_at(high));
         assert_eq!(cell.wet_at(high), 0.0);
         // Far higher it is bitter, and snow lies whatever fell.

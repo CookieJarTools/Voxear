@@ -538,3 +538,41 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     // something, and black there left dark patches all over a chrome ball.
     return float4(light, 1.0);
 }
+
+// ---------------------------------------------------------------- Reflection probes
+
+// A reflection probe's capture (src/reflection_probes.rs): from its middle,
+// a ray through each texel of its cube's six faces, against the scene the
+// GI's rays see, what it meets lit as theirs is and its textures read as
+// wide as the texel spreads; where it meets nothing, the sky. A thread a
+// texel, a face for each z. push.textures.xyz: the probe's middle, as
+// floats' bits; push.output: the capture's first mip.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void probeCaptureMain(uint3 id : SV_DispatchThreadID)
+{
+    Frame* frame = push.frame;
+    if (any(id.xy >= push.size))
+    {
+        return;
+    }
+    float3 origin = asfloat(push.textures.xyz);
+    float3 direction = normalize(probeFaceDirection(id.z, (float2(id.xy) + 0.5) / float2(push.size)));
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    // A texel's width as an angle: a face's quarter turn over its texels.
+    float spread = 0.5 * PI / float(push.size.x);
+    Hit hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
+    float3 light;
+    if (hit.found)
+    {
+        bool back;
+        light = ddgiShadeReflected(frame, hit, origin, direction, 0.0, spread, back);
+    }
+    else
+    {
+        light = reflectedSky(frame, direction, atmosphere);
+    }
+    // Kept within what half floats hold, and nothing that is not a number, which would spread through the mips.
+    light = select(isnan(light) || isinf(light), float3(0.0), min(light, 60000.0));
+    storageArraysRgba16f[push.output][id] = float4(light, 1.0);
+}

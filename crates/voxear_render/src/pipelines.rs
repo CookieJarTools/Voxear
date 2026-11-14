@@ -55,6 +55,9 @@ pub struct Pipelines {
     /// Turns each instance draw into draws of its meshlets that survive culling.
     pub meshlet_cull: vk::Pipeline,
     pub pyramid: vk::Pipeline,
+    /// Builds a level of the nearest-depth pyramid that screen-space
+    /// reflections step through (`nearestMain` in `shaders/pyramid.slang`).
+    pub nearest_pyramid: vk::Pipeline,
     pub shadow: vk::Pipeline,
     /// As `shadow`, for local lights' views, without clamping depth: what
     /// lies nearer a light than its near plane, as the flame or bulb round
@@ -265,6 +268,14 @@ pub struct Pipelines {
     /// Reflections by the GPU's rays, through the GI's scene, where the GPU
     /// has ray tracing (`rayReflectionsFragment` in `shaders/ddgi.slang`).
     pub ray_reflections: Option<vk::Pipeline>,
+    /// A reflection probe's capture, by the GPU's rays where it has them,
+    /// and in software (`probeCaptureMain` in `shaders/ddgi.slang`).
+    pub probe_capture: Option<vk::Pipeline>,
+    pub probe_capture_software: vk::Pipeline,
+    /// A probe's capture's mips, and their filtering for its own
+    /// (`shaders/probe_filter.slang`).
+    pub probe_downsample: vk::Pipeline,
+    pub probe_filter: vk::Pipeline,
 }
 
 impl Pipelines {
@@ -308,6 +319,7 @@ impl Pipelines {
             module("particle_sim")?,
             module("map")?,
             module("portal")?,
+            module("probe_filter")?,
         ];
         let [
             cull,
@@ -339,6 +351,7 @@ impl Pipelines {
             particle_sim,
             map,
             portal,
+            probe_filter,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -391,6 +404,14 @@ impl Pipelines {
             cull: create_compute_pipeline(gpu, layout, "Cull", cull, c"cullMain")?,
             meshlet_cull: create_compute_pipeline(gpu, layout, "Meshlets", cull, c"meshletMain")?,
             pyramid: create_compute_pipeline(gpu, layout, "Depth pyramid", pyramid, c"reduceMain")?,
+            nearest_pyramid: create_compute_pipeline(gpu, layout, "Nearest depth pyramid", pyramid, c"nearestMain")?,
+            probe_downsample: create_compute_pipeline(gpu, layout, "Reflection probe mips", probe_filter, c"probeDownsampleMain")?,
+            probe_filter: create_compute_pipeline(gpu, layout, "Reflection probe filter", probe_filter, c"probeFilterMain")?,
+            probe_capture_software: create_compute_pipeline(gpu, layout, "Reflection probe capture", ddgi_software, c"probeCaptureMain")?,
+            probe_capture: match &ddgi {
+                Some(module) => Some(create_compute_pipeline(gpu, layout, "Reflection probe capture", module, c"probeCaptureMain")?),
+                None => None,
+            },
             shadow: graphics(&GraphicsPipelineDesc {
                 // Single-sided geometry such as planes must still cast.
                 cull: vk::CullModeFlags::NONE,
@@ -1126,6 +1147,8 @@ impl Pipelines {
             self.mesh.iter().flat_map(|m| [m.shadow, m.local_shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
+        let probes = [self.nearest_pyramid, self.probe_capture_software, self.probe_downsample, self.probe_filter];
+        let traced = traced.chain(self.probe_capture).chain(probes);
         for pipeline in all.into_iter().chain(mesh).chain(traced).chain(encode) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }

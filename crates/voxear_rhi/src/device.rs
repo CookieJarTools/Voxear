@@ -457,7 +457,8 @@ impl Features<'_> {
             .shader_clip_distance(true)
             .independent_blend(true)
             .texture_compression_bc(true)
-            .fragment_stores_and_atomics(true);
+            .fragment_stores_and_atomics(true)
+            .image_cube_array(true);
         Self {
             core: vk::PhysicalDeviceFeatures2::default().features(core),
             v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
@@ -530,6 +531,7 @@ impl Features<'_> {
                 on(r.core.features.fragment_stores_and_atomics),
                 on(s.core.features.fragment_stores_and_atomics),
             ),
+            ("cube map arrays", on(r.core.features.image_cube_array), on(s.core.features.image_cube_array)),
             ("shader draw parameters", on(r.v11.shader_draw_parameters), on(s.v11.shader_draw_parameters)),
             ("timeline semaphores", on(r.v12.timeline_semaphore), on(s.v12.timeline_semaphore)),
             ("buffer device address", on(r.v12.buffer_device_address), on(s.v12.buffer_device_address)),

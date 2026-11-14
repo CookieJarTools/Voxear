@@ -13,6 +13,7 @@
 #include "impostor.slang"
 #include "lights.slang"
 #include "occlusion.slang"
+#include "reflection_probes.slang"
 #include "seasons.slang"
 #include "terrain_ground.slang"
 #include "wind.slang"
@@ -290,41 +291,17 @@ float3 shadowTint(Frame* frame, Surface s, float3 toSun, float3 sunLight, float 
     return s.diffuse / PI * sunLight * tint * (1.0 - lit);
 }
 
-// What a surface reflects of its surroundings: the sky in the mirror
-// direction, or with GI the light the probes see that way, blurring
-// towards the light from all round (`ambient`) as the surface roughens.
+// What a surface reflects of its surroundings where nothing nearer is found
+// along its mirror ray: the reflection probes round it, then the GI's
+// probes, then the sky, blurring towards the light from all round
+// (`ambient`) as the surface roughens (see reflectionFallback).
 float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
 {
-    // A surface this rough reflects the light from all round alone, so nothing more need be looked up.
-    float blur = saturate(roughness * 1.5);
-    if (blur >= 1.0)
-    {
-        return ambient;
-    }
-    float3 sky;
-    if (atmosphere)
-    {
-        sky = skyToward(frame, direction) * skyLook(frame);
-    }
-    else
-    {
-        float up = direction.y;
-        float3 above = lerp(frame->skyHorizon, frame->skyZenith, pow(saturate(up), 0.45));
-        float3 below = lerp(frame->skyHorizon, frame->groundColor, pow(saturate(-up), 0.35));
-        sky = up >= 0.0 ? above : below;
-    }
-    // Scaled as the sky's other light is, so a night scene's floor does not mirror a day sky.
-    sky *= frame->ambient;
-    if (frame->ddgi.enabled != 0)
-    {
-        // With GI, the light arriving from the mirror direction as the probes see it: blurred, but never the sky
-        // through a wall. Looked up a probe's spacing out from the surface, past the thing reflecting: from just
-        // off a chrome ball, the probes round it are inside it or have it in their way, and its reflection was
-        // smudged dark wherever they fell, smudges that moved as the camera did.
-        float3 outside = position + normal * ddgiSpacing(frame, 0);
-        sky = ddgiIrradianceAlong(frame, outside, direction, normal, sky);
-    }
-    return lerp(sky, ambient, blur);
+    // The GI's light is looked up a probe's spacing out from the surface, past the thing reflecting: from just off a
+    // chrome ball, the probes round it are inside it or have it in their way, and its reflection was smudged dark
+    // wherever they fell, smudges that moved as the camera did.
+    float3 outside = position + normal * ddgiSpacing(frame, 0);
+    return reflectionFallback(frame, position, outside, normal, direction, roughness, ambient, atmosphere);
 }
 
 // As surroundingsReflection, with screen-space reflections over it where

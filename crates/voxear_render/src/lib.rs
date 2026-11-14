@@ -70,6 +70,7 @@ pub mod portals;
 mod post;
 mod post_passes;
 mod post_volume;
+mod reflection_probes;
 mod previews;
 mod scene;
 pub mod sea;
@@ -138,6 +139,7 @@ pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, Ma
 pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
+pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
@@ -497,6 +499,7 @@ pub struct Renderer {
     clear: [f32; 4],
     frame_debugger: frame_debugger::FrameDebugger,
     captures: capture::Captures,
+    reflection_probes: reflection_probes::ReflectionProbes,
 }
 
 impl Renderer {
@@ -606,11 +609,28 @@ impl Renderer {
             clear: [0.0, 0.0, 0.0, 1.0],
             frame_debugger: Default::default(),
             captures: Default::default(),
+            reflection_probes: Default::default(),
         })
     }
 
     pub fn gpu(&self) -> &GpuInfo {
         &self.gpu.info
+    }
+
+    /// What a reflection probe's Obj shows, as captured, read back from the
+    /// GPU for a bake to save: none until it has been captured. Waits for
+    /// the GPU.
+    pub fn reflection_probe_pixels(&self, entity: voxear_ecs::Entity) -> Result<Option<ProbePixels>> {
+        let Some(slot) = self.reflection_probes.slot_of(entity) else { return Ok(None) };
+        let Some(image) = self.graph.kept_image("reflection probes") else { return Ok(None) };
+        reflection_probes::read_back(&self.gpu, image, slot).map(Some)
+    }
+
+    /// Whether every reflection probe in the world has been captured or
+    /// loaded, so a bake can read them all.
+    pub fn reflection_probes_ready(&self, world: &World) -> bool {
+        let probes = world.query_ref::<(voxear_ecs::Entity, &ReflectionProbe)>();
+        probes.into_iter().all(|(entity, _)| self.reflection_probes.slot_of(entity).is_some())
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
@@ -1387,6 +1407,7 @@ impl Renderer {
             frames,
             frame_debugger,
             captures,
+            reflection_probes,
             clear,
             mesh_shaders,
             software_rays,
@@ -1405,6 +1426,9 @@ impl Renderer {
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
         // UI panels in the world first, into their textures, for every view to draw.
+        // The reflection probes every view shades with, and the one the first view captures or loads.
+        let probes = reflection_probes.prepare(&mut fg, (gpu, bindless), world, (time, frame_index, frame.slot))?;
+        let mut probe_job_done = false;
         let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
         let (panel_textures, (panel_quads, panel_values)) =
             ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, (&ui.quads, &ui.values), (0, 0))?;
@@ -1484,12 +1508,14 @@ impl Renderer {
                 panels: panel_textures.clone(),
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
+                probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
             if first {
                 backdrops[at] = recorded.backdrop;
             }
+            probe_job_done |= recorded.probe_job_done;
             for (entity, size) in recorded.panel_sizes {
                 ui_panels.saw(entity, size);
             }
@@ -1498,6 +1524,9 @@ impl Renderer {
             }
         }
         fg.set_prefix("");
+        if probe_job_done {
+            reflection_probes.take_job(world, time);
+        }
         // An output no view drew into is cleared for its UI.
         for (&image, cleared) in images.iter().zip(&cleared) {
             if let (Some((output, _)), false) = (image, cleared) {
@@ -1754,6 +1783,7 @@ impl Drop for Renderer {
         self.gpu.wait_idle();
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
+        self.reflection_probes.destroy(gpu);
         self.skinning.destroy(gpu);
         self.particle_sim.destroy(gpu);
         self.terrains.destroy(gpu);
@@ -1956,6 +1986,9 @@ struct ViewSetup {
     terrains: std::sync::Arc<[terrain::Drawn]>,
     /// This frame's worlds of blocks, as every view draws them.
     blocks: std::sync::Arc<[blocks::DrawnBlocks]>,
+    /// This frame's reflection probes, and the capture or load the first
+    /// camera's own view records, until one has.
+    probes: Option<reflection_probes::ProbeFrame>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1966,6 +1999,8 @@ struct ViewRecorded {
     backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
     /// How large each UI panel showed in the view, in pixels.
     panel_sizes: Vec<(voxear_ecs::Entity, [f32; 2])>,
+    /// It recorded this frame's reflection probe capture or load.
+    probe_job_done: bool,
     /// The Portals a view through a Portal sees in turn, for the view it
     /// is seen in to draw the far sides of.
     sees: Option<Sees>,
@@ -2663,6 +2698,8 @@ impl View {
         let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
         // Whether reflections trace the scene's triangles, by the GPU's ray queries, rather than the screen.
         let mut traced_reflections = false;
+        // How the scene is traced this frame, if it is: in software (true) or by the GPU's rays.
+        let mut traced_by = None;
         if lit.enabled && !wireframe {
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
@@ -2696,6 +2733,7 @@ impl View {
                 };
                 self.ddgi_history = Some((origin, spacing, frames));
                 traced_reflections = !made.software;
+                traced_by = Some(made.software);
                 probes = Some(made);
             }
         } else if reflections.is_some() && !setup.software_rays && pipelines.ray_reflections.is_some() {
@@ -2706,8 +2744,50 @@ impl View {
             if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
                 frame_data.ddgi.scene = scene;
                 traced_reflections = true;
+                traced_by = Some(false);
             }
         }
+        if let Some(probes) = &setup.probes {
+            frame_data.reflection_probes = probes.gpu;
+        }
+        // The first camera's own view captures this frame's reflection probe, through the scene its GI or
+        // reflections trace, or one built for it.
+        let probe_job = setup.probes.filter(|_| self.number == 0 && portal.is_none() && !wireframe);
+        let probe_job = probe_job.and_then(|probes| probes.job.map(|job| (probes, job)));
+        let probe_job = match probe_job {
+            Some((probes, job)) => {
+                if traced_by.is_none() && matches!(job.kind, reflection_probes::JobKind::Capture { .. }) {
+                    if setup.software_rays || pipelines.probe_capture.is_none() {
+                        let hierarchy = &mut self.scene_hierarchies[slot];
+                        scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
+                        traced_by = Some(true);
+                    } else {
+                        let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
+                        if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                            frame_data.ddgi.scene = scene;
+                            traced_by = Some(false);
+                        }
+                    }
+                }
+                let capture = match traced_by {
+                    Some(false) => pipelines.probe_capture,
+                    Some(true) => Some(pipelines.probe_capture_software),
+                    // A load traces nothing.
+                    None => Some(pipelines.probe_capture_software)
+                        .filter(|_| matches!(job.kind, reflection_probes::JobKind::Load { .. })),
+                };
+                capture.map(|capture| {
+                    let filters = reflection_probes::ProbePipelines {
+                        capture,
+                        downsample: pipelines.probe_downsample,
+                        filter: pipelines.probe_filter,
+                    };
+                    (probes, job, filters)
+                })
+            }
+            None => None,
+        };
+        let probe_job_done = probe_job.is_some();
         let panes = match wireframe || portal.is_some() {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
@@ -2924,6 +3004,7 @@ impl View {
                 particle_steps: particle_step.map_or(0, |step| step.systems),
                 particle_trails: setup.simulated.1,
                 particle_hits: particle_step.map_or(0, |step| step.hits_address),
+                reflection_probes: setup.probes.map_or(0, |probes| probes.list),
                 portal_quads: buffers.portal_quads.address,
                 weather_maps: buffers.weather_maps.address,
             }],
@@ -3129,6 +3210,7 @@ impl View {
             traced_reflections,
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
+            probe_job,
         };
         // A camera's own view draws the far sides of the Portals it sees once its own surfaces are in, and those
         // seen through them after each; a view through a Portal leaves its own to the view it is seen in.
@@ -3155,7 +3237,7 @@ impl View {
             return Err(error);
         }
         if portal.is_some() {
-            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees });
+            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done });
         }
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -3201,7 +3283,7 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None })
+        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done })
     }
 }
 
@@ -3400,6 +3482,7 @@ fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
         format: PYRAMID_FORMAT,
         usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
         mip_levels: full_mip_count(width, height),
+        cubes: 0,
     }
 }
 

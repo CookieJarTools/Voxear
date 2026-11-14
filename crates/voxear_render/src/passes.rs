@@ -182,6 +182,9 @@ pub struct Frame {
     /// The view is one through a Portal: it draws over what the view it is
     /// seen in has drawn, and reads that view's sky tables.
     pub through: bool,
+    /// A reflection probe to capture or load this frame, once the GI's rays
+    /// are traced, and the pipelines it takes (see `reflection_probes`).
+    pub probe_job: Option<(crate::reflection_probes::ProbeFrame, crate::reflection_probes::Job, crate::reflection_probes::ProbePipelines)>,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
@@ -748,6 +751,12 @@ pub fn record(
     }
     if let Some(probes) = frame.probes {
         ddgi::record(fg, (pipelines, push), probes, &shadow_maps);
+    }
+    if let Some((probe_frame, job, probe_pipelines)) = &frame.probe_job {
+        // What the probe's rays meet is lit as the GI's rays' hits are: through the lights' shadows, and by the GI.
+        let gi = frame.probes.iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]);
+        let sampled: Vec<ImageId> = shadow_maps.iter().copied().chain(gi).collect();
+        crate::reflection_probes::record(fg, *probe_pipelines, push, probe_frame, *job, &sampled);
     }
     if let Some(volume) = frame.volume {
         let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(shadow_maps.iter().copied()).collect();

@@ -86,11 +86,25 @@ pub struct ImageDesc {
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
+    /// How many cubes the image holds, six layers each, sampled as an array
+    /// of cubes; 0 for a plain 2D image.
+    pub cubes: u32,
 }
 
 impl ImageDesc {
     pub fn new(width: u32, height: u32, format: vk::Format, usage: vk::ImageUsageFlags) -> Self {
-        Self { width, height, format, usage, mip_levels: 1 }
+        Self { width, height, format, usage, mip_levels: 1, cubes: 0 }
+    }
+
+    /// An array of `cubes` cube maps, each face `size` texels square, with
+    /// every mip down to one texel.
+    pub fn cube_array(size: u32, cubes: u32, format: vk::Format, usage: vk::ImageUsageFlags) -> Self {
+        Self { cubes: cubes.max(1), ..Self::new(size, size, format, usage).with_mips() }
+    }
+
+    /// Its array layers: six for each cube, else one.
+    pub fn layers(&self) -> u32 {
+        if self.cubes > 0 { self.cubes * 6 } else { 1 }
     }
 
     pub fn with_mips(mut self) -> Self {
@@ -186,7 +200,8 @@ impl Gpu {
             .format(desc.format)
             .extent(vk::Extent3D { width: desc.width, height: desc.height, depth: 1 })
             .mip_levels(desc.mip_levels)
-            .array_layers(1)
+            .array_layers(desc.layers())
+            .flags(if desc.cubes > 0 { vk::ImageCreateFlags::CUBE_COMPATIBLE } else { vk::ImageCreateFlags::empty() })
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(desc.usage)
@@ -218,15 +233,23 @@ impl Gpu {
         Ok(Image { handle, view, mip_views, desc, allocation: Some(allocation) })
     }
 
+    /// A view of `mips` mips from `base_mip`: of a cube array, all its cubes
+    /// as one to sample, or, one mip at a time, its faces as an array of 2D
+    /// layers for compute passes to write.
     fn create_view(&self, image: vk::Image, desc: ImageDesc, base_mip: u32, mips: u32) -> Result<vk::ImageView> {
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(desc.aspect())
             .base_mip_level(base_mip)
             .level_count(mips)
-            .layer_count(1);
+            .layer_count(desc.layers());
+        let view_type = match (desc.cubes > 0, mips == 1 && desc.mip_levels > 1) {
+            (false, _) => vk::ImageViewType::TYPE_2D,
+            (true, false) => vk::ImageViewType::CUBE_ARRAY,
+            (true, true) => vk::ImageViewType::TYPE_2D_ARRAY,
+        };
         let info = vk::ImageViewCreateInfo::default()
             .image(image)
-            .view_type(vk::ImageViewType::TYPE_2D)
+            .view_type(view_type)
             .format(desc.format)
             .subresource_range(range);
         Ok(unsafe { self.device.create_image_view(&info, None)? })

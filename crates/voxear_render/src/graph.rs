@@ -162,6 +162,12 @@ impl RenderGraph {
         Ok(Self { transients: HashMap::new(), timer: GpuTimer::new(gpu, slots)?, fill_new_with_nan: false })
     }
 
+    /// A graph-owned image by its name, as `history_image` made it, if it
+    /// has been.
+    pub(crate) fn kept_image(&self, name: &str) -> Option<(vk::Image, ImageDesc)> {
+        self.transients.get(name).map(|kept| (kept.image.handle, kept.image.desc))
+    }
+
     /// Starts recording a frame's passes. Call after the slot's fence wait.
     pub fn begin<'a>(&'a mut self, gpu: &Gpu, slot: usize) -> FrameGraph<'a> {
         self.timer.begin_frame(gpu, slot);
@@ -554,7 +560,7 @@ impl<'a> FrameGraph<'a> {
                 let range = vk::ImageSubresourceRange::default()
                     .aspect_mask(desc.aspect())
                     .level_count(vk::REMAINING_MIP_LEVELS)
-                    .layer_count(1);
+                    .layer_count(vk::REMAINING_ARRAY_LAYERS);
                 image_barriers.push(
                     vk::ImageMemoryBarrier2::default()
                         .image(image)

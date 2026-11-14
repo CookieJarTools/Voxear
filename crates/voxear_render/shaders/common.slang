@@ -11,6 +11,10 @@
 // The same storage images, for those of four half floats, as the GI probes'.
 [[vk::binding(2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> storageImagesRgba16f[];
 [[vk::binding(3, 0)]] SamplerComparisonState comparisonSamplers[];
+// The same textures, for those that are arrays of cube maps, as the reflection probes'.
+[[vk::binding(0, 0)]] TextureCubeArray cubeArrays[];
+// The same storage images, for one mip of an array of cube maps, its faces as layers.
+[[vk::binding(2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> storageArraysRgba16f[];
 
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
@@ -822,6 +826,37 @@ struct Ddgi
     float4 rotation[3];
 };
 
+// Reflection probes (src/reflection_probes.rs, reflection_probes.slang): the
+// mips each probe's cube has, from mirror-smooth to fully rough.
+static const uint REFLECTION_PROBE_MIPS = 6;
+static const uint REFLECTION_PROBE_BOX_PROJECTION = 1;
+
+// One reflection probe as shading reads it: where its box is and which way
+// it faces, its half size in metres, and its cube's place in the array.
+struct ReflectionProbe
+{
+    float3 centre;
+    // How far outside its box, in metres, it fades out.
+    float blend;
+    float3 axisX;
+    float intensity;
+    float3 axisY;
+    uint slot;
+    float3 axisZ;
+    uint flags;
+    float3 halfSize;
+    float pad;
+};
+
+// This frame's reflection probes: how many shading reads (in buffers()->reflectionProbes), and their cubes, as
+// a texture.
+struct ReflectionProbes
+{
+    uint count;
+    uint cubes;
+    uint2 pad;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -877,6 +912,7 @@ struct Frame
     uint2 glassShadow;
     Lighting lighting;
     Ddgi ddgi;
+    ReflectionProbes reflectionProbes;
     Wind wind;
     Pushes pushes;
     Seasons seasons;
@@ -1549,6 +1585,8 @@ struct Buffers
     // What the weather has left lying by place, how high what stops the rain is near the viewer, and how deep the
     // sea is (src/weather_maps.rs): a header, then each grid's cells.
     uint* weatherMaps;
+    // This frame's reflection probes, in the order shading takes them (reflection_probes.slang).
+    ReflectionProbe* reflectionProbes;
 };
 
 struct Push

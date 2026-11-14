@@ -407,6 +407,7 @@ pub struct GpuFrame {
     pub glass_shadow: [u32; 2],
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
+    pub reflection_probes: GpuReflectionProbes,
     pub wind: GpuWind,
     pub pushes: GpuPushes,
     pub seasons: GpuSeasons,
@@ -645,6 +646,33 @@ pub struct GpuDdgi {
     /// This frame's turn of the probes' rays, a rotation's rows, so the
     /// directions they sample change from frame to frame.
     pub rotation: [[f32; 4]; 3],
+}
+
+/// This frame's reflection probes, as `ReflectionProbes` in
+/// `shaders/common.slang`: how many shading reads, and the texture of their
+/// cubes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuReflectionProbes {
+    pub count: u32,
+    pub cubes: u32,
+    pub pad: [u32; 2],
+}
+
+/// One reflection probe, as `ReflectionProbe` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuReflectionProbe {
+    pub centre: [f32; 3],
+    pub blend: f32,
+    pub axis_x: [f32; 3],
+    pub intensity: f32,
+    pub axis_y: [f32; 3],
+    pub slot: u32,
+    pub axis_z: [f32; 3],
+    pub flags: u32,
+    pub half_size: [f32; 3],
+    pub pad: f32,
 }
 
 /// The ray-traced GI's cascades, each `DDGI_CASCADE_SCALE` times as far apart
@@ -1011,6 +1039,9 @@ pub struct GpuBuffers {
     /// What the weather has left lying by place, what is over the ground
     /// near the viewer, and how deep the sea is (see `weather_maps`).
     pub weather_maps: u64,
+    /// This frame's reflection probes, in the order shading takes them
+    /// (see `reflection_probes`).
+    pub reflection_probes: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1396,7 +1427,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16
         );
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
@@ -1404,7 +1435,8 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 68 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 69 * 8);
+        assert_eq!(size_of::<GpuReflectionProbe>(), 80);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
         // then its motions' and moving blocks' addresses and how many of each, how it is turned, and its far tints'

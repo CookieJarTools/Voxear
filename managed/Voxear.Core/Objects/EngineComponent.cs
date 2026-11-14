@@ -24,4 +24,5 @@ public enum EngineComponent
 	FoliageInteraction,
 	Foliage,
 	TrackMaker,
+	ReflectionProbe,
 }

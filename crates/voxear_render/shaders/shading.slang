@@ -311,10 +311,9 @@ float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, floa
 float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere, out float found)
 {
     found = 0.0;
-    float3 reflected = surroundingsReflection(frame, position, normal, direction, roughness, ambient, atmosphere);
     if (frame->post.reflectionTexture == NO_TEXTURE)
     {
-        return reflected;
+        return surroundingsReflection(frame, position, normal, direction, roughness, ambient, atmosphere);
     }
     float2 uv = pixel / float2(frame->viewport);
     float4 traced = textures[NonUniformResourceIndex(frame->post.reflectionTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
@@ -323,6 +322,11 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     // showed through a chrome ball's mirror as dark smudges.
     float smooth = saturate(2.0 - 2.0 * roughness / frame->post.reflectionMaxRoughness);
     found = saturate(traced.a) * smooth;
+    if (smooth >= 1.0)
+    {
+        return traced.rgb;
+    }
+    float3 reflected = surroundingsReflection(frame, position, normal, direction, roughness, ambient, atmosphere);
     return lerp(reflected, traced.rgb, smooth);
 }
 

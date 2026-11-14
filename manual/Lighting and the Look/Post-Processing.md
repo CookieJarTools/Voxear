@@ -237,10 +237,10 @@ A name Voxear does not know, such as a misspelt setting, is an error, and the Co
 
 Shiny surfaces reflect what is round them. A floor polished like glass shows the things standing on it, and a chrome ball the room it is in. How much a surface reflects comes from its material: smooth ones, with a low roughness, reflect sharply, and metals most of all.
 
-Voxear reflects two things:
+Voxear reflects:
 
-- **The sky**, always: every surface reflects the sky in the direction it faces, blurring as it roughens.
-- **What is on screen**, with screen-space reflections: each smooth surface looks along its reflection, through the picture the camera already has, and shows what it finds. They are on in the Voxear Look, and need TAA.
+- **What is round it**, always: the [[Reflection Probes]] whose boxes a surface is in, or where there are none, the [[Bounced Light]]'s probes, or the sky, in the direction it faces, blurring as it roughens.
+- **What its own ray finds**, with these reflections: each smooth surface looks along its reflection and shows what it finds, and where it finds nothing, what is round it. They are on in the Voxear Look, and need TAA.
 
 ```toml
 [post.reflections]
@@ -248,9 +248,10 @@ enabled = true
 max_distance = 30   # how far reflections reach, in metres
 thickness = 0.3     # how thick things count as, in metres
 max_roughness = 0.6 # surfaces rougher than this show none
+steps = 32          # advanced: how far a screen-space search goes before longer strides
 ```
 
-Where the graphics card has ray tracing, reflections trace real rays through the scene instead, from each surface's own normal: a chrome ball mirrors the whole room, behind the camera too, and the sides of things the camera cannot see. What it shows is lit as the [[Bounced Light]] lights it when that is on, and by the sun, the lamps and the sky when it is off. Without ray tracing, reflections are screen-space, and can only show what is on screen: look down at a puddle and the sky it would reflect is above the picture, so the puddle shows the sky's colour from the scene instead, and things just come on screen, or just behind something, can show a moment late. Pixels rougher than `max_roughness` are passed over before any search, so a level of mostly rough ground costs about a twentieth of a millisecond at 1080p.
+Where the graphics card has ray tracing, reflections trace real rays through the scene instead, from each surface's own normal: a chrome ball mirrors the whole room, behind the camera too, and the sides of things the camera cannot see. What it shows is lit as the [[Bounced Light]] lights it when that is on, and by the sun, the lamps and the sky when it is off. Without ray tracing, reflections are screen-space, and can only show what is on screen: look down at a puddle and the sky it would reflect is above the picture, so the puddle shows what the reflection probe round it saw, or the sky, instead, and things just come on screen, or just behind something, can show a moment late. The search steps through the depth of the picture a block of pixels at a time where nothing is near the ray, and pixel by pixel where something is, so it does not step over a thin post or a wall seen side on; where it runs out of `steps`, it finishes the way in a few long strides. Pixels rougher than `max_roughness` are passed over before any search, so a level of mostly rough ground costs about a twentieth of a millisecond at 1080p.
 
 Reflections are traced for every pixel on screen, so a mirror stays sharp and steady whether the camera moves or stands still.
 

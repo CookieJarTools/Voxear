@@ -173,19 +173,21 @@ pub fn record_reflections(
     fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipeline, &push, target));
 }
 
-/// The levels of the nearest-depth pyramid screen-space reflections walk
-/// through, as `REFLECTION_PYRAMID_LEVELS` in the shaders: cells up to 64
-/// pixels across.
+/// The levels screen-space reflections walk through, as
+/// `REFLECTION_PYRAMID_LEVELS` in the shaders: the depth, then the
+/// pyramid's, cells up to 64 pixels across.
 pub const REFLECTION_PYRAMID_LEVELS: u32 = 7;
 
-/// The nearest-depth pyramid for a view `extent` pixels across: its first
-/// level as large as the depth, rounded up so that every level halves
-/// exactly and each pixel is under one texel of each.
+/// The nearest-depth pyramid for a view `extent` pixels across: half the
+/// depth's size, rounded up so that every level halves exactly and each
+/// pixel is under one texel of each, the depth itself being the finest
+/// level the walk reads.
 pub fn pyramid_desc(extent: vk::Extent2D) -> ImageDesc {
     let cell = 1 << (REFLECTION_PYRAMID_LEVELS - 1);
     let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
-    let (width, height) = (extent.width.div_ceil(cell) * cell, extent.height.div_ceil(cell) * cell);
-    ImageDesc { mip_levels: REFLECTION_PYRAMID_LEVELS, ..ImageDesc::new(width, height, crate::pipelines::PYRAMID_FORMAT, usage) }
+    let (width, height) = (extent.width.div_ceil(cell) * cell / 2, extent.height.div_ceil(cell) * cell / 2);
+    let desc = ImageDesc::new(width, height, crate::pipelines::PYRAMID_FORMAT, usage);
+    ImageDesc { mip_levels: REFLECTION_PYRAMID_LEVELS - 1, ..desc }
 }
 
 /// Builds the nearest-depth pyramid from the depth, a level at a time.
@@ -198,12 +200,9 @@ fn record_pyramid(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push),
     fg.add_pass("Reflection depth pyramid", &images, &[], move |ctx| {
         for (level, output) in levels.iter().enumerate() {
             let size = [desc.width >> level, desc.height >> level];
-            let (texture, above) = match level {
-                0 => (depth_texture, [depth_size.width, depth_size.height]),
-                _ => (levels[level - 1], [desc.width >> (level - 1), desc.height >> (level - 1)]),
-            };
-            let push =
-                Push { texture, output: *output, size, level: level as u32, textures: [above[0], above[1], 0, 0], ..push };
+            let texture = if level == 0 { depth_texture } else { levels[level - 1] };
+            let textures = [depth_size.width, depth_size.height, 0, 0];
+            let push = Push { texture, output: *output, size, level: level as u32, textures, ..push };
             crate::passes::bind(ctx, pipelines.nearest_pyramid, vk::PipelineBindPoint::COMPUTE, &push);
             unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
             let barrier = [vk::MemoryBarrier2::default()

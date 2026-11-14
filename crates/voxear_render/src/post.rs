@@ -138,7 +138,7 @@ pub struct Reflections {
 
 impl Default for Reflections {
     fn default() -> Self {
-        Self { enabled: true, max_distance: 30.0, thickness: 0.3, max_roughness: 0.6, steps: 64 }
+        Self { enabled: true, max_distance: 30.0, thickness: 0.3, max_roughness: 0.6, steps: 32 }
     }
 }
 

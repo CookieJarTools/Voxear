@@ -431,8 +431,9 @@ float2 reflectionPixel(Frame* frame, float3 point, float2 size)
     return (ndc * 0.5 + 0.5) * size;
 }
 
-// The levels of the nearest-depth pyramid screen-space reflections step
-// through (src/ambient_occlusion.rs builds it): cells up to 64 pixels across.
+// The levels screen-space reflections step through: the depth itself, then
+// the nearest-depth pyramid's (src/ambient_occlusion.rs builds it), cells up
+// to 64 pixels across.
 static const uint REFLECTION_PYRAMID_LEVELS = 7;
 
 // A world position from a point on the screen, in pixels, at a depth.
@@ -492,7 +493,6 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     float3 worldRay = reflect(normalizeOr(position - frame->cameraPosition, frame->cameraForward), worldNormal);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 outside = position + worldNormal * ddgiSpacing(frame, 0);
-    float3 around = reflectionAmbient(frame, outside, worldNormal, atmosphere);
 
     // Rays back towards the camera find only what is behind it, off screen. They fade out on the way there: cut off
     // at once, a chrome ball's lower half showed a sharp ring where they gave way to the sky's ground colour.
@@ -522,7 +522,8 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     // A pixel and a half along, off the surface it leaves, and a little more by noise, so neighbouring rays do not
     // band together.
     float along = length(span.xy) > 1e-3 ? (1.5 + aoNoise(pixel, frame->frameIndex).y) / length(span.xy) : 1.0;
-    float t = along;
+    // A ray turned back towards the camera has its find faded out, so it need not look.
+    float t = towards > 0.0 ? along : last;
     bool found = false;
     for (uint i = 0; i < iterations && t < last; i++)
     {
@@ -533,7 +534,9 @@ float4 reflectionsFragment(AoOut input) : SV_Target
         float2 side = (cell + select(span.xy > 0.0, float2(1.0), float2(0.0))) * cellSize;
         float2 crossing = select(abs(span.xy) < 1e-6, float2(1e9), (side - from.xy) / span.xy);
         float leaves = min(crossing.x, crossing.y) + 0.01 / max(length(span.xy), 1e-3);
-        float nearest = textures[NonUniformResourceIndex(pyramid)].Load(int3(int2(cell), level)).r;
+        // The finest level is the depth itself; the pyramid holds the coarser ones.
+        float nearest = level == 0 ? loadDepth(depthTexture, int2(cell))
+            : textures[NonUniformResourceIndex(pyramid)].Load(int3(int2(cell), level - 1)).r;
         if (at.z > nearest)
         {
             // In front of everything in the cell: on to its side, or, where the ray reaches the nearest depth inside
@@ -624,24 +627,30 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     float travelled = length(endView - start);
     float3 end = position + worldRay * max(travelled - ddgiSpacing(frame, 0) * 0.5, 0.0);
     end = travelled > ddgiSpacing(frame, 0) ? end : outside;
+    // What the ray met, as last frame's picture shows it where that point was then.
+    float3 colour = 0.0;
+    float sure = 0.0;
+    if (found)
+    {
+        float2 hit = ended.xy;
+        float2 uv = hit / size;
+        float hitDepth = loadDepth(depthTexture, int2(hit));
+        float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, hitDepth, 1.0));
+        float4 before = transform(frame->prevViewProj, float4(world.xyz / world.w, 1.0));
+        float2 previousUv = before.xy / before.w * 0.5 + 0.5;
+        if (before.w > 0.0 && all(previousUv >= 0.0) && all(previousUv <= 1.0))
+        {
+            colour = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).rgb;
+            float2 border = min(uv, 1.0 - uv);
+            sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled / max(reach, 1e-3)) * 4.0) * towards;
+        }
+    }
+    // The surroundings only where the ray's own find leaves any of the reflection to them.
+    if (sure >= 0.999)
+    {
+        return float4(colour, sure);
+    }
+    float3 around = reflectionAmbient(frame, outside, worldNormal, atmosphere);
     float3 surroundings = reflectionFallback(frame, position, end, -worldRay, worldRay, roughness, around, atmosphere, true);
-    if (!found)
-    {
-        return float4(surroundings, 0.0);
-    }
-    // Where the point it met was last frame.
-    float2 hit = ended.xy;
-    float2 uv = hit / size;
-    float hitDepth = loadDepth(depthTexture, int2(hit));
-    float4 world = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, hitDepth, 1.0));
-    float4 before = transform(frame->prevViewProj, float4(world.xyz / world.w, 1.0));
-    float2 previousUv = before.xy / before.w * 0.5 + 0.5;
-    if (before.w <= 0.0 || any(previousUv < 0.0) || any(previousUv > 1.0))
-    {
-        return float4(surroundings, 0.0);
-    }
-    float3 colour = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).rgb;
-    float2 border = min(uv, 1.0 - uv);
-    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled / max(reach, 1e-3)) * 4.0) * towards;
     return float4(lerp(surroundings, colour, sure), sure);
 }

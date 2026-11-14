@@ -23,7 +23,7 @@ The probes sit in three grids round the camera, each 32 probes across, 16 high a
 
 A few probes, scattered through the grids, trace their rays each frame: a quarter of the fine ones, which light what is near, an eighth of the middle grid's, and a sixteenth of the farthest, which light the distance. Each blends what it finds into what it had, smoothing away the noise of its rays, but takes a real change at once: when a lamp goes out or a door shuts, its bounced light goes with it within a fraction of a second rather than lingering. When a level opens, every probe traces each frame for its first few, so the light has settled by the time you see it.
 
-Light bounces more than once: where a ray hits a surface, the light it brings back includes what the probes round that surface found last frame. Shiny surfaces reflect the probes' light too, so a polished floor shows the warm walls round it rather than the sky through the ceiling.
+Light bounces more than once: where a ray hits a surface, the light it brings back includes what the probes round that surface found last frame. Shiny surfaces reflect the probes' light too, where no [[Reflection Probes|reflection probe]] covers them, so a polished floor shows the warm walls round it rather than the sky through the ceiling. A reflection probe shows them sharper.
 
 Bounced light is soft by nature, so the probes show it well. The small, sharp shade where things touch comes from ambient occlusion and contact shadows (see [[Post-Processing]] and [[Lights]]).
 

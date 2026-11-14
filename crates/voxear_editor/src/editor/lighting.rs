@@ -31,6 +31,11 @@ impl Editor {
         self.lighting_panel.row_of(title)
     }
 
+    /// The row of a setting of the selected Post Volume, by its title.
+    pub fn post_volume_row(&self, title: &str) -> Option<voxear_ui::NodeId> {
+        self.inspector.volume_row(title)
+    }
+
     /// The lighting settings the Lighting page shows, as the scene names them.
     pub fn lighting_shown(&self) -> Option<&str> {
         self.lighting_panel.shown()
@@ -74,13 +79,13 @@ impl Editor {
             LightingAction::SetScene(reference) => self.set_scene_lighting(reference.as_deref()),
             // A look pack's setting: written into its file, and the scene shown under it wears it as it now is.
             LightingAction::Set { file, path, value } if file.extension().is_some_and(|e| e == "lookpack") => {
-                lighting_panel::write_setting(&file, path, value).map(|()| {
+                self.write_setting_undoably(&file, path, value).map(|()| {
                     self.files_seen();
                     self.look_pack_changed();
                 })
             }
             LightingAction::Set { file, path, value } => {
-                lighting_panel::write_setting(&file, path, value).and_then(|()| {
+                self.write_setting_undoably(&file, path, value).and_then(|()| {
                     self.files_seen();
                     self.game.content.forget_kind(voxear_assets::AssetKind::Lighting);
                     let game = &mut self.game;
@@ -101,6 +106,23 @@ impl Editor {
             tracing::error!("{error:#}");
         }
         self.refresh_lighting_page();
+    }
+
+    /// Writes a setting into a lighting settings or look pack file, as a step
+    /// to undo: the file's text before and after.
+    fn write_setting_undoably(
+        &mut self,
+        file: &std::path::Path,
+        path: &[&str],
+        value: Option<toml_edit::Value>,
+    ) -> anyhow::Result<()> {
+        let before = std::fs::read_to_string(file)?;
+        lighting_panel::write_setting(file, path, value)?;
+        let after = std::fs::read_to_string(file)?;
+        if after != before {
+            self.history.record_step(crate::history::Edit::File { path: file.to_path_buf(), before, after });
+        }
+        Ok(())
     }
 
     /// A change to the lighting of the scene at `scene`, from its Inspector:

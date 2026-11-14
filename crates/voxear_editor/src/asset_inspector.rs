@@ -606,6 +606,7 @@ impl AssetView {
                 ui.add_class(tabs, "lighting-asset-tabs");
                 let body = ui.panel(rows, Style::column());
                 let mut fields = LightingFields::for_pack(ui, tabs, body);
+                fields.set_pictures(ui, lighting_panel::pictures(game));
                 fields.show_file(ui, &file);
                 view.lighting = Some((fields, file.clone()));
             }
@@ -620,6 +621,7 @@ impl AssetView {
                 ui.add_class(tabs, "lighting-asset-tabs");
                 let body = ui.panel(rows, Style::column());
                 let mut fields = LightingFields::new(ui, tabs, body);
+                fields.set_pictures(ui, lighting_panel::pictures(game));
                 fields.show_file(ui, &file);
                 view.lighting = Some((fields, file.clone()));
             }
@@ -1053,6 +1055,7 @@ impl AssetView {
     /// are, after a change to them.
     pub fn refresh_lighting(&mut self, ui: &mut Ui, game: &Game) {
         if let Some((fields, file)) = &mut self.lighting {
+            fields.set_pictures(ui, lighting_panel::pictures(game));
             fields.show_file(ui, file);
         }
         if let Some(panel) = &mut self.scene_lighting {

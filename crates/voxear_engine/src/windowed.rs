@@ -148,6 +148,11 @@ impl App {
         let handles =
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
+        // HDR output to try a display with before a game's options set it: `VOXEAR_HDR=on`, `hdr10` or `scrgb`.
+        if let Some(hdr) = std::env::var("VOXEAR_HDR").ok().and_then(|asked| hdr_choice(&asked)) {
+            self.game.display.hdr.hdr = hdr;
+            self.game.display.hdr_changed = true;
+        }
         if let Some(setup) = self.setup.take() {
             setup(&mut self.game, &mut renderer)?;
         }
@@ -213,6 +218,9 @@ impl App {
         let display = &mut self.game.display;
         (display.width, display.height) = (size.width, size.height);
         display.fullscreen = window.fullscreen().is_some();
+        if let Some(renderer) = &self.renderer {
+            display.hdr_shown = renderer.display().1;
+        }
     }
 
     /// Makes what the scripts asked of the window and the mouse, after a
@@ -221,6 +229,12 @@ impl App {
     fn apply_display(&mut self) {
         let Some(window) = &self.window else { return };
         let display = &mut self.game.display;
+        if std::mem::take(&mut display.hdr_changed)
+            && let Some(renderer) = &mut self.renderer
+            && let Err(error) = renderer.set_display(display.hdr)
+        {
+            tracing::error!("could not change the display's HDR output: {error:#}");
+        }
         if let Some((width, height, fullscreen)) = display.asked.take() {
             window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
             if !fullscreen {
@@ -443,5 +457,17 @@ mod tests {
     #[test]
     fn with_no_scripts_running_the_right_mouse_button_flies_at_once() {
         assert!(frees_camera(&Engine::new()), "nothing else reads the mouse");
+    }
+}
+
+/// HDR output as `VOXEAR_HDR` names it.
+fn hdr_choice(name: &str) -> Option<voxear_render::display::HdrChoice> {
+    use voxear_render::display::HdrChoice;
+    match name.to_ascii_lowercase().as_str() {
+        "on" | "1" => Some(HdrChoice::On),
+        "hdr10" => Some(HdrChoice::Hdr10),
+        "scrgb" => Some(HdrChoice::ScRgb),
+        "off" | "0" => Some(HdrChoice::Off),
+        _ => None,
     }
 }

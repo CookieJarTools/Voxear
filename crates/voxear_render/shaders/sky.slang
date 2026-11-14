@@ -149,6 +149,18 @@ float3 gradientSky(Frame* frame, float3 direction)
     return color + frame->sunColor * (smoothstep(0.99955, 0.9998, toSun) * 8.0 + pow(saturate(toSun), 48.0) * 0.12);
 }
 
+// A gradient sky's picture, an equirectangular panorama round the camera:
+// across it once round the horizon, from straight up at its top to straight
+// down at its bottom, turned round by the sky's turn. Light as it is, for an
+// HDR picture.
+float3 pictureSky(Frame* frame, float3 direction)
+{
+    float around = atan2(direction.x, direction.z) + frame->lighting.skyPictureTurn;
+    float2 uv = float2(frac(around / (2.0 * PI) + 0.5), acos(clamp(direction.y, -1.0, 1.0)) / PI);
+    // Its finest mip: derivatives jump across the seam, where they would pick a far coarser one.
+    return textures[NonUniformResourceIndex(frame->lighting.skyPicture - 1)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0).rgb;
+}
+
 float3 atmosphereSky(Frame* frame, float3 direction)
 {
     Atmosphere atmosphere = frame->lighting.atmosphere;
@@ -183,7 +195,9 @@ SkyFragmentOut skyFragment(SkyOut input)
     float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
     SkyFragmentOut o;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
-    float3 color = atmosphere ? atmosphereSky(frame, direction) : gradientSky(frame, direction);
+    float3 color = atmosphere ? atmosphereSky(frame, direction)
+        : frame->lighting.skyPicture != 0 ? pictureSky(frame, direction)
+        : gradientSky(frame, direction);
     if (frame->stars > 0.0 && direction.y > 0.0)
     {
         // Dimmed through the air as everything beyond it is: faint near the horizon.

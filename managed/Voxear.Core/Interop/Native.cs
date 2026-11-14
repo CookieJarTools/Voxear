@@ -97,6 +97,25 @@ internal static unsafe class Native
 		return ((int)width, (int)height, fullscreen);
 	}
 
+	/// <summary>The display's HDR output as it is, after it is set as asked when it is given.</summary>
+	public static HdrInfoData Hdr(HdrInfoData? asked)
+	{
+		var now = new HdrInfoData { PaperWhite = 200f, Peak = 1000f };
+		if (!IsConnected)
+		{
+			return now;
+		}
+		if (asked is { } set)
+		{
+			Api->ScreenHdr(&set, &now);
+		}
+		else
+		{
+			Api->ScreenHdr(null, &now);
+		}
+		return now;
+	}
+
 	public static void SetScreen(int width, int height, bool fullscreen)
 	{
 		if (IsConnected)

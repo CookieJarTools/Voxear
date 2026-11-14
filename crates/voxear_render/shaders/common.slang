@@ -645,6 +645,11 @@ struct Lighting
     // 1 when the sky's light is the moon: its disc, and a night sky.
     uint moon;
     Clouds clouds;
+    // A gradient sky's picture, a panorama drawn in place of its colours, as its texture's index and one, so 0 is
+    // none; and how far it is turned round, in radians.
+    uint skyPicture;
+    float skyPictureTurn;
+    uint2 skyPad;
 };
 
 // How rough a world of blocks' sea is, and where (src/sea.rs's GpuSea; blockSwell in water.slang).

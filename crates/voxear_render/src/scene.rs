@@ -386,6 +386,42 @@ pub struct Sky {
     pub sun_size: f32,
     /// The clouds in it; none by default.
     pub clouds: Clouds,
+    /// A gradient sky drawn as a picture of the whole sky round it, an
+    /// equirectangular panorama, in place of its colours: the picture
+    /// asset it names, turned round by `picture_turn` degrees.
+    pub picture: Option<voxear_assets::AssetGuid>,
+    pub picture_turn: f32,
+    /// The picture as the engine uploaded it, and the light of its top, its
+    /// horizon and its bottom (linear), which light the scene in place of
+    /// the zenith, horizon and ground colours. The engine sets them.
+    pub picture_texture: Option<TextureId>,
+    pub picture_light: Option<[Vec3; 3]>,
+}
+
+/// The light of a sky's picture, an equirectangular panorama, as a gradient
+/// sky's three colours: the sky above 45 degrees, round the horizon up to 20
+/// degrees, and below it, each averaged over the sky's own area, so the scene
+/// is lit by the picture's light. Linear floats in, linear colours out.
+pub fn picture_sky_light(pixels: &[[f32; 4]], width: u32, height: u32) -> [Vec3; 3] {
+    let mut sums = [(Vec3::ZERO, 0.0f32); 3];
+    for y in 0..height {
+        // Each row's height above the horizon, and how much of the sky it covers.
+        let up = std::f32::consts::FRAC_PI_2 - (y as f32 + 0.5) / height as f32 * std::f32::consts::PI;
+        let band = match up.to_degrees() {
+            a if a >= 45.0 => 0,
+            a if a >= 0.0 && a < 20.0 => 1,
+            a if a < 0.0 => 2,
+            _ => continue,
+        };
+        let weight = up.cos();
+        for x in 0..width {
+            let [r, g, b, _] = pixels[(y * width + x) as usize];
+            let colour = Vec3::new(r, g, b).max(Vec3::ZERO);
+            sums[band].0 += colour * weight;
+            sums[band].1 += weight;
+        }
+    }
+    sums.map(|(sum, weight)| if weight > 0.0 { sum / weight } else { Vec3::ZERO })
 }
 
 /// Clouds in the sky: a layer of them between two heights, drifting with the
@@ -495,6 +531,10 @@ impl Default for Sky {
             distance_haze: 10.0,
             sun_size: 0.5357,
             clouds: Clouds::default(),
+            picture: None,
+            picture_turn: 0.0,
+            picture_texture: None,
+            picture_light: None,
         }
     }
 }
@@ -621,6 +661,7 @@ pub fn extract(
     let origin = voxear_scene::WorldOrigin::of(world).0 + offset.as_i64vec3();
     gpu_post.fog_base_height = (f64::from(gpu_post.fog_base_height) - origin.y as f64) as f32;
     gpu_post.lut_texture = post.grading.lut.map_or(NO_TEXTURE, |lut| lut.0);
+    let pictured = sky.picture_texture.filter(|_| sky.mode == SkyMode::Gradient).and(sky.picture_light);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
         planes: through.map_or_else(|| frustum_planes(position, rotation, fov, aspect, camera.near), |t| t.planes),
@@ -647,9 +688,10 @@ pub fn extract(
         sun_direction: vec3(Vec3::new(0.3, -0.8, 0.5).normalize()),
         sun_color: [0.0; 3],
         exposure: camera.exposure,
-        sky_zenith: vec3(sky.zenith),
-        sky_horizon: vec3(sky.horizon),
-        ground_color: vec3(sky.ground),
+        // A picture sky lights the scene with its own light, as a gradient's colours would.
+        sky_zenith: vec3(pictured.map_or(sky.zenith, |light| light[0])),
+        sky_horizon: vec3(pictured.map_or(sky.horizon, |light| light[1])),
+        ground_color: vec3(pictured.map_or(sky.ground, |light| light[2])),
         ambient: sky.ambient,
         stars: sky.stars.max(0.0),
         viewport: [width, height],
@@ -666,6 +708,11 @@ pub fn extract(
             multi_scattering: NO_TEXTURE,
             sky_view: NO_TEXTURE,
             aerial_perspective: NO_TEXTURE,
+            sky_picture: match (sky.mode, sky.picture_texture) {
+                (SkyMode::Gradient, Some(texture)) => texture.0 + 1,
+                _ => 0,
+            },
+            sky_picture_turn: sky.picture_turn.to_radians(),
             ..GpuLighting::default()
         },
         origin: crate::gpu::frame_origin(origin),
@@ -1089,6 +1136,24 @@ fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
 #[cfg(test)]
 mod tests {
     use super::temperature_color;
+
+    #[test]
+    fn a_sky_pictures_light_is_its_sky_its_horizon_and_its_ground() {
+        // Blue overhead, white round the horizon, brown below, as a panorama 16 by 8.
+        let (width, height) = (16, 8);
+        let pixels: Vec<[f32; 4]> = (0..width * height)
+            .map(|i| match i / width {
+                0 | 1 => [0.1, 0.3, 2.0, 1.0],
+                2 => [0.5, 0.5, 0.5, 1.0],
+                3 => [4.0, 4.0, 4.0, 1.0],
+                _ => [0.2, 0.1, 0.05, 1.0],
+            })
+            .collect();
+        let [sky, horizon, ground] = super::picture_sky_light(&pixels, width, height);
+        assert!((sky - voxear_core::math::Vec3::new(0.1, 0.3, 2.0)).length() < 1e-4, "{sky}");
+        assert!((horizon.x - 4.0).abs() < 1e-4, "the row just above the horizon: {horizon}");
+        assert!((ground - voxear_core::math::Vec3::new(0.2, 0.1, 0.05)).length() < 1e-4, "{ground}");
+    }
 
     #[test]
     fn a_candle_is_orange_daylight_white_and_a_blue_sky_blue() {

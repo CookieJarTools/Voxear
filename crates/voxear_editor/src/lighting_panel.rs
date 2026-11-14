@@ -43,6 +43,20 @@ enum Kind {
     },
     /// A line of text.
     Text,
+    /// Three numbers, one for each channel, as lift, gamma and gain write them.
+    Channels {
+        min: f32,
+        max: f32,
+    },
+    /// An sRGB colour that may be left unset, picked from its swatch, with a
+    /// button that unsets it: the fog's, which is the horizon's unset.
+    MaybeColor,
+    /// A picture of the project, picked from a menu, or none, written as its
+    /// project path.
+    Picture,
+    /// A picture of the project as `Picture`, written as its GUID, as a
+    /// sky's is.
+    PictureId,
 }
 
 /// One setting: where it is in a `.lighting` file, its name, its group, and
@@ -75,6 +89,9 @@ const SHAFTS: When = &[(&["post", "fog", "enabled"], "true"), (&["post", "fog", 
 const BOUNCE: When = &[(&["post", "global_illumination", "enabled"], "true")];
 const OCCLUSION: When = &[(&["post", "ambient_occlusion", "enabled"], "true")];
 const FOCUS: When = &[(&["post", "depth_of_field", "enabled"], "true")];
+const CONTACT: When = &[(&["post", "contact_shadows", "enabled"], "true")];
+const REFLECT: When = &[(&["post", "reflections", "enabled"], "true")];
+const TAA: When = &[(&["post", "anti_aliasing", "mode"], "taa")];
 const BLUR: When = &[(&["post", "motion_blur", "enabled"], "true")];
 
 const fn number(min: f32, max: f32, unit: &'static str) -> Kind {
@@ -97,6 +114,8 @@ const CUSTOM_WEATHER: When = &[(&["weather", "kind"], "custom")];
 const CLOUD_KINDS: &[(&str, &str)] = &[("Soft", "soft"), ("Blocks", "blocks")];
 const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
+const AO_QUALITIES: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra")];
+const AA_MODES: &[(&str, &str)] = &[("Off", "off"), ("FXAA", "fxaa"), ("TAA", "taa")];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
 
@@ -112,6 +131,10 @@ const SETTINGS: &[Info] = &[
         help: "The sky's colour at the horizon, where it meets the ground." },
     Info { path: &["sky", "ground"], title: "Ground", group: "Sky", kind: Kind::Color, when: GRADIENT_SKY,
         help: "The colour below the horizon, which also lights things from beneath." },
+    Info { path: &["sky", "picture"], title: "Picture", group: "Sky", kind: Kind::PictureId, when: GRADIENT_SKY,
+        help: "A picture of a whole sky, round you as a panorama twice as wide as it is high: an HDR picture (.exr or .hdr) for a sky as bright as the real one. It is drawn in place of the colours above, and lights the scene with its own." },
+    Info { path: &["sky", "picture_turn"], title: "Picture turn", group: "Sky", kind: number(-360.0, 360.0, "°"), when: GRADIENT_SKY,
+        help: "How far the sky's picture is turned round, in degrees, to put its sun or its mountains where you want them." },
     Info { path: &["sky", "ambient"], title: "Ambient", group: "Sky", kind: number(0.0, 8.0, ""), when: ALWAYS,
         help: "How brightly the sky lights everything, shade included. Lower it for a darker, moodier scene." },
     Info { path: &["sky", "haze"], title: "Haze", group: "Sky", kind: number(0.0, 10.0, ""), when: ATMOSPHERE,
@@ -190,6 +213,12 @@ const SETTINGS: &[Info] = &[
         help: "How fast the eye adjusts when you walk into somewhere brighter, in stops a second." },
     Info { path: &["post", "exposure", "speed_down"], title: "Adapt to dark", group: "Exposure", kind: number(0.0, 20.0, "EV/s"), when: AUTO_EXPOSURE,
         help: "How fast the eye adjusts when you walk into somewhere darker, in stops a second. Eyes adjust to the dark slowly." },
+    Info { path: &["post", "exposure", "night"], title: "Night", group: "Exposure", kind: number(0.0, 1.0, ""), when: AUTO_EXPOSURE,
+        help: "How dark a dark scene stays, as an eye sees it: 1 keeps night dark, 0 brightens it as far as a daylit scene." },
+    Info { path: &["post", "exposure", "low_percent"], title: "Meter from", group: "Exposure", kind: number(0.0, 99.0, "%"), when: AUTO_EXPOSURE,
+        help: "The darkest part of the picture exposure is measured from, as a percentile of its brightness. Lower it to lift the shadows." },
+    Info { path: &["post", "exposure", "high_percent"], title: "Meter to", group: "Exposure", kind: number(1.0, 100.0, "%"), when: AUTO_EXPOSURE,
+        help: "The brightest part of the picture exposure is measured to, as a percentile: the brightest few percent beyond it are left out, so a lamp or the sun does not darken the rest." },
     Info { path: &["post", "tonemap", "mapper"], title: "Tonemapper", group: "Colour", kind: Kind::Choice(TONEMAPPERS), when: ALWAYS,
         help: "How bright light is squeezed into what a screen can show. AgX keeps colours natural in bright light and is the best default; ACES is punchier, like film." },
     Info { path: &["post", "tonemap", "contrast"], title: "Contrast", group: "Colour", kind: number(0.0, 3.0, ""), when: AGX,
@@ -204,8 +233,22 @@ const SETTINGS: &[Info] = &[
         help: "Contrast applied in the final colour grade, after the tonemapper." },
     Info { path: &["post", "grading", "saturation"], title: "Grade saturation", group: "Colour", kind: number(0.0, 3.0, ""), when: ALWAYS,
         help: "Colour strength applied in the final colour grade, after the tonemapper." },
+    Info { path: &["post", "grading", "lift"], title: "Lift", group: "Colour", kind: Kind::Channels { min: -1.0, max: 1.0 }, when: ALWAYS,
+        help: "Raises or lowers the shadows, red, green and blue each, after the tonemapper. 0 leaves them as they are." },
+    Info { path: &["post", "grading", "gamma"], title: "Gamma", group: "Colour", kind: Kind::Channels { min: 0.1, max: 4.0 }, when: ALWAYS,
+        help: "Brightens (above 1) or darkens (below 1) the midtones, red, green and blue each." },
+    Info { path: &["post", "grading", "gain"], title: "Gain", group: "Colour", kind: Kind::Channels { min: 0.0, max: 4.0 }, when: ALWAYS,
+        help: "Scales the highlights, red, green and blue each. 1 leaves them as they are." },
+    Info { path: &["post", "grading", "lut"], title: "Lookup table", group: "Colour", kind: Kind::Picture, when: ALWAYS,
+        help: "A colour lookup table applied last: a picture of squares side by side, as many as each is wide, such as 256×16. `vox lut neutral` writes one to grade in an image editor." },
+    Info { path: &["post", "grading", "lut_contribution"], title: "Table amount", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How much of the lookup table's grade shows: 0 none, 1 all of it." },
     Info { path: &["post", "vignette", "intensity"], title: "Vignette", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "Darkens the corners of the picture, drawing the eye to the middle, as old lenses do." },
+    Info { path: &["post", "vignette", "smoothness"], title: "Vignette softness", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "How gently the corners darken: low gives a hard edge, high a gradual one." },
+    Info { path: &["post", "vignette", "roundness"], title: "Vignette roundness", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "1 darkens in a circle, 0 follows the screen's own shape." },
     Info { path: &["post", "chromatic_aberration"], title: "Colour fringes", group: "Colour", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "Splits colours slightly at the picture's edges, as a cheap lens does. Small amounts look filmic." },
     Info { path: &["post", "bloom", "enabled"], title: "Bloom", group: "Bloom", kind: Kind::Toggle, when: ALWAYS,
@@ -224,6 +267,8 @@ const SETTINGS: &[Info] = &[
         help: "How quickly the fog thins as it rises. Higher keeps it low to the ground." },
     Info { path: &["post", "fog", "base_height"], title: "Base height", group: "Fog", kind: number(-1000.0, 1000.0, "m"), when: FOG,
         help: "The height, in metres, where the fog is thickest." },
+    Info { path: &["post", "fog", "color"], title: "Colour", group: "Fog", kind: Kind::MaybeColor, when: FOG,
+        help: "The fog's colour. Unset, it takes the sky's colour at the horizon, so it blends into the distance." },
     Info { path: &["post", "fog", "sun_glow"], title: "Sun glow", group: "Fog", kind: number(0.0, 1.0, ""), when: FOG,
         help: "How brightly the fog glows when you look towards the sun." },
     Info { path: &["post", "fog", "volumetric"], title: "Light shafts", group: "Fog", kind: Kind::Toggle, when: FOG,
@@ -244,10 +289,30 @@ const SETTINGS: &[Info] = &[
         help: "How far, in metres, each point looks for nearby things that shade it. Larger darkens wider areas." },
     Info { path: &["post", "ambient_occlusion", "strength"], title: "Occlusion strength", group: "Shading", kind: number(0.0, 4.0, ""), when: OCCLUSION,
         help: "How dark the corners get." },
+    Info { path: &["post", "ambient_occlusion", "tint"], title: "Occlusion tint", group: "Shading", kind: Kind::Color, when: OCCLUSION,
+        help: "The colour corners take on. Black only darkens; a warm brown or a purple tints them, as stylised looks do." },
+    Info { path: &["post", "ambient_occlusion", "quality"], title: "Occlusion quality", group: "Shading", kind: Kind::Choice(AO_QUALITIES), when: OCCLUSION,
+        help: "How hard each point looks for what shades it. Higher is smoother and costs more." },
+    Info { path: &["post", "ambient_occlusion", "full_resolution"], title: "Full resolution", group: "Shading", kind: Kind::Toggle, when: OCCLUSION,
+        help: "Looks at every pixel, rather than one in four each frame: sharper in fine detail, and about four times the cost." },
     Info { path: &["post", "contact_shadows", "enabled"], title: "Contact shadows", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
         help: "Adds small, sharp shadows where things touch the ground or each other, that the sun's shadows are too coarse to show." },
+    Info { path: &["post", "contact_shadows", "length"], title: "Contact length", group: "Shading", kind: number(0.0, 4.0, "m"), when: CONTACT,
+        help: "How far, in metres, each point looks towards the sun for what shades it." },
+    Info { path: &["post", "contact_shadows", "thickness"], title: "Contact thickness", group: "Shading", kind: number(0.001, 2.0, "m"), when: CONTACT,
+        help: "How thick things count as, in metres: what lies farther behind them than this does not shadow." },
+    Info { path: &["post", "contact_shadows", "steps"], title: "Contact steps", group: "Shading", kind: Kind::Whole { max: 64 }, when: CONTACT,
+        help: "How many steps each point takes towards the sun. More finds thinner things and costs more." },
     Info { path: &["post", "reflections", "enabled"], title: "Reflections", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
         help: "Shiny surfaces reflect what is round them: polished floors, water, metal. With ray tracing they reflect everything, even what is off screen." },
+    Info { path: &["post", "reflections", "max_distance"], title: "Reflection distance", group: "Shading", kind: number(0.1, 1000.0, "m"), when: REFLECT,
+        help: "How far, in metres, reflections look for what they show." },
+    Info { path: &["post", "reflections", "thickness"], title: "Reflection thickness", group: "Shading", kind: number(0.01, 10.0, "m"), when: REFLECT,
+        help: "How thick things on screen count as for reflections, in metres. Too thin and reflections show gaps." },
+    Info { path: &["post", "reflections", "max_roughness"], title: "Reflection roughness", group: "Shading", kind: number(0.01, 1.0, ""), when: REFLECT,
+        help: "Surfaces rougher than this show no screen reflections, only the blurred sky's." },
+    Info { path: &["post", "reflections", "steps"], title: "Reflection steps", group: "Shading", kind: Kind::Whole { max: 128 }, when: REFLECT,
+        help: "How many steps each reflection ray takes. More finds thinner things and costs more." },
     Info { path: &["post", "anti_aliasing", "specular_smoothing"], title: "Shimmer reduction", group: "Shading", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "Calms the sparkle of shiny, finely bumpy surfaces, such as embroidery or worn metal, as the camera moves, by drawing them a little less glossy where their bumps are smaller than a pixel. 0 turns it off." },
     Info { path: &["post", "depth_of_field", "enabled"], title: "Depth of field", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
@@ -256,10 +321,22 @@ const SETTINGS: &[Info] = &[
         help: "How far from the camera, in metres, things are in sharp focus." },
     Info { path: &["post", "depth_of_field", "aperture"], title: "Aperture", group: "Lens", kind: number(0.5, 64.0, "f"), when: FOCUS,
         help: "How much blur there is outside the focus: smaller f-numbers blur more, as on a real lens." },
+    Info { path: &["post", "depth_of_field", "max_blur"], title: "Largest blur", group: "Lens", kind: number(0.0, 64.0, "px"), when: FOCUS,
+        help: "The widest the blur gets, in pixels of a 1080p picture." },
     Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
         help: "Blurs things as they move fast, or as the camera turns, as a film camera does." },
     Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR,
         help: "How much moving things blur." },
+    Info { path: &["post", "anti_aliasing", "mode"], title: "Anti-aliasing", group: "Quality", kind: Kind::Choice(AA_MODES), when: ALWAYS,
+        help: "How edges are smoothed. TAA is smooth and steady, and reflections and render scale need it; FXAA is cheap and a little soft." },
+    Info { path: &["post", "anti_aliasing", "render_scale"], title: "Render scale", group: "Quality", kind: number(0.25, 1.0, "×"), when: TAA,
+        help: "The share of the screen's width and height the scene is drawn at, TAA filling in the rest. 0.67 draws under half the pixels, far cheaper and a little softer." },
+    Info { path: &["post", "anti_aliasing", "sharpness"], title: "Sharpening", group: "Quality", kind: number(0.0, 1.0, ""), when: ALWAYS,
+        help: "Sharpens fine detail after anti-aliasing, without halos round edges. 0 turns it off." },
+    Info { path: &["post", "anti_aliasing", "taa_history"], title: "TAA history", group: "Quality", kind: number(0.8, 0.97, ""), when: TAA,
+        help: "How much of the last frame TAA keeps: higher is smoother and steadier, lower reacts faster to what moves." },
+    Info { path: &["post", "anti_aliasing", "taa_jitter"], title: "TAA jitter", group: "Quality", kind: number(0.0, 2.0, "px"), when: TAA,
+        help: "How far, in pixels, the camera is shifted from frame to frame for TAA to gather detail from. 1 is right for nearly every scene." },
 ];
 
 /// What a look pack has that lighting settings have not: a line saying
@@ -297,6 +374,8 @@ enum Control {
     /// A pack's toggle: the level's own, on or off.
     Tri(NodeId),
     Text(NodeId),
+    /// Red, green and blue.
+    Channels([NodeId; 3]),
 }
 
 impl Control {
@@ -308,6 +387,7 @@ impl Control {
             | Self::Color(node)
             | Self::Tri(node)
             | Self::Text(node) => node,
+            Self::Channels([first, ..]) => first,
         }
     }
 }
@@ -422,6 +502,7 @@ impl LightingPanel {
     /// and every setting's value, which can be changed only in a file of
     /// the project's.
     pub fn refresh(&mut self, ui: &mut Ui, game: &mut Game) {
+        self.fields.set_pictures(ui, pictures(game));
         let current = game.levels.scene_lighting().map(str::to_string);
         let own = world_own(game);
         self.show_scene(ui, game, current, own);
@@ -608,26 +689,53 @@ pub struct LightingFields {
     /// Whether these are a look pack's settings: a row is empty where the
     /// pack leaves a setting to the level.
     pack: bool,
+    /// The project's pictures a picture setting's menu lists, after None:
+    /// each one's project path and GUID.
+    pictures: Vec<(String, String)>,
+    /// Whether the settings can be changed: a file of the project's, or a
+    /// Post Volume's own.
+    editable: bool,
+}
+
+/// Which settings a [`LightingFields`] shows, and how.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Lighting settings: every setting, in effect.
+    Lighting,
+    /// A look pack: lighting's but for the weather, with its own, empty
+    /// where the pack leaves a setting to the level.
+    Pack,
+    /// A Post Volume's: the post-processing settings alone, empty where the
+    /// volume leaves a setting to the level, colours as numbers.
+    Volume,
 }
 
 impl LightingFields {
     /// A tab for each group into `tab_bar` and every setting into `view`.
     pub fn new(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
-        Self::build(ui, tab_bar, view, false)
+        Self::build(ui, tab_bar, view, Mode::Lighting)
+    }
+
+    /// A Post Volume's settings: post-processing alone, each row empty where
+    /// the volume leaves it to the level.
+    pub fn for_volume(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
+        Self::build(ui, tab_bar, view, Mode::Volume)
     }
 
     /// A look pack's settings: its description, the settings lighting has
     /// but for the weather, which is the level's, and how blocks are drawn.
     pub fn for_pack(ui: &mut Ui, tab_bar: NodeId, view: NodeId) -> Self {
-        Self::build(ui, tab_bar, view, true)
+        Self::build(ui, tab_bar, view, Mode::Pack)
     }
 
-    fn build(ui: &mut Ui, tab_bar: NodeId, view: NodeId, pack: bool) -> Self {
+    fn build(ui: &mut Ui, tab_bar: NodeId, view: NodeId, mode: Mode) -> Self {
         let (first, last) = PACK_SETTINGS.split_at(1);
+        let pack = mode != Mode::Lighting;
         let lighting = SETTINGS.iter().filter(|info| !pack || info.group != "Weather");
-        let infos: Vec<&'static Info> = match pack {
-            true => first.iter().chain(lighting).chain(last).collect(),
-            false => lighting.collect(),
+        let infos: Vec<&'static Info> = match mode {
+            Mode::Pack => first.iter().chain(lighting).chain(last).collect(),
+            Mode::Lighting => lighting.collect(),
+            Mode::Volume => lighting.filter(|info| info.path[0] == "post").collect(),
         };
         let mut tabs: Vec<(&'static str, NodeId)> = Vec::new();
         let body = ui.panel(view, Style::column());
@@ -651,18 +759,29 @@ impl LightingFields {
             ui.add_class(label, "prop-label");
             ui.add_class(label, "scrub");
             ui.set_tooltip(label, info.help, None);
-            let control = control(ui, row, info.kind, pack);
-            // A colour has no empty state to pick, so a pack's has a button that gives it back to the level.
-            let reset = (pack && matches!(info.kind, Kind::Color)).then(|| {
+            // A volume's colours are typed in, as the Inspector's are, having no file for the colour picker.
+            let kind = match (mode, info.kind) {
+                (Mode::Volume, Kind::Color | Kind::MaybeColor) => Kind::Channels { min: 0.0, max: 1.0 },
+                (_, kind) => kind,
+            };
+            let control = control(ui, row, kind, pack);
+            // A colour has no empty state to pick, so a pack's has a button that gives it back to the level, as
+            // one that may be unset has.
+            let resettable =
+                mode != Mode::Volume && ((pack && matches!(info.kind, Kind::Color)) || matches!(info.kind, Kind::MaybeColor));
+            let reset = resettable.then(|| {
                 let reset = ui.button(row, "×");
                 ui.add_class(reset, "setting-reset");
-                ui.set_tooltip(reset, "Give this colour back to the level", None);
+                let tip = if pack { "Give this colour back to the level" } else { "Unset this colour" };
+                ui.set_tooltip(reset, tip, None);
                 reset
             });
             rows.push(Row { info, row, label, control, reset, pack });
         }
         let group = rows[0].info.group;
-        let mut fields = Self { tabs, headings, group, rows, file: None, values: toml::Table::new(), pack };
+        let values = toml::Table::new();
+        let mut fields =
+            Self { tabs, headings, group, rows, file: None, values, pack, pictures: Vec::new(), editable: false };
         fields.show_group(ui);
         fields
     }
@@ -670,13 +789,28 @@ impl LightingFields {
     /// Shows lighting settings' values, in effect, changeable when `file` is
     /// the project's file of them.
     pub fn show(&mut self, ui: &mut Ui, file: Option<PathBuf>, values: toml::Table) {
+        let editable = file.is_some();
         self.file = file;
+        self.show_values(ui, editable, values);
+    }
+
+    /// Shows settings' values, changeable when `editable`, as a Post
+    /// Volume's are: laid out as a `.lighting` file writes them.
+    pub fn show_values(&mut self, ui: &mut Ui, editable: bool, values: toml::Table) {
         self.values = values;
-        let editable = self.file.is_some();
+        self.editable = editable;
         for row in &self.rows {
-            ui.set_enabled(row.control.node(), editable);
+            match row.control {
+                Control::Channels(fields) => fields.into_iter().for_each(|field| ui.set_enabled(field, editable)),
+                control => ui.set_enabled(control.node(), editable),
+            }
             let value = find(&self.values, row.info.path);
-            show(ui, row, value);
+            show(ui, row, value, &self.pictures);
+            if matches!(row.info.kind, Kind::MaybeColor)
+                && let Some(reset) = row.reset
+            {
+                ui.set_visible(reset, value.is_some() && editable);
+            }
             if !row.pack {
                 continue;
             }
@@ -728,16 +862,54 @@ impl LightingFields {
 
     /// A setting changed this frame, as a change to make to the file.
     pub fn update(&mut self, ui: &mut Ui) -> Option<LightingAction> {
+        let (path, value) = self.changed(ui)?;
+        Some(LightingAction::Set { file: self.file.clone()?, path, value })
+    }
+
+    /// A setting changed this frame: where it is, as a `.lighting` file
+    /// writes it, and its value, or `None` to take it out.
+    pub fn changed(&mut self, ui: &mut Ui) -> Option<(&'static [&'static str], Option<toml_edit::Value>)> {
         if let Some(&(group, _)) = self.tabs.iter().find(|(_, tab)| ui.clicked(*tab)) {
             self.group = group;
             self.show_group(ui);
         }
-        let file = self.file.clone()?;
+        if !self.editable {
+            return None;
+        }
         self.rows.iter().find_map(|row| {
             let reset = row.reset.is_some_and(|reset| ui.clicked(reset));
-            let value = if reset { None } else { read_control(ui, row)? };
-            Some(LightingAction::Set { file: file.clone(), path: row.info.path, value })
+            let value = if reset { None } else { read_control(ui, row, &self.pictures, find(&self.values, row.info.path))? };
+            Some((row.info.path, value))
         })
+    }
+
+    /// The tab shown.
+    pub fn group(&self) -> &'static str {
+        self.group
+    }
+
+    /// Shows the tab of `group`, where there is one.
+    pub fn set_group(&mut self, ui: &mut Ui, group: &'static str) {
+        if let Some(&(group, _)) = self.tabs.iter().find(|(name, _)| *name == group) {
+            self.group = group;
+            self.show_group(ui);
+        }
+    }
+
+    /// Lists the project's pictures, by their project paths, in the menus of
+    /// settings that name a picture.
+    pub fn set_pictures(&mut self, ui: &mut Ui, pictures: Vec<(String, String)>) {
+        if pictures == self.pictures {
+            return;
+        }
+        let labels: Vec<&str> = std::iter::once("None").chain(pictures.iter().map(|(path, _)| path.as_str())).collect();
+        for row in self.rows.iter().filter(|row| matches!(row.info.kind, Kind::Picture | Kind::PictureId)) {
+            ui.set_options(row.control.node(), &labels);
+        }
+        self.pictures = pictures;
+        for row in &self.rows {
+            show(ui, row, find(&self.values, row.info.path), &self.pictures);
+        }
     }
 
     /// The colour setting whose swatch was clicked this frame.
@@ -772,6 +944,16 @@ impl LightingFields {
     }
 }
 
+/// The project's pictures, by their project paths, as a picture setting's
+/// menu lists them.
+pub fn pictures(game: &Game) -> Vec<(String, String)> {
+    let db = game.content.db();
+    let mut found: Vec<(String, String)> =
+        db.entries().filter(|e| e.kind == AssetKind::Texture).map(|e| (e.path.clone(), e.guid.to_string())).collect();
+    found.sort();
+    found
+}
+
 /// What a group of settings is for, shown when the pointer rests on its tab.
 fn group_help(group: &str) -> &'static str {
     match group {
@@ -785,6 +967,7 @@ fn group_help(group: &str) -> &'static str {
         "Fog" => "Mist and dust in the air, and the light shafts that show in it.",
         "Shading" => "How light settles in the scene: bounced light, shade in corners, small shadows and reflections.",
         "Lens" => "Camera effects: focus blur and motion blur.",
+        "Quality" => "How edges are smoothed and sharpened, and the scale the scene is drawn at.",
         "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",
         "Blocks" => "How every Block World's faces are drawn under the pack.",
         "Water" => "How water looks under the pack, wherever it is: the sea, Pools and the water of Block Worlds.",
@@ -842,6 +1025,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
         ("haze_glow", toml::Value::Float(f64::from(sky.haze_glow))),
         ("distance_haze", toml::Value::Float(f64::from(sky.distance_haze))),
         ("sun_size", toml::Value::Float(f64::from(sky.sun_size))),
+        ("picture_turn", toml::Value::Float(f64::from(sky.picture_turn))),
         ("clouds", toml::Value::try_from(sky.clouds)?),
         (
             "mode",
@@ -864,7 +1048,12 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     sun.insert("shadow_split".into(), toml::Value::Float(f64::from(lighting.sun.shadow_split)));
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
-    table.insert("post".into(), toml::Value::Table(toml::Table::try_from(post)?));
+    let mut post_table = toml::Table::try_from(post)?;
+    // A lookup table is a picture the settings name, which they do not hold as a value.
+    if let (Some(lut), Some(toml::Value::Table(grading))) = (find(&lighting.post, &["grading", "lut"]), post_table.get_mut("grading")) {
+        grading.insert("lut".into(), lut.clone());
+    }
+    table.insert("post".into(), toml::Value::Table(post_table));
     table.insert("weather".into(), toml::Value::try_from(lighting.weather)?);
     Ok(table)
 }
@@ -986,10 +1175,29 @@ fn control(ui: &mut Ui, row: NodeId, kind: Kind, pack: bool) -> Control {
             ui.add_class(unit, "setting-unit");
             Control::Number(field)
         }
-        Kind::Color => {
+        Kind::Color | Kind::MaybeColor => {
             let swatch = ui.panel(row, Style::default());
             ui.add_class(swatch, "swatch");
             Control::Color(swatch)
+        }
+        Kind::Channels { .. } => {
+            let holder = ui.panel(row, Style::row());
+            ui.add_class(holder, "prop-value");
+            let fields = ["R", "G", "B"].map(|name| {
+                let label = ui.add_label(holder, name);
+                ui.add_class(label, "setting-unit");
+                let field = ui.text_field(holder, "");
+                ui.add_class(field, "value-input");
+                ui.add_class(field, "number-input");
+                field
+            });
+            Control::Channels(fields)
+        }
+        Kind::Picture | Kind::PictureId => {
+            let none = if pack { LEVELS_OWN } else { "None" };
+            let dropdown = ui.dropdown(row, &[none], 0);
+            ui.add_class(dropdown, "value-choice");
+            Control::Choice(dropdown)
         }
         Kind::Whole { .. } => {
             let field = ui.text_field(row, "");
@@ -1007,8 +1215,40 @@ fn control(ui: &mut Ui, row: NodeId, kind: Kind, pack: bool) -> Control {
 
 /// A change made in a row's control this frame: the value to write, or
 /// `None` inside to take the setting out of the file.
-fn read_control(ui: &Ui, row: &Row) -> Option<Option<toml_edit::Value>> {
+fn read_control(
+    ui: &Ui,
+    row: &Row,
+    pictures: &[(String, String)],
+    shown: Option<&toml::Value>,
+) -> Option<Option<toml_edit::Value>> {
     match (row.control, row.info.kind) {
+        (Control::Choice(dropdown), Kind::Picture | Kind::PictureId) if ui.changed(dropdown) => {
+            match ui.selected_option(dropdown) {
+                0 => Some(None),
+                index => pictures.get(index - 1).map(|(path, guid)| match row.info.kind {
+                    Kind::PictureId => Some(guid.as_str().into()),
+                    _ => Some(path.as_str().into()),
+                }),
+            }
+        }
+        (Control::Channels(fields), kind) if fields.iter().any(|&field| ui.changed(field)) => {
+            let (min, max) = match kind {
+                Kind::Channels { min, max } => (min, max),
+                _ => (0.0, 1.0),
+            };
+            let texts = fields.map(|field| ui.text(field).trim().to_string());
+            if texts.iter().all(String::is_empty) {
+                return Some(None);
+            }
+            // A field left empty keeps the channel as it is in effect.
+            let was = shown.and_then(rgb).unwrap_or([0.0; 3]);
+            let mut channels = [0.0f64; 3];
+            for ((channel, text), was) in channels.iter_mut().zip(&texts).zip(was) {
+                let number = if text.is_empty() { f64::from(was) } else { text.parse::<f64>().ok()? };
+                *channel = (number.clamp(f64::from(min), f64::from(max)) * 10_000.0).round() / 10_000.0;
+            }
+            Some(Some(toml_edit::Value::Array(channels.into_iter().collect())))
+        }
         (Control::Toggle(toggle), _) if ui.changed(toggle) => Some(Some(ui.is_checked(toggle).into())),
         // A pack's menus start with the level's own, which takes the setting out of the file.
         (Control::Tri(dropdown), _) if ui.changed(dropdown) => match ui.selected_option(dropdown) {
@@ -1055,8 +1295,26 @@ fn read_control(ui: &Ui, row: &Row) -> Option<Option<toml_edit::Value>> {
 }
 
 /// Shows a setting's value in its control, except in a field being typed in.
-fn show(ui: &mut Ui, row: &Row, value: Option<&toml::Value>) {
+fn show(ui: &mut Ui, row: &Row, value: Option<&toml::Value>, pictures: &[(String, String)]) {
     match (row.control, row.info.kind) {
+        (Control::Choice(dropdown), Kind::Picture | Kind::PictureId) => {
+            let written = value.and_then(toml::Value::as_str);
+            let index = written
+                .and_then(|name| pictures.iter().position(|(path, guid)| path == name || guid == name))
+                .map_or(0, |at| at + 1);
+            if ui.selected_option(dropdown) != index {
+                ui.set_selected_option(dropdown, index);
+            }
+        }
+        (Control::Channels(fields), _) => {
+            let channels = value.and_then(rgb);
+            for (i, field) in fields.into_iter().enumerate() {
+                let text = channels.map_or_else(String::new, |c| format_number(f64::from(c[i])));
+                if ui.focused() != Some(field) && ui.text(field) != text {
+                    ui.set_text(field, &text);
+                }
+            }
+        }
         (Control::Toggle(toggle), _) => {
             let on = value.and_then(toml::Value::as_bool).unwrap_or(false);
             if ui.is_checked(toggle) != on {
@@ -1294,7 +1552,10 @@ mod tests {
         let file = LightingFile::builtin("golden_hour").unwrap();
         let values = effective(&file).unwrap();
         for info in SETTINGS {
-            let optional = info.path == ["sun", "temperature"];
+            // Unset, these are the sun's own colour, the horizon's and no table.
+            let optional =
+                [&["sun", "temperature"][..], &["post", "fog", "color"], &["post", "grading", "lut"], &["sky", "picture"]]
+                    .contains(&info.path);
             assert!(optional || find(&values, info.path).is_some(), "{:?} has a value", info.path);
         }
         assert_eq!(find(&values, &["sky", "mode"]).and_then(|v| v.as_str()), Some("atmosphere"));

@@ -29,10 +29,17 @@ fn renderer(encoding: Encoding) -> Option<Renderer> {
 /// A sphere glowing `glow` on black, filling the middle of the picture,
 /// with fixed exposure and nothing over the picture but the tonemapper.
 fn glowing_sphere(renderer: &mut Renderer, glow: f32) -> World {
+    sphere_of(
+        renderer,
+        MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [glow; 3], ..MaterialDesc::default() },
+    )
+}
+
+/// A sphere of `material` on black, as `glowing_sphere`.
+fn sphere_of(renderer: &mut Renderer, material: MaterialDesc) -> World {
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
     let sphere = renderer.primitive(Primitive::Sphere).unwrap();
-    let material = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [glow; 3], ..MaterialDesc::default() };
     let material = renderer.add_material(&material).unwrap();
     world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::ZERO)));
     world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
@@ -158,4 +165,91 @@ fn an_image_renderer_reports_its_output_and_keeps_settings_held() {
     let (settings, state) = renderer.display();
     assert_eq!((settings.paper_white, settings.peak), (40.0, 10_000.0), "held to what displays show");
     assert_eq!(state.encoding, Encoding::Sdr, "with no HDR to be had, SDR");
+}
+
+/// A Radiance HDR file of one colour, `light` past white.
+fn radiance(light: [f32; 3]) -> Vec<u8> {
+    let picture = image::Rgb32FImage::from_fn(16, 16, |_, _| image::Rgb(light));
+    let mut file = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb32F(picture).write_to(&mut file, image::ImageFormat::Hdr).unwrap();
+    file.into_inner()
+}
+
+/// The middle of a sphere whose glow map is `texture`, in nits, shown as scRGB.
+fn glow_mapped(renderer: &mut Renderer, texture: voxear_rhi::TextureId) -> [f32; 3] {
+    let glowing = MaterialDesc {
+        base_color: [0.0, 0.0, 0.0, 1.0],
+        emissive: [1.0; 3],
+        emissive_texture: Some(texture),
+        ..MaterialDesc::default()
+    };
+    let world = sphere_of(renderer, glowing);
+    let mut time = 0.0;
+    for _ in 0..4 {
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+    }
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let at = (height / 2 * width + width / 2) as usize;
+    let half = |i: usize| half_to_f32(u16::from_le_bytes([pixels[at * 8 + i * 2], pixels[at * 8 + i * 2 + 1]]));
+    [half(0), half(1), half(2)].map(|c| c * 80.0)
+}
+
+#[test]
+fn an_hdr_glow_map_glows_past_white_cooked_or_not() {
+    use voxear_assets::TextureImport;
+    use voxear_render::{CookedPicture, PictureUse};
+    let Some(mut renderer) = renderer(Encoding::ScRgb) else { return };
+    let file = radiance([0.2, 3.0, 12.0]);
+    let compressed = CookedPicture::cook(&file, &TextureImport::default(), PictureUse::Colour).unwrap();
+    let kept = TextureImport { compress: false, ..TextureImport::default() };
+    let halves = CookedPicture::cook(&file, &kept, PictureUse::Colour).unwrap();
+    assert!(compressed.is_hdr() && halves.half_floats().is_some());
+    let bc6h = renderer.add_cooked_picture("bc6h", &compressed, true).unwrap();
+    let half = renderer.add_cooked_picture("half floats", &halves, true).unwrap();
+    let (a, b) = (glow_mapped(&mut renderer, bc6h), glow_mapped(&mut renderer, half));
+    eprintln!("BC6H {a:?} nits, half floats {b:?} nits");
+    assert!(b[2] > DISPLAY.paper_white && b[2] > b[1] && b[1] > b[0], "the map's light past white: {b:?}");
+    for c in 0..3 {
+        assert!((a[c] - b[c]).abs() <= b[c] * 0.06 + 1.0, "BC6H as the half floats are: {a:?} against {b:?}");
+    }
+}
+
+/// What the middle of the view shows of a sky drawn from a panorama whose
+/// left half is red and right half a bright green, turned by `turn` degrees,
+/// in nits, shown as scRGB.
+fn picture_sky(renderer: &mut Renderer, turn: f32) -> [f32; 3] {
+    let (width, height) = (64u32, 32u32);
+    let pixels: Vec<[f32; 4]> = (0..width * height)
+        .map(|i| if i % width < width / 2 { [1.0, 0.0, 0.0, 1.0] } else { [0.0, 4.0, 0.0, 1.0] })
+        .collect();
+    let texture = renderer.add_hdr_texture("sky", (width, height), &pixels).unwrap();
+    let light = voxear_render::picture_sky_light(&pixels, width, height);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::ZERO)));
+    let sky = Sky { picture_turn: turn, picture_texture: Some(texture), picture_light: Some(light), ..Sky::default() };
+    world.insert_resource(sky);
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.fog.enabled = false;
+    world.insert_resource(post);
+    let mut time = 0.0;
+    for _ in 0..4 {
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+    }
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let at = (height / 2 * width + width / 2) as usize;
+    let half = |i: usize| half_to_f32(u16::from_le_bytes([pixels[at * 8 + i * 2], pixels[at * 8 + i * 2 + 1]]));
+    [half(0), half(1), half(2)].map(|c| c * 80.0)
+}
+
+#[test]
+fn a_sky_is_drawn_from_its_picture_turned_as_it_says() {
+    let Some(mut renderer) = renderer(Encoding::ScRgb) else { return };
+    let (one_way, other_way) = (picture_sky(&mut renderer, 90.0), picture_sky(&mut renderer, -90.0));
+    eprintln!("turned 90°: {one_way:?} nits, -90°: {other_way:?} nits");
+    assert!(one_way[1] > one_way[0] * 2.0, "the green half ahead: {one_way:?}");
+    assert!(one_way[1] > DISPLAY.paper_white, "as bright as the picture is, past white: {one_way:?}");
+    assert!(other_way[0] > other_way[1] * 2.0, "the red half ahead: {other_way:?}");
 }

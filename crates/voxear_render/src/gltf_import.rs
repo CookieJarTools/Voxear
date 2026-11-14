@@ -115,6 +115,10 @@ pub(crate) enum TextureFormat {
     Rgba8 = 0,
     Bc7 = 1,
     Bc5 = 2,
+    /// An HDR picture's half floats, uncompressed.
+    Rgba16f = 3,
+    /// An HDR picture compressed, unsigned half floats.
+    Bc6h = 4,
 }
 
 impl TextureFormat {
@@ -123,6 +127,8 @@ impl TextureFormat {
             0 => Self::Rgba8,
             1 => Self::Bc7,
             2 => Self::Bc5,
+            3 => Self::Rgba16f,
+            4 => Self::Bc6h,
             _ => return None,
         })
     }
@@ -134,6 +140,9 @@ impl TextureFormat {
             (Self::Bc7, true) => vk::Format::BC7_SRGB_BLOCK,
             (Self::Bc7, false) => vk::Format::BC7_UNORM_BLOCK,
             (Self::Bc5, _) => vk::Format::BC5_UNORM_BLOCK,
+            // Light, never sRGB.
+            (Self::Rgba16f, _) => vk::Format::R16G16B16A16_SFLOAT,
+            (Self::Bc6h, _) => vk::Format::BC6H_UFLOAT_BLOCK,
         }
     }
 }

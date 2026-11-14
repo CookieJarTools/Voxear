@@ -90,6 +90,12 @@ pub trait ScriptServices {
     /// A size and full screen scripts ask the game's window for.
     fn set_resolution(&mut self, _width: u32, _height: u32, _fullscreen: bool) {}
 
+    /// The display's HDR output as it is, after it is set as `set` asks
+    /// when given. No HDR, and none to be had, by default.
+    fn hdr(&mut self, _set: Option<crate::HdrInfo>) -> crate::HdrInfo {
+        crate::HdrInfo::default()
+    }
+
     /// The game's input, for `Input`, `Keyboard`, `Mouse` and `Gamepad`.
     fn input(&mut self) -> Option<&mut voxear_input::Input> {
         None

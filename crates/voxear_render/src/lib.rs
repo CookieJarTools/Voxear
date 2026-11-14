@@ -103,7 +103,7 @@ pub use box_model::{
 };
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
-pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
+pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse, read_hdr, sized as sized_hdr};
 pub use ui_panels::{MAX_UI_PANELS, PanelRect, UiPanel, UiPanelFrame, panels as ui_panel_rects};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
@@ -163,7 +163,7 @@ pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, str
 pub use scene::{
     Camera, CloudKind, Clouds, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode,
     ViewOptions,
-    temperature_color,
+    picture_sky_light, temperature_color,
 };
 pub use portals::{
     CameraFollows, Carry, Portal, PortalFar, PortalPose, PortalSide, PortalTraveller, Straddles, ViewCarry,
@@ -999,12 +999,23 @@ impl Renderer {
         assets.add_texture(&self.gpu, &mut self.bindless, source)
     }
 
+    /// Uploads an HDR picture, light as it is, linear RGBA floats a pixel, as
+    /// half floats with mips. Freed with [`free_texture`](Self::free_texture).
+    pub fn add_hdr_texture(&mut self, name: &str, (width, height): (u32, u32), pixels: &[[f32; 4]]) -> Result<TextureId> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        let halves = texture_codec::to_f16_bytes(pixels);
+        assets.add_hdr_texture(&self.gpu, &mut self.bindless, name, (width, height), &halves)
+    }
+
     /// Uploads a picture a build cooked (see [`CookedPicture`]), its colours
     /// read as sRGB or as the values they are. Freed with
     /// [`free_texture`](Self::free_texture).
     pub fn add_cooked_picture(&mut self, name: &str, picture: &CookedPicture, srgb: bool) -> Result<TextureId> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         let (width, height) = picture.size();
+        if let Some(halves) = picture.half_floats() {
+            return assets.add_hdr_texture(&self.gpu, &mut self.bindless, name, (width, height), halves);
+        }
         match picture.rgba() {
             Some(rgba) => {
                 let source = TextureSource { name, width, height, rgba, srgb };

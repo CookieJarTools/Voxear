@@ -62,6 +62,8 @@ pub struct Game {
     /// The lookup table the post-processing names that could not be loaded,
     /// said once rather than every frame.
     lut_failed: Option<String>,
+    /// The sky picture last refused, so it is reported once.
+    sky_failed: Option<voxear_assets::AssetGuid>,
     /// The pictures prompts show for controls, as the input actions name
     /// them.
     pub prompt_icons: crate::prompt_icons::PromptIcons,
@@ -103,6 +105,13 @@ pub struct Display {
     pub cursor_lock: CursorLock,
     /// The mouse was asked to change since it was last made so.
     pub cursor_changed: bool,
+    /// The HDR output scripts ask for, with paper white and the peak, and
+    /// whether that changed since it was last made so.
+    pub hdr: voxear_render::display::DisplaySettings,
+    pub hdr_changed: bool,
+    /// What the window shows, and the HDR its display offers, as whatever
+    /// shows the game has it.
+    pub hdr_shown: voxear_render::display::DisplayState,
 }
 
 impl Default for Display {
@@ -115,6 +124,9 @@ impl Default for Display {
             cursor_visible: true,
             cursor_lock: CursorLock::None,
             cursor_changed: false,
+            hdr: voxear_render::display::DisplaySettings::default(),
+            hdr_changed: false,
+            hdr_shown: voxear_render::display::DisplayState::default(),
         }
     }
 }
@@ -144,6 +156,7 @@ impl Game {
             audio: GameAudio::default(),
             input: voxear_input::Input::new(),
             lut_failed: None,
+            sky_failed: None,
             prompt_icons: crate::prompt_icons::PromptIcons::default(),
         };
         game.audio.headphones = game.project.file.audio.headphones;
@@ -736,9 +749,10 @@ impl Game {
         // The scene's own, or failing that, its lighting settings'.
         let lut_in = |table: &toml::Table| Some(table.get("grading")?.get("lut")?.as_str()?.to_string());
         let world = &self.engine.world;
-        let named = world
-            .resource::<PostTable>()
-            .and_then(|table| lut_in(&table.0))
+        // A script's first, as what scripts set is laid over the level's.
+        let script = world.resource::<voxear_render::ScriptPost>().and_then(|script| lut_in(script.overrides()));
+        let named = script
+            .or_else(|| world.resource::<PostTable>().and_then(|table| lut_in(&table.0)))
             .or_else(|| world.resource::<LightingPost>().and_then(|table| lut_in(&table.0)));
         let lut = named.and_then(|path| {
             let loaded = self.content.parse(&path).and_then(|reference| self.content.lut(renderer, &reference));
@@ -755,6 +769,36 @@ impl Game {
         });
         if let Some(post) = self.engine.world.resource_mut::<PostProcess>() {
             post.grading.lut = lut;
+        }
+        self.prepare_sky_picture(renderer);
+    }
+
+    /// Uploads the picture a gradient sky names, on first use, and gives it
+    /// and its light to the sky, the level's and a look pack's worn over it.
+    fn prepare_sky_picture(&mut self, renderer: &mut Renderer) {
+        let world = &self.engine.world;
+        let named = world.resource::<voxear_render::Sky>().and_then(|sky| sky.picture);
+        let worn = world.resource::<voxear_render::WornLook>().and_then(|worn| worn.sky.picture);
+        for guid in [named, worn].into_iter().flatten() {
+            let made = self.content.sky_picture(renderer, guid);
+            let (texture, light) = match made {
+                Ok(made) => made,
+                Err(error) => {
+                    if self.sky_failed != Some(guid) {
+                        tracing::error!("the sky's picture: {error:#}");
+                        self.sky_failed = Some(guid);
+                    }
+                    continue;
+                }
+            };
+            let world = &mut self.engine.world;
+            for sky in world.resource_mut::<voxear_render::Sky>().into_iter().filter(|sky| sky.picture == Some(guid)) {
+                (sky.picture_texture, sky.picture_light) = (Some(texture), Some(light));
+            }
+            let worn = world.resource_mut::<voxear_render::WornLook>().map(|worn| &mut worn.sky);
+            for sky in worn.into_iter().filter(|sky| sky.picture == Some(guid)) {
+                (sky.picture_texture, sky.picture_light) = (Some(texture), Some(light));
+            }
         }
     }
 
@@ -1275,6 +1319,38 @@ impl ScriptServices for GameServices<'_> {
 
     fn set_resolution(&mut self, width: u32, height: u32, fullscreen: bool) {
         self.display.asked = Some((width.max(1), height.max(1), fullscreen));
+    }
+
+    fn hdr(&mut self, set: Option<voxear_scripting::HdrInfo>) -> voxear_scripting::HdrInfo {
+        use voxear_render::display::{DisplaySettings, Encoding, HdrChoice};
+        if let Some(asked) = set {
+            let hdr = match asked.mode {
+                1 => HdrChoice::On,
+                2 => HdrChoice::Hdr10,
+                3 => HdrChoice::ScRgb,
+                _ => HdrChoice::Off,
+            };
+            let asked = DisplaySettings { hdr, paper_white: asked.paper_white, peak: asked.peak }.held();
+            self.display.hdr_changed |= asked != self.display.hdr;
+            self.display.hdr = asked;
+        }
+        let (settings, shown) = (self.display.hdr, self.display.hdr_shown);
+        voxear_scripting::HdrInfo {
+            mode: match settings.hdr {
+                HdrChoice::Off => 0,
+                HdrChoice::On => 1,
+                HdrChoice::Hdr10 => 2,
+                HdrChoice::ScRgb => 3,
+            },
+            output: match shown.encoding {
+                Encoding::Sdr => 0,
+                Encoding::Hdr10 => 1,
+                Encoding::ScRgb => 2,
+            },
+            offered: i32::from(shown.offered.hdr10) | i32::from(shown.offered.scrgb) << 1,
+            paper_white: settings.paper_white,
+            peak: settings.peak,
+        }
     }
 
     fn cursor(&self) -> (bool, CursorLock) {

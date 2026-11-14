@@ -9,6 +9,11 @@
 //! height and how many mips it has, then each mip's size and bytes. One
 //! left uncompressed holds its RGBA8 pixels alone, and the GPU makes its
 //! mips as it would for a picture file.
+//!
+//! An HDR picture (`.exr` or `.hdr`) is read as floats, light as it is,
+//! never sRGB, and cooks to BC6H with mips made in linear light, or to half
+//! floats where it is left uncompressed: for skies, glow maps and, later,
+//! light probes.
 
 use anyhow::{Context, Result, ensure};
 use voxear_assets::TextureImport;
@@ -69,6 +74,9 @@ impl CookedPicture {
     /// pixels exactly, whatever the settings say, as anything else would
     /// change its colours.
     pub fn cook(file: &[u8], settings: &TextureImport, usage: PictureUse) -> Result<Self> {
+        if let Some(read) = read_hdr(file) {
+            return Self::cook_hdr(read?, settings);
+        }
         let mut picture = image::load_from_memory(file).context("reading the picture")?.to_rgba8();
         let (width, height) = picture.dimensions();
         if height >= 2 && width == height * height {
@@ -90,6 +98,72 @@ impl CookedPicture {
         };
         let mips = levels.iter().map(|(w, h, pixels)| encode(pixels, *w, *h)).collect();
         Ok(Self { width, height, format, mips })
+    }
+
+    /// An HDR picture cooked: BC6H with its mips, or its half floats alone,
+    /// whose mips the GPU makes, where the settings leave it uncompressed.
+    fn cook_hdr(picture: image::Rgba32FImage, settings: &TextureImport) -> Result<Self> {
+        let picture = sized(picture, settings);
+        let (width, height) = picture.dimensions();
+        let pixels: Vec<[f32; 4]> = picture.pixels().map(|pixel| pixel.0).collect();
+        if !settings.compress || width % 4 != 0 || height % 4 != 0 {
+            let mips = vec![texture_codec::to_f16_bytes(&pixels)];
+            return Ok(Self { width, height, format: TextureFormat::Rgba16f, mips });
+        }
+        let levels = texture_codec::float_mip_chain(&pixels, width, height);
+        let mips = levels.iter().map(|(w, h, pixels)| texture_codec::encode_bc6h(pixels, *w, *h)).collect();
+        Ok(Self { width, height, format: TextureFormat::Bc6h, mips })
+    }
+
+    /// Its half floats, eight bytes a pixel, when it is an HDR picture left
+    /// uncompressed.
+    pub fn half_floats(&self) -> Option<&[u8]> {
+        (self.format == TextureFormat::Rgba16f).then(|| self.mips[0].as_slice())
+    }
+
+    /// A small mip of it as linear floats, 64 pixels wide or less, for
+    /// working out the light of a sky: sRGB colours made linear, HDR light as
+    /// it is. None where it cannot be read so.
+    pub fn small_pixels(&self) -> Option<(u32, u32, Vec<[f32; 4]>)> {
+        let linear = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        match self.format {
+            TextureFormat::Rgba8 => {
+                let pixels = self.mips[0].chunks_exact(4).map(|p| [linear(p[0]), linear(p[1]), linear(p[2]), 1.0]);
+                Some((self.width, self.height, pixels.collect()))
+            }
+            TextureFormat::Rgba16f => {
+                let halves = self.mips[0].chunks_exact(2).map(|h| texture_codec::f16_value(u16::from_le_bytes([h[0], h[1]])));
+                let values: Vec<f32> = halves.collect();
+                Some((self.width, self.height, values.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect()))
+            }
+            TextureFormat::Bc6h => {
+                // The first mip 64 wide or less, whose sides are still whole blocks.
+                let level = (0..self.mips.len()).find(|&level| (self.width >> level) <= 64)?;
+                let (w, h) = ((self.width >> level).max(1), (self.height >> level).max(1));
+                if w % 4 != 0 || h % 4 != 0 {
+                    return None;
+                }
+                let mut pixels = vec![[0.0; 4]; (w * h) as usize];
+                for (index, block) in self.mips[level].chunks_exact(16).enumerate() {
+                    let (bx, by) = (index as u32 % (w / 4), index as u32 / (w / 4));
+                    let decoded = texture_codec::decode_bc6h(block.try_into().ok()?)?;
+                    for (i, [r, g, b]) in decoded.into_iter().enumerate() {
+                        let (x, y) = (bx * 4 + i as u32 % 4, by * 4 + i as u32 / 4);
+                        pixels[(y * w + x) as usize] = [r, g, b, 1.0];
+                    }
+                }
+                Some((w, h, pixels))
+            }
+            TextureFormat::Bc7 | TextureFormat::Bc5 => None,
+        }
+    }
+
+    /// Whether it holds light rather than colours: an HDR picture.
+    pub fn is_hdr(&self) -> bool {
+        matches!(self.format, TextureFormat::Rgba16f | TextureFormat::Bc6h)
     }
 
     /// Whether `bytes` are a cooked picture rather than a picture file.
@@ -144,6 +218,26 @@ impl CookedPicture {
 
     pub(crate) fn mips(&self) -> &[Vec<u8>] {
         &self.mips
+    }
+}
+
+/// An HDR picture file's pixels as floats, light as it is: `None` when the
+/// file is not an OpenEXR or Radiance picture.
+pub fn read_hdr(file: &[u8]) -> Option<Result<image::Rgba32FImage>> {
+    let format = image::guess_format(file).ok()?;
+    if !matches!(format, image::ImageFormat::OpenExr | image::ImageFormat::Hdr) {
+        return None;
+    }
+    let read = image::load_from_memory_with_format(file, format).context("reading the HDR picture");
+    Some(read.map(|picture| picture.to_rgba32f()))
+}
+
+/// An HDR picture at the size its import settings allow.
+pub fn sized(picture: image::Rgba32FImage, settings: &TextureImport) -> image::Rgba32FImage {
+    let (width, height) = settings.size(picture.width(), picture.height());
+    match (width, height) == picture.dimensions() {
+        true => picture,
+        false => image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle),
     }
 }
 
@@ -221,6 +315,44 @@ mod tests {
         assert_eq!(table.size(), (256, 16));
         let source = image::load_from_memory(&file).unwrap().to_rgba8().into_raw();
         assert_eq!(table.rgba().unwrap(), source.as_slice());
+    }
+
+    /// A Radiance HDR file of `width` × `height` pixels, each from `pixel`.
+    fn radiance(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [f32; 3]) -> Vec<u8> {
+        let picture = image::Rgb32FImage::from_fn(width, height, |x, y| image::Rgb(pixel(x, y)));
+        let mut file = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb32F(picture).write_to(&mut file, image::ImageFormat::Hdr).unwrap();
+        file.into_inner()
+    }
+
+    /// An OpenEXR file of `width` × `height` pixels, each from `pixel`.
+    fn exr(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [f32; 4]) -> Vec<u8> {
+        let picture = image::Rgba32FImage::from_fn(width, height, |x, y| image::Rgba(pixel(x, y)));
+        let mut file = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba32F(picture).write_to(&mut file, image::ImageFormat::OpenExr).unwrap();
+        file.into_inner()
+    }
+
+    #[test]
+    fn hdr_pictures_cook_to_bc6h_keeping_light_past_white() {
+        let sky = |x: u32, y: u32| [0.5 + x as f32, 30.0 + y as f32, 2.0];
+        for file in [radiance(32, 16, sky), exr(32, 16, |x, y| { let [r, g, b] = sky(x, y); [r, g, b, 1.0] })] {
+            assert!(read_hdr(&file).is_some(), "read as HDR");
+            let cooked = CookedPicture::cook(&file, &TextureImport::default(), PictureUse::Colour).unwrap();
+            assert_eq!(cooked.format(), TextureFormat::Bc6h);
+            assert!(cooked.is_hdr() && cooked.rgba().is_none() && cooked.half_floats().is_none());
+            assert_eq!(cooked.mips().len(), 6, "32 down to 1");
+            assert_eq!(cooked.mips()[0].len(), 32 * 16, "BC6H is a byte a pixel");
+            assert_eq!(CookedPicture::from_bytes(&cooked.to_bytes(), "it").unwrap(), cooked);
+
+            let kept = TextureImport { compress: false, ..TextureImport::default() };
+            let halves = CookedPicture::cook(&file, &kept, PictureUse::Colour).unwrap();
+            let bytes = halves.half_floats().unwrap();
+            assert_eq!(bytes.len(), 32 * 16 * 8);
+            let green = texture_codec::f16_value(u16::from_le_bytes([bytes[2], bytes[3]]));
+            assert!((green - 30.0).abs() < 0.3, "light past white kept: {green}");
+        }
+        assert!(read_hdr(&png(4, 4, gradient)).is_none(), "a PNG is not HDR");
     }
 
     #[test]

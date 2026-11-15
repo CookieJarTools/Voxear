@@ -22,7 +22,24 @@ A Portal's opening stands on its Obj's position, on its sill, as wide as its Siz
 | **Size** | The opening's width and height, in metres |
 | **Open** | Closed, it shows its mist and nothing goes through |
 | **Mist** | The colour of the mist it shows while it is closed, or while its far side is not ready |
-| **View Distance** | How far from the opening a camera still sees the far side, in metres. Further off it shows its mist |
+| **View Distance** | **Project** uses the project's view distance; **Own** gives it its own **Distance**, in metres. Further off it shows its mist |
+
+## Near and far
+
+A camera within a Portal's view distance sees its far side. Further off, the Portal shows only its mist, as it does while its far side is loading, and costs nothing for the other side: no view of it is drawn. After 600 frames out of sight, ten seconds at 60 a second, the Portal also lets go of the memory its far side's view held.
+
+Coming back within the view distance, the mist clears over a moment into the live far side, so it never appears all at once. Once it has cleared, the far side stays until the camera is a little past the view distance, a tenth of it, between 2 and 16 metres. A camera that wanders back and forth over the edge does not make it flicker.
+
+Every Portal starts with the project's view distance, 96 m, set in **Project Settings ▸ Quality ▸ Portals**. Give one Portal its own by setting its **View Distance** to **Own**: a town gate seen from across the square, say, or a small one in a cave that only needs to show up close. To change a game's every Portal at run time, as from its options, set `Portal.DefaultViewDistance`:
+
+```csharp
+Portal.DefaultViewDistance = lowQuality ? 48f : 96f;
+townGate.Portal.ViewDistance = 200f;   // its own; null for the project's again
+```
+
+`portal.Shown` says how much of its far side shows through its mist, from 0 to 1.
+
+Tools set the project's with `vox editor call project.set key=portals.view_distance value=64`, and one Portal's as the Inspector does, with `field.set`: its field `view_distance` to `Own`, then `view_distance#2` to the distance.
 
 ## What goes through
 
@@ -61,7 +78,7 @@ A camera that keeps clear of walls with a line test should first ask `Portal.Bet
 
 ## In a world without end
 
-In a [[Block Worlds|Block World]] without end, ground is only made near the camera. A Portal's far side may be kilometres away, where nothing is made yet. So as the camera comes within a Portal's view distance, the world also makes its ground round the far Portal, with its plants, as it does round the camera, but only out to **Far Side Distance**. Its far view reaches as far as the world's own does.
+In a [[Block Worlds|Block World]] without end, ground is only made near the camera. A Portal's far side may be kilometres away, where nothing is made yet. So as the camera comes near a Portal, 24 metres before its view distance, the world also makes its ground round the far Portal, with its plants, as it does round the camera, but only out to **Far Side Distance**. Its far view reaches as far as the world's own does. That ground is kept until the camera is 56 metres past the view distance, so walking back and forth near the edge makes nothing twice. Further off, nothing is made for it.
 
 Until that ground is made and solid, the Portal shows its mist and lets nothing through, then clears over a moment. `portal.IsReady` says whether it has cleared.
 
@@ -75,7 +92,7 @@ var (town, camp) = Portal.CreatePair(townSquare, Quaternion.Identity, campfire, 
 camp.Close();
 ```
 
-`Portal.Create(position, rotation, size)` makes one, leading nowhere until its `To` is set. `obj.AddPortal()` gives an Obj you already have a Portal, and `Portal.Link(first, second)` joins two Objs both ways. A Portal's `Size`, `IsOpen`, `Mist`, `ViewDistance` and `Passes` read and set what the Inspector shows. `Open()` and `Close()` open and close it. To move or turn one, move or turn its Obj.
+`Portal.Create(position, rotation, size)` makes one, leading nowhere until its `To` is set. `obj.AddPortal()` gives an Obj you already have a Portal, and `Portal.Link(first, second)` joins two Objs both ways. A Portal's `Size`, `IsOpen`, `Mist`, `ViewDistance` and `Passes` read and set what the Inspector shows; a `ViewDistance` of null is the project's. `Open()` and `Close()` open and close it. To move or turn one, move or turn its Obj.
 
 `Portal.Passed` is raised once for each Obj that goes through, after it comes out, and before LateUpdate in the frame it went through. Its `PortalPassage` says which Obj, from which Portal to which, whether it went in at the back, and what going through did: `Carry` for a place, `CarryDirection` for a direction or a speed, `CarryRotation` for a turn, and `Yaw` in degrees.
 
@@ -93,6 +110,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Far Side Distance | How far round a far side a world without end makes its own blocks, in metres: 96 |
 | Water | Whether the water of a far side's Block Worlds is drawn |
 | Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
+| View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Quality ▸ Portals |
 
 ```toml
 [portals]
@@ -102,6 +120,7 @@ shadow_distance = 30.0
 far_side_distance = 96.0
 water = true
 draw_distance = 0.0
+view_distance = 96.0
 ```
 
 ## In scene files
@@ -119,7 +138,7 @@ size = [3.0, 4.0]
 open = false
 passes = [0, 4]           # left out, every layer
 mist = [0.35, 0.55, 1.0]  # linear
-view_distance = 96.0
+view_distance = 200.0     # its own; left out, the project's
 
 [[obj]]
 id = 2

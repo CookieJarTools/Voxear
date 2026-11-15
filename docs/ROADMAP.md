@@ -1904,22 +1904,29 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   own camera in a space whose middle is the far Portal's, its depth first, a mask, the far plane as a clip
   distance, the parent's sky and post, clouds only in the opening, the sun's shadows to 48 m near the opening,
   and the far side's depth laid over the parent's for its fog. Portals seen through Portals, two deep; mist while
-  closed, too far, or not ready. Characters, Rigidbodies and what is under them go through with their speed and
+  closed, too far, or not ready. A view distance of each Portal's own or the project's (`[portals]
+  view_distance`, Project Settings ▸ Quality, `Portal.DefaultViewDistance`, `project.set`): past it only the mist
+  shows and nothing of the far side is drawn, its view and pictures let go after 600 frames unseen; coming back,
+  the mist clears over 0.4 s, and a margin past the edge keeps a camera wandering over it from making it flicker.
+  Characters, Rigidbodies and what is under them go through with their speed and
   spin turned, never shown between the places; a camera filming something on the other side of an opening looks
   through it (`Camera.Follows`), the renderer carrying its history, so a third-person camera never cuts; Objs
   part-way through drawn on both sides. In a world of blocks without end, chunks, collision and plants are made
   round each far side near the camera (`BlockStreamer::update_from`), each view drawing the chunks of the place
   nearest it, and a Portal opens once its far side stands. Remote Objs snap across. Scripts: `Portal.Create`,
   `CreatePair`, `Link`, `Between`, `Obj.Portal`/`AddPortal` (`To`, `Size`, `IsOpen`, `Mist`, `ViewDistance`,
-  `Passes`, `IsReady`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
+  `Passes`, `IsReady`, `Shown`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
   side matching a camera standing there from three angles and with the far Portal turned three ways, a Portal two
   deep, blocks and water 20 km off, mist, only the opening changing; a character walking through to ground made
   for it 9 km off in a world without end and standing on it; a thrown body keeping speed and spin; nothing shown
-  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through. Manual:
+  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through; a far
+  side clearing over a moment as a camera comes near and steady as it wanders over the edge; one walked away from
+  drawing nothing and letting its view go. Manual:
   Portals. Cost at 1080p on an RTX 3070, the least of 60 frames: in the test scene +0.15 ms for one Portal over a
   third of the picture and +0.5 ms for two (the timing test holds +1.5 and +2.5); in an endless world of Ultra
   quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
-  draw_distance` cuts. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
+  draw_distance` cuts. A Portal in GrownPlants seen from 26 m and 60 m at 720p costs 3.6 ms and 1.8 ms; with
+  its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
   part-way through, the server deciding and checking crossings, Portals to other levels.

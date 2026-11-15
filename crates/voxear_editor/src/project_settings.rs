@@ -2,7 +2,9 @@
 //! project's `voxear.toml` rather than the editor's, a tab down the left for
 //! each section. Modules comes first: a row for each of the engine's
 //! optional systems, switched on or off with its toggle. Quality holds what
-//! the renderer may spend: the most simulated particles. World holds the
+//! the renderer may spend: the most simulated particles, and how far off a
+//! Portal without a view distance of its own still shows its far side.
+//! World holds the
 //! floating origin: whether the world's middle moves with the camera, how
 //! far out it goes first, and how far it moves; and what making worlds of
 //! blocks may spend: a Quality preset, and the threads, chunk columns at
@@ -14,8 +16,8 @@
 //! `.otf` files.
 
 use voxear_engine::{
+    PortalSettings, QualitySettings,
     modules::{Module, Modules},
-    QualitySettings,
     origin::{OriginMode, OriginSettings},
 };
 use voxear_render::MAX_PARTICLE_BUDGET;
@@ -78,18 +80,20 @@ pub struct ProjectSettingsPanel {
     budget: BudgetRows,
     /// The most simulated particles, on the Quality tab.
     particles: NodeId,
+    /// The view distance of Portals without their own, on the Quality tab.
+    portal_view: NodeId,
 }
 
 impl ProjectSettingsPanel {
     /// Builds the tabs into `tab_bar` and their rows into `view`, showing
     /// `modules`, the floating origin's `origin`, the project's `quality`
-    /// and its block worlds' `budget`.
+    /// and `portals`, and its block worlds' `budget`.
     pub fn new(
         ui: &mut Ui,
         (tab_bar, view): (NodeId, NodeId),
         modules: &Modules,
         (origin, budget): (&OriginSettings, &WorldBudget),
-        quality: &QualitySettings,
+        (quality, portals): (&QualitySettings, &PortalSettings),
     ) -> Self {
         let (modules_tab, body) = section(ui, tab_bar, view, "Modules");
         ui.set_checked(modules_tab, true);
@@ -156,6 +160,9 @@ impl ProjectSettingsPanel {
         let heading = ui.add_label(body, "Particles");
         ui.add_class(heading, "settings-group");
         let particles = number(ui, body, "Budget", quality.particles as f32, "");
+        let heading = ui.add_label(body, "Portals");
+        ui.add_class(heading, "settings-group");
+        let portal_view = number(ui, body, "View Distance", portals.view_distance, "m");
         let quality_body = body;
 
         let (localization_tab, fonts_body) = section(ui, tab_bar, view, "Localization");
@@ -166,7 +173,7 @@ impl ProjectSettingsPanel {
             (world_tab, world_body),
             (localization_tab, fonts_body),
         ];
-        Self { tabs, fonts_body, font_buttons: Vec::new(), rows, origin, budget, particles }
+        Self { tabs, fonts_body, font_buttons: Vec::new(), rows, origin, budget, particles, portal_view }
     }
 
     /// Shows each language's fonts on the Localization tab, `languages`
@@ -332,6 +339,26 @@ impl ProjectSettingsPanel {
         let text = format_metres(quality.particles as f32);
         if ui.focused() != Some(self.particles) && ui.text(self.particles) != text {
             ui.set_text(self.particles, &text);
+        }
+    }
+
+    /// The view distance of Portals without their own as typed on the page
+    /// this frame, where it differs from `now`.
+    pub fn portal_view_changed(&self, ui: &Ui, now: f32) -> Option<f32> {
+        if !ui.changed(self.portal_view) {
+            return None;
+        }
+        let typed = ui.text(self.portal_view).trim().replace([',', ' ', '_'], "").parse::<f32>().ok()?;
+        let distance = (typed.is_finite() && typed >= 0.0).then_some(typed)?;
+        (distance != now).then_some(distance)
+    }
+
+    /// Shows the project's view distance for Portals, but in a field being
+    /// typed in.
+    pub fn show_portals(&self, ui: &mut Ui, portals: &PortalSettings) {
+        let text = format_metres(portals.view_distance);
+        if ui.focused() != Some(self.portal_view) && ui.text(self.portal_view) != text {
+            ui.set_text(self.portal_view, &text);
         }
     }
 

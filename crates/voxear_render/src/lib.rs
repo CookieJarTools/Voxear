@@ -906,6 +906,15 @@ impl Renderer {
         self.graph.fill_new_with_nan = fill;
     }
 
+    /// How many pictures the renderer keeps from frame to frame, and how many
+    /// views through Portals: for tests, to see what a far side holds.
+    pub fn kept(&self) -> (usize, usize) {
+        fn count(children: &[PortalChild]) -> usize {
+            children.iter().map(|child| 1 + count(&child.view.portals)).sum()
+        }
+        (self.graph.kept_images(), self.views.iter().map(|view| count(&view.portals)).sum())
+    }
+
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
     pub fn reset_history(&mut self) {
@@ -1398,6 +1407,12 @@ impl Renderer {
         self.last_time = Some(time);
         let frame_index = self.frame_index;
         self.frame_index += 1;
+        // The views through Portals no longer seen for a while let what they hold go.
+        for (index, view) in self.views.iter_mut().enumerate() {
+            let root = if index == 0 { String::new() } else { format!("view {index} ") };
+            let services = (&self.gpu, &mut self.graph, &mut self.bindless, &mut self.frames);
+            free_portal_views(&mut view.portals, services, (&root, &root), frame_index);
+        }
         // Every terrain's tiles that changed, staged to copy in before any view draws them.
         let assets = self.assets.as_mut().expect("assets live until drop");
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
@@ -3408,7 +3423,10 @@ fn draw_portals(
                         at
                     }
                     None => {
-                        let number = PORTAL_VIEW_NUMBERS * level as usize + children.len();
+                        // The first number no view at this level has, as one let go leaves a gap.
+                        let base = PORTAL_VIEW_NUMBERS * level as usize;
+                        let taken = |number: usize| children.iter().any(|child| child.view.number == number);
+                        let number = (base..).find(|&number| !taken(number)).expect("numbers without end");
                         let view = Box::new(View::new(gpu, number)?);
                         children.push(PortalChild { portal: seen.entity, view, used: 0 });
                         children.len() - 1
@@ -3501,6 +3519,45 @@ fn draw_portals(
 /// How many frames a view through a Portal is kept for a Portal no longer
 /// seen, before another Portal takes it.
 const PORTAL_VIEW_KEPT: u64 = 120;
+
+/// How many frames a view through a Portal is kept for a Portal no longer
+/// seen at all, before it lets its buffers and pictures go: a few seconds,
+/// so a camera that looks away and back draws on at once, and one that has
+/// walked off holds nothing for it.
+const PORTAL_VIEW_FREED: u64 = 600;
+
+/// Lets go of each view through a Portal in `children` not drawn for
+/// [`PORTAL_VIEW_FREED`] frames, with its pictures, named after `outer`,
+/// and the views through Portals it saw in turn. Once a camera's own view,
+/// whose pictures are named after `root`, keeps none, the depths its views
+/// through Portals shared go too.
+fn free_portal_views(
+    children: &mut Vec<PortalChild>,
+    (gpu, graph, bindless, frames): (&Gpu, &mut RenderGraph, &mut Bindless, &mut Frames),
+    (root, outer): (&str, &str),
+    frame: u64,
+) {
+    if children.is_empty() {
+        return;
+    }
+    let mut kept = Vec::with_capacity(children.len());
+    for mut child in children.drain(..) {
+        let named = format!("{outer}portal view {} ", child.view.number);
+        if child.used + PORTAL_VIEW_FREED < frame {
+            // Not drawn for hundreds of frames, so no frame in flight uses its pictures.
+            graph.release_named(gpu, bindless, |name| name.starts_with(&named));
+            child.view.retire(frames);
+        } else {
+            free_portal_views(&mut child.view.portals, (gpu, graph, bindless, frames), (root, &named), frame);
+            kept.push(child);
+        }
+    }
+    if kept.is_empty() && root == outer {
+        let levels = format!("{root}portal level ");
+        graph.release_named(gpu, bindless, |name| name.starts_with(&levels));
+    }
+    *children = kept;
+}
 
 /// Where the numbers of each level's views through Portals start, as
 /// `View::number`: past any camera's own.

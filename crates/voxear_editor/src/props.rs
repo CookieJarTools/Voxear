@@ -872,6 +872,8 @@ pub enum Prop {
     PortalSize,
     PortalOpen,
     PortalMist,
+    /// Whether its view distance is the project's or its own, and its own.
+    PortalViewFrom,
     PortalViewDistance,
     /// The Obj a camera films, which its view is carried through Portals
     /// to go on seeing.
@@ -1257,9 +1259,12 @@ impl Prop {
             | Prop::JointLimited
             | Prop::JointMin
             | Prop::JointMax => Part::Joint,
-            Prop::PortalTo | Prop::PortalSize | Prop::PortalOpen | Prop::PortalMist | Prop::PortalViewDistance => {
-                Part::Portal
-            }
+            Prop::PortalTo
+            | Prop::PortalSize
+            | Prop::PortalOpen
+            | Prop::PortalMist
+            | Prop::PortalViewFrom
+            | Prop::PortalViewDistance => Part::Portal,
             Prop::Shape2D
             | Prop::Offset2D
             | Prop::Size2D
@@ -1659,7 +1664,7 @@ impl Prop {
             Prop::PortalSize => "size",
             Prop::PortalOpen => "open",
             Prop::PortalMist => "mist",
-            Prop::PortalViewDistance => "view_distance",
+            Prop::PortalViewFrom | Prop::PortalViewDistance => "view_distance",
             Prop::CameraFollows => "camera_follows",
             Prop::Shape2D => "shape",
             Prop::Offset2D => "offset",
@@ -2350,8 +2355,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             }
             props
         }
+        // A Portal shows its own view distance where it has one.
         Part::Portal => {
-            vec![Prop::PortalTo, Prop::PortalSize, Prop::PortalOpen, Prop::PortalMist, Prop::PortalViewDistance]
+            let mut props =
+                vec![Prop::PortalTo, Prop::PortalSize, Prop::PortalOpen, Prop::PortalMist, Prop::PortalViewFrom];
+            if world.get::<Portal>(entity).is_some_and(|portal| portal.view_distance.is_some()) {
+                props.push(Prop::PortalViewDistance);
+            }
+            props
         }
         Part::Collider2D => {
             let shape = world.get::<Collider2D>(entity).map_or(ColliderShape2D::Box, |c| c.shape);
@@ -2797,7 +2808,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::PortalSize => "Size",
         Prop::PortalOpen => "Open",
         Prop::PortalMist => "Mist",
-        Prop::PortalViewDistance => "View Distance",
+        Prop::PortalViewFrom => "View Distance",
+        Prop::PortalViewDistance => "Distance",
         Prop::CameraFollows => "Follows",
         Prop::Shape2D => "Shape",
         Prop::Offset2D => "Offset",
@@ -3352,7 +3364,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PortalSize => Value::Vector(world.get::<Portal>(entity)?.size.to_array().to_vec()),
         Prop::PortalOpen => Value::Toggle(world.get::<Portal>(entity)?.open),
         Prop::PortalMist => Value::Color(srgb(world.get::<Portal>(entity)?.mist.to_array()).map(round3)),
-        Prop::PortalViewDistance => Value::Number(world.get::<Portal>(entity)?.view_distance),
+        Prop::PortalViewFrom => {
+            let own = world.get::<Portal>(entity)?.view_distance.is_some();
+            Value::Choice(usize::from(own), vec!["Project".into(), "Own".into()])
+        }
+        Prop::PortalViewDistance => Value::Number(world.get::<Portal>(entity)?.view_distance?),
         Prop::CameraFollows => {
             world.get::<Camera>(entity)?;
             let follows = world.get::<voxear_render::CameraFollows>(entity).map(|follows| follows.0);
@@ -4827,8 +4843,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::PortalMist, Value::Color(color)) => with(world, entity, |portal: &mut Portal| {
             portal.mist = Vec3::from(linear(color.map(|c| c.clamp(0.0, 1.0))));
         }),
+        // Its own starts at the project's.
+        (Prop::PortalViewFrom, Value::Choice(index, _)) => {
+            let project = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+            with(world, entity, |portal: &mut Portal| {
+                portal.view_distance = (index == 1).then(|| portal.view_distance.unwrap_or(project.view_distance));
+            })
+        }
         (Prop::PortalViewDistance, Value::Number(n)) => {
-            with(world, entity, |portal: &mut Portal| portal.view_distance = n.max(0.0))
+            with(world, entity, |portal: &mut Portal| portal.view_distance = Some(n.max(0.0)))
         }
         (Prop::JointAnchor, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.anchor = three(&v)),
         (Prop::JointAxis, Value::Vector(v)) => with(world, entity, |joint: &mut Joint| joint.axis = three(&v)),

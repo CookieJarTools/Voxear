@@ -2400,7 +2400,7 @@ impl View {
     /// is marked new there.
     fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
         for (index, (instance, owner)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
-            if let Some(previous) = self.prev_models.get(owner).filter(|_| owner.plant.is_none()) {
+            if let Some(previous) = owner.plant.is_none().then(|| self.prev_models.get(owner)).flatten() {
                 instance.prev_model = *previous;
             }
             if self.prev_entities.get(index) != Some(owner) {
@@ -2494,7 +2494,11 @@ impl View {
             // The plants round the camera where the world has it, moved into the view's own space.
             let first = extracted.instances.len();
             let seen_from = camera + offset;
-            self.foliage.gather(world, seen_from, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+            // The view's frustum moved out of its own space into the world's, where the plants are.
+            let moved = |[x, y, z, d]: [f32; 4]| [x, y, z, d - voxear_core::math::Vec3::new(x, y, z).dot(offset)];
+            let planes = extracted.frame.planes.map(moved);
+            let sphere = |mesh| assets.mesh_sphere(mesh);
+            self.foliage.gather(world, seen_from, &planes, &mut extracted, &sphere, &assets.impostors);
             if portal.is_some() {
                 for plant in &mut extracted.instances[first..] {
                     scene::rebase(&mut plant.model, offset);
@@ -2511,8 +2515,9 @@ impl View {
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
-        for (instance, owner) in extracted.instances.iter_mut().zip(&extracted.entities) {
-            // Drawn again on a Portal's far side, it is posed as it is on the near one.
+        // Drawn again on a Portal's far side, it is posed as it is on the near one. A Foliage's plants never are.
+        let objs = extracted.instances.iter_mut().zip(&extracted.entities).filter(|(_, owner)| owner.plant.is_none());
+        for (instance, owner) in objs.filter(|_| !setup.posed.is_empty()) {
             if let Some(posed) = setup.posed.get(&scene::Owner { far_side: false, ..*owner }) {
                 posed.apply(instance);
             }

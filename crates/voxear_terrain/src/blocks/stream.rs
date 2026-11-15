@@ -496,9 +496,11 @@ impl BlockStreamer {
                 changed = true;
             }
         }
-        // Asked again only where something came or went, or the camera moved, or there is still more to make.
+        // Asked again only where something came or went, or the camera moved, or there is still more to make and
+        // room to make it: every thread busy, the far view would be looked over every frame for nothing.
         let moved = self.windows.as_deref() != Some(&windows[..]);
-        if changed || moved || self.waiting > 0 || std::mem::take(&mut self.again) {
+        let room = self.making_now.load(Ordering::Acquire) < self.at_once.max(1);
+        if changed || moved || self.waiting > 0 && room || std::mem::take(&mut self.again) {
             self.ask(world, &making, &windows, (from, pending));
         }
         if changed || moved {

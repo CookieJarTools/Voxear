@@ -64,12 +64,12 @@ pub fn update(world: &mut World, content: &mut Content) {
         let placed = asset.file.generate.as_ref().and_then(|generate| generate.placed.as_deref());
         placed.is_some_and(|placed| placed.biomes.list().iter().any(|biome| !biome.tints.is_none()))
     };
-    let worlds: Vec<(Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
+    let worlds: Vec<(Entity, voxear_core::math::Vec3)> = world
         .query_ref::<(Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(_, _, asset, ..)| tinted(asset))
-        .map(|(entity, _, asset, local, placed)| (entity, asset.clone(), voxear_terrain::corner(local, placed)))
+        .map(|(entity, _, _, local, placed)| (entity, voxear_terrain::corner(local, placed)))
         .collect();
     // Those no longer tinted are drawn untinted.
     let stale: Vec<Entity> = world
@@ -89,7 +89,8 @@ pub fn update(world: &mut World, content: &mut Content) {
     let mut kept = world.remove_resource::<TintTiles>().unwrap_or_default();
     kept.0.retain(|entity, _| worlds.iter().any(|(tinted, ..)| tinted == entity));
     let mut left = TILES_A_FRAME;
-    for (entity, asset, corner) in worlds {
+    for (entity, corner) in worlds {
+        let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
         let Some(generator) = crate::blocks::generator(content, &asset.file) else { continue };
         let Some(generate) = asset.file.generate.as_ref() else { continue };
         let size = asset.file.block_size.max(0.01);
@@ -101,8 +102,8 @@ pub fn update(world: &mut World, content: &mut Content) {
         }
         let local = viewer.map_or(voxear_core::math::Vec3::ZERO, |viewer| viewer - corner);
         let mut changed = world.get::<BlockTints>(entity).is_none();
-        let mut made = Vec::with_capacity(2);
-        for (window, scale) in kept.windows.iter_mut().zip([1, TINT_FAR]) {
+        let mut seen_from = [[0; 2]; 2];
+        for ((window, scale), seen_from) in kept.windows.iter_mut().zip([1, TINT_FAR]).zip(&mut seen_from) {
             // As the near tints' tiles are, of blocks as many times larger: points as many times further apart.
             let size = size * scale as f32;
             let tile_side = (TINT_TILE * TINT_STEP) as f32 * size;
@@ -122,10 +123,12 @@ pub fn update(world: &mut World, content: &mut Content) {
             }
             changed |= window.shown != Some((seen, window.tiles.len()));
             window.shown = Some((seen, window.tiles.len()));
-            made.push(put_together(window, seen));
+            *seen_from = seen;
         }
+        // Put together only where a tile came or the tile it is seen from changed: half a megabyte each.
         if changed {
-            let [(corner, points), (far_corner, far_points)] = [made[0].clone(), made[1].clone()];
+            let [(corner, points), (far_corner, far_points)] =
+                [0, 1].map(|window| put_together(&kept.windows[window], seen_from[window]));
             let side = (2 * REACH * TINT_TILE) as u32;
             world.insert(entity, BlockTints { corner, size: side, points, far_corner, far_points });
         }

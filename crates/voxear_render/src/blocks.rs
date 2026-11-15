@@ -274,12 +274,54 @@ const PARTS_EACH: usize = MAX_MOTIONS * size_of::<GpuBlockMotion>() + MAX_MOVING
 pub const FRAME_SIZE: u64 = (PARTS_AT + MAX_BLOCK_WORLDS * PARTS_EACH) as u64;
 
 /// One chunk in a pool: the faces it was made from, its slot, where its
-/// quads start, and the box it lies in, in metres from the world's corner.
+/// quads start, the box its faces lie in, and its whole cube, in metres
+/// from the world's corner.
 struct Held {
     mesh: Arc<ChunkMesh>,
     slot: u32,
     first: u64,
     bounds: [Vec3; 2],
+    cube: [Vec3; 2],
+    /// How many of each facing's quads are cut out, last in it.
+    cut: [u32; FACINGS],
+}
+
+/// A chunk's quads as its pool holds them, each with its slot: in each
+/// facing, those of a solid surface first and those of a surface `cut`
+/// out from its pictures last, as leaves are, which the sun's shadows draw
+/// apart (see [`record_shadows`]); and how many are cut out in each. Drawn
+/// smooth, its corners' words as they are, `cut` empty.
+fn arranged(mesh: &ChunkMesh, slot: u32, cut: &[bool]) -> (Vec<[u32; 2]>, [u32; FACINGS]) {
+    let mut quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+    let mut counts = [0; FACINGS];
+    if !cut.iter().any(|&cut| cut) {
+        return (quads, counts);
+    }
+    // As the shaders read a quad's surface: the last where it has more than the world.
+    let is_cut = |quad: &[u32; 2]| cut[usize::from(quad[1] as u8).min(cut.len() - 1)];
+    for (facing, count) in counts.iter_mut().enumerate() {
+        let run = &mut quads[mesh.buckets[facing] as usize..mesh.buckets[facing + 1] as usize];
+        run.sort_by_key(is_cut);
+        *count = run.iter().filter(|quad| is_cut(quad)).count() as u32;
+    }
+    (quads, counts)
+}
+
+/// The box chunk `mesh`'s faces lie in, in its blocks from its corner: its
+/// ground's faces, and the blocks its sheets of leaves and vines and its
+/// blocks of parts stand in. `None` where it has none of those, as a chunk
+/// of water alone, whose water lies anywhere in its cube.
+fn faces_box(mesh: &ChunkMesh) -> Option<[Vec3; 2]> {
+    let block = |word: u32| Vec3::new((word & 31) as f32, (word >> 5 & 31) as f32, (word >> 10 & 31) as f32);
+    let (first, count) = mesh.loose();
+    let loose = mesh.quads[first as usize..(first + count) as usize].iter().map(|&[word, _]| block(word));
+    let (first, words) = mesh.parts();
+    let parts = mesh.quads[first as usize..(first + words) as usize]
+        .chunks_exact(2)
+        .map(|pair| Vec3::from(voxear_terrain::blocks::mesh::unpack_part([pair[0], pair[1]]).at.map(|v| v as f32)));
+    let blocks = loose.chain(parts).map(|at| [at, at + Vec3::ONE]);
+    let ground = mesh.positions.iter().map(|&point| [Vec3::from(point); 2]);
+    ground.chain(blocks).reduce(|[low, high], [from, to]| [low.min(from), high.max(to)])
 }
 
 /// One chunk as a view picks what to draw of it: its level and place, its
@@ -288,8 +330,14 @@ struct Held {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ChunkDraw {
     pub key: [i32; 4],
+    /// The box its faces lie in, and its whole cube, which its water may
+    /// fill anywhere.
     pub bounds: [Vec3; 2],
+    pub cube: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
+    /// How many of each facing's quads are of a surface cut out from its
+    /// pictures, last among them (see [`arranged`]).
+    pub cut: [u32; FACINGS],
     /// Its loose quads, sheets of bushy leaves and of vines, drawn
     /// whichever way the view looks while it is near enough.
     pub loose: [u32; 2],
@@ -501,9 +549,57 @@ pub(crate) fn pick_water(
         let [level, x, y, z] = chunk.key;
         shown.is_none_or(|shown| shown.contains(&[level, x, z]))
             && (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z])))
-            && within(planes, chunk.bounds)
+            && within(planes, chunk.cube)
     });
     merged(picked.map(|chunk| chunk.water).collect())
+}
+
+/// The runs of `chunks`' quads cut out from their pictures, in the order
+/// their pool holds them: the last of each facing's (see [`arranged`]), and
+/// every sheet of leaves and block of parts.
+fn cut_runs(chunks: &[ChunkDraw]) -> Vec<[u32; 2]> {
+    let mut cut: Vec<[u32; 2]> = Vec::new();
+    for chunk in chunks.iter().filter(|chunk| chunk.cone.is_none()) {
+        for (&[first, count], &cut_count) in chunk.facings.iter().zip(&chunk.cut) {
+            if cut_count > 0 {
+                cut.push([first + count - cut_count, cut_count]);
+            }
+        }
+        for run in [chunk.loose, chunk.parts] {
+            if run[1] > 0 {
+                cut.push(run);
+            }
+        }
+    }
+    cut.sort_unstable();
+    cut
+}
+
+/// Runs of quads `picked` (see [`pick`]) as two lists of runs: those whose
+/// quads may all be drawn as depth alone, and those within `cut` (see
+/// [`cut_runs`]).
+fn cut_apart(cut: &[[u32; 2]], picked: Vec<[u32; 2]>) -> (Vec<[u32; 2]>, Vec<[u32; 2]>) {
+    let (mut solid, mut cut_out) = (Vec::new(), Vec::new());
+    for [mut first, count] in picked {
+        let end = first + count;
+        // The cut runs that start before this run ends, from the last that starts at or before its first.
+        let from = cut.partition_point(|&[start, _]| start <= first).saturating_sub(1);
+        for &[start, length] in cut[from..].iter().take_while(|&&[start, _]| start < end) {
+            let (start, stop) = (start.max(first), (start + length).min(end));
+            if start >= stop {
+                continue;
+            }
+            if start > first {
+                solid.push([first, start - first]);
+            }
+            cut_out.push([start, stop - start]);
+            first = stop;
+        }
+        if first < end {
+            solid.push([first, end - first]);
+        }
+    }
+    (solid, cut_out)
 }
 
 /// Runs of quads in order, those that follow on drawn as one.
@@ -554,6 +650,10 @@ struct Pool {
     /// Its tints as last brought up, where it has any: their points, from
     /// which point and how many a side.
     tinted: Option<(Arc<[u32]>, [i32; 2], u32, Option<[i32; 2]>)>,
+    /// Which of its surfaces are cut out from their pictures, as leaves
+    /// are, as its chunks' quads were last put in order by (see
+    /// [`arranged`]).
+    cut: Arc<[bool]>,
 }
 
 impl Pool {
@@ -575,6 +675,7 @@ impl Pool {
             smooth,
             draws: None,
             sights: None,
+            cut: Arc::from([]),
             seen: 0,
             made_from: None,
             tinted: None,
@@ -651,7 +752,7 @@ impl Pool {
                     self.space.alloc(count).expect("room after growing")
                 }
             };
-            let quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+            let (quads, cut) = arranged(mesh, slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
             // A coarser level's chunk is as many times larger as its blocks are; drawn smooth, its surface
@@ -660,8 +761,15 @@ impl Pool {
             let side = side * scale;
             let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
             let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
-            let bounds = [low - margin, low + Vec3::splat(side) + margin];
-            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds });
+            let cube = [low - margin, low + Vec3::splat(side) + margin];
+            // Where its faces are, a block more each way for leaves that sway and doors that swing: often a thin
+            // layer of a coarse chunk's cube, hundreds of metres high, which the sun's cascades would take whole.
+            let block = world.block_size * scale;
+            let bounds = faces_box(mesh).map_or(cube, |[from, to]| {
+                let grown = margin + Vec3::splat(block);
+                [(low + from * block - grown).max(cube[0]), (low + to * block + grown).min(cube[1])]
+            });
+            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds, cube, cut });
         }
         // Those the world no longer has go once every one coming has come, so none leaves a gap till then.
         if whole {
@@ -709,13 +817,29 @@ impl Pool {
         }
         for (key, held) in &mut self.held {
             held.first = self.space.alloc(held.mesh.quads.len() as u64).expect("room in a larger pool");
-            let quads: Vec<[u32; 2]> = held.mesh.quads.iter().map(|&[a, b]| [a, b | held.slot << 16]).collect();
+            let quads;
+            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
         }
         self.draws = None;
         self.sights = None;
         Ok(())
+    }
+
+    /// Every chunk held put in order again where it is, by which of the
+    /// world's surfaces are cut out now, where that changed.
+    fn arrange(&mut self, cut: Arc<[bool]>, stage: &mut dyn FnMut(&[u8], u64)) {
+        if self.cut == cut {
+            return;
+        }
+        self.cut = cut;
+        for held in self.held.values_mut() {
+            let quads;
+            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
+            stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
+        }
+        self.draws = None;
     }
 
     /// Which of each of its own chunks' sides see each other, made again
@@ -741,7 +865,17 @@ impl Pool {
                 let (parts, count) = held.mesh.parts();
                 let parts = [held.first as u32 + parts, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
-                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, parts, water, cone }
+                ChunkDraw {
+                    key: *key,
+                    bounds: held.bounds,
+                    cube: held.cube,
+                    facings,
+                    cut: held.cut,
+                    loose,
+                    parts,
+                    water,
+                    cone,
+                }
             });
             self.draws = Some(draws.collect());
         }
@@ -955,6 +1089,12 @@ impl BlockWorlds {
                 staged.extend_from_slice(bytes);
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
+            // Its chunks' quads in order by which of its surfaces are cut out from their pictures (see `arranged`).
+            let cut: Arc<[bool]> = match blocks.smooth {
+                true => Arc::from([]),
+                false => look.surfaces.iter().map(|surface| assets.is_cut_out(surface.material)).collect(),
+            };
+            pool.arrange(cut, &mut stage);
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Its tints, brought up where they changed; one larger than its room is left untinted.
             match world.get::<BlockTints>(entity) {
@@ -1217,10 +1357,9 @@ impl ViewBlocks {
             };
             counts.draws += lists[LIST_EARLY as usize].len() as u32;
             counts.triangles += triangles(&lists[LIST_EARLY as usize]);
-            for cascade in 0..CASCADES {
-                let list = &lists[LIST_SHADOW as usize + cascade];
-                counts.shadow_draws += list.len() as u32;
-                counts.shadow_triangles += triangles(list);
+            for list in (0..CASCADES).flat_map(|c| [LIST_SHADOW as usize + c, SHADOW_CUT as usize + c]) {
+                counts.shadow_draws += lists[list].len() as u32;
+                counts.shadow_triangles += triangles(&lists[list]);
             }
         }
         for (_, smooth, runs) in &self.water {
@@ -1337,7 +1476,7 @@ pub(crate) fn gather(
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
         let local = back * (camera - corner);
-        let mut lists = vec![Vec::new(); LAMP_KEPT as usize + LOCAL_SHADOW_LIGHTS];
+        let mut lists = vec![Vec::new(); LISTS];
         let planes = turned_planes(&frame.planes, corner, back);
         // What the world shows from the place nearest the camera, where it is seen from more than one.
         let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
@@ -1368,9 +1507,15 @@ pub(crate) fn gather(
         }
         if has_sun && blocks.cast_shadows {
             let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
+            let cut = cut_runs(&blocks.chunks);
             for cascade in 0..CASCADES {
                 let planes = turned_planes(&frame.cascade_planes[cascade], corner, back);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+                let picked = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+                // In the last cascade a picture's pixel is about one of the cascade's: leaves cast as solid there.
+                (lists[LIST_SHADOW as usize + cascade], lists[SHADOW_CUT as usize + cascade]) = match cascade {
+                    SOLID_CASCADE.. => (picked, Vec::new()),
+                    _ => cut_apart(&cut, picked),
+                };
             }
         }
         let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
@@ -1399,7 +1544,8 @@ pub(crate) fn gather(
     }
     buffer.write(0, &records);
     buffer.write(SURFACES_AT as u64, &surfaces);
-    let shadows = runs.iter().any(|(_, _, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
+    let cascades = (0..CASCADES).flat_map(|c| [LIST_SHADOW as usize + c, SHADOW_CUT as usize + c]).collect::<Vec<_>>();
+    let shadows = runs.iter().any(|(_, _, lists)| cascades.iter().any(|&list| !lists[list].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
     Some(ViewBlocks { runs, water, pools, shadows })
 }
@@ -1407,6 +1553,18 @@ pub(crate) fn gather(
 /// Where a world's lists of what a lamp keeps of it start, beyond the lists
 /// the GPU fills: one a lamp, by its slot.
 const LAMP_KEPT: u32 = LIST_COUNT;
+
+/// Where a world's lists of what each sun cascade draws cut out from its
+/// pictures start, after the lamps' (see [`record_shadows`]): one a
+/// cascade. Its list at `LIST_SHADOW` draws the rest.
+const SHADOW_CUT: u32 = LAMP_KEPT + LOCAL_SHADOW_LIGHTS as u32;
+
+/// How many lists each world has.
+const LISTS: usize = SHADOW_CUT as usize + CASCADES;
+
+/// The first sun cascade whose texels are as large as a block's pictures'
+/// pixels, into which faces cut out from their pictures cast as solid.
+const SOLID_CASCADE: usize = CASCADES - 1;
 
 /// The planes, inward, round a lamp's reach.
 fn reach_planes(at: Vec3, reach: f32) -> [[f32; 4]; 6] {
@@ -1459,8 +1617,14 @@ pub(crate) fn draw_lamp_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, 
 /// view and one in `level`, and the run's first quad in `output`, as the
 /// shaders' vertex numbers leave a draw's first out.
 fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
+    draw_runs_from(ctx, view, push, (list, list));
+}
+
+/// As [`draw_runs`], each world's runs of its list `from`, drawn as list
+/// `list` is.
+fn draw_runs_from(ctx: &PassContext, view: &ViewBlocks, push: &Push, (from, list): (u32, u32)) {
     for (number, smooth, lists) in &view.runs {
-        for &[first, count] in &lists[list as usize] {
+        for &[first, count] in &lists[from as usize] {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
             let vertices = if *smooth { count / 2 } else { count * 6 };
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
@@ -1491,7 +1655,10 @@ fn draws(view: &ViewBlocks, list: u32) -> bool {
 }
 
 /// **Shadows (blocks)**: the faces each cascade sees, into its corner of
-/// the sun's atlas, over what the other shadow passes drew.
+/// the sun's atlas, over what the other shadow passes drew: those of solid
+/// surfaces as depth alone, which the GPU tests before shading anything,
+/// then those cut out from their pictures, as leaves are, whose fragments
+/// may be thrown away where the picture is clear.
 pub(crate) fn record_shadows(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
@@ -1507,14 +1674,17 @@ pub(crate) fn record_shadows(
         let size = cascade_size * 2;
         let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
-        bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
-        for cascade in 0..CASCADES as u32 {
-            let offset = vk::Offset2D {
-                x: (cascade % 2 * cascade_size) as i32,
-                y: (cascade / 2 * cascade_size) as i32,
-            };
-            set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
-            draw_runs(ctx, &view, &push, LIST_SHADOW + cascade);
+        for (pipeline, lists) in [(pipelines.block_shadow_solid, LIST_SHADOW), (pipelines.block_shadow, SHADOW_CUT)] {
+            if !(0..CASCADES as u32).any(|cascade| draws(&view, lists + cascade)) {
+                continue;
+            }
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            for cascade in 0..CASCADES as u32 {
+                let offset =
+                    vk::Offset2D { x: (cascade % 2 * cascade_size) as i32, y: (cascade / 2 * cascade_size) as i32 };
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
+                draw_runs_from(ctx, &view, &push, (lists + cascade, LIST_SHADOW + cascade));
+            }
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
@@ -1648,6 +1818,8 @@ mod tests {
         let chunk = |x: f32, first: u32| ChunkDraw {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cube: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cut: [0; FACINGS],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
             parts: [0, 0],
@@ -1714,6 +1886,8 @@ mod tests {
         let chunk = |x: f32, first: u32, water: u32| ChunkDraw {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cube: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cut: [0; FACINGS],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
             parts: [0, 0],
@@ -1726,5 +1900,53 @@ mod tests {
         assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None, None), vec![[185, 7]]);
         let seen = HashSet::from([[0, 0, 0]]);
         assert_eq!(pick_water(&chunks, &[], Some(&seen), None), vec![[60, 5]]);
+    }
+
+    #[test]
+    fn cut_out_faces_go_last_in_each_facing_and_cast_apart_from_the_solid() {
+        use voxear_terrain::blocks::mesh::pack;
+        // Surface 1 is leaves, cut out; 0 and 2 are solid. Two facings, three quads and one.
+        let quad = |x: u32, surface: u8| pack([x, 0, 0], [1, 1], 0, surface, [3; 4]);
+        let mut mesh = ChunkMesh { quads: vec![quad(0, 1), quad(1, 0), quad(2, 2), quad(3, 1)], ..Default::default() };
+        mesh.buckets = [0, 3, 4, 4, 4, 4, 4, 4, 4];
+        let cut: Arc<[bool]> = Arc::from([false, true, false]);
+        let (quads, counts) = arranged(&mesh, 5, &cut);
+        let surfaces: Vec<u8> = quads.iter().map(|quad| quad[1] as u8).collect();
+        assert_eq!(surfaces, [0, 2, 1, 1], "the solid first in the first facing, in the order they came");
+        assert_eq!(counts, [1, 1, 0, 0, 0, 0]);
+        assert!(quads.iter().all(|quad| quad[1] >> 16 == 5), "each with its slot");
+        // A world with nothing cut out keeps its quads as they came.
+        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).1, [0; FACINGS]);
+        // Drawn from the pool's 100th quad: the cut runs are the last of each facing.
+        let draw = ChunkDraw {
+            key: [0; 4],
+            bounds: [Vec3::ZERO, Vec3::splat(32.0)],
+            cube: [Vec3::ZERO, Vec3::splat(32.0)],
+            facings: [[100, 3], [103, 1], [104, 0], [104, 0], [104, 0], [104, 0]],
+            cut: counts,
+            loose: [104, 2],
+            parts: [0, 0],
+            water: [106, 0],
+            cone: None,
+        };
+        let runs = cut_runs(&[draw]);
+        assert_eq!(runs, vec![[102, 1], [103, 1], [104, 2]], "the leaves of each facing and the sheets");
+        // One run over all of them comes apart into its solid quads and its cut ones.
+        assert_eq!(cut_apart(&runs, vec![[100, 6]]), (vec![[100, 2]], vec![[102, 1], [103, 1], [104, 2]]));
+        // Runs that only touch a cut run, or start inside one, are cut where they cross.
+        assert_eq!(cut_apart(&runs, vec![[100, 1], [103, 2]]), (vec![[100, 1]], vec![[103, 1], [104, 1]]));
+    }
+
+    #[test]
+    fn a_chunks_box_is_where_its_faces_are_not_its_whole_cube() {
+        // Ground faces between heights 3 and 5, and a sheet of leaves in the block at height 9.
+        let mut mesh = ChunkMesh {
+            positions: vec![[0.0, 3.0, 0.0], [32.0, 5.0, 32.0]],
+            quads: vec![voxear_terrain::blocks::mesh::pack_loose([4, 9, 4], 6, 0, 1, 0, 0)],
+            ..Default::default()
+        };
+        mesh.buckets = [0, 0, 0, 0, 0, 0, 0, 1, 1];
+        assert_eq!(faces_box(&mesh), Some([Vec3::new(0.0, 3.0, 0.0), Vec3::new(32.0, 10.0, 32.0)]));
+        assert_eq!(faces_box(&ChunkMesh::default()), None, "water alone may lie anywhere in its cube");
     }
 }

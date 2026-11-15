@@ -52,8 +52,9 @@ fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) 
     let size = file.block_size;
     let [px, pz] = generate.position;
     let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
-    let halved = generate.halves.is_some() && generate.slabs && !file.smooth;
-    let laid = (size, generate.position, generate.bottom, halved);
+    // Laid as its chunks lay it: over the floor under its ground, its top in half blocks where it says.
+    let halved = voxear_terrain::blocks::generate::halved(generate) && !file.smooth;
+    let laid = (size, generate.position, generate.lowest_open(), halved);
     let near = [at[0] - corner.x + px, at[2] - corner.z + pz];
     let found = dungeons_near(built, &generator, biomes, laid, near, at[3].max(0.0));
     let metres = |block: [f32; 3]| (corner + Vec3::new(block[0], block[1], block[2]) * size).to_array();

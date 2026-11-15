@@ -1775,10 +1775,24 @@ pub(crate) fn gather(
         }
         if has_sun && blocks.cast_shadows {
             let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
-            let cut = cut_runs(&blocks.chunks);
-            for cascade in 0..CASCADES {
-                let planes = turned_planes(&frame.cascade_planes[cascade], corner, back);
-                let picked = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+            let cascades: Vec<Vec<[f32; 4]>> =
+                frame.cascade_planes.iter().map(|planes| turned_planes(planes, corner, back)).collect();
+            // Every cascade's planes face the same ways, along and across the sun: the loosest of each way holds them
+            // all. The chunks within those are looked at for each cascade, of the thousands a far view has.
+            let around: Vec<[f32; 4]> = (0..cascades[0].len())
+                .map(|way| {
+                    let loosest = cascades.iter().map(|planes| planes[way][3]).fold(f32::MIN, f32::max);
+                    [cascades[0][way][0], cascades[0][way][1], cascades[0][way][2], loosest]
+                })
+                .collect();
+            let ours = |chunk: &&ChunkDraw| {
+                shown.is_none_or(|shown| shown.contains(&[chunk.key[0], chunk.key[1], chunk.key[3]]))
+            };
+            let casting: Vec<ChunkDraw> =
+                blocks.chunks.iter().filter(ours).filter(|chunk| within(&around, chunk.bounds)).copied().collect();
+            let cut = cut_runs(&casting);
+            for (cascade, planes) in cascades.iter().enumerate() {
+                let picked = pick(&casting, planes, (sunlit, detail), None, None);
                 // In the last cascade a picture's pixel is about one of the cascade's: leaves cast as solid there.
                 (lists[LIST_SHADOW as usize + cascade], lists[SHADOW_CUT as usize + cascade]) = match cascade {
                     SOLID_CASCADE.. => (picked, Vec::new()),

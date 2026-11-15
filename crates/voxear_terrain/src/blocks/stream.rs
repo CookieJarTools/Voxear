@@ -344,8 +344,17 @@ pub struct BlockStreamer {
     /// `fade_clock`, or `f32::MAX` while it shows with them not made yet
     /// (see [`RingFades::covered`]).
     covered_since: HashMap<(u32, [i32; 2]), f32>,
-    /// Whether a coarse column is fading into the finer ones over it.
+    /// Whether a coarse column is fading into the finer ones over it, and
+    /// when the first of those fades is over, on `fade_clock`.
     fading: bool,
+    fade_over: f32,
+    /// For each coarse column, a number given it as it was made, new each
+    /// time; and the columns shown, with those numbers, as the far chunks
+    /// were last put together from them, and those far chunks (see
+    /// [`Self::show_coarse`]).
+    coarse_made: HashMap<(u32, [i32; 2]), u64>,
+    made_count: u64,
+    far_from: (u64, Option<Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>>),
     waiting: usize,
     making_now: Arc<AtomicUsize>,
     /// The folder the far view's tiles of what it makes are kept in.
@@ -377,6 +386,10 @@ impl Default for BlockStreamer {
             stale: HashSet::new(),
             covered_since: HashMap::new(),
             fading: false,
+            fade_over: 0.0,
+            coarse_made: HashMap::new(),
+            made_count: 0,
+            far_from: (0, None),
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
             far_tiles: None,
@@ -493,6 +506,8 @@ impl BlockStreamer {
         changed |= self.take_finished(world, (base, pending), (&shown, &made));
         changed |= self.let_go(world, (base, pending), (&shown, &made));
         self.coarse.retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.contains(*at)));
+        let coarse = &self.coarse;
+        self.coarse_made.retain(|key, _| coarse.contains_key(key));
         self.coarse_blocks
             .retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.grown().contains(*at)));
         // Faces made since for columns not drawn, as where water flowed or a change reached, are not drawn: the
@@ -515,7 +530,8 @@ impl BlockStreamer {
         if changed || moved || self.waiting > 0 && room || std::mem::take(&mut self.again) {
             self.ask(world, &making, &windows, (from, pending));
         }
-        if changed || moved || self.fading {
+        // Again where columns came or went or the camera moved, and as the first fade under way is over.
+        if changed || moved || self.fading && super::fade_clock() >= self.fade_over {
             changed |= self.show_coarse(world, &by_place, from);
         }
         self.windows = Some(windows);
@@ -585,12 +601,16 @@ impl BlockStreamer {
                         continue;
                     }
                     let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
+                    self.made_count += 1;
+                    self.coarse_made.insert((level, at), self.made_count);
                     self.coarse.insert((level, at), meshes);
                     changed = true;
                 }
                 Finished::Joined { level, at, meshes, .. } => {
                     self.joining.remove(&(level, at));
                     let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
+                    self.made_count += 1;
+                    self.coarse_made.insert((level, at), self.made_count);
                     self.coarse.insert((level, at), meshes);
                     changed = true;
                 }
@@ -888,8 +908,8 @@ impl BlockStreamer {
         let mut covered_since = std::mem::take(&mut self.covered_since);
         covered_since.retain(|key, _| self.coarse.contains_key(key));
         let mut fades = RingFades::default();
-        let mut fading = false;
-        let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
+        let mut fade_over = f32::MAX;
+        let mut shown_columns: HashSet<(u32, [i32; 2])> = HashSet::new();
         let mut places = Vec::with_capacity(by_place.len());
         for (number, (windows, place)) in by_place.iter().zip(from).enumerate() {
             let top = windows.len() - 1;
@@ -925,7 +945,9 @@ impl BlockStreamer {
                             *since = now;
                         }
                         let fades_now = *since != f32::MAX && now - *since < RING_FADE_SECONDS;
-                        fading |= fades_now;
+                        if fades_now {
+                            fade_over = fade_over.min(*since + RING_FADE_SECONDS);
+                        }
                         // Under the band where the finer ring fades out, or past it.
                         let scale = (1u32 << (level - 1)) as f32;
                         let size = CHUNK as f32 * self.making.as_ref().map_or(1.0, |m| m.file.block_size) * scale * 2.0;
@@ -948,9 +970,7 @@ impl BlockStreamer {
                     continue;
                 }
                 columns.insert([*level as i32, at[0], at[1]]);
-                for (key, mesh) in meshes.iter().filter(|(_, mesh)| !mesh.is_empty()) {
-                    far.insert([*level as i32, key[0], key[1], key[2]], mesh.clone());
-                }
+                shown_columns.insert((*level, *at));
             }
             places.push(super::BlockPlace { at: place.at, columns });
         }
@@ -958,17 +978,37 @@ impl BlockStreamer {
         if places.len() < 2 {
             places.clear();
         }
-        let same_far = world.far.len() == far.len()
-            && far.iter().all(|(key, mesh)| world.far.get(key).is_some_and(|kept| Arc::ptr_eq(kept, mesh)));
+        // The far chunks put together again only where the columns shown, or one's faces, changed since: with
+        // thousands of chunks in the far view, the columns shown are far quicker to look over.
+        let made = |&(level, at): &(u32, [i32; 2])| {
+            let number = self.coarse_made.get(&(level, at)).copied().unwrap_or(0);
+            let mut h = u64::from(level) << 58 ^ u64::from(at[0] as u32) << 29 ^ u64::from(at[1] as u32) ^ number << 7;
+            // Mixed, so a sum of them tells sets apart.
+            h = (h ^ (h >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            h ^ (h >> 31)
+        };
+        let far_from = shown_columns.iter().map(made).fold(shown_columns.len() as u64, u64::wrapping_add);
+        let same_far =
+            far_from == self.far_from.0 && self.far_from.1.as_ref().is_some_and(|far| Arc::ptr_eq(far, &world.far));
         if !same_far {
+            let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
+            for (level, at) in &shown_columns {
+                let meshes = self.coarse.get(&(*level, *at)).map_or(&[][..], |meshes| &meshes[..]);
+                for (key, mesh) in meshes.iter().filter(|(_, mesh)| !mesh.is_empty()) {
+                    far.insert([*level as i32, key[0], key[1], key[2]], mesh.clone());
+                }
+            }
             world.far = Arc::new(far);
+            self.far_from = (far_from, Some(world.far.clone()));
         }
         let same_places = *world.places == places;
         if !same_places {
             world.places = Arc::new(places);
         }
         self.covered_since = covered_since;
-        self.fading = fading;
+        self.fading = fade_over != f32::MAX;
+        self.fade_over = fade_over;
         let same_fades = *world.fades == fades;
         if !same_fades {
             world.fades = Arc::new(fades);

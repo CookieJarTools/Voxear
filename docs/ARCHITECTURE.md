@@ -1329,7 +1329,7 @@ picker and Inspector show them, and games ask for them for inventory icons, shop
   later, `Texture` and `Region` are for the C# UI to come, and `Release` lets it go (`ScriptPreviews` in the
   engine).
 
-### Post-processing and the Voxear Look *(implemented; third-party upscalers planned)*
+### Post-processing and the Voxear Look *(implemented; DLSS and XeSS planned)*
 
 Every project starts with a finished look, so nothing has to be set up for a scene to look good. Each effect is a
 plain setting, nothing is hidden behind a profile asset, and the shaders are short and commented.
@@ -1403,7 +1403,12 @@ history on camera cuts.
 undo, `Post` in C#, HDR display output (an encode pass after the UI, see `display`), and the looks' sun canopy
 (`SunLook::canopy`, the `canopy` cookie) and near-only depth of field.
 
-**Planned: third-party upscalers.** AMD FSR, NVIDIA DLSS and Intel XeSS, each a choice beside Voxear's own
+**Upscalers.** AMD FSR 3.1 is built in (`fsr3`): AMD's MIT shaders, vendored in `voxear_render/fsr3/amd`,
+compiled to SPIR-V by `build.rs` with slangc for the one set of options Voxear uses, their bindings read from
+slangc's reflection into a table, and run by a host of Voxear's in one frame-graph pass, FSR's images the view's
+own, kept in the general layout. DLSS and XeSS are choices that say why they cannot run.
+
+**Planned: DLSS and XeSS.** NVIDIA DLSS and Intel XeSS, each a choice beside Voxear's own
 temporal upscaler, taking TAA's place in the chain: the scene at render size, its depth (reverse-Z), its motion in
 pixels, the frame's jitter in pixels, exposure as a 1×1 image, and a reactive mask for what is drawn over the
 opaque scene. Each is loaded at run time from its vendor's own library where present, and greyed out where it is

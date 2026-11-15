@@ -44,17 +44,19 @@ const SHADING_CHANGE: usize = 3;
 const PREPARE_REACTIVITY: usize = 4;
 const LUMA_INSTABILITY: usize = 5;
 const ACCUMULATE: usize = 6;
+const AUTOGEN_REACTIVE: usize = 7;
 
 /// Where each constant buffer is in a frame's part of the constants buffer.
 const FSR3_CONSTANTS: u64 = 0;
 const SPD_CONSTANTS: u64 = 256;
+const REACTIVE_CONSTANTS: u64 = 384;
 const CONSTANTS_PER_FRAME: u64 = 512;
 
 /// Every pass's pipeline, set layout and layout, and the two samplers AMD's
 /// shaders name, which the set layouts hold.
 #[derive(Clone, Copy)]
 pub(crate) struct Fsr3Pipelines {
-    passes: [(vk::DescriptorSetLayout, vk::PipelineLayout, vk::Pipeline); 7],
+    passes: [(vk::DescriptorSetLayout, vk::PipelineLayout, vk::Pipeline); 8],
     samplers: [vk::Sampler; 2],
     /// Each frame in flight's descriptor sets, for every view, reset as the
     /// frame begins (`reset_sets`).
@@ -79,7 +81,7 @@ impl Fsr3Pipelines {
             unsafe { gpu.device.create_sampler(&info, None) }.context("creating FSR's samplers")
         };
         let samplers = [sampler(vk::Filter::NEAREST)?, sampler(vk::Filter::LINEAR)?];
-        let mut passes = [(vk::DescriptorSetLayout::null(), vk::PipelineLayout::null(), vk::Pipeline::null()); 7];
+        let mut passes = [(vk::DescriptorSetLayout::null(), vk::PipelineLayout::null(), vk::Pipeline::null()); 8];
         for (made, info) in passes.iter_mut().zip(&FSR3_PASSES) {
             let immutable: Vec<[vk::Sampler; 1]> = info
                 .bindings
@@ -164,6 +166,10 @@ fn descriptor_type(kind: Fsr3Binding) -> vk::DescriptorType {
 /// and how the frame was drawn.
 pub(crate) struct Fsr3Frame {
     pub color: vk::ImageView,
+    /// The scene before smoke, particles and the like were drawn over it,
+    /// from which the reactive mask is made: what changed tells FSR to keep
+    /// less of its history there. None where nothing was drawn over it.
+    pub opaque: Option<vk::ImageView>,
     pub depth: vk::ImageView,
     pub motion: vk::ImageView,
     pub exposure: vk::ImageView,
@@ -215,14 +221,15 @@ const NEW_LOCKS: usize = 16;
 const FARTHEST_MIP1: usize = 17;
 const DILATED_REACTIVE: usize = 18;
 const DEFAULT_REACTIVE: usize = 19;
-const LANCZOS: usize = 20;
+const AUTOREACTIVE: usize = 20;
+const LANCZOS: usize = 21;
 
 impl Fsr3State {
     pub fn new(gpu: &Gpu, render: [u32; 2], upscale: [u32; 2]) -> Result<Self> {
         let storage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
         let half = render.map(|side| (side / 2).max(1));
         use vk::Format as F;
-        let plain: [(&str, [u32; 2], F); 20] = [
+        let plain: [(&str, [u32; 2], F); 21] = [
             ("FSR luma 1", render, F::R16_SFLOAT),
             ("FSR luma 2", render, F::R16_SFLOAT),
             ("FSR accumulation 1", render, F::R8_UNORM),
@@ -243,8 +250,9 @@ impl Fsr3State {
             ("FSR farthest depth mip 1", half, F::R16_SFLOAT),
             ("FSR dilated reactive masks", render, F::R8G8B8A8_UNORM),
             ("FSR default reactivity", [1, 1], F::R8_UNORM),
+            ("FSR reactive mask", render, F::R8_UNORM),
         ];
-        let mut images = Vec::with_capacity(21);
+        let mut images = Vec::with_capacity(22);
         for (index, (name, [width, height], format)) in plain.into_iter().enumerate() {
             let mut desc = ImageDesc::new(width, height, format, storage);
             if index == SPD_MIPS {
@@ -372,6 +380,10 @@ impl Fsr3State {
         self.constants.write(offset + FSR3_CONSTANTS, &constants[..]);
         let (spd, groups) = spd_setup(frame.render);
         self.constants.write(offset + SPD_CONSTANTS, &spd[..]);
+        // As AMD's sample makes its mask: tonemapped, the largest channel's change, and past a fifth, nine tenths.
+        let reactive = [1.0f32.to_bits(), 0.2f32.to_bits(), 0.9f32.to_bits(), 1 | 4 | 8];
+        self.constants.write(offset + REACTIVE_CONSTANTS, &reactive[..]);
+        let reactive_mask = if frame.opaque.is_some() { AUTOREACTIVE } else { DEFAULT_REACTIVE };
 
         let spd = &self.images[SPD_MIPS];
         let view = |name: &str| -> Option<(vk::ImageView, vk::ImageLayout)> {
@@ -389,7 +401,12 @@ impl Fsr3State {
                 "r_input_motion_vectors" => Some((frame.motion, read)),
                 "r_input_exposure" => Some((frame.exposure, read)),
                 "rw_upscaled_output" => Some((frame.output, general)),
-                "r_reactive_mask" | "r_transparency_and_composition_mask" => own(DEFAULT_REACTIVE),
+                "r_reactive_mask" => own(reactive_mask),
+                "r_transparency_and_composition_mask" => own(DEFAULT_REACTIVE),
+                "r_input_opaque_only" => frame.opaque.map(|opaque| (opaque, read)),
+                "rw_output_autoreactive" => own(AUTOREACTIVE),
+                // FSR's mask of what is composed over the scene: left empty, as the default is.
+                "rw_output_autocomposition" => own(DILATED_REACTIVE),
                 "r_dilated_motion_vectors" | "rw_dilated_motion_vectors" => own(DILATED_MOTION),
                 "r_dilated_depth" | "rw_dilated_depth" => own(DILATED_DEPTH),
                 "r_reconstructed_previous_nearest_depth" | "rw_reconstructed_previous_nearest_depth" => {
@@ -421,6 +438,7 @@ impl Fsr3State {
 
         let groups_of = |size: [u32; 2], tile: u32| [size[0].div_ceil(tile), size[1].div_ceil(tile)];
         let shading = [frame.render[0] / 2, frame.render[1] / 2];
+        let reactive = frame.opaque.map(|_| (AUTOGEN_REACTIVE, groups_of(frame.render, 8)));
         let dispatches: [(usize, [u32; 2]); 7] = [
             (PREPARE_INPUTS, groups_of(frame.render, 8)),
             (LUMA_PYRAMID, groups),
@@ -439,7 +457,7 @@ impl Fsr3State {
                     | vk::AccessFlags2::SHADER_STORAGE_READ
                     | vk::AccessFlags2::SHADER_STORAGE_WRITE,
             );
-        for (pass, [x, y]) in dispatches {
+        for (pass, [x, y]) in reactive.into_iter().chain(dispatches) {
             let info = &FSR3_PASSES[pass];
             let (set_layout, layout, pipeline) = pipelines.passes[pass];
             let layouts = [set_layout];
@@ -470,7 +488,12 @@ impl Fsr3State {
                 .iter()
                 .filter(|(_, kind, _)| *kind == Fsr3Binding::Uniform)
                 .map(|&(name, _, binding)| {
-                    let at = offset + if name == "cbSPD" { SPD_CONSTANTS } else { FSR3_CONSTANTS };
+                    let at = offset
+                        + match name {
+                            "cbSPD" => SPD_CONSTANTS,
+                            "cbGenerateReactive" => REACTIVE_CONSTANTS,
+                            _ => FSR3_CONSTANTS,
+                        };
                     (binding, [vk::DescriptorBufferInfo::default().buffer(self.constants.handle).offset(at).range(256)])
                 })
                 .collect();
@@ -590,7 +613,8 @@ mod tests {
 
     #[test]
     fn every_pass_is_compiled_and_names_what_it_binds() {
-        assert_eq!(FSR3_PASSES.len(), 7);
+        assert_eq!(FSR3_PASSES.len(), 8);
+        assert_eq!(FSR3_PASSES[AUTOGEN_REACTIVE].name, "autogen_reactive");
         for info in &FSR3_PASSES {
             assert!(info.spirv.len() > 1000 && info.spirv[..4] == [0x03, 0x02, 0x23, 0x07], "{} is SPIR-V", info.name);
             assert!(info.bindings.iter().any(|(name, ..)| *name == "cbFSR3Upscaler"), "{}", info.name);

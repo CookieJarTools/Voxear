@@ -126,6 +126,21 @@ pub fn record(
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
     }
+    // FSR's reactive mask is made from the scene before and after what is drawn over it.
+    let fsr_chosen = input.fsr3.is_some()
+        && settings.anti_aliasing.mode == AntiAliasingMode::Taa
+        && settings.anti_aliasing.upscaler == crate::post::Upscaler::Fsr;
+    let drawn_over = input.smoke.is_some() || input.particles.is_some() || input.under_water.is_some();
+    let opaque = match fsr_chosen && drawn_over {
+        true => {
+            let copy = fg.create_image(gpu, bindless, "FSR opaque only", drawn(HDR_FORMAT))?;
+            let push = Push { textures: [fg.texture(hdr).0, 0, 0, 0], ..push };
+            let images = [(hdr, ImageAccess::Sampled), (copy, ImageAccess::ColorAttachment)];
+            fg.add_pass("FSR opaque copy", &images, &[], move |ctx| draw(ctx, pipelines.fsr_copy, &push, copy, false));
+            Some(copy)
+        }
+        false => None,
+    };
     if let Some(smoke) = input.smoke.clone() {
         let target = (smoke, hdr, render_extent, input.history);
         crate::smoke::record(fg, (gpu, bindless), (pipelines, push), target, input.fog_volume)?;
@@ -161,7 +176,7 @@ pub fn record(
         settings.anti_aliasing.mode == AntiAliasingMode::Taa && settings.anti_aliasing.upscaler == crate::post::Upscaler::Fsr
     });
     if let Some(fsr3) = fsr3 {
-        scene = record_fsr3(fg, gpu, bindless, input, fsr3, (scene, velocity, depth))?;
+        scene = record_fsr3(fg, gpu, bindless, input, fsr3, (scene, velocity, depth), opaque)?;
     } else if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
         let current = taa_history(fg, gpu, bindless, extent, input.history)?;
         let previous = taa_history(fg, gpu, bindless, extent, 1 - input.history)?;
@@ -265,6 +280,7 @@ fn record_fsr3(
     input: &PostInput,
     fsr3: &Fsr3Input,
     (scene, velocity, depth): (ImageId, ImageId, ImageId),
+    opaque: Option<ImageId>,
 ) -> Result<ImageId> {
     let (render, upscale) = (input.render_extent, input.extent);
     let (render, upscale) = ([render.width, render.height], [upscale.width, upscale.height]);
@@ -288,19 +304,21 @@ fn record_fsr3(
     });
     let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
     let output = fg.create_image(gpu, bindless, "FSR output", ImageDesc::new(upscale[0], upscale[1], HDR_FORMAT, usage))?;
-    let images = [
+    let mut images = vec![
         (scene, ImageAccess::Sampled),
         (depth, ImageAccess::Sampled),
         (velocity, ImageAccess::Sampled),
         (exposure, ImageAccess::Sampled),
         (output, ImageAccess::StorageWrite),
     ];
+    images.extend(opaque.map(|opaque| (opaque, ImageAccess::Sampled)));
     let state = fsr3.state.clone();
     let (fsr, jitter, fov_y, near, delta_time, reset, slot) =
         (fsr3.pipelines, fsr3.jitter, fsr3.fov_y, fsr3.near, fsr3.delta_time, fsr3.reset, fsr3.slot);
     fg.add_pass("FSR 3", &images, &[], move |ctx| {
         let frame = crate::fsr3::Fsr3Frame {
             color: ctx.view(scene),
+            opaque: opaque.map(|opaque| ctx.view(opaque)),
             depth: ctx.view(depth),
             motion: ctx.view(velocity),
             exposure: ctx.view(exposure),

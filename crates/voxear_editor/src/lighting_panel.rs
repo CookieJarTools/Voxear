@@ -1618,7 +1618,13 @@ mod tests {
         for info in SETTINGS {
             // Unset, these are the sun's own colour, the horizon's and no table.
             let optional =
-                [&["sun", "temperature"][..], &["post", "fog", "color"], &["post", "grading", "lut"], &["sky", "picture"]]
+                [
+                &["sun", "temperature"][..],
+                &["post", "fog", "color"],
+                &["post", "grading", "lut"],
+                &["sky", "picture"],
+                &["post", "anti_aliasing", "quality"],
+            ]
                     .contains(&info.path);
             assert!(optional || find(&values, info.path).is_some(), "{:?} has a value", info.path);
         }

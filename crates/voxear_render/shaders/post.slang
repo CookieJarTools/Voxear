@@ -805,6 +805,14 @@ float4 fsrExposureFragment(PostOut input) : SV_Target
     return float4(frame->exposure * exp2(ev), 0.0, 0.0, 1.0);
 }
 
+// The scene as it is, copied before smoke and particles are drawn over it,
+// for FSR's reactive mask.
+[shader("fragment")]
+float4 fsrCopyFragment(PostOut input) : SV_Target
+{
+    return load(push.textures.x, int2(input.position.xy));
+}
+
 // ---------------------------------------------------------------- Encode
 
 // ST 2084's PQ curve: light from 0 to 1 for 0 to 10,000 nits, as a signal

@@ -50,7 +50,7 @@ fn main() {
 /// samplers from 80), and its reflection turned into the table `fsr3` binds
 /// from: Voxear's permutation table, one entry a pass.
 fn fsr3(slangc: &str, out: &std::path::Path) {
-    const PASSES: [&str; 7] = [
+    const PASSES: [&str; 8] = [
         "prepare_inputs",
         "luma_pyramid",
         "shading_change_pyramid",
@@ -58,10 +58,12 @@ fn fsr3(slangc: &str, out: &std::path::Path) {
         "prepare_reactivity",
         "luma_instability",
         "accumulate",
+        // The reactive mask, from the scene before and after what is drawn over it.
+        "autogen_reactive",
     ];
     let root = std::path::Path::new("fsr3/amd");
     let mut table = String::from("// Made by build.rs from slangc's reflection of AMD's FSR 3.1 passes.\n");
-    table.push_str("pub(crate) const FSR3_PASSES: [Fsr3PassInfo; 7] = [\n");
+    table.push_str("pub(crate) const FSR3_PASSES: [Fsr3PassInfo; 8] = [\n");
     for pass in PASSES {
         let source = root.join(format!("upscalers/fsr3/internal/shaders/ffx_fsr3upscaler_{pass}_pass.hlsl"));
         let spirv = out.join(format!("fsr3_{pass}.spv"));

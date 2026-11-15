@@ -108,3 +108,92 @@ fn upscalers_say_whether_they_run_here() {
     assert!(why(Upscaler::Dlss).is_some_and(|why| why.contains("DLSS")), "{:?}", why(Upscaler::Dlss));
     assert!(why(Upscaler::Xess).is_some_and(|why| why.contains("XeSS")), "{:?}", why(Upscaler::Xess));
 }
+
+/// Sparks shooting up in front of a dark wall, after `frames` frames, the
+/// scene drawn as `quality` says and upscaled by `upscaler`; or the wall
+/// alone.
+fn sparks(renderer: &mut Renderer, upscaler: Upscaler, quality: UpscaleQuality, sparks: bool) -> Vec<u8> {
+    use voxear_render::{ParticleBlend, ParticlePlayback, ParticleSystem};
+    let anti_aliasing = AntiAliasing {
+        mode: AntiAliasingMode::Taa,
+        upscaler,
+        quality: Some(quality),
+        sharpness: 0.0,
+        ..AntiAliasing::default()
+    };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.reflections.enabled = false;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey =
+        renderer.add_material(&MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((
+        MeshRenderer::new(cube, grey),
+        Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2)),
+    ));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if sparks {
+        let system = ParticleSystem {
+            rate: 200.0,
+            lifetime: [1.0, 1.5],
+            speed: [3.0, 4.0],
+            size: [0.08, 0.12],
+            angle: 25.0,
+            gravity: 1.0,
+            color: [1.0, 0.6, 0.2, 1.0],
+            color_end: [1.0, 0.3, 0.1, 1.0],
+            intensity: 4.0,
+            blend: ParticleBlend::Additive,
+            lit: false,
+            ..ParticleSystem::default()
+        };
+        world.spawn((
+            system,
+            ParticlePlayback { started: time - 2.0, stopped: None },
+            Transform::from_position(Vec3::ZERO),
+        ));
+    }
+    world.insert_resource(post);
+    for _ in 0..12 {
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+    }
+    renderer.read_pixels().unwrap().2
+}
+
+/// How many pixels are much redder than in `before`.
+fn redder(pixels: &[u8], before: &[u8]) -> usize {
+    pixels
+        .chunks_exact(4)
+        .zip(before.chunks_exact(4))
+        .filter(|(now, was)| i32::from(now[0]) > i32::from(was[0]) + 40)
+        .count()
+}
+
+#[test]
+fn fsr_keeps_moving_sparks_where_they_are_rather_than_smearing_them() {
+    let Some(mut renderer) = renderer() else { return };
+    if !renderer.upscalers().iter().any(|(upscaler, why)| *upscaler == Upscaler::Fsr && why.is_none()) {
+        return eprintln!("skipping: this GPU cannot run FSR");
+    }
+    let wall = sparks(&mut renderer, Upscaler::Voxear, UpscaleQuality::Native, false);
+    let native = sparks(&mut renderer, Upscaler::Voxear, UpscaleQuality::Native, true);
+    let voxear = sparks(&mut renderer, Upscaler::Voxear, UpscaleQuality::Performance, true);
+    let fsr = sparks(&mut renderer, Upscaler::Fsr, UpscaleQuality::Performance, true);
+    keep("sparks native.png", &native);
+    keep("sparks voxear half.png", &voxear);
+    keep("sparks fsr half.png", &fsr);
+    let (native, voxear, fsr) = (redder(&native, &wall), redder(&voxear, &wall), redder(&fsr, &wall));
+    eprintln!("sparks over the wall: {native} pixels at full size, {voxear} Voxear's from half, {fsr} FSR's from half");
+    assert!(native > 300, "sparks show: {native}");
+    let ratio = fsr as f32 / native as f32;
+    assert!(
+        (0.4..2.0).contains(&ratio),
+        "FSR shows the sparks as they are, neither lost nor smeared: {fsr} against {native}"
+    );
+}

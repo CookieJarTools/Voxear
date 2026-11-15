@@ -231,6 +231,8 @@ pub struct Pipelines {
     /// pass that writes FSR the frame's exposure.
     pub fsr3: Option<crate::fsr3::Fsr3Pipelines>,
     pub fsr_exposure: vk::Pipeline,
+    /// Copies the scene before what is drawn over it, for FSR's reactive mask.
+    pub fsr_copy: vk::Pipeline,
     pub ui: vk::Pipeline,
     /// A UI panel's UI into its texture, the panels over each view's
     /// finished picture, and each panel's texture's mips (see `ui_panels`).
@@ -870,6 +872,7 @@ impl Pipelines {
                 false => None,
             },
             fsr_exposure: fullscreen("FSR exposure", c"fsrExposureFragment", &[FSR_EXPOSURE_FORMAT], Blend::Opaque)?,
+            fsr_copy: fullscreen("FSR opaque copy", c"fsrCopyFragment", hdr, Blend::Opaque)?,
             encode: {
                 let formats = [
                     window_format,
@@ -1163,7 +1166,7 @@ impl Pipelines {
         if let Some(fsr3) = &self.fsr3 {
             fsr3.destroy(gpu);
         }
-        let encode = encode.chain(std::iter::once(self.fsr_exposure));
+        let encode = encode.chain([self.fsr_exposure, self.fsr_copy]);
         for pipeline in all.into_iter().chain(mesh).chain(traced).chain(encode) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }

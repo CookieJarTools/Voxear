@@ -246,6 +246,22 @@
     padding: 0px;
 }
 
+/* A folder setting: a button naming the folder, which picks another, and one that clears it. */
+.setting-folder {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0px;
+    height: 22px;
+    padding: 0px 8px;
+    border-radius: 6px;
+}
+
+.setting-clear {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+}
+
 /* The command palette, under the command bar. */
 .palette {
     position: absolute;

@@ -111,6 +111,9 @@ pub struct MaterialDesc {
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground's own look; 0 for not at all.
     pub ground_blend: f32,
+    /// Drawn from both sides, its back lit as a front is, for leaves on
+    /// cards and scans open behind. Not displaced.
+    pub two_sided: bool,
     /// Lit as leaves are: light wrapped round, through the leaf against the
     /// sun, and a rim of the sun's colour.
     pub foliage: bool,
@@ -174,6 +177,7 @@ impl Default for MaterialDesc {
             pixels: false,
             connected: false,
             ground_blend: 0.0,
+            two_sided: false,
             foliage: false,
             glass: false,
             ior: 1.5,
@@ -1073,11 +1077,11 @@ impl Assets {
         }
         self.material_writes += 1;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
-        // Diced only as the standard shader, opaque and not glass, foliage or an impostor, draws it.
+        // Diced only as the standard shader, opaque, one-sided and not glass, foliage or an impostor, draws it.
         let displaced = desc.height_texture.is_some()
             && desc.displacement != 0.0
             && desc.shader == STANDARD_SHADER
-            && !(desc.glass || desc.foliage || desc.impostor || desc.alpha_cutoff.is_some());
+            && !(desc.glass || desc.foliage || desc.impostor || desc.two_sided || desc.alpha_cutoff.is_some());
         let material = GpuMaterial {
             base_color: desc.base_color,
             emissive: desc.emissive,
@@ -1095,6 +1099,7 @@ impl Assets {
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }
+                | if desc.two_sided { crate::gpu::MATERIAL_TWO_SIDED } else { 0 }
                 | (desc.glow as u32) << crate::gpu::MATERIAL_GLOW_SHIFT,
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),

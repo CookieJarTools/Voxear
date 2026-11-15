@@ -42,6 +42,10 @@ pub enum SettingKind {
     },
     /// A colour, picked from its swatch.
     Color,
+    /// A folder on this machine, picked in the desktop's folder chooser,
+    /// or none. Kept as a path, so it has no [`SettingValue`] (see
+    /// [`Settings::folder`]).
+    Folder,
 }
 
 /// One setting: the key it is kept and found by, what it is called, the
@@ -54,7 +58,7 @@ pub struct SettingInfo {
     pub kind: SettingKind,
 }
 
-pub const SETTINGS: [SettingInfo; 26] = [
+pub const SETTINGS: [SettingInfo; 27] = [
     SettingInfo {
         key: "snap",
         title: "Snap distance",
@@ -146,6 +150,7 @@ pub const SETTINGS: [SettingInfo; 26] = [
         group: "Tools",
         kind: SettingKind::Toggle,
     },
+    SettingInfo { key: "fab_downloads", title: "Watch for downloads", group: "Fab", kind: SettingKind::Folder },
 ];
 
 /// A setting's value, as the panel and palette show and change it.
@@ -292,6 +297,10 @@ pub struct Settings {
     /// Programs reaching the editor through its link, as `vox editor call`
     /// and `vox mcp` do, may change the project, not only read it.
     pub tools_may_change: bool,
+    /// The folder the browser downloads into, watched for Megascans
+    /// downloaded from Fab, which are imported when the editor gets the
+    /// focus back (see `megascans`). None watches nothing.
+    pub fab_downloads: Option<PathBuf>,
 }
 
 /// A Console filter saved by name, as Sifter keeps them: a search, and the
@@ -350,6 +359,7 @@ impl Default for Settings {
             theme_accent: 0x7988ff,
             theme_contrast: 50.0,
             tools_may_change: true,
+            fab_downloads: None,
         }
     }
 }
@@ -428,6 +438,25 @@ impl Settings {
         *self != before
     }
 
+    /// A folder setting's folder, if one is chosen.
+    pub fn folder(&self, key: &str) -> Option<&Path> {
+        match key {
+            "fab_downloads" => self.fab_downloads.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Sets a folder setting, or clears it. Returns whether it changed.
+    pub fn set_folder(&mut self, key: &str, folder: Option<PathBuf>) -> bool {
+        let kept = match key {
+            "fab_downloads" => &mut self.fab_downloads,
+            _ => return false,
+        };
+        let changed = *kept != folder;
+        *kept = folder;
+        changed
+    }
+
     /// Wears one of [`THEMES`], its three choices with it, or Custom, which
     /// keeps the choices as they are.
     fn set_theme(&mut self, index: usize) {
@@ -456,6 +485,7 @@ impl Settings {
                 format!("{} {unit}", (n * 100.0).round() / 100.0)
             }
             (Some(SettingValue::Color(c)), _) => Color::hex(c).css(),
+            (None, SettingKind::Folder) => self.folder(info.key).map_or("None".into(), |f| f.display().to_string()),
             _ => String::new(),
         }
     }
@@ -627,5 +657,23 @@ mod tests {
         let forgetful = Memory::forgetful();
         forgetful.save();
         assert_eq!(forgetful.settings, Settings::default());
+    }
+
+    #[test]
+    fn a_folder_setting_is_kept_as_its_path_and_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut memory = Memory::open(dir.path());
+        let watched = info("fab_downloads").unwrap();
+        assert_eq!((watched.kind, memory.settings.describe(watched).as_str()), (SettingKind::Folder, "None"));
+        let downloads = dir.path().join("Downloads");
+        assert!(memory.settings.set_folder("fab_downloads", Some(downloads.clone())));
+        assert!(!memory.settings.set_folder("fab_downloads", Some(downloads.clone())), "the same again is no change");
+        memory.save();
+
+        let mut again = Memory::open(dir.path());
+        assert_eq!(again.settings.folder("fab_downloads"), Some(downloads.as_path()));
+        assert_eq!(again.settings.describe(watched), downloads.display().to_string());
+        assert!(again.settings.set_folder("fab_downloads", None));
+        assert_eq!(again.settings.fab_downloads, None);
     }
 }

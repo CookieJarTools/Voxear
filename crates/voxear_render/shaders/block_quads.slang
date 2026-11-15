@@ -288,7 +288,7 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     if (facing >= BLOCK_TUFT && loose)
     {
         // A lamp's shadow is kept from frame to frame, so its sheets are as its lamp sees them, wherever the camera is.
-        bool lamp = push.list >= LIST_LOCAL_SHADOW && push.list < LIST_COUNT;
+        bool lamp = push.list >= LIST_LOCAL_SHADOW && push.list < LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
         float3 eye = lamp ? push.frame->localShadows.casters[push.list - LIST_LOCAL_SHADOW].xyz : push.frame->cameraPosition;
         return loosePoint(world, quad, vertexId % 6, eye);
     }

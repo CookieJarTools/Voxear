@@ -73,6 +73,10 @@ pub struct MaterialData {
     /// sun, and a rim of the sun's colour.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub foliage: bool,
+    /// Drawn from both sides, its back lit as a front is: for leaves on
+    /// cards, and scans open behind. It is then not displaced.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub two_sided: bool,
     /// Glass: what lies behind shows through, tinted by the colour, bent a
     /// little and blurred as roughness rises, with the surroundings
     /// reflected in it. It casts no shadow, and light passes it.
@@ -163,6 +167,7 @@ impl Default for MaterialData {
             displacement: 0.0,
             detail: default_detail(),
             foliage: false,
+            two_sided: false,
             glass: false,
             cutout: None,
             pixels: false,
@@ -294,6 +299,7 @@ impl MaterialData {
             normal_texture: normal,
             emissive_texture: emissive,
             foliage: self.foliage,
+            two_sided: self.two_sided,
             glass: self.glass,
             ior: self.ior,
             wind_bend: self.wind_bend(),
@@ -321,6 +327,7 @@ impl MaterialData {
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
         let flags = flags | u32::from(self.pixels) << 8 | u32::from(self.connected) << 9;
+        let flags = flags | u32::from(self.two_sided) << 10;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
         let (displacement, detail) = (self.displacement.to_bits(), self.detail.to_bits());
         // Cut out or not is in the custom part, so the array keeps its size.
@@ -2815,6 +2822,16 @@ mod tests {
         // Without a height map, nothing moves it.
         let unmapped = MaterialData { height_map: None, ..data };
         assert_eq!(unmapped.desc([None; 5]).displacement, 0.0);
+    }
+
+    #[test]
+    fn a_two_sided_material_reads_and_writes_back_and_draws_apart_from_a_one_sided_one() {
+        let data: MaterialData = toml::from_str("two_sided = true\n").unwrap();
+        assert!(data.two_sided && data.desc([None; 5]).two_sided, "the GPU's material is drawn from both sides");
+        assert_eq!(toml::from_str::<MaterialData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("two_sided"), "left out when one-sided");
+        let one_sided = MaterialData { two_sided: false, ..data.clone() };
+        assert_ne!(one_sided.key(), data.key(), "a one-sided material is a GPU material of its own");
     }
 }
 

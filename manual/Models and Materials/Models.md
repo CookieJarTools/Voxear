@@ -17,6 +17,8 @@ You can also right-click a folder, or the space around the files, and choose **I
 
 On Linux, some desktops cannot pass a drag from an X11 program to the editor. If a drop does nothing, open your file manager on its own, not from another program such as the Unity editor, and drag from there, or use **Import New Asset…**.
 
+A Megascans download from Fab, dropped as its zip, comes in whole: its textures, a material and its models, in a folder of its own. See [[Megascans from Fab]].
+
 You can also copy files into the project's folder yourself. The editor sees them when you come back to it. In the same way, when you export a model again over its file, Voxear imports it again when you come back to the editor, and everything drawing it shows the change.
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.
@@ -151,6 +153,7 @@ A picture packed inside a model file has no `.meta` of its own, so it is always 
 - The shape, its normals (which way each surface faces) and its texture coordinates. If the file has no normals, Voxear works them out.
 - Its materials: colour, metal and roughness, normal map, and glow, each with its picture.
 - Cut-outs, such as leaves on a flat card, where the material says to cut them out.
+- Two-sided materials, such as leaves or a curtain, drawn from both sides where the file marks the material double-sided. See [[Materials#Seen from both sides|Seen from both sides]].
 - Its skeleton, the bones each mesh moves with, and its clips, for a model made to animate. See [[Animation Clips]].
 
 Not yet read: vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file.

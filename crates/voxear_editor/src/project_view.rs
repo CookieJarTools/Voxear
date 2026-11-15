@@ -21,7 +21,9 @@
 //! Path, Rename, Duplicate and Delete, and new folders, scenes, levels,
 //! materials and C# scripts (see `project_files`). Rename, and anything new,
 //! opens a bar over the files to type the name in: Enter keeps it, and going
-//! elsewhere leaves the old one.
+//! elsewhere leaves the old one. Open Fab shows Megascans' page on Fab in
+//! the browser; a download from there dropped on the panel is imported
+//! whole (see `megascans`).
 //!
 //! Materials, prefabs and models show previews of themselves in place of
 //! their icons once the editor has them drawn (see [`ProjectView::set_previews`]).
@@ -134,6 +136,7 @@ enum MenuAction {
     Duplicate,
     Delete,
     Import,
+    OpenFab,
     New(NewFile),
     NewShader,
     NewEffect,
@@ -1008,6 +1011,7 @@ impl ProjectView {
         }
         add(MenuItem::separator(), None);
         add(MenuItem::new("Import New Asset…").enabled(open_to_new), Some(MenuAction::Import));
+        add(MenuItem::new("Open Fab"), Some(MenuAction::OpenFab));
         add(MenuItem::separator(), None);
         // Shaders are one item, offering what a new one starts as, to keep the menu short enough to show whole.
         for kind in NewFile::ALL {
@@ -1089,6 +1093,10 @@ impl ProjectView {
                 }
             }
             MenuAction::Import => vec![ProjectEvent::Import { folder: self.contents.borrow().folders[folder].path.clone() }],
+            MenuAction::OpenFab => {
+                open_with_desktop(std::ffi::OsStr::new(crate::megascans::FAB_URL));
+                vec![ProjectEvent::Notice("Drop a Fab download here to import it".to_string())]
+            }
             MenuAction::NewShader => {
                 let folder = self.contents.borrow().folders[folder].path.clone();
                 vec![ProjectEvent::NewShader { folder, anchor: self.path }]
@@ -1607,6 +1615,12 @@ fn parent(path: &str) -> &str {
 
 /// Opens a folder in the system's file manager.
 pub(crate) fn show_in_files(folder: &Path) {
+    open_with_desktop(folder.as_os_str());
+}
+
+/// Opens a folder or a web page as the desktop does: a folder in its file
+/// manager, a page in its browser.
+fn open_with_desktop(target: &std::ffi::OsStr) {
     let program = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(windows) {
@@ -1614,10 +1628,10 @@ pub(crate) fn show_in_files(folder: &Path) {
     } else {
         "xdg-open"
     };
-    match std::process::Command::new(program).arg(folder).spawn() {
+    match std::process::Command::new(program).arg(target).spawn() {
         // Waited on elsewhere, so it does not linger once it ends.
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
-        Err(error) => tracing::warn!("could not open {}: {error}", folder.display()),
+        Err(error) => tracing::warn!("could not open {}: {error}", target.to_string_lossy()),
     }
 }
 

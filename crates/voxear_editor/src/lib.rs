@@ -92,6 +92,7 @@ pub mod localization_panel;
 mod localization_tables;
 mod live;
 mod lod_inspector;
+pub mod megascans;
 pub mod memory_panel;
 mod object_picker;
 mod objs;

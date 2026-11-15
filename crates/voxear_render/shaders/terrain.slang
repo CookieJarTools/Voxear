@@ -52,7 +52,7 @@ TerrainPoint terrainPoint(Frame* frame, uint list, uint vertexId, uint instanceI
     float3 before = terrain.corner + float3(local.x, terrainHeight(terrain, min(local, size)), local.y);
     float2 range = terrain.morph[min(level, TERRAIN_MAX_LEVELS - 1)];
     // Slid by its distance from a lamp for the lamp's shadow, kept from frame to frame, wherever the camera is.
-    bool lamp = list >= LIST_LOCAL_SHADOW && list < LIST_COUNT;
+    bool lamp = list >= LIST_LOCAL_SHADOW && list < LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
     float3 eye = lamp ? frame->localShadows.casters[list - LIST_LOCAL_SHADOW].xyz : frame->cameraPosition;
     float slide = range.y > range.x ? saturate((distance(before, eye) - range.x) / (range.y - range.x)) : 0.0;
     float2 odd = float2(grid % 2);

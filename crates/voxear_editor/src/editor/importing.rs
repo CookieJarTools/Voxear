@@ -16,6 +16,12 @@
 //!   the desktop's file chooser (zenity, or KDE's kdialog), on a thread of
 //!   its own so the editor keeps drawing, and copies them into the folder
 //!   the menu was opened on, as a drop would.
+//! - A Megascans download from Fab, its zip or the folder it was unpacked
+//!   into, dropped or picked so, is imported whole on a thread of its own
+//!   (see `megascans`): into a folder named for the asset, in the folder it
+//!   was dropped on, or else in `Megascans`. With a folder to watch in the
+//!   settings, as the browser's downloads, a download that turns up there
+//!   is imported the same way when the editor gets the focus back.
 //! - When the window gets the focus back, the editor looks at the project's
 //!   files: files that came or went show in the Project panel, and a model
 //!   in use whose file, `.meta`, buffers or pictures changed is imported
@@ -32,7 +38,12 @@ use voxear_assets::Mounts;
 use voxear_render::Renderer;
 
 use super::Editor;
-use crate::{import_fields::ImportSettings, project_files, project_view::ProjectEvent};
+use crate::{
+    import_fields::ImportSettings,
+    megascans::{self, Imported},
+    project_files,
+    project_view::ProjectEvent,
+};
 
 /// Folders never looked in for changes, as the asset database skips them,
 /// beside those whose names start with a dot.
@@ -53,6 +64,50 @@ pub(super) struct Imports {
     /// The file chooser open for Import New Asset, and the folder its files
     /// go into.
     choosing: Option<(Receiver<std::io::Result<Vec<PathBuf>>>, String)>,
+    /// The folder chooser open for a folder setting, and the setting.
+    choosing_folder: Option<(Receiver<std::io::Result<Option<PathBuf>>>, &'static str)>,
+    /// Megascans downloads being imported, each on a thread of its own.
+    scanning: Vec<Scanning>,
+    /// The folder watched for Fab downloads, as the settings name it.
+    watched: Option<Watched>,
+}
+
+/// A Megascans download being imported: its name, the folder it goes
+/// into, from the project's folder, and how it went, once it has.
+struct Scanning {
+    name: String,
+    folder: String,
+    done: Receiver<anyhow::Result<Imported>>,
+}
+
+/// The folder watched for Fab downloads, and the zips in it already seen,
+/// each with its size and when it changed: those there when the watching
+/// began, and those that turned up since. So only what is downloaded while
+/// the editor is open is imported, never what was there before.
+struct Watched {
+    folder: PathBuf,
+    seen: HashMap<PathBuf, (u64, SystemTime)>,
+}
+
+impl Watched {
+    fn new(folder: PathBuf) -> Self {
+        let seen = zips(&folder).into_iter().collect();
+        Self { folder, seen }
+    }
+
+    /// The zips that turned up or changed since it last looked, leaving out
+    /// those the browser is still downloading.
+    fn new_zips(&mut self) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for (zip, stamp) in zips(&self.folder) {
+            if self.seen.get(&zip) == Some(&stamp) || stamp.0 == 0 || downloading(&zip) {
+                continue;
+            }
+            self.seen.insert(zip.clone(), stamp);
+            found.push(zip);
+        }
+        found
+    }
 }
 
 impl Imports {
@@ -155,6 +210,89 @@ impl Editor {
         self.imports.dropped.push((path.to_path_buf(), folder));
     }
 
+    /// Imports a Megascans download on a thread of its own: into `folder`,
+    /// a folder of the project's it was dropped on, or else `Megascans`.
+    pub(super) fn import_scan(&mut self, download: PathBuf, folder: Option<String>) {
+        let folder = folder.filter(|folder| !folder.is_empty()).unwrap_or_else(|| megascans::FOLDER.to_string());
+        let at = match project_files::place(self.game.content.db().mounts(), &folder) {
+            Ok(at) => at,
+            Err(error) => return self.notify(&format!("Could not import into {folder}: {error:#}")),
+        };
+        let into = at.root.join(&at.path);
+        let name =
+            download.file_name().map_or_else(|| download.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let (send, done) = mpsc::channel();
+        let started = std::thread::Builder::new().name("megascans import".into()).spawn(move || {
+            let _ = send.send(megascans::import(&download, &into));
+        });
+        match started {
+            Ok(_) => {
+                self.notify(&format!("Importing {name}…"));
+                self.imports.scanning.push(Scanning { name, folder: at.back(&at.path), done });
+            }
+            Err(error) => self.notify(&format!("Could not import {name}: {error}")),
+        }
+    }
+
+    /// Shows what Megascans imports have finished, selecting what each made.
+    fn finish_scans(&mut self, renderer: &mut Renderer) {
+        let mut finished = Vec::new();
+        self.imports.scanning.retain(|scan| match scan.done.try_recv() {
+            Ok(result) => {
+                finished.push((scan.name.clone(), scan.folder.clone(), result));
+                false
+            }
+            Err(TryRecvError::Empty) => true,
+            Err(TryRecvError::Disconnected) => {
+                finished.push((scan.name.clone(), scan.folder.clone(), Err(anyhow::anyhow!("the import stopped"))));
+                false
+            }
+        });
+        for (name, folder, result) in finished {
+            match result {
+                Ok(imported) => {
+                    let select = Some(format!("{folder}/{}", imported.select));
+                    self.project_event(ProjectEvent::Changed { select, rename: false }, renderer);
+                    for skipped in &imported.skipped {
+                        tracing::warn!("{name}: left out {skipped}");
+                    }
+                    let left = match imported.skipped.len() {
+                        0 => String::new(),
+                        count => format!(", leaving out {count} files (see the Console)"),
+                    };
+                    self.notify(&format!("Imported {name} to {folder}/{}{left}", imported.folder));
+                }
+                Err(error) => self.notify(&format!("Could not import {name}: {error:#}")),
+            }
+        }
+    }
+
+    /// Imports the Megascans downloads that turned up in the watched
+    /// folder since it was last looked at.
+    fn look_at_downloads(&mut self) {
+        let Some(watched) = &mut self.imports.watched else { return };
+        let downloads: Vec<PathBuf> =
+            watched.new_zips().into_iter().filter(|zip| megascans::is_download(zip)).collect();
+        for download in downloads {
+            self.import_scan(download, None);
+        }
+    }
+
+    /// Opens the desktop's folder chooser for a folder setting.
+    pub(super) fn choose_setting_folder(&mut self, key: &'static str) {
+        if self.imports.choosing_folder.is_some() {
+            return self.notify("A folder chooser is open already");
+        }
+        let (send, chosen) = mpsc::channel();
+        let started = std::thread::Builder::new().name("folder chooser".into()).spawn(move || {
+            let _ = send.send(choose_folder("Watch for Fab Downloads"));
+        });
+        match started {
+            Ok(_) => self.imports.choosing_folder = Some((chosen, key)),
+            Err(error) => self.notify(&format!("Could not open a folder chooser: {error}")),
+        }
+    }
+
     /// Opens the desktop's file chooser for files to copy into `folder`.
     pub(super) fn choose_imports(&mut self, folder: String) {
         if self.imports.choosing.is_some() {
@@ -188,6 +326,34 @@ impl Editor {
                 Err(TryRecvError::Empty) => {}
             }
         }
+        if let Some(key) = self.settings_panel.folder_clicked(&self.ui) {
+            self.choose_setting_folder(key);
+        }
+        if let Some((chosen, key)) = &self.imports.choosing_folder {
+            let key = *key;
+            match chosen.try_recv() {
+                Ok(Ok(folder)) => {
+                    self.imports.choosing_folder = None;
+                    if let Some(folder) = folder
+                        && self.memory.settings.set_folder(key, Some(folder.clone()))
+                    {
+                        self.memory.save();
+                        self.notify(&format!("Watching {} for Fab downloads", folder.display()));
+                    }
+                }
+                Ok(Err(error)) => {
+                    self.imports.choosing_folder = None;
+                    self.notify(&format!("Could not open a folder chooser: {error}"));
+                }
+                Err(TryRecvError::Disconnected) => self.imports.choosing_folder = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        // The folder watched as the settings say: a new one is looked at first for what is there already.
+        let wanted = self.memory.settings.fab_downloads.as_ref();
+        if self.imports.watched.as_ref().map(|watched| &watched.folder) != wanted {
+            self.imports.watched = wanted.cloned().map(Watched::new);
+        }
         if !self.imports.dropped.is_empty() {
             self.bring_in_dropped(renderer);
         }
@@ -196,13 +362,26 @@ impl Editor {
         if std::mem::replace(&mut self.imports.scanned, scanned) != scanned {
             self.imports.look = true;
         }
+        if !self.imports.scanning.is_empty() {
+            self.finish_scans(renderer);
+        }
         if std::mem::take(&mut self.imports.look) {
             self.look_at_files(renderer);
+            self.look_at_downloads();
         }
     }
 
     fn bring_in_dropped(&mut self, renderer: &mut Renderer) {
         let dropped = std::mem::take(&mut self.imports.dropped);
+        // Megascans downloads come in whole, each into a folder of its own; the rest are copied as they are.
+        let (downloads, dropped): (Vec<_>, Vec<_>) =
+            dropped.into_iter().partition(|(file, _)| megascans::is_download(file));
+        for (download, folder) in downloads {
+            self.import_scan(download, folder);
+        }
+        if dropped.is_empty() {
+            return;
+        }
         let folder =
             dropped.iter().find_map(|(_, folder)| folder.clone()).unwrap_or_else(|| self.project.open_folder());
         let files: Vec<PathBuf> = dropped.into_iter().map(|(file, _)| file).collect();
@@ -448,6 +627,51 @@ fn file_times(root: &Path) -> HashMap<String, SystemTime> {
     let mut times = HashMap::new();
     walk(root, "", &mut times);
     times
+}
+
+/// The zips in `folder`, each with its size and when it last changed.
+fn zips(folder: &Path) -> Vec<(PathBuf, (u64, SystemTime))> {
+    let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
+    let zipped = |path: &Path| path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("zip"));
+    entries
+        .flatten()
+        .filter(|entry| zipped(&entry.path()))
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok().filter(std::fs::Metadata::is_file)?;
+            Some((entry.path(), (metadata.len(), metadata.modified().ok()?)))
+        })
+        .collect()
+}
+
+/// Whether a browser is still downloading `zip`: the partial file browsers
+/// keep beside it until it is whole, `.part`, `.crdownload` or `.download`.
+fn downloading(zip: &Path) -> bool {
+    ["part", "crdownload", "download"].iter().any(|ending| {
+        let mut name = zip.as_os_str().to_owned();
+        name.push(format!(".{ending}"));
+        Path::new(&name).exists()
+    })
+}
+
+/// The folder picked in the desktop's folder chooser, or none when it is
+/// closed without picking: zenity's, or else KDE's kdialog.
+fn choose_folder(title: &str) -> std::io::Result<Option<PathBuf>> {
+    let choosers: [(&str, &[&str]); 2] = [
+        ("zenity", &["--file-selection", "--directory", "--title", title]),
+        ("kdialog", &["--getexistingdirectory", ".", "--title", title]),
+    ];
+    for (program, args) in choosers {
+        match std::process::Command::new(program).args(args).output() {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                return Ok(text.lines().find(|line| !line.is_empty()).map(PathBuf::from));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let missing = "no folder chooser was found; install zenity";
+    Err(std::io::Error::new(std::io::ErrorKind::NotFound, missing))
 }
 
 /// Files picked in the desktop's file chooser, or none when it is closed

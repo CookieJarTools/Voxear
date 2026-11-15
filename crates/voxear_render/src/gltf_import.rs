@@ -206,6 +206,19 @@ pub(crate) struct PreparedNode {
     pub skin: Option<usize>,
 }
 
+/// A drawable part of a model and where it sits in the model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartPlace<'a> {
+    pub name: &'a str,
+    /// `mesh0.0`, as asset references name it.
+    pub mesh: &'a str,
+    /// `material0`, or `None` for glTF's default material.
+    pub material: Option<&'a str>,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
@@ -235,6 +248,19 @@ impl PreparedModel {
     /// [`reupload`] needs to match an earlier import.
     pub fn parts(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
         self.nodes.iter().map(|node| (node.mesh_part.as_str(), node.material_part.as_deref()))
+    }
+
+    /// Each drawable part with where the model puts it, in order: what an
+    /// Obj of its own drawing the part is placed by.
+    pub fn part_places(&self) -> impl Iterator<Item = PartPlace<'_>> {
+        self.nodes.iter().map(|node| PartPlace {
+            name: &node.name,
+            mesh: &node.mesh_part,
+            material: node.material_part.as_deref(),
+            position: node.position,
+            rotation: node.rotation,
+            scale: node.scale,
+        })
     }
 
     /// Each of its materials that a part draws with, as its file has it, in
@@ -689,6 +715,7 @@ impl Preparer {
             emissive: material.emissive_factor().map(|c| c * material.emissive_strength().unwrap_or(1.0)),
             normal_scale,
             alpha_cutoff,
+            two_sided: material.double_sided(),
             ..MaterialDesc::default()
         };
         let name = name.to_string();
@@ -1044,7 +1071,19 @@ fn to_rgba8(image: &gltf::image::Data) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cooked::tests::quad;
+    use crate::cooked::tests::{quad, quad_and_leaf};
+
+    #[test]
+    fn a_material_the_file_marks_double_sided_is_drawn_from_both_sides() {
+        let gltf = quad_and_leaf();
+        let model = prepare("Models/Leaf.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+        let sides: Vec<_> = model.materials.iter().map(|m| (m.name.as_str(), m.desc.two_sided)).collect();
+        assert_eq!(sides, [("Painted", false), ("Leaf", true)]);
+
+        // Extract Materials writes each with what the file says.
+        let extracted: Vec<_> = model.file_materials().into_iter().map(|m| (m.part, m.desc.two_sided)).collect();
+        assert_eq!(extracted, [("material0".to_string(), false), ("material1".to_string(), true)]);
+    }
 
     #[test]
     fn a_pictures_meta_shrinks_it_and_can_keep_it_uncompressed() {

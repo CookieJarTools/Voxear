@@ -240,6 +240,26 @@ float3 surfaceNormal(VertexOut input, Material material)
     return normalizeOr(t * m.x + b * m.y + n * m.z, n);
 }
 
+// A two-sided material's back, as the camera sees it: its normal and tangent
+// turned round, and the bitangent with them, so its normal map bends the
+// normal it shades by the other way too, and the back is lit as a front is.
+// A mirrored instance's triangles wind the other way round on screen.
+void turnToSeenSide(inout VertexOut input, Material material, bool frontFacing)
+{
+    if ((material.flags & MATERIAL_TWO_SIDED) == 0)
+    {
+        return;
+    }
+    Mat4 model = buffers()->instances[input.instance].model;
+    bool mirrored = dot(cross(model.c0.xyz, model.c1.xyz), model.c2.xyz) < 0.0;
+    if (frontFacing != mirrored)
+    {
+        return;
+    }
+    input.normal = -input.normal;
+    input.tangent = -input.tangent;
+}
+
 // Which way a surface faces before its normal map, for where snow settles:
 // its own normal, or for an impostor, the plant's as pictured, since its
 // quad faces the camera.
@@ -1156,11 +1176,12 @@ FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
 }
 
 [shader("fragment")]
-FragmentOut fragmentMain(VertexOut input)
+FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
 {
     Frame* frame = push.frame;
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
+    turnToSeenSide(input, material, frontFacing);
 
     float4 base = material.baseColor * sampleBaseColor(material, input.uv);
     bool custom = material.shader != STANDARD_SHADER;

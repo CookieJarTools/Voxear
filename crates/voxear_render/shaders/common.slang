@@ -33,7 +33,12 @@ static const uint LIST_SHADOW = 2;
 // One list for each local light casting a shadow, drawn into each of its views.
 static const uint LIST_LOCAL_SHADOW = LIST_SHADOW + CASCADES;
 static const uint LOCAL_SHADOW_LIGHTS = 8;
-static const uint LIST_COUNT = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
+// The lists with meshlets: all but the two-sided lists.
+static const uint MESHLET_LIST_COUNT = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
+// The main view's two-sided draws, early then late: whole LODs, drawn
+// without culling their backs.
+static const uint LIST_TWO_SIDED = MESHLET_LIST_COUNT;
+static const uint LIST_COUNT = LIST_TWO_SIDED + 2;
 
 // Each instance list's draw count heads a dispatch's arguments (count, 1, 1).
 // With meshlet culling the list's draws are not written: its meshlets are
@@ -212,6 +217,8 @@ static const uint MATERIAL_DISPLACED = 256;
 static const uint MATERIAL_PIXELS = 512;
 // Its pictures are the five tiles of a block's face that joins those beside it (blocks.slang).
 static const uint MATERIAL_CONNECTED = 1024;
+// Drawn from both sides, its back lit as a front is, in the two-sided lists.
+static const uint MATERIAL_TWO_SIDED = 2048;
 
 struct Material
 {

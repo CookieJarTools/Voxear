@@ -81,6 +81,11 @@ pub struct Pipelines {
     /// The forward pass over the depth already drawn: it neither writes
     /// depth nor shades anything that depth hides.
     pub forward_on_depth: vk::Pipeline,
+    /// `forward`, `depth` and `forward_on_depth` culling no backs, for the
+    /// two-sided lists, which are always drawn whole, without mesh shaders.
+    pub forward_two_sided: vk::Pipeline,
+    pub depth_two_sided: vk::Pipeline,
+    pub forward_on_depth_two_sided: vk::Pipeline,
     /// The forward pass's meshes as their edges, for the wireframe view.
     pub wireframe: vk::Pipeline,
     /// The meshes' edges drawn faintly over the lit scene, for the lit
@@ -503,6 +508,29 @@ impl Pipelines {
                 depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque", forward, c"vertexMain", c"fragmentMain")
+            })?,
+            forward_two_sided: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (two-sided)", forward, c"vertexMain", c"fragmentMain")
+            })?,
+            depth_two_sided: graphics(&GraphicsPipelineDesc {
+                color_formats: &[SURFACE_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Depth (two-sided)", forward, c"vertexMain", c"depthFragment")
+            })?,
+            forward_on_depth_two_sided: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (two-sided)", forward, c"vertexMain", c"fragmentMain")
             })?,
             wireframe: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
@@ -1104,6 +1132,9 @@ impl Pipelines {
             self.forward,
             self.depth,
             self.forward_on_depth,
+            self.forward_two_sided,
+            self.depth_two_sided,
+            self.forward_on_depth_two_sided,
             self.wireframe,
             self.edges,
             self.sky,

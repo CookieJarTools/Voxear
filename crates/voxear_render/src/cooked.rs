@@ -32,8 +32,9 @@ use crate::{
 /// and clips. 11: whether a material's pixels are drawn sharp. 12: what part of
 /// a body each bone moves, for a model that says. 13: how much a material
 /// bends and flutters in the wind, for a plant that is a box model. 14:
-/// meshes' lightmap UVs in the payload.
-pub const COOKED_VERSION: u32 = 14;
+/// meshes' lightmap UVs in the payload. 15: whether each material is
+/// two-sided.
+pub const COOKED_VERSION: u32 = 15;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -250,6 +251,7 @@ impl CookedModel {
             w.option(desc.alpha_cutoff.map(f32::to_bits));
             w.u32(u32::from(desc.pixels));
             w.f32s(&[desc.wind_bend, desc.wind_flutter]);
+            w.u32(u32::from(desc.two_sided));
             for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
                 w.option(texture.map(|t| t as u32));
             }
@@ -362,6 +364,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let alpha_cutoff = r.option()?.map(f32::from_bits);
         let pixels = r.u32()? != 0;
         let [wind_bend, wind_flutter] = r.f32s()?;
+        let two_sided = r.u32()? != 0;
         let desc = MaterialDesc {
             base_color: [r0, g, b, a],
             metallic,
@@ -372,6 +375,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             pixels,
             wind_bend,
             wind_flutter,
+            two_sided,
             ..MaterialDesc::default()
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));
@@ -660,6 +664,18 @@ pub(crate) mod tests {
         .into_bytes()
     }
 
+    /// The quad with a second part drawn with a second material, "Leaf",
+    /// which the file marks double-sided; "Painted" stays one-sided.
+    pub(crate) fn quad_and_leaf() -> Vec<u8> {
+        let gltf = String::from_utf8(quad()).unwrap();
+        let painted = r#"{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }"#;
+        let leaf = r#"{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 1 }"#;
+        let materials = r#""roughnessFactor": 0.25 } }]"#;
+        let with_leaf = r#""roughnessFactor": 0.25 } }, { "name": "Leaf", "doubleSided": true }]"#;
+        assert!(gltf.contains(painted) && gltf.contains(materials), "the quad as this expects it");
+        gltf.replace(painted, &format!("{painted}, {leaf}")).replace(materials, with_leaf).into_bytes()
+    }
+
     /// A bar two metres tall bound to two bones, its bottom to "Root" and
     /// its top to "Tip" a metre up, and a clip, "Bend", turning the tip a
     /// quarter turn about Z over a second. Its mesh's node sits five metres
@@ -818,6 +834,18 @@ pub(crate) mod tests {
         newer[8] = 99;
         let error = format!("{:#}", CookedModel::from_bytes("x", &newer).err().expect("a newer version fails"));
         assert!(error.contains("build the content again"), "{error}");
+    }
+
+    #[test]
+    fn a_double_sided_material_is_still_two_sided_once_cooked() {
+        let gltf = quad_and_leaf();
+        let model = crate::gltf_import::prepare("Models/Leaf.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+        let bytes = model.cook().unwrap().to_bytes();
+        let back = CookedModel::from_bytes("Models/Leaf.gltf", &bytes).unwrap();
+
+        let sides: Vec<_> = back.materials.iter().map(|m| (m.name.as_str(), m.desc.two_sided)).collect();
+        assert_eq!(sides, [("Painted", false), ("Leaf", true)]);
+        assert_eq!(back.to_bytes(), bytes, "writing it again gives the same bytes");
     }
 
     #[test]

@@ -294,6 +294,13 @@ pub trait ScriptServices {
         anyhow::bail!("caves are read only in a running game, not here (Obj {obj})")
     }
 
+    /// The dungeons of the world of blocks on `obj` (0 for every one) whose
+    /// layouts reach within `at[3]` metres of the place `at`, as JSON (see
+    /// `voxear_engine::dungeons`).
+    fn dungeons_json(&mut self, _world: &World, obj: u64, _at: [f32; 4]) -> Result<String> {
+        anyhow::bail!("dungeons are read only in a running game, not here (Obj {obj})")
+    }
+
     /// The GUID of the block numbered `block` in the world of blocks on
     /// `entity`: none for air, or a kind the world keeps itself.
     fn block_guid(&mut self, _world: &World, _entity: Entity, _block: u16) -> Option<String> {
@@ -763,6 +770,21 @@ pub(crate) unsafe extern "C" fn caves_info(
     // A level with no caves is an answer, not an error: `Caves.Rooms` is empty there.
     let said = crate::interop::with_world(|world| {
         with_services(|services| services.caves_json(world, obj, what, at).ok())
+    });
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
+}
+
+/// The dungeons of a world of blocks near a place as JSON for `Dungeons` in
+/// Voxear.Core (see [`ScriptServices::dungeons_json`]), written when it
+/// fits: its length, or -1 where they cannot be read.
+pub(crate) unsafe extern "C" fn dungeons_info(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32 {
+    let at = if at.is_null() { [0.0; 4] } else { unsafe { *at } };
+    let said = crate::interop::with_world(|world| {
+        with_services(|services| services.dungeons_json(world, obj, at).ok())
     });
     let Some(Some(json)) = said else { return -1 };
     if !buffer.is_null() && json.len() <= capacity.max(0) as usize {

@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 89;
+pub(crate) const API_VERSION: u32 = 90;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -598,6 +598,9 @@ pub(crate) struct NativeApi {
     pub screen_hdr: unsafe extern "C" fn(set: *const crate::display::HdrInfo, out: *mut crate::display::HdrInfo) -> i32,
     /// `Blocks.FloorHeight`: the top of the floor under a world of blocks' generated ground.
     pub block_floor: unsafe extern "C" fn(at: *const [f32; 3], obj: *mut u64) -> f32,
+    /// The dungeons of a world of blocks near a place, as JSON for `Dungeons`.
+    pub dungeons_info:
+        unsafe extern "C" fn(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2231,6 +2234,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         post_call: crate::post::post_call,
         screen_hdr: crate::display::screen_hdr,
         block_floor: crate::blocks::block_floor,
+        dungeons_info: crate::services::dungeons_info,
     }
 }
 

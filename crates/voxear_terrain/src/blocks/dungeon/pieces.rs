@@ -198,27 +198,24 @@ pub(crate) fn statue(kit: &Kit, grid: &mut Grid, frame: Frame, height: i32, armo
 }
 
 /// A monolith on a pillar rising from `foot`: a pillar `pillar` blocks
-/// high, then a great carved block five wide and seven high, banded with
-/// trim, a recessed panel on each face.
+/// high, then a carved stone three wide and eight high, narrowing to a
+/// point, a face cut into each side.
 pub(crate) fn monolith(kit: &Kit, grid: &mut Grid, foot: [i32; 3], pillar: i32) {
     let b = &kit.blocks;
     for y in 1..=pillar {
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                grid.build([foot[0] + dx, foot[1] + y, foot[2] + dz], b.stone);
-            }
-        }
+        grid.build([foot[0], foot[1] + y, foot[2]], b.stone);
     }
     let base = foot[1] + pillar;
-    for up in 1..=7 {
-        for dz in -2..=2i32 {
-            for dx in -2..=2i32 {
-                let band = up == 1 || up == 7 || up == 4;
-                let rim = dx.abs() == 2 || dz.abs() == 2;
-                let panel = rim && !band && dx.abs() + dz.abs() < 4 && (2..=6).contains(&up);
+    for up in 1..=8 {
+        // Narrower at its top, a carved face on each side a third of the way down.
+        let half = if up >= 7 { 0 } else { 1 };
+        for dz in -half..=half {
+            for dx in -half..=half {
+                let band = up == 1;
+                let face = up == 5 && (dx == 0) != (dz == 0);
                 let block = if band {
                     b.trim
-                } else if panel {
+                } else if face {
                     b.cracked
                 } else {
                     b.statue
@@ -227,7 +224,6 @@ pub(crate) fn monolith(kit: &Kit, grid: &mut Grid, foot: [i32; 3], pillar: i32) 
             }
         }
     }
-    grid.build([foot[0], base + 8, foot[2]], b.trim);
 }
 
 /// An obelisk on a stepped plinth at `foot`: a shaft tapering from five

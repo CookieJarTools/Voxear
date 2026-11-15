@@ -9,6 +9,7 @@ pub mod block_tints;
 pub mod build_profile;
 mod cameras;
 pub mod caves;
+pub mod dungeons;
 mod content;
 pub mod content_build;
 pub mod debug_texts;

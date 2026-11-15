@@ -155,6 +155,28 @@ fn dungeon_world(world: &WorldGen, entrances: Vec<EntranceKind>) -> Option<(Bloc
     None
 }
 
+/// A world whose land climbs in escarpments: areas 160 m across, from 4 m
+/// up to 160 m in four levels, walls between.
+fn escarpments() -> Arc<WorldGen> {
+    use voxear_terrain::generate::{BiomeBlocks, BiomeDef, Biomes, LevelPlan, Regions, WorldBiomes, nodes::Levels};
+    let world = Arc::new(Preset::RollingHills.world());
+    let levels = Levels { size: 160.0, levels: 4, low: 4.0, high: 160.0, peaks: 0.0, ..Levels::default() };
+    let list = vec![BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() }];
+    let biomes = Biomes::new(list, 15.0, 0.3, world.seed());
+    let regions = Regions::new(160.0, 16.0, biomes.clone(), world.clone());
+    let regions = Arc::new(regions.with_levels(LevelPlan { keep: None, ..levels.plan() }));
+    let generate = BlockGenerate {
+        levels: Some(levels),
+        placed: Some(Arc::new(WorldBiomes {
+            regions: Some(regions),
+            biomes,
+            blocks: vec![BiomeBlocks { top: 1, ..Default::default() }],
+        })),
+        ..Default::default()
+    };
+    voxear_terrain::blocks::generate::landed(&generate, &world)
+}
+
 /// A rotation that looks from `from` towards `to`: cameras look along +z.
 fn looking(from: Vec3, to: Vec3) -> Quat {
     let d = (to - from).normalize();
@@ -292,7 +314,10 @@ fn viewpoint(layout: &DungeonLayout, space: &dungeon::Space) -> (Vec3, Vec3) {
 #[test]
 fn a_temple_dungeon_is_drawn_from_its_entrance_in_the_land_down_through_its_spaces() {
     let Some(mut renderer) = renderer() else { return };
-    let world = Preset::RollingHills.world();
+    let world = match std::env::var("VOXEAR_DUNGEON_WORLD").as_deref() {
+        Ok("escarpments") => (*escarpments()).clone(),
+        _ => Preset::RollingHills.world(),
+    };
     let kinds: Vec<EntranceKind> = match std::env::var("VOXEAR_DUNGEON_ENTRANCE").as_deref() {
         Ok("cliff") => vec![EntranceKind::Cliff],
         Ok("temple") => vec![EntranceKind::Temple],

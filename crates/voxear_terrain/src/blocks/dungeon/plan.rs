@@ -510,6 +510,11 @@ fn plan_floors(
             }
         }
         let need = entrance.at[1] - level;
+        // A grand stair falls no further than a hall is high and a little: deeper means the land the floors lie
+        // under is far lower than the entrance's, and a stair hundreds of metres long is no way in.
+        if need > MOST_FALL {
+            return None;
+        }
         if need > fall + 2 && tries < 5 {
             fall = need;
             continue;
@@ -522,6 +527,9 @@ fn plan_floors(
         return Some(finish(dungeon, sizes, land, entrance, laid, level, cover, seed));
     }
 }
+
+/// The furthest a grand stair falls, in blocks.
+const MOST_FALL: i32 = 72;
 
 /// How long a grand stair falling `fall` blocks runs: a block down for every
 /// two along, a landing of four every ten blocks down.

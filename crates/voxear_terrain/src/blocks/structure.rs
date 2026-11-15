@@ -1173,6 +1173,58 @@ pub fn build_over_standing(
     build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet));
 }
 
+/// The dungeons `structures` lays out within `reach` metres of `near`, a
+/// point in metres in `world` (the generator's own world), in a world of
+/// blocks laid as `at` says (block size, corner, lowest block, half-block
+/// top): each structure's place in the list, its site, and the layout kept
+/// for it, as building its chunks finds it. Sites whose ground does not
+/// fit their placement are left out; a site an earlier structure keeps
+/// another from is not.
+pub fn dungeons_near(
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    near: [f32; 2],
+    reach: f32,
+) -> Vec<(usize, Site, std::sync::Arc<super::dungeon::DungeonLayout>)> {
+    let checks = SiteFits::new(world, biomes, at.0, structures);
+    let mut found = Vec::new();
+    for (which, structure) in structures.list.iter().enumerate() {
+        let StructureBlocks::Dungeon(dungeon) = &structure.blocks else { continue };
+        let far = reach + dungeon.reach() * at.0;
+        let sites = structure.placement.tries_near(world.seed(), near, near, far);
+        let fitting = checks.fits(structure, &sites);
+        for (site, fits) in sites.into_iter().zip(fitting) {
+            if !fits || kept_out(structures, &checks, which, &site, at.0, world.seed()) {
+                continue;
+            }
+            if let Some(layout) = super::dungeon::layout_at(dungeon, world, at, &site) {
+                found.push((which, site, layout));
+            }
+        }
+    }
+    found
+}
+
+/// Whether a site of structure `which` is kept out by a site of one listed
+/// before it standing too near: within both their footprints, or the
+/// distance either keeps. Towns' streets and buildings are not looked at.
+fn kept_out(structures: &WorldStructures, checks: &SiteFits, which: usize, site: &Site, size: f32, seed: u32) -> bool {
+    let own = &structures.list[which];
+    let (footprint, apart) = (own.footprint(), own.placement.apart.max(0.0) / size);
+    structures.list[..which].iter().any(|earlier| {
+        let reach = (footprint + earlier.footprint()).max(apart).max(earlier.placement.apart.max(0.0) / size) * size;
+        let sites = earlier.placement.tries_near(seed, site.at, site.at, reach);
+        let fitting = checks.fits(earlier, &sites);
+        sites.iter().zip(fitting).any(|(other, fits)| {
+            let d = ((other.at[0] - site.at[0]).powi(2) + (other.at[1] - site.at[1]).powi(2)).sqrt() / size;
+            let keeps = (earlier.placement.apart.max(0.0) / size).max(apart);
+            fits && (d < footprint + earlier.footprint() || d < keeps)
+        })
+    })
+}
+
 /// How far past the columns being built each structure's sites are looked
 /// for, in metres, for what is built there to be what any other columns
 /// would build: as far as it reaches itself, and as far as any site of a

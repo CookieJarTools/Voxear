@@ -130,6 +130,7 @@ mod prompt_icons_inspector;
 mod world_gen_inspector;
 mod starter_biomes;
 mod starter_blocks;
+mod starter_dungeon;
 mod starter_trees;
 mod strings_inspector;
 #[cfg(target_os = "linux")]

@@ -102,15 +102,16 @@ fn terrace(kit: &Kit, grid: &mut Grid, frame: Frame, near: i32, far: i32, half: 
 fn temple(kit: &Kit, grid: &mut Grid, frame: Frame) {
     let b = &kit.blocks;
     let width = kit.dungeon.sizes_stair();
-    let door = width / 2 - 1;
-    let spring = 6;
-    let tall = 14;
-    terrace(kit, grid, frame, 1, 10, 8);
+    let door = width / 2;
+    let spring = 8;
+    let tall = 21;
+    let half = 13i32;
+    terrace(kit, grid, frame, 1, 12, half - 1);
     // The facade, three blocks deep into the hill, the door left open.
     for ahead in -2..=0 {
-        for right in -9i32..=9 {
+        for right in -half..=half {
             for up in 1..=tall {
-                let step = (right.abs() - 5).max(0);
+                let step = (right.abs() - 6).max(0);
                 if up > tall - step {
                     continue;
                 }
@@ -130,16 +131,16 @@ fn temple(kit: &Kit, grid: &mut Grid, frame: Frame) {
     }
     // A portico behind it running back into the hill: walls either side of the stair and a roof over it, until
     // the hill rises over the roof and hides the rest.
-    for ahead in -24..=-3 {
-        for right in -9i32..=9 {
+    for ahead in -28..=-3 {
+        for right in -half..=half {
             let at = frame.at(right, 0, ahead);
             if kit.ground.top(at[0], at[2]) > frame.foot[1] + tall + 1 {
                 continue;
             }
             for up in 1..=tall {
-                let step = (right.abs() - 5).max(0);
+                let step = (right.abs() - 6).max(0);
                 let roof = up == tall - step || up == tall - step - 1;
-                let wall = right.abs() >= 7 && up < tall - step;
+                let wall = right.abs() >= half - 2 && up < tall - step;
                 if up > tall - step || !(roof || wall) {
                     continue;
                 }
@@ -149,9 +150,9 @@ fn temple(kit: &Kit, grid: &mut Grid, frame: Frame) {
     }
     // The statues either side of the door.
     for side in [-1, 1] {
-        let foot = frame.at(side * 7, 0, 3);
-        pieces::statue(kit, grid, Frame { foot, facing: frame.facing }, 13, false);
-        pieces::caged_brazier(kit, grid, frame.at(side * 4, 1, 8));
+        let foot = frame.at(side * 9, 0, 4);
+        pieces::statue(kit, grid, Frame { foot, facing: frame.facing }, 18, false);
+        pieces::caged_brazier(kit, grid, frame.at(side * 5, 1, 9));
     }
     // Stepping stones out across the ground, broken pillars beside them.
     let seed = frame.foot[0] as u32 ^ (frame.foot[2] as u32).rotate_left(11);

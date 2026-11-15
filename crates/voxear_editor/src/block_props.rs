@@ -1699,6 +1699,24 @@ pub fn list_structures(
     change_file(game, renderer, entity, file)
 }
 
+/// Lists `structure` first under the world's generator, before everything
+/// it builds now, moving it there where it is listed already, and makes its
+/// ground again with it: what is listed later keeps clear of it, so a
+/// dungeon listed first is never left out for a tree. Nothing for a world
+/// whose ground is not generated.
+pub fn list_structure_first(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, structure: AssetGuid) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let is = |reference: &String| game.content.parse(reference).ok().and_then(|parsed| parsed.guid()) == Some(structure);
+    if generate.structures.first().is_some_and(is) {
+        return false;
+    }
+    generate.structures.retain(|reference| !is(reference));
+    generate.structures.insert(0, structure.to_string());
+    let file = voxear_engine::blocks::with_structures(&mut game.content, &file);
+    change_file(game, renderer, entity, file)
+}
+
 /// Takes the biome at `at` out of the world's biomes, and makes its ground
 /// again without it. The blocks it brought stay numbered.
 pub fn remove_biome(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, at: usize) -> bool {

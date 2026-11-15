@@ -2153,6 +2153,12 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   from inside; a fresh blast pushes it into a thicker shell. At the end of its life it disperses: breaking up from its thin
   swirls into wisps, rising and drifting apart in broad slow swirls, thinning to nothing. Still to come: drifting in the wind, filling again as
   walls change.
+- **Smoke, fog look ✅.** By default smoke is a bright, dense white fog. It thins towards open air over the outer
+  **Softness** share of each cell's depth from its edge (`SmokeFill::inside`, worked out with the fill), its thin edge
+  frays into wisps (**Wisps**), and light scatters right through it over three orders, the last standing for all the
+  rest (**Self Shadow**); **Billows** brings back round rolling puffs. Mist drifting through smoke keeps each its own
+  look, blended by thickness at each step. The march goes on past a gun held up within a metre of the eye, so no rim
+  shows round it as the view turns.
 - **Simulated particles ✅.** A Particle System's **Space** (Local or World), **Wind** and **Turbulence** (with its
   size): any of them makes it a simulated system, its particles kept on the GPU and stepped each frame in one
   compute pass for every system and view (`voxear_render::particle_sim`, `shaders/particle_sim.slang`), and the

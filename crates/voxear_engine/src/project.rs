@@ -437,6 +437,9 @@ impl Project {
         set_key(&mut document, "world", "upload", whole(budget.upload));
         set_key(&mut document, "world", "view_distance", metres(budget.view_distance));
         set_key(&mut document, "world", "far_distance", metres(budget.far_distance));
+        set_key(&mut document, "world", "near_detail", metres(budget.near_detail));
+        set_key(&mut document, "world", "far_detail", metres(budget.far_detail));
+        set_key(&mut document, "world", "plant_detail", metres(budget.plant_detail));
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.world = budget;
         Ok(())
@@ -621,10 +624,11 @@ mod tests {
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
         assert!(written.contains("[world]\nquality = \"low\"\n") && !written.contains("threads"), "{written}");
         assert_eq!(Project::open(folder.path()).unwrap().file.world, low);
-        let custom = WorldBudget { quality: WorldQuality::Custom, threads: 3, ..low };
+        let custom = WorldBudget { quality: WorldQuality::Custom, threads: 3, plant_detail: 1.5, ..low };
         project.set_world(&custom).unwrap();
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
         assert!(written.contains("quality = \"custom\"") && written.contains("threads = 3"), "{written}");
+        assert!(written.contains("plant_detail = 1.5") && written.contains("near_detail = 0.5"), "{written}");
         assert_eq!(Project::open(folder.path()).unwrap().file.world, custom);
         project.set_world(&WorldBudget::default()).unwrap();
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();

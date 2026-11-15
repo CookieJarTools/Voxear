@@ -168,9 +168,22 @@ impl Game {
         game.engine.world.insert_resource(game.project.layers());
         crate::modules::put(&mut game.engine.world, game.project.modules());
         game.project.file.quality.put(&mut game.engine.world);
-        game.project.file.world.put(&mut game.engine.world);
+        voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
         game
+    }
+
+    /// Makes worlds of blocks spend what this machine keeps for the game in
+    /// `Graphics.toml` beside its saves, in place of the project's, where it
+    /// keeps anything; and lets a game's options keep what they set there
+    /// (see `voxear_terrain::MachineBudget`). A built game, `vox run` and the
+    /// editor do this; tests and pictures keep to the project's.
+    pub fn use_machine_budget(&mut self, company: Option<&str>) {
+        let file = crate::player::machine_file(company, self.project.name());
+        let project = self.project.file.world;
+        if let Some(problem) = voxear_terrain::MachineBudget::open(&mut self.engine.world, project, file) {
+            tracing::warn!("{problem}; the project's world quality is used");
+        }
     }
 
     /// Reads the project's input actions: its `.inputactions` file, the

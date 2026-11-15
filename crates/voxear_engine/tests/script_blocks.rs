@@ -145,8 +145,11 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     assert!(said("quality High, columns 24"), "as the project has it: {lines:?}");
     assert!(said("quality Low, threads 2, columns 2, upload 4"), "a preset sets every number: {lines:?}");
     assert!(said("quality Custom, view 80, far 1024"), "a number set by hand makes it Custom: {lines:?}");
+    // Details too; and with nowhere to keep it, as here, nothing is kept for the machine.
+    assert!(said("near 2, far 0.5, plants 0.6, saved False"), "{lines:?}");
     let low = WorldQuality::Low.budget().unwrap();
-    let custom = WorldBudget { quality: WorldQuality::Custom, view_distance: 80.0, ..low };
+    let custom =
+        WorldBudget { quality: WorldQuality::Custom, view_distance: 80.0, near_detail: 2.0, plant_detail: 0.6, ..low };
     assert_eq!(WorldBudget::of(&game.engine.world), custom, "the streamer and the renderer read it");
     assert_eq!(voxear_terrain::workers::threads(), 2, "two threads make terrain");
 }
@@ -164,6 +167,10 @@ public sealed class Quality : Behaviour
 		Log.Info($"quality {World.Quality}, threads {World.Threads}, columns {World.ColumnsAtOnce}, upload {World.UploadMegabytes}");
 		World.ViewDistance = 80f;
 		Log.Info($"quality {World.Quality}, view {World.ViewDistance}, far {World.FarDistance}");
+		World.NearDetail = 2f;
+		World.PlantDetail = 0.6f;
+		World.SaveQuality();
+		Log.Info($"near {World.NearDetail}, far {World.FarDetail}, plants {World.PlantDetail}, saved {World.QualitySaved}");
 	}
 }
 "#;

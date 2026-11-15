@@ -1598,7 +1598,24 @@ fn lay(cells: &mut Vec<[i32; 2]>, point: [f32; 2], width: f32) {
 const BEACH: f32 = 2.5;
 
 /// How far from a river's or a lake's water a plant keeps, in metres.
-const BY_WATER: f32 = 6.0;
+pub(crate) const BY_WATER: f32 = 6.0;
+
+/// How high over the sea the plants `structure` grows keep, in metres,
+/// wherever they stand: as high as the shore of any biome they keep to, of
+/// every biome where they keep to none, and over a beach. None for a
+/// structure that is no plant, or a plant that grows by the water. So far
+/// off, where a ring's block may hold a beach and the land behind it, a
+/// wood keeps to the land a tree stands on near.
+pub fn plant_shore(structure: &PlacedStructure, biomes: Option<&WorldBiomes>) -> Option<f32> {
+    let plant = matches!(structure.blocks, StructureBlocks::Plant { .. });
+    if !plant || structure.placement.by_water {
+        return None;
+    }
+    let list = biomes.map_or(&[][..], |biomes| biomes.biomes.list());
+    let kept = |at: &usize| structure.biomes.is_empty() || structure.biomes.contains(at);
+    let shores = list.iter().enumerate().filter(|(at, _)| kept(at)).map(|(_, biome)| biome.ground.shore_height);
+    Some(shores.fold(BEACH, f32::max))
+}
 
 /// The ground under a place, for building: the generator's height there,
 /// in metres in its world.
@@ -1843,7 +1860,28 @@ pub fn build_over(
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
 ) {
-    build_looking(set, structures, world, biomes, at, area, under, &looks(structures, at.0));
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), &|_| None));
+}
+
+/// [`build_over`], each structure standing on the ground `feet` gives for
+/// the column its site is on, as the highest block of ground there, where
+/// it gives any; else on the generator's own. The far view's coarser rings
+/// stand each tree and house on their own coarse ground this way, which is
+/// sampled at the middles of their larger blocks: put where the generator
+/// has the ground, one on a sharp ridge or in a saddle would hang over the
+/// ring's ground or sink into it.
+#[allow(clippy::too_many_arguments)]
+pub fn build_over_standing(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    area: ([i32; 2], [i32; 2]),
+    under: BlockId,
+    feet: &dyn Fn([i32; 2]) -> Option<i32>,
+) {
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet));
 }
 
 /// How far past the columns being built each structure's sites are looked
@@ -1877,7 +1915,8 @@ fn looks(structures: &WorldStructures, size: f32) -> Vec<f32> {
 }
 
 /// [`build_over`], each structure's sites looked for `looks` metres past
-/// the columns, by its place in the list.
+/// the columns, by its place in the list, each standing where `feet` says
+/// (see [`build_over_standing`]).
 #[allow(clippy::too_many_arguments)]
 fn build_looking(
     set: &mut dyn FnMut([i32; 3], BlockId),
@@ -1887,7 +1926,7 @@ fn build_looking(
     (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     (first, end): ([i32; 2], [i32; 2]),
     under: BlockId,
-    looks: &[f32],
+    (looks, feet): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>),
 ) {
     let side = CHUNK as i32;
     let ground = Ground { world, size, position, biomes, halved };
@@ -2041,7 +2080,7 @@ fn build_looking(
                 }
             };
             for mut part in parts {
-                let foot = ground.top(part.at[0], part.at[1]);
+                let foot = feet(part.at).unwrap_or_else(|| ground.top(part.at[0], part.at[1]));
                 if !structures.turns.is_empty() && (part.turns % 4 != 0 || part.mirrored) {
                     for (_, block) in &mut part.pieces {
                         *block = structures.turned_block(*block, part.turns, part.mirrored);
@@ -2954,7 +2993,17 @@ mod tests {
         assert!(near[0] <= everywhere[0] * 1.5 && near[3] * 20.0 < everywhere[3]);
         let built = |area: ([i32; 2], [i32; 2]), looks: &[f32]| {
             let mut sets: Vec<([i32; 3], BlockId)> = Vec::new();
-            build_looking(&mut |at, block| sets.push((at, block)), &structures, &world, None, at, area, 2, looks);
+            let generators: &dyn Fn([i32; 2]) -> Option<i32> = &|_| None;
+            build_looking(
+                &mut |at, block| sets.push((at, block)),
+                &structures,
+                &world,
+                None,
+                at,
+                area,
+                2,
+                (looks, generators),
+            );
             sets
         };
         let mut blocks = 0;

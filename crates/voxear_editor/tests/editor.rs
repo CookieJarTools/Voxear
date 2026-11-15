@@ -7876,9 +7876,10 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     assert_eq!(budget(&editor), low, "and worlds take it up from now on");
     let mut fields = Vec::new();
     with_class(&editor.ui, body, "number-input", &mut fields);
-    // After the floating origin's distance and step: threads, columns, upload, view and far distance.
+    // After the floating origin's distance and step: threads, columns, upload, view and far distance, and the
+    // near, far and plant details.
     let shown: Vec<String> = fields[2..].iter().map(|&field| editor.ui.text(field)).collect();
-    assert_eq!(shown, ["2", "2", "4", "64", "1024"]);
+    assert_eq!(shown, ["2", "2", "4", "64", "1024", "0.5", "0.5", "0.5"]);
     // A number typed makes it Custom, the rest kept.
     type_into(&mut editor.ui, fields[3], "6");
     editor.ui.key_down(Key::Enter);
@@ -7893,6 +7894,29 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     editor.set_world_budget(&WorldBudget::default());
     let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
     assert!(!text.contains("[world]"), "{text}");
+    // This machine on: its own kept beside the saves, as an editor that remembers would keep it, and what is
+    // changed goes there, the project's left as it is.
+    let saves = tempfile::tempdir().unwrap();
+    let file = saves.path().join(voxear_terrain::budget::MACHINE_FILE);
+    voxear_terrain::MachineBudget::open(&mut editor.game.engine.world, WorldBudget::default(), Some(file.clone()));
+    let mut toggles = Vec::new();
+    with_class(&editor.ui, body, "checkbox", &mut toggles);
+    click(&mut editor.ui, toggles[0]);
+    frame(&mut editor, &mut renderer);
+    assert!(file.is_file() && voxear_terrain::MachineBudget::of(&editor.game.engine.world).kept);
+    type_into(&mut editor.ui, fields[9], "2");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(budget(&editor).plant_detail, 2.0, "plants twice as far");
+    assert!(std::fs::read_to_string(&file).unwrap().contains("plant_detail = 2.0"), "kept for the machine");
+    let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(!text.contains("[world]"), "the project's as it was: {text}");
+    // Off again: the machine's forgotten, the project's back.
+    click(&mut editor.ui, toggles[0]);
+    frame(&mut editor, &mut renderer);
+    assert!(!file.exists());
+    assert_eq!(budget(&editor), WorldBudget::default());
 }
 
 

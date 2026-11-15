@@ -155,6 +155,13 @@ pub fn save_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
     Some(game_data_folder(company, product)?.join(SAVES_FOLDER))
 }
 
+/// Where a game keeps what this machine sets for it, its graphics among
+/// them: `Graphics.toml`, beside its saves (see
+/// `voxear_terrain::MachineBudget`).
+pub fn machine_file(company: Option<&str>, product: &str) -> Option<PathBuf> {
+    Some(game_data_folder(company, product)?.join(voxear_terrain::budget::MACHINE_FILE))
+}
+
 fn game_data_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
     let data = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
@@ -258,6 +265,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         },
     };
     let mut game = Game::with_content(project, engine, content);
+    game.use_machine_budget(settings.company_name.as_deref());
     // A development build marks a key no language has, as the editor does; a shipped game shows the key.
     if let Some(localization) = game.engine.world.resource_mut::<voxear_localization::Localization>() {
         localization.set_mark_missing(settings.development);

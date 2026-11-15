@@ -1600,6 +1600,57 @@ mod tests {
     }
 
     #[test]
+    fn more_detail_streams_more_columns_and_rings_that_still_meet_without_overlap_or_gaps() {
+        use crate::{WorldBudget, WorldQuality};
+        let making = making();
+        // A world that says 128 m of its own blocks and 1 km of rings, at High and at Ultra.
+        let streamed = |budget: WorldBudget| {
+            let near = budget.near(128.0);
+            let distances = (near, budget.far(1024.0, near));
+            let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+            let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+            let mut streamer = BlockStreamer::default();
+            let start = std::time::Instant::now();
+            loop {
+                streamer.update(&mut world, &mut base, &mut pending, making.clone(), distances, [10.0, 10.0]);
+                if streamer.settled() {
+                    break;
+                }
+                assert!(start.elapsed().as_secs() < 120, "never settled");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            (streamer, world, distances)
+        };
+        let (high, high_world, high_reach) = streamed(WorldQuality::High.budget().unwrap());
+        let (ultra, ultra_world, ultra_reach) = streamed(WorldQuality::Ultra.budget().unwrap());
+        assert_eq!((high_reach, ultra_reach), ((128.0, 1024.0), (192.0, 2048.0)));
+        let (more, fewer) = (ultra.drawn.len(), high.drawn.len());
+        assert!(more * 2 > fewer * 3, "{more} near columns, {fewer} at High");
+        let levels = |world: &BlockWorld| world.far.keys().map(|key| key[0]).max().unwrap_or(0);
+        assert!(levels(&ultra_world) > levels(&high_world), "a ring more round them");
+        for (streamer, world, (_, far)) in [(&high, &high_world, high_reach), (&ultra, &ultra_world, ultra_reach)] {
+            // Each level's columns drawn: the near ones, and every ring's.
+            let mut drawn: HashSet<(i32, [i32; 2])> = streamer.drawn.iter().map(|at| (0, *at)).collect();
+            drawn.extend(world.far.keys().map(|key| (key[0], [key[1], key[3]])));
+            // No column draws where the four finer ones under it are drawn.
+            for &(level, [x, z]) in drawn.iter().filter(|(level, _)| *level > 0) {
+                let finer = (0..4).all(|i| drawn.contains(&(level - 1, [x * 2 + (i & 1), z * 2 + (i >> 1)])));
+                assert!(!finer, "level {level} column {x}, {z} over the finer ones under it");
+            }
+            // And the ground is drawn all the way out, at one level or another.
+            let column = CHUNK as f32 * 2.0;
+            for step in 0..(far * 0.9 / 16.0) as i32 {
+                let place = [10.0 + step as f32 * 16.0, 10.0 - step as f32 * 9.0];
+                let covered = (0..MOST_LEVELS as i32).any(|level| {
+                    let size = column * (1 << level) as f32;
+                    drawn.contains(&(level, place.map(|v| (v / size).floor() as i32)))
+                });
+                assert!(covered, "nothing drawn at {place:?}, {far} m out");
+            }
+        }
+    }
+
+    #[test]
     fn faces_alone_changed_are_taken_up_with_nothing_made_again() {
         let making = making();
         let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);

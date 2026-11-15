@@ -3,12 +3,16 @@ using Voxear.Interop;
 namespace Voxear;
 
 /// <summary>
-/// What making worlds of blocks may spend, so a game runs on slow machines as well as fast ones. It starts as the
-/// project has it, in Project Settings ▸ World, and a game's options can change it while the game runs: worlds take
-/// it up at once, and nothing made is made again.
+/// What making worlds of blocks may spend, so a game runs on slow machines as well as fast ones, and looks its best
+/// on fast ones. It starts as the project has it, in Project Settings ▸ World, or as this machine kept it. A game's
+/// options change it while the game runs: worlds take it up at once, and nothing made is made again. SaveQuality
+/// keeps it for this machine, so the game starts with it from then on.
 /// <code>
-/// World.Quality = WorldQuality.Low;
-/// World.ViewDistance = 96f;
+/// World.Quality = WorldQuality.Ultra;
+/// World.SaveQuality();
+///
+/// World.NearDetail = 1.25f;
+/// World.PlantDetail = 2f;
 /// </code>
 /// </summary>
 public static partial class World
@@ -51,7 +55,7 @@ public static partial class World
 	}
 
 	/// <summary>
-	/// How far a world without end's own chunks reach, in metres: no further than the world's own View distance.
+	/// The furthest a world without end's own chunks reach, in metres, whatever its NearDetail. High stops at 192 m.
 	/// </summary>
 	public static float ViewDistance
 	{
@@ -59,11 +63,56 @@ public static partial class World
 		set { NativeWorldBudget.Set(NativeWorldBudget.ViewDistance, value); }
 	}
 
-	/// <summary>How far its coarser chunks reach, in metres: no further than the world's own Far distance.</summary>
+	/// <summary>The furthest its coarser chunks reach, in metres, whatever its FarDetail. High stops at 8 km.</summary>
 	public static float FarDistance
 	{
 		get { return NativeWorldBudget.Get(NativeWorldBudget.FarDistance); }
 		set { NativeWorldBudget.Set(NativeWorldBudget.FarDistance, value); }
+	}
+
+	/// <summary>
+	/// How many times as far as the world's own View distance its own chunks reach: 1 at High, 1.5 at Ultra, from a
+	/// quarter to four.
+	/// </summary>
+	public static float NearDetail
+	{
+		get { return NativeWorldBudget.Get(NativeWorldBudget.NearDetail); }
+		set { NativeWorldBudget.Set(NativeWorldBudget.NearDetail, value); }
+	}
+
+	/// <summary>How many times as far as the world's own Far distance its coarser chunks reach: 2 at Ultra.</summary>
+	public static float FarDetail
+	{
+		get { return NativeWorldBudget.Get(NativeWorldBudget.FarDetail); }
+		set { NativeWorldBudget.Set(NativeWorldBudget.FarDetail, value); }
+	}
+
+	/// <summary>
+	/// How many times as far as each Foliage says its plants are drawn, the woods they show as far off starting that
+	/// much further out. Under 1, a world's structures are built into fewer of its coarser rings.
+	/// </summary>
+	public static float PlantDetail
+	{
+		get { return NativeWorldBudget.Get(NativeWorldBudget.PlantDetail); }
+		set { NativeWorldBudget.Set(NativeWorldBudget.PlantDetail, value); }
+	}
+
+	/// <summary>Whether this machine keeps its own quality for the game, in place of the project's.</summary>
+	public static bool QualitySaved => NativeWorldBudget.Get(NativeWorldBudget.KeptForMachine) == 1f;
+
+	/// <summary>
+	/// Keeps the quality in use for this machine, in Graphics.toml beside the game's saves: the game starts with it
+	/// from then on.
+	/// </summary>
+	public static void SaveQuality()
+	{
+		NativeWorldBudget.Set(NativeWorldBudget.KeptForMachine, 1f);
+	}
+
+	/// <summary>Forgets the quality this machine kept, and goes back to the project's at once.</summary>
+	public static void ResetQuality()
+	{
+		NativeWorldBudget.Set(NativeWorldBudget.KeptForMachine, 0f);
 	}
 
 	private static int Whole(int which)

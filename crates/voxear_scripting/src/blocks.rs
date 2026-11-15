@@ -507,10 +507,12 @@ pub(crate) unsafe extern "C" fn blocks_version() -> u64 {
 
 /// `World.Quality` and the numbers under it, by `which`: the preset by its
 /// place in `WorldQuality::ALL`, the threads, the chunk columns made at
-/// once, the megabytes uploaded a frame, and the view and far distances
-/// (see `voxear_terrain::WorldBudget`). NaN for any other.
+/// once, the megabytes uploaded a frame, the view and far distances, the
+/// near, far and plant details (see `voxear_terrain::WorldBudget`), and 1
+/// where this machine keeps its own (see `voxear_terrain::MachineBudget`).
+/// NaN for any other.
 pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
-    use voxear_terrain::{WorldBudget, WorldQuality};
+    use voxear_terrain::{MachineBudget, WorldBudget, WorldQuality};
     let read = |world: &mut World| {
         let budget = WorldBudget::of(world);
         Some(match which {
@@ -520,6 +522,10 @@ pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
             3 => budget.upload as f32,
             4 => budget.view_distance,
             5 => budget.far_distance,
+            6 => budget.near_detail,
+            7 => budget.far_detail,
+            8 => budget.plant_detail,
+            9 => f32::from(u8::from(MachineBudget::of(world).kept)),
             _ => return None,
         })
     };
@@ -528,13 +534,21 @@ pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
 
 /// Sets `World.Quality` or a number under it, as [`world_budget`] numbers
 /// them: a preset brings its numbers, and a number makes it Custom. Taken
-/// up at once, with nothing made again.
+/// up at once, with nothing made again. The last, 1 or 0, keeps the budget
+/// in use for this machine, or forgets the one kept and goes back to the
+/// project's.
 pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
-    use voxear_terrain::{WorldBudget, WorldQuality};
+    use voxear_terrain::{MachineBudget, WorldBudget, WorldQuality};
     if !value.is_finite() {
         return;
     }
     with_world(|world| {
+        if which == 9 {
+            if let Err(error) = MachineBudget::keep(world, value >= 0.5) {
+                tracing::error!("keeping this machine's world quality: {error}");
+            }
+            return Some(());
+        }
         let custom = WorldBudget { quality: WorldQuality::Custom, ..WorldBudget::of(world) };
         let whole = value.max(0.0).round() as u32;
         let budget = match which {
@@ -544,6 +558,9 @@ pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
             3 => WorldBudget { upload: whole, ..custom },
             4 => WorldBudget { view_distance: value, ..custom },
             5 => WorldBudget { far_distance: value, ..custom },
+            6 => WorldBudget { near_detail: value, ..custom },
+            7 => WorldBudget { far_detail: value, ..custom },
+            8 => WorldBudget { plant_detail: value, ..custom },
             _ => return None,
         };
         budget.put(world);

@@ -244,8 +244,23 @@ impl FoliageCache {
         let switched = voxear_scene::Switched::of(world);
         let on = |entity: Entity| switched.is_on(world, entity, voxear_scene::Switch::Foliage);
         let found = found.into_iter().filter(|(entity, ..)| on(*entity));
+        // Drawn as many times as far as the machine's plant detail says (see `WorldBudget::plants`).
+        let budget = voxear_terrain::WorldBudget::of(world);
         for (entity, foliage, plants, transform, placed) in found {
             seen.push(entity);
+            let detailed;
+            let foliage = match budget.plant_detail == 1.0 {
+                true => foliage,
+                false => {
+                    detailed = Foliage {
+                        draw_distance: budget.plants(foliage.draw_distance),
+                        fade_distance: budget.plants(foliage.fade_distance),
+                        impostor_distance: budget.plants(foliage.impostor_distance),
+                        ..foliage.clone()
+                    };
+                    &detailed
+                }
+            };
             let model = placed.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
                 |w| w.0,

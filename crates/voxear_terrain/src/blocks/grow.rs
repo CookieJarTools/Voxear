@@ -561,8 +561,16 @@ pub struct FarGround<'a> {
 /// hollows the ground, from the generator's heights at the same tries. Each
 /// stands no higher than the ground of any ring out to level `levels` puts
 /// its place, so none hangs over coarser ground: sunk a little into it at
-/// worst, until its own blocks are made.
+/// worst, until its own blocks are made. Its heights, rivers and lakes are
+/// those of the generator its ground is made by, as near.
 pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u32) -> Vec<Grown> {
+    let size = ground.file.block_size;
+    super::generate::with_ground(ground.generate, ground.world, size, |world| {
+        grow_far_on(rule, &FarGround { world, ..*ground }, column, levels)
+    })
+}
+
+fn grow_far_on(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u32) -> Vec<Grown> {
     let size = ground.file.block_size.max(0.01);
     let side = CHUNK as i32;
     let position = ground.generate.position;
@@ -602,9 +610,17 @@ pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u
             *lowest = lowest.min((height / coarse - 0.5).ceil() * coarse);
         }
     }
+    // None stands in a river or a lake, as near none stands on its water.
+    let dry = match rule.under_water {
+        true => vec![true; found.len()],
+        false => {
+            let own = |of: &[f32]| (0..found.len()).map(|at| of[at * 5]).collect::<Vec<f32>>();
+            dry(ground.world, (&own(&xs), &own(&zs), &own(&surfaces.heights)), None)
+        }
+    };
     let mut taken: HashSet<[i32; 2]> = HashSet::new();
     let mut grown = Vec::new();
-    for (at, found) in found.iter().enumerate() {
+    for (at, found) in found.iter().enumerate().filter(|(at, _)| dry[*at]) {
         let [bx, bz] = found.block;
         let (y, block) = (ground_top(at * 5), surfaces.tops[at * 5]);
         // Under the sea, or no ground at all; a plant of the sea's bed, only under the sea.
@@ -662,6 +678,11 @@ pub struct Woods {
     /// The world's biomes it keeps to, by their place in its list; none for
     /// any. A structure's trees keep to its biomes far off too.
     pub biomes: Vec<usize>,
+    /// How high over the sea it keeps, in metres, and away from rivers and
+    /// lakes, as a structure's trees do near (see `structure`); none for
+    /// plants that grow down to the water. Either way none stands in a
+    /// river or a lake.
+    pub shore: Option<f32>,
 }
 
 /// How much of the ground a rule's plants must cover between them, each
@@ -700,11 +721,20 @@ impl FarBuilt for Woods {
         if !self.shows() {
             return;
         }
+        // The climate, rivers and lakes of the generator the ground is made by, as near.
+        let (generate, size) = (&making.generate, making.file.block_size);
+        super::generate::with_ground(generate, &making.world, size, |world| self.build_on(making, tile, world));
+    }
+}
+
+impl Woods {
+    /// [`FarBuilt::build`], on the ground generator `world` makes.
+    fn build_on(&self, making: &BlockMaking, tile: &mut FarTile, world: &crate::generate::WorldGen) {
         let rule = &self.rule;
         let side = CHUNK;
         let size = making.file.block_size.max(0.01) * (1u32 << tile.level.min(16)) as f32;
         let position = making.generate.position;
-        let (sea, world) = (tile.sea.0, &*making.world);
+        let sea = tile.sea.0;
         // The top of each column's ground, in the tile's blocks, and its block: none under the sea.
         let ground = |x: u32, z: u32| {
             let top = tile.column([x, z]).last()?;
@@ -726,8 +756,16 @@ impl FarBuilt for Woods {
                 let beside = |x: u32, z: u32| ground(x, z).map_or(top, |(top, _)| top) as f32;
                 let along = |low: f32, high: f32, both: bool| (high - low) / if both { 2.0 } else { 1.0 };
                 let last = side - 1;
-                let dx = along(beside(x.saturating_sub(1), z), beside((x + 1).min(last), z), x > 0 && x < last);
-                let dz = along(beside(x, z.saturating_sub(1)), beside(x, (z + 1).min(last)), z > 0 && z < last);
+                let (west, east) = (beside(x.saturating_sub(1), z), beside((x + 1).min(last), z));
+                let (south, north) = (beside(x, z.saturating_sub(1)), beside(x, (z + 1).min(last)));
+                let dx = along(west, east, x > 0 && x < last);
+                let dz = along(south, north, z > 0 && z < last);
+                // A lone spire's top, two blocks or more over the ground either side of it, holds no wood: it is
+                // level only as its sides are alike.
+                let over = |a: f32, b: f32| top as f32 - a.max(b) >= 2.0;
+                if over(west, east) || over(south, north) {
+                    continue;
+                }
                 let height = top as f32 * size;
                 if !rule.stands_on(height - world.sea_level(), (dx * dx + dz * dz).sqrt()) {
                     continue;
@@ -752,13 +790,16 @@ impl FarBuilt for Woods {
             }
         }
         // Their climate, asked of the generator at once, and from it their biome where it keeps to any.
-        let mut liked = vec![true; wooded.len()];
+        let mut liked = dry(world, (&xs, &zs, &heights), self.shore.filter(|_| !rule.under_water));
         let biomes = making.generate.placed.as_deref().filter(|_| !self.biomes.is_empty());
         if rule.temperature.is_some() || rule.humidity.is_some() || biomes.is_some() {
             let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
             world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
             liked = (0..xs.len())
                 .map(|at| {
+                    if !liked[at] {
+                        return false;
+                    }
                     let biome = biomes.is_none_or(|biomes| {
                         let (above_sea, place) = (heights[at] - world.sea_level(), [xs[at], zs[at]]);
                         let sunk = super::structure::sunk_at(world, &biomes.biomes, place, heights[at]);
@@ -806,6 +847,36 @@ impl FarBuilt for Woods {
             }
         }
     }
+}
+
+/// Which of the places `(xs, zs)`, their ground `heights` metres high, are
+/// clear of rivers and lakes; and where `shore` says, that many metres over
+/// the sea at least, and [`super::structure::BY_WATER`] from any river or
+/// lake, as a structure's trees stand near.
+pub(crate) fn dry(
+    world: &crate::generate::WorldGen,
+    (xs, zs, heights): (&[f32], &[f32], &[f32]),
+    shore: Option<f32>,
+) -> Vec<bool> {
+    let sea = world.sea_level();
+    let mut dry: Vec<bool> = heights.iter().map(|height| shore.is_none_or(|shore| height - sea >= shore)).collect();
+    let still: Vec<usize> = (0..dry.len()).filter(|&at| dry[at]).collect();
+    let round: &[(f32, f32)] = match shore {
+        Some(_) => {
+            let by = super::structure::BY_WATER;
+            &[(0.0, 0.0), (by, 0.0), (-by, 0.0), (0.0, by), (0.0, -by)]
+        }
+        None => &[(0.0, 0.0)],
+    };
+    let (wx, wz): (Vec<f32>, Vec<f32>) =
+        still.iter().flat_map(|&at| round.iter().map(move |(dx, dz)| (xs[at] + dx, zs[at] + dz))).unzip();
+    if let Some((water, _)) = world.water(&wx, &wz) {
+        let clear = |water: &f32| *water < crate::generate::nodes::NO_WATER * 0.5;
+        for (k, &at) in still.iter().enumerate() {
+            dry[at] = water[k * round.len()..(k + 1) * round.len()].iter().all(clear);
+        }
+    }
+    dry
 }
 
 /// The block at `at` as changes kept for ground not made now have it: none
@@ -1201,6 +1272,94 @@ mod tests {
     }
 
     #[test]
+    fn a_structures_wood_keeps_off_the_shore_and_rivers_far_off_as_its_trees_do_near() {
+        use crate::blocks::generate::far::far_tile;
+        use std::sync::Arc;
+        // The islands' coast where a river runs out into the sea, a tile of the far view's blocks of 8 m.
+        let world = crate::generate::starters().into_iter().find(|s| s.name == "Archipelago").unwrap().world(7, 1.0);
+        let mut file = BlockFile {
+            ground: FlatGround { size: [0, 0], ..FlatGround::default() },
+            generate: Some(BlockGenerate { position: [592.0, 64.0], caves: 0.0, ..BlockGenerate::default() }),
+            ..BlockFile::default()
+        };
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.1, 0.3, 0.6]) });
+        file.generate.as_mut().unwrap().sea = file.blocks.len() as BlockId;
+        let (_, faces) = file.faces();
+        let making = BlockMaking {
+            generate: file.generate.clone().unwrap(),
+            file: file.clone(),
+            world: Arc::new(world),
+            faces: faces.into(),
+            far_folder: None,
+            far_built: Vec::new(),
+        };
+        let trees = GrowRule { spacing: 8.0, separation: 3.0, chance: 0.9, slope: 35.0, ..GrowRule::default() };
+        let leaves = 2;
+        let wood = |shore: Option<f32>| Woods {
+            rule: trees.clone(),
+            block: leaves,
+            height: 6.5,
+            width: 5.0,
+            from: 3,
+            biomes: Vec::new(),
+            shore,
+        };
+        let bare = far_tile(&making.file, &making.generate, &making.world, 3, [0, 0]);
+        let size = 8.0;
+        let world = &*making.world;
+        // The places of the columns a wood was put on: as wide as a column, each wood is its own.
+        let wooded = |shore: Option<f32>| {
+            let mut tile = bare.clone();
+            wood(shore).build(&making, &mut tile);
+            let mut places = Vec::new();
+            for z in 0..32u32 {
+                for x in 0..32u32 {
+                    let (was, now) =
+                        (bare.column([x, z]).last().copied().unwrap(), tile.column([x, z]).last().copied().unwrap());
+                    if now.block == leaves && was.block != leaves {
+                        let middle = |cell: u32, axis: usize| [592.0, 64.0][axis] + (cell as f32 + 0.5) * size;
+                        places.push(([middle(x, 0), middle(z, 1)], was.to as f32 * size));
+                    }
+                }
+            }
+            places
+        };
+        let wet = |[x, z]: [f32; 2], by: f32| {
+            let round = [(0.0, 0.0), (by, 0.0), (-by, 0.0), (0.0, by), (0.0, -by)];
+            let (xs, zs): (Vec<f32>, Vec<f32>) = round.iter().map(|(dx, dz)| (x + dx, z + dz)).unzip();
+            let (water, _) = world.water(&xs, &zs).unwrap();
+            water.iter().any(|&water| water > crate::generate::nodes::NO_WATER * 0.5)
+        };
+        let sea = world.sea_level();
+        let anywhere = wooded(None);
+        let kept = wooded(Some(2.5));
+        assert!(kept.len() > 20, "{} columns wooded", kept.len());
+        // None stands in a river, either way; kept off the shore, none on it nor by a river.
+        assert!(anywhere.iter().all(|(at, _)| !wet(*at, 0.0)), "a wood in a river");
+        assert!(kept.iter().all(|(at, top)| top - sea >= 2.5 && !wet(*at, 6.0)), "a wood on the shore or by a river");
+        // Here the rule takes some away: the coast's lowest columns, and those beside the river.
+        assert!(
+            anywhere.iter().any(|(at, top)| top - sea < 2.5 || wet(*at, 6.0)),
+            "nothing here for the rule to keep off"
+        );
+        assert!(kept.len() < anywhere.len());
+        // A lone spire, two blocks or more over the ground either side of it, holds none.
+        let mut spire = bare.clone();
+        let at = (0..32u32).flat_map(|z| (0..32u32).map(move |x| [x, z])).find(|&[x, z]| {
+            (1..31).contains(&x)
+                && (1..31).contains(&z)
+                && bare.column([x, z]).last().unwrap().block != making.generate.sea
+        });
+        if let Some(at) = at {
+            let top = spire.column(at).last().unwrap().to;
+            spire.add(at, top, top + 3, 1);
+            let mut built = spire.clone();
+            wood(None).build(&making, &mut built);
+            assert_eq!(built.column(at).last().unwrap().block, 1, "no wood on the spire's top");
+        }
+    }
+
+    #[test]
     fn a_wood_shows_in_the_far_view_as_blocks_over_the_ground_its_trees_grow_on() {
         use crate::blocks::generate::far::far_tile;
         use std::sync::Arc;
@@ -1215,7 +1374,8 @@ mod tests {
             far_built: Vec::new(),
         };
         let trees = GrowRule { on: vec![1], spacing: 7.0, separation: 4.0, chance: 0.6, ..GrowRule::default() };
-        let wood = Woods { rule: trees.clone(), block: 2, height: 6.5, width: 4.5, from: 3, biomes: Vec::new() };
+        let wood =
+            Woods { rule: trees.clone(), block: 2, height: 6.5, width: 4.5, from: 3, biomes: Vec::new(), shore: None };
         assert!(wood.shows());
         // Trees drawn to 500 m in a world of 128 m stand on its first two rings, and the wood begins with the
         // third; drawn no further than the world's own blocks, with the first ring.

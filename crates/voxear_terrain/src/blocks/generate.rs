@@ -35,6 +35,20 @@ pub mod tints;
 pub use cells::{CAVE_ROOF, landed, lays_land, write_land};
 pub use columns::column_chunks;
 
+/// Hands `then` the generator a world's ground is made by, rivers and its
+/// biomes' land with it (see `cells::source`): what its near ground and its
+/// far view stand on, so what is built or grows far off stands where near
+/// it would.
+pub(crate) fn with_ground<R>(
+    generate: &BlockGenerate,
+    world: &WorldGen,
+    block_size: f32,
+    then: impl FnOnce(&WorldGen) -> R,
+) -> R {
+    let source = cells::source(generate, world, block_size.max(0.01));
+    then(source.world())
+}
+
 /// How a world of blocks' ground is generated: by the world generator
 /// `world` names (a reference to a `.worldgen`), from `position` metres in
 /// its world, down to block `bottom` (counted from the world's corner, so

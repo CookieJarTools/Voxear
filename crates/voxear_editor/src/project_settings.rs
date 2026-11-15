@@ -6,10 +6,12 @@
 //! floating origin: whether the world's middle moves with the camera, how
 //! far out it goes first, and how far it moves; and what making worlds of
 //! blocks may spend: a Quality preset, and the threads, chunk columns at
-//! once, megabytes uploaded a frame and distances under it, a number
-//! changed by hand making it Custom. Localization holds each language's
-//! fonts, in the order its text falls back to them, each picked from the
-//! project's `.ttf` and `.otf` files.
+//! once, megabytes uploaded a frame, distances and details under it, a
+//! number changed by hand making it Custom. With This machine on, they are
+//! this machine's own, kept beside the game's saves, and the project's are
+//! left as they are. Localization holds each language's fonts, in the order
+//! its text falls back to them, each picked from the project's `.ttf` and
+//! `.otf` files.
 
 use voxear_engine::{
     modules::{Module, Modules},
@@ -36,11 +38,15 @@ struct OriginRows {
 /// each number under it.
 struct BudgetRows {
     quality: NodeId,
+    machine: NodeId,
     threads: NodeId,
     columns: NodeId,
     upload: NodeId,
     view: NodeId,
     far: NodeId,
+    near_detail: NodeId,
+    far_detail: NodeId,
+    plant_detail: NodeId,
 }
 
 /// What the Localization tab asks of the editor: a font picked for a
@@ -128,13 +134,20 @@ impl ProjectSettingsPanel {
         let row = setting(ui, body, "Quality");
         let quality_choice = ui.dropdown(row, &labels, selected);
         ui.add_class(quality_choice, "value-choice");
+        let row = setting(ui, body, "This machine");
+        let machine = ui.toggle(row, "", false);
+        ui.add_class(machine, "checkbox");
         let budget = BudgetRows {
             quality: quality_choice,
+            machine,
             threads: number(ui, body, "Threads", budget.threads as f32, ""),
             columns: number(ui, body, "Columns at once", budget.columns as f32, ""),
             upload: number(ui, body, "Upload a frame", budget.upload as f32, "MB"),
             view: number(ui, body, "View distance", budget.view_distance, "m"),
             far: number(ui, body, "Far distance", budget.far_distance, "m"),
+            near_detail: number(ui, body, "Near detail", budget.near_detail, "×"),
+            far_detail: number(ui, body, "Far detail", budget.far_detail, "×"),
+            plant_detail: number(ui, body, "Plant detail", budget.plant_detail, "×"),
         };
         let world_body = body;
 
@@ -249,11 +262,31 @@ impl ProjectSettingsPanel {
             WorldBudget { view_distance: typed(rows.view)?, ..custom }
         } else if ui.changed(rows.far) {
             WorldBudget { far_distance: typed(rows.far)?, ..custom }
+        } else if ui.changed(rows.near_detail) {
+            WorldBudget { near_detail: typed(rows.near_detail)?, ..custom }
+        } else if ui.changed(rows.far_detail) {
+            WorldBudget { far_detail: typed(rows.far_detail)?, ..custom }
+        } else if ui.changed(rows.plant_detail) {
+            WorldBudget { plant_detail: typed(rows.plant_detail)?, ..custom }
         } else {
             return None;
         };
         let changed = changed.checked();
         (changed != *now).then_some(changed)
+    }
+
+    /// This machine toggled on or off this frame: whether it now keeps its
+    /// own budget.
+    pub fn machine_changed(&self, ui: &Ui) -> Option<bool> {
+        let machine = self.budget.machine;
+        ui.changed(machine).then(|| ui.is_checked(machine))
+    }
+
+    /// Shows whether this machine keeps its own budget.
+    pub fn show_machine(&self, ui: &mut Ui, kept: bool) {
+        if ui.is_checked(self.budget.machine) != kept {
+            ui.set_checked(self.budget.machine, kept);
+        }
     }
 
     /// Shows the block worlds' budget, but in a field being typed in.
@@ -269,6 +302,9 @@ impl ProjectSettingsPanel {
             (rows.upload, budget.upload as f32),
             (rows.view, budget.view_distance),
             (rows.far, budget.far_distance),
+            (rows.near_detail, budget.near_detail),
+            (rows.far_detail, budget.far_detail),
+            (rows.plant_detail, budget.plant_detail),
         ];
         for (field, value) in numbers {
             let text = format_metres(value);

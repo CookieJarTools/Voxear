@@ -435,6 +435,18 @@ public readonly struct Obj : IEquatable<Obj>
 		return new ReflectionProbe(this);
 	}
 
+	/// <summary>
+	/// The Obj's Reverb Probe, a box of probes baked for how long sound rings through it. Not valid when it has none.
+	/// </summary>
+	public ReverbProbe ReverbProbe => new ReverbProbe(this);
+
+	/// <summary>Gives the Obj a Reverb Probe, unless it has one, and returns it.</summary>
+	public ReverbProbe AddReverbProbe()
+	{
+		NativeComponent.Set(NativeComponent.ReverbProbe, this, NativeComponent.Add, Vector4.Zero);
+		return new ReverbProbe(this);
+	}
+
 	/// <summary>The Obj's Heat Body, which takes the temperature of where it is. Not valid when it has none.</summary>
 	public HeatBody HeatBody => new HeatBody(this);
 

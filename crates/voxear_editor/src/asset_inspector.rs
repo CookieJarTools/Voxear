@@ -229,6 +229,8 @@ pub enum AssetAction {
     BakePaths(String),
     /// Bake the reflection probes of the level at this path.
     BakeProbes(String),
+    /// Bake the reverb probes of the level at this path.
+    BakeReverb(String),
     /// Show where the asset at this path is in the Project panel.
     Ping(String),
     /// Play the sound at this path in the editor, or stop it.
@@ -316,6 +318,8 @@ pub struct AssetView {
     bake: Option<NodeId>,
     /// A level's Bake Probes button.
     bake_probes: Option<NodeId>,
+    /// A level's Bake Reverb button.
+    bake_reverb: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
     lighting: Option<(LightingFields, PathBuf)>,
     /// A shader's state, compiled or not, and the state it shows.
@@ -389,6 +393,8 @@ struct MaterialFields {
     ior: NodeId,
     /// How far up a model's foot it blends into the ground.
     ground: NodeId,
+    /// What sound hears it as: guessed from the look, first, or a preset.
+    acoustic: NodeId,
     /// Its custom shader and the shader's properties.
     shader: ShaderFields,
 }
@@ -499,6 +505,7 @@ impl AssetView {
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_reverb: None,
             lighting: None,
             scene_lighting: None,
             shader_state: None,
@@ -639,6 +646,7 @@ impl AssetView {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
                 view.bake_probes = Some(reflection_probes(ui, root, &item.path, game));
+                view.bake_reverb = Some(reverb_probes(ui, root, &item.path, game));
             }
             ItemKind::Asset(AssetKind::Font) => font_sample(ui, root, game, &item.path),
             ItemKind::Asset(AssetKind::Strings) => {
@@ -710,6 +718,7 @@ impl AssetView {
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_reverb: None,
             lighting: None,
             scene_lighting: None,
             shader_state: None,
@@ -743,6 +752,9 @@ impl AssetView {
         }
         if self.bake_probes.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakeProbes(self.item.path.clone()));
+        }
+        if self.bake_reverb.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::BakeReverb(self.item.path.clone()));
         }
         if let Some((listen, playing)) = self.listen
             && ui.clicked(listen.button)
@@ -892,7 +904,7 @@ impl AssetView {
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
-            .chain([&fields.pixels, &fields.connected])
+            .chain([&fields.pixels, &fields.connected, &fields.acoustic])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -923,6 +935,8 @@ impl AssetView {
         data.glass = ui.is_checked(fields.glass);
         (data.pixels, data.connected) = (ui.is_checked(fields.pixels), ui.is_checked(fields.connected));
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
+        let acoustic = ui.selected_option(fields.acoustic);
+        data.acoustic = acoustic.checked_sub(1).and_then(|at| voxear_engine::physics::Acoustic::ALL.get(at)).copied();
         data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
         data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
         data.ground_blend = read(fields.ground, data.ground_blend).clamp(0.0, 10.0);
@@ -1288,6 +1302,32 @@ fn reflection_probes(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> Nod
     button
 }
 
+/// Whether a level's reverb probes are baked and how many, its own
+/// ray-traced audio over the project's, and the button that bakes them,
+/// which this returns.
+fn reverb_probes(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
+    use voxear_engine::reverb_probes::{BakedReverb, reverb_file};
+    let rows = part(ui, root, "Sound", "audio");
+    let bytes = std::fs::read(game.project.root.join(reverb_file(level))).ok();
+    let baked = bytes.as_deref().map(BakedReverb::read);
+    let text = match baked {
+        None => "Not baked".to_string(),
+        Some(Ok(baked)) => format!("{} · {}", baked.probes(), size(bytes.map_or(0, |b| b.len() as u64))),
+        Some(Err(_)) => "Bake again".to_string(),
+    };
+    text_row(ui, rows, "Reverb probes", &text);
+    let file = std::fs::read_to_string(game.project.root.join(level)).ok();
+    let own = file.and_then(|text| toml::from_str::<voxear_engine::LevelFile>(&text).ok()).and_then(|f| f.audio);
+    let project = game.project.file.audio.sound_tracing();
+    let settings = own.unwrap_or_default().over(project);
+    let whose = if own.is_some_and(|own| !own.is_empty()) { "Level" } else { "Project" };
+    let traced = if settings.on { format!("On · {}", settings.quality.label()) } else { "Off".to_string() };
+    text_row(ui, rows, "Ray-traced", &format!("{traced} · {whose}"));
+    let button = ui.button(rows, "Bake Reverb");
+    ui.add_class(button, "add-component");
+    button
+}
+
 /// What a sound file holds, and the button that plays it, which this
 /// returns.
 fn sound(ui: &mut Ui, root: NodeId, file: &std::path::Path) -> Listen {
@@ -1385,6 +1425,13 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
     let ground = one(ui, "Ground blend", data.ground_blend);
+    let row = prop(ui, rows, "Acoustic");
+    ui.set_tooltip(row, "What sound hears it as with ray-traced audio: By look guesses metal, glass or generic", None);
+    let acoustics = voxear_engine::physics::Acoustic::ALL;
+    let names: Vec<&str> = std::iter::once("By look").chain(acoustics.iter().map(|a| a.label())).collect();
+    let picked = data.acoustic.and_then(|a| acoustics.iter().position(|&known| known == a)).map_or(0, |at| at + 1);
+    let acoustic = ui.dropdown(row, &names, picked);
+    ui.add_class(acoustic, "value-input");
     let swatches = [color_swatch, emission_swatch];
     let shader = ShaderFields::build(ui, (shader_row, root), &data, game.content.shaders(), db);
     let fields = MaterialFields {
@@ -1407,6 +1454,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         glass,
         ior,
         ground,
+        acoustic,
         shader,
     };
     fields.show_swatches(ui);

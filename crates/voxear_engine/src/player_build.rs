@@ -243,6 +243,9 @@ pub fn build(
         headphones: project.file.audio.headphones,
         reverb: project.file.audio.reverb,
         reverb_mode: project.file.audio.reverb_mode,
+        ray_traced: project.file.audio.ray_traced,
+        ray_quality: project.file.audio.ray_quality,
+        ray_budget: project.file.audio.ray_budget,
         modules: project.modules(),
     };
     settings.write(&data)?;

@@ -146,6 +146,16 @@ public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 		set { Set(NativeAudio.SourcePathing, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// How much of a 3D source on the effects bus the room rings with, its reverb and its first echoes: 1 all of it,
+	/// 0 none, as for a voice heard close up that the hall should not answer.
+	/// </summary>
+	public float ReverbSend
+	{
+		get { return Get(NativeAudio.SourceReverbSend, 1f); }
+		set { Set(NativeAudio.SourceReverbSend, value); }
+	}
+
 	/// <summary>Whether it plays through the effects bus or the music bus.</summary>
 	public AudioBus Bus
 	{

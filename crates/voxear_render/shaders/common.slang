@@ -244,7 +244,9 @@ struct Material
     float detail;
     // How many metres up from where it meets a terrain a model drawn with it blends into the ground (shading.slang).
     float groundBlend;
-    uint2 pad;
+    // The acoustic preset sound rays hear it as, plus one; 0 to guess from its look (sound_rays.slang).
+    uint acoustic;
+    uint pad;
 };
 
 static const uint STANDARD_SHADER = 0;
@@ -272,7 +274,8 @@ struct Instance
     uint posedBefore;
     // How far its pose may reach past its mesh's bounds, in metres.
     float reach;
-    uint pad;
+    // For a chunk of blocks, the acoustic preset sound rays hear it as, plus one; 0 for its material's.
+    uint acoustic;
 };
 
 // Where an instance's vertices start in the vertex buffer: its posed ones

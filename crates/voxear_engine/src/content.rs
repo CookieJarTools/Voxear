@@ -98,6 +98,12 @@ pub struct MaterialData {
     /// foot; 0 for not at all.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub ground_blend: f32,
+    /// What sound hears it as, with ray-traced audio on: how much of each
+    /// band of pitch it soaks up and lets through. Left out, it is guessed
+    /// from the look: metal where metallic, glass for glass, else generic;
+    /// a block world's chunks are rock unless their blocks' materials say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acoustic: Option<voxear_physics::scene::Acoustic>,
     /// Advanced: glass's index of refraction, 1.5 for window glass; higher
     /// bends and reflects more.
     #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
@@ -162,6 +168,7 @@ impl Default for MaterialData {
             pixels: false,
             connected: false,
             ground_blend: 0.0,
+            acoustic: None,
             ior: default_ior(),
             wind_bend: None,
             wind_flutter: None,
@@ -302,6 +309,7 @@ impl MaterialData {
             pixels: self.pixels,
             connected: self.connected,
             ground_blend: self.ground_blend.max(0.0),
+            acoustic: self.acoustic.map_or(0, |acoustic| acoustic_code(acoustic)),
             ..MaterialDesc::default()
         }
     }
@@ -325,6 +333,9 @@ impl MaterialData {
         }
         if self.ground_blend > 0.0 {
             custom.push_str(&format!(" ground {}", self.ground_blend));
+        }
+        if let Some(acoustic) = self.acoustic {
+            custom.push_str(&format!(" acoustic {}", acoustic_code(acoustic)));
         }
         (values, MaterialMap::ALL.map(|map| self.map(map)), custom)
     }
@@ -2762,6 +2773,12 @@ pub fn srgb(linear: [f32; 3]) -> [f32; 3] {
     linear.map(|c| if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 })
 }
 
+/// An acoustic preset as the renderer's sound rays number it: its place in
+/// `Acoustic::ALL`, plus one.
+pub fn acoustic_code(acoustic: voxear_physics::scene::Acoustic) -> u32 {
+    voxear_physics::scene::Acoustic::ALL.iter().position(|&a| a == acoustic).map_or(0, |at| at as u32 + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2798,3 +2815,4 @@ mod tests {
         assert_eq!(unmapped.desc([None; 5]).displacement, 0.0);
     }
 }
+

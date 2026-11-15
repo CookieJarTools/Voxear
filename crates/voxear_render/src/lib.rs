@@ -79,6 +79,7 @@ pub mod sea;
 mod seasons;
 mod shadow_cache;
 mod shadows;
+mod sound_rays;
 mod texture_codec;
 mod ui_pass;
 mod ui_panels;
@@ -142,6 +143,10 @@ pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, Wor
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
+pub use sound_rays::{
+    MAX_SOUND_RAYS, MAX_SOUND_SOURCES, MAX_SOUND_SPOTS, MAX_SOURCE_RAYS, SOUND_FIELD, SOUND_FIXED, SOUND_MATERIALS,
+    SoundHeard, SoundMaterial, SoundRays, SoundSource,
+};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
@@ -502,6 +507,7 @@ pub struct Renderer {
     frame_debugger: frame_debugger::FrameDebugger,
     captures: capture::Captures,
     reflection_probes: reflection_probes::ReflectionProbes,
+    sound_rays: sound_rays::SoundRayWork,
 }
 
 impl Renderer {
@@ -612,6 +618,7 @@ impl Renderer {
             frame_debugger: Default::default(),
             captures: Default::default(),
             reflection_probes: Default::default(),
+            sound_rays: Default::default(),
         })
     }
 
@@ -633,6 +640,21 @@ impl Renderer {
     /// asks for a capture knows it has been taken once this has caught up.
     pub fn reflection_probe_captured(&self, entity: voxear_ecs::Entity) -> Option<u32> {
         self.reflection_probes.captured(entity)
+    }
+
+    /// Rays for the game's sound to trace in the next frame, against the
+    /// scene the GI traces, in place of any asked for before and not yet
+    /// drawn; `None` for none. What they find comes back from
+    /// [`sound_heard`](Self::sound_heard) once the GPU has finished that
+    /// frame. Only the first view traces them, and only a frame with a
+    /// view draws them.
+    pub fn trace_sound(&mut self, rays: Option<SoundRays>) {
+        self.sound_rays.ask(rays);
+    }
+
+    /// What the sound rays of a finished frame found, the latest, once.
+    pub fn sound_heard(&mut self) -> Option<SoundHeard> {
+        self.sound_rays.take_heard()
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
@@ -1385,6 +1407,7 @@ impl Renderer {
         // Every posed model's skinned parts, for all the views.
         self.skinning.prepare(&self.gpu, assets, world, self.frame_index, frame.slot)?;
         self.captures.finish(&self.gpu, frame.slot);
+        self.sound_rays.finish(frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let first = &self.views[0];
         let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats_readback.read()[..stat::COUNT * 4]);
@@ -1445,6 +1468,7 @@ impl Renderer {
             frame_debugger,
             captures,
             reflection_probes,
+            sound_rays,
             clear,
             mesh_shaders,
             software_rays,
@@ -1470,6 +1494,8 @@ impl Renderer {
         // The reflection probes every view shades with, and the one the first view captures or loads.
         let probes = reflection_probes.prepare(&mut fg, (gpu, bindless), world, (time, frame_index, frame.slot))?;
         let mut probe_job_done = false;
+        let sound = sound_rays.prepare(gpu, frame.slot)?;
+        let mut sound_done = false;
         let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
         let (panel_textures, (panel_quads, panel_values)) =
             ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, (&ui.quads, &ui.values), (0, 0))?;
@@ -1550,6 +1576,7 @@ impl Renderer {
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
+                sound: sound.filter(|_| !sound_done),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
@@ -1557,6 +1584,7 @@ impl Renderer {
                 backdrops[at] = recorded.backdrop;
             }
             probe_job_done |= recorded.probe_job_done;
+            sound_done |= recorded.sound_done;
             for (entity, size) in recorded.panel_sizes {
                 ui_panels.saw(entity, size);
             }
@@ -1570,6 +1598,9 @@ impl Renderer {
         }
         if probe_job_done {
             reflection_probes.take_job(world, time);
+        }
+        if sound_done {
+            sound_rays.recorded(frame.slot);
         }
         // An output no view drew into is cleared for its UI.
         for (&image, cleared) in images.iter().zip(&cleared) {
@@ -1836,6 +1867,7 @@ impl Drop for Renderer {
             view.retire(&mut self.frames);
         }
         let baked = self.impostor_bakes.take_buffers().into_iter().chain(self.maps.take_buffers());
+        let baked = baked.chain(self.sound_rays.take_buffers());
         for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()).chain(baked) {
             self.frames.retire(Retired::Buffer(buffer));
         }
@@ -2037,6 +2069,8 @@ struct ViewSetup {
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
+    /// This frame's sound rays, which the first camera's own view records.
+    sound: Option<sound_rays::SoundPass>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2049,6 +2083,8 @@ struct ViewRecorded {
     panel_sizes: Vec<(voxear_ecs::Entity, [f32; 2])>,
     /// It recorded this frame's reflection probe capture or load.
     probe_job_done: bool,
+    /// It recorded this frame's sound rays.
+    sound_done: bool,
     /// The Portals a view through a Portal sees in turn, for the view it
     /// is seen in to draw the far sides of.
     sees: Option<Sees>,
@@ -2864,6 +2900,37 @@ impl View {
             None => None,
         };
         let probe_job_done = probe_job.is_some();
+        // The first camera's own view traces the frame's sound rays, through the scene its GI or reflections
+        // trace, or one built for them.
+        let sound_job = setup.sound.filter(|_| self.number == 0 && portal.is_none() && !wireframe);
+        let sound_job = match sound_job {
+            Some(pass) => {
+                if traced_by.is_none() {
+                    if setup.software_rays || pipelines.sound_occlusion.is_none() {
+                        let hierarchy = &mut self.scene_hierarchies[slot];
+                        scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
+                        traced_by = Some(true);
+                    } else {
+                        let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
+                        if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                            frame_data.ddgi.scene = scene;
+                            traced_by = Some(false);
+                        }
+                    }
+                }
+                let traced = match (traced_by, pipelines.sound_occlusion, pipelines.sound_reverb) {
+                    (Some(false), Some(occlusion), Some(reverb)) => Some(sound_rays::SoundPipelines { occlusion, reverb }),
+                    (Some(true), ..) => Some(sound_rays::SoundPipelines {
+                        occlusion: pipelines.sound_occlusion_software,
+                        reverb: pipelines.sound_reverb_software,
+                    }),
+                    _ => None,
+                };
+                traced.map(|traced| (pass, traced))
+            }
+            None => None,
+        };
+        let sound_done = sound_job.is_some();
         let panes = match wireframe || portal.is_some() {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
@@ -3288,6 +3355,7 @@ impl View {
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
             probe_job,
+            sound_job,
         };
         // A camera's own view draws the far sides of the Portals it sees once its own surfaces are in, and those
         // seen through them after each; a view through a Portal leaves its own to the view it is seen in.
@@ -3314,7 +3382,7 @@ impl View {
             return Err(error);
         }
         if portal.is_some() {
-            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done });
+            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done, sound_done });
         }
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -3371,7 +3439,7 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done })
+        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done, sound_done })
     }
 }
 

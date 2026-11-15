@@ -135,7 +135,14 @@ impl QualitySettings {
 /// reverb = true
 /// reverb_mode = "convolution"
 /// steam_audio = false
+/// ray_traced = true
+/// ray_quality = "high"
+/// ray_budget = 0.3
 /// ```
+///
+/// With `ray_traced`, sound is heard through the scene the GPU traces for
+/// the GI, blocks and terrain too, within `ray_budget` milliseconds of GPU
+/// time a frame (see `crate::sound_tracing`); a level may set its own.
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioSettings {
@@ -144,11 +151,33 @@ pub struct AudioSettings {
     #[serde(with = "ReverbModeName")]
     pub reverb_mode: ReverbMode,
     pub steam_audio: bool,
+    pub ray_traced: bool,
+    pub ray_quality: crate::sound_tracing::RayQualityName,
+    pub ray_budget: f32,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { headphones: false, reverb: false, reverb_mode: ReverbMode::Parametric, steam_audio: true }
+        Self {
+            headphones: false,
+            reverb: false,
+            reverb_mode: ReverbMode::Parametric,
+            steam_audio: true,
+            ray_traced: false,
+            ray_quality: crate::sound_tracing::RayQualityName::Medium,
+            ray_budget: crate::sound_tracing::DEFAULT_BUDGET,
+        }
+    }
+}
+
+impl AudioSettings {
+    /// Its ray-traced audio, as the game takes it.
+    pub fn sound_tracing(&self) -> crate::sound_tracing::SoundTracing {
+        crate::sound_tracing::SoundTracing {
+            on: self.ray_traced,
+            quality: self.ray_quality.into(),
+            budget: self.ray_budget.max(0.0),
+        }
     }
 }
 

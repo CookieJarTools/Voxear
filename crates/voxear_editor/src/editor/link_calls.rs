@@ -96,6 +96,8 @@ pub(super) enum Waiting {
     },
     /// The open level's reflection probes baking.
     ProbeBake,
+    /// The open level's reverb probes baking.
+    ReverbBake,
 }
 
 /// A call done, or one that answers later.
@@ -312,6 +314,20 @@ impl Editor {
                     _ => Ok(Outcome::Later(Waiting::ProbeBake)),
                 }
             }
+            "reverb_probes.bake" => {
+                self.refuse_while_playing("bake the reverb probes")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                if !self.baking_reverb() {
+                    self.bake_reverb();
+                }
+                match self.reverb_bake_end() {
+                    Some(Err(error)) if !self.baking_reverb() => Err(refuse(ErrorKind::Failed, error.clone())),
+                    _ => Ok(Outcome::Later(Waiting::ReverbBake)),
+                }
+            }
+            "audio.rays" => self.audio_rays(args),
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -451,6 +467,14 @@ impl Editor {
             Waiting::Capture { view, path, settle, asked } => {
                 self.go_on_capturing_for_tool(view, path, settle, asked, renderer)
             }
+            Waiting::ReverbBake => match (self.baking_reverb(), self.reverb_bake_end()) {
+                (false, Some(Ok(baked))) => done(json!({
+                    "probes": baked.probes, "inside": baked.inside, "file": baked.file, "bytes": baked.bytes
+                })),
+                (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
+                (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
+                (true, _) => Ok(Outcome::Later(Waiting::ReverbBake)),
+            },
             Waiting::ProbeBake => match (self.baking_probes(), self.probe_bake_end()) {
                 (false, Some(Ok(baked))) => {
                     done(json!({ "probes": baked.probes, "file": baked.file, "bytes": baked.bytes }))
@@ -480,6 +504,50 @@ impl Editor {
                 done(answer)
             }
         }
+    }
+
+    /// Ray-traced audio in the running game: what `audio.rays` sets, and
+    /// what it does now.
+    fn audio_rays(&mut self, args: &Json) -> Result<Outcome, LinkError> {
+        use voxear_engine::audio::ReverbTimes;
+        use voxear_engine::sound_tracing::RayQualityName;
+        let tracer = &mut self.game.audio.tracer;
+        let mut settings = tracer.settings();
+        let mut changed = false;
+        if let Some(on) = opt_bool(args, "on") {
+            settings.on = on;
+            changed = true;
+        }
+        if let Some(quality) = opt_text(args, "quality") {
+            let named: RayQualityName = serde_json::from_value(json!(quality))
+                .map_err(|_| bad(format!("`{quality}` is not a quality: low, medium or high")))?;
+            settings.quality = named.into();
+            changed = true;
+        }
+        if let Some(budget) = args.get("budget").filter(|b| !b.is_null()) {
+            let budget = budget.as_f64().ok_or_else(|| bad("`budget` is a number of milliseconds"))?;
+            settings.budget = (budget as f32).max(0.0);
+            changed = true;
+        }
+        if changed {
+            self.refuse_unless_playing("trace sound for")?;
+            self.game.audio.tracer.script = Some(settings);
+        }
+        let tracer = &self.game.audio.tracer;
+        let settings = tracer.settings();
+        let room = match self.game.audio.reverb_on() {
+            true => self.game.audio.room(),
+            false => ReverbTimes::NONE,
+        };
+        done(json!({
+            "on": settings.on,
+            "quality": voxear_engine::sound_tracing::RayQualityName::from(settings.quality),
+            "budget": settings.budget,
+            "tracing": tracer.tracing(),
+            "rays": tracer.rays(),
+            "cost_ms": tracer.cost(),
+            "room": room.0,
+        }))
     }
 
     pub(super) fn refuse_while_playing(&self, what: &str) -> Result<(), LinkError> {
@@ -1032,7 +1100,7 @@ impl Editor {
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
                 "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
-                | "reflection_probes.bake" => {
+                | "reflection_probes.bake" | "reverb_probes.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),

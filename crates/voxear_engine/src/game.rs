@@ -162,6 +162,7 @@ impl Game {
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
         game.audio.reverb_mode = game.project.file.audio.reverb_mode;
+        game.audio.tracer.project = game.project.file.audio.sound_tracing();
         game.load_input_actions();
         game.load_fonts();
         game.load_strings();
@@ -1021,6 +1022,7 @@ impl Game {
                 self.audio.hear_level(self.levels.current(), &mut self.content);
             }
             self.audio.update(&self.engine.world, &mut self.content, running, delta);
+            self.audio.trace_sound(renderer.as_deref_mut());
         }
         // A server tells its clients the level it plays and shares new networked Objs, then whatever this
         // frame left to send goes.

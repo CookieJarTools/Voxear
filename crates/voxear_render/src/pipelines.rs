@@ -283,6 +283,12 @@ pub struct Pipelines {
     /// and in software (`probeCaptureMain` in `shaders/ddgi.slang`).
     pub probe_capture: Option<vk::Pipeline>,
     pub probe_capture_software: vk::Pipeline,
+    /// Sound rays (see `sound_rays`), by ray queries where the GPU has them,
+    /// and in software.
+    pub sound_occlusion: Option<vk::Pipeline>,
+    pub sound_reverb: Option<vk::Pipeline>,
+    pub sound_occlusion_software: vk::Pipeline,
+    pub sound_reverb_software: vk::Pipeline,
     /// A probe's capture's mips, and their filtering for its own
     /// (`shaders/probe_filter.slang`).
     pub probe_downsample: vk::Pipeline,
@@ -421,6 +427,16 @@ impl Pipelines {
             probe_capture_software: create_compute_pipeline(gpu, layout, "Reflection probe capture", ddgi_software, c"probeCaptureMain")?,
             probe_capture: match &ddgi {
                 Some(module) => Some(create_compute_pipeline(gpu, layout, "Reflection probe capture", module, c"probeCaptureMain")?),
+                None => None,
+            },
+            sound_occlusion_software: create_compute_pipeline(gpu, layout, "Sound occlusion", ddgi_software, c"soundOcclusionMain")?,
+            sound_reverb_software: create_compute_pipeline(gpu, layout, "Sound reverb", ddgi_software, c"soundReverbMain")?,
+            sound_occlusion: match &ddgi {
+                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound occlusion", module, c"soundOcclusionMain")?),
+                None => None,
+            },
+            sound_reverb: match &ddgi {
+                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound reverb", module, c"soundReverbMain")?),
                 None => None,
             },
             shadow: graphics(&GraphicsPipelineDesc {
@@ -1172,7 +1188,8 @@ impl Pipelines {
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
         let probes = [self.nearest_pyramid, self.probe_capture_software, self.probe_downsample, self.probe_filter];
-        let traced = traced.chain(self.probe_capture).chain(probes);
+        let sounds = [self.sound_occlusion_software, self.sound_reverb_software];
+        let traced = traced.chain(self.probe_capture).chain(probes).chain(self.sound_occlusion).chain(self.sound_reverb).chain(sounds);
         if let Some(fsr3) = &self.fsr3 {
             fsr3.destroy(gpu);
         }

@@ -287,6 +287,9 @@ pub struct ObjData {
     /// middle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_probe: Option<ReflectionProbeData>,
+    /// A box of reverb probes, baked for how long sound rings through it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverb_probe: Option<ReverbProbeData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
     /// A whole model drawn by the Obj, each part where the model puts it.
@@ -476,6 +479,7 @@ impl ObjData {
             light: None,
             post_volume: None,
             reflection_probe: None,
+            reverb_probe: None,
             renderer: None,
             model: None,
             audio: None,
@@ -723,6 +727,49 @@ impl ReflectionProbeData {
             intensity: probe.intensity,
             importance: probe.importance,
         }
+    }
+}
+
+/// A box of reverb probes as a scene writes it, each value left out at its
+/// default:
+///
+/// ```toml
+/// [obj.reverb_probe]
+/// size = [20.0, 6.0, 20.0]   # metres along each axis of the world, round the Obj
+/// spacing = 3.0              # metres between its probes
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReverbProbeData {
+    #[serde(default = "default_reverb_size", skip_serializing_if = "is_default_reverb_size")]
+    pub size: [f32; 3],
+    #[serde(default = "default_reverb_spacing", skip_serializing_if = "is_default_reverb_spacing")]
+    pub spacing: f32,
+}
+
+fn default_reverb_size() -> [f32; 3] {
+    crate::reverb_probes::ReverbProbe::default().size
+}
+
+fn is_default_reverb_size(size: &[f32; 3]) -> bool {
+    *size == default_reverb_size()
+}
+
+fn default_reverb_spacing() -> f32 {
+    crate::reverb_probes::ReverbProbe::default().spacing
+}
+
+fn is_default_reverb_spacing(spacing: &f32) -> bool {
+    *spacing == default_reverb_spacing()
+}
+
+impl ReverbProbeData {
+    pub fn component(&self) -> crate::reverb_probes::ReverbProbe {
+        crate::reverb_probes::ReverbProbe { size: self.size.map(|side| side.max(0.0)), spacing: self.spacing.max(0.25) }
+    }
+
+    pub fn of(probe: &crate::reverb_probes::ReverbProbe) -> Self {
+        Self { size: probe.size, spacing: probe.spacing }
     }
 }
 
@@ -1859,6 +1906,9 @@ fn capture_instance(
     if root.reflection_probe.is_some() && root.reflection_probe != prefab_root.reflection_probe {
         instance.reflection_probe = root.reflection_probe;
     }
+    if root.reverb_probe.is_some() && root.reverb_probe != prefab_root.reverb_probe {
+        instance.reverb_probe = root.reverb_probe;
+    }
     if root.light.is_some() && root.light != prefab_root.light {
         instance.light = root.light;
     }
@@ -2095,6 +2145,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(probe) = actual.reflection_probe.filter(|p| Some(*p) != expected.reflection_probe) {
         put("reflection_probe", toml::Value::try_from(probe)?);
+    }
+    if let Some(probe) = actual.reverb_probe.filter(|p| Some(*p) != expected.reverb_probe) {
+        put("reverb_probe", toml::Value::try_from(probe)?);
     }
     if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
@@ -2462,6 +2515,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
     obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
     obj.reflection_probe = world.get::<ReflectionProbe>(entity).map(ReflectionProbeData::of);
+    obj.reverb_probe = world.get::<crate::reverb_probes::ReverbProbe>(entity).map(ReverbProbeData::of);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {

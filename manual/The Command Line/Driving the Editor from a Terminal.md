@@ -187,6 +187,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |
 | `reflection_probe.capture`, `reflection_probes.bake` | Capture a Reflection Probe again, and bake the open level's probes beside it |
+| `reverb_probes.bake` | Bake the open level's Reverb Probes beside it |
+| `audio.rays` | Read ray-traced audio in the running game, or set it there: on, quality and budget |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |

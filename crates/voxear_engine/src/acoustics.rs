@@ -62,6 +62,11 @@ impl Walls {
         self.level.as_deref()
     }
 
+    /// Whether the open level has baked paths, loaded or still to load.
+    pub fn has_paths_file(&self) -> bool {
+        self.paths_file.is_some() || self.paths.is_some()
+    }
+
     /// The open level's baked paths, from its `.paths` file, if it has one.
     pub fn set_paths(&mut self, level: Option<&str>, file: Option<Vec<u8>>) {
         self.level = level.map(str::to_string);

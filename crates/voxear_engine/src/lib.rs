@@ -66,6 +66,8 @@ mod project;
 pub mod local_link;
 pub mod reflection_bakes;
 mod reflection_probes;
+pub mod reverb_probes;
+pub mod sound_tracing;
 pub mod remote_console;
 pub mod saplings;
 pub mod scene_file;

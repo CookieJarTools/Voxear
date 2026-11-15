@@ -7,6 +7,7 @@
 use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
+use voxear_engine::reverb_probes::ReverbProbe;
 use voxear_engine::first_person::FirstPersonView;
 use voxear_engine::guns::mechanism::{GunPart, PartMotion, PartRole};
 use voxear_engine::guns::{Gun, GunHolder, GunKind};
@@ -103,6 +104,8 @@ pub enum Part {
     PostVolume,
     /// A Reflection Probe: a box whose surfaces reflect what its middle sees.
     ReflectionProbe,
+    /// A Reverb Probe: a box of probes baked for how long sound rings.
+    ReverbProbe,
     WindZone,
     ParticleSystem,
     /// A Force Field: what moves the particles round its Obj.
@@ -187,6 +190,7 @@ impl Part {
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
             Part::ReflectionProbe => "reflection_probe".into(),
+            Part::ReverbProbe => "reverb_probe".into(),
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
             Part::ForceField => "force_field".into(),
@@ -265,6 +269,7 @@ impl Part {
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
             Part::ReflectionProbe => "Reflection Probe",
+            Part::ReverbProbe => "Reverb Probe",
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
             Part::ForceField => "Force Field",
@@ -357,6 +362,7 @@ impl Part {
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
             Part::ReflectionProbe => "globe",
+            Part::ReverbProbe => "audio",
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
             Part::ForceField => "move",
@@ -539,6 +545,11 @@ pub enum Prop {
     ProbeBoxProjection,
     ProbeIntensity,
     ProbeImportance,
+    /// A Reverb Probe's box and how far apart its probes are.
+    ReverbSize,
+    ReverbSpacing,
+    /// How much of an Audio Source the room rings with.
+    ReverbSend,
     MistEmitting,
     MistWidth,
     MistDensity,
@@ -973,6 +984,7 @@ impl Prop {
             | Prop::ProbeBoxProjection
             | Prop::ProbeIntensity
             | Prop::ProbeImportance => Part::ReflectionProbe,
+            Prop::ReverbSize | Prop::ReverbSpacing => Part::ReverbProbe,
             Prop::WindStrength
             | Prop::WindGusts
             | Prop::WindGustSize
@@ -1232,6 +1244,7 @@ impl Prop {
             | Prop::OcclusionRadius
             | Prop::Transmission
             | Prop::Pathing
+            | Prop::ReverbSend
             | Prop::SoundBus => Part::Audio,
             Prop::LodMeasure | Prop::LodCull | Prop::LodObj(..) | Prop::LodAdd(_) | Prop::LodUntil(_) => {
                 Part::LodGroup
@@ -1350,6 +1363,8 @@ impl Prop {
             Prop::ProbeBoxProjection => "box_projection",
             Prop::ProbeIntensity => "intensity",
             Prop::ProbeImportance => "importance",
+            Prop::ReverbSize => "size",
+            Prop::ReverbSpacing => "spacing",
             Prop::WindStrength => "strength",
             Prop::WindGusts => "gusts",
             Prop::WindGustSize => "gust_size",
@@ -1632,6 +1647,7 @@ impl Prop {
             Prop::OcclusionRadius => "occlusion_radius",
             Prop::Transmission => "transmission",
             Prop::Pathing => "pathing",
+            Prop::ReverbSend => "reverb_send",
             Prop::SoundBus => "bus",
             Prop::LodMeasure => "measure",
             Prop::LodCull => "cull",
@@ -1762,6 +1778,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<ReflectionProbe>(entity) {
         parts.push(Part::ReflectionProbe);
+    }
+    if world.has::<ReverbProbe>(entity) {
+        parts.push(Part::ReverbProbe);
     }
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
@@ -1971,6 +1990,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
+        Part::ReverbProbe => vec![Prop::ReverbSize, Prop::ReverbSpacing],
         Part::ReflectionProbe => {
             // Only a live probe is captured every so often.
             let live = world.get::<ReflectionProbe>(entity).is_some_and(|probe| probe.update == ProbeUpdate::Live);
@@ -2317,6 +2337,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if source.space == SoundSpace::ThreeD {
                 props.extend([Prop::MinDistance, Prop::MaxDistance, Prop::DopplerLevel, Prop::Occlusion]);
                 props.extend(occlusion_props(source.occlusion));
+                props.push(Prop::ReverbSend);
             }
             props
         }
@@ -2484,6 +2505,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::ProbeBoxProjection => "Box Projection",
         Prop::ProbeIntensity => "Intensity",
         Prop::ProbeImportance => "Importance",
+        Prop::ReverbSize => "Size",
+        Prop::ReverbSpacing => "Spacing",
         Prop::WindStrength => "Strength",
         Prop::WindGusts => "Gusts",
         Prop::WindGustSize => "Gust size",
@@ -2770,6 +2793,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::OcclusionRadius => "Occlusion radius",
         Prop::Transmission => "Transmission",
         Prop::Pathing => "Pathing",
+        Prop::ReverbSend => "Reverb send",
         Prop::SoundBus => "Bus",
         Prop::LodMeasure => "Switch by",
         Prop::LodCull => "Culled",
@@ -2995,6 +3019,9 @@ pub fn add(
         Part::ReflectionProbe => {
             world.insert(entity, ReflectionProbe::default());
         }
+        Part::ReverbProbe => {
+            world.insert(entity, ReverbProbe::default());
+        }
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
@@ -3132,6 +3159,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::ReflectionProbe => {
             world.remove::<ReflectionProbe>(entity);
             world.remove::<voxear_render::ReflectionProbeBake>(entity);
+        }
+        Part::ReverbProbe => {
+            world.remove::<ReverbProbe>(entity);
         }
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::Smoke => {
@@ -3452,6 +3482,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ProbeBoxProjection
         | Prop::ProbeIntensity
         | Prop::ProbeImportance => probe_value(world.get::<ReflectionProbe>(entity)?, prop)?,
+        Prop::ReverbSize => Value::Vector(world.get::<ReverbProbe>(entity)?.size.to_vec()),
+        Prop::ReverbSpacing => Value::Number(world.get::<ReverbProbe>(entity)?.spacing),
         Prop::WindStrength => Value::Number(world.get::<WindZone>(entity)?.strength),
         Prop::WindGusts => Value::Number(world.get::<WindZone>(entity)?.gusts),
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
@@ -3915,6 +3947,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OcclusionRadius => Value::Number(audio()?.occlusion_radius),
         Prop::Transmission => Value::Toggle(audio()?.transmission),
         Prop::Pathing => Value::Toggle(audio()?.pathing),
+        Prop::ReverbSend => Value::Number(audio()?.reverb_send),
         Prop::SoundBus => {
             let index = usize::from(audio()?.bus == AudioBus::Music);
             Value::Choice(index, AUDIO_BUSES.iter().map(|k| k.to_string()).collect())
@@ -5341,6 +5374,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::Transmission, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.transmission = on),
         (Prop::Pathing, Value::Toggle(on)) => with(world, entity, |a: &mut AudioSource| a.pathing = on),
+        (Prop::ReverbSend, Value::Number(n)) => {
+            with(world, entity, |a: &mut AudioSource| a.reverb_send = n.clamp(0.0, 1.0))
+        }
+        (Prop::ReverbSize, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |probe: &mut ReverbProbe| probe.size = [v[0], v[1], v[2]].map(|s| s.max(0.0)))
+        }
+        (Prop::ReverbSpacing, Value::Number(n)) => {
+            with(world, entity, |probe: &mut ReverbProbe| probe.spacing = n.clamp(0.25, 64.0))
+        }
         (Prop::SoundBus, Value::Choice(index, _)) => with(world, entity, |a: &mut AudioSource| {
             a.bus = if index == 1 { AudioBus::Music } else { AudioBus::Effects };
         }),
@@ -6165,6 +6207,23 @@ mod tests {
         assert!(![Prop::ParticleTexture, Prop::ParticleTiles, Prop::ParticleStretch, Prop::ParticleSoftness].iter().any(|row| rows.contains(row)));
         world.get_mut::<ParticleSystem>(entity).unwrap().effect = Some(EffectRef::Builtin(Starter::Explosion));
         assert_eq!(shown(&world), [Prop::ParticleEffect], "its own settings are not used");
+    }
+
+    #[test]
+    fn a_reverb_probe_shows_its_box_and_spacing_and_an_audio_source_its_reverb_send() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+        let types = ScriptTypes::default();
+        world.insert(entity, ReverbProbe::default());
+        assert!(parts(&world, entity).contains(&Part::ReverbProbe));
+        assert_eq!(props(&world, entity, &Part::ReverbProbe, &types), [Prop::ReverbSize, Prop::ReverbSpacing]);
+        assert!(set_component(&mut world, entity, &Prop::ReverbSize, Value::Vector(vec![20.0, -1.0, 8.0])));
+        assert!(set_component(&mut world, entity, &Prop::ReverbSpacing, Value::Number(0.0)));
+        assert_eq!(*world.get::<ReverbProbe>(entity).unwrap(), ReverbProbe { size: [20.0, 0.0, 8.0], spacing: 0.25 });
+        world.insert(entity, AudioSource { space: SoundSpace::ThreeD, ..AudioSource::default() });
+        assert!(props(&world, entity, &Part::Audio, &types).contains(&Prop::ReverbSend));
+        assert!(set_component(&mut world, entity, &Prop::ReverbSend, Value::Number(2.0)));
+        assert_eq!(world.get::<AudioSource>(entity).unwrap().reverb_send, 1.0, "never more than all of it");
     }
 
     #[test]

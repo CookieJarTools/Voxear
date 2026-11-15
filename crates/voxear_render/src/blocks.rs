@@ -686,7 +686,7 @@ struct Pool {
     proxied: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)>,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner, made again as they change.
-    placed: Option<Arc<[(MeshHandle, Vec3)]>>,
+    placed: Option<Arc<[(MeshHandle, Vec3, u32)]>>,
     /// The world as it last drew it, drawn in place of the pool that follows
     /// it until that one has every chunk.
     shown: Option<DrawnBlocks>,
@@ -977,7 +977,10 @@ pub(crate) struct DrawnBlocks {
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
-    pub proxies: Arc<[(MeshHandle, Vec3)]>,
+    /// Each chunk's mesh for rays, where it is from the world's corner, and
+    /// the acoustic preset sound rays hear it as, plus one: its most common
+    /// surface's material's, or rock's, as most of a world of blocks is.
+    pub proxies: Arc<[(MeshHandle, Vec3, u32)]>,
     /// Its tints in its pool, where it has any: the point they start from
     /// and how many a side.
     pub tints: Option<([i32; 2], u32, Option<[i32; 2]>)>,
@@ -1250,7 +1253,15 @@ impl BlockWorlds {
                 .placed
                 .get_or_insert_with(|| {
                     let at = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                    pool.proxies.iter().map(|(key, (_, mesh))| (*mesh, at(key))).collect()
+                    let acoustic = |chunk: &ChunkMesh| {
+                        let surface = most_common_surface(chunk);
+                        let material = surface.and_then(|surface| look.surfaces.get(surface));
+                        match material.map_or(0, |look| assets.acoustic(look.material)) {
+                            0 => ACOUSTIC_ROCK + 1,
+                            given => given,
+                        }
+                    };
+                    pool.proxies.iter().map(|(key, (chunk, mesh))| (*mesh, at(key), acoustic(chunk))).collect()
                 })
                 .clone();
             let drawn = DrawnBlocks {
@@ -1372,12 +1383,25 @@ fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64
     }
 }
 
+/// Rock's place among `voxear_physics::scene::Acoustic`'s presets.
+const ACOUSTIC_ROCK: u32 = 10;
+
+/// The surface most of a chunk's faces are drawn with, its water's aside.
+fn most_common_surface(chunk: &ChunkMesh) -> Option<usize> {
+    let mut counts = [0u32; 256];
+    for quad in &chunk.quads[..chunk.water().0 as usize] {
+        counts[(quad[1] & 0xff) as usize] += 1;
+    }
+    let (surface, &count) = counts.iter().enumerate().max_by_key(|(_, count)| **count)?;
+    (count > 0).then_some(surface)
+}
+
 /// Adds each world's chunks' meshes for rays to the frame's instances, so
 /// the GI's rays see its blocks.
 pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame) {
     for blocks in drawn {
-        for (part, (mesh, at)) in blocks.proxies.iter().enumerate() {
-            let model = Mat4::from_translation(blocks.corner + *at);
+        for (part, &(mesh, at, acoustic)) in blocks.proxies.iter().enumerate() {
+            let model = Mat4::from_translation(blocks.corner + at);
             let normal = Mat3::from_mat4(model).inverse().transpose();
             extracted.instances.push(GpuInstance {
                 model: crate::gpu::cols(model),
@@ -1386,6 +1410,7 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
                 mesh: mesh.0,
                 material: blocks.look.material.0,
                 flags: INSTANCE_RAYS_ONLY,
+                acoustic,
                 ..GpuInstance::default()
             });
             extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32), far_side: false });

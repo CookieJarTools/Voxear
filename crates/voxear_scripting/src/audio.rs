@@ -95,6 +95,8 @@ pub enum SourceValue {
     OcclusionRadius,
     Transmission,
     Pathing,
+    /// How much of a 3D source the room rings with, 0 to 1.
+    ReverbSend,
 }
 
 impl SourceValue {
@@ -120,6 +122,7 @@ impl SourceValue {
             17 => Self::OcclusionRadius,
             18 => Self::Transmission,
             19 => Self::Pathing,
+            20 => Self::ReverbSend,
             _ => return None,
         })
     }
@@ -151,6 +154,16 @@ pub enum BusValue {
     DuckAttack,
     DuckRelease,
     ReverbMode,
+    /// Ray-traced audio: whether it is asked for, its quality (0 low, 1
+    /// medium, 2 high) and its budget of GPU time a frame, in milliseconds;
+    /// whether sound is traced now; the pass's least time of late, in
+    /// milliseconds; and the rays from the listener a frame now.
+    RayTraced,
+    RayQuality,
+    RayBudget,
+    RayTracing,
+    RayCost,
+    Rays,
 }
 
 impl BusValue {
@@ -172,6 +185,12 @@ impl BusValue {
             13 => Self::DuckAttack,
             14 => Self::DuckRelease,
             15 => Self::ReverbMode,
+            16 => Self::RayTraced,
+            17 => Self::RayQuality,
+            18 => Self::RayBudget,
+            19 => Self::RayTracing,
+            20 => Self::RayCost,
+            21 => Self::Rays,
             _ => return None,
         })
     }

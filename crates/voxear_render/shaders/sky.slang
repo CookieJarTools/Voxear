@@ -421,7 +421,8 @@ float4 cloudShadowsFragment(LutOut input) : SV_Target0
 // Soft clouds along a ray from a camera `camera` metres over the ground: what they add in colour, in alpha how much
 // of the sky behind shows through, and in `distance` how far off they are, in metres. The layer is marched from a
 // start that moves each frame.
-float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera, float3 sun, float3 sky, out float distance)
+float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera, float3 sun, float3 sky, out float distance,
+    uint steps = CLOUD_STEPS, uint sunSteps = CLOUD_SUN_STEPS)
 {
     Clouds clouds = frame->lighting.clouds;
     float top = clouds.base + clouds.thickness;
@@ -468,12 +469,12 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
     float jitter = frac(52.9829189 * frac(dot(pixel + 5.588238 * float(frame->frameIndex % 64), float2(0.06711056, 0.00583715))));
     // Another for the steps towards the sun, so the light's edge inside a cloud is not a line.
     float sunJitter = frac(jitter * 7.31 + 0.37);
-    float step = (to - from) / float(CLOUD_STEPS);
+    float step = (to - from) / float(steps);
     float flat = 1.0 - direction.y * direction.y;
     float3 color = 0.0;
     float through = 1.0;
     float weight = 0.0;
-    for (uint i = 0; i < CLOUD_STEPS; i++)
+    for (uint i = 0; i < steps; i++)
     {
         float t = from + (float(i) + jitter) * step;
         // How high the ray is here, over ground that curves away under it.
@@ -490,7 +491,7 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
         float shade = 0.0;
         float reach = clouds.thickness * 0.04;
         float along = 0.0;
-        for (uint j = 0; j < CLOUD_SUN_STEPS; j++)
+        for (uint j = 0; j < sunSteps; j++)
         {
             float middle = along + reach * (0.25 + 0.5 * sunJitter);
             shade += cloudDensityAt(frame, xz + toSun.xz * middle, height + toSun.y * middle / clouds.thickness, false) * reach;
@@ -727,14 +728,32 @@ float4 cloudsFragment(LutOut input) : SV_Target0
     return lerp(seen, kept, CLOUD_KEPT);
 }
 
+// One block of 8 by 4 texels in this many of the clouds' panorama is marched each frame (src/clouds.rs's
+// PANORAMA_EVERY), whole blocks, as many texels as the GPU runs together, so those not due cost nothing; and with
+// fewer steps than the screen's. So few texels leave the GPU waiting on each step in turn, so the steps, not the
+// texels, are what the pass costs; a reflection blurs them anyway.
+static const uint CLOUD_PANORAMA_EVERY = 4;
+static const uint CLOUD_PANORAMA_STEPS = 12;
+static const uint CLOUD_PANORAMA_SUN_STEPS = 2;
+
 // The clouds all round the camera, across once round the horizon and from straight up at the top to straight down at
-// the bottom (clouds.slang's cloudsToward), marched as the Clouds pass marches the screen's and blended with last
-// frame's at the same texel: what reflections take of the sky shows them. push.textures.x: last frame's.
+// the bottom (clouds.slang's cloudsToward), marched as the Clouds pass marches the screen's, a block in
+// CLOUD_PANORAMA_EVERY each frame, and blended with what that texel held: what reflections take of the sky shows them.
+// push.textures.x: last frame's.
 [shader("fragment")]
 float4 cloudPanoramaFragment(LutOut input) : SV_Target0
 {
     Frame* frame = push.frame;
     Clouds clouds = frame->lighting.clouds;
+    // The blocks not due this frame keep what they held; the pattern steps across them, each its turn in four frames.
+    uint2 block = uint2(input.position.xy) / uint2(8, 4);
+    bool due = (block.x + block.y * 5u + frame->frameIndex) % CLOUD_PANORAMA_EVERY == 0u;
+    float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.uv, 0.0);
+    bool keepable = clouds.reset == 0 && !any(isnan(kept)) && !any(isinf(kept));
+    if (!due && keepable)
+    {
+        return kept;
+    }
     float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
     float3 sun, sky;
     cloudLight(frame, sun, sky);
@@ -743,7 +762,7 @@ float4 cloudPanoramaFragment(LutOut input) : SV_Target0
     float distance;
     float reach = blocks ? CLOUD_BLOCK_REACH : CLOUD_REACH;
     float4 seen = blocks ? cloudBlocksSeen(frame, direction, camera, sun, sky, distance)
-        : cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance);
+        : cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance, CLOUD_PANORAMA_STEPS, CLOUD_PANORAMA_SUN_STEPS);
     float covered = 1.0 - seen.a;
     if (covered > 0.0)
     {
@@ -754,14 +773,6 @@ float4 cloudPanoramaFragment(LutOut input) : SV_Target0
         float far = 1.0 - smoothstep(0.65, 1.0, distance / reach);
         seen = float4(color * far, 1.0 - covered * far);
     }
-    if (clouds.reset != 0)
-    {
-        return seen;
-    }
-    float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.uv, 0.0);
-    if (any(isnan(kept)) || any(isinf(kept)))
-    {
-        return seen;
-    }
-    return lerp(seen, kept, CLOUD_KEPT);
+    // Three quarters of what it held, as it is marched a quarter as often as the screen's, which keeps nine tenths.
+    return keepable ? lerp(seen, kept, 0.75) : seen;
 }

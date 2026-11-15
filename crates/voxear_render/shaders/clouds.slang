@@ -363,6 +363,12 @@ float3 cloudsBefore(Frame* frame, float2 screenUv, float3 world, float3 color)
     float3 offset = world - frame->cameraPosition;
     float distance = length(offset);
     float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    // Nearer than the layer is above or below the camera, it is in front of them all: most of what is drawn.
+    float clear = max(clouds.base - camera, camera - clouds.base - clouds.thickness);
+    if (distance <= clear)
+    {
+        return color;
+    }
     float from, to;
     if (distance <= 0.0 || !cloudSpan(frame, camera, offset.y / distance, from, to) || distance <= from)
     {
@@ -379,7 +385,7 @@ float3 cloudsBefore(Frame* frame, float2 screenUv, float3 world, float3 color)
     return color * through + seen.rgb * ((1.0 - through) / covered);
 }
 
-// The clouds' panorama (src/clouds.rs's PANORAMA) in a direction from the camera, as reflections take them: what they
+// The clouds' panorama (src/clouds.rs's PANORAMA, 128 by 64) in a direction from the camera, as reflections take them: what they
 // add, and in alpha how much of what is behind shows through.
 float4 cloudsToward(Frame* frame, float3 direction)
 {
@@ -389,8 +395,8 @@ float4 cloudsToward(Frame* frame, float3 direction)
         return float4(0.0, 0.0, 0.0, 1.0);
     }
     float2 uv = float2(frac(atan2(direction.x, direction.z) / (2.0 * PI) + 0.5), acos(clamp(direction.y, -1.0, 1.0)) / PI);
-    // Its 128 rows (PANORAMA) kept apart at the top and bottom, which the sampler would wrap together.
-    uv.y = clamp(uv.y, 0.5 / 128.0, 1.0 - 0.5 / 128.0);
+    // Its 64 rows (PANORAMA) kept apart at the top and bottom, which the sampler would wrap together.
+    uv.y = clamp(uv.y, 0.5 / 64.0, 1.0 - 0.5 / 64.0);
     return textures[NonUniformResourceIndex(clouds.panorama)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0);
 }
 

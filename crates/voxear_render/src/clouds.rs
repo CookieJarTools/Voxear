@@ -25,7 +25,7 @@
 //!
 //! 3. **Cloud panorama** marches them the same way all round the camera, into
 //!    a small picture across once round the horizon and from straight up to
-//!    straight down, blended with last frame's: what reflections, reflection
+//!    straight down, a quarter of it a frame with fewer steps, the rest kept: what reflections, reflection
 //!    probes' captures and screen-space reflections' misses take of the sky
 //!    show the clouds from it.
 //!
@@ -55,8 +55,14 @@ pub const SHADOW_REACH: f32 = 6000.0;
 const HISTORY_NAMES: [&str; 2] = ["clouds 0", "clouds 1"];
 const PANORAMA_NAMES: [&str; 2] = ["cloud panorama 0", "cloud panorama 1"];
 
-/// The clouds' panorama, texels across and down: about 1.4 degrees a texel.
-pub const PANORAMA: [u32; 2] = [256, 128];
+/// The clouds' panorama, texels across and down: about 2.8 degrees a texel,
+/// as fine as a reflection, which blurs them, shows them. One block of 8 by
+/// 4 texels in `PANORAMA_EVERY` is marched each frame, with 12 steps where
+/// the screen's take 40, and the rest kept: the clouds drift slowly, and the
+/// whole of it at 256 by 128 with the screen's steps cost 1.4 ms.
+pub const PANORAMA: [u32; 2] = [128, 64];
+/// As `CLOUD_PANORAMA_EVERY` in `shaders/sky.slang`.
+pub const PANORAMA_EVERY: u32 = 4;
 
 /// A sky's clouds as the shaders read them, before a frame gives them their
 /// pictures and how far they have drifted.

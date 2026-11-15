@@ -261,6 +261,9 @@ impl MeshRenderer {
 /// Everything the GPU needs for one view of the world.
 pub struct ExtractedFrame {
     pub frame: GpuFrame,
+    /// The sun shines through the canopy cookie, its look's, whose picture
+    /// the renderer has.
+    pub canopy_cookie: bool,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
@@ -740,6 +743,7 @@ pub fn extract(
     // The local lights that may cast shadows, by their index in `lights`.
     let mut shadowed = Vec::new();
     let mut sun_found = false;
+    let mut canopy_cookie = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
     let sun_look = match worn {
         Some(worn) => worn.sun,
@@ -757,6 +761,7 @@ pub fn extract(
                     intensity: light.intensity * look.strength,
                     softness: if light.softness == 0.5 { look.softness } else { light.softness },
                     shadow_tint: if light.shadow_tint == Vec3::ZERO { look.shadow_tint } else { light.shadow_tint },
+                    cookie_size: if light.cookie.is_none() && look.canopy > 0.0 { look.canopy } else { light.cookie_size },
                     ..*light
                 };
                 &looked
@@ -773,12 +778,15 @@ pub fn extract(
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
-                if let Some(cookie) = light.cookie {
-                    frame.lighting.sun_cookie = cookie.0;
+                // A look's canopy where the light has no cookie: the renderer names its picture.
+                let canopy = light.cookie.is_none() && sun_look.is_some_and(|look| look.canopy > 0.0);
+                if light.cookie.is_some() || canopy {
+                    frame.lighting.sun_cookie = light.cookie.map_or(NO_TEXTURE, |cookie| cookie.0);
                     frame.lighting.sun_cookie_size = light.cookie_size;
                     frame.lighting.sun_right = vec3(transform.rotation * Vec3::X);
                     frame.lighting.sun_up = vec3(transform.rotation * Vec3::Y);
                 }
+                canopy_cookie = canopy;
             }
             LightKind::Directional => {}
             _ => {
@@ -989,6 +997,7 @@ pub fn extract(
     }
 
     ExtractedFrame {
+        canopy_cookie,
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),
         frame,

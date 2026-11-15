@@ -335,6 +335,10 @@ pub struct DepthOfField {
     pub aperture: f32,
     /// Advanced: the largest blur radius, in pixels at 1080p.
     pub max_blur: f32,
+    /// Whether what lies beyond the focus blurs too. Off blurs only the
+    /// near foreground, as leaves or grass right in front of the camera,
+    /// and leaves the distance sharp.
+    pub far: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -445,7 +449,7 @@ impl Default for Fog {
 
 impl Default for DepthOfField {
     fn default() -> Self {
-        Self { enabled: false, focus_distance: 10.0, aperture: 2.8, max_blur: 12.0 }
+        Self { enabled: false, focus_distance: 10.0, aperture: 2.8, max_blur: 12.0, far: true }
     }
 }
 
@@ -647,7 +651,7 @@ impl PostProcess {
             contact_steps: self.contact_shadows.steps.clamp(1, 64),
             // The renderer names the table once it knows it.
             lut_texture: crate::gpu::NO_TEXTURE,
-            _lut_pad0: 0,
+            dof_far: u32::from(self.depth_of_field.far),
             lut_contribution: self.grading.lut_contribution.clamp(0.0, 1.0),
             surface_texture: crate::gpu::NO_TEXTURE,
             // The renderer names the image once it has made it.

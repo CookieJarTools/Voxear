@@ -1013,7 +1013,15 @@ Done so far:
   - **Storybook:** a warm, strong sun pushed toward yellow-green against a teal sky, shadows tinted warm purple,
     teal fog in layers, tinted ambient occlusion, gold-tinted bloom, saturation 1.15, shadows lifted toward teal
     and highlights toward gold.
-  - Still to come for them: a dappled canopy cookie, probes, and depth of field on the near foreground.
+  - **Their leftovers:** a dappled **canopy** cookie, made once on the CPU as a tiling picture from whole-number
+    hashes (`canopy`): green light through the leaves, clusters of gaps the sun falls through as soft round
+    flecks. A look's or lighting file's `[sun] canopy`, the metres it repeats over, gives it to the sun where the
+    light has no cookie of its own (`SunLook::canopy`); Storybook and Dark Forest have one, and the Lighting
+    page's Sun tab a row. **Depth of field on the near foreground:** `[post.depth_of_field] far = false` blurs only
+    what is nearer than the focus (`dofFar`), which Storybook uses at 2 m. **Probes:** both looks light with the
+    ray-traced GI probes, on since they came. Tests: the canopy tiles and is the same each time; the looks' settings;
+    GPU pictures of a floor dappled under a canopy against an even one in the open, and of a far edge kept sharp
+    while a near block blurs.
 - **GI v2:** the meshes near the camera drawn into the voxels each frame, flat along each axis, as colour,
   normal and glow, and each voxel lit as its surface is (the sun through its shadow map, lamps, its glow, and last
   frame's bounce), so walls behind the camera bounce their own colour. Coarser grids are made from finer ones,

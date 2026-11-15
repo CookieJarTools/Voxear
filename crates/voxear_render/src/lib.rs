@@ -15,6 +15,7 @@ mod atmosphere;
 pub use atmosphere::FarHaze;
 mod box_model;
 mod bvh;
+mod canopy;
 mod capture;
 mod clouds;
 mod cooked;
@@ -2643,6 +2644,9 @@ impl View {
 
         let mut frame_data = extracted.frame;
         (frame_data.post.display_peak, frame_data.post.display_image) = (setup.fitted.0, u32::from(setup.fitted.1));
+        if extracted.canopy_cookie {
+            frame_data.lighting.sun_cookie = assets.canopy.0;
+        }
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
         // Contact shadows are the sun's, so they go without one, and the wireframe goes without its depth.

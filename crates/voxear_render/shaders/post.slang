@@ -341,6 +341,11 @@ float circleOfConfusion(float depth)
 {
     Frame* frame = push.frame;
     float distance = linearDepth(depth);
+    // With the far blur off, only what is nearer than the focus blurs.
+    if (frame->post.dofFar == 0 && distance >= frame->post.dofFocus)
+    {
+        return 0.0;
+    }
     float blur = abs(1.0 - frame->post.dofFocus / distance) * 24.0 / max(frame->post.dofAperture, 0.5);
     return min(blur, frame->post.dofMaxBlur) * float(frame->viewport.y) / 1080.0;
 }

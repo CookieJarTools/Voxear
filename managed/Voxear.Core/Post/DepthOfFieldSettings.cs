@@ -17,12 +17,16 @@ public sealed class DepthOfFieldSettings
 	/// <summary>The largest blur, in pixels at 1080p.</summary>
 	public float MaxBlur = 12f;
 
+	/// <summary>Whether what lies beyond the focus blurs too. Off blurs only the near foreground.</summary>
+	public bool Far = true;
+
 	internal void Read(JsonObject from)
 	{
 		PostJson.Read(from, "enabled", ref Enabled);
 		PostJson.Read(from, "focus_distance", ref FocusDistance);
 		PostJson.Read(from, "aperture", ref Aperture);
 		PostJson.Read(from, "max_blur", ref MaxBlur);
+		PostJson.Read(from, "far", ref Far);
 	}
 
 	internal void Write(JsonObject to)
@@ -31,5 +35,6 @@ public sealed class DepthOfFieldSettings
 		to["focus_distance"] = FocusDistance;
 		to["aperture"] = Aperture;
 		to["max_blur"] = MaxBlur;
+		to["far"] = Far;
 	}
 }

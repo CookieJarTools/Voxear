@@ -1329,7 +1329,7 @@ picker and Inspector show them, and games ask for them for inventory icons, shop
   later, `Texture` and `Region` are for the C# UI to come, and `Release` lets it go (`ScriptPreviews` in the
   engine).
 
-### Post-processing and the Voxear Look *(implemented; upscalers, LUTs, volumes and the C# API planned)*
+### Post-processing and the Voxear Look *(implemented; third-party upscalers planned)*
 
 Every project starts with a finished look, so nothing has to be set up for a scene to look good. Each effect is a
 plain setting, nothing is hidden behind a profile asset, and the shaders are short and commented.
@@ -1366,7 +1366,7 @@ the section back as it was written, preset and overrides, not every resolved val
 | `grading` | `temperature`, `tint`, `contrast`, `saturation`, and per-channel `lift`, `gamma` and `gain` |
 | `vignette` | `intensity` 0.2, `smoothness`, `roundness` |
 | `fog` | `enabled`, `density` 0.004, `height_falloff`, `base_height`, `color` (the sky's horizon when unset), `sun_glow` |
-| `depth_of_field` | off; `focus_distance`, `aperture` (f-stop), `max_blur` (pixels at 1080p) |
+| `depth_of_field` | off; `focus_distance`, `aperture` (f-stop), `max_blur` (pixels at 1080p), `far` (true; false blurs only what is nearer than the focus) |
 | `motion_blur` | off; `intensity` (fraction of a frame's motion) |
 | `chromatic_aberration`, `grain` | off; `grain.size` |
 
@@ -1399,12 +1399,22 @@ history on camera cuts.
 - The Voxear Look adds about 0.25 ms. TAA takes 0.06 ms, composite 0.04 ms and finish 0.03 ms.
 - Depth of field, when on, takes about 0.28 ms.
 
-**Planned:**
-- Upscalers: FSR built in, DLSS and XeSS optional. They take TAA's place in the chain.
-- Colour grading LUTs, exportable to and from image editors.
-- Local post volumes that blend by distance (Unity's local Volumes), and per-camera overrides.
+**Since:** colour lookup tables, local post volumes, the settings on the Lighting page and in the Inspector with
+undo, `Post` in C#, HDR display output (an encode pass after the UI, see `display`), and the looks' sun canopy
+(`SunLook::canopy`, the `canopy` cookie) and near-only depth of field.
+
+**Planned: third-party upscalers.** AMD FSR, NVIDIA DLSS and Intel XeSS, each a choice beside Voxear's own
+temporal upscaler, taking TAA's place in the chain: the scene at render size, its depth (reverse-Z), its motion in
+pixels, the frame's jitter in pixels, exposure as a 1×1 image, and a reactive mask for what is drawn over the
+opaque scene. Each is loaded at run time from its vendor's own library where present, and greyed out where it is
+not or the GPU cannot run it. What the vendors' own sources allowed, read 2026-11-15:
+
+| | Licence | Linux | In the repo |
+| --- | --- | --- | --- |
+| FSR (SDK 2.4: FSR 3.1.6, FSR 4.1.2) | MIT | none official: Windows DLLs; FSR 3.1's HLSL is there without its compiled permutations | may be |
+| DLSS (SDK 310.9.16) | NVIDIA RTX SDKs License, accepted by use: attribution and marks, notice before a commercial release, NVIDIA GPUs only | yes, `libnvidia-ngx-dlss.so`, Vulkan | no: downloaded by the user or the launcher |
+| XeSS (SDK 3.0.2) | Intel Simplified Software License for the binaries, MIT headers | no: Windows only | headers may be; binaries unmodified with the notice |
 - An inspector with live previews.
-- A C# API: `Post.Current.Bloom.Intensity = 0.1f` for the easy path, and the full struct for the advanced one.
 
 ## Materials and VoxShade
 

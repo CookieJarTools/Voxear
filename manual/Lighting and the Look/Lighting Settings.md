@@ -39,7 +39,7 @@ intensity = 0.2
 | --- | --- |
 | `look` | A built-in look to start from, such as `golden_hour`, `night_raid` or `candlelit_castle`: every one is listed in [[Post-Processing]]. Leave it out to start from the plain defaults |
 | `[sky]` | The sky, as a scene's `[sky]` writes it: its mode, colours, haze, sun size, stars and, under `[sky.clouds]`, its clouds (see [[The Sky]]). Only what you write changes |
-| `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, `shadow_tint` colours its shadows where the light has no tint of its own, and `shadow_distance` and `shadow_split` set how far its shadows reach and how sharp they are near and far (see [[Lights]]) |
+| `[sun]` | How the level's sun looks, whatever light it is: `temperature` in kelvin and `tint` colour it, `strength` scales its intensity, `softness` widens it where the light keeps its default, `shadow_tint` colours its shadows where the light has no tint of its own, `shadow_distance` and `shadow_split` set how far its shadows reach and how sharp they are near and far (see [[Lights]]), and `canopy` puts leaves overhead: the sun falls through them in soft flecks, the pattern repeating every so many metres, where the light has no cookie of its own |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: exposure, bloom, grading, fog and the rest (see [[Post-Processing]]). Only what you write changes |
 | `[weather]` | The weather the level is in once lit by these settings: a `kind` such as `"rain"`, or `"custom"` and amounts of its own (see [[Weather]]). Clear when left out |
 

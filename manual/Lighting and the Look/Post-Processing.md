@@ -44,7 +44,7 @@ look = "storybook"
 | Look | What it gives |
 | --- | --- |
 | `soft_overcast` | Hazy, bright and calm, like daylight through big windows on a cloudy day. The sky is the main light; the sun is weak and warm, with soft shadows and light shafts in a thin blue mist. Bounced light is on |
-| `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. Bounced light is on |
+| `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. The sun falls through a canopy of leaves in soft flecks, leaves and grass right in front of the camera soften, and bounced light is on |
 | `golden_hour` | A low, warm sun in dusty air, as in Arc Raiders. The haze glows round the sun and swallows the distance, light shafts cut through it, a wide glare spreads from the sun, and shade stays deep but never black. Bounced light is on. Point the sun low, 5 to 20 degrees up |
 
 Seven looks are after the places of Arc Raiders:
@@ -226,6 +226,7 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 | `focus_distance = 10` | How far away is sharp, in metres |
 | `aperture = 2.8` | As on a real camera: lower blurs more |
 | `max_blur = 12` | The most blur, in pixels |
+| `far = true` | Whether what lies beyond the focus blurs too. `false` blurs only the near foreground, such as leaves right in front of the camera, and keeps the distance sharp, as the `storybook` look does |
 
 **Movement**, `[post.motion_blur]`: `enabled = false`, and `intensity = 0.5` for how strong it is.
 

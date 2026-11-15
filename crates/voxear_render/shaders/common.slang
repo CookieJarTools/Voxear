@@ -549,7 +549,8 @@ struct Post
     // The colour grading lookup table (NO_TEXTURE without one), and how much
     // of it shows. Its size comes from the table itself.
     uint lutTexture;
-    uint lutPad0;
+    // 1 when depth of field blurs what lies beyond its focus as well as what is nearer.
+    uint dofFar;
     float lutContribution;
     // Each pixel's normal and roughness from the depth passes (NO_TEXTURE without them), for TAA to tell mirrors by.
     uint surfaceTexture;

@@ -88,7 +88,7 @@ voxels = 8
 | Part | What it holds |
 | --- | --- |
 | `description` | A line for the menu the pack is picked from |
-| `[sun]` | How the sun looks, as lighting settings write it: `temperature`, `tint`, `strength`, `softness`, `shadow_tint`, `shadow_distance`, `shadow_split`. A `tint` colours the level's own sun; the others take the place of the level's |
+| `[sun]` | How the sun looks, as lighting settings write it: `temperature`, `tint`, `strength`, `softness`, `shadow_tint`, `shadow_distance`, `shadow_split`, `canopy`. A `tint` colours the level's own sun; the others take the place of the level's |
 | `[sky]` | The sky, as a scene's `[sky]` writes it, and under `[sky.clouds]` its clouds (see [[The Sky]]) |
 | `[post]` | Post-processing, as a scene's `[post]` writes it: glow, colour, mist, dark corners and the rest (see [[Post-Processing]]) |
 | `[blocks]` | How every Block World's faces are drawn: `voxels`, the small cubes along a block's side, 0 for plain faces, and `relief`, how many deep the deepest sink (see [[Block Worlds#Faces of small cubes]]) |

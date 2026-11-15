@@ -201,6 +201,8 @@ const SETTINGS: &[Info] = &[
         help: "How far from the camera the sun casts shadows. Nearer keeps the shadows by the camera sharper; farther shows them over a wider view, each softer." },
     Info { path: &["sun", "shadow_split"], title: "Cascade split", group: "Sun", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "How the sun's four shadow maps share the shadow distance. Near 1, the nearest is small and very sharp and the farthest wide; near 0, they share it evenly, so far shadows are sharper and near ones softer." },
+    Info { path: &["sun", "canopy"], title: "Canopy", group: "Sun", kind: number(0.0, 1000.0, "m"), when: ALWAYS,
+        help: "Leaves overhead: the sun falls through them in soft flecks, the pattern repeating every so many metres. 0 for open sky. A light with a cookie of its own keeps it." },
     Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS,
         help: "Lets the camera adjust its brightness to the scene, like an eye: brighter in dark places, darker in bright ones. Off keeps it fixed." },
     Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS,
@@ -323,6 +325,8 @@ const SETTINGS: &[Info] = &[
         help: "How much blur there is outside the focus: smaller f-numbers blur more, as on a real lens." },
     Info { path: &["post", "depth_of_field", "max_blur"], title: "Largest blur", group: "Lens", kind: number(0.0, 64.0, "px"), when: FOCUS,
         help: "The widest the blur gets, in pixels of a 1080p picture." },
+    Info { path: &["post", "depth_of_field", "far"], title: "Far blur", group: "Lens", kind: Kind::Toggle, when: FOCUS,
+        help: "Blurs what lies beyond the focus too. Off blurs only what is nearer, such as leaves right in front of the camera, and keeps the distance sharp." },
     Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
         help: "Blurs things as they move fast, or as the camera turns, as a film camera does." },
     Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR,
@@ -1046,6 +1050,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     sun.insert("shadow_tint".into(), color(voxear_engine::srgb(lighting.sun.shadow_tint.to_array())));
     sun.insert("shadow_distance".into(), toml::Value::Float(f64::from(lighting.sun.shadow_distance)));
     sun.insert("shadow_split".into(), toml::Value::Float(f64::from(lighting.sun.shadow_split)));
+    sun.insert("canopy".into(), toml::Value::Float(f64::from(lighting.sun.canopy)));
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
     let mut post_table = toml::Table::try_from(post)?;

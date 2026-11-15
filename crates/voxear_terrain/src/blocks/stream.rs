@@ -39,7 +39,7 @@ use std::{
 };
 
 use super::{
-    BlockMap, BlockWorld,
+    BlockMap, BlockWorld, RING_FADE_SECONDS, RingFades,
     chunk::{CHUNK, Chunk},
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
@@ -339,6 +339,13 @@ pub struct BlockStreamer {
     /// Coarse columns made before changes were kept for the ground under
     /// them, made again to show what was built, the old drawn till then.
     stale: HashSet<(u32, [i32; 2])>,
+    /// For each coarse column made round where the world is looked at
+    /// from, by level and place: when its finer columns were all made, on
+    /// `fade_clock`, or `f32::MAX` while it shows with them not made yet
+    /// (see [`RingFades::covered`]).
+    covered_since: HashMap<(u32, [i32; 2]), f32>,
+    /// Whether a coarse column is fading into the finer ones over it.
+    fading: bool,
     waiting: usize,
     making_now: Arc<AtomicUsize>,
     /// The folder the far view's tiles of what it makes are kept in.
@@ -368,6 +375,8 @@ impl Default for BlockStreamer {
             again: false,
             asked: HashSet::new(),
             stale: HashSet::new(),
+            covered_since: HashMap::new(),
+            fading: false,
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
             far_tiles: None,
@@ -459,6 +468,7 @@ impl BlockStreamer {
             world.columns = Some(Arc::default());
             (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
             (self.coarse, self.asked, self.stale) = (HashMap::new(), HashSet::new(), HashSet::new());
+            self.covered_since.clear();
             (self.coarse_blocks, self.joining) = (HashMap::new(), HashSet::new());
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.far_tiles = making.far_tiles();
@@ -496,12 +506,14 @@ impl BlockStreamer {
                 changed = true;
             }
         }
-        // Asked again only where something came or went, or the camera moved, or there is still more to make.
+        // Asked again only where something came or went, or the camera moved, or there is still more to make and
+        // room to make it: every thread busy, the far view would be looked over every frame for nothing.
         let moved = self.windows.as_deref() != Some(&windows[..]);
-        if changed || moved || self.waiting > 0 || std::mem::take(&mut self.again) {
+        let room = self.making_now.load(Ordering::Acquire) < self.at_once.max(1);
+        if changed || moved || self.waiting > 0 && room || std::mem::take(&mut self.again) {
             self.ask(world, &making, &windows, (from, pending));
         }
-        if changed || moved {
+        if changed || moved || self.fading {
             changed |= self.show_coarse(world, &by_place, from);
         }
         self.windows = Some(windows);
@@ -865,15 +877,30 @@ impl BlockStreamer {
     /// each place by its own windows, as the detail kept round another
     /// place lies under this one's coarser rings. The coarsest columns show
     /// from every place, wherever they are. True if what is drawn changed.
-    fn show_coarse(&self, world: &mut BlockWorld, by_place: &[Vec<Window>], from: &[StreamFrom]) -> bool {
+    fn show_coarse(&mut self, world: &mut BlockWorld, by_place: &[Vec<Window>], from: &[StreamFrom]) -> bool {
         voxear_core::profile_scope!("Coarse");
         let drawn_fine = |level: u32, at: [i32; 2]| {
             if level == 0 { self.drawn.contains(&at) } else { self.coarse.contains_key(&(level, at)) }
         };
+        let now = super::fade_clock();
+        let mut covered_since = std::mem::take(&mut self.covered_since);
+        covered_since.retain(|key, _| self.coarse.contains_key(key));
+        let mut fades = RingFades::default();
+        let mut fading = false;
         let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
         let mut places = Vec::with_capacity(by_place.len());
-        for (windows, place) in by_place.iter().zip(from) {
+        for (number, (windows, place)) in by_place.iter().zip(from).enumerate() {
             let top = windows.len() - 1;
+            // Round where the world is looked at from, its rings fade into each other (see `RingFades`): out to as far
+            // as its own blocks' window always reaches, the last column of it a band.
+            let rings =
+                self.making.as_ref().filter(|making| number == 0 && top > 0 && !making.file.smooth).map(|making| {
+                    let column = CHUNK as f32 * making.file.block_size.max(0.01);
+                    ((place.distance / column).ceil().max(1.0) * column, column)
+                });
+            if let Some((reach, band)) = rings {
+                fades = RingFades { at: place.at, reach, band, coarsest: top as u32, ..RingFades::default() };
+            }
             let own = self.drawn.iter().filter(|at| windows[0].contains(**at));
             let mut columns: HashSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
             for ((level, at), meshes) in &self.coarse {
@@ -884,7 +911,38 @@ impl BlockStreamer {
                     let child = [at[0] * 2 + (i & 1), at[1] * 2 + (i >> 1)];
                     finer.contains(child) && drawn_fine(level - 1, child)
                 });
-                if !mine || covered {
+                let shown = match rings {
+                    Some((reach, band)) if mine => {
+                        // Covered once, it stays so: the finer columns stay seen as one leaves the window.
+                        let since = covered_since.entry((*level, *at)).or_insert(match covered {
+                            // Covered when first seen, as all of it is made at once: nothing to fade.
+                            true => now - RING_FADE_SECONDS,
+                            false => f32::MAX,
+                        });
+                        if covered && *since == f32::MAX {
+                            *since = now;
+                        }
+                        let fades_now = *since != f32::MAX && now - *since < RING_FADE_SECONDS;
+                        fading |= fades_now;
+                        // Under the band where the finer ring fades out, or past it.
+                        let scale = (1u32 << (level - 1)) as f32;
+                        let size = CHUNK as f32 * self.making.as_ref().map_or(1.0, |m| m.file.block_size) * scale * 2.0;
+                        let furthest = (0..2)
+                            .map(|axis| {
+                                let (low, high) = (at[axis] as f32 * size, (at[axis] + 1) as f32 * size);
+                                (low - place.at[axis]).abs().max((high - place.at[axis]).abs())
+                            })
+                            .fold(0.0f32, f32::max);
+                        let banded = furthest > (reach - band) * scale;
+                        let shown = !covered || fades_now || banded;
+                        if shown {
+                            fades.covered.insert([*level as i32, at[0], at[1]], *since);
+                        }
+                        shown
+                    }
+                    _ => mine && !covered,
+                };
+                if !shown {
                     continue;
                 }
                 columns.insert([*level as i32, at[0], at[1]]);
@@ -907,7 +965,13 @@ impl BlockStreamer {
         if !same_places {
             world.places = Arc::new(places);
         }
-        !same_far || !same_places
+        self.covered_since = covered_since;
+        self.fading = fading;
+        let same_fades = *world.fades == fades;
+        if !same_fades {
+            world.fades = Arc::new(fades);
+        }
+        !same_far || !same_places || !same_fades
     }
 }
 
@@ -1559,14 +1623,16 @@ mod tests {
         let [sx, sz] = column(second.at);
         assert!(first.columns.contains(&[0, cx, cz]) && !first.columns.contains(&[0, sx, sz]));
         assert!(other.columns.contains(&[0, sx, sz]) && !other.columns.contains(&[0, cx, cz]));
-        // Every column shown from a place is one of a level's: no two overlap by part.
-        for place in world.places.iter() {
+        // Every column shown from a place is one of a level's: no two overlap by part, but where the rings round
+        // where the world is looked at from fade into each other, which says so.
+        for (number, place) in world.places.iter().enumerate() {
             for &[level, x, z] in &place.columns {
                 let under = (0..level).any(|finer| {
                     let scale = 1 << (level - finer);
                     (0..scale).any(|dx| (0..scale).any(|dz| place.columns.contains(&[finer, x * scale + dx, z * scale + dz])))
                 });
-                assert!(!under, "column {x},{z} of level {level} is drawn over finer ones");
+                let fading = number == 0 && world.fades.covered.get(&[level, x, z]).is_some_and(|&s| s != f32::MAX);
+                assert!(!under || fading, "column {x},{z} of level {level} is drawn over finer ones");
             }
         }
         // The coarsest ring shows from both, wherever it was made for: over the second place it shows from the
@@ -1574,7 +1640,10 @@ mod tests {
         let top = world.far.keys().map(|key| key[0]).max().unwrap();
         let over = |at: [f32; 2]| [top, (at[0] / (64.0 * (1 << top) as f32)).floor() as i32, (at[1] / (64.0 * (1 << top) as f32)).floor() as i32];
         assert!(first.columns.contains(&over(second.at)) && !other.columns.contains(&over(second.at)));
-        assert!(other.columns.contains(&over(camera.at)) && !first.columns.contains(&over(camera.at)));
+        // From the camera only to fade, where it reaches under the finer ring's band.
+        let fading = |column: &[i32; 3]| world.fades.covered.get(column).is_some_and(|&since| since != f32::MAX);
+        assert!(other.columns.contains(&over(camera.at)));
+        assert!(!first.columns.contains(&over(camera.at)) || fading(&over(camera.at)));
         let both = world.meshes.len();
         // The second place gone: its columns go, the camera's stay.
         settle(&mut streamer, &mut world, &[camera]);
@@ -1707,11 +1776,53 @@ mod tests {
         // And back: made again with it.
         settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
         assert_eq!(world.blocks.get([5, 200, 5]), 3);
-        // No coarse column draws where its four finer ones are made.
+        // A coarse column draws where its four finer ones are made only to fade into them: as they come, or under
+        // the band where they fade out; and says when they came, for the renderer to fade the two into each other.
         for key in world.far.keys().filter(|k| k[0] == 1) {
             let child = [key[1] * 2, key[3] * 2];
             let all = (0..4).all(|i| streamer.drawn.contains(&[child[0] + (i & 1), child[1] + (i >> 1)]));
-            assert!(!all, "coarse column {key:?} over drawn near ones");
+            let since = world.fades.covered.get(&[1, key[1], key[3]]).copied();
+            assert!(!all || since.is_some_and(|since| since != f32::MAX), "coarse column {key:?} over near ones");
+        }
+    }
+
+    #[test]
+    fn rings_fade_into_each_other_over_a_band_round_where_the_world_is_looked_at_from() {
+        let making = making();
+        let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        let at = [10.0, 10.0];
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, at);
+        // Once those covered last have faded.
+        std::thread::sleep(std::time::Duration::from_secs_f32(RING_FADE_SECONDS + 0.1));
+        streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 600.0), at);
+        // Columns of 64 m: its own blocks drawn whole out to two columns, the last of them a band.
+        let fades = world.fades.clone();
+        assert_eq!((fades.at, fades.reach, fades.band), (at, 128.0, 64.0));
+        assert!(fades.coarsest > 1);
+        // The first coarse ring shows under that band though its finer columns are all made there, and they are
+        // marked as made, so they fade in over it as it fades out.
+        let size = 128.0;
+        let furthest = |x: i32, z: i32| {
+            let edge = |low: i32, at: f32| (low as f32 * size - at).abs().max(((low + 1) as f32 * size - at).abs());
+            edge(x, at[0]).max(edge(z, at[1]))
+        };
+        let under_band: Vec<[i32; 4]> = world
+            .far
+            .keys()
+            .filter(|key| key[0] == 1)
+            .filter(|key| (0..4).all(|i| streamer.drawn.contains(&[key[1] * 2 + (i & 1), key[3] * 2 + (i >> 1)])))
+            .copied()
+            .collect();
+        assert!(!under_band.is_empty(), "coarse columns shown over made ones under the band");
+        for key in &under_band {
+            assert!(furthest(key[1], key[3]) > fades.reach - fades.band, "{key:?} reaches into the band");
+            assert!(fades.covered.get(&[1, key[1], key[3]]).is_some_and(|&since| since != f32::MAX));
+        }
+        // Every coarse column shown round there is in its fades, those not covered marked as waiting.
+        for key in world.far.keys() {
+            assert!(fades.covered.contains_key(&[key[0], key[1], key[3]]), "{key:?} has its fade");
         }
     }
 

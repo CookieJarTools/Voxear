@@ -87,16 +87,17 @@ pub fn sort_last<T>(instances: &mut Vec<GpuInstance>, entities: &mut Vec<T>, cam
         let nearest = model.inverse().transform_point3(camera).clamp(low, high);
         model.transform_point3(nearest).distance(camera)
     };
-    let mut order: Vec<usize> = (0..instances.len()).collect();
-    // Opaque first, in the order they came; then glass, farthest first.
-    order.sort_by(|&a, &b| {
-        let (a, b) = (&instances[a], &instances[b]);
-        glass(a).cmp(&glass(b)).then_with(|| match glass(a) {
-            true => distance(b).total_cmp(&distance(a)),
-            false => std::cmp::Ordering::Equal,
-        })
-    });
-    let opaque = order.iter().take_while(|&&index| !glass(&instances[index])).count();
+    // Opaque first, in the order they came; then glass, farthest first. Only the panes are sorted: the rest, the
+    // thousands of plants among them, keep their order as they are.
+    let is_glass: Vec<bool> = instances.iter().map(glass).collect();
+    let mut panes: Vec<(usize, f32)> = (0..instances.len())
+        .filter(|&index| is_glass[index])
+        .map(|index| (index, distance(&instances[index])))
+        .collect();
+    panes.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let opaque = instances.len() - panes.len();
+    let order: Vec<usize> =
+        (0..instances.len()).filter(|&index| !is_glass[index]).chain(panes.iter().map(|&(index, _)| index)).collect();
     let mut taken: Vec<Option<T>> = entities.drain(..).map(Some).collect();
     *entities = order.iter().map(|&index| taken[index].take().expect("each index once")).collect();
     *instances = order.iter().map(|&index| instances[index]).collect();

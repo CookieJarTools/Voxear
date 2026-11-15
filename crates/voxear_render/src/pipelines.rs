@@ -192,6 +192,9 @@ pub struct Pipelines {
     pub block_forward_on_depth: vk::Pipeline,
     pub block_wireframe: vk::Pipeline,
     pub block_shadow: vk::Pipeline,
+    /// As `block_shadow`, for faces that are never cut out: depth alone,
+    /// with no fragment stage.
+    pub block_shadow_solid: vk::Pipeline,
     /// As `block_shadow`, into local lights' views, without clamping depth.
     pub block_local_shadow: vk::Pipeline,
     /// Grass (see `grass`): each draw's command made afresh, the blades
@@ -803,6 +806,12 @@ impl Pipelines {
                 fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
+            block_shadow_solid: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (solid blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
+            })?,
             block_local_shadow: graphics(&GraphicsPipelineDesc {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
@@ -1121,6 +1130,7 @@ impl Pipelines {
             self.block_forward_on_depth,
             self.block_wireframe,
             self.block_shadow,
+            self.block_shadow_solid,
             self.block_local_shadow,
             self.grass_reset,
             self.grass_scatter,

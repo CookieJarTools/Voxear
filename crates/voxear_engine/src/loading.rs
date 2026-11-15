@@ -434,6 +434,7 @@ fn gather(
                 | AssetKind::Font
                 | AssetKind::Paths
                 | AssetKind::ReflectionProbes
+                | AssetKind::Lightmaps
                 | AssetKind::Data
                 | AssetKind::PromptIcons
                 | AssetKind::WorldGen

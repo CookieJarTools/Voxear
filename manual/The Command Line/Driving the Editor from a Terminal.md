@@ -189,6 +189,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `reflection_probe.capture`, `reflection_probes.bake` | Capture a Reflection Probe again, and bake the open level's probes beside it |
 | `reverb_probes.bake` | Bake the open level's Reverb Probes beside it |
 | `audio.rays` | Read ray-traced audio in the running game, or set it there: on, quality and budget |
+| `lighting.bake`, `lighting.bake_status`, `lighting.bake_cancel`, `lighting.probe_light` | Bake the open level's lightmaps and light probes beside it, see how a bake goes or give it up, and read the baked probes' light at a point |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |

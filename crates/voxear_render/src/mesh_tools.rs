@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use voxear_assets::{ModelImport, Normals, Tangents, WindMasks};
+use voxear_assets::{LightmapUvs, ModelImport, Normals, Tangents, WindMasks};
 use voxear_core::math::{Vec2, Vec3};
 
 use crate::{
@@ -13,7 +13,8 @@ use crate::{
     mesh::{MeshData, NO_WIND_MASKS},
 };
 
-/// What a mesh's file gave it, so the settings know what to calculate.
+/// What a mesh's file gave it, so the settings know what to calculate. Its
+/// own lightmap UVs are in its data, when it has them.
 #[derive(Clone, Copy)]
 pub(crate) struct FromFile {
     pub normals: bool,
@@ -42,6 +43,13 @@ pub(crate) fn finish(mut data: MeshData, settings: &ModelImport, size: f32, file
         WindMasks::Colors if file.colors => {}
         WindMasks::Generate => generate_wind_masks(&mut data),
         _ => data.vertices.iter_mut().for_each(|vertex| vertex.wind = NO_WIND_MASKS),
+    }
+    // Before the LODs, which keep the vertices split where the lightmap's charts meet.
+    let own = data.lightmap_uvs.len() == data.vertices.len() && !data.vertices.is_empty();
+    match settings.lightmap_uvs {
+        LightmapUvs::Import if own => {}
+        LightmapUvs::Import | LightmapUvs::Generate => crate::lightmap_uvs::generate(&mut data),
+        LightmapUvs::None => data.lightmap_uvs.clear(),
     }
     let lods = if settings.lods { build_lods(&data) } else { full_lod(&data) };
     (data, lods)
@@ -146,6 +154,7 @@ pub(crate) fn calculate_normals(data: &mut MeshData, smoothing_angle: f32) {
     let smooth = smoothing_angle.clamp(0.0, 180.0).to_radians().cos() - 1e-5;
     let mut vertices = Vec::with_capacity(data.vertices.len());
     let mut skin = Vec::with_capacity(data.skin.len());
+    let mut lightmap_uvs = Vec::with_capacity(data.lightmap_uvs.len());
     let mut made: HashMap<(u32, [u32; 3]), u32> = HashMap::new();
     let mut indices = Vec::with_capacity(data.indices.len());
     for (face, corners) in triangles.iter().enumerate() {
@@ -158,12 +167,13 @@ pub(crate) fn calculate_normals(data: &mut MeshData, smoothing_angle: f32) {
                 vertex.normal = normal;
                 vertices.push(vertex);
                 skin.extend(data.skin.get(corner as usize).copied());
+                lightmap_uvs.extend(data.lightmap_uvs.get(corner as usize).copied());
                 vertices.len() as u32 - 1
             });
             indices.push(index);
         }
     }
-    *data = MeshData { vertices, indices, skin };
+    *data = MeshData { vertices, indices, skin, lightmap_uvs };
 }
 
 /// Makes tangents from the normals and UVs: each along the direction U
@@ -280,12 +290,14 @@ mod tests {
 
     #[test]
     fn settings_size_the_mesh_and_can_leave_out_its_lods() {
-        let settings = ModelImport { scale: 2.0, lods: false, ..ModelImport::default() };
+        let settings =
+            ModelImport { scale: 2.0, lods: false, lightmap_uvs: LightmapUvs::None, ..ModelImport::default() };
         let file = FromFile { normals: true, tangents: true, colors: false };
         let (data, lods) = finish(corner(), &settings, size(&settings), file);
         assert_eq!(data.vertices[2].position, [2.0, 0.0, 0.0]);
         assert_eq!(lods.len(), 1, "the mesh in full, only");
         assert_eq!(data.vertices.len(), 4, "the file's normals are kept");
+        assert!(data.lightmap_uvs.is_empty(), "none asked for");
         assert_eq!(size(&ModelImport { scale: -1.0, ..ModelImport::default() }), 1.0);
     }
 
@@ -331,6 +343,21 @@ mod tests {
         assert!(far[2] > near[2] + 100, "a leaf far out sways further than one near the trunk: {far:?} {near:?}");
         assert!((8..12).all(|i| wind(i) == far), "a leaf moves as one");
         assert_ne!(far[1], near[1], "each leaf at its own phase");
+    }
+
+    #[test]
+    fn lightmap_uvs_are_the_files_own_or_made() {
+        let file = FromFile { normals: true, tangents: true, colors: false };
+        let settings = ModelImport { lods: false, ..ModelImport::default() };
+        let (made, _) = finish(MeshData::cube(), &settings, 1.0, file);
+        assert_eq!(made.lightmap_uvs.len(), made.vertices.len(), "made for a mesh without");
+        let mut own = MeshData::plane();
+        own.lightmap_uvs = vec![[0.1, 0.2]; own.vertices.len()];
+        let (kept, _) = finish(own.clone(), &settings, 1.0, file);
+        assert_eq!(kept.lightmap_uvs, own.lightmap_uvs, "its own kept");
+        let generate = ModelImport { lightmap_uvs: LightmapUvs::Generate, ..settings };
+        let (again, _) = finish(own, &generate, 1.0, file);
+        assert_ne!(again.lightmap_uvs[0], [0.1, 0.2], "made again when asked");
     }
 
     #[test]

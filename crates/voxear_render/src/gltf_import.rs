@@ -623,6 +623,9 @@ impl Preparer {
         let positions: Vec<[f32; 3]> = reader.read_positions().context("primitive has no positions")?.collect();
         let normals: Vec<[f32; 3]> = reader.read_normals().map(|n| n.collect()).unwrap_or_default();
         let uvs: Vec<[f32; 2]> = reader.read_tex_coords(0).map(|t| t.into_f32().collect()).unwrap_or_default();
+        // A second set of UVs, as glTF writes a lightmap's.
+        let lightmap_uvs: Vec<[f32; 2]> = reader.read_tex_coords(1).map(|t| t.into_f32().collect()).unwrap_or_default();
+        let lightmap_uvs = if lightmap_uvs.len() == positions.len() { lightmap_uvs } else { Vec::new() };
         let tangents: Vec<[f32; 4]> = reader.read_tangents().map(|t| t.collect()).unwrap_or_default();
         let colors: Vec<[u8; 4]> = reader.read_colors(0).map(|c| c.into_rgba_u8().collect()).unwrap_or_default();
         let indices: Vec<u32> = match reader.read_indices() {
@@ -647,7 +650,7 @@ impl Preparer {
                 wind: colors.get(i).copied().unwrap_or(crate::mesh::NO_WIND_MASKS),
             })
             .collect();
-        let mut data = MeshData { vertices, indices, skin };
+        let mut data = MeshData { vertices, indices, skin, lightmap_uvs };
         data.mirror_x();
         let file = FromFile { normals: !normals.is_empty(), tangents: !tangents.is_empty(), colors: !colors.is_empty() };
         self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));

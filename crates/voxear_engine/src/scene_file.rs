@@ -64,7 +64,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_terrain::generate::{CaveExit, CaveShape};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, ProbeResolution, ProbeUpdate, ReflectionProbe, Renderer,
+    Camera, Foliage, FoliageInteraction, Light, LightKind, Lightmap, LightMode, LightProbeGroup, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, ProbeFill, ProbeResolution, ProbeUpdate, ReflectionProbe, Renderer,
     DryArea, ForceField, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
@@ -290,6 +290,13 @@ pub struct ObjData {
     /// A box of reverb probes, baked for how long sound rings through it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reverb_probe: Option<ReverbProbeData>,
+    /// Still for lighting: a lighting bake gives its meshes a lightmap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightmap: Option<LightmapData>,
+    /// Light probes, which a lighting bake bakes and Objs without a
+    /// lightmap are lit by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_probe_group: Option<LightProbeGroupData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
     /// A whole model drawn by the Obj, each part where the model puts it.
@@ -480,6 +487,8 @@ impl ObjData {
             post_volume: None,
             reflection_probe: None,
             reverb_probe: None,
+            lightmap: None,
+            light_probe_group: None,
             renderer: None,
             model: None,
             audio: None,
@@ -798,6 +807,68 @@ impl ReverbProbeData {
         Self { size: probe.size, spacing: probe.spacing }
     }
 }
+/// A Lightmap as a scene writes it, each value left out at its default:
+///
+/// ```toml
+/// [obj.lightmap]
+/// scale = 2.0        # times the level's texels a metre
+/// cast = false       # shades and bounces no light in the bake
+/// receive = false    # lit by the light probes, not a lightmap
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightmapData {
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub scale: f32,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub cast: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub receive: bool,
+}
+
+impl LightmapData {
+    pub fn component(&self) -> Lightmap {
+        Lightmap { scale: self.scale.max(0.0), cast: self.cast, receive: self.receive }
+    }
+
+    pub fn of(lightmap: &Lightmap) -> Self {
+        Self { scale: lightmap.scale, cast: lightmap.cast, receive: lightmap.receive }
+    }
+}
+
+/// A Light Probe Group as a scene writes it: probes placed by hand, in the
+/// Obj's space, and a grid filling its box, `spacing` metres apart; without
+/// `fill`, only the points.
+///
+/// ```toml
+/// [obj.light_probe_group]
+/// points = [[0.0, 1.5, 0.0], [2.0, 1.5, 0.0]]
+/// fill = 2.0
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightProbeGroupData {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<f32>,
+}
+
+impl LightProbeGroupData {
+    pub fn component(&self) -> LightProbeGroup {
+        LightProbeGroup {
+            points: self.points.iter().map(|&p| Vec3::from(p)).collect(),
+            fill: self.fill.map(|spacing| ProbeFill { spacing: spacing.max(0.05) }),
+        }
+    }
+
+    pub fn of(group: &LightProbeGroup) -> Self {
+        Self {
+            points: group.points.iter().map(|p| p.to_array()).collect(),
+            fill: group.fill.map(|fill| fill.spacing),
+        }
+    }
+}
 
 /// A light as a scene writes it. A `cookie` is a picture the light shines
 /// through, and a `profile` an `.ies` file, each by GUID or project path.
@@ -826,6 +897,9 @@ pub enum LightData {
         /// What it shows as in the sky: `"sun"`, or `"moon"` for a night sky.
         #[serde(default, skip_serializing_if = "is_sun")]
         body: SkyBodyData,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
     Point {
         #[serde(default = "white")]
@@ -842,6 +916,9 @@ pub enum LightData {
         shadows: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
     Spot {
         #[serde(default = "white")]
@@ -864,6 +941,9 @@ pub enum LightData {
         cookie: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
     /// A panel shining from its face along the Obj's +Z, `width` along +X.
     Rectangle {
@@ -886,6 +966,9 @@ pub enum LightData {
         /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
         #[serde(default = "yes", skip_serializing_if = "is_true")]
         soft_shadows: bool,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
     Disc {
         #[serde(default = "white")]
@@ -905,6 +988,9 @@ pub enum LightData {
         /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
         #[serde(default = "yes", skip_serializing_if = "is_true")]
         soft_shadows: bool,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
     /// A glowing capsule along the Obj's +X.
     Tube {
@@ -927,7 +1013,42 @@ pub enum LightData {
         /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
         #[serde(default = "yes", skip_serializing_if = "is_true")]
         soft_shadows: bool,
+        /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
+        #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
+        mode: LightModeData,
     },
+}
+
+/// What of a light a lighting bake keeps, as a scene names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LightModeData {
+    Realtime,
+    #[default]
+    Mixed,
+    Baked,
+}
+
+impl LightModeData {
+    fn is_mixed(&self) -> bool {
+        *self == Self::Mixed
+    }
+
+    pub fn mode(self) -> LightMode {
+        match self {
+            Self::Realtime => LightMode::Realtime,
+            Self::Mixed => LightMode::Mixed,
+            Self::Baked => LightMode::Baked,
+        }
+    }
+
+    pub fn of(mode: LightMode) -> Self {
+        match mode {
+            LightMode::Realtime => Self::Realtime,
+            LightMode::Mixed => Self::Mixed,
+            LightMode::Baked => Self::Baked,
+        }
+    }
 }
 
 fn one() -> f32 {
@@ -976,6 +1097,18 @@ impl LightData {
             | Self::Disc { soft_shadows, .. }
             | Self::Tube { soft_shadows, .. } => soft_shadows,
             _ => true,
+        }
+    }
+
+    /// What of the light a lighting bake keeps.
+    pub fn mode(&self) -> LightModeData {
+        match *self {
+            Self::Directional { mode, .. }
+            | Self::Point { mode, .. }
+            | Self::Spot { mode, .. }
+            | Self::Rectangle { mode, .. }
+            | Self::Disc { mode, .. }
+            | Self::Tube { mode, .. } => mode,
         }
     }
 
@@ -1935,6 +2068,12 @@ fn capture_instance(
     if root.reverb_probe.is_some() && root.reverb_probe != prefab_root.reverb_probe {
         instance.reverb_probe = root.reverb_probe;
     }
+    if root.lightmap.is_some() && root.lightmap != prefab_root.lightmap {
+        instance.lightmap = root.lightmap;
+    }
+    if root.light_probe_group.is_some() && root.light_probe_group != prefab_root.light_probe_group {
+        instance.light_probe_group = root.light_probe_group.clone();
+    }
     if root.light.is_some() && root.light != prefab_root.light {
         instance.light = root.light;
     }
@@ -2174,6 +2313,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(probe) = actual.reverb_probe.filter(|p| Some(*p) != expected.reverb_probe) {
         put("reverb_probe", toml::Value::try_from(probe)?);
+    }
+    if let Some(lightmap) = actual.lightmap.filter(|l| Some(*l) != expected.lightmap) {
+        put("lightmap", toml::Value::try_from(lightmap)?);
+    }
+    if let Some(group) = actual.light_probe_group.as_ref().filter(|g| Some(*g) != expected.light_probe_group.as_ref()) {
+        put("light_probe_group", toml::Value::try_from(group)?);
     }
     if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
@@ -2542,6 +2687,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
     obj.reflection_probe = world.get::<ReflectionProbe>(entity).map(ReflectionProbeData::of);
     obj.reverb_probe = world.get::<crate::reverb_probes::ReverbProbe>(entity).map(ReverbProbeData::of);
+    obj.lightmap = world.get::<Lightmap>(entity).map(LightmapData::of);
+    obj.light_probe_group = world.get::<LightProbeGroup>(entity).map(LightProbeGroupData::of);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {
@@ -2686,6 +2833,7 @@ pub fn has_component(world: &World, entity: Entity, switch: Switch) -> bool {
         Switch::Foliage => world.has::<FoliageSource>(entity),
         Switch::TrackMaker => world.has::<voxear_render::TrackMaker>(entity),
         Switch::ReflectionProbe => world.has::<ReflectionProbe>(entity),
+        Switch::LightProbeGroup => world.has::<LightProbeGroup>(entity),
     }
 }
 
@@ -2734,7 +2882,13 @@ pub(crate) fn light_component(data: &LightData) -> Light {
             Light::tube(Vec3::from(linear(color)), intensity, range, length, radius)
         }
     };
-    Light { temperature: data.temperature(), shadows: data.shadows(), soft_shadows: data.soft_shadows(), ..light }
+    Light {
+        temperature: data.temperature(),
+        shadows: data.shadows(),
+        soft_shadows: data.soft_shadows(),
+        mode: data.mode().mode(),
+        ..light
+    }
 }
 
 /// A light with its cookie and IES profile loaded, as a scene names them.
@@ -2757,6 +2911,7 @@ fn light_data(content: &Content, light: &Light) -> LightData {
     let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
     let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
     let (shadows, soft_shadows) = (light.shadows, light.soft_shadows);
+    let mode = LightModeData::of(light.mode);
     match light.kind {
         LightKind::Directional => LightData::Directional {
             color,
@@ -2770,8 +2925,9 @@ fn light_data(content: &Content, light: &Light) -> LightData {
                 SkyBody::Sun => SkyBodyData::Sun,
                 SkyBody::Moon => SkyBodyData::Moon,
             },
+            mode,
         },
-        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, shadows, profile },
+        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, shadows, profile, mode },
         LightKind::Spot => LightData::Spot {
             color,
             intensity,
@@ -2782,6 +2938,7 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             outer_angle: light.spot_outer_degrees,
             cookie,
             profile,
+            mode,
         },
         LightKind::Rectangle => {
             let (width, height) = (light.width, light.height);
@@ -2794,15 +2951,16 @@ fn light_data(content: &Content, light: &Light) -> LightData {
                 width,
                 height,
                 soft_shadows,
+                mode,
             }
         }
         LightKind::Disc => {
             let radius = light.radius;
-            LightData::Disc { color, intensity, temperature, range: light.range, shadows, radius, soft_shadows }
+            LightData::Disc { color, intensity, temperature, range: light.range, shadows, radius, soft_shadows, mode }
         }
         LightKind::Tube => {
             let (length, radius) = (light.length, light.radius);
-            LightData::Tube { color, intensity, temperature, range: light.range, shadows, length, radius, soft_shadows }
+            LightData::Tube { color, intensity, temperature, range: light.range, shadows, length, radius, soft_shadows, mode }
         }
     }
 }
@@ -3055,6 +3213,25 @@ mod tests {
         assert_eq!((back.path, back.stream), (obj.path, obj.stream));
         let raft: ObjData = toml::from_str("id = 4\n[buoyancy]\nsubmerged = 0.3").unwrap();
         assert_eq!(raft.buoyancy.map(|b| (b.submerged, b.drag)), Some((0.3, crate::water::Buoyancy::default().drag)));
+    }
+
+    #[test]
+    fn a_lightmap_a_probe_group_and_a_lights_mode_read_and_write_back() {
+        let text = "id = 1\n[lightmap]\nscale = 2.0\ncast = false\n[light_probe_group]\npoints = [[0.0, 1.0, 0.0]]\nfill = 3.0\n[light]\ntype = \"point\"\nmode = \"baked\"";
+        let obj: ObjData = toml::from_str(text).unwrap();
+        let lightmap = obj.lightmap.unwrap().component();
+        assert_eq!((lightmap.scale, lightmap.cast, lightmap.receive), (2.0, false, true));
+        let group = obj.light_probe_group.clone().unwrap().component();
+        assert_eq!((group.points.len(), group.fill.map(|f| f.spacing)), (1, Some(3.0)));
+        assert_eq!(light_component(obj.light.as_ref().unwrap()).mode, LightMode::Baked);
+        let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
+        assert_eq!((back.lightmap, back.light_probe_group, back.light), (obj.lightmap, obj.light_probe_group, obj.light));
+        let plain = ObjData { lightmap: Some(LightmapData::of(&Lightmap::default())), ..ObjData::new(2, "Wall") };
+        let written = toml::to_string(&plain).unwrap();
+        assert!(written.contains("[lightmap]") && !written.contains("scale"), "{written}");
+        let mixed: LightData = toml::from_str("type = \"point\"").unwrap();
+        assert_eq!(light_component(&mixed).mode, LightMode::Mixed);
+        assert!(!toml::to_string(&mixed).unwrap().contains("mode"), "a Mixed light writes no mode");
     }
 
     #[test]

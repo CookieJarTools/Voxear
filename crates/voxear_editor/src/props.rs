@@ -82,6 +82,8 @@ const PROBE_UPDATES: [&str; 2] = ["Once", "Live"];
 const PROBE_UPDATE_ORDER: [ProbeUpdate; 2] = [ProbeUpdate::Once, ProbeUpdate::Live];
 /// A reflection probe's resolutions, as `ProbeResolution::ALL` orders them.
 const PROBE_RESOLUTIONS: [&str; 4] = ["64", "128", "256", "512"];
+/// What of a light a lighting bake keeps, in `LightMode::ALL`'s order.
+const LIGHT_MODES: [&str; 3] = ["Realtime", "Mixed", "Baked"];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
 
@@ -108,6 +110,11 @@ pub enum Part {
     ReflectionProbe,
     /// A Reverb Probe: a box of probes baked for how long sound rings.
     ReverbProbe,
+    /// A Lightmap: still for lighting, so a lighting bake gives it a lightmap.
+    Lightmap,
+    /// A Light Probe Group: probes a lighting bake bakes, which light Objs
+    /// without a lightmap.
+    LightProbeGroup,
     WindZone,
     ParticleSystem,
     /// A Force Field: what moves the particles round its Obj.
@@ -193,6 +200,8 @@ impl Part {
             Part::PostVolume => "post_volume".into(),
             Part::ReflectionProbe => "reflection_probe".into(),
             Part::ReverbProbe => "reverb_probe".into(),
+            Part::Lightmap => "lightmap".into(),
+            Part::LightProbeGroup => "light_probe_group".into(),
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
             Part::ForceField => "force_field".into(),
@@ -272,6 +281,8 @@ impl Part {
             Part::PostVolume => "Post Volume",
             Part::ReflectionProbe => "Reflection Probe",
             Part::ReverbProbe => "Reverb Probe",
+            Part::Lightmap => "Lightmap",
+            Part::LightProbeGroup => "Light Probe Group",
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
             Part::ForceField => "Force Field",
@@ -336,6 +347,7 @@ impl Part {
             Part::Wheel => Switch::Wheel,
             Part::PostVolume => Switch::PostVolume,
             Part::ReflectionProbe => Switch::ReflectionProbe,
+            Part::LightProbeGroup => Switch::LightProbeGroup,
             Part::WindZone => Switch::WindZone,
             Part::Seasons => Switch::Seasons,
             Part::FoliageInteraction => Switch::FoliageInteraction,
@@ -365,6 +377,8 @@ impl Part {
             Part::PostVolume => "panels",
             Part::ReflectionProbe => "globe",
             Part::ReverbProbe => "audio",
+            Part::Lightmap => "light",
+            Part::LightProbeGroup => "globe",
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
             Part::ForceField => "move",
@@ -554,6 +568,18 @@ pub enum Prop {
     ReverbSend,
     ProbeResolution,
     ProbeCaptureOffset,
+    /// What of a light a lighting bake keeps.
+    LightMode,
+    /// A Lightmap's scale of the level's texels a metre, and whether it
+    /// shades and bounces light in the bake and takes a lightmap.
+    LightmapScale,
+    LightmapCast,
+    LightmapReceive,
+    /// A Light Probe Group's grid filling its box, how far apart, and how
+    /// many probes it places.
+    ProbeGroupFill,
+    ProbeGroupSpacing,
+    ProbeGroupCount,
     MistEmitting,
     MistWidth,
     MistDensity,
@@ -977,9 +1003,12 @@ impl Prop {
             | Prop::LightSoftShadows
             | Prop::LightSoftness
             | Prop::LightShadowTint
+            | Prop::LightMode
             | Prop::LightBody => {
                 Part::Light
             }
+            Prop::LightmapScale | Prop::LightmapCast | Prop::LightmapReceive => Part::Lightmap,
+            Prop::ProbeGroupFill | Prop::ProbeGroupSpacing | Prop::ProbeGroupCount => Part::LightProbeGroup,
             Prop::FieldOfView | Prop::Near | Prop::Exposure | Prop::CameraFollows => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
             Prop::ProbeUpdate
@@ -1359,6 +1388,12 @@ impl Prop {
             Prop::LightSoftness => "softness",
             Prop::LightShadowTint => "shadow_tint",
             Prop::LightBody => "body",
+            Prop::LightMode => "mode",
+            Prop::LightmapScale => "scale",
+            Prop::LightmapCast => "cast",
+            Prop::LightmapReceive => "receive",
+            Prop::ProbeGroupFill | Prop::ProbeGroupSpacing => "fill",
+            Prop::ProbeGroupCount => "points",
             Prop::VolumeShape => "shape",
             Prop::VolumeBlend => "blend_distance",
             Prop::VolumeWeight => "weight",
@@ -1790,6 +1825,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<ReverbProbe>(entity) {
         parts.push(Part::ReverbProbe);
     }
+    if world.has::<voxear_render::Lightmap>(entity) {
+        parts.push(Part::Lightmap);
+    }
+    if world.has::<voxear_render::LightProbeGroup>(entity) {
+        parts.push(Part::LightProbeGroup);
+    }
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
@@ -1994,6 +2035,17 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if kind.has_shape() {
                 props.push(Prop::LightSoftShadows);
             }
+            props.push(Prop::LightMode);
+            props
+        }
+        Part::Lightmap => vec![Prop::LightmapScale, Prop::LightmapCast, Prop::LightmapReceive],
+        Part::LightProbeGroup => {
+            let filled = world.get::<voxear_render::LightProbeGroup>(entity).is_some_and(|group| group.fill.is_some());
+            let mut props = vec![Prop::ProbeGroupFill];
+            if filled {
+                props.push(Prop::ProbeGroupSpacing);
+            }
+            props.push(Prop::ProbeGroupCount);
             props
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
@@ -2510,6 +2562,13 @@ pub fn label(prop: &Prop) -> String {
         Prop::LightSoftness => "Shadow softness",
         Prop::LightShadowTint => "Shadow tint",
         Prop::LightBody => "Sky body",
+        Prop::LightMode => "Mode",
+        Prop::LightmapScale => "Scale in lightmap",
+        Prop::LightmapCast => "Casts",
+        Prop::LightmapReceive => "Receives",
+        Prop::ProbeGroupFill => "Fill box",
+        Prop::ProbeGroupSpacing => "Spacing",
+        Prop::ProbeGroupCount => "Probes",
         Prop::VolumeShape => "Shape",
         Prop::VolumeBlend => "Blend distance",
         Prop::VolumeWeight => "Weight",
@@ -3039,6 +3098,12 @@ pub fn add(
         Part::ReverbProbe => {
             world.insert(entity, ReverbProbe::default());
         }
+        Part::Lightmap => {
+            world.insert(entity, voxear_render::Lightmap::default());
+        }
+        Part::LightProbeGroup => {
+            world.insert(entity, voxear_render::LightProbeGroup::default());
+        }
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
@@ -3180,6 +3245,11 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::ReverbProbe => {
             world.remove::<ReverbProbe>(entity);
         }
+        Part::Lightmap => {
+            world.remove::<voxear_render::Lightmap>(entity);
+            world.remove::<voxear_render::LightmapBake>(entity);
+        }
+        Part::LightProbeGroup => drop(world.remove::<voxear_render::LightProbeGroup>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::Smoke => {
             world.remove::<voxear_render::Smoke>(entity);
@@ -3477,6 +3547,26 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightShadows => Value::Toggle(light()?.shadows),
         Prop::LightSoftShadows => Value::Toggle(light()?.soft_shadows),
         Prop::LightShadowTint => Value::Color(srgb(light()?.shadow_tint.to_array()).map(round3)),
+        Prop::LightMode => {
+            let mode = light()?.mode;
+            let index = voxear_render::LightMode::ALL.iter().position(|&known| known == mode).unwrap_or(1);
+            Value::Choice(index, LIGHT_MODES.iter().map(|m| m.to_string()).collect())
+        }
+        Prop::LightmapScale => Value::Number(world.get::<voxear_render::Lightmap>(entity)?.scale),
+        Prop::LightmapCast => Value::Toggle(world.get::<voxear_render::Lightmap>(entity)?.cast),
+        Prop::LightmapReceive => Value::Toggle(world.get::<voxear_render::Lightmap>(entity)?.receive),
+        Prop::ProbeGroupFill => Value::Toggle(world.get::<voxear_render::LightProbeGroup>(entity)?.fill.is_some()),
+        Prop::ProbeGroupSpacing => {
+            Value::Number(world.get::<voxear_render::LightProbeGroup>(entity)?.fill.map_or(2.0, |fill| fill.spacing))
+        }
+        Prop::ProbeGroupCount => {
+            let group = world.get::<voxear_render::LightProbeGroup>(entity)?;
+            let matrix = world.get::<voxear_scene::WorldTransform>(entity).map_or_else(
+                || world.get::<voxear_scene::Transform>(entity).map_or(voxear_core::math::Mat4::IDENTITY, |t| t.matrix()),
+                |placed| placed.0,
+            );
+            Value::Fixed(group.probes(&matrix).len().to_string())
+        }
         Prop::LightBody => {
             let body = light()?.body;
             let index = SKY_BODY_ORDER.iter().position(|&known| known == body).unwrap_or(0);
@@ -4971,6 +5061,22 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }),
         (Prop::LightBody, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
             light.body = SKY_BODY_ORDER[index.min(SKY_BODY_ORDER.len() - 1)];
+        }),
+        (Prop::LightMode, Value::Choice(index, _)) => with(world, entity, |light: &mut Light| {
+            light.mode = voxear_render::LightMode::ALL[index.min(voxear_render::LightMode::ALL.len() - 1)];
+        }),
+        (Prop::LightmapScale, Value::Number(n)) => {
+            with(world, entity, |lightmap: &mut voxear_render::Lightmap| lightmap.scale = n.clamp(0.0, 64.0))
+        }
+        (Prop::LightmapCast, Value::Toggle(on)) => with(world, entity, |lightmap: &mut voxear_render::Lightmap| lightmap.cast = on),
+        (Prop::LightmapReceive, Value::Toggle(on)) => {
+            with(world, entity, |lightmap: &mut voxear_render::Lightmap| lightmap.receive = on)
+        }
+        (Prop::ProbeGroupFill, Value::Toggle(on)) => with(world, entity, |group: &mut voxear_render::LightProbeGroup| {
+            group.fill = on.then(|| group.fill.unwrap_or_default());
+        }),
+        (Prop::ProbeGroupSpacing, Value::Number(n)) => with(world, entity, |group: &mut voxear_render::LightProbeGroup| {
+            group.fill = Some(voxear_render::ProbeFill { spacing: n.clamp(0.1, 100.0) });
         }),
         (Prop::LightShadows, Value::Toggle(on)) => with(world, entity, |light: &mut Light| light.shadows = on),
         (Prop::LightSoftShadows, Value::Toggle(on)) => with(world, entity, |light: &mut Light| light.soft_shadows = on),

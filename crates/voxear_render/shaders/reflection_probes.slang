@@ -15,6 +15,7 @@
 #include "common.slang"
 #include "atmosphere.slang"
 #include "ddgi_sample.slang"
+#include "lightmaps.slang"
 
 // A gradient sky's picture in a direction, as `pictureSky` in sky.slang
 // draws it, blurred as a surface `roughness` rough reflects it: read from
@@ -178,6 +179,12 @@ float3 probeReflection(Frame* frame, float3 position, float3 direction, float ro
 float3 reflectionAmbient(Frame* frame, float3 outside, float3 normal, bool atmosphere)
 {
     float3 sky = reflectedSky(frame, normal, atmosphere);
+    // Under a bake alone, its light probes' grid, where the GI's probes are not traced.
+    float3 baked;
+    if (frame->ddgi.enabled == 0 && probeVolumeLight(frame, outside, normal, baked))
+    {
+        return baked;
+    }
     return frame->ddgi.enabled != 0 ? ddgiIrradianceAlong(frame, outside, normal, normal, sky) : sky;
 }
 
@@ -201,9 +208,15 @@ float3 reflectionFallback(Frame* frame, float3 position, float3 end, float3 away
     if (blur < 1.0)
     {
         float3 sky = reflectedSky(frame, direction, atmosphere, roughness);
+        float3 baked;
         if (gi && frame->ddgi.enabled != 0)
         {
             sky = ddgiIrradianceAlong(frame, end, direction, away, sky);
+        }
+        else if (gi && probeVolumeLight(frame, end, direction, baked))
+        {
+            // Under a bake alone, the light its probes' grid holds where the ray stopped, from the way it looked.
+            sky = baked;
         }
         rest = lerp(sky, ambient, blur);
     }

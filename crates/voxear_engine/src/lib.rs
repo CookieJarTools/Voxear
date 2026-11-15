@@ -65,6 +65,8 @@ pub mod prompt_icons;
 mod project;
 pub mod local_link;
 pub mod reflection_bakes;
+pub mod light_bakes;
+mod lightmaps;
 mod reflection_probes;
 pub mod reverb_probes;
 pub mod sound_tracing;

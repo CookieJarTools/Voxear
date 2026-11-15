@@ -176,6 +176,10 @@ pub struct GpuInstance {
     /// For a chunk of blocks, the acoustic preset sound rays hear it as,
     /// plus one; 0 for its material's.
     pub acoustic: u32,
+    /// Its baked light in this frame's `GpuBakedInstance`s, plus one; 0 for
+    /// none (see `lightmaps`).
+    pub baked: u32,
+    pub _pad: [u32; 3],
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -320,6 +324,10 @@ pub const DEBUG_VIEW_AMBIENT_OCCLUSION: u32 = 9;
 /// The light falling on each surface from all round, as the GI's probes
 /// find it: bounced light and the sky's, before the surface's colour.
 pub const DEBUG_VIEW_GLOBAL_ILLUMINATION: u32 = 10;
+/// Each lightmapped surface's lightmap texels, as a checker tinted by its
+/// Obj's lightmap scale: green as the level has them, blue for fewer, red
+/// for more. What light probes light is grey.
+pub const DEBUG_VIEW_LIGHTMAP_DENSITY: u32 = 11;
 
 /// `GpuFrame::meshlet_flags`: back-facing meshlets are culled; surviving
 /// meshlets side by side are drawn together, as one range of indices; draws
@@ -432,6 +440,87 @@ pub struct GpuFrame {
     /// the far Portal's, for a view through a Portal (see `portals`), and
     /// one that cuts nothing for every other view.
     pub cut: [f32; 4],
+    pub bake: GpuBake,
+}
+
+/// How the level's bake lights it, as `Bake` in the shaders: its lights come
+/// in order of their mode, Baked, Mixed, Realtime, then lava's and
+/// particles'.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBake {
+    /// `GI_REALTIME`, `GI_BAKED` or `GI_BOTH`.
+    pub source: u32,
+    /// The lights before this are Baked, and before `bake_lights` in the
+    /// bake at all.
+    pub baked_lights: u32,
+    pub bake_lights: u32,
+    /// The sun's `LightMode::order`.
+    pub sun_mode: u32,
+    pub strength: f32,
+    pub texels_per_metre: f32,
+    pub pad: [u32; 2],
+    /// The probes' light resampled on a grid (see `lightmaps::ProbeVolume`):
+    /// three rows a cell, its cells across, how wide one is, and where the
+    /// first cell's middle is; 0 cells across for none.
+    pub volume: u64,
+    pub volume_size: [u32; 3],
+    pub volume_cell: f32,
+    pub volume_origin: [f32; 3],
+    pub volume_pad: f32,
+}
+
+pub const GI_REALTIME: u32 = 0;
+pub const GI_BAKED: u32 = 1;
+pub const GI_BOTH: u32 = 2;
+
+/// An instance's baked light, as `BakedInstance` in the shaders.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBakedInstance {
+    pub scale_offset: [f32; 4],
+    pub lightmap: u32,
+    pub directions: u32,
+    pub flags: u32,
+    pub density: f32,
+    pub sh: [[f32; 4]; 7],
+}
+
+pub const BAKED_LIGHTMAP: u32 = 1;
+pub const BAKED_PROBES: u32 = 2;
+pub const BAKED_RECEIVES: u32 = 4;
+
+/// While a lightmap bake traces the scene, an instance that neither shades
+/// nor bounces light in it.
+pub const INSTANCE_NO_BAKE_CAST: u32 = 128;
+
+/// A texel a bake traces from, as `BakeTexel` in the shaders.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBakeTexel {
+    /// Where it is, and in w how wide a texel is there, in metres.
+    pub position: [f32; 4],
+    pub normal: [f32; 4],
+    pub face: [f32; 4],
+}
+
+/// A bake's work for a dispatch, as `BakeJob` in the shaders.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBakeJob {
+    pub texels: u64,
+    pub light: u64,
+    pub directions: u64,
+    pub probes: u64,
+    pub probe_light: u64,
+    pub sky: u64,
+    pub texel_count: u32,
+    pub probe_count: u32,
+    pub first_texel: u32,
+    pub first_sample: u32,
+    pub samples: u32,
+    pub bounces: u32,
+    pub pad: [u32; 2],
 }
 
 /// The plane in `GpuFrame::cut` that cuts nothing.
@@ -1055,6 +1144,12 @@ pub struct GpuBuffers {
     /// This frame's reflection probes, in the order shading takes them
     /// (see `reflection_probes`).
     pub reflection_probes: u64,
+    /// Each vertex's lightmap UVs, at its own place (see `Assets`).
+    pub lightmap_uvs: u64,
+    /// This frame's instances' baked light, and a lightmap bake's work (see
+    /// `lightmaps` and `lightmapper`).
+    pub baked_instances: u64,
+    pub bake_job: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1418,7 +1513,7 @@ mod tests {
         assert_eq!(size_of::<GpuMeshlet>(), 48);
         assert_eq!(size_of::<GpuMaterial>(), 112);
         // Three matrices, ids and flags, then where its LODs end.
-        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16 + 16);
+        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16 + 16 + 16);
         assert_eq!(size_of::<GpuLight>(), 96);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
@@ -1440,15 +1535,18 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
         );
+        assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 69 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 72 * 8);
+        assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
+        assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,

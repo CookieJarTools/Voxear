@@ -1476,12 +1476,57 @@ Done so far:
     outside); per-block acoustics within a chunk; moving geometry heard as it moves in Steam Audio's CPU path;
     probes placed on floors rather than in a grid; a level settings panel in the editor (they are in the
     `.level` file now).
+- **Baked lightmaps and light probes ✅:** an Obj with a **Lightmap** (scale, cast, receive) is still for lighting,
+  and a **Light Probe Group** places probes, by hand or filling its box. **Bake Lighting** (palette, the Lighting
+  page, `lighting.bake` over `vox editor call` and `vox mcp`, with `lighting.bake_status`, `lighting.bake_cancel`
+  and `lighting.probe_light`) traces them on the GPU and writes `Level.lightmaps` beside the level.
+  - **Lightmap UVs:** a second set of UVs per vertex, in a buffer beside the vertex buffer and in cooked models
+    (cooked format 14). A model's own (glTF's second UVs) are kept, or made at import: charts grown over
+    triangles facing within 60° of their average, laid flat, turned into the smallest box over their hull's edges,
+    packed in rows with margins sized in texels; a model's Lightmap UVs setting picks Import, Generate or None.
+    Built-in cubes, spheres and planes have them.
+  - **The bake:** parts get squares in lightmaps by area and texels a metre, their triangles drawn into them on the
+    CPU (texel middles, then texels only touched, at the nearest point). Each texel traces cosine-spread paths
+    through the GI's scene (ray queries or the software tracer), each bounce lit by the sun and the bake's lights
+    through shadow rays to points on their shapes, so baked shadows are as soft as the lights are wide; probes
+    trace twice as many over the sphere into L2 harmonics. A few dispatches a frame, as many as take about 8 ms, cut
+    the same way however many, every path's randomness from its texel and number, glow read at its average, the sun's and the sky's light worked
+    out once a frame as at the level's middle rather than where the camera is, and lights, parts and probe groups in
+    an order taken from the scene rather than from how the world keeps them (each lamp takes a path's random numbers
+    in turn): the same scene bakes the same file, byte for byte, in every run. Sponza's demo, baked five times in
+    separate editor runs, wrote the same file each time; GPU tests bake in two renderers with the camera elsewhere,
+    the lamps spawned the other way round, a different pace and start, by ray queries and in software.
+    Finished on a thread: texels mostly seeing backs dropped, an edge-stopping à-trous filter across like surfaces,
+    dilation round charts, BC6H light and BC7 directions (directional lightmaps bend the light by the normal map).
+  - **Real-time, baked or both** (`[post.global_illumination] source`): Baked lights the level by its bake alone and
+    traces no probes round the camera; Both keeps the sky's and every Mixed and Baked light's bounce in the bake and
+    only Realtime lights' in the probes, so nothing is counted twice. Lights have a mode (Realtime, Mixed, Baked:
+    direct light on lightmapped surfaces baked too). Objs without a lightmap blend the eight nearest probes;
+    fog, water, terrain, particles and the rays' hits read the probes resampled on a grid, so a baked interior's
+    fog is not lit by the open sky.
+  - **Storage:** LZ4 over the GPU's blocks, parts by scene and Obj path, probes as half floats; loaded with the
+    level, from bundles too, and shipped by content builds. Sponza: 1.1 MB; Hello: 36 KB.
+  - **Editor:** the Lighting page's Baked tab (texels a metre, bounces, samples, directional, denoise, lightmap
+    size) and Bake Lighting / Cancel Bake with progress; Lightmap and Light Probe Group in the Inspector and the +
+    menu (probes drawn as dots); a light's Mode; the Scene view's Lightmap Density shading
+    (`vox render --debug-view lightmaps`). C#: `Obj.Lightmap`, `Obj.LightProbeGroup`, `Light.Mode`,
+    `BakedLighting.ProbeLightAt`, bake state (script API 89).
+  - Bake times on an RTX 3070 (engine crates at the development build's optimisation), as many dispatches a frame as
+    take about 8 ms of it: Sponza, 890,000 texels at 512 paths and 725 probes at 1,024, about 6 s, 2.3 to 4 s of it
+    tracing (the GPU shared with other work) and the rest the CPU's finish; Hello 0.25 s; a closed test room 0.1 s. Shading at 1280×720 (least of 240
+    frames, GPU shared): Sponza's demo, opaque pass 2.53 → 1.65 ms and the probes' 1.26 ms gone; Hello, frame 2.87 →
+    1.19 ms.
+  - GPU tests: a closed room lit through a window bakes its bounced light (both tracers); probes light a ball moving
+    through it; the same room bakes the same lightmaps twice, and the same in another renderer as said above (both
+    tracers); an open floor bakes the sky's light as plain shading gives it; baked and real-time light compared in
+    the closed room. Editor test: `lighting.bake` writes the file, and the level read again has the same bake.
+  - Later: a probe placement tool in the Scene view, per-pixel probe lighting for large moving Objs, baked shadow
+    masks for Mixed lights, terrain and worlds of blocks taking lightmaps.
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps.
 - Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
-- Baked lightmapper and light probes.
 - **Ray-traced audio ✅** (in Done, above).
 - **HDR colour, end to end ✅** (in Done, above).
 

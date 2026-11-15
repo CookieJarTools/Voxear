@@ -49,6 +49,9 @@ pub enum AssetKind {
     /// A `.probes` file: what a level's reflection probes show, as baked
     /// beside its `.level`.
     ReflectionProbes,
+    /// A `.lightmaps` file: a level's baked lighting, its lightmaps and
+    /// light probes, as baked beside its `.level`.
+    Lightmaps,
     /// A `.assettable` file: a table of the game's assets that differ by
     /// language, as a voice line recorded in each, a key's asset for each.
     AssetTable,
@@ -134,6 +137,7 @@ impl AssetKind {
             "strings" => Self::Strings,
             "paths" => Self::Paths,
             "probes" => Self::ReflectionProbes,
+            "lightmaps" => Self::Lightmaps,
             "assettable" => Self::AssetTable,
             "ies" => Self::LightProfile,
             "lighting" => Self::Lighting,

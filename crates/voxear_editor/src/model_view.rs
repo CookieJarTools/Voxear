@@ -699,7 +699,7 @@ impl ModelView {
                 tangent: [1.0, 0.0, 0.0, 1.0],
                 ..Vertex::default()
             });
-            let data = MeshData { vertices: vertices.to_vec(), indices: vec![0, 1, 2, 0, 2, 3], skin: Vec::new() };
+            let data = MeshData { vertices: vertices.to_vec(), indices: vec![0, 1, 2, 0, 2, 3], ..MeshData::default() };
             let made = renderer.add_texture(&source).and_then(|texture| {
                 let desc = MaterialDesc {
                     roughness: 1.0,

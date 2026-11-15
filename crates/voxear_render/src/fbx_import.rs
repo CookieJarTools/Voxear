@@ -241,7 +241,7 @@ impl Preparer {
                 indices.push(index);
             }
         }
-        let mut data = MeshData { vertices, indices, skin };
+        let mut data = MeshData { vertices, indices, skin, lightmap_uvs: Vec::new() };
         into_space(&mut data, self.space);
         let file = FromFile {
             normals: mesh.vertex_normal.exists,

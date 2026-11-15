@@ -23,6 +23,8 @@ public readonly struct ReflectionProbe : IEquatable<ReflectionProbe>, IObjCompon
 	private const int IntensityValue = 7;
 	private const int ImportanceValue = 8;
 	private const int CaptureValue = 9;
+	private const int ResolutionValue = 10;
+	private const int CaptureOffsetValue = 11;
 
 	public static readonly ReflectionProbe None = default;
 
@@ -80,6 +82,31 @@ public readonly struct ReflectionProbe : IEquatable<ReflectionProbe>, IObjCompon
 	{
 		get { return (int)Number(ImportanceValue); }
 		set { Write(ImportanceValue, value); }
+	}
+
+	/// <summary>Texels across each face of its cube; 128 as it starts.</summary>
+	public ReflectionProbeResolution Resolution
+	{
+		get { return (ReflectionProbeResolution)(int)Number(ResolutionValue); }
+		set { Write(ResolutionValue, (float)value); }
+	}
+
+	/// <summary>Where it takes its picture from, in metres from its box's middle along the box's own axes; zero for the middle.</summary>
+	public Vector3 CaptureOffset
+	{
+		get
+		{
+			NativeComponent.Get(NativeComponent.ReflectionProbe, Obj, CaptureOffsetValue, out var offset);
+			return new Vector3(offset.X, offset.Y, offset.Z);
+		}
+		set
+		{
+			var written = NativeComponent.Set(NativeComponent.ReflectionProbe, Obj, CaptureOffsetValue, new Vector4(value, 0f));
+			if (!written && Native.IsConnected)
+			{
+				Log.Error($"{Obj} has no Reflection Probe; give it one with AddReflectionProbe.");
+			}
+		}
 	}
 
 	/// <summary>Captures it again, next frame or soon after, as after what it sees has changed.</summary>

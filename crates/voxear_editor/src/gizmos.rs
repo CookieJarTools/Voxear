@@ -418,7 +418,8 @@ fn post_volume(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, enti
 }
 
 /// A reflection probe's box, and round it, fainter, where it fades out,
-/// with a mark where it is captured from, its middle.
+/// with a mark where it is captured from: its middle, or its capture
+/// offset from it.
 fn reflection_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
     let Some(probe) = world.get::<voxear_render::ReflectionProbe>(entity) else { return };
     let matrix = voxear_scene::world_matrix(world, entity);
@@ -430,7 +431,8 @@ fn reflection_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera,
     if probe.blend_distance > 0.0 {
         wire_box(shapes, camera, position, rotation, scale * 0.5 + probe.blend_distance, faint);
     }
-    if let Some(at) = camera.project(position) {
+    let capture = position + rotation * probe.capture_offset;
+    if let Some(at) = camera.project(capture) {
         let at = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
         shapes.push(Shape::Icon { name: "globe", center: at, size: SPEAKER, color });
     }

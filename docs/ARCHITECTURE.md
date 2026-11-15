@@ -1058,8 +1058,13 @@ With any `softness`, cubes are mist: `cloudCubeAt` gives each cube a share of cl
 the walk takes out light by that share and the length of the ray inside the cube and goes on, and each cube is lit
 through, by the cubes between its middle and the sun, blended with the face's shade by the softness.
 
-The sky pass lays that picture over the sky it draws. Clouds are therefore behind everything drawn, and are not in
-reflections. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
+The sky pass lays that picture over the sky it draws, and shading lays it over what is drawn, as much of it as lies
+in front (`cloudsBefore`): `cloudSpan` finds where the pixel's ray goes into and comes out of the layer, as the march
+does, and the share of that stretch before the surface takes the same share of the picture's light and cover. Far
+ground beyond the layer, a peak rising into it, and the ground round a camera inside it or above it are seen through
+the clouds, with no depth read before shading. A third pass, **Cloud panorama**, marches them all round the camera
+into a 128×64 picture, across once round the horizon, a quarter of it a frame with 12 steps; `reflectedSky` lays it over the
+sky it gives reflections, reflection probes' captures and screen-space reflections' misses. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
 so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
 passes.
 
@@ -1268,6 +1273,20 @@ its mist then clearing over 0.4 s. Rays for the GI are made only of chunks round
 
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
+
+**Reflection probes** *(implemented)*. A Reflection Probe (`voxear_render::reflection_probes`) is a box, the Obj's
+unit cube, whose surfaces reflect a cube map taken from its middle or from its capture offset. A capture traces a ray
+through each texel of the six faces against the scene the GI's rays see, by ray queries or the software tracer, and
+lights each hit as the GI's rays do, with the shine of metals added from the probes, the GI and the sky as last
+captured (`ddgiShadeHit`). On the frame a probe is captured, the plants of any Foliage within 64 m of it are added
+to the traced instances, and the ray is checked against the flat tops of the sea and Pools (`probeCaptureWater`).
+Terrain's meshes for rays carry the material of the surface with the largest share at each point
+(`mesh::PROXY_MATERIAL`, in the vertex's wind word). The faces are averaged into mips, then each of six mips is
+filtered with GGX for its roughness. Each resolution (64 to 512) is one array of cubes; shading reads each probe's
+own, in order of importance and size, box-projected from its capture point, and takes what they leave from the GI's
+probes and then the sky. One probe is captured or loaded a frame; a probe captured once can be baked into a `.probes`
+file beside its level, which builds ship. A gradient sky's picture is what reflections and captures see of the sky,
+from a mip as blurred as the surface is rough, and what the GI's rays that miss take (`ddgiSky`).
 
 **Global illumination** comes in two forms:
 

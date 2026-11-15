@@ -1036,6 +1036,8 @@ FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
         float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    // The clouds in front of it: far ground beyond their layer, or near ground with the camera in them.
+    color = cloudsBefore(frame, input.position.xy / float2(frame->viewport), input.worldPosition, color);
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
@@ -1190,6 +1192,8 @@ FragmentOut fragmentMain(VertexOut input)
         float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    // The clouds in front of it: far ground beyond their layer, or near ground with the camera in them.
+    color = cloudsBefore(frame, input.position.xy / float2(frame->viewport), input.worldPosition, color);
 
     if (frame->debugView == DEBUG_VIEW_LOD)
     {

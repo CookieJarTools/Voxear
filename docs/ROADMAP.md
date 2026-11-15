@@ -914,7 +914,11 @@ Done so far:
     in a build), lighting the scene in the colours' place. Picture and Picture turn on the Lighting page's Sky
     tab. Tests: a picture's light; the file written and read; on the GPU, the sky drawn from its picture as it
     is turned, past white.
-  - Still to come for them: reflections of the picture itself, and the light probes they will fill.
+  - Reflections of the picture itself (`skyPictureSeen` in `reflection_probes.slang`): traced and screen-space
+    reflections' misses and reflection probes' captures read it from the mip whose texels are as wide as the
+    surface's spread, its rows kept from wrapping at the top and bottom. The GI's rays that miss take it too
+    (`ddgiSky`), a radian blurred, so a bright side of the sky lights the sides that face it. GPU test: a probe under
+    a picture red above the horizon and blue below captures red above and blue below.
 - **Upscalers beside Voxear's own:** `[post.anti_aliasing] upscaler` (`Upscaler`: `voxear`, `fsr`, `dlss`, `xess`)
   and `quality` (`UpscaleQuality`: native 1, quality 1/1.5, balanced 1/1.7, performance 1/2, ultra performance 1/3
   of each side) in place of `render_scale`. One that cannot run here is Voxear's in its place
@@ -1157,7 +1161,21 @@ Done so far:
     sky and under the moon, shadows put the ground in light and shade and move on as the clouds drift, cubes have
     flat faces and shade the ground, and the cost at 1080p. Editor and file tests: the Clouds tab's settings are
     written under `[sky.clouds]` one at a time over the look's.
-  - Later: clouds in front of far ground and round a camera inside them, clouds in reflections.
+  - **In front of what lies beyond them:** shading lays the Clouds picture over what is drawn, the share of the
+    pixel's stretch through the layer (`cloudSpan`, as the march finds it) that lies before the surface taking that
+    share of the picture's light and cover (`cloudsBefore`, in `shading.slang` and the water's passes). Far ground
+    past the layer's edge, a peak rising into them and the ground round a camera inside them or above them are seen
+    through them, with no depth read before shading.
+  - **In reflections:** a **Cloud panorama** pass marches them all round the camera into a 128×64 picture, a
+    quarter of it a frame in whole 8×4 blocks with 12 steps, and `reflectedSky` lays it over the sky that
+    reflections, captures and screen-space misses take. Left out through a Portal. Marched whole at 256×128 with
+    the screen's 40 steps it cost 1.4 ms in Hello; so few texels leave the GPU waiting on each step in turn, so the
+    steps are what it costs, not the texels.
+  - Cost at 1080p on an RTX 3070, least of 60 frames, three runs: the panorama 0.03 ms (GrownPlants as it is,
+    Hello with clouds) to 0.05 ms (GrownPlants with low clouds); shading +0.015 ms with clouds, the rest within the
+    runs' spread.
+  - GPU tests: a probe's capture of the sky goes from blue to grey under overcast; the ground below a camera
+    inside low clouds is seen through them.
 - **Weather:** a `Weather` resource (`voxear_render::weather`) laid over the level's lighting as each frame is
   drawn, so the lighting is never changed and clear weather is the lighting as it is. Six amounts from 0 to 1:
   cloud fills the sky's clouds towards overcast; darkness thickens them, darkens their shadows and takes the sun's
@@ -1400,8 +1418,24 @@ Done so far:
     projection lines the reflection up; a probe captured once keeps what it saw until captured again, and its bake
     loads as captured; thin far poles show in a mirror floor; a screen-space miss shows the probe's wall behind the
     camera. Editor test: bake a probe added with `obj.create`, and it loads with the level.
-  - Later: terrain, block worlds, water and plants in captures; metals' own shine in captures; a resolution
-    setting; letting a probe's capture point move off its box's middle.
+  - **Resolution and capture point:** each probe's own `resolution` (64, 128, 256 or 512 texels a face), one array
+    of cubes for each in use, each probe's texture in its row of the list; and a `capture_offset` from the box's
+    middle along its axes, from which it is captured and box-projected. In scene files, the Inspector (Resolution,
+    Capture Offset, the gizmo's mark at the capture point), C# (`Resolution`, `CaptureOffset`) and `field.set`.
+  - **What captures see:** metals their shine, from the probes as last captured, then the GI and the sky, with
+    Fresnel, in captures and traced reflections alike (it was black); the plants of a Foliage within 64 m of the
+    capture point, 8,192 at most, on the frame it is captured; the sea's and Pools' flat tops, with the water's own
+    colour, what lies under it through its depth, and what it reflects (`probeCaptureWater`); and terrain with each
+    point's largest surface's material and picture size (`mesh::PROXY_MATERIAL`, in the wind word of its mesh for
+    rays, which the GI's rays read too).
+  - Cost (as above): a capture 0.023 → 0.026 ms in Hello and 0.048 → 0.051 ms in GrownPlants; traced
+    reflections +0.005 ms; nothing where there is no probe.
+  - GPU tests: a probe captured at 256 then 64, and from a capture point past a red block, sees it on the other
+    side; a metal block mirrors a green wall from the second capture; a pond under a probe is darker and bluer than
+    the ground was, and a hedge of plants shows where the sky did. Unit tests: a painted terrain tile's mesh for rays
+    carries each half's material and picture size.
+  - Later: worlds of blocks in their surfaces' materials (their meshes for rays keep no surface a triangle); grass
+    and water seen from under it in captures.
 - **Ray-traced audio ✅:** sound traced on the GPU against the scene the GI traces, its models, worlds of blocks
   and terrain, by ray queries or the compute tracer (`voxear_render::sound_rays`, `shaders/sound_rays.slang`, a
   "Sound rays" pass the first view records; `voxear_engine::sound_tracing`).

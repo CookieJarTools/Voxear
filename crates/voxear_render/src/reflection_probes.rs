@@ -571,7 +571,8 @@ mod tests {
         let matrix = Mat4::from_scale_rotation_translation(Vec3::new(8.0, 3.0, 4.0), turn, Vec3::new(1.0, 2.0, 3.0));
         let probe = gpu_probe(&ReflectionProbe::default(), &matrix, 5);
         assert_eq!(probe.centre, [1.0, 2.0, 3.0]);
-        assert_eq!(probe.half_size, [4.0, 1.5, 2.0]);
+        let half = Vec3::from(probe.half_size);
+        assert!(half.distance(Vec3::new(4.0, 1.5, 2.0)) < 1e-5, "{half}");
         let x = Vec3::from(probe.axis_x);
         assert!(x.distance(Vec3::new(0.0, 0.0, -1.0)) < 1e-5, "{x}");
         assert_eq!((probe.slot, probe.flags), (5, BOX_PROJECTION));

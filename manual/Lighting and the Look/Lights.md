@@ -32,9 +32,9 @@ Select the light, and the Inspector shows:
 | Shadows | Whether the light casts shadows, for any light but a directional one. On by default: see below |
 | Inner angle, Outer angle | A spot light's cone, in degrees: full brightness inside the inner angle, fading to nothing at the outer |
 | Width, Height | A rectangle's size, in metres |
-| Radius | A disc's or a tube's radius, in metres |
+| Radius | A disc's or a tube's radius, in metres; for a point or spot light, its bulb's or flame's, which softens its shadow, 0 by default |
 | Length | A tube's length, end to end, in metres |
-| Soft shadows | For a rectangle, disc or tube: whether its shadow softens as wide as the light is. On by default: see below |
+| Soft shadows | Whether its shadow softens as wide as the light is: a shape by its size, a point or spot light by its radius. On by default: see below |
 | Cookie | A picture the light shines through, for a spot or directional light |
 | Cookie size | How many metres a directional light's cookie covers before it repeats |
 | IES profile | How bright a real light fitting is in each direction, for a point or spot light |
@@ -95,9 +95,20 @@ Each light that casts shadows draws what is round it again, so they cost more th
 
 In each frame, the eight lights nearest the camera that ask for shadows cast them. Any more light without a shadow until the camera comes nearer.
 
-A light keeps its shadow of what stands still from one frame to the next, and each frame draws only what moves over it. Walls, floors, worlds of blocks and Objs that have stood still for 16 frames are drawn into a light's shadow once; a character walking past is drawn each frame. A light draws what stands still again only when it moves, or when something in its reach changes: an Obj stops, starts moving, appears or goes, or a block is placed or dug out. You do not have to mark anything: the engine sees what moves. A lamp carried around draws its whole shadow each frame while it moves, as it would without the cache.
+A light keeps its shadow of what stands still from one frame to the next, and each frame draws only what moves over it. Walls, floors, terrains, worlds of blocks and Objs that have stood still for 16 frames are drawn into a light's shadow once; a character walking past is drawn each frame. A light draws what stands still again only when it moves, or when something in its reach changes: an Obj stops, starts moving, appears or goes, a block is placed or dug out, or a terrain is sculpted or dug. You do not have to mark anything: the engine sees what moves. A lamp carried around draws its whole shadow each frame while it moves, as it would without the cache.
 
 `vox render --no-shadow-cache` draws every light's shadow whole each frame, to compare.
+
+### Virtual shadow maps for lamps
+
+A lamp's shadow is drawn into **virtual shadow maps**, as the sun's is: each view of the lamp, a spot light's one or each side of a point light's cube, is a shadow map 4096 texels across, eight times the size it has without them, in levels each half as fine as the last. Only the pages of it the view needs are drawn, each as fine as the pixels that show it, so a shadow by the camera is sharp to the millimetre while one across the room costs no more than it did. The pages keep what stands still while the lamp does, as above; what moves is drawn each frame over them at the size a lamp has without them.
+
+- A page the view asks for is drawn within a frame or two. Until then a coarser one stands in, never coarser than a lamp's shadow without virtual shadow maps once its pages are drawn.
+- A lamp that has just come on, or is moving, is drawn whole each frame as without them, and goes over to its pages once it has stood still for a frame.
+- Each frame draws at most 64 pages for all its lamps; a lamp coming into view fills in over a few frames.
+- Drawing shadows costs less than with the atlas, as so little is drawn again; shading each pixel a lamp lights costs a little more, about 0.1 ms a lamp at 1440p over a whole view.
+
+Set **Shadow maps** on the Lighting page's Lamps tab to **Atlas**, or `shadows = "atlas"` in the lighting file's `[lamps]`, to draw lamps' shadows at a fixed size, as before. `vox render --lamp-shadows atlas` does it for one render, to compare.
 
 Nothing within 10 centimetres of a light casts its shadow, or just past its own shape for an area or tube light, so a flame or bulb drawn round a light does not shut its light in. Glass casts no dark shadow, but colours the light through it, as the sun's. An opaque shade does, as a real one would: the light comes out of its open end.
 
@@ -108,11 +119,13 @@ temperature = 1900
 shadows = false
 ```
 
-### Soft shadows from area lights
+### Soft shadows from lamps
 
-A rectangle, disc or tube light is as wide as its shape, so its shadows soften as a real panel or window light's do: sharp where things touch and softer the farther they fall from what casts them, and softer for a larger light. A point or spot light's shadows have hard edges.
+A rectangle, disc or tube light is as wide as its shape, so its shadows soften as a real panel or window light's do: sharp where things touch and softer the farther they fall from what casts them, and softer for a larger light. The soft edge takes the light's shape: a long tube softens shadows along its length and leaves them sharper across it, as a fluorescent tube does, and a long panel the same way.
 
-Turn a light's **Soft shadows** off for hard edges. Its shadow then costs less to shade, which helps where many area lights overlap.
+A point or spot light is a point unless you give it a **Radius**: a bulb's few centimetres, or a candle flame's one. With a radius its shadows soften as a small ball of light's would; at 0, the default, their edges are hard.
+
+Turn a light's **Soft shadows** off for hard edges. Its shadow then costs less to shade, which helps where many lights overlap.
 
 ```toml
 [obj.light]
@@ -122,17 +135,48 @@ height = 0.6
 soft_shadows = false
 ```
 
+```toml
+[obj.light]
+type = "point"
+temperature = 1900
+radius = 0.02
+```
+
 ## The sun
 
 The first directional light in the level is its **sun**. It always casts shadows, and the sky draws the sun's disc in its direction and colour. A level only uses one: any other directional lights are left out.
 
 At night, set its **Sky body** to Moon: the sky draws the moon instead, and darkens so the stars show. See [[The Sky]].
 
-Shadows reach 80 metres from the camera, unless the scene's lighting says otherwise.
+### Virtual shadow maps
+
+The sun's shadows are drawn into **virtual shadow maps**: one very large shadow map round the camera, in levels from 2 millimetres a texel near the camera to about half a metre four kilometres off. Only the pieces of it the view needs are drawn, each as fine as the pixels that show it, so shadows are sharp at your feet and still there on a hillside a kilometre away, with no line where one map gives way to the next.
+
+Each piece, a page, keeps what stands still from frame to frame and is drawn again only when that changes:
+
+- Walls, ground, worlds of blocks, plants and Objs that stand still are drawn into a page once.
+- A character, a door or a falling crate is drawn each frame over a copy of the pages it stands in, which stay as they are. When it stops, or starts moving, the pages where it stood are drawn again.
+- Turning the camera or walking on only draws the pages coming into view; a page the view asks for is drawn within a frame or two, and until then the next coarser one stands in for it.
+- The sun turning by more than a twentieth of a degree draws every page again, over a few frames. A sun that moves slowly across the sky costs a little each time it turns that far.
+
+Plants of a Foliage and leaves on a wind-swayed material keep still in the sun's virtual shadows, as drawing their sway into kept pages would show where one page was drawn at another moment. Switch to cascades for a scene where their shadows should sway.
+
+The Debug view's **Shadow cascades** shows the level each pixel reads, coloured in turn, and red where no page reaches.
+
+### Cascades
+
+Set **Shadow maps** on the Lighting page's Sun tab to **Cascades**, or `shadows = "cascades"` in the lighting file's `[sun]`, for the shadow maps drawn before virtual shadow maps: four maps over a shadow distance, drawn whole every frame. They cost the same however much moves, and plants' shadows sway with them. Shadows then reach 80 metres from the camera, unless the scene's lighting says otherwise.
+
+```toml
+[sun]
+shadows = "cascades"
+```
+
+`vox render --sun-shadows cascades` or `--sun-shadows virtual` draws a scene either way, whatever its lighting says, to compare.
 
 ### Shadow distance
 
-The sun's shadows are drawn into four shadow maps, each covering a stretch of the view from near the camera outwards. Two settings on the Lighting page's Sun tab, or in the lighting file's `[sun]`, decide how:
+With cascades, the sun's shadows are drawn into four shadow maps, each covering a stretch of the view from near the camera outwards. Two settings on the Lighting page's Sun tab, or in the lighting file's `[sun]`, decide how:
 
 | Setting | What it does |
 | --- | --- |
@@ -199,8 +243,8 @@ protected override void Update()
 | `Intensity`, `Range` | How bright it is, and how far it reaches in metres |
 | `InnerSpotAngle`, `OuterSpotAngle` | A spot light's cone, in degrees |
 | `Shadows` | Whether it casts shadows |
-| `SoftShadows` | Whether a rectangle's, disc's or tube's shadow softens as wide as it is |
-| `Size`, `Radius`, `Length` | A rectangle's size, a disc's or tube's radius, and a tube's length, in metres |
+| `SoftShadows` | Whether its shadow softens as wide as it is |
+| `Size`, `Radius`, `Length` | A rectangle's size, a disc's, tube's, point or spot light's radius, and a tube's length, in metres |
 | `Softness` | How wide the sun looks, in degrees, for soft shadows |
 | `Remove()` | Takes the Light off its Obj |
 

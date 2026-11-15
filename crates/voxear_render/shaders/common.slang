@@ -313,6 +313,8 @@ static const uint PROXY_MATERIAL = 0x80000000u;
 static const uint INSTANCE_STILL = 64;
 // While a lightmap bake traces the scene, an instance that neither shades nor bounces light in it (src/lightmaps.rs).
 static const uint INSTANCE_NO_BAKE_CAST = 128;
+// Moves, as the sun's virtual shadow maps see it: drawn over the still part of the pages it is in, each frame.
+static const uint INSTANCE_MOVING = 65536;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
@@ -963,6 +965,91 @@ struct BakeJob
     uint pad0;
     uint pad1;
 };
+// The sun's virtual shadow maps (src/vsm.rs); mirrors GpuVirtualShadows in src/gpu.rs. Each level's window is
+// VSM_WINDOW pages of VSM_PAGE texels a side, each level's texels twice the last's; a page is drawn into a slot of the
+// pool VSM_SLOT texels a side, with VSM_BORDER texels of border all round, which a filter centred in the page reads.
+static const uint VSM_LEVELS = 10;
+static const uint VSM_PAGE = 128;
+static const uint VSM_BORDER = 8;
+static const uint VSM_SLOT = VSM_PAGE + 2 * VSM_BORDER;
+static const uint VSM_POOL_SLOTS = 32;
+static const uint VSM_POOL = VSM_SLOT * VSM_POOL_SLOTS;
+static const int VSM_WINDOW = 64;
+static const uint VSM_PAGES_A_FRAME = 96;
+static const uint VSM_MOVING_POOL_SLOTS = 16;
+static const uint VSM_MOVING_POOL = VSM_SLOT * VSM_MOVING_POOL_SLOTS;
+static const uint VSM_MOVING_SLOTS = VSM_MOVING_POOL_SLOTS * VSM_MOVING_POOL_SLOTS;
+static const uint VSM_PAGE_VIEW = 0x10000;
+static const uint VSM_CULL = 2;
+static const uint VSM_CULL_MOVING = 3;
+
+struct VirtualShadows
+{
+    float3 right;
+    float finestTexel;
+    float3 up;
+    float depthMin;
+    float3 direction;
+    float depthRange;
+    // Each level's window of pages, row after row: a slot plus one, or 0 for none.
+    uint* table;
+    // A bit for each page of each level's window that the view asks for.
+    uint* requests;
+    // The pool, or NO_TEXTURE while the sun's shadows are cascades.
+    uint pool;
+    uint drawn;
+    float bias;
+    // The moving pool: copies of the pages what moves stands in this frame, it drawn over them; or NO_TEXTURE.
+    uint movingPool;
+    int4 origins[VSM_LEVELS];
+    float4 planes[VSM_LEVELS * 6];
+    float4 movingPlanes[VSM_LEVELS * 6];
+    // Level, slot, column and row of each page drawn this frame, then of each page what moves stands in.
+    int4 pages[VSM_PAGES_A_FRAME + VSM_MOVING_SLOTS];
+};
+
+// The lamps' virtual shadow maps (src/lamp_vsm.rs); mirrors GpuLampShadows in src/gpu.rs. Each view of a lamp is
+// LAMP_VSM_FINEST texels a side at its finest, with LAMP_VSM_MIPS levels each half as fine, cut into pages of VSM_PAGE
+// texels drawn into slots of the pool as the sun's are, with VSM_BORDER texels of border all round.
+static const uint LAMP_VSM_FINEST = 4096;
+static const uint LAMP_VSM_MIPS = 6;
+// The coarsest level a point asks for, as fine as the atlas's views: the coarser stand in until pages are drawn.
+static const uint LAMP_VSM_ASKED = 3;
+static const uint LAMP_VSM_VIEW_PAGES = 1365;
+static const uint LAMP_VSM_POOL_SLOTS = 32;
+static const uint LAMP_VSM_POOL = VSM_SLOT * LAMP_VSM_POOL_SLOTS;
+static const uint LAMP_VSM_PAGES_A_FRAME = 64;
+static const uint LAMP_PAGE_VIEW = 0x20000;
+
+struct LampShadows
+{
+    // Each page of every level of every view of every slot: a slot of the pool plus one, or 0 for none.
+    uint* table;
+    // A bit for each page that the view asks for.
+    uint* requests;
+    // The pool, or NO_TEXTURE while lamps' shadows are drawn whole into the atlas.
+    uint pool;
+    uint drawn;
+    float bias;
+    uint pad;
+    // Each slot's first view, how many it has, and the tangent of half the angle a view takes in.
+    float4 lights[LOCAL_SHADOW_LIGHTS];
+    // The pages drawn this frame: view, level, column and row.
+    int4 pages[LAMP_VSM_PAGES_A_FRAME];
+};
+
+// Where level `mip`'s pages start among a view's: after every finer level's.
+uint lampMipBase(uint mip)
+{
+    return LAMP_VSM_VIEW_PAGES - (LAMP_VSM_VIEW_PAGES >> (2 * mip));
+}
+
+// A page's word in the page table and bit in the requests: page `page` of level `mip` of view `face` of lamp `slot`.
+uint lampPageIndex(uint slot, uint face, uint mip, int2 page)
+{
+    uint across = (LAMP_VSM_FINEST / VSM_PAGE) >> mip;
+    return (slot * LOCAL_SHADOW_SLOT_VIEWS + face) * LAMP_VSM_VIEW_PAGES + lampMipBase(mip) + uint(page.y) * across + uint(page.x);
+}
 
 struct Frame
 {
@@ -1034,6 +1121,8 @@ struct Frame
     // cuts nothing otherwise.
     float4 cut;
     Bake bake;
+    VirtualShadows vsm;
+    LampShadows lampVsm;
 };
 
 // How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.
@@ -1082,11 +1171,118 @@ float levelHeight(Frame* frame, float3 world)
     return world.y + frame->origin.w;
 }
 
+// The projection that draws virtual shadow page `page` of this frame's into its slot of the pool, with its texel of
+// border: across and up the sun's view onto the slot, along its light into depth (src/vsm.rs).
+Mat4 vsmPageViewProj(Frame* frame, uint page)
+{
+    int4 drawn = frame->vsm.pages[page];
+    float metres = frame->vsm.finestTexel * float(VSM_PAGE) * float(1u << uint(drawn.x));
+    float border = metres / float(VSM_PAGE) * float(VSM_BORDER);
+    float scale = 2.0 / (metres + 2.0 * border);
+    float2 low = float2(drawn.zw) * metres - border;
+    float3 x = frame->vsm.right * scale;
+    float3 y = frame->vsm.up * scale;
+    float3 z = frame->vsm.direction / frame->vsm.depthRange;
+    Mat4 m;
+    m.c0 = float4(x.x, y.x, z.x, 0.0);
+    m.c1 = float4(x.y, y.y, z.y, 0.0);
+    m.c2 = float4(x.z, y.z, z.z, 0.0);
+    m.c3 = float4(-low * scale - 1.0, -frame->vsm.depthMin / frame->vsm.depthRange, 1.0);
+    return m;
+}
+
+// The projection that draws lamp page `page` of this frame's into its slot of the pool, with its border: its view's,
+// narrowed to the page.
+Mat4 lampPageViewProj(Frame* frame, uint page)
+{
+    int4 drawn = frame->lampVsm.pages[page];
+    Mat4 m = frame->localShadows.viewProj[drawn.x];
+    float side = float(LAMP_VSM_FINEST >> uint(drawn.y));
+    // The slot's corner and size in the view's clip space, and what maps them onto the slot's.
+    float2 low = (float2(drawn.zw) * float(VSM_PAGE) - float(VSM_BORDER)) / side * 2.0 - 1.0;
+    float size = float(VSM_SLOT) / side * 2.0;
+    float2 middle = low + size * 0.5;
+    float scale = 2.0 / size;
+    m.c0.xy = (m.c0.xy - middle * m.c0.w) * scale;
+    m.c1.xy = (m.c1.xy - middle * m.c1.w) * scale;
+    m.c2.xy = (m.c2.xy - middle * m.c2.w) * scale;
+    m.c3.xy = (m.c3.xy - middle * m.c3.w) * scale;
+    return m;
+}
+
+// Whether a sphere lies within the sides of a projection: a lamp page's, with its border.
+bool insideProjection(Mat4 m, float3 center, float radius)
+{
+    float4 r0 = float4(m.c0.x, m.c1.x, m.c2.x, m.c3.x);
+    float4 r1 = float4(m.c0.y, m.c1.y, m.c2.y, m.c3.y);
+    float4 r3 = float4(m.c0.w, m.c1.w, m.c2.w, m.c3.w);
+    float4 planes[4] = { r3 + r0, r3 - r0, r3 + r1, r3 - r1 };
+    for (uint i = 0; i < 4; i++)
+    {
+        if (dot(planes[i].xyz, center) + planes[i].w < -radius * length(planes[i].xyz))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // The projection a shadow draw puts its vertices through: a cascade's, or
-// for a local light's list the view `level` names.
+// for a local light's list the view `level` names, or a virtual shadow
+// page's for a view from VSM_PAGE_VIEW on, a lamp's from LAMP_PAGE_VIEW.
 Mat4 shadowViewProj(Frame* frame, uint list, uint view)
 {
+    if (view >= LAMP_PAGE_VIEW)
+    {
+        return lampPageViewProj(frame, view - LAMP_PAGE_VIEW);
+    }
+    if (view >= VSM_PAGE_VIEW)
+    {
+        return vsmPageViewProj(frame, view - VSM_PAGE_VIEW);
+    }
     return list >= LIST_LOCAL_SHADOW ? frame->localShadows.viewProj[view] : frame->cascadeViewProj[list - LIST_SHADOW];
+}
+
+// The virtual shadow level a sun list culls for: in a virtual shadow page's draw its page's, in a cull or meshlet
+// pass for pages the level in the list's byte of `output`; VSM_LEVELS for a cascade's.
+uint vsmCullLevel(Frame* frame, uint list, uint level, uint output)
+{
+    if (list < LIST_SHADOW || list >= LIST_LOCAL_SHADOW)
+    {
+        return VSM_LEVELS;
+    }
+    if (level >= VSM_PAGE_VIEW)
+    {
+        return uint(frame->vsm.pages[level - VSM_PAGE_VIEW].x);
+    }
+    return level == VSM_CULL || level == VSM_CULL_MOVING ? (output >> (8 * (list - LIST_SHADOW))) & 0xFF : VSM_LEVELS;
+}
+
+// Whether a sphere lies within the planes round a level's pages drawn this frame, or with `moving` round its pages
+// what moves stands in.
+bool insideVsmLevel(Frame* frame, uint level, bool moving, float3 center, float radius)
+{
+    for (uint i = 0; i < 4; i++)
+    {
+        float4 plane = moving ? frame->vsm.movingPlanes[level * 6 + i] : frame->vsm.planes[level * 6 + i];
+        if (dot(plane.xyz, center) + plane.w < -radius)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether a sphere lies across a virtual shadow page drawn this frame, with its border.
+bool insideVsmPage(Frame* frame, uint page, float3 center, float radius)
+{
+    int4 drawn = frame->vsm.pages[page];
+    float metres = frame->vsm.finestTexel * float(VSM_PAGE) * float(1u << uint(drawn.x));
+    float border = metres / float(VSM_PAGE) * float(VSM_BORDER);
+    float2 across = float2(dot(center, frame->vsm.right), dot(center, frame->vsm.up));
+    float2 low = float2(drawn.zw) * metres - border - radius;
+    float2 high = float2(drawn.zw) * metres + metres + border + radius;
+    return all(across >= low) && all(across <= high);
 }
 
 struct DrawCommand

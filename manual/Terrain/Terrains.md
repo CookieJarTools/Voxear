@@ -48,7 +48,7 @@ These are under **Settings** too.
 | Material | The material its ground is drawn with while it has no surfaces (see [[Surfaces]]) |
 | Texture size | How many metres one picture of the material covers on the ground |
 | Detail distance | How far from the camera the ground is drawn at its finest, in metres |
-| Cast shadows | Whether its hills cast the sun's shadows |
+| Cast shadows | Whether its hills cast shadows, the sun's and lamps': a lamp in a hollow leaves the ground over the rise dark |
 
 The ground near the camera is drawn with a triangle between every pair of heights. Further off it is drawn more coarsely, in levels: each level reaches twice as far as the one before, with half as many triangles each way. Where one level meets the next, the finer one's points slide onto the coarser one's over the last stretch, so the ground changes without cracks or popping as the camera moves. Raise **Detail distance** for hills that keep their shape further off; lower it to draw less. The **LOD** debug view colours each level.
 

@@ -994,8 +994,54 @@ Done so far:
   The GI's rays, the fog, particles and smoke read the hard shadow. Eight overlapping 1 m panels over a hall of 400
   Objs at 640×360 take the opaque pass from 0.21 to 0.31 ms. GPU test: a wall's shadow from a 1 m panel is
   wider far from the wall than by its foot, wider than a 10 cm panel's, and than with Soft shadows off.
-- Still to come for lights' shadows: terrains casting lamps' shadows; a point or spot light's own size; a soft edge
-  that follows a tube's length rather than spreading evenly.
+- **Lamps' shadows of terrains:** a lamp takes the terrain's patches within its reach, as fine as its distance from
+  them says and slid onto coarser grids by it, so the shadow it keeps is the same wherever the camera is; drawn into
+  its kept views, or each frame for a lamp that keeps none. A terrain sculpted, dug or moved draws every lamp's kept
+  views again. GPU test: a lamp by a ridge leaves the ground behind it dark, kept or not, until the ridge is
+  flattened.
+- **A light's own size in its shadow:** a point or spot light's Radius (0 by default) softens its shadow as a small
+  ball of light's; and the soft edge takes a light's shape (`localLightAcross`): a tube's along its length and its
+  radius across it, a rectangle's width and height, laid over the shadow view at the point, so a tube's shadow
+  softens along it and stays sharp across. The Inspector, `radius` in scenes and `Light.Radius`. GPU tests: a bulb
+  half a metre round softens a wall's shadow, most far from the wall; a 2 m tube's edge is twice as soft where its
+  length runs across it as along it.
+- **Virtual shadow maps for the sun** (`vsm`, `shaders/virtual_shadows.slang`): the default, cascades kept as a
+  setting (`[sun] shadows = "cascades"`, Shadow maps on the Lighting page's Sun tab, `vox render --sun-shadows`).
+  Ten clipmap levels round the camera, 64×64 pages of 128 texels each, 2 mm a texel at the finest and about 4 km
+  either way at the coarsest. The pyramid's third level asks each frame for the page of the level whose texels are
+  no wider than a pixel, and two coarser; the CPU reads that when the frame in flight comes round, gives pages slots
+  of a 4608² pool (8 texels of border each, which every tap of a filter reads), keeps a few coarse pages round the
+  camera for the fog and the GI, and draws up to 96 a frame, new ones first. A page keeps what stands still until
+  something in it comes, goes, stops or starts moving, a chunk or terrain changes, a material is written or the sun
+  turns 0.05°; what moves is drawn each frame over a copy of each page it stands in, in a moving pool of 256 slots. A
+  caster under two texels of a level changes nothing there. Drawn four levels at a time through the cascades' lists, each page with
+  its own projection, task shaders culling meshlets per page; terrains and worlds of blocks picked per level. Wind is
+  left out of pages. Shading reads the page table once a filter and every tap from that page's slot. RTX 3070,
+  1440p, the least of 3 runs of 120 frames each, sun shadows then the opaque passes: Hello 0.053 and 0.96 ms with
+  cascades, 0.043 and 1.05 virtual; Sponza 0.302 and 5.53, 0.019 and 5.59. A GrownPlants copy, loaded, its character
+  idling: the whole frame 10.35 ms with cascades (3.0 of it the sun's shadows, blocks mostly), 7.85 virtual, the
+  character drawn over its pages' copies for 0.07 ms; a frame that draws pages again, as a chunk's blocks change,
+  about 3 ms more. A coarser ring's chunks changing as the world brings in detail leave the sun's pages as they are. GPU tests: the cascades'
+  shadow as sharp or sharper; a box 600 m off shadowed through a long lens, where cascades reach nothing; pages kept
+  while nothing moves, drawn again where a box moves and the picture then as a fresh view's. Unit tests for pages,
+  slots, turning and the camera moving.
+- **Virtual shadow maps for lamps** (`lamp_vsm`): the default, the atlas kept as a setting (`[lamps] shadows =
+  "atlas"`, Shadow maps on the Lighting page's Lamps tab, `vox render --lamp-shadows`). Each view of a lamp is 4096
+  texels across, eight times the atlas's tile, in six levels of 128-texel pages. The pyramid's third level asks for
+  the page of the level whose texels are no wider than a pixel, but no coarser than the atlas's, and two coarser; the
+  CPU gives pages slots of a 4608² pool, keeps every view's coarsest page, and draws up to 64 a frame. Pages keep what
+  stands still while the lamp does, going stale under a change by the box it covers in each view; what moves is drawn
+  each frame into the atlas, and shading takes the darker of the two. A lamp that came on or moves is drawn whole into
+  the atlas until it stands still and its coarsest pages are drawn. Page tables, the sun's too, are copied into GPU
+  memory each frame for shading to read. RTX 3070, Sponza's seven lamps at 1440p, the least of 3 runs of 120 frames:
+  the lamps' shadow passes 0.128 ms with the atlas, 0.101 with pages (0.05 a frame once all is kept, 0.055 more on a
+  frame drawing pages), but shading 0.73 ms more in the opaque pass and 0.27 in reflections: 0.2 ms of it the finer
+  pages, the rest the page table's lookups and projections per lamp and pixel. GPU tests: a wall's edge from a lamp
+  takes 2 pixels from its pages near the camera against 14 from the atlas, in all three culling paths; pages kept
+  while nothing moves, the box drawn over them the frame it moves, and both pictures as the atlas drawn whole. Unit
+  tests for the page table, the coarsest pages, pages asked for, a change under a page and a lamp moving.
+- Still to come for shadows: plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages'
+  copies at their size, rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's
@@ -1525,7 +1571,6 @@ Done so far:
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
-- Virtual shadow maps.
 - Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
 - **Ray-traced audio ✅** (in Done, above).
 - **HDR colour, end to end ✅** (in Done, above).

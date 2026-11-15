@@ -955,13 +955,15 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
     // Its picture stays on its face as the face sways, and on a moving part where it rests.
     float3 stands = b.world - b.posedBy;
-    // A lamp keeps its shadow of what stands still from frame to frame (src/shadow_cache.rs): it leaves out the sway.
+    // A lamp keeps its shadow of what stands still from frame to frame (src/shadow_cache.rs), as a virtual shadow page
+    // does: they leave out the sway.
     bool lamp = push.list >= LIST_LOCAL_SHADOW;
     if (!lamp)
     {
         b.world += blockSway(push.frame, world, b, push.frame->time);
     }
     BlockShadowOut o;
+    // A lamp's list, or a virtual shadow page's past them, names its view in push.source.
     o.position = transform(shadowViewProj(push.frame, push.list, lamp ? push.source : 0), float4(b.world, 1.0));
     o.place = stands - world.corner;
     o.normal = b.normal;

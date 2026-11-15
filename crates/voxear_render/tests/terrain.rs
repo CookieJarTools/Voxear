@@ -138,6 +138,53 @@ fn a_ridge_shades_the_ground_on_its_far_side_from_the_sun() {
     assert!(shaded * 2 < lit, "the ground east of the ridge is in its shadow: {shaded} against {lit} lit");
 }
 
+/// A lamp two metres over flat ground at night, six metres west of a ridge
+/// three metres high running along z at x = 62 to 64, seen from 30 m up:
+/// the world and the terrain, for a test to change and draw again.
+fn lamp_by_a_ridge(renderer: &mut Renderer, caching: bool) -> (World, voxear_ecs::Entity) {
+    renderer.set_view_options(ViewOptions { local_shadow_cache: caching, ..ViewOptions::default() });
+    let mut world = World::new();
+    let heights = Heightmap::from_fn(1, 1, 0.5, |x, _| if (62.0..=64.0).contains(&x) { 3.0 } else { 0.0 });
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let ground = world.spawn((Terrain::new(heights), TerrainLook::new(grey, 4.0), Transform::default()));
+    look_down(&mut world, 30.0);
+    world.spawn((
+        Light::point(Vec3::new(1.0, 0.85, 0.6), 60.0, 16.0),
+        Transform::from_position(Vec3::new(56.0, 2.0, 64.0)),
+    ));
+    world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+    (world, ground)
+}
+
+#[test]
+fn a_lamp_by_a_ridge_leaves_the_ground_behind_it_dark_until_the_ridge_is_flattened() {
+    let Some(mut kept) = renderer() else { return };
+    let (mut world, ground) = lamp_by_a_ridge(&mut kept, true);
+    let before = render(&mut kept, &world, 24);
+    keep_image("terrain ridge lamp shadow.png", &before);
+    let brightness = |pixels: &[u8], x: f32| {
+        let (px, py) = from_above(30.0, x, 64.0);
+        rgb_at(pixels, px, py).iter().sum::<i32>()
+    };
+    // Ten metres from the lamp either way: west in the open, east behind the ridge.
+    let (open, behind) = (brightness(&before, 46.0), brightness(&before, 66.0));
+    assert!(open > 40, "the lamp lights the ground: {open}");
+    assert!(behind * 4 < open, "the ridge shades the ground behind it from the lamp: {behind} against {open}");
+    // Drawn whole every frame, the same.
+    let Some(mut whole) = renderer() else { return };
+    let (whole_world, _) = lamp_by_a_ridge(&mut whole, false);
+    let drawn_whole = render(&mut whole, &whole_world, 24);
+    let apart = before.iter().zip(&drawn_whole).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+    assert!(apart <= 1, "kept or drawn whole, the same: {apart} apart");
+
+    // The ridge flattened: its shadow goes the frame after.
+    world.get_mut::<Terrain>(ground).unwrap().heights = std::sync::Arc::new(Heightmap::flat(1, 1, 0.5, 0.0));
+    let after = render(&mut kept, &world, 3);
+    keep_image("terrain ridge flattened.png", &after);
+    let lit = brightness(&after, 66.0);
+    assert!(lit * 4 > open * 3, "lit where the ridge's shadow was: {lit} against {open}");
+}
+
 #[test]
 fn a_tile_changed_after_it_was_drawn_is_drawn_changed() {
     let Some(mut renderer) = renderer() else { return };

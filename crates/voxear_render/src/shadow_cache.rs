@@ -24,7 +24,7 @@ use crate::{
     assets::Assets,
     blocks::{ChunkDraw, DrawnBlocks},
     gpu::{
-        GpuInstance, GpuLight, GpuLocalShadows, INSTANCE_IMPOSTOR, INSTANCE_LOD_SCREEN, INSTANCE_NEW,
+        GpuInstance, GpuLight, GpuLocalShadows, INSTANCE_IMPOSTOR, INSTANCE_LOD_SCREEN, INSTANCE_MOVING, INSTANCE_NEW,
         INSTANCE_RAYS_ONLY, INSTANCE_STILL, LOCAL_SHADOW_LIGHTS, LOCAL_SHADOW_SLOT_VIEWS, Mat4Cols, cols,
     },
     scene::{ExtractedFrame, Owner},
@@ -62,6 +62,8 @@ struct Kept {
     still: u16,
     sphere: [f32; 4],
     kept: bool,
+    /// Whether the sun's virtual shadow maps draw it as moving.
+    moving: bool,
 }
 
 /// A world of blocks as its chunks were last frame, which is kept only while
@@ -71,6 +73,28 @@ struct KeptBlocks {
     corner: Vec3,
     block_size: f32,
     cast_shadows: bool,
+}
+
+/// A terrain as its shadows were last drawn: its Obj, where it is, and its
+/// heights' and dug ground's draws, which are made again whenever they
+/// change.
+#[derive(Clone, PartialEq)]
+struct TerrainKey {
+    entity: Entity,
+    corner: Vec3,
+    tree: usize,
+    dug: usize,
+}
+
+impl TerrainKey {
+    fn of(terrain: &crate::terrain::Drawn) -> Self {
+        Self {
+            entity: terrain.entity,
+            corner: terrain.corner,
+            tree: Arc::as_ptr(&terrain.tree) as *const u8 as usize,
+            dug: terrain.dug.as_ref().map_or(0, |(_, draws, _)| Arc::as_ptr(draws) as *const u8 as usize),
+        }
+    }
 }
 
 /// A slot of the atlases: the light that last had it, and whether its kept
@@ -109,60 +133,126 @@ pub(crate) struct ShadowCache {
     objs: HashMap<Owner, Kept>,
     spare: HashMap<Owner, Kept>,
     blocks: HashMap<Entity, KeptBlocks>,
+    terrains: Vec<TerrainKey>,
     slots: [Option<Slot>; LOCAL_SHADOW_LIGHTS],
     /// Where what stands still changed since the slots were last given out.
     changed: Vec<[f32; 4]>,
     /// Everything changed, as when a material does.
     everything: bool,
+    /// The same for the sun's virtual shadow maps, which take them apart.
+    sun_changed: Vec<[f32; 4]>,
+    sun_everything: bool,
+    /// Where what moves stands this frame.
+    moving: Vec<[f32; 4]>,
+    /// What the slots were last given out with, for the lamps' virtual
+    /// shadow pages: where what stands still changed, and whether
+    /// everything did.
+    lamp_changed: Vec<[f32; 4]>,
+    lamp_everything: bool,
     material_writes: u64,
 }
 
 impl ShadowCache {
     /// Marks the instances that stand still, which local lights keep the
-    /// shadows of, among the first `count`, and notes where what stands
-    /// still changed. Only Objs' instances stand still: a Foliage's plants,
-    /// skinned instances, and those whose material moves its vertices or
-    /// whose LOD follows the camera are drawn each frame.
+    /// shadows of, among the first `count`, notes where what stands still
+    /// changed, and where what moves stands, for the sun's virtual shadow
+    /// maps. Only Objs' instances stand still: a Foliage's plants, skinned
+    /// instances, and those whose material moves its vertices or whose LOD
+    /// follows the camera are drawn each frame. A Foliage's plants are not
+    /// followed at all: they stand where they grew.
     pub fn mark_still(&mut self, extracted: &mut ExtractedFrame, count: usize, assets: &Assets) {
         voxear_core::profile_scope!("Shadow Cache");
         if assets.material_writes() != self.material_writes {
             self.material_writes = assets.material_writes();
-            self.everything = true;
+            self.note_everything();
         }
+        self.moving.clear();
         let mut objs = std::mem::take(&mut self.spare);
         objs.clear();
         let instances = extracted.instances.iter_mut().zip(&extracted.entities).take(count);
-        for (instance, owner) in instances.filter(|(instance, owner)| may_stand_still(instance, owner, assets)) {
+        for (instance, owner) in instances.filter(|(instance, owner)| tracked(instance, owner)) {
             let before = self.objs.get(owner);
+            // A skinned instance's pose moves it whether or not its Obj moves.
             let same = before.filter(|kept| {
                 kept.model == instance.model
                     && kept.mesh == instance.mesh
                     && kept.material == instance.material
                     && kept.flags == instance.flags & !INSTANCE_NEW
                     && kept.lod_bias == instance.lod_bias
+                    && instance.posed == 0
             });
             let still = same.map_or(0, |kept| kept.still.saturating_add(1));
-            let kept = still >= STILL_FRAMES;
+            let kept = still >= STILL_FRAMES && may_keep(instance, assets);
             let sphere = match same {
                 Some(kept) => kept.sphere,
                 None => sphere_of(instance, assets),
             };
+            // The sun's pages keep what stands still, plants and a material's sway too: what moves is drawn over them.
+            let moving = still < STILL_FRAMES || instance.posed != 0;
+            if moving {
+                self.moving.push(sphere);
+                instance.flags |= INSTANCE_MOVING;
+            }
             let was_kept = before.is_some_and(|before| before.kept);
             if was_kept != kept {
                 self.changed.push(if kept { sphere } else { before.expect("was kept").sphere });
             }
+            // A new instance moves until it stands still, so it changes the sun's still part only once it does.
+            let was_moving = before.is_none_or(|before| before.moving);
+            if was_moving != moving {
+                self.sun_changed.push(if moving { before.expect("stood still").sphere } else { sphere });
+            }
             if kept {
                 instance.flags |= INSTANCE_STILL;
             }
-            let flags = instance.flags & !(INSTANCE_NEW | INSTANCE_STILL);
+            let flags = instance.flags & !(INSTANCE_NEW | INSTANCE_STILL | INSTANCE_MOVING);
             let (model, mesh, material, lod_bias) =
                 (instance.model, instance.mesh, instance.material, instance.lod_bias);
-            objs.insert(*owner, Kept { model, mesh, material, flags, lod_bias, still, sphere, kept });
+            objs.insert(*owner, Kept { model, mesh, material, flags, lod_bias, still, sphere, kept, moving });
         }
         // Those kept that are gone.
-        let gone = self.objs.iter().filter(|(owner, kept)| kept.kept && !objs.contains_key(owner));
-        self.changed.extend(gone.map(|(_, kept)| kept.sphere));
+        for (_, kept) in self.objs.iter().filter(|(owner, _)| !objs.contains_key(owner)) {
+            if kept.kept {
+                self.changed.push(kept.sphere);
+            }
+            if !kept.moving {
+                self.sun_changed.push(kept.sphere);
+            }
+        }
         self.spare = std::mem::replace(&mut self.objs, objs);
+    }
+
+    /// Notes a chunk of blocks that changed, came or went. The sun's pages
+    /// take only those of a world's finest level, where blocks are placed
+    /// and dug: a coarser ring's chunks change as the world brings in more
+    /// detail of the same land, a kilometre wide and more, and would draw
+    /// most pages again each time; they show when their pages are next drawn.
+    fn note_chunk(&mut self, key: [i32; 4], sphere: [f32; 4]) {
+        self.changed.push(sphere);
+        if key[0] == 0 {
+            self.sun_changed.push(sphere);
+        }
+    }
+
+    /// Notes that everything changed, for the lamps and the sun.
+    fn note_everything(&mut self) {
+        self.everything = true;
+        self.sun_everything = true;
+    }
+
+    /// For the sun's virtual shadow maps (see `vsm`): where what moves stands
+    /// this frame, where what stands still changed since last asked, and
+    /// whether everything did.
+    pub fn take_for_sun(&mut self) -> (&[[f32; 4]], Vec<[f32; 4]>, bool) {
+        let changed = std::mem::take(&mut self.sun_changed);
+        (&self.moving, changed, std::mem::take(&mut self.sun_everything))
+    }
+
+    /// For the lamps' virtual shadow pages (see `lamp_vsm`): where what
+    /// stands still changed when the slots were last given out, and whether
+    /// everything did.
+    pub fn for_lamps(&self) -> (&[[f32; 4]], bool) {
+        (&self.lamp_changed, self.lamp_everything)
     }
 
     /// Forgets what it knew of what stands still, for a frame it does not
@@ -170,8 +260,9 @@ impl ShadowCache {
     pub fn forget(&mut self) {
         self.objs.clear();
         self.blocks.clear();
+        self.terrains.clear();
         self.changed.clear();
-        self.everything = true;
+        self.note_everything();
     }
 
     /// Notes where worlds of blocks' chunks changed since last frame. A
@@ -191,22 +282,35 @@ impl ShadowCache {
                 Some(before) if same_place(&before, &now) => {
                     let had: HashMap<[i32; 4], &ChunkDraw> = before.chunks.iter().map(|c| (c.key, c)).collect();
                     for chunk in now.chunks.iter() {
-                        if had.get(&chunk.key).is_none_or(|was| *was != chunk) {
-                            self.changed.push(chunk_sphere(now.corner, chunk));
+                        // Moved in the pool with the same blocks, as when it grows, it is the same chunk.
+                        if had.get(&chunk.key).is_none_or(|was| was.mesh != chunk.mesh || was.bounds != chunk.bounds) {
+                            self.note_chunk(chunk.key, chunk_sphere(now.corner, chunk));
                         }
                     }
                     let has: std::collections::HashSet<[i32; 4]> = now.chunks.iter().map(|c| c.key).collect();
                     let gone = before.chunks.iter().filter(|chunk| !has.contains(&chunk.key));
-                    self.changed.extend(gone.map(|chunk| chunk_sphere(before.corner, chunk)));
+                    let gone: Vec<([i32; 4], [f32; 4])> =
+                        gone.map(|chunk| (chunk.key, chunk_sphere(before.corner, chunk))).collect();
+                    gone.into_iter().for_each(|(key, sphere)| self.note_chunk(key, sphere));
                 }
-                _ => self.everything = true,
+                _ => self.note_everything(),
             }
             worlds.insert(blocks.entity, now);
         }
         if !self.blocks.is_empty() {
-            self.everything = true;
+            self.note_everything();
         }
         self.blocks = worlds;
+    }
+
+    /// Notes whether terrains changed since last frame: one sculpted, dug,
+    /// painted for holes, come, gone or moved changes everything.
+    pub fn note_terrains(&mut self, drawn: &[crate::terrain::Drawn]) {
+        let now: Vec<TerrainKey> = drawn.iter().filter(|terrain| terrain.cast_shadows).map(TerrainKey::of).collect();
+        if now != self.terrains {
+            self.note_everything();
+            self.terrains = now;
+        }
     }
 
     /// Gives this frame's lights casting shadows their slots of the atlases,
@@ -241,6 +345,8 @@ impl ShadowCache {
         // What changed round a slot's light, kept or not this frame, is drawn again when it next keeps it.
         let everything = std::mem::take(&mut self.everything) || !caching || fresh;
         let changed = std::mem::take(&mut self.changed);
+        self.lamp_changed.clone_from(&changed);
+        self.lamp_everything = everything;
         for slot in self.slots.iter_mut().flatten() {
             let near = |sphere: &[f32; 4]| {
                 Vec3::new(sphere[0], sphere[1], sphere[2]).distance(slot.light.position) < sphere[3] + slot.light.range
@@ -285,11 +391,30 @@ impl ShadowCache {
     }
 }
 
-/// Whether an instance can stand still for local lights to keep its shadow.
-fn may_stand_still(instance: &GpuInstance, owner: &Owner, assets: &Assets) -> bool {
-    owner.plant.is_none()
-        && instance.posed == 0
-        && instance.flags & (INSTANCE_RAYS_ONLY | INSTANCE_LOD_SCREEN | INSTANCE_IMPOSTOR) == 0
+/// The planes, inward, round a lamp's reach.
+pub(crate) fn reach_planes(at: Vec3, reach: f32) -> [[f32; 4]; 6] {
+    [
+        [1.0, 0.0, 0.0, reach - at.x],
+        [-1.0, 0.0, 0.0, reach + at.x],
+        [0.0, 1.0, 0.0, reach - at.y],
+        [0.0, -1.0, 0.0, reach + at.y],
+        [0.0, 0.0, 1.0, reach - at.z],
+        [0.0, 0.0, -1.0, reach + at.z],
+    ]
+}
+
+/// Whether the cache follows an instance: an Obj's, drawn into shadows. A
+/// Foliage's plants stand where they grew.
+fn tracked(instance: &GpuInstance, owner: &Owner) -> bool {
+    owner.plant.is_none() && instance.flags & (INSTANCE_RAYS_ONLY | INSTANCE_IMPOSTOR) == 0
+}
+
+/// Whether local lights can keep an instance's shadow once it stands still:
+/// not one skinned, whose material moves its vertices, or whose LOD follows
+/// the camera.
+fn may_keep(instance: &GpuInstance, assets: &Assets) -> bool {
+    instance.posed == 0
+        && instance.flags & INSTANCE_LOD_SCREEN == 0
         && !assets.moves_vertices(MaterialHandle(instance.material))
 }
 

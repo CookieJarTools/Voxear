@@ -39,7 +39,7 @@ use voxear_terrain::{
 use crate::{
     MaterialHandle, MeshHandle,
     assets::Assets,
-    gpu::{GpuInstance, INSTANCE_RAYS_ONLY, LIST_COUNT, LIST_EARLY, LIST_SHADOW, Push},
+    gpu::{GpuInstance, INSTANCE_RAYS_ONLY, LIST_COUNT, LIST_EARLY, LIST_LOCAL_SHADOW, LIST_SHADOW, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     mesh::{MeshData, NO_WIND_MASKS, PROXY_MATERIAL, Vertex},
     passes::{attachment, begin_rendering, bind, set_viewport},
@@ -236,8 +236,13 @@ pub struct GpuTerrainPatch {
     pub packed: u32,
 }
 
+/// The lists a view's patches are picked into: those the GPU fills, then
+/// one for each level of the sun's virtual shadow maps (`VSM_LIST`).
+const TERRAIN_LISTS: usize = LIST_COUNT as usize + crate::vsm::LEVELS;
+/// The first list of the sun's virtual shadow levels' patches.
+const VSM_LIST: u32 = LIST_COUNT;
 /// Where each draw list's patches start, then how many it has.
-const LISTS_SIZE: usize = 2 * LIST_COUNT as usize * 4;
+const LISTS_SIZE: usize = 2 * TERRAIN_LISTS * 4;
 const TERRAINS_AT: usize = LISTS_SIZE;
 /// Each terrain's surfaces, `MAX_SURFACES` places each.
 const SURFACES_AT: usize = TERRAINS_AT + MAX_TERRAINS * size_of::<GpuTerrain>();
@@ -772,7 +777,7 @@ fn proxy(
 /// are, how many patches each list has, and their heights to wait on.
 #[derive(Clone)]
 pub(crate) struct ViewTerrains {
-    pub lists: [(u32, u32); LIST_COUNT as usize],
+    pub lists: [(u32, u32); TERRAIN_LISTS],
     pub heights: Vec<BufferId>,
     /// The view's tracks, which the ground's pixels read.
     pub tracks: Option<BufferId>,
@@ -816,12 +821,22 @@ pub(crate) fn add_proxies(drawn: &[Drawn], extracted: &mut ExtractedFrame) {
 /// terrains' records, into `buffer`; `None` when there is nothing to draw.
 /// `entities` gives each instance's owner, from which each terrain finds
 /// its anchor among its meshes for rays.
+///
+/// Each level of the sun's virtual shadow maps with pages drawn this frame
+/// takes the patches within the planes round them, `sun_pages`.
+///
+/// Each lamp casting a shadow takes the patches in its reach, as fine as
+/// its distance from them says, so its shadow is the same wherever the
+/// camera is: only when it draws them, into its kept views (see
+/// `shadow_cache`) or, for one that keeps nothing, each frame.
 pub(crate) fn gather(
     drawn: &[Drawn],
     frame: &crate::gpu::GpuFrame,
     entities: &[Owner],
     has_sun: bool,
     buffer: &Buffer,
+    lamps: &crate::shadow_cache::Lamps,
+    sun_pages: &[(usize, [[f32; 4]; 6])],
 ) -> Option<ViewTerrains> {
     if drawn.is_empty() {
         // An empty record first, so models blending into the ground find none.
@@ -837,7 +852,7 @@ pub(crate) fn gather(
     let camera = Vec3::from(frame.camera_position);
     let mut records = Vec::with_capacity(drawn.len().min(MAX_TERRAINS));
     let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_TERRAINS) * MAX_SURFACES];
-    let mut lists: Vec<Vec<GpuTerrainPatch>> = vec![Vec::new(); LIST_COUNT as usize];
+    let mut lists: Vec<Vec<GpuTerrainPatch>> = vec![Vec::new(); TERRAIN_LISTS];
     let mut patches = Vec::new();
     let mut dug = Vec::new();
     for (number, terrain) in drawn.iter().take(MAX_TERRAINS).enumerate() {
@@ -895,7 +910,7 @@ pub(crate) fn gather(
         lists[LIST_EARLY as usize].extend(patches.iter().map(pack));
         // Its dug chunks each list sees, coarser where the ground round them is drawn coarser.
         let ends: Vec<f32> = (0..voxear_terrain::dig::MESH_LEVELS - 1).map(|level| terrain.ranges.end(level)).collect();
-        let mut dug_lists: Vec<Arc<[[u32; 2]]>> = vec![Arc::from([]); LIST_COUNT as usize];
+        let mut dug_lists: Vec<Arc<[[u32; 2]]>> = vec![Arc::from([]); TERRAIN_LISTS];
         if let Some((_, draws, _)) = &terrain.dug {
             dug_lists[LIST_EARLY as usize] = crate::dug::pick(draws, local, &planes, &ends).into();
         }
@@ -910,11 +925,33 @@ pub(crate) fn gather(
                 }
             }
         }
+        for (level, planes) in sun_pages.iter().filter(|_| terrain.cast_shadows) {
+            let planes = voxear_terrain::lod::planes_from(planes, terrain.corner);
+            patches.clear();
+            voxear_terrain::lod::select(&terrain.tree, local, &terrain.ranges, &planes, &mut patches);
+            lists[VSM_LIST as usize + level].extend(patches.iter().map(pack));
+            if let Some((_, draws, _)) = &terrain.dug {
+                dug_lists[VSM_LIST as usize + level] = crate::dug::pick(draws, local, &planes, &ends).into();
+            }
+        }
+        let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
+        let drawn_now = |slot: usize| !lamps.is_cached(slot) || lamps.redraws(slot);
+        for (slot, (at, reach)) in lit.filter(|&(slot, _)| terrain.cast_shadows && drawn_now(slot)) {
+            let planes =
+                voxear_terrain::lod::planes_from(&crate::shadow_cache::reach_planes(at, reach), terrain.corner);
+            let from = at - terrain.corner;
+            patches.clear();
+            voxear_terrain::lod::select(&terrain.tree, from, &terrain.ranges, &planes, &mut patches);
+            lists[LIST_LOCAL_SHADOW as usize + slot].extend(patches.iter().map(pack));
+            if let Some((_, draws, _)) = &terrain.dug {
+                dug_lists[LIST_LOCAL_SHADOW as usize + slot] = crate::dug::pick(draws, from, &planes, &ends).into();
+            }
+        }
         if terrain.dug.is_some() {
             dug.push((number as u32, dug_lists));
         }
     }
-    let mut placed = [(0u32, 0u32); LIST_COUNT as usize];
+    let mut placed = [(0u32, 0u32); TERRAIN_LISTS];
     let mut all: Vec<GpuTerrainPatch> = Vec::new();
     for (list, patches) in lists.iter().enumerate() {
         let room = MAX_TERRAIN_PATCHES - all.len();
@@ -922,10 +959,10 @@ pub(crate) fn gather(
         placed[list] = (all.len() as u32, taken as u32);
         all.extend_from_slice(&patches[..taken]);
     }
-    let mut header = [0u32; 2 * LIST_COUNT as usize];
+    let mut header = [0u32; 2 * TERRAIN_LISTS];
     for (list, (first, count)) in placed.iter().enumerate() {
         header[list] = *first;
-        header[LIST_COUNT as usize + list] = *count;
+        header[TERRAIN_LISTS + list] = *count;
     }
     buffer.write(0, &header);
     // An empty record after the last ends the list for models blending into the ground.
@@ -989,6 +1026,30 @@ fn draw_dug(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, list: u32) 
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count, 1, 0, 0) };
         }
     }
+}
+
+/// The patches and dug chunks a level of the sun's virtual shadow maps takes,
+/// drawn into page `view` (`VSM_PAGE_VIEW` on).
+pub(crate) fn draw_sun_page(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, level: usize, view: u32) {
+    let list = VSM_LIST + level as u32;
+    let page = Push { source: view, ..*push };
+    draw_list(ctx, terrains, &page, list);
+    draw_dug(ctx, terrains, &page, list);
+}
+
+/// Whether any terrain draws anything into a lamp's views this frame.
+pub(crate) fn draws_for_lamp(terrains: &ViewTerrains, slot: u32) -> bool {
+    let list = (LIST_LOCAL_SHADOW + slot) as usize;
+    terrains.lists[list].1 > 0 || terrains.dug.iter().any(|(_, lists)| !lists[list].is_empty())
+}
+
+/// The patches and dug chunks a lamp's slot draws into its view `view`, as
+/// `draw_list` and `draw_dug` draw a list.
+pub(crate) fn draw_lamp(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, slot: u32, view: u32) {
+    let list = LIST_LOCAL_SHADOW + slot;
+    let lamp = Push { source: view, ..*push };
+    draw_list(ctx, terrains, &lamp, list);
+    draw_dug(ctx, terrains, &lamp, list);
 }
 
 /// **Shadows (terrain)**: the patches each cascade sees, into its corner of

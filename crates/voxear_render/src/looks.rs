@@ -126,6 +126,12 @@ pub struct SunLook {
     /// cookie (see `canopy`), repeating every so many metres, where the
     /// light has no cookie of its own; 0 for open sky.
     pub canopy: f32,
+    /// How the sun's shadows are drawn: virtual shadow maps, or cascades
+    /// over the shadow distance.
+    pub sun_shadows: crate::SunShadows,
+    /// How lamps' shadows are drawn: virtual shadow maps, or a view of the
+    /// atlas each.
+    pub lamp_shadows: crate::LampShadows,
 }
 
 /// What the level is drawn with while a look pack is worn, as a world
@@ -306,6 +312,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -350,6 +358,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -393,6 +403,8 @@ impl Look {
             shadow_split: SHADOW_SPLIT,
             // A canopy overhead: the sun falls through it in flecks.
             canopy: 12.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -443,6 +455,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -496,6 +510,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -545,6 +561,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -595,6 +613,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -643,6 +663,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -694,6 +716,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -744,6 +768,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -795,6 +821,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -845,6 +873,8 @@ impl Look {
             shadow_split: SHADOW_SPLIT,
             // Deep woods: the sun only breaks through the leaves in patches.
             canopy: 14.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -894,6 +924,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -941,6 +973,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }
@@ -991,6 +1025,8 @@ impl Look {
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
             canopy: 0.0,
+            sun_shadows: crate::SunShadows::Virtual,
+            lamp_shadows: crate::LampShadows::Virtual,
         };
         Self { post, sky, sun }
     }

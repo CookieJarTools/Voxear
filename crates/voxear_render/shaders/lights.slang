@@ -445,27 +445,77 @@ float localShadowDistance(Light light, float depth)
     return light.shadowNear / max(1.0 - depth * (light.shadowFar - light.shadowNear) / light.shadowFar, 1e-6);
 }
 
-// An area light's shadow at `uv` in its view, at a depth of `depth`: the
-// blockers within the light's sight of the point found first, then a
-// filter as wide as the light seen past them, its taps turned each frame
-// and pixel. `texelMetres` is how wide a texel of the view is at the point.
-float localSoftShadow(Frame* frame, Light light, Texture2D atlas, float2 uv, float depth, float2 low, float2 high,
-    float texelMetres, float3 position)
+// A local light's shape as a point at `position` sees it, across the way
+// from the light to it: two half axes, in metres. A rectangle's width and
+// height, a disc's radius both ways, a tube's half length and its radius
+// across it, a point or spot light's radius both ways.
+void localLightAcross(Light light, float3 position, out float3 u, out float3 v)
+{
+    float3 way = normalizeOr(position - light.position, light.direction);
+    float3 up = lightUp(light);
+    if (light.kind == LIGHT_RECTANGLE)
+    {
+        u = light.right * light.size.x;
+        v = up * light.size.y;
+    }
+    else if (light.kind == LIGHT_DISC)
+    {
+        u = light.right * light.size.x;
+        v = up * light.size.x;
+    }
+    else if (light.kind == LIGHT_TUBE)
+    {
+        u = light.right * (light.size.x + light.size.y);
+        v = normalizeOr(cross(way, light.right), up) * light.size.y;
+    }
+    else
+    {
+        float3 side = normalizeOr(cross(way, abs(way.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0)), up);
+        u = side * light.shadowRadius;
+        v = cross(way, side) * light.shadowRadius;
+    }
+    u -= dot(u, way) * way;
+    v -= dot(v, way) * way;
+}
+
+// Where in the atlas a point falls in local shadow view `view`.
+float2 localAtlasUv(Frame* frame, uint view, float3 position)
+{
+    float4 clip = transform(frame->localShadows.viewProj[view], float4(position, 1.0));
+    float2 corner = float2(view % LOCAL_SHADOW_COLUMNS, view / LOCAL_SHADOW_COLUMNS) * float(LOCAL_SHADOW_TILE);
+    return (corner + (clip.xy / max(clip.w, 1e-6) * 0.5 + 0.5) * float(LOCAL_SHADOW_TILE)) / float2(LOCAL_SHADOW_ATLAS);
+}
+
+// A shaped light's shadow at `uv` in its view `view`, at a depth of
+// `depth`: the blockers within the light's sight of the point found first,
+// then a filter as large as the light seen past them, its shape and turn
+// as the light's, so a tube's shadow softens along its length and stays
+// sharper across it. The taps are turned each frame and pixel.
+float localSoftShadow(Frame* frame, Light light, Texture2D atlas, uint view, float2 uv, float depth, float2 low,
+    float2 high, float3 position)
 {
     float2 texelUv = 1.0 / float2(LOCAL_SHADOW_ATLAS);
     float receiver = localShadowDistance(light, depth);
     float angle = frac(52.9829189 * frac(dot(position.xz * 37.0 + position.y * 11.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI;
     angle += float(frame->frameIndex % 64) * 2.39996323;
-    // A blocker as near the light as its shape is wide still lies within the light's sight of the point this far
-    // round it, in metres there.
+    // The light's half axes laid over the atlas at the point, as far as each reaches past a blocker as far from the
+    // point as the light is: scaled by how much farther the point is than the blocker.
+    float3 u;
+    float3 v;
+    localLightAcross(light, position, u, v);
+    float2 base = localAtlasUv(frame, view, position);
+    float2 alongU = localAtlasUv(frame, view, position + u) - base;
+    float2 alongV = localAtlasUv(frame, view, position + v) - base;
+    float widest = max(length(alongU / texelUv), length(alongV / texelUv));
+    // A blocker as near the light as its shape reaches still lies within the light's sight of the point this far.
     float nearest = max(light.shadowNear, light.shadowRadius);
-    float sight = light.shadowRadius * max(receiver - nearest, 0.0) / nearest;
-    float searchTexels = clamp(sight / texelMetres, 1.0, LOCAL_PCSS_MAX_TEXELS);
+    float search = min(max(receiver - nearest, 0.0) / nearest, LOCAL_PCSS_MAX_TEXELS / max(widest, 1e-4));
     float blockers = 0.0;
     float blockerDistance = 0.0;
     for (uint i = 0; i < LOCAL_PCSS_BLOCKER_TAPS; i++)
     {
-        float2 at = clamp(uv + vogelDisc(i, LOCAL_PCSS_BLOCKER_TAPS, angle) * searchTexels * texelUv, low, high);
+        float2 disc = vogelDisc(i, LOCAL_PCSS_BLOCKER_TAPS, angle);
+        float2 at = clamp(uv + (alongU * disc.x + alongV * disc.y) * search + disc * texelUv, low, high);
         float found = atlas.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], at, 0.0).r;
         if (found < depth)
         {
@@ -482,25 +532,248 @@ float localSoftShadow(Frame* frame, Light light, Texture2D atlas, float2 uv, flo
     {
         return 0.0;
     }
-    // The light seen past the blockers, as wide as it is over how far they stand from it.
+    // The light seen past the blockers: as large as it is over how far they stand from it.
     float blocker = max(blockerDistance / blockers, 1e-3);
-    float penumbra = light.shadowRadius * max(receiver - blocker, 0.0) / blocker;
-    float filterTexels = clamp(penumbra / texelMetres, 1.0, LOCAL_PCSS_MAX_TEXELS);
+    float spread = min(max(receiver - blocker, 0.0) / blocker, LOCAL_PCSS_MAX_TEXELS / max(widest, 1e-4));
     float lit = 0.0;
     for (uint i = 0; i < LOCAL_PCSS_FILTER_TAPS; i++)
     {
-        float2 at = clamp(uv + vogelDisc(i, LOCAL_PCSS_FILTER_TAPS, angle) * filterTexels * texelUv, low, high);
+        float2 disc = vogelDisc(i, LOCAL_PCSS_FILTER_TAPS, angle);
+        float2 at = clamp(uv + (alongU * disc.x + alongV * disc.y) * spread + disc * texelUv, low, high);
         lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], at, depth);
     }
     return lit / float(LOCAL_PCSS_FILTER_TAPS);
 }
 
+// A lamp's virtual shadow pages (src/lamp_vsm.rs): a point's page of a level of one of its views, or of the next
+// coarser level drawn there, and its slot's corner in the pool.
+struct LampTap
+{
+    bool found;
+    uint mip;
+    int2 page;
+    float2 corner;
+};
+
+// The widest, in texels of a level, a soft shadow's taps reach from the page's middle: short of the border, which a
+// tap's 2x2 filter reaches a texel past.
+static const float LAMP_SOFT_TEXELS = 7.0;
+
+// Whether a lamp's shadow of what stands still is read from its pages: lamps have them, and its slot is kept (it
+// stands still, and its coarsest pages are drawn).
+bool lampPaged(Frame* frame, uint slot)
+{
+    return frame->lampVsm.pool != NO_TEXTURE && ((frame->localShadows.cached >> slot) & 1) != 0;
+}
+
+// Whether anything moving is drawn into a lamp's views of the atlas this frame, over its pages.
+bool lampMoving(Frame* frame, uint slot)
+{
+    return ((frame->localShadows.cached >> (KEPT_MOVING_SHIFT + slot)) & 1) != 0
+        || buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] != 0;
+}
+
+// How wide a texel of level `mip` of a lamp's view is `distance` from it, in metres.
+float lampTexelMetres(Frame* frame, uint slot, float distance, uint mip)
+{
+    return 2.0 * distance * frame->lampVsm.lights[slot].z / float(LAMP_VSM_FINEST >> mip);
+}
+
+// The finest level a point `distance` from a lamp asks for: the one whose texels are no wider than its pixel, and no
+// coarser than the atlas's (markLampsMain).
+uint lampMipFor(Frame* frame, uint slot, float3 position, float distance)
+{
+    float pixel = max(length(position - frame->cameraPosition), frame->near) / frame->lodScale;
+    float texel = max(lampTexelMetres(frame, slot, distance, 0), 1e-6);
+    float mip = floor(log2(max(pixel / texel, 1.0)) + frame->lampVsm.bias);
+    return uint(clamp(mip, 0.0, float(LAMP_VSM_ASKED)));
+}
+
+// The level whose texels make `width`, across a view from 0 to 1, about LAMP_SOFT_TEXELS of them, no finer than
+// `finest`.
+uint lampMipForWidth(float width, uint finest)
+{
+    float mip = ceil(log2(max(width * float(LAMP_VSM_FINEST) / LAMP_SOFT_TEXELS, 1.0)));
+    return uint(clamp(max(mip, float(finest)), 0.0, float(LAMP_VSM_MIPS - 1)));
+}
+
+// Where a point falls across a lamp's view `view`, from 0 to 1 either way, and its depth there.
+float3 lampViewAt(Frame* frame, uint view, float3 position)
+{
+    float4 clip = transform(frame->localShadows.viewProj[view], float4(position, 1.0));
+    float3 ndc = clip.xyz / max(clip.w, 1e-6);
+    return float3(ndc.xy * 0.5 + 0.5, ndc.z);
+}
+
+LampTap lampTap(Frame* frame, uint slot, uint face, float2 uv, uint mip)
+{
+    LampTap tap;
+    tap.found = false;
+    tap.mip = mip;
+    tap.page = 0;
+    tap.corner = 0.0;
+    for (uint k = mip; k < LAMP_VSM_MIPS; k++)
+    {
+        int across = int((LAMP_VSM_FINEST / VSM_PAGE) >> k);
+        int2 page = clamp(int2(floor(uv * float(across))), 0, across - 1);
+        uint entry = frame->lampVsm.table[lampPageIndex(slot, face, k, page)];
+        if (entry == 0)
+        {
+            continue;
+        }
+        uint held = entry - 1;
+        tap.found = true;
+        tap.mip = k;
+        tap.page = page;
+        tap.corner = float2(held % LAMP_VSM_POOL_SLOTS, held / LAMP_VSM_POOL_SLOTS) * float(VSM_SLOT);
+        return tap;
+    }
+    return tap;
+}
+
+// Where `uv` across a lamp's view falls in the pool, kept within the slot of the tap's page, whose border reaches as
+// far as any filter centred in the page.
+float2 lampPoolUv(LampTap tap, float2 uv)
+{
+    float side = float(LAMP_VSM_FINEST >> tap.mip);
+    float2 within = uv * side - float2(tap.page) * float(VSM_PAGE) + float(VSM_BORDER);
+    return (tap.corner + clamp(within, 1.0, float(VSM_SLOT) - 1.0)) / float(LAMP_VSM_POOL);
+}
+
+// A shaped lamp's soft shadow from its pages, as localSoftShadow reads the atlas: blockers searched for at a level
+// whose texels keep the search within a page's border, then a filter as large as the light seen past them at its own.
+float lampSoftShadow(Frame* frame, Light light, uint slot, uint face, uint view, float3 position, float3 normal,
+    uint finest)
+{
+    Texture2D pool = textures[frame->lampVsm.pool];
+    float distance = length(position - light.position);
+    float3 u;
+    float3 v;
+    localLightAcross(light, position, u, v);
+    float3 base = lampViewAt(frame, view, position);
+    float2 alongU = lampViewAt(frame, view, position + u).xy - base.xy;
+    float2 alongV = lampViewAt(frame, view, position + v).xy - base.xy;
+    float widest = max(max(length(alongU), length(alongV)), 1e-6);
+    // As far across the view as the atlas's soft edges reach.
+    float most = LOCAL_PCSS_MAX_TEXELS / float(LOCAL_SHADOW_TILE);
+    float receiver = localShadowDistance(light, base.z);
+    float nearest = max(light.shadowNear, light.shadowRadius);
+    float search = min(max(receiver - nearest, 0.0) / nearest, most / widest);
+    LampTap centre = lampTap(frame, slot, face, base.xy, lampMipForWidth(widest * search, finest));
+    if (!centre.found)
+    {
+        return 1.0;
+    }
+    float3 at = lampViewAt(frame, view, position + normal * lampTexelMetres(frame, slot, distance, centre.mip) * 1.5);
+    float texel = 1.0 / float(LAMP_VSM_FINEST >> centre.mip);
+    float angle = frac(52.9829189 * frac(dot(position.xz * 37.0 + position.y * 11.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI;
+    angle += float(frame->frameIndex % 64) * 2.39996323;
+    float blockers = 0.0;
+    float blockerDistance = 0.0;
+    for (uint i = 0; i < LOCAL_PCSS_BLOCKER_TAPS; i++)
+    {
+        float2 disc = vogelDisc(i, LOCAL_PCSS_BLOCKER_TAPS, angle);
+        float2 tap = at.xy + (alongU * disc.x + alongV * disc.y) * search + disc * texel;
+        float found = pool.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], lampPoolUv(centre, tap), 0.0).r;
+        if (found < at.z)
+        {
+            blockers += 1.0;
+            blockerDistance += localShadowDistance(light, found);
+        }
+    }
+    if (blockers == 0.0)
+    {
+        return 1.0;
+    }
+    if (blockers == float(LOCAL_PCSS_BLOCKER_TAPS))
+    {
+        return 0.0;
+    }
+    float blocker = max(blockerDistance / blockers, 1e-3);
+    float spread = min(max(receiver - blocker, 0.0) / blocker, most / widest);
+    LampTap filter = lampTap(frame, slot, face, base.xy, lampMipForWidth(widest * spread, finest));
+    if (!filter.found)
+    {
+        return 1.0;
+    }
+    float3 filterAt = lampViewAt(frame, view, position + normal * lampTexelMetres(frame, slot, distance, filter.mip) * 1.5);
+    float filterTexel = 1.0 / float(LAMP_VSM_FINEST >> filter.mip);
+    float lit = 0.0;
+    for (uint i = 0; i < LOCAL_PCSS_FILTER_TAPS; i++)
+    {
+        float2 disc = vogelDisc(i, LOCAL_PCSS_FILTER_TAPS, angle);
+        float2 tap = filterAt.xy + (alongU * disc.x + alongV * disc.y) * spread + disc * filterTexel;
+        lit += pool.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], lampPoolUv(filter, tap), filterAt.z);
+    }
+    return lit / float(LOCAL_PCSS_FILTER_TAPS);
+}
+
+// How much of a lamp's light its pages let through to `position`, seen in view `view`: 3x3 taps of hardware 2x2
+// filtering at the finest level drawn round the point, pushed off its surface by a texel and a half of it, or the soft
+// shadow. Lit where no page is drawn.
+float lampShadow(Frame* frame, Light light, uint view, float3 position, float3 normal, bool soft)
+{
+    uint slot = light.shadow / LOCAL_SHADOW_SLOT_VIEWS;
+    uint face = view - light.shadow;
+    float distance = length(position - light.position);
+    uint finest = lampMipFor(frame, slot, position, distance);
+    if (soft && light.shadowRadius > 0.0)
+    {
+        return lampSoftShadow(frame, light, slot, face, view, position, normal, finest);
+    }
+    LampTap tap = lampTap(frame, slot, face, lampViewAt(frame, view, position).xy, finest);
+    if (!tap.found)
+    {
+        return 1.0;
+    }
+    float3 at = lampViewAt(frame, view, position + normal * lampTexelMetres(frame, slot, distance, tap.mip) * 1.5);
+    float texel = 1.0 / float(LAMP_VSM_FINEST >> tap.mip);
+    Texture2D pool = textures[frame->lampVsm.pool];
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 uv = lampPoolUv(tap, at.xy + float2(x, y) * texel);
+            lit += pool.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], uv, at.z);
+        }
+    }
+    return lit / 9.0;
+}
+
+// How much of a local light reaches `position` past what its atlas view `view` holds in the way, at `ndc`.
+float localAtlasShadow(Frame* frame, Light light, uint texture, uint view, float3 ndc, float3 position, bool soft)
+{
+    float tile = float(LOCAL_SHADOW_TILE);
+    float2 corner = float2(view % LOCAL_SHADOW_COLUMNS, view / LOCAL_SHADOW_COLUMNS) * tile;
+    float2 low = (corner + 1.5) / float2(LOCAL_SHADOW_ATLAS);
+    float2 high = (corner + tile - 1.5) / float2(LOCAL_SHADOW_ATLAS);
+    float2 uv = (corner + (ndc.xy * 0.5 + 0.5) * tile) / float2(LOCAL_SHADOW_ATLAS);
+    float2 texel = 1.0 / float2(LOCAL_SHADOW_ATLAS);
+    Texture2D atlas = textures[NonUniformResourceIndex(texture)];
+    if (soft && light.shadowRadius > 0.0)
+    {
+        return localSoftShadow(frame, light, atlas, view, uv, ndc.z, low, high, position);
+    }
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 at = clamp(uv + float2(x, y) * texel, low, high);
+            lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], at, ndc.z);
+        }
+    }
+    return lit / 9.0;
+}
+
 // How much of a local light reaches `position` past what its shadow holds in
 // the way: 1 for a light that casts none. Nine taps of hardware 2x2
-// filtering soften the edge, kept inside the view. A light with a shape,
-// with `soft`, softens it as wide as its shape makes it: percentage-closer
+// filtering soften the edge, kept inside the view. A light with a shape or
+// a radius, with `soft`, softens it as wide as the light is: percentage-closer
 // soft shadows (Fernando 2005), so shadows stay sharp where things touch
-// and soften away from them.
+// and soften away from them. A lamp read from its virtual shadow pages takes
+// the darker of them and what moves, drawn into the atlas this frame.
 float localShadow(Frame* frame, Light light, float3 position, float3 normal, bool soft = true)
 {
     if (light.shadow == NO_SHADOW || frame->localShadows.texture == NO_TEXTURE)
@@ -514,29 +787,19 @@ float localShadow(Frame* frame, Light light, float3 position, float3 normal, boo
     {
         return 1.0;
     }
-    float tile = float(LOCAL_SHADOW_TILE);
-    float2 corner = float2(view % LOCAL_SHADOW_COLUMNS, view / LOCAL_SHADOW_COLUMNS) * tile;
-    float2 low = (corner + 1.5) / float2(LOCAL_SHADOW_ATLAS);
-    float2 high = (corner + tile - 1.5) / float2(LOCAL_SHADOW_ATLAS);
-    float2 uv = (corner + (ndc.xy * 0.5 + 0.5) * tile) / float2(LOCAL_SHADOW_ATLAS);
-    float2 texel = 1.0 / float2(LOCAL_SHADOW_ATLAS);
-    bool kept = localShadowKept(frame, light.shadow / LOCAL_SHADOW_SLOT_VIEWS);
-    uint texture = kept ? frame->localShadows.cache : frame->localShadows.texture;
-    Texture2D atlas = textures[NonUniformResourceIndex(texture)];
-    if (soft && light.shadowRadius > 0.0)
+    uint slot = light.shadow / LOCAL_SHADOW_SLOT_VIEWS;
+    if (lampPaged(frame, slot))
     {
-        return localSoftShadow(frame, light, atlas, uv, ndc.z, low, high, texelMetres, position);
-    }
-    float lit = 0.0;
-    for (int y = -1; y <= 1; y++)
-    {
-        for (int x = -1; x <= 1; x++)
+        float lit = lampShadow(frame, light, view, position, normal, soft);
+        if (lit <= 0.0 || !lampMoving(frame, slot))
         {
-            float2 at = clamp(uv + float2(x, y) * texel, low, high);
-            lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], at, ndc.z);
+            return lit;
         }
+        return min(lit, localAtlasShadow(frame, light, frame->localShadows.texture, view, ndc, position, soft));
     }
-    return lit / 9.0;
+    bool kept = localShadowKept(frame, slot);
+    uint texture = kept ? frame->localShadows.cache : frame->localShadows.texture;
+    return localAtlasShadow(frame, light, texture, view, ndc, position, soft);
 }
 
 // What glass lets through of a local light to a point (glassLight), white

@@ -1836,7 +1836,7 @@ fn kept_local_shadows_draw_the_same_image_as_drawing_them_whole_every_frame() {
     let paths = [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders];
     for (light, meshlets) in kinds.into_iter().flat_map(|light| paths.map(|meshlets| (light, meshlets))) {
         let render = |caching: bool| {
-            let options = ViewOptions { local_shadow_cache: caching, ..ViewOptions::default() };
+            let options = ViewOptions { local_shadow_cache: caching, ..atlas_lamps() };
             let mut renderer = renderer_culling(meshlets, options)?;
             let (world, ..) = boxed_light_world(&mut renderer, light);
             // Long enough for what stands still to be kept, and the stats to come back from the frames after.
@@ -1875,7 +1875,7 @@ fn kept_local_shadows_follow_what_moves_comes_and_goes_and_the_light_moving() {
         world.get_mut::<Transform>(lamp).unwrap().position = light_at;
         Some(draw_frames(&mut renderer, &world, &mut 0.0, 3).0)
     };
-    let Some(mut renderer) = renderer_culling(Meshlets::Off, ViewOptions::default()) else { return };
+    let Some(mut renderer) = renderer_culling(Meshlets::Off, atlas_lamps()) else { return };
     let (mut world, boxed, lamp) = boxed_light_world(&mut renderer, light);
     let mut time = 0.0;
     let (still, draws) = draw_frames(&mut renderer, &world, &mut time, 24);
@@ -1914,6 +1914,128 @@ fn kept_local_shadows_follow_what_moves_comes_and_goes_and_the_light_moving() {
     assert!(apart <= DITHER_APART, "the light moved, its shadows with it: {apart} apart");
 }
 
+/// View options drawing lamps' shadows into the atlas, kept as the kept
+/// atlas keeps them, rather than into virtual shadow pages.
+fn atlas_lamps() -> ViewOptions {
+    ViewOptions { lamp_shadows: Some(voxear_render::LampShadows::Atlas), ..ViewOptions::default() }
+}
+
+/// The floor by the end of a wall lit by a point lamp three metres up and
+/// three to the left of it, seen from 1.2 metres above, two metres out
+/// along the edge of the wall's shadow, which crosses the picture's middle
+/// left to right: shadowed below it, lit above it.
+fn lamp_edge_render(lamp_shadows: voxear_render::LampShadows, meshlets: Meshlets) -> Option<Vec<u8>> {
+    let options = ViewOptions { lamp_shadows: Some(lamp_shadows), ..ViewOptions::default() };
+    let mut renderer = renderer_culling(meshlets, options)?;
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let eye = Transform::new(Vec3::new(2.0, 1.2, 0.0), lamp_camera_rotation(), Vec3::ONE);
+    world.spawn((Camera::default(), eye));
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 3.0, -5.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 10.0));
+    world.spawn((MeshRenderer::new(cube, material), wall));
+    let lamp = Light::point(Vec3::ONE, 40.0, 20.0);
+    world.spawn((lamp, Transform::from_position(Vec3::new(-3.0, 3.0, 0.0))));
+    world.insert_resource(voxear_render::Sky { ambient: 0.0, ..voxear_render::Sky::default() });
+    let anti_aliasing =
+        voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
+    let mut post = voxear_render::PostProcess { anti_aliasing, ..voxear_render::PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    // Long enough for the wall and floor to stand still and go into the pages.
+    run(&mut renderer, &world, &mut 0.0, 30);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How many pixels down the picture's middle column the shadow's edge takes
+/// to go from a tenth of the way from dark to lit to nine tenths.
+fn edge_pixels(pixels: &[u8]) -> usize {
+    let column: Vec<i32> = (0..360).map(|y| rgb_at(pixels, (320, y)).iter().sum()).collect();
+    let (dark, lit) = (*column.iter().min().unwrap(), *column.iter().max().unwrap());
+    let range = lit - dark;
+    column.iter().filter(|&&value| value > dark + range / 10 && value < dark + range * 9 / 10).count()
+}
+
+#[test]
+fn a_lamps_virtual_shadow_is_sharper_than_its_atlas_view_near_the_camera() {
+    use voxear_render::LampShadows;
+    for meshlets in [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders] {
+        let (Some(paged), Some(atlas)) =
+            (lamp_edge_render(LampShadows::Virtual, meshlets), lamp_edge_render(LampShadows::Atlas, meshlets))
+        else {
+            continue;
+        };
+        keep_image(&format!("lamp edge virtual {meshlets:?}.png"), &paged);
+        keep_image(&format!("lamp edge atlas {meshlets:?}.png"), &atlas);
+        let (sharp, soft) = (edge_pixels(&paged), edge_pixels(&atlas));
+        assert!(sharp * 3 <= soft, "{meshlets:?}: the edge takes {sharp} pixels from its pages, {soft} from the atlas");
+        // The same shadow either way: dark below the edge, lit above it.
+        for pixels in [&paged, &atlas] {
+            let (below, above) = (rgb_at(pixels, (320, 300))[0], rgb_at(pixels, (320, 60))[0]);
+            assert!(below * 4 < above, "{meshlets:?}: shadowed below the edge ({below}), lit above it ({above})");
+        }
+    }
+}
+
+#[test]
+fn lamp_pages_are_kept_while_nothing_moves_and_what_moves_casts_over_them() {
+    let light = Light::point(Vec3::ONE, 6.0, 10.0);
+    let (behind, clear) = (Vec3::new(0.2, 0.0, 0.0), Vec3::new(-4.2, 0.0, 0.0));
+    let moved = Vec3::new(-1.0, 1.0, 2.0);
+    let behind_moved = Vec3::new(0.2, 0.0, 4.0);
+    for meshlets in [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders] {
+        // The atlas drawn whole each frame, with the box where it is.
+        let whole = |place: Vec3| {
+            let options = ViewOptions { local_shadow_cache: false, ..ViewOptions::default() };
+            let mut renderer = renderer_culling(meshlets, options)?;
+            let (mut world, boxed, _) = boxed_light_world(&mut renderer, light);
+            *world.get_mut::<Transform>(boxed).unwrap() = box_at(place);
+            Some(draw_frames(&mut renderer, &world, &mut 0.0, 3).0)
+        };
+        let Some(mut renderer) = renderer_culling(meshlets, ViewOptions::default()) else { continue };
+        let (mut world, boxed, _) = boxed_light_world(&mut renderer, light);
+        let mut time = 0.0;
+        let stats = run(&mut renderer, &world, &mut time, 24);
+        let still = renderer.read_pixels().unwrap().2;
+        keep_image(&format!("lamp pages still {meshlets:?}.png"), &still);
+        assert!(stats.lamp_shadow_pages > 0, "{meshlets:?}: pages held");
+        assert_eq!(
+            (stats.lamp_shadow_drawn, stats.shadow_draws),
+            (0, 0),
+            "{meshlets:?}: nothing drawn once all is kept"
+        );
+        let Some(expected) = whole(Vec3::new(-1.0, 1.0, 0.0)) else { continue };
+        let apart = most_apart(&still, &expected);
+        assert!(apart <= 4, "{meshlets:?}: the pages show what the atlas drawn whole does: {apart} apart");
+
+        // The box moves: drawn into the atlas over the pages the frame it moves, and gone from where it stood.
+        *world.get_mut::<Transform>(boxed).unwrap() = box_at(moved);
+        let (moving, _) = draw_frames(&mut renderer, &world, &mut time, 1);
+        keep_image(&format!("lamp pages box moved {meshlets:?}.png"), &moving);
+        assert!(
+            floor_brightness(&moving, behind) * 4 > floor_brightness(&moving, clear) * 3,
+            "{meshlets:?}: lit where it stood"
+        );
+        assert!(
+            floor_brightness(&moving, behind_moved) * 4 < floor_brightness(&moving, clear),
+            "{meshlets:?}: shadowed where it went"
+        );
+        let Some(expected) = whole(moved) else { continue };
+        let apart = most_apart(&moving, &expected);
+        assert!(apart <= 4, "{meshlets:?}: the frame it moves, as drawn whole: {apart} apart");
+
+        // Standing still again, it goes into the pages, and nothing is drawn after.
+        let stats = run(&mut renderer, &world, &mut time, 24);
+        let kept = renderer.read_pixels().unwrap().2;
+        assert_eq!((stats.lamp_shadow_drawn, stats.shadow_draws), (0, 0), "{meshlets:?}: kept again");
+        let apart = most_apart(&kept, &expected);
+        assert!(apart <= 4, "{meshlets:?}: and drawn the same: {apart} apart");
+    }
+}
+
 /// The local shadow passes' GPU time in a hall of 400 pillars and balls
 /// lit by eight lamps, each pass's least over 60 frames, summed, after the
 /// hall has stood still long enough to be kept; one ball circles by a lamp
@@ -1921,7 +2043,7 @@ fn kept_local_shadows_follow_what_moves_comes_and_goes_and_the_light_moving() {
 /// frame. Not run with the rest: `cargo test -p voxear_render --test gpu
 /// -- --ignored --nocapture local_shadow_timings`.
 fn local_shadow_time(caching: bool) -> Option<(f32, Vec<(String, f32)>)> {
-    let least = hall_pass_times(caching, None)?;
+    let least = hall_pass_times(ViewOptions { local_shadow_cache: caching, ..atlas_lamps() }, None)?;
     let local: Vec<(String, f32)> = least.into_iter().filter(|(name, _)| name.contains("ocal shadow")).collect();
     Some((local.iter().map(|(_, ms)| ms).sum(), local))
 }
@@ -1929,8 +2051,7 @@ fn local_shadow_time(caching: bool) -> Option<(f32, Vec<(String, f32)>)> {
 /// Each pass's least GPU time over 60 frames in the hall of pillars and
 /// balls, lit by eight point lights, or by eight rectangle lights a metre
 /// a side, facing down, with or without soft shadows.
-fn hall_pass_times(caching: bool, rectangles: Option<bool>) -> Option<Vec<(String, f32)>> {
-    let options = ViewOptions { local_shadow_cache: caching, ..ViewOptions::default() };
+fn hall_pass_times(options: ViewOptions, rectangles: Option<bool>) -> Option<Vec<(String, f32)>> {
     let mut renderer =
         renderer_culling(Meshlets::MeshShaders, options.clone()).or_else(|| renderer_culling(Meshlets::Compute, options))?;
     let cube = renderer.primitive(Primitive::Cube).unwrap();
@@ -1993,7 +2114,9 @@ fn local_shadow_timings() {
     };
     println!("drawn whole every frame: {whole:.3} ms {whole_passes:?}");
     println!("what stands still kept:  {kept:.3} ms {kept_passes:?}");
-    let (Some(hard), Some(soft)) = (hall_pass_times(true, Some(false)), hall_pass_times(true, Some(true))) else {
+    let (Some(hard), Some(soft)) =
+        (hall_pass_times(atlas_lamps(), Some(false)), hall_pass_times(atlas_lamps(), Some(true)))
+    else {
         return;
     };
     for (name, ms) in &soft {
@@ -2004,12 +2127,49 @@ fn local_shadow_timings() {
     }
 }
 
+/// The hall's passes with lamps' shadows in the kept atlas and in virtual
+/// shadow pages, point lamps and soft rectangles, each pass's least over 60
+/// frames. Not run with the rest: `cargo test -p voxear_render --test gpu
+/// -- --ignored --nocapture lamp_page_timings`.
+#[test]
+#[ignore]
+fn lamp_page_timings() {
+    let paged = ViewOptions { lamp_shadows: Some(voxear_render::LampShadows::Virtual), ..ViewOptions::default() };
+    for rectangles in [None, Some(true)] {
+        let (Some(atlas), Some(pages)) =
+            (hall_pass_times(atlas_lamps(), rectangles), hall_pass_times(paged.clone(), rectangles))
+        else {
+            return;
+        };
+        let names: Vec<&String> = atlas.iter().chain(&pages).map(|(name, _)| name).collect();
+        let mut shown: Vec<&String> = Vec::new();
+        for name in names {
+            if shown.contains(&name) {
+                continue;
+            }
+            shown.push(name);
+            let of = |times: &[(String, f32)]| times.iter().find(|(known, _)| known == name).map_or(0.0, |(_, ms)| *ms);
+            let (before, after) = (of(&atlas), of(&pages));
+            if (before - after).abs() > 0.003 || name.contains("hadow") || name.contains("Opaque") {
+                println!("{rectangles:?} {name}: {before:.3} ms atlas, {after:.3} ms pages");
+            }
+        }
+    }
+}
+
 /// The floor lit by a rectangle light `size` metres a side, three metres
 /// up and three to the left, facing down, beside a wall standing on the
 /// floor at its middle and running from there off along -z: its shadow's
 /// edge runs across the floor along +x from the wall's end, near the wall
 /// cast by its foot and far from it by higher up.
 fn area_shadow_render(size: f32, soft: bool) -> Option<Vec<u8>> {
+    let light = Light { soft_shadows: soft, ..Light::rectangle(Vec3::ONE, 40.0, 20.0, size, size) };
+    wall_shadow_render(light, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
+}
+
+/// The wall's shadow (see `area_shadow_render`) from `light`, turned by
+/// `turn`, three metres up and three to the left.
+fn wall_shadow_render(light: Light, turn: Quat) -> Option<Vec<u8>> {
     let mut renderer = renderer()?;
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2019,9 +2179,7 @@ fn area_shadow_render(size: f32, soft: bool) -> Option<Vec<u8>> {
     world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
     let wall = Transform::new(Vec3::new(0.0, 3.0, -5.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 10.0));
     world.spawn((MeshRenderer::new(cube, material), wall));
-    let light = Light { soft_shadows: soft, ..Light::rectangle(Vec3::ONE, 40.0, 20.0, size, size) };
-    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-    world.spawn((light, Transform::new(Vec3::new(-3.0, 3.0, 0.0), down, Vec3::ONE)));
+    world.spawn((light, Transform::new(Vec3::new(-3.0, 3.0, 0.0), turn, Vec3::ONE)));
     world.insert_resource(voxear_render::Sky { ambient: 0.0, ..voxear_render::Sky::default() });
     let anti_aliasing =
         voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
@@ -2048,6 +2206,39 @@ fn an_area_lights_shadow_softens_with_its_size_and_away_from_what_casts_it() {
     assert!(far > near * 2.0, "softer far from the wall: {far} m against {near} m by its foot");
     assert!(far > small_far * 2.0, "softer from a larger light: {far} m against {small_far} m");
     assert!(far > hard_far * 2.0, "and softer than with soft shadows off: {far} m against {hard_far} m");
+}
+
+#[test]
+fn a_point_lights_radius_softens_its_shadow() {
+    let bulb = |radius: f32| Light { radius, ..Light::point(Vec3::ONE, 40.0, 20.0) };
+    assert_eq!(bulb(0.0).radius, Light::point(Vec3::ONE, 1.0, 1.0).radius, "a point of light by default");
+    let (Some(point), Some(wide)) =
+        (wall_shadow_render(bulb(0.0), Quat::IDENTITY), wall_shadow_render(bulb(0.5), Quat::IDENTITY))
+    else {
+        return;
+    };
+    keep_image("point light radius 0.png", &point);
+    keep_image("point light radius 0.5.png", &wide);
+    let (hard, soft) = (penumbra_width(&point, 4.5), penumbra_width(&wide, 4.5));
+    let near = penumbra_width(&wide, 0.8);
+    assert!(soft > hard * 2.0, "a bulb half a metre round softens it: {soft} m against {hard} m");
+    assert!(soft > near * 2.0, "most far from the wall: {soft} m against {near} m by its foot");
+}
+
+#[test]
+fn a_tubes_shadow_softens_along_its_length_more_than_across_it() {
+    let tube = Light::tube(Vec3::ONE, 40.0, 20.0, 2.0, 0.03);
+    // Along x, its length lies along the shadow's edge; turned to run along z, across it.
+    let (Some(along), Some(across)) = (
+        wall_shadow_render(tube, Quat::IDENTITY),
+        wall_shadow_render(tube, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+    ) else {
+        return;
+    };
+    keep_image("tube along the edge.png", &along);
+    keep_image("tube across the edge.png", &across);
+    let (narrow, wide) = (penumbra_width(&along, 4.5), penumbra_width(&across, 4.5));
+    assert!(wide > narrow * 2.0, "softer where its length runs across the edge: {wide} m against {narrow} m");
 }
 
 #[test]
@@ -2141,8 +2332,16 @@ fn volumetric_fog_is_dark_in_shadow_and_glows_round_a_lamp() {
 /// along +X by a sun 40 degrees from straight down, as soft as `softness`
 /// makes it. The shadow's edge runs along X from where the wall ends.
 fn post_shadow_render(softness: f32) -> Option<Vec<u8>> {
-    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
     let mut renderer = renderer()?;
+    let (world, _) = post_shadow_world(&mut renderer, softness);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The wall's world (see `post_shadow_render`), and a box on the floor in
+/// the sun clear of the wall's shadow, for a test to move.
+fn post_shadow_world(renderer: &mut Renderer, softness: f32) -> (World, voxear_ecs::Entity) {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2155,14 +2354,83 @@ fn post_shadow_render(softness: f32) -> Option<Vec<u8>> {
     let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
     let light = Light { softness, ..Light::directional(Vec3::ONE, 2.0) };
     world.spawn((light, Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let boxed = world.spawn((MeshRenderer::new(cube, material), Transform::from_position(Vec3::new(-6.0, 0.5, 3.0))));
     world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
     let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
     let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
     post.ambient_occlusion.enabled = false;
     post.contact_shadows.enabled = false;
     world.insert_resource(post);
-    run(&mut renderer, &world, &mut 0.0, 3);
-    Some(renderer.read_pixels().unwrap().2)
+    (world, boxed)
+}
+
+fn sun_renderer(sun_shadows: voxear_render::SunShadows) -> Option<Renderer> {
+    let mut renderer = renderer()?;
+    renderer.set_view_options(ViewOptions { sun_shadows: Some(sun_shadows), ..ViewOptions::default() });
+    Some(renderer)
+}
+
+/// The share of pixels two pictures shade differently: dark in one and not
+/// in the other.
+fn shaded_apart(a: &[u8], b: &[u8]) -> f32 {
+    let dark = |pixels: &[u8], i: usize| pixels[i * 4..i * 4 + 3].iter().map(|&c| u32::from(c)).sum::<u32>() < 300;
+    let apart = (0..640 * 360).filter(|&i| dark(a, i) != dark(b, i)).count();
+    apart as f32 / (640.0 * 360.0)
+}
+
+#[test]
+fn virtual_shadows_cast_the_cascades_shadows_as_sharp_or_sharper() {
+    use voxear_render::SunShadows;
+    let render = |sun| {
+        let mut renderer = sun_renderer(sun)?;
+        let (world, _) = post_shadow_world(&mut renderer, 0.0);
+        Some(draw_frames(&mut renderer, &world, &mut 0.0, 12))
+    };
+    let (Some((cascades, _)), Some((pages, _))) = (render(SunShadows::Cascades), render(SunShadows::Virtual)) else {
+        return;
+    };
+    keep_image("sun shadow cascades.png", &cascades);
+    keep_image("sun shadow virtual.png", &pages);
+    let apart = shaded_apart(&cascades, &pages);
+    assert!(apart < 0.01, "the same shadows: {:.2}% of pixels shaded differently", apart * 100.0);
+    let (edge_cascades, edge_pages) = (penumbra_width(&cascades, 2.0), penumbra_width(&pages, 2.0));
+    assert!(edge_pages <= edge_cascades, "as sharp or sharper: {edge_pages} m against {edge_cascades} m");
+}
+
+#[test]
+fn virtual_shadow_pages_are_kept_while_nothing_moves_and_drawn_again_where_something_does() {
+    use voxear_render::SunShadows;
+    let Some(mut renderer) = sun_renderer(SunShadows::Virtual) else { return };
+    let (mut world, boxed) = post_shadow_world(&mut renderer, 0.0);
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 30);
+    let still = renderer.stats();
+    assert!(still.virtual_shadow_pages > 0, "pages held");
+    assert_eq!(still.virtual_shadow_drawn, 0, "none drawn again while nothing moves");
+    // The box moves: the pages where it stood are drawn again without it, and while it moves those it stands in are
+    // copied each frame with it drawn over them.
+    let moved = Vec3::new(-6.0, 0.5, -1.0);
+    world.get_mut::<Transform>(boxed).unwrap().position = moved;
+    time += FRAME;
+    renderer.render(&world, time).unwrap();
+    assert!(renderer.stats().virtual_shadow_drawn > 0, "pages drawn again where the box stood");
+    assert!(renderer.stats().virtual_shadow_moving > 0, "and those it stands in copied, it drawn over them");
+    time += FRAME;
+    renderer.render(&world, time).unwrap();
+    let moving = renderer.stats();
+    assert_eq!(moving.virtual_shadow_drawn, 0, "nothing drawn again the next frame");
+    assert!(moving.virtual_shadow_moving > 0, "the box still counted as moving, its pages copied");
+    let (settled, _) = draw_frames(&mut renderer, &world, &mut time, 30);
+    assert_eq!(renderer.stats().virtual_shadow_drawn, 0, "and kept again once it stands still");
+    assert_eq!(renderer.stats().virtual_shadow_moving, 0, "copying nothing");
+    keep_image("virtual shadows, the box moved.png", &settled);
+    // As a view that never saw it stand anywhere else.
+    let Some(mut fresh) = sun_renderer(SunShadows::Virtual) else { return };
+    let (mut world, boxed) = post_shadow_world(&mut fresh, 0.0);
+    world.get_mut::<Transform>(boxed).unwrap().position = moved;
+    let (expected, _) = draw_frames(&mut fresh, &world, &mut 0.0, 30);
+    let apart = shaded_apart(&settled, &expected);
+    assert!(apart < 0.001, "shadowed as a fresh view: {:.3}% apart", apart * 100.0);
 }
 
 /// How wide, in metres, the shadow's edge goes from mostly shaded to mostly
@@ -2189,21 +2457,26 @@ fn a_soft_sun_softens_shadows_more_the_farther_they_fall() {
     assert!(soft_far > hard_far * 2.0, "wider than a hard shadow: {soft_far} m against {hard_far} m");
 }
 
-/// A box on a floor 120 m away, beyond the reach of shadow maps, seen
+/// A box on a floor 120 m away, beyond the reach of the cascades, seen
 /// through a narrow lens under a low sun, with contact shadows on or off.
 fn far_box_render(contact: bool) -> Option<Vec<u8>> {
+    far_box_render_with(contact, voxear_render::SunShadows::Cascades, 120.0)
+}
+
+/// The same `away` metres off, the sun's shadows drawn `sun_shadows`.
+fn far_box_render_with(contact: bool, sun_shadows: voxear_render::SunShadows, away: f32) -> Option<Vec<u8>> {
     use voxear_render::{AntiAliasing, AntiAliasingMode, ContactShadows, PostProcess, Sky};
-    let mut renderer = renderer()?;
+    let mut renderer = sun_renderer(sun_shadows)?;
     let mut world = World::new();
-    let camera = Camera { fov_y_degrees: 4.0, ..Camera::default() };
-    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -20.0, 120.0).normalize());
+    let camera = Camera { fov_y_degrees: 4.0 * 120.0 / away, ..Camera::default() };
+    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -20.0, away).normalize());
     world.spawn((camera, Transform::new(Vec3::new(0.0, 20.0, 0.0), looking, Vec3::ONE)));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let material = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let floor = Transform::new(Vec3::new(0.0, 0.0, 120.0), Quat::IDENTITY, Vec3::splat(40.0));
+    let floor = Transform::new(Vec3::new(0.0, 0.0, away), Quat::IDENTITY, Vec3::splat(40.0));
     world.spawn((MeshRenderer::new(plane, material), floor));
-    world.spawn((MeshRenderer::new(cube, material), Transform::from_position(Vec3::new(0.0, 0.5, 120.0))));
+    world.spawn((MeshRenderer::new(cube, material), Transform::from_position(Vec3::new(0.0, 0.5, away))));
     // Low, from the left, so the box's shadow falls to its right on screen.
     let towards_sun = Vec3::new(-1.0, 0.5, 0.0).normalize();
     world.spawn((Light::directional(Vec3::ONE, 2.0), Transform::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::Z, -towards_sun), Vec3::ONE)));
@@ -2215,8 +2488,30 @@ fn far_box_render(contact: bool) -> Option<Vec<u8>> {
     let mut post = PostProcess { anti_aliasing, contact_shadows, ..PostProcess::neutral() };
     post.ambient_occlusion.enabled = false;
     world.insert_resource(post);
-    run(&mut renderer, &world, &mut 0.0, 3);
+    run(&mut renderer, &world, &mut 0.0, 12);
     Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn virtual_shadows_reach_a_box_six_hundred_metres_off_where_cascades_do_not() {
+    use voxear_render::SunShadows;
+    let (Some(cascades), Some(pages)) = (
+        far_box_render_with(false, SunShadows::Cascades, 600.0),
+        far_box_render_with(false, SunShadows::Virtual, 600.0),
+    ) else {
+        return;
+    };
+    keep_image("far box, cascades.png", &cascades);
+    keep_image("far box, virtual shadows.png", &pages);
+    let darker: Vec<usize> = (0..640 * 360)
+        .filter(|&i| {
+            let (a, b) = (&cascades[i * 4..i * 4 + 3], &pages[i * 4..i * 4 + 3]);
+            a.iter().zip(b).map(|(a, b)| i32::from(*a) - i32::from(*b)).sum::<i32>() > 30
+        })
+        .collect();
+    // The floor is seen nearly edge on from so far away: the shadow is a strip a pixel or two high, on the box's right.
+    assert!(darker.len() > 60, "the box's shadow on the floor: {} pixels darker", darker.len());
+    assert!(darker.iter().all(|&i| i % 640 >= 320), "all of it to the box's right, away from the sun");
 }
 
 #[test]
@@ -2751,6 +3046,8 @@ fn a_sun_look_colours_the_sun_and_tints_its_shadows() {
         shadow_distance: voxear_render::SHADOW_DISTANCE,
         shadow_split: voxear_render::SHADOW_SPLIT,
         canopy: 0.0,
+        sun_shadows: voxear_render::SunShadows::Virtual,
+        lamp_shadows: voxear_render::LampShadows::Virtual,
     };
     let (Some(before), Some(after)) = (shadow_tint_render(light, None), shadow_tint_render(light, Some(look))) else {
         return;

@@ -80,7 +80,9 @@ pub struct Light {
     /// A rectangle's size, in metres.
     pub width: f32,
     pub height: f32,
-    /// A disc's or a tube's radius, in metres.
+    /// A disc's or a tube's radius, in metres; for a point or spot light,
+    /// its bulb's or flame's, which softens its shadow (see `soft_shadows`),
+    /// 0 by default for hard edges.
     pub radius: f32,
     /// A tube's length, end to end, in metres.
     pub length: f32,
@@ -95,10 +97,11 @@ pub struct Light {
     /// degree. A rectangle, disc or tube softens its shadow by its own size
     /// (see `soft_shadows`).
     pub softness: f32,
-    /// Whether a rectangle, disc or tube light's shadow softens as wide as
-    /// the light is, from hard where things touch to softer the farther it
-    /// falls from them; on by default. Off, its edges are hard, as a point
-    /// light's are, and cost less to shade.
+    /// Whether a local light's shadow softens as wide as the light is: a
+    /// rectangle, disc or tube by its shape, a point or spot light by its
+    /// `radius`; from hard where things touch to softer the farther it falls
+    /// from them, and along a tube or a long rectangle more than across it.
+    /// On by default. Off, its edges are hard, and cost less to shade.
     pub soft_shadows: bool,
     /// Whether a point, spot, area or tube light casts shadows, as Unity's
     /// Shadow Type; on by default. Each that does draws what is round it
@@ -274,6 +277,10 @@ pub struct ExtractedFrame {
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
     pub has_sun: bool,
+    /// How the sun's shadows are drawn, as the scene's lighting says.
+    pub sun_shadows: crate::SunShadows,
+    /// How lamps' shadows are drawn, as the scene's lighting says.
+    pub lamp_shadows: crate::LampShadows,
     /// Each slot of the local shadow atlas, in its list's order: its first
     /// view and how many its light takes this frame, none for a slot no
     /// light has (see `shadow_cache`).
@@ -364,6 +371,12 @@ pub struct ViewOptions {
     /// frame to frame, drawing only what moves each frame (see
     /// `shadow_cache`). On by default; off, to compare.
     pub local_shadow_cache: bool,
+    /// How the sun's shadows are drawn, whatever the scene's lighting says,
+    /// as `vox render --sun-shadows` does, to compare.
+    pub sun_shadows: Option<crate::SunShadows>,
+    /// How lamps' shadows are drawn, whatever the scene's lighting says, as
+    /// `vox render --lamp-shadows` does, to compare.
+    pub lamp_shadows: Option<crate::LampShadows>,
 }
 
 impl Default for ViewOptions {
@@ -379,6 +392,8 @@ impl Default for ViewOptions {
             render_scale: None,
             upscaler: None,
             local_shadow_cache: true,
+            sun_shadows: None,
+            lamp_shadows: None,
         }
     }
 }
@@ -1057,6 +1072,12 @@ pub fn extract(
         has_sun: sun_found,
         local_shadows: Vec::new(),
         shadow_lights,
+        sun_shadows: options
+            .sun_shadows
+            .unwrap_or(sun_look.map_or(crate::SunShadows::default(), |look| look.sun_shadows)),
+        lamp_shadows: options
+            .lamp_shadows
+            .unwrap_or(sun_look.map_or(crate::LampShadows::default(), |look| look.lamp_shadows)),
         entities,
         post,
         render_size: (width, height),
@@ -1130,7 +1151,8 @@ fn shadow_light(light: &Light, transform: &Transform, gpu: &GpuLight) -> shadows
         LightKind::Rectangle => Vec3::new(gpu.size[0], gpu.size[1], 0.0).length(),
         LightKind::Disc => gpu.size[0],
         LightKind::Tube => gpu.size[0] + gpu.size[1],
-        _ => 0.0,
+        LightKind::Point | LightKind::Spot => light.radius.max(0.0),
+        LightKind::Directional => 0.0,
     };
     shadows::LocalLight {
         position: transform.position,
@@ -1194,19 +1216,22 @@ fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
         shadow: NO_SHADOW,
         shadow_near: 0.0,
         shadow_far: 0.0,
-        shadow_radius: if light.soft_shadows { shadow_radius(light.kind, size) } else { 0.0 },
+        shadow_radius: if light.soft_shadows { shadow_radius(light, size) } else { 0.0 },
     }
 }
 
-/// How far a shape reaches round its middle, as its shadow softens by it:
-/// the average of its half width and half height, a disc's radius, a tube's
-/// half length and radius; none for a point or spot light. `size` is as
-/// `GpuLight::size` holds it.
-fn shadow_radius(kind: LightKind, size: [f32; 2]) -> f32 {
-    match kind {
-        LightKind::Rectangle | LightKind::Tube => (size[0] + size[1]) * 0.5,
+/// How far a light reaches round its middle, as its shadow softens by it:
+/// a point or spot light's radius; for a shape, the farthest it reaches,
+/// which its shadow's search for blockers keeps within, the shaders taking
+/// its shape from `size` (`localLightAcross`). 0 for a hard edge. `size` is
+/// as `GpuLight::size` holds it.
+fn shadow_radius(light: &Light, size: [f32; 2]) -> f32 {
+    match light.kind {
+        LightKind::Rectangle => size[0].max(size[1]),
         LightKind::Disc => size[0],
-        _ => 0.0,
+        LightKind::Tube => size[0] + size[1],
+        LightKind::Point | LightKind::Spot => light.radius.max(0.0),
+        LightKind::Directional => 0.0,
     }
 }
 

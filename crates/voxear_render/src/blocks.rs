@@ -404,6 +404,9 @@ pub(crate) struct ChunkDraw {
     /// `voxear_terrain::blocks::mesh::ChunkMesh::cone`), [`EVERY_WAY`] where
     /// they face every way; `None` for cubes, kept by the way they face.
     pub cone: Option<[f32; 4]>,
+    /// Which of its meshes it is drawn from, the same while its blocks are,
+    /// wherever in the pool they lie (see `shadow_cache`).
+    pub mesh: usize,
 }
 
 /// How far from the camera a chunk's loose quads are drawn, in blocks
@@ -980,6 +983,7 @@ impl Pool {
                 let (parts, count) = held.mesh.parts();
                 let parts = [held.first as u32 + parts, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
+                let mesh = Arc::as_ptr(&held.mesh) as usize;
                 ChunkDraw {
                     key: *key,
                     bounds: held.bounds,
@@ -990,6 +994,7 @@ impl Pool {
                     parts,
                     water,
                     cone,
+                    mesh,
                 }
             });
             self.draws = Some(draws.collect());
@@ -1646,6 +1651,7 @@ pub(crate) fn gather(
     buffer: &Buffer,
     (offset, sights, shadows, rings): (Vec3, Option<Vec3>, bool, bool),
     lamps: &crate::shadow_cache::Lamps,
+    sun_pages: &[(usize, [[f32; 4]; 6])],
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
@@ -1786,9 +1792,15 @@ pub(crate) fn gather(
                 };
             }
         }
+        // The faces turned towards the sun within each level of its virtual shadow maps drawn this frame.
+        for (level, planes) in sun_pages.iter().filter(|_| blocks.cast_shadows) {
+            let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
+            let planes = turned_planes(planes, corner, back);
+            lists[VSM_LIST as usize + level] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+        }
         let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
         for (slot, (at, reach)) in lit.filter(|_| blocks.cast_shadows) {
-            let planes = turned_planes(&reach_planes(at, reach), corner, back);
+            let planes = turned_planes(&crate::shadow_cache::reach_planes(at, reach), corner, back);
             let from = back * (at - corner);
             // What the world shows from the place nearest the lamp, so its shadow is the same wherever the camera is.
             let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
@@ -1799,11 +1811,12 @@ pub(crate) fn gather(
             let picked =
                 |parts| pick_parts(&blocks.chunks, &planes, (Facing::Camera(from), None), (None, shown), parts);
             let list = LIST_LOCAL_SHADOW as usize + slot;
-            if blocks.turn.is_none() && lamps.is_cached(slot) {
+            // A lamp drawing its virtual shadow pages takes what stands still into them, kept or not yet.
+            if blocks.turn.is_none() && (lamps.is_cached(slot) || lamps.redraws(slot)) {
                 if lamps.redraws(slot) {
                     lists[LAMP_KEPT as usize + slot] = picked(Parts::Without);
                 }
-                lists[list] = picked(Parts::Only);
+                lists[list] = picked(if lamps.is_cached(slot) { Parts::Only } else { Parts::With });
             } else {
                 lists[list] = picked(Parts::With);
             }
@@ -1827,24 +1840,16 @@ const LAMP_KEPT: u32 = LIST_COUNT;
 /// cascade. Its list at `LIST_SHADOW` draws the rest.
 const SHADOW_CUT: u32 = LAMP_KEPT + LOCAL_SHADOW_LIGHTS as u32;
 
+/// Where its lists for the levels of the sun's virtual shadow maps start,
+/// after those: one a level.
+const VSM_LIST: u32 = SHADOW_CUT + CASCADES as u32;
+
 /// How many lists each world has.
-const LISTS: usize = SHADOW_CUT as usize + CASCADES;
+const LISTS: usize = VSM_LIST as usize + crate::vsm::LEVELS;
 
 /// The first sun cascade whose texels are as large as a block's pictures'
 /// pixels, into which faces cut out from their pictures cast as solid.
 const SOLID_CASCADE: usize = CASCADES - 1;
-
-/// The planes, inward, round a lamp's reach.
-fn reach_planes(at: Vec3, reach: f32) -> [[f32; 4]; 6] {
-    [
-        [1.0, 0.0, 0.0, reach - at.x],
-        [-1.0, 0.0, 0.0, reach + at.x],
-        [0.0, 1.0, 0.0, reach - at.y],
-        [0.0, -1.0, 0.0, reach + at.y],
-        [0.0, 0.0, 1.0, reach - at.z],
-        [0.0, 0.0, -1.0, reach + at.z],
-    ]
-}
 
 impl ViewBlocks {
     /// The lamps' slots, a bit each, for which a world draws something
@@ -1862,6 +1867,23 @@ impl ViewBlocks {
     pub fn draws_for_lamp(&self, slot: u32, kept: bool) -> bool {
         let stored = if kept { LAMP_KEPT + slot } else { LIST_LOCAL_SHADOW + slot };
         draws(self, stored)
+    }
+}
+
+/// Each world's quads a level of the sun's virtual shadow maps takes, drawn
+/// into page `view` (`VSM_PAGE_VIEW` on), as `draw_runs` draws a list.
+pub(crate) fn draw_sun_page(ctx: &PassContext, view: &ViewBlocks, push: &Push, level: usize, page: u32) {
+    let list = VSM_LIST + level as u32;
+    for (number, smooth, lists) in &view.runs {
+        for &[first, count] in &lists[list as usize] {
+            ctx.bindless.push(
+                ctx.gpu,
+                ctx.cmd,
+                &Push { list, level: number + 1, output: first, source: page, ..*push },
+            );
+            let vertices = if *smooth { count / 2 } else { count * 6 };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+        }
     }
 }
 
@@ -2111,6 +2133,7 @@ mod tests {
             parts: [0, 0],
             water: [first + 60, 0],
             cone: None,
+            mesh: 0,
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
@@ -2179,6 +2202,7 @@ mod tests {
             parts: [0, 0],
             water: [first + 60, water],
             cone: None,
+            mesh: 0,
         };
         let chunks = [chunk(0.0, 0, 5), chunk(32.0, 65, 0), chunk(64.0, 125, 7)];
         assert_eq!(pick_water(&chunks, &[], None, None), vec![[60, 5], [185, 7]]);
@@ -2214,6 +2238,7 @@ mod tests {
             parts: [0, 0],
             water: [106, 0],
             cone: None,
+            mesh: 0,
         };
         let runs = cut_runs(&[draw]);
         assert_eq!(runs, vec![[102, 1], [103, 1], [104, 2]], "the leaves of each facing and the sheets");

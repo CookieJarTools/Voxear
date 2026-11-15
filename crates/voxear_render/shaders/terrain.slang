@@ -51,7 +51,10 @@ TerrainPoint terrainPoint(Frame* frame, uint list, uint vertexId, uint instanceI
     // Slid by its distance before sliding, every other vertex onto the one before it.
     float3 before = terrain.corner + float3(local.x, terrainHeight(terrain, min(local, size)), local.y);
     float2 range = terrain.morph[min(level, TERRAIN_MAX_LEVELS - 1)];
-    float slide = range.y > range.x ? saturate((distance(before, frame->cameraPosition) - range.x) / (range.y - range.x)) : 0.0;
+    // Slid by its distance from a lamp for the lamp's shadow, kept from frame to frame, wherever the camera is.
+    bool lamp = list >= LIST_LOCAL_SHADOW && list < LIST_COUNT;
+    float3 eye = lamp ? frame->localShadows.casters[list - LIST_LOCAL_SHADOW].xyz : frame->cameraPosition;
+    float slide = range.y > range.x ? saturate((distance(before, eye) - range.x) / (range.y - range.x)) : 0.0;
     float2 odd = float2(grid % 2);
     local -= odd * step * slide;
     // A patch reaching past the terrain's far edge folds onto it.
@@ -145,13 +148,14 @@ struct TerrainShadowOut
 };
 
 // A vertex in a sun cascade's view (push.list), placed as the camera's view places it, so the ground's shadow
-// falls from the very ground drawn.
+// falls from the very ground drawn; or in the view of a lamp's list that push.source names.
 [shader("vertex")]
 TerrainShadowOut terrainShadowVertex(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
 {
     TerrainPoint p = terrainOrDug(push.frame, vertexId, instanceId);
     TerrainShadowOut o;
-    o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(p.world, 1.0));
+    uint view = push.list >= LIST_LOCAL_SHADOW ? push.source : 0;
+    o.position = transform(shadowViewProj(push.frame, push.list, view), float4(p.world, 1.0));
     o.local = p.local;
     o.terrain = p.terrain;
     o.dug = p.level >= TERRAIN_DUG ? 1 : 0;

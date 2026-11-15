@@ -579,3 +579,5 @@ void probeCaptureMain(uint3 id : SV_DispatchThreadID)
     light = select(isnan(light) || isinf(light), float3(0.0), min(light, 60000.0));
     storageArraysRgba16f[push.output][id] = float4(light, 1.0);
 }
+
+#include "sound_rays.slang"

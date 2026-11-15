@@ -138,6 +138,95 @@ impl AllPass {
     }
 }
 
+/// The longest an early reflection may come after its sound, in seconds:
+/// past the 80 ms they are heard in, with room to spare.
+const EARLY_LONGEST: f32 = 0.12;
+
+/// The room's first echoes, played from what is sent to the reverb: each a
+/// copy of it, delayed, quieter, duller as the walls it struck soak up the
+/// high notes, and from its own side. New echoes fade in as the ones
+/// before fade out, over about 20 milliseconds, so a change does not click.
+pub(crate) struct EarlyEchoes {
+    line: Vec<f32>,
+    at: usize,
+    sample_rate: f32,
+    taps: Vec<Tap>,
+}
+
+struct Tap {
+    delay: usize,
+    /// Its left and right volumes now and wanted, and its low-pass's
+    /// coefficient and what it holds.
+    now: [f32; 2],
+    target: [f32; 2],
+    dull: f32,
+    held: f32,
+    /// Which way it comes from, in the world, and its volume before that.
+    from: Option<voxear_core::math::Vec3>,
+    gain: f32,
+    leaving: bool,
+}
+
+impl EarlyEchoes {
+    pub fn new(sample_rate: u32) -> Box<Self> {
+        let length = (EARLY_LONGEST * sample_rate.max(1) as f32) as usize + 1;
+        Box::new(Self { line: vec![0.0; length], at: 0, sample_rate: sample_rate.max(1) as f32, taps: Vec::new() })
+    }
+
+    /// Puts these echoes in place of the ones before, which fade out.
+    pub fn set(&mut self, echoes: &[crate::sound_field::EarlyReflection]) {
+        for tap in &mut self.taps {
+            tap.leaving = true;
+            tap.target = [0.0; 2];
+        }
+        let longest = self.line.len() - 1;
+        self.taps.extend(echoes.iter().map(|echo| Tap {
+            delay: ((echo.delay * self.sample_rate) as usize).clamp(1, longest),
+            now: [0.0; 2],
+            target: [0.0; 2],
+            dull: (1.0 - echo.bands[2].clamp(0.05, 1.0)).clamp(0.0, 0.95),
+            held: 0.0,
+            from: echo.from,
+            gain: echo.gain.clamp(0.0, 1.0),
+            leaving: false,
+        }));
+    }
+
+    /// Pans each echo for a listener turned as `listener` is, once a block.
+    pub fn face(&mut self, listener: &crate::spatial::Listener) {
+        for tap in self.taps.iter_mut().filter(|tap| !tap.leaving) {
+            // From all round, the same on both sides; from one side, louder there.
+            let pan = tap.from.map_or(0.0, |from| (listener.rotation.inverse() * from).x.clamp(-1.0, 1.0));
+            let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+            tap.target = [angle.cos() * tap.gain, angle.sin() * tap.gain];
+        }
+        self.taps.retain(|tap| !tap.leaving || tap.now.iter().any(|v| v.abs() > 1e-5));
+    }
+
+    /// Whether it has echoes to play, or to fade out.
+    pub fn is_empty(&self) -> bool {
+        self.taps.is_empty()
+    }
+
+    /// Takes the next sample sent to it, and gives the left and right of
+    /// its echoes.
+    pub fn apply(&mut self, sent: f32) -> [f32; 2] {
+        let length = self.line.len();
+        self.line[self.at] = sent;
+        let mut out = [0.0; 2];
+        for tap in &mut self.taps {
+            let echo = self.line[(self.at + length - tap.delay) % length];
+            tap.held = echo * (1.0 - tap.dull) + tap.held * tap.dull;
+            for side in 0..2 {
+                tap.now[side] += (tap.target[side] - tap.now[side]) * SLIDE * 4.0;
+                out[side] += tap.held * tap.now[side];
+            }
+        }
+        self.at = (self.at + 1) % length;
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +252,34 @@ mod tests {
         let closet = ringing(ReverbTimes([0.3; 3]), 1.0);
         assert!(hall > closet * 100.0, "a hall still rings a second on: {hall} against {closet}");
         assert!(ringing(ReverbTimes::NONE, 0.0) < 1e-6, "no room, no reverb");
+    }
+
+    #[test]
+    fn an_early_echo_comes_late_and_from_its_side() {
+        use crate::{sound_field::EarlyReflection, spatial::Listener};
+        let mut echoes = EarlyEchoes::new(48_000);
+        let echo = EarlyReflection { delay: 0.02, gain: 0.5, bands: [1.0; 3], from: Some(voxear_core::math::Vec3::X) };
+        echoes.set(&[echo]);
+        // Long enough for its volume to slide in.
+        let mut out = Vec::new();
+        for at in 0..48_000 {
+            if at % 256 == 0 {
+                echoes.face(&Listener::default());
+            }
+            out.push(echoes.apply(if at % 4_800 == 0 { 1.0 } else { 0.0 }));
+        }
+        let last = &out[43_200..48_000];
+        let loudest = last.iter().position(|s| s[1].abs() > 0.1).expect("heard");
+        assert_eq!(loudest, 960, "20 ms after the click");
+        assert!(last[loudest][1] > last[loudest][0] * 4.0, "from the right: {:?}", last[loudest]);
+        echoes.set(&[]);
+        for _ in 0..80 {
+            echoes.face(&Listener::default());
+            for _ in 0..256 {
+                echoes.apply(0.0);
+            }
+        }
+        assert!(echoes.is_empty(), "faded out and let go of");
     }
 
     #[test]

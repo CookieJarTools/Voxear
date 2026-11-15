@@ -145,6 +145,11 @@ impl AudioPanel {
         } else if game.audio.reverb_on() {
             parts.push(format!("Reverb {:.1} s", game.audio.room().0[1]));
         }
+        let tracer = &game.audio.tracer;
+        if tracer.tracing() {
+            let cost = tracer.cost().map_or_else(String::new, |ms| format!(" · {ms:.2} ms"));
+            parts.push(format!("Rays {}{cost}", tracer.rays()));
+        }
         ui.set_text(self.summary, &parts.join("   "));
         ui.set_visible(self.hint, voices.is_empty());
         self.sources = voices.iter().map(|voice| voice.source).collect();

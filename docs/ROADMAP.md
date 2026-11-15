@@ -784,7 +784,7 @@ Later:
     is heard round the walls along them, from the doorway's side, in the Inspector, scene files and C#
   - [x] Steam Audio convolution reflections: the room's own echoes, worked out from the listener and played through
     the HRTF with headphones on, with `Audio.ReverbMode` and `[audio] reverb_mode`; parametric stays the default and
-    the fallback. Ray-traced audio follows in M5, once the ray-tracing acceleration structures exist.
+    the fallback. Ray-traced audio is done, in M5.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings
   - [x] a list of the voices playing, with their buses and volumes: the editor's Audio panel
@@ -1402,14 +1402,53 @@ Done so far:
     camera. Editor test: bake a probe added with `obj.create`, and it loads with the level.
   - Later: terrain, block worlds, water and plants in captures; metals' own shine in captures; a resolution
     setting; letting a probe's capture point move off its box's middle.
+- **Ray-traced audio ✅:** sound traced on the GPU against the scene the GI traces, its models, worlds of blocks
+  and terrain, by ray queries or the compute tracer (`voxear_render::sound_rays`, `shaders/sound_rays.slang`, a
+  "Sound rays" pass the first view records; `voxear_engine::sound_tracing`).
+  - **Occlusion and transmission** per 3D Audio Source with occlusion on: rays from the listener across its
+    sphere (1, or 4/8/16 volumetric), each wall letting through what its acoustic material does, into the same
+    three-band muffle as Steam Audio's. A model with no collider is a wall now.
+  - **Reverb and early reflections:** rays from the listener bounced as Steam Audio's reflection simulation
+    bounces them, into an energy field in its layout (10 ms bins, three bands, first order), added up in shared
+    memory, blended over frames; a ray out of bounces goes on as a tail at its own mean free path and loss, so a
+    hard hall is not cut short. The CPU fits reverb times as Steam Audio's estimator does, and the six loudest
+    arrivals of the first 80 ms play as panned, dulled early echoes (`reverb::EarlyEchoes`). Steam Audio's custom
+    scene was not used: its callbacks block a bounce at a time, and its impulse responses cannot be filled from
+    outside. It needs no Steam Audio at all; headphones' HRTF and baked pathing still use it where it is.
+  - **Acoustic materials:** `acoustic = "concrete"` on a material (the Inspector's **Acoustic**, "By look" guessing
+    Metal, Glass or Generic); a block world's chunk as its most common surface's material, else Rock; cut-out and
+    foliage pass sound.
+  - **Settings:** `[audio] ray_traced`, `ray_quality` (low, medium, high: 256/1,024/4,096 rays, 6/10/16
+    bounces) and `ray_budget` (0.3 ms) in `voxear.toml` and player settings; a level's own `[audio]` over them;
+    per source **Reverb send**. The rays shrink while the least of 60 frames' pass times is over the budget, and
+    grow back under half of it; if even 64 rays are over, it steps aside to the baked probes.
+  - **Reverb Probes**, the fallback: a component (scene files, prefabs, Inspector, the + menu, gizmo, C#), baked
+    from the editor on the GPU (palette, a level's Inspector, `reverb_probes.bake`), nine probes a frame at 8,192
+    rays, into a `.reverb` file beside the level (six bytes a probe), loaded with it and shipped in builds. With
+    rays off, the listener's room rings by the probes round it.
+  - C# `Audio.RayTraced`, `RayQuality`, `RayBudget`, `RayTracing`, `RayCost`, `Rays`, `AudioSource.ReverbSend`,
+    `Obj.ReverbProbe`/`AddReverbProbe` (script API 91); `audio.rays` over `vox editor call` and `vox mcp`; the
+    Audio panel shows the rays and their cost.
+  - Cost on an RTX 3070 (closed 20 m room, 200 boxes, 16 sources, least of 60 frames): ray queries 0.07, 0.14
+    and 0.65 ms at low, medium and high; software 0.73, 1.63 and 3.08 ms. Heard through the mixer: a clap in a
+    20 m concrete hall rings 3.8 s (middle band; 4.6 low, 1.6 high), and on open ground not at all; a hum behind
+    20 cm of concrete plays at 1.6% of its level (its low band, as concrete lets through), muffled from its first
+    20 ms.
+  - Tests: GPU tests of a wall stopping a source and a closed room ringing where open ground does not, both
+    tracers; engine tests of a drawn wall muffling a source by concrete, a hall's reverb rising, and a level's baked
+    probes loading and ringing its room without rays; unit tests of the reverb fit, early reflections, the budget,
+    bakes and the `.reverb` file.
+  - Later: Steam Audio's convolution fed from the rays (it needs Steam Audio to take an impulse response from
+    outside); per-block acoustics within a chunk; moving geometry heard as it moves in Steam Audio's CPU path;
+    probes placed on floors rather than in a grid; a level settings panel in the editor (they are in the
+    `.level` file now).
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps.
 - Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
 - Baked lightmapper and light probes.
-- **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
-  Audio, with baked reverb probes as the fallback.
+- **Ray-traced audio ✅** (in Done, above).
 - **HDR colour, end to end ✅** (in Done, above).
 
 ## Vegetation ✅ (done)

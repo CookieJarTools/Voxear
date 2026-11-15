@@ -497,6 +497,7 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Pseudo-localise Text", "", "globe", Command::PseudoText),
         ("Bake Sound Paths", "", "branch", Command::BakePaths),
         ("Bake Reflection Probes", "", "globe", Command::BakeProbes),
+        ("Bake Reverb Probes", "", "audio", Command::BakeReverb),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

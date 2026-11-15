@@ -492,6 +492,24 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ probes, file, bytes }",
     },
     CallInfo {
+        name: "reverb_probes.bake",
+        about: "Bakes the open level's reverb probes, as Bake Reverb Probes does: every probe of every Reverb Probe's box is traced on the GPU, then how long sound rings at each is written beside the level as its .reverb file, which the game rings by when it does not trace rays itself. Answers once it is written.",
+        args: &[],
+        changes: true,
+        returns: "{ probes, inside, file, bytes }",
+    },
+    CallInfo {
+        name: "audio.rays",
+        about: "Ray-traced audio in the running game: whether it is on, its quality and its budget of GPU time a frame, as a script's Audio.RayTraced, RayQuality and RayBudget set them until play stops (a project's own are its voxear.toml's [audio] ray_traced, ray_quality and ray_budget, a level's its [audio]); and what it does now: whether it traces, its rays a frame, the pass's least GPU time over the last 60 frames, and how long the listener's room rings in each band.",
+        args: &[
+            maybe("on", ArgKind::Toggle, "Trace sound by rays."),
+            maybe("quality", ArgKind::Choice(&["low", "medium", "high"]), "How many rays at most."),
+            maybe("budget", ArgKind::Number, "The most GPU time a frame, in milliseconds."),
+        ],
+        changes: false,
+        returns: "{ on, quality, budget, tracing, rays, cost_ms, room: [low, middle, high] }",
+    },
+    CallInfo {
         name: "commands",
         about: "Every command the command palette runs: the editor's own, those code adds, and the scripts' [Command] methods.",
         args: &[],
@@ -943,6 +961,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Wheel
             | Part::PostVolume
             | Part::ReflectionProbe
+            | Part::ReverbProbe
             | Part::WindZone
             | Part::ParticleSystem
             | Part::ForceField

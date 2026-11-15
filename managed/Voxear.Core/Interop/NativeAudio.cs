@@ -34,6 +34,7 @@ internal static unsafe class NativeAudio
 	public const int SourceOcclusionRadius = 17;
 	public const int SourceTransmission = 18;
 	public const int SourcePathing = 19;
+	public const int SourceReverbSend = 20;
 
 	public const int BusMaster = 0;
 	public const int BusEffects = 1;
@@ -51,6 +52,12 @@ internal static unsafe class NativeAudio
 	public const int BusDuckAttack = 13;
 	public const int BusDuckRelease = 14;
 	public const int BusReverbMode = 15;
+	public const int BusRayTraced = 16;
+	public const int BusRayQuality = 17;
+	public const int BusRayBudget = 18;
+	public const int BusRayTracing = 19;
+	public const int BusRayCost = 20;
+	public const int BusRays = 21;
 
 	/// <summary>The engine's id for the sound at a project path or GUID, or -1 when it will not load.</summary>
 	public static int Load(string path)

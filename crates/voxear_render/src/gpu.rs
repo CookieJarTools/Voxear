@@ -130,7 +130,10 @@ pub struct GpuMaterial {
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground; 0 for not at all.
     pub ground_blend: f32,
-    pub _pad: [u32; 2],
+    /// The acoustic preset sound rays hear it as, plus one; 0 to guess from
+    /// its look (see `sound_rays`).
+    pub acoustic: u32,
+    pub _pad: u32,
 }
 
 /// A material drawn with the standard shader, not a custom one.
@@ -170,7 +173,9 @@ pub struct GpuInstance {
     /// How far, in metres, its pose may reach past its mesh's bounds, which
     /// culling allows for.
     pub reach: f32,
-    pub _pad: u32,
+    /// For a chunk of blocks, the acoustic preset sound rays hear it as,
+    /// plus one; 0 for its material's.
+    pub acoustic: u32,
 }
 
 /// An instance whose place in the list another Obj held last frame, so the

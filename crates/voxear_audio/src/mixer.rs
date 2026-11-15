@@ -41,7 +41,8 @@ use crate::{
     buses::{BusFilters, Ducker, Ducking, Slide},
     ears::Ears,
     report::{VoiceBoard, VoiceReport},
-    reverb::{Reverb, ReverbTimes},
+    reverb::{EarlyEchoes, Reverb, ReverbTimes},
+    sound_field::EarlyReflection,
     spatial::{self, Distance, Listener},
     steam_audio::{Convolution, Hrtf, Muffle},
     stream::{Frame, StreamReader},
@@ -81,6 +82,10 @@ pub struct VoiceParams {
     /// in the world, 0 not at all.
     pub velocity: Vec3,
     pub doppler: f32,
+    /// How much of a 3D voice on the effects bus goes to the reverb and
+    /// the room's early echoes: 1 all of it, 0 none, as for a voice the
+    /// room should not ring with.
+    pub reverb_send: f32,
 }
 
 impl Default for VoiceParams {
@@ -93,6 +98,7 @@ impl Default for VoiceParams {
             spatial: None,
             velocity: Vec3::ZERO,
             doppler: 1.0,
+            reverb_send: 1.0,
         }
     }
 }
@@ -115,6 +121,9 @@ pub(crate) enum Command {
     Doppler(VoiceId, f32),
     Muffle(VoiceId, Muffle),
     Reverb(ReverbTimes),
+    /// The room's first echoes, from rays traced from the listener.
+    Early(Vec<EarlyReflection>),
+    ReverbSend(VoiceId, f32),
     /// The room's echoes to play in place of the reverb, or none, to fade
     /// out the ones playing.
     Echoes(Option<Box<Convolution>>),
@@ -209,6 +218,7 @@ pub struct Mixer {
     mix: Vec<f32>,
     sent: Vec<f32>,
     reverb: Option<Box<Reverb>>,
+    early: Option<Box<EarlyEchoes>>,
     echoes: Option<Box<Convolution>>,
     /// Where it tells the editor what it plays.
     board: Arc<VoiceBoard>,
@@ -242,6 +252,7 @@ impl Mixer {
             mix: Vec::new(),
             sent: Vec::new(),
             reverb: None,
+            early: None,
             echoes: None,
             board,
         }
@@ -335,6 +346,17 @@ impl Mixer {
                 mixed[1] += right;
             }
         }
+        if let Some(early) = &mut self.early {
+            early.face(&self.listener);
+            for (mixed, &sent) in effects.iter_mut().zip(&self.sent) {
+                let [left, right] = early.apply(sent);
+                mixed[0] += left;
+                mixed[1] += right;
+            }
+            if early.is_empty() {
+                self.early = None;
+            }
+        }
         if let Some(echoes) = &mut self.echoes {
             let (listener, binaural) = (self.listener, self.headphones);
             for (mixed, &sent) in effects.iter_mut().zip(&self.sent) {
@@ -388,6 +410,16 @@ impl Mixer {
                     None if times != ReverbTimes::NONE => self.reverb = Some(Reverb::new(self.sample_rate, times)),
                     None => {}
                 },
+                Command::Early(echoes) => match &mut self.early {
+                    Some(early) => early.set(&echoes),
+                    None if !echoes.is_empty() => {
+                        let mut early = EarlyEchoes::new(self.sample_rate);
+                        early.set(&echoes);
+                        self.early = Some(early);
+                    }
+                    None => {}
+                },
+                Command::ReverbSend(id, send) => self.with(id, |voice| voice.params.reverb_send = send.clamp(0.0, 1.0)),
                 Command::Echoes(echoes) => self.set_echoes(echoes),
                 Command::Transition(seconds) => self.transition = seconds.max(0.0),
                 Command::Filter(bus, high, hz) => {
@@ -660,7 +692,7 @@ impl Voice {
             mono = bands.apply(mono);
         }
         if self.params.bus == Bus::Effects {
-            *sent += mono * (gains[0] + gains[1]) * 0.5;
+            *sent += mono * (gains[0] + gains[1]) * 0.5 * self.params.reverb_send;
         }
         match &mut self.ears {
             Some(ears) => ears.hear(mono * gains[0], listener, at),

@@ -79,6 +79,8 @@ The walls are the level's colliders that stay put: those without a Rigidbody, an
 
 Occlusion needs Steam Audio, as headphones do (see below). Without it, walls stop nothing.
 
+With ray-traced audio on, the walls are everything the GPU draws, worlds of blocks and terrain too, and it needs no Steam Audio (see [[Ray-Traced Sound]]).
+
 A wall that stops a sound stops it however close the door is. To have sounds come round walls and through doorways, bake the level's paths and turn on **Pathing**, as [[Sound Round Corners]] shows.
 
 ## The room

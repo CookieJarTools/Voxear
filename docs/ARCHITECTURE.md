@@ -102,7 +102,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | Physics | **Jolt** (C++, MIT) behind a Rust API | It is the fastest and most robust open option (Horizon Forbidden West, Godot 4). It is wrapped so that it is not a black box to users. |
 | 2D physics | Box2D v3 (C, MIT) | The modern solver is fast and deterministic, and it pairs naturally with Jolt. |
 | UI | **Our own retained UI** on taffy, parley, swash and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
-| Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
+| Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. Ray-traced audio traces sound on the GPU against the GI's scene instead. |
 | Mesh import | glTF 2.0, and FBX through **ufbx** (C, MIT) | Both become the same prepared model, so LODs, cooking and previews are shared. meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
 
 ## Conventions
@@ -3045,20 +3045,51 @@ from the Project into a Scene view or the Hierarchy makes an Obj named for it wi
   Audio triple-buffers between the simulating thread and the one reading, so only the audio thread reads it; plays
   the send through it into first-order Ambisonics, two seconds long; and decodes that to stereo, or binaurally with
   headphones on, as the listener faces. The convolution takes Freeverb's place, which fades as it comes in, and
-  fades itself out when reverb goes off. Echoes that will not start fall back to reverb times. Baked probes come
-  later.)*
+  fades itself out when reverb goes off. Echoes that will not start fall back to reverb times. Baked reverb probes
+  are below, with ray-traced audio.)*
 - **Pathing:** sound bends around corners and through doorways.
 
-**Ray-traced audio (optional setting).** A per-project and per-quality-tier switch traces sound on the GPU instead
-of Steam Audio's CPU ray tracer, through Steam Audio's custom scene callbacks in batches:
-- Rays run against the same acceleration structures as ray-traced GI and the lightmapper, with hardware ray queries
-  where available and the compute BVH elsewhere. Nothing extra has to be built or kept in sync.
-- Thousands of rays per source give real-time reflections, echo and reverb from the actual geometry. Opening a door
-  or collapsing a wall changes how a room sounds immediately, with no baked probes.
-- Each surface's acoustic material (absorption, scattering, transmission per frequency band) comes from its render
-  material, with an override.
-- When the switch is off, or the GPU cannot spare the time, the same sources fall back to baked reverb probes and
-  ray-cast occlusion, so games never depend on it.
+**Ray-traced audio (optional setting).** `[audio] ray_traced`, a level's own `[audio]` over it, or
+`Audio.RayTraced` traces sound on the GPU, against the scene the GI traces, rather than Steam Audio's CPU tracer
+against the colliders. *(Built.)*
+- **Why not Steam Audio's custom scene:** its custom-scene callbacks are called a batch of rays at a time and block
+  until answered, a bounce at a time; answered by a GPU a frame or two away, a room's 16 bounces would take a quarter
+  of a second each time. Its impulse responses (`IPLReflectionEffectIR`) are its own triple-buffered FIR objects,
+  which nothing outside can fill. So the GPU traces the rays and adds up the energy field itself, in Steam Audio's
+  own layout and by its own formulas (10 ms bins, three bands, first order; its diffuse and specular terms,
+  `irradianceMinDistance` of 1 m, its listener radius and surface offset), and the CPU fits the reverb times the way
+  Steam Audio's reverb estimator does (the energy decay curve weighted by air absorption, a line through -5 to
+  -25 dB).
+- **Renderer side** (`voxear_render::sound_rays`, `shaders/sound_rays.slang`, included by `ddgi.slang` so both its
+  builds, ray queries and `SOFTWARE_RAYS`, get it): `Renderer::trace_sound(Some(SoundRays))` before a frame;
+  the first camera's own view records "Sound rays" after the scene's BVH, building the scene for it when neither GI
+  nor reflections did. The request (listener, up to 64 sources, up to 9 spots, rays, bounces, 16 acoustic presets) is
+  written into a host-visible buffer per frame slot; results go to a `GpuToCpu` buffer, cleared by
+  `vkCmdFillBuffer` and read in `render()` once the slot's fence has passed (`Renderer::sound_heard`), two frames on.
+  Their addresses travel in `Push::textures`, cast to pointers in the shader, so `Buffers` and `GpuFrame` are
+  untouched. `soundOcclusionMain` is a workgroup a source, a thread a ray across a disc facing the listener, walking
+  up to six surfaces and multiplying the transmission of every other one (a wall's two faces are one wall);
+  `soundReverbMain` is 64 rays a workgroup, a row of workgroups a spot, its field added up in group-shared memory in
+  whole numbers (2^24 a unit) and flushed with one atomic per non-zero bin.
+- **Acoustic materials:** `MaterialDesc::acoustic` (from a material's `acoustic = "concrete"`) fills a spare word of
+  `GpuMaterial`; a block world's chunk proxies fill `GpuInstance::acoustic` (its former padding) with the material of
+  the surface most of the chunk's quads use, else Rock. A hit reads the instance's, then the material's, then guesses
+  Metal for metallic, Glass for glass, Generic otherwise. Cut-out and foliage hits are passed through.
+- **Engine side** (`voxear_engine::sound_tracing::SoundTracer`, kept in `GameAudio`): `update` notes the listener and
+  each 3D source with occlusion on (those following baked paths stay with Steam Audio) and gives back what the last
+  answer said; `Game::tick` then calls `GameAudio::trace_sound(renderer)`, which takes the answer and asks again. The
+  listener's fields are blended over frames (keeping 60 to 90%, by quality; started again after a 2 m move), and
+  every fourth frame the mixer gets `ReverbTimes` and up to six `EarlyReflection`s, the loudest arrivals of the first
+  80 ms with their side, which `reverb::EarlyEchoes` plays as panned, low-passed taps of the reverb send.
+  `VoiceParams::reverb_send` (Audio Source **Reverb send**) scales a voice's send.
+- **Budget:** the pass's GPU time is read from the frame graph's timings each frame; while the least of the last 60
+  is over `ray_budget` (0.3 ms by default) the listener's rays shrink by a fifth, and while under half of it they
+  grow by a tenth, up to the quality's 256, 1,024 or 4,096.
+- **Fallback, baked reverb probes** (`voxear_engine::reverb_probes`): a Reverb Probe component is an axis-aligned box
+  of probes `spacing` apart. The editor's bake hands every probe to the tracer as spots, nine a frame, 8,192 rays of
+  16 bounces each, and writes `Level.reverb` (`VXRV` v1: each box's lowest probe, spacing and counts, then three
+  `u16` milliseconds a probe, 0 for one inside something). With rays off, `GameAudio` rings the room by the probes
+  round the listener, trilinear over those that heard, and by Steam Audio's room outside every box.
 
 **Tools.** An audio debugger shows active voices, occlusion rays and paths in the viewport. *(Built so far: Audio
 Sources as speakers in the Scene view, lit while they play, and the Audio panel, which lists every voice the mixer

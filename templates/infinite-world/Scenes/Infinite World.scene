@@ -1,0 +1,185 @@
+# Voxear scene
+format = 1
+
+[[obj]]
+id = 2
+name = "World"
+
+[obj.block_world]
+data = "Blocks/Endless.blockworld"
+cast_shadows = true
+
+[[obj]]
+id = 3
+name = "Eye"
+position = [95.5, 16.0, 95.5]
+rotation = [18.0, 115.0, 0.0]
+
+[obj.camera]
+fov = 70.0
+
+[[obj]]
+id = 10
+name = "Grass Tuft"
+parent = 2
+
+[obj.foliage]
+mesh = "Plants/Grass Tuft.boxmodel#mesh0.0"
+material = "Plants/Grass Tuft.boxmodel#material0"
+draw_distance = 60.0
+fade_distance = 10.0
+shadow_distance = 0.0
+impostors = "off"
+
+[obj.foliage.grow]
+on = ["6d833d3c5ec628264b3edb8a928b832e", "c9c3ae2e8a6a43f991988801fcd316c7"]
+slope = 40.0
+spacing = 1.0
+separation = 0.0
+chance = 0.6
+scale = [0.8, 1.2]
+
+[[obj]]
+id = 11
+name = "Flower"
+parent = 2
+
+[obj.foliage]
+mesh = "Plants/Flower.boxmodel#mesh0.0"
+material = "Plants/Flower.boxmodel#material0"
+draw_distance = 60.0
+fade_distance = 10.0
+shadow_distance = 0.0
+impostors = "off"
+
+[obj.foliage.grow]
+on = ["6d833d3c5ec628264b3edb8a928b832e", "c9c3ae2e8a6a43f991988801fcd316c7"]
+slope = 30.0
+spacing = 2.0
+separation = 1.0
+chance = 0.5
+patches = 14.0
+seed = 1
+scale = [0.8, 1.2]
+
+[[obj]]
+id = 12
+name = "Bush"
+parent = 2
+
+[obj.foliage]
+mesh = "Plants/Bush.boxmodel#mesh0.0"
+material = "Plants/Bush.boxmodel#material0"
+draw_distance = 100.0
+fade_distance = 10.0
+shadow_distance = 30.0
+
+[obj.foliage.grow]
+on = ["6d833d3c5ec628264b3edb8a928b832e", "c9c3ae2e8a6a43f991988801fcd316c7"]
+slope = 35.0
+spacing = 7.0
+separation = 3.0
+chance = 0.4
+seed = 2
+scale = [0.8, 1.4]
+
+[[obj]]
+id = 13
+name = "Rock"
+parent = 2
+
+[obj.foliage]
+mesh = "Plants/Rock.boxmodel#mesh0.0"
+material = "Plants/Rock.boxmodel#material0"
+draw_distance = 120.0
+fade_distance = 10.0
+shadow_distance = 40.0
+
+[obj.foliage.grow]
+slope = 70.0
+spacing = 9.0
+separation = 3.0
+chance = 0.35
+seed = 3
+scale = [0.6, 1.8]
+
+[[obj]]
+id = 40
+name = "Weather"
+
+[obj.storms]
+natural = true
+frequency = 0.35
+largest = 900.0
+standing = true
+seed = 0
+sea_look = "small_cubes"
+swell = 3.0
+whirlpools = true
+maelstroms = true
+glow = 0.6
+
+[[obj]]
+id = 42
+name = "Main Camera"
+position = [147.5, 7.5, 90.5]
+rotation = [15.0, 0.0, 0.0]
+behaviours = ["{{Namespace}}.OrbitCamera"]
+camera_follows = 43
+
+[obj.fields."{{Namespace}}.OrbitCamera".replaces]
+obj = 3
+
+[obj.fields."{{Namespace}}.OrbitCamera".target]
+obj = 43
+
+[obj.camera]
+fov = 60.0
+
+[[obj]]
+id = 43
+name = "Player"
+position = [147.5, 4.0, 96.5]
+behaviours = ["{{Namespace}}.PlayerController", "{{Namespace}}.UsesBlocks"]
+
+[obj.fields."{{Namespace}}.PlayerController".view]
+obj = 42
+
+[obj.fields."{{Namespace}}.UsesBlocks".eye]
+obj = 42
+
+[obj.model]
+model = "fd27e32ecc014f5dac084987da9ae391"
+
+[obj.mob_motion]
+leg_swing = 38.0
+arm_swing = 30.0
+stride = 0.0
+bounce = 1.0
+idle = 1.0
+look_speed = 9.0
+look_limit = 70.0
+lag = 1.0
+
+[obj.character]
+step_offset = 1.05
+
+[[obj]]
+id = 44
+name = "Map"
+position = [102.5, 13.5, 92.25]
+behaviours = ["{{Namespace}}.MapOpenAction"]
+
+[obj.map]
+minimap = true
+corner = "top_right"
+size = 380.0
+zoom = 2
+turns = true
+round = false
+tilt = 58.0
+map_zoom = 4
+map_size = 0.92
+map_tilt = 42.0
+pointer_control = true
+shows = "everything"

@@ -1,0 +1,4 @@
+type = "Voxear.Item"
+
+[fields]
+places = "Blocks/Birch Log.block"

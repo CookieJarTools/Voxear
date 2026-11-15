@@ -1,0 +1,4 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.04, 0.46, 0.33]
+liquid = "water"
+hardness = 1.0

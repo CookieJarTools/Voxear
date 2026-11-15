@@ -1,0 +1,7 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.78, 0.27, 0.07]
+hardness = 1.0
+
+[heat]
+celsius = 220.0
+reach = 2.0

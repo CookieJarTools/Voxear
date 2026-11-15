@@ -1549,6 +1549,7 @@ impl Content {
                 loaded.world = stale.world.restyled(&faces, file.smooth);
             }
             loaded.world.cast_shadows = stale.world.cast_shadows;
+            loaded.world.floor = placed.generate.as_ref().and_then(|generate| generate.floor_top());
             let found = Some(Arc::new(LoadedBlockWorld { file: placed, derived, ..loaded }));
             self.block_worlds.insert(guid, found.clone());
             return found;
@@ -1576,6 +1577,7 @@ impl Content {
                 let (_, faces) = drawn.faces();
                 let mut world =
                     voxear_terrain::blocks::BlockWorld::made(Default::default(), &faces, file.block_size, file.smooth);
+                world.floor = file.generate.as_ref().and_then(|generate| generate.floor_top());
                 let pending = Arc::new(edits.unwrap_or_default());
                 world.set_links(&pending.links);
                 return Ok(Arc::new(LoadedBlockWorld { world, base: Arc::default(), pending, file, derived }));

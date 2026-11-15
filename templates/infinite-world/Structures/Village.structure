@@ -1,0 +1,39 @@
+ground = "leave"
+sink = 0
+
+[placement]
+spacing = 520.0
+separation = 200.0
+chance = 0.8
+on = "land"
+height = [3.0, 140.0]
+slope = 10.0
+
+[town]
+middle = "ed0057cd187a477d82eee814f79bdf9b"
+count = [12, 18]
+radius = [34.0, 60.0]
+path = "b15aba9a8e7047689d6bffb862d6679c"
+path_width = 3
+wander = 0.5
+branching = 0.6
+roads = true
+road = "906264d7a5e14697b63ebe14a1682665"
+road_width = 3
+bridge = "a960ef9bf5604d8880aaab0577e485bf"
+link = 0.8
+
+[[town.houses]]
+structure = "b4ff9d53d3434a8ab241e60bf929c500"
+weight = 2.0
+zone = [0.0, 1.0]
+
+[[town.houses]]
+structure = "b6448b98875b4828bf294c37f461fe54"
+weight = 2.0
+zone = [0.0, 1.0]
+
+[[town.houses]]
+structure = "fb6a54142af64f67b7ac6d9eef00c386"
+weight = 1.0
+zone = [0.0, 1.0]

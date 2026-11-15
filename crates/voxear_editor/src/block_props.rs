@@ -1282,6 +1282,7 @@ fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity,
             let (_, faces) = drawn.faces();
             let mut empty = BlockWorld::made(BlockMap::default(), &faces, file.block_size, file.smooth);
             empty.cast_shadows = blocks.cast_shadows;
+            empty.floor = file.generate.as_ref().and_then(|generate| generate.floor_top());
             world.insert(entity, empty);
             let pending = Arc::new(changes);
             let kept = BlockWorldAsset { file, base: Arc::default(), pending, drawn: drawn.clone(), derived, ..asset };

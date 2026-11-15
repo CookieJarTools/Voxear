@@ -1,0 +1,5 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.2, 0.46, 0.14]
+sways = true
+shape = "vine"
+hardness = 0.2

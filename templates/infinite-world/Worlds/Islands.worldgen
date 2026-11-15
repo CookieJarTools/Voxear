@@ -1,0 +1,517 @@
+seed = 1
+scale = 1.0
+sea_level = 0.0
+
+[[nodes]]
+id = 1
+at = [0.0, 0.0]
+kind = "landmass"
+height = 140.0
+sharpness = 0.6
+coast = [[0.0, -0.6], [0.5, -0.25], [0.65, 0.0], [0.75, 0.08], [1.0, 0.3]]
+inland = [[0.0, 0.0], [0.6, 0.0], [0.75, 0.6], [1.0, 1.0]]
+relief = [[0.0, 0.3], [1.0, 0.8]]
+peaks = [[0.0, -0.2], [0.5, 0.1], [1.0, 0.6]]
+crags = 0.03
+bumps = 1.0
+
+[nodes.continents]
+size = 2500.0
+octaves = 4
+
+[nodes.ruggedness]
+size = 1200.0
+octaves = 3
+
+[nodes.ridges]
+size = 900.0
+octaves = 3
+
+[nodes.warp]
+size = 1000.0
+strength = 220.0
+
+[nodes.erosion]
+strength = 0.5
+spacing = 160.0
+octaves = 4
+
+[[nodes]]
+id = 21
+at = [300.0, -400.0]
+kind = "falloff"
+shape = "round"
+x = 0.0
+z = 4585.0
+radius = 600.0
+feather = 600.0
+
+[[nodes]]
+id = 22
+at = [600.0, -200.0]
+kind = "blend"
+a = 0.0
+b = 1.0
+mask = 0.5
+
+[[nodes]]
+id = 2
+at = [0.0, 260.0]
+kind = "climate"
+size = 5000.0
+temperature = 15.0
+temperature_range = 12.0
+humidity = 0.5
+humidity_range = 0.35
+cooling = 6.5
+
+[[nodes]]
+id = 3
+at = [1550.0, 210.0]
+kind = "output"
+
+[[nodes]]
+id = 4
+at = [0.0, 540.0]
+kind = "solid"
+
+[[nodes]]
+id = 5
+at = [240.0, 540.0]
+kind = "overhangs"
+amount = 2.0
+size = 14.0
+octaves = 2
+seed = 41
+
+[[nodes]]
+id = 6
+at = [480.0, 660.0]
+kind = "tunnels"
+amount = 0.05
+size = 72.0
+roof = 3.0
+seed = 53
+
+[[nodes]]
+id = 7
+at = [480.0, 840.0]
+kind = "chambers"
+amount = 0.1
+size = 100.0
+roof = 3.0
+seed = 79
+
+[[nodes]]
+id = 8
+at = [720.0, 740.0]
+kind = "combine"
+operation = "union"
+blend = 4.0
+
+[[nodes]]
+id = 9
+at = [960.0, 540.0]
+kind = "combine"
+operation = "subtract"
+blend = 4.0
+
+[[nodes]]
+id = 10
+at = [480.0, 1020.0]
+kind = "cave_network"
+layout = "endless"
+spacing = 192.0
+depth = 40.0
+tunnel_width = 14.0
+tunnel_width_max = 22.0
+winding = 0.6
+slope_limit = 0.7
+branches = 0.2
+loops = 0.3
+roughness = 0.8
+entrances = 0.5
+mouths = 0.5
+main_rooms = 8
+side_rooms = 4
+layers = 1
+layer_depth = 48.0
+roof = 3.0
+seed = 97
+
+[[nodes]]
+id = 11
+at = [840.0, 900.0]
+kind = "combine"
+operation = "union"
+blend = 4.0
+
+[[nodes]]
+id = 23
+at = [-1040.0, -1600.0]
+kind = "math"
+operation = "add"
+a = 0.0
+b = 0.0
+
+[[nodes]]
+id = 24
+at = [-1320.0, -1600.0]
+kind = "gullies"
+strength = 0.8
+spacing = 260.0
+octaves = 4
+
+[[nodes]]
+id = 25
+at = [-1320.0, -1410.0]
+kind = "noise"
+style = "fractal"
+size = 40.0
+octaves = 3
+low = -0.7
+high = 0.7
+
+[[nodes]]
+id = 26
+at = [-1600.0, -1410.0]
+kind = "math"
+operation = "add"
+a = 0.0
+b = 0.0
+
+[[nodes]]
+id = 27
+at = [-2160.0, -1410.0]
+kind = "math"
+operation = "multiply"
+a = 0.0
+b = 900.0
+
+[[nodes]]
+id = 28
+at = [-1600.0, -1600.0]
+kind = "math"
+operation = "multiply"
+a = 0.0
+b = 0.0
+
+[[nodes]]
+id = 29
+at = [-2160.0, -1600.0]
+kind = "warp"
+size = 2000.0
+strength = 300.0
+octaves = 3
+
+[[nodes]]
+id = 30
+at = [-1880.0, -1600.0]
+kind = "noise"
+style = "ridged"
+size = 320.0
+octaves = 3
+low = 0.0
+high = 70.0
+
+[[nodes]]
+id = 31
+at = [-1880.0, -1410.0]
+kind = "height_mask"
+min = 380.0
+max = 100000.0
+feather = 260.0
+
+[[nodes]]
+id = 32
+at = [-2440.0, -1410.0]
+kind = "math"
+operation = "add"
+a = 0.0
+b = 0.0
+
+[[nodes]]
+id = 33
+at = [-2720.0, -1600.0]
+kind = "curve"
+curve = [[0.0, -0.3], [0.35, -0.05], [0.45, 0.03], [0.6, 0.15], [1.0, 0.3]]
+low = 0.2
+high = 0.8
+
+[[nodes]]
+id = 34
+at = [-2440.0, -1600.0]
+kind = "math"
+operation = "multiply"
+a = 0.0
+b = 0.0
+
+[[nodes]]
+id = 35
+at = [-3000.0, -1600.0]
+kind = "noise"
+style = "fractal"
+size = 6000.0
+octaves = 4
+low = 0.0
+high = 1.0
+
+[[nodes]]
+id = 36
+at = [-2720.0, -1410.0]
+kind = "curve"
+curve = [[0.0, 0.0], [0.4, 0.0], [0.5, 0.3], [0.7, 0.9], [1.0, 1.0]]
+low = 0.2
+high = 0.8
+
+[[nodes]]
+id = 37
+at = [-2720.0, -1220.0]
+kind = "curve"
+curve = [[0.0, -0.12], [0.3, -0.05], [0.6, 0.35], [0.85, 0.75], [1.0, 0.85]]
+low = 0.03
+high = 0.87
+
+[[nodes]]
+id = 38
+at = [-3000.0, -1410.0]
+kind = "noise"
+style = "ridged"
+size = 2600.0
+octaves = 5
+low = 0.0
+high = 1.0
+
+[[links]]
+from = 1
+out = "height"
+to = 22
+in = "b"
+
+[[links]]
+from = 21
+out = "falloff"
+to = 22
+in = "mask"
+
+[[links]]
+from = 22
+out = "result"
+to = 3
+in = "height"
+
+[[links]]
+from = 2
+out = "temperature"
+to = 3
+in = "temperature"
+
+[[links]]
+from = 2
+out = "humidity"
+to = 3
+in = "humidity"
+
+[[links]]
+from = 4
+out = "solid"
+to = 5
+in = "ground"
+
+[[links]]
+from = 5
+out = "ground"
+to = 6
+in = "ground"
+
+[[links]]
+from = 5
+out = "ground"
+to = 7
+in = "ground"
+
+[[links]]
+from = 6
+out = "tunnels"
+to = 8
+in = "a"
+
+[[links]]
+from = 7
+out = "chambers"
+to = 8
+in = "b"
+
+[[links]]
+from = 5
+out = "ground"
+to = 9
+in = "a"
+
+[[links]]
+from = 9
+out = "result"
+to = 3
+in = "volume"
+
+[[links]]
+from = 5
+out = "ground"
+to = 10
+in = "ground"
+
+[[links]]
+from = 8
+out = "result"
+to = 11
+in = "a"
+
+[[links]]
+from = 10
+out = "caves"
+to = 11
+in = "b"
+
+[[links]]
+from = 11
+out = "result"
+to = 9
+in = "b"
+
+[[links]]
+from = 35
+out = "noise"
+to = 33
+in = "in"
+
+[[links]]
+from = 35
+out = "noise"
+to = 36
+in = "in"
+
+[[links]]
+from = 38
+out = "noise"
+to = 37
+in = "in"
+
+[[links]]
+from = 36
+out = "out"
+to = 34
+in = "a"
+
+[[links]]
+from = 37
+out = "out"
+to = 34
+in = "b"
+
+[[links]]
+from = 33
+out = "out"
+to = 32
+in = "a"
+
+[[links]]
+from = 34
+out = "result"
+to = 32
+in = "b"
+
+[[links]]
+from = 32
+out = "result"
+to = 29
+in = "in"
+
+[[links]]
+from = 29
+out = "out"
+to = 27
+in = "a"
+
+[[links]]
+from = 27
+out = "result"
+to = 31
+in = "height"
+
+[[links]]
+from = 30
+out = "noise"
+to = 28
+in = "a"
+
+[[links]]
+from = 31
+out = "mask"
+to = 28
+in = "b"
+
+[[links]]
+from = 27
+out = "result"
+to = 26
+in = "a"
+
+[[links]]
+from = 28
+out = "result"
+to = 26
+in = "b"
+
+[[links]]
+from = 26
+out = "result"
+to = 24
+in = "height"
+
+[[links]]
+from = 24
+out = "height"
+to = 23
+in = "a"
+
+[[links]]
+from = 25
+out = "noise"
+to = 23
+in = "b"
+
+[[links]]
+from = 23
+out = "result"
+to = 22
+in = "a"
+
+[[exposed]]
+node = 1
+value = "height"
+label = "Height"
+
+[[exposed]]
+node = 2
+value = "temperature"
+label = "Temperature"
+
+[[exposed]]
+node = 2
+value = "humidity"
+label = "Humidity"
+
+[[exposed]]
+node = 5
+value = "amount"
+label = "Overhangs"
+
+[[exposed]]
+node = 6
+value = "amount"
+label = "Tunnels"
+
+[[exposed]]
+node = 7
+value = "amount"
+label = "Chambers"

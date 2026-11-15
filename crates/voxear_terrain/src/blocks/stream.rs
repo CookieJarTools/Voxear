@@ -466,6 +466,8 @@ impl BlockStreamer {
             *world = BlockWorld::made(BlockMap::default(), &making.faces, making.file.block_size, making.file.smooth);
             (world.links, world.clock) = (links, clock);
             world.columns = Some(Arc::default());
+            // Its floor is the world's settings', made anew with them.
+            world.floor = making.generate.floor_top();
             (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
             (self.coarse, self.asked, self.stale) = (HashMap::new(), HashSet::new(), HashSet::new());
             self.covered_since.clear();

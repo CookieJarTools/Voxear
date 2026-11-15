@@ -1,0 +1,11 @@
+ground = "leave"
+sink = 0
+plant = "f8f1affeec8b4cbc85eee89f198443e8"
+
+[placement]
+spacing = 8.0
+separation = 4.0
+chance = 0.6
+on = "land"
+slope = 28.0
+biomes = ["f788f8c381c947c6a8c270412a71c3f3"]

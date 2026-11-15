@@ -1,0 +1,18 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.95, 0.72, 0.3]
+shape = "boxes"
+hardness = 0.5
+swing = 4.0
+hangs = true
+
+[[boxes]]
+from = [5, 1, 5]
+to = [11, 9, 11]
+
+[[boxes]]
+from = [6, 9, 6]
+to = [10, 11, 10]
+
+[[boxes]]
+from = [7, 11, 7]
+to = [9, 16, 9]

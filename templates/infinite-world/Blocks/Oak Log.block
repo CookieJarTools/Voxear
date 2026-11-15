@@ -1,0 +1,12 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.42, 0.31, 0.2]
+material = "6ef37fa3b3754ec98349ad43f3a5d4d3"
+top = "31e17e4edcee444998b453245e7e4cad"
+bottom = "31e17e4edcee444998b453245e7e4cad"
+shape = "log"
+hardness = 2.0
+
+[[drops]]
+item = "aaca769542bf40ed8dbed0284fad651d"
+count = [1, 1]
+chance = 1.0

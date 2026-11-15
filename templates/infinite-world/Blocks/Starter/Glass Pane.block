@@ -1,0 +1,5 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.82, 0.9, 0.94]
+material = "630976fbd942456ba1b79e2f13ecaf97"
+shape = "pane"
+hardness = 0.3

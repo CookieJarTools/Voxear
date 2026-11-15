@@ -2668,6 +2668,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     ground, its caves and its water, near and in the far view; nothing a generator builds goes into it. Far off,
     plants and houses stand on the ground the world lays in, out of its rivers and lakes. Tests: far plants in no
     lake a world lays in; the floor near and far, kept by edits, gone when off.
+  - ~~**An Infinite World template:**~~ done: `vox new --template infinite-world`, and the launcher's template
+    picker, start a project in an endless world of blocks: land in levels with rivers, lakes and a sea, eleven
+    biomes, trees, villages and dungeons, weather, a map and minimap, and a player of blocks with a camera that
+    follows them. The template is a folder of the engine's (`templates/infinite-world`, shipped in every install, a
+    fifth of a megabyte: settings, biomes, blocks, plants and structures, never saved ground), copied with the
+    project's namespace put into its scripts and scenes and its assets' GUIDs kept. Manual: Starting an Infinite
+    World. Tests: a project made from it opens, builds its scripts, makes its world round the player, who stands
+    on the ground, and plays, with a close-up from its camera.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

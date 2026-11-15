@@ -1,0 +1,7 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.14, 0.34, 0.22]
+material = "2d9ceb4b169c4a9aa5828d059b4392de"
+sways = true
+shape = "bushy"
+hardness = 0.2
+tint = "foliage"

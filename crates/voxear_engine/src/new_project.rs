@@ -6,9 +6,11 @@
 //!
 //! A project gets `voxear.toml` pinned to this engine's version, a level
 //! and its scene, a scripts project with a solution beside it, and the
-//! `.meta` files that give its assets their GUIDs. Templates offer only what
-//! the engine can make today: Empty and 3D. The first-person, third-person,
-//! top-down and 2D templates wait for an input API and 2D rendering.
+//! `.meta` files that give its assets their GUIDs. Empty and 3D are written
+//! here; Infinite World is a folder of the engine's (`templates/` in an
+//! install or the checkout), copied with the project's namespace put into
+//! its scripts and scenes. The first-person, third-person, top-down and 2D
+//! templates wait for an input API and 2D rendering.
 
 use std::{
     path::{Path, PathBuf},
@@ -32,21 +34,49 @@ const RESERVED: [&str; 22] = [
     "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
-/// A template: its ID, name, what it is, and the setup it turns on.
+/// A template: its ID, name, what it is, and the setup it turns on; or,
+/// for one made of files, the folder of the engine's `templates/` they are
+/// in, the level it starts in and the modules it switches on.
 struct Template {
     id: &'static str,
     name: &'static str,
     description: &'static str,
     setup: &'static [&'static str],
+    files: Option<Files>,
 }
 
-const TEMPLATES: [Template; 2] = [
-    Template { id: "empty", name: "Empty", description: "Nothing but a camera", setup: &["camera"] },
+/// A template's own files (see [`Template`]).
+struct Files {
+    folder: &'static str,
+    start_level: &'static str,
+    modules: &'static [&'static str],
+}
+
+/// What in a template's files is the project's namespace.
+const NAMESPACE_MARK: &str = "{{Namespace}}";
+
+/// The picture of a template's files, shown in the launcher's picker and not copied.
+const THUMBNAIL: &str = "thumbnail.png";
+
+const TEMPLATES: [Template; 3] = [
+    Template { id: "empty", name: "Empty", description: "Nothing but a camera", setup: &["camera"], files: None },
     Template {
         id: "3d",
         name: "3D",
         description: "A lit 3D scene with a ground and a turning cube",
         setup: &["lighting", "camera", "sample-scene"],
+        files: None,
+    },
+    Template {
+        id: "infinite-world",
+        name: "Infinite World",
+        description: "A world of blocks without end: biomes, rivers, villages and weather, with a player to walk it",
+        setup: &[],
+        files: Some(Files {
+            folder: "infinite-world",
+            start_level: "Levels/Infinite World.level",
+            modules: &["terrain", "vegetation", "water"],
+        }),
     },
 ];
 
@@ -78,7 +108,15 @@ pub struct NewProject {
 pub fn describe() -> Value {
     let templates: Vec<Value> = TEMPLATES
         .iter()
-        .map(|t| json!({ "id": t.id, "name": t.name, "description": t.description, "setup": t.setup }))
+        .map(|t| {
+            let mut offered = json!({ "id": t.id, "name": t.name, "description": t.description, "setup": t.setup });
+            // Its picture, relative to the engine's files, where it has one there.
+            let thumbnail = t.files.as_ref().map(|files| format!("templates/{}/{THUMBNAIL}", files.folder));
+            if let Some(thumbnail) = thumbnail.filter(|path| crate::project::engine_root().join(path).is_file()) {
+                offered["thumbnail"] = json!(thumbnail);
+            }
+            offered
+        })
         .collect();
     let setup: Vec<Value> = SETUP
         .iter()
@@ -109,18 +147,31 @@ pub fn create(request: &NewProject, step: &mut dyn FnMut(&str)) -> Result<PathBu
     for sub in ["Levels", "Scenes", "Scripts", ".voxear"] {
         std::fs::create_dir_all(folder.join(sub)).with_context(|| format!("making {}", folder.display()))?;
     }
-    write(folder, PROJECT_FILE, &project_file(&request.name, &namespace))?;
-    write(folder, "Levels/Main.level", MAIN_LEVEL)?;
-
-    step("Writing the scene");
-    write(folder, "Scenes/Main.scene", &scene(&namespace, has("lighting"), has("camera"), has("sample-scene")))?;
+    write(folder, PROJECT_FILE, &project_file(&request.name, &namespace, template.files.as_ref()))?;
+    match &template.files {
+        Some(files) => {
+            step(&format!("Copying the {} world", template.name));
+            let from = crate::project::engine_root().join("templates").join(files.folder);
+            ensure!(from.is_dir(), "this install of Voxear has no template files at {}", from.display());
+            copy_template(&from, folder, &namespace, true)?;
+            if !setup.is_empty() {
+                step("The template's world has its own lighting, camera and scene, so the setup items were left out");
+            }
+        }
+        None => {
+            write(folder, "Levels/Main.level", MAIN_LEVEL)?;
+            step("Writing the scene");
+            let main = scene(&namespace, has("lighting"), has("camera"), has("sample-scene"));
+            write(folder, "Scenes/Main.scene", &main)?;
+        }
+    }
 
     step("Writing the scripts project");
     write(folder, &format!("Scripts/{namespace}.Scripts.csproj"), &scripts_project(&namespace))?;
     write(folder, &format!("{namespace}.slnx"), &solution(&namespace))?;
     write(folder, ".voxear/Engine.props", &crate::scripts::engine_props())?;
     write(folder, ".voxear/Modules.props", &crate::scripts::modules_props(&crate::modules::Modules::default()))?;
-    if has("sample-scene") {
+    if has("sample-scene") && template.files.is_none() {
         write(folder, "Scripts/Turner.cs", &turner(&namespace))?;
     }
 
@@ -202,15 +253,45 @@ fn write(folder: &Path, path: &str, text: &str) -> Result<()> {
     std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))
 }
 
-fn project_file(name: &str, namespace: &str) -> String {
+fn project_file(name: &str, namespace: &str, files: Option<&Files>) -> String {
     let name = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let start_level = files.map_or("Levels/Main.level", |files| files.start_level);
+    let on = |key: &str| files.is_some_and(|files| files.modules.contains(&key));
     format!(
-        "[project]\nname = \"{name}\"\nscripts = \"Scripts/{namespace}.Scripts.csproj\"\nstart_level = \"Levels/Main.level\"\n\
+        "[project]\nname = \"{name}\"\nscripts = \"Scripts/{namespace}.Scripts.csproj\"\nstart_level = \"{start_level}\"\n\
          # The Voxear version this project uses, which the launcher opens it with.\nengine = \"{}\"\n\n\
          # The engine's optional systems, switched on in Project Settings.\n[modules]\n{}",
         engine_version(),
-        crate::modules::Module::ALL.map(|module| format!("{} = false\n", module.key())).concat()
+        crate::modules::Module::ALL.map(|module| format!("{} = {}\n", module.key(), on(module.key()))).concat()
     )
+}
+
+/// Copies a template's files from `from` into the project `folder`, the
+/// project's namespace put into its scripts and scenes where they name it;
+/// at the `top`, its picture left out.
+fn copy_template(from: &Path, folder: &Path, namespace: &str, top: bool) -> Result<()> {
+    for entry in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
+        let source = entry?.path();
+        let name = source.file_name().unwrap_or_default();
+        let to = folder.join(name);
+        if source.is_dir() {
+            std::fs::create_dir_all(&to).with_context(|| format!("making {}", to.display()))?;
+            copy_template(&source, &to, namespace, false)?;
+            continue;
+        }
+        if top && name == THUMBNAIL {
+            continue;
+        }
+        let named = source.extension().is_some_and(|extension| extension == "cs" || extension == "scene");
+        if named {
+            let text = std::fs::read_to_string(&source).with_context(|| format!("reading {}", source.display()))?;
+            std::fs::write(&to, text.replace(NAMESPACE_MARK, namespace))
+        } else {
+            std::fs::copy(&source, &to).map(|_| ())
+        }
+        .with_context(|| format!("writing {}", to.display()))?;
+    }
+    Ok(())
 }
 
 const MAIN_LEVEL: &str =
@@ -377,10 +458,48 @@ mod tests {
     }
 
     #[test]
+    fn an_infinite_world_project_starts_in_its_endless_world_its_scripts_in_its_namespace() {
+        let parent = tempfile::tempdir().unwrap();
+        let folder = parent.path().join("Far Lands");
+        let request = NewProject {
+            folder: folder.clone(),
+            name: "Far Lands".into(),
+            template: "infinite-world".into(),
+            setup: None,
+            ide: None,
+            git: false,
+            modding: false,
+            steam_app_id: None,
+        };
+        create(&request, &mut |_| {}).unwrap();
+        let project = crate::Project::open(&folder).unwrap();
+        assert_eq!(project.file.project.start_level.as_deref(), Some("Levels/Infinite World.level"));
+        let modules = project.modules();
+        assert!(modules.terrain && modules.vegetation && modules.water && !modules.guns, "{modules:?}");
+        // The scene's behaviours and the scripts are the project's, and nothing of the template's mark is left.
+        let scene = crate::scene_file::read(&folder.join("Scenes/Infinite World.scene")).unwrap();
+        let names: Vec<&str> = scene.objs.iter().map(|o| o.name.as_str()).collect();
+        assert!(["World", "Main Camera", "Player", "Map", "Weather"].iter().all(|n| names.contains(n)), "{names:?}");
+        let player = scene.objs.iter().find(|o| o.name == "Player").unwrap();
+        assert!(player.behaviours.iter().any(|b| b == "FarLands.PlayerController"), "{:?}", player.behaviours);
+        let script = std::fs::read_to_string(folder.join("Scripts/PlayerController.cs")).unwrap();
+        assert!(script.contains("namespace FarLands;") && !script.contains(NAMESPACE_MARK));
+        // Its assets keep the GUIDs they reference each other by, and its picture stays behind.
+        let template = crate::project::engine_root().join("templates/infinite-world");
+        let guid = |root: &Path| std::fs::read_to_string(root.join("Blocks/Endless.blockworld.meta")).unwrap();
+        assert_eq!(guid(&folder), guid(&template));
+        assert!(!folder.join(THUMBNAIL).exists());
+        // The launcher is offered it.
+        let offered = describe();
+        let templates = offered["templates"].as_array().unwrap();
+        assert!(templates.iter().any(|t| t["id"] == "infinite-world"), "{offered}");
+    }
+
+    #[test]
     fn the_description_lists_what_create_accepts() {
         let offer = describe();
         assert_eq!(offer["format"], FORMAT);
         let ids: Vec<&str> = offer["templates"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, ["empty", "3d"]);
+        assert_eq!(ids, ["empty", "3d", "infinite-world"]);
     }
 }

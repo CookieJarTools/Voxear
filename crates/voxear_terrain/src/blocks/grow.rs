@@ -561,8 +561,16 @@ pub struct FarGround<'a> {
 /// hollows the ground, from the generator's heights at the same tries. Each
 /// stands no higher than the ground of any ring out to level `levels` puts
 /// its place, so none hangs over coarser ground: sunk a little into it at
-/// worst, until its own blocks are made.
+/// worst, until its own blocks are made. Its heights, rivers and lakes are
+/// those of the generator its ground is made by, as near.
 pub fn grow_far(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u32) -> Vec<Grown> {
+    let size = ground.file.block_size;
+    super::generate::with_ground(ground.generate, ground.world, size, |world| {
+        grow_far_on(rule, &FarGround { world, ..*ground }, column, levels)
+    })
+}
+
+fn grow_far_on(rule: &GrowRule, ground: &FarGround, column: [i32; 2], levels: u32) -> Vec<Grown> {
     let size = ground.file.block_size.max(0.01);
     let side = CHUNK as i32;
     let position = ground.generate.position;
@@ -713,11 +721,20 @@ impl FarBuilt for Woods {
         if !self.shows() {
             return;
         }
+        // The climate, rivers and lakes of the generator the ground is made by, as near.
+        let (generate, size) = (&making.generate, making.file.block_size);
+        super::generate::with_ground(generate, &making.world, size, |world| self.build_on(making, tile, world));
+    }
+}
+
+impl Woods {
+    /// [`FarBuilt::build`], on the ground generator `world` makes.
+    fn build_on(&self, making: &BlockMaking, tile: &mut FarTile, world: &crate::generate::WorldGen) {
         let rule = &self.rule;
         let side = CHUNK;
         let size = making.file.block_size.max(0.01) * (1u32 << tile.level.min(16)) as f32;
         let position = making.generate.position;
-        let (sea, world) = (tile.sea.0, &*making.world);
+        let sea = tile.sea.0;
         // The top of each column's ground, in the tile's blocks, and its block: none under the sea.
         let ground = |x: u32, z: u32| {
             let top = tile.column([x, z]).last()?;

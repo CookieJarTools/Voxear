@@ -1858,7 +1858,28 @@ pub fn build_over(
     area: ([i32; 2], [i32; 2]),
     under: BlockId,
 ) {
-    build_looking(set, structures, world, biomes, at, area, under, &looks(structures, at.0));
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), &|_| None));
+}
+
+/// [`build_over`], each structure standing on the ground `feet` gives for
+/// the column its site is on, as the highest block of ground there, where
+/// it gives any; else on the generator's own. The far view's coarser rings
+/// stand each tree and house on their own coarse ground this way, which is
+/// sampled at the middles of their larger blocks: put where the generator
+/// has the ground, one on a sharp ridge or in a saddle would hang over the
+/// ring's ground or sink into it.
+#[allow(clippy::too_many_arguments)]
+pub fn build_over_standing(
+    set: &mut dyn FnMut([i32; 3], BlockId),
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    area: ([i32; 2], [i32; 2]),
+    under: BlockId,
+    feet: &dyn Fn([i32; 2]) -> Option<i32>,
+) {
+    build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet));
 }
 
 /// How far past the columns being built each structure's sites are looked
@@ -1892,7 +1913,8 @@ fn looks(structures: &WorldStructures, size: f32) -> Vec<f32> {
 }
 
 /// [`build_over`], each structure's sites looked for `looks` metres past
-/// the columns, by its place in the list.
+/// the columns, by its place in the list, each standing where `feet` says
+/// (see [`build_over_standing`]).
 #[allow(clippy::too_many_arguments)]
 fn build_looking(
     set: &mut dyn FnMut([i32; 3], BlockId),
@@ -1902,7 +1924,7 @@ fn build_looking(
     (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     (first, end): ([i32; 2], [i32; 2]),
     under: BlockId,
-    looks: &[f32],
+    (looks, feet): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>),
 ) {
     let side = CHUNK as i32;
     let ground = Ground { world, size, position, biomes, halved };
@@ -2056,7 +2078,7 @@ fn build_looking(
                 }
             };
             for mut part in parts {
-                let foot = ground.top(part.at[0], part.at[1]);
+                let foot = feet(part.at).unwrap_or_else(|| ground.top(part.at[0], part.at[1]));
                 if !structures.turns.is_empty() && (part.turns % 4 != 0 || part.mirrored) {
                     for (_, block) in &mut part.pieces {
                         *block = structures.turned_block(*block, part.turns, part.mirrored);
@@ -2969,7 +2991,17 @@ mod tests {
         assert!(near[0] <= everywhere[0] * 1.5 && near[3] * 20.0 < everywhere[3]);
         let built = |area: ([i32; 2], [i32; 2]), looks: &[f32]| {
             let mut sets: Vec<([i32; 3], BlockId)> = Vec::new();
-            build_looking(&mut |at, block| sets.push((at, block)), &structures, &world, None, at, area, 2, looks);
+            let generators: &dyn Fn([i32; 2]) -> Option<i32> = &|_| None;
+            build_looking(
+                &mut |at, block| sets.push((at, block)),
+                &structures,
+                &world,
+                None,
+                at,
+                area,
+                2,
+                (looks, generators),
+            );
             sets
         };
         let mut blocks = 0;

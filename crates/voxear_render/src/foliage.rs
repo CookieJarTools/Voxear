@@ -25,7 +25,11 @@
 //! pushes left from far away have sprung back long before the camera comes
 //! round to their cells again.
 
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{I64Vec3, Mat3, Mat4, Vec3, Vec4};
@@ -226,17 +230,22 @@ impl FoliageCache {
 
     /// Adds the plants within their draw distance of `camera` to the frame,
     /// building the instances of any Foliage that changed. `sphere` gives a
-    /// mesh's bounding sphere.
+    /// mesh's bounding sphere. A chunk of plants that cast no shadow there
+    /// is left out where it is wholly outside `planes`, the view's frustum
+    /// in the world's space (inward): most of them are, and the GPU would
+    /// only cull them again.
+    #[allow(clippy::too_many_arguments)]
     pub fn gather(
         &mut self,
         world: &World,
         camera: Vec3,
+        planes: &[[f32; 4]; 6],
         extracted: &mut ExtractedFrame,
         sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
         impostors: &crate::impostors::ImpostorTable,
     ) {
         let origin = voxear_scene::WorldOrigin::of(world).0;
-        let mut seen = Vec::new();
+        let mut seen = HashSet::new();
         let found = world
             .query_ref::<(Entity, &Foliage, &Plants, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>();
@@ -247,7 +256,7 @@ impl FoliageCache {
         // Drawn as many times as far as the machine's plant detail says (see `WorldBudget::plants`).
         let budget = voxear_terrain::WorldBudget::of(world);
         for (entity, foliage, plants, transform, placed) in found {
-            seen.push(entity);
+            seen.insert(entity);
             let detailed;
             let foliage = match budget.plant_detail == 1.0 {
                 true => foliage,
@@ -292,6 +301,10 @@ impl FoliageCache {
                     continue;
                 }
                 let shadowless = near > foliage.shadow_distance;
+                let outside = |&[x, y, z, d]: &[f32; 4]| Vec3::new(x, y, z).dot(chunk.centre) + d < -chunk.radius;
+                if shadowless && planes.iter().any(outside) {
+                    continue;
+                }
                 let far = chunk.centre.distance(camera) + chunk.radius;
                 // Where the whole chunk is nearer than impostors start, no plant needs looking at on its own.
                 let mixed = !built.impostors.is_empty() && far > built.impostor_from;

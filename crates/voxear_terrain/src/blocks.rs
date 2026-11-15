@@ -45,6 +45,7 @@ pub mod sapling;
 pub mod shape;
 pub mod sight;
 pub mod smooth;
+pub mod dungeon;
 pub mod structure;
 pub mod stream;
 pub mod usable;
@@ -415,6 +416,9 @@ pub struct BlockWorld {
     /// what is shown from the place nearest its camera. Empty, everything
     /// shows from anywhere.
     pub places: Arc<Vec<BlockPlace>>,
+    /// For a world without end, how its rings fade into each other round
+    /// where it is looked at from (see [`RingFades`]).
+    pub fades: Arc<RingFades>,
     pub block_size: f32,
     pub smooth: bool,
     pub cast_shadows: bool,
@@ -449,6 +453,43 @@ pub struct BlockPlace {
     /// The chunk columns shown from it: each by its level, 0 for the
     /// world's own blocks, and its place in that level's columns.
     pub columns: HashSet<[i32; 3]>,
+}
+
+/// How the rings of a world without end fade into each other round the place
+/// it is looked at from, so no ring ends at a line and no column of finer
+/// ground pops in over the coarse (see `stream`).
+///
+/// Its own blocks are drawn whole out to `reach` metres from `at`, measured
+/// along x or z, whichever is further, and fade out over the last `band`
+/// metres of that, the first coarser ring fading in under them; each
+/// coarser ring the same out to twice as far, over a band twice as wide,
+/// but the coarsest, which fades into nothing. A coarse column whose finer
+/// columns were all made after it showed fades out as they fade in, over
+/// [`RING_FADE_SECONDS`] from when the last was made.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RingFades {
+    /// Where its rings are round, in metres from its corner along x and z.
+    pub at: [f32; 2],
+    /// 0 for a world with no rings to fade.
+    pub reach: f32,
+    pub band: f32,
+    /// Its coarsest ring's level.
+    pub coarsest: u32,
+    /// For each coarse column shown by its level and place: when its finer
+    /// columns were all made, on [`fade_clock`]; `f32::MAX` while they are
+    /// not yet, the finer columns made there waiting unseen till then.
+    pub covered: std::collections::HashMap<[i32; 3], f32>,
+}
+
+/// How long a coarse column takes to fade into the finer ones over it, in
+/// seconds.
+pub const RING_FADE_SECONDS: f32 = 0.6;
+
+/// Seconds since the program first asked: the clock rings fade by, the same
+/// for the streamer and the renderer.
+pub fn fade_clock() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f32()
 }
 
 /// How fast water running out sideways from what feeds it flows, in metres
@@ -494,6 +535,7 @@ impl BlockWorld {
             far: Arc::default(),
             columns: None,
             places: Arc::default(),
+            fades: Arc::default(),
             block_size,
             smooth,
             cast_shadows: true,

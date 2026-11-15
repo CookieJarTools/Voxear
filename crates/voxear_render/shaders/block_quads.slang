@@ -57,6 +57,8 @@ struct BlockPoint
     uint part;
     float3 posedBy;
     float3 back;
+    // Its chunk's slot in its world's pool: where its place is kept, and its fades (blockRingHidden in blocks.slang).
+    uint slot;
 };
 
 // What a loose quad is, where a face says which way it faces (voxear_terrain::blocks::mesh::TUFT and VINE).
@@ -171,6 +173,7 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
     float2 sign = float2(corner == 1 || corner == 2 ? 1.0 : -1.0, corner >= 2 ? 1.0 : -1.0);
     float3 offset = (across * sign.x + up * sign.y) * shown;
     BlockPoint b;
+    b.slot = quad.y >> 16;
     b.world = centre + offset * blockSize;
     // Lit as a soft mass: leaves from their block's middle outwards and up, a vine as it faces, and up.
     float3 toEye = behind ? -facing : facing;
@@ -214,6 +217,7 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
         n.xz = (1.0 - abs(folded.yx)) * select(folded >= 0.0, float2(1.0), float2(-1.0));
     }
     BlockPoint b;
+    b.slot = first.y >> 16;
     b.world = world.corner + (float3(chunk.xyz * 32) + local) * blockSize;
     b.normal = normalize(n);
     b.surface = (second.y & 0xFFFF) | ((second.x >> 24) << 16);
@@ -301,6 +305,7 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     int4 chunk = world.origins[quad.y >> 16];
     float blockSize = world.blockSize * float(1u << uint(chunk.w));
     BlockPoint b;
+    b.slot = quad.y >> 16;
     b.world = world.corner + (float3(chunk.xyz * 32) + p) * blockSize;
     b.normal = blockAxis(axes.x) * (out ? 1.0 : -1.0);
     b.surface = quad.y & 0xFF;
@@ -490,6 +495,7 @@ BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
         }
     }
     BlockPoint b;
+    b.slot = head.y >> 16;
     b.world = placed;
     b.normal = turned;
     b.surface = head.y & 0xFF;

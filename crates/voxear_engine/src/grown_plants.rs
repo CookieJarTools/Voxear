@@ -316,7 +316,8 @@ pub fn update(world: &mut World, content: &mut Content) {
             let generator = crate::blocks::generator(content, &asset.file);
             Some((asset, blocks, generator))
         });
-        let Some((asset, blocks, generator)) = read.clone() else { continue };
+        // Borrowed, not cloned for each Foliage: a world and its blocks are large.
+        let Some((asset, blocks, generator)) = read.as_ref() else { continue };
         let wanted: Vec<AssetGuid> =
             grower.data.near_plants.iter().filter_map(|model| model_of(content, model)).collect();
         let mut number = |block: &str| {

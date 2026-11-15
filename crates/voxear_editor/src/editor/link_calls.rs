@@ -287,6 +287,11 @@ impl Editor {
                 self.refuse_while_playing("write a world's land into its generator")?;
                 self.block_world_write_land(args, renderer)
             }
+            "dungeon.starter" => {
+                self.refuse_while_playing("make the starter dungeon")?;
+                self.dungeon_starter(args, renderer)
+            }
+            "dungeon.layouts" => self.dungeon_layouts(args),
             "reflection_probe.capture" => {
                 let entity = self.obj_arg(args)?;
                 let probe = self.game.engine.world.get_mut::<voxear_render::ReflectionProbe>(entity);
@@ -1344,6 +1349,39 @@ impl Editor {
                 .map(|(entity, blocks)| (entity, corner(entity), blocks.block_size))
                 .collect()),
         }
+    }
+
+    fn dungeon_starter(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let entity = link::resolve_obj(&self.game, need(args, "obj")?)?;
+        let generated = self.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(entity);
+        if !generated.is_some_and(|asset| asset.file.generate.is_some()) {
+            return Err(refuse(ErrorKind::Failed, "dungeons are built by a generator: set the world's Ground to Generated"));
+        }
+        let before = crate::history::ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let (changed, structure) = crate::starter_dungeon::add(&mut self.game, Some(renderer), entity)
+            .map_err(|error| refuse(ErrorKind::Failed, format!("the starter dungeon was not made: {error:#}")))?;
+        if changed {
+            self.record_change(entity, before);
+        }
+        done(json!({ "structure": link::asset_ref(&self.game, &structure), "changed": changed }))
+    }
+
+    fn dungeon_layouts(&mut self, args: &Json) -> Called {
+        let near = match opt_vector(args, "near")? {
+            Some(near) => near,
+            None => self.game.engine.world.get::<voxear_scene::Transform>(self.scene.camera).map_or([0.0; 3], |camera| camera.position.to_array()),
+        };
+        let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(500.0) as f32;
+        let obj = match args.get("obj").filter(|obj| !obj.is_null()) {
+            Some(obj) => link::resolve_obj(&self.game, obj)?.to_bits(),
+            None => 0,
+        };
+        let world = &self.game.engine.world;
+        let text = voxear_engine::dungeons::dungeons_json(world, &mut self.game.content, obj, [near[0], near[1], near[2], reach])
+            .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
+        let answer: Json = serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        done(answer)
     }
 
     fn blocks_get(&self, args: &Json) -> Called {

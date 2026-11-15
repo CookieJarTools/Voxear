@@ -9,7 +9,7 @@ A structure is built of one of three things:
 - **A model**: its own blocks, kept in its file.
 - **A plant**: a tree or a bush grown from a `.voxplant` afresh at every place, so no two trees of a wood are alike.
 - **A town**: houses and a middle, each a structure with a model, laid out along streets (see [Towns](#towns)).
-- **A dungeon**: rooms under the ground joined by corridors, on one floor or several (see [Dungeons](#dungeons)).
+- **A dungeon**: great spaces carved into the rock under the land, reached by a grand stair from an entrance in the land (see [Dungeons](#dungeons)).
 
 ## Where structures stand
 
@@ -118,49 +118,120 @@ With **Roads** on, a town is joined to the towns of its kind next to it. A road 
 
 ## Dungeons
 
-A dungeon is rooms under the ground joined by corridors, reached by a stair winding down from the surface. It goes down floor by floor: each floor is laid out afresh, and a stair at the far end of its main path winds down to the next, which starts at the stair's foot. Each floor is laid out the way well-loved dungeons are:
+A dungeon is a set of great spaces carved into the rock under the land: a gate in the land, a grand stair going down, and floors of halls, rooms, gorges and chasms below, the boss at the bottom. Only its entrance comes up to the surface. Every space keeps rock over and round it, whatever the land does over it, so no room ever comes out through a slope, an escarpment's wall or a lake's bed.
 
-- **A main path** of rooms leads from the stair's foot to its far end: the stair down to the next floor, or on the last floor the **boss's room**. Some rooms along it are **great halls**.
-- **Side branches** leave the main path, one to three rooms long, each ending in a dead end where the **loot** is.
-- **Loops** join rooms that lie near each other but are three or more corridors apart along the paths, so not every way back is the way you came. A loop never reaches the boss's room, a loot room or the stair down, so those stay dead ends with one way in.
+The quickest way to have one is **Add Temple Dungeon** on a generated Block World (or `vox editor call dungeon.starter`). It makes the temple's blocks, with their pictures, in a Dungeon folder beside the world's Blocks, and writes `Structures/Temple Dungeon.structure`, listed under the world's generator.
 
-So every floor has its loot, and the boss waits at the bottom.
+### The entrance in the land
 
-Rooms come in many sizes and are fitted on one at a time beside the room they leave, so every room can be reached. Paths turn now and then rather than running in a line.
+Each dungeon looks round its place, up to 48 m, for where the land offers an entrance:
 
-### Your own rooms
+| Entrance | Where | What stands there |
+| --- | --- | --- |
+| Cliff gate | Where the land rises 12 m or more within 8 m: an escarpment's wall, a canyon's side | Four frames stepping into the rock from its face, trim round each, a pillar dividing the way in, great armoured statues, the ground before the face cut level, a terrace before it |
+| Temple door | A slope of 20 to 40 degrees | A stone front with a pointed arch over the door and a stepped gable, a portico running back into the hill, two hooded statues, a terrace, then stepping stones out past broken pillars |
+| Sinkhole stair | Level ground | A round shaft open to the sky, a stair winding down its wall, a kerb and broken columns round its rim |
 
-A dungeon's rooms are kinds you list, each a structure with a model, each with a **role**:
+The dungeon is then laid out into the land behind its entrance, under the high side. Where the land round a place offers none of the kinds the dungeon may use, or no room under it for even one floor over the world's lowest block, no dungeon is built there.
 
-| Role | Where it stands |
-| --- | --- |
-| Any | Any room on the main path or a side branch |
-| Hall | A great hall on the main path |
-| Loot | A dead end at the end of a side branch |
-| Boss | The room at the end of the last floor's main path |
+A grand stair runs down from the entrance to the first floor's landing: a block down for every two along, half steps of slabs, a landing every ten blocks down, pillars and pointed arches over it.
 
-Each kind also has the rules a town's houses have: **Weight** against the others of its role, **Most** a floor has, and a **Zone**, here how far from the floor's stair as a share of the way to its furthest room. Where no kind of a room's role may stand, a plain room of the dungeon's walls is built, as large as that role's rooms are. So a dungeon with no kinds at all still has halls, loot rooms and a boss's room, and listing a throne room as Boss swaps it in for the plain one.
+### Floors and spaces
+
+Each floor is planned as a graph first:
+
+1. The **landing**, or on a lower floor the foot of the shaft down.
+2. A **threshold room**, where the first fight is.
+3. **Two ways round** to a pillared hall: one down through a **gorge**, the other by a room and a long stair.
+4. The **pillared hall**, on the floor's lower level.
+5. Two ways on: a **flooded hall** and a **chasm**.
+6. The **end**: a shaft down to the next floor, or on the last floor the **boss's arena**.
+
+Loot waits in **treasuries** off the side rooms, and a narrow **shortcut** behind an iron gate leads from the end back to the start. Each floor is turned the way that keeps it under the highest land, and every passage is routed round the other spaces and under the land too.
+
+| Space | Size (Medium) | What is in it |
+| --- | --- | --- |
+| Room | 22 m across, 12 m high | Pilasters, a raised edge with steps at its ends, two thick columns for cover, braziers in the corners |
+| Pillared hall | 56 m long, 28 m high | Columns down both sides, pointed arches carrying a gallery with a balustrade, armoured statues in the bays, ribs across the vault, and at its far end a broad flight of stairs up to an apse with a glowing reliquary under a carved relief, daylight falling on it where level land lies over the hall |
+| Gorge | 40 m long, 26 m deep | Layered walls, a terrace and a carved archway with caged braziers at its top, a stair down its walls, rubble on its flagstones, blue crystal in the rock |
+| Chasm | 44 m across, a 24 m pit | A walkway round a pit of lava, a balustrade at its edge, bridges on piers to an island with an obelisk, a ring of columns and arches |
+| Flooded hall | 48 m long | Green water round carved stelae on pillars, wide walkways and steps down into the water, a relief on its far wall |
+| Boss's arena | 40 m across, 24 m high | Rings in its floor, a ring of columns and arches, a throne on a dais facing the way in |
+| Shaft down | 20 m across | A stair winding down its wall, a balustrade on its inner edge, past a well that goes on down to lava |
+
+Every space is cut out of the rock with an edge that wanders in and out, so natural rock rounds into it. Built stone is laid crisp into it after: flagstones, walls dressed in stone to head height, columns, arches and stairs. Then it is worn and lit:
+
+- **Ruin:** built stone breaks away at its exposed edges, with rubble under where it fell. Never on a floor or a stair's tread.
+- **Wear:** stone is cracked where most exposed, and mossy near the way in.
+- **Overgrowth:** vines hang from the roofs near the way in, thinning with depth.
+- **Lights:** braziers along the main path every 14 m, blue crystal on side ways, pools of firelight down the halls, lava glowing in the chasm.
+- **Shafts:** where level land lies over a great hall, a crack lets daylight fall into it.
+
+### Settings
+
+The easy way in is a theme, a size and how many floors. Everything else has a good value for the theme:
+
+```toml
+[dungeon]
+theme = "temple"
+size = "medium"             # small, medium or large
+floors = [1, 3]
+```
 
 | Setting | What it does |
 | --- | --- |
-| Entrance | The structure at the surface over the stair: a crypt door, a ruined tower. None for a bare stair |
-| Rooms | The kinds of room it builds, each with its role and rules |
-| Count | How many rooms on each floor, from and to |
+| Theme | The look and the set pieces. Temple: an old temple carved into natural rock |
+| Size | Small (a threshold, a hall, a gorge and the end, about 120 m across), Medium (about 200 m) or Large (a second hall and more loot, about 260 m) |
 | Floors | How many floors, one under the next, from and to |
-| Floor gap | How far down each floor is from the one over it, in blocks. Never less than its tallest room needs |
-| Main path | The share of a floor's rooms on its main path |
-| Halls | The share of the main path that is great halls |
-| Corridor | How long its corridors are, in blocks, from and to |
-| Loops | How many of the joins between near rooms are made, from 0 to 1 |
-| Depth | How far under the ground its first floor is, in blocks, from and to |
-| Caves | How far one of its rooms breaks through to a cave of the world's, in blocks. 48 by default; 0 for never |
-| Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
-| Corridor width, Corridor height | How wide and high its corridors are |
-| Room size, Hall size, Loot size, Boss size | The sizes of its plain rooms of each role, in blocks along x, up and along z |
+| Entrances | The kinds of entrance it may use: Cliff, Temple, Sinkhole. None for any the land offers |
+| Cover | The least rock over and round every space, in blocks. 8 by default |
+| Caves | How far a space breaks through to a cave of the world's, in blocks. 48 by default; 0 for never |
+| Shafts | Cracks of daylight over its great halls, where level land lies over them |
+| Blocks | Its blocks by what they are for (see below) |
+| Passes | How worn and lit it is: Ruin, Wear, Overgrowth and Lights, each 0 to 1 |
+| Sizes | The sizes of its spaces, in blocks: Passage (width, height), Stair (width), Room, Hall, Gorge, Chasm, Arena, and Floor Gap. Each as its size says where left at 0 |
+| Entrance | Your own entrance in place of the theme's: a structure with a model, its door on the side that faces -z |
+| Rooms | Your own pieces, by role (see below) |
 
-A room's doors are in the middles of its sides, a block over its floor: the corridors open its walls there. The stair winds round a pillar, a block up for every block along.
+**Blocks** names each block by what it is for: Stone (walls, columns, arches), Trim (capitals, bases, arch rings, balustrades), Floor (flagstones), Rubble, Cracked, Mossy, Slab (half steps), Stairs, Statue, Metal (cages, stands, gates), Light (a brazier's fire), Cold Light (blue crystal), Water, Lava and Vine. Any left out is the nearest: the stone for most, the ground's own rock where there is no stone. What needs a slab, iron, lights, water, lava or vines does without where there are none.
 
-A dungeon in a world with [[Caves|caves]] breaks into them. The room of any floor nearest a cave room, within **Caves** blocks of it, has a rough tunnel cut from its middle to that room's floor, four blocks high and as wide as five or so, never steeper than it runs along. So a dungeon can be found from a cave, and a cave from a dungeon, and the way down from the surface may be either.
+A dungeon written before themes keeps loading: its Wall and Floor blocks become its Stone and Floor, and its old room counts and sizes are read and left unused.
+
+### Your own pieces
+
+Your own pieces stand in the spaces of their role in place of the theme's furnishing. Each is a structure with a model, with a **Role**:
+
+| Role | Where it stands |
+| --- | --- |
+| Any | A room where fights happen |
+| Hall | A pillared hall |
+| Loot | A treasury |
+| Boss | The boss's arena |
+
+Each kind also has **Weight** against the others of its role, **Most** a floor has, and a **Zone**: how far along the floor it stands, from 0 at its start to 1 at its end. A piece stands in the middle of its space, on its floor, and the space is made large enough to hold it and a little more.
+
+```toml
+[[dungeon.rooms]]
+structure = "Structures/Throne.structure"
+role = "boss"
+```
+
+### From scripts and the command line
+
+A script reads the dungeons near a place with **Dungeons**. Each gives its entrance, its spaces by kind, where each is and how large, the ways between them and its lights, for putting players, enemies and loot in them:
+
+```csharp
+var dungeon = Dungeons.Nearest(Player.Position);
+Obj.Instantiate(boss, dungeon!.Boss!.Position, Quaternion.Identity);
+foreach (var room in dungeon.SpacesOf(DungeonSpaceKind.Room))
+{
+	SpawnGuards(room.SpawnPoint());
+}
+```
+
+`vox editor call dungeon.layouts` gives the same, as JSON in the level's metres, and `vox editor call dungeon.starter` makes the starter dungeon. A dungeon's settings are its file's, read and changed with `asset.get` and `asset.set`.
+
+A dungeon in a world with [[Caves|caves]] breaks into them: the space nearest a cave room, within **Caves** blocks of it, has a rough passage cut to that room's floor. So a dungeon can be found from a cave, and a cave from a dungeon.
 
 ## Doors and stairs in a structure
 
@@ -187,4 +258,5 @@ A structure placed turned, as a town turns each house to face its street, turns 
 - A structure's levers and buttons are not linked to its doors. Link them from a script once it stands.
 
 - Structures are built near the camera only. Far off, past a world's own chunks, they do not show.
-- Structures and towns are made by writing their files. The editor has no tools for them yet, but for a plant's own settings in the Inspector.
+- Structures and towns are made by writing their files. The editor has no tools for them yet, but for a plant's own settings in the Inspector and Add Temple Dungeon.
+- A dungeon has one theme so far, the temple. Its enemies, loot and the boss are a script's to place, from `Dungeons`.

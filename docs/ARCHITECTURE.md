@@ -3838,6 +3838,25 @@ the face's surface's material and discards under its cutoff inside `terrainShadi
 shaded pass both call, so the two agree. The shadow pass has a fragment stage of its own for it
 (`blockShadowFragment`), which returns at once for a face that is not cut out and else samples the same picture.
 
+**Dungeons.** A structure with a `[dungeon]` section (`voxear_terrain::blocks::dungeon`) is planned once for each
+site and kept, by a key of its settings, the generator, the world's corner and lowest block and the site
+(`plan::cached_layout`, a cell per key so threads asking at once plan it once); every chunk column it reaches then
+builds only its own part. Planning (`plan`) reads the land a tile of 4-block readings at a time as it asks (`Land`),
+sites the entrance from it (a rise of 12 blocks within 8 for a cliff gate, a 20 to 40 degree slope for a temple
+door, level ground for a sinkhole), lays each floor's graph (a fixed grammar per size: threshold, two ways round
+to a hall, two on to the end, loot off the side rooms, a shortcut home) turned the way the land is highest, pushes
+spaces apart where their heights meet, then solves one number: the first floor's level, the highest that leaves
+`cover` blocks of land over and round every space, every floor's levels fixed below it. Spaces that may be left out
+and would need the floor far deeper are dropped. Passages are routed on a 2-block grid round the spaces their
+heights meet, under-covered cells dearer, and stair along their middle lines in half blocks. Building (`build`)
+fills a grid of the columns and a margin of two: carving first (each space's air by its kind, its wall wandering
+by whole-number noise, vaulted or domed roofs), the walls dressed from the carved rock alone, then each space's
+built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statues, monoliths, obelisks, thrones,
+reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
+any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
+among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
+`vox editor call dungeon.layouts`.
+
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
 (blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared

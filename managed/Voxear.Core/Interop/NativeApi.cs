@@ -214,4 +214,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> PostCall;
 	public delegate* unmanaged[Cdecl]<HdrInfoData*, HdrInfoData*, int> ScreenHdr;
 	public delegate* unmanaged[Cdecl]<Vector3*, ulong*, float> BlockFloor;
+	public delegate* unmanaged[Cdecl]<ulong, Vector4*, byte*, int, int> DungeonsInfo;
 }

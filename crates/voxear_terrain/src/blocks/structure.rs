@@ -38,6 +38,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use super::dungeon::{
+    Dungeon, DungeonBlockNames, DungeonBlocks, DungeonDef, DungeonPasses, DungeonRoom, DungeonSize, DungeonSizes,
+    DungeonTheme, EntranceKind, RoomRole,
+};
 use super::{
     chunk::{AIR, BlockId, CHUNK, Chunk},
     plant::{PlantDef, PlantPart},
@@ -261,155 +265,6 @@ impl Default for TownDef {
     }
 }
 
-/// A dungeon: rooms under the ground joined by corridors, reached by a
-/// winding stair down from a way in at the surface, on one floor or
-/// several, one under the next. It is laid out as dungeons people enjoy
-/// are: on each floor a main path of rooms from the stair to its far end,
-/// a stair down to the next floor there and the boss's room on the last, some of them great halls, with side
-/// branches off it that end in dead ends where the loot is, and a few
-/// loops joining rooms that lie near each other but far apart along the
-/// paths, so not everything is a walk back. Rooms are of many sizes, each
-/// fitted on beside the last one at a time, so every room can be reached.
-///
-/// Each room is a kind with a role, a structure with a model, chosen by
-/// rules as a town's houses are: your own rooms, swapped in by role. Where
-/// no kind of a room's role may stand, a plain room of the dungeon's walls
-/// is built, as large as that role's rooms are. A room's doors are in the
-/// middles of its sides, a block over its floor: the corridors open them.
-///
-/// ```toml
-/// [dungeon]
-/// entrance = "Structures/Crypt Door.structure"  # at the surface, over the stair; none for a bare stair
-/// count = [10, 16]            # rooms, from and to
-/// main_path = 0.5             # the share of them on the main path to the boss
-/// halls = 0.3                 # the share of the main path that is great halls
-/// corridor = [4, 9]           # corridors' lengths, in blocks, from and to
-/// loops = 0.3                 # how many joins between rooms near each other are made, 0 to 1
-/// floors = [1, 3]             # floors, one under the next, from and to
-/// floor_gap = 14              # blocks from one floor down to the next
-/// depth = [12, 20]            # the first floor's blocks under the surface, from and to
-/// caves = 48                  # how far a room breaks through to a cave of the world's, in blocks; 0 never
-/// wall = "Blocks/Stone Bricks.block"
-/// floor = "Blocks/Cobblestone.block"
-/// corridor_width = 3
-/// corridor_height = 3
-/// room_size = [7, 5, 7]       # a plain room's size, blocks along x, up and along z; halls,
-/// hall_size = [13, 7, 13]     # loot rooms and the boss's room each have their own
-/// loot_size = [5, 4, 5]
-/// boss_size = [17, 9, 17]
-///
-/// [[dungeon.rooms]]
-/// structure = "Structures/Throne Room.structure"
-/// role = "boss"               # any, hall, loot or boss
-///
-/// [[dungeon.rooms]]
-/// structure = "Structures/Treasury.structure"
-/// role = "loot"
-/// weight = 1.0
-/// most = 2                    # on each floor
-/// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DungeonDef {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entrance: Option<String>,
-    pub rooms: Vec<DungeonRoom>,
-    pub count: [u32; 2],
-    pub main_path: f32,
-    pub halls: f32,
-    pub corridor: [u32; 2],
-    pub loops: f32,
-    pub floors: [u32; 2],
-    pub floor_gap: u32,
-    pub depth: [u32; 2],
-    pub caves: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wall: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub floor: Option<String>,
-    pub corridor_width: u32,
-    pub corridor_height: u32,
-    pub room_size: [u32; 3],
-    pub hall_size: [u32; 3],
-    pub loot_size: [u32; 3],
-    pub boss_size: [u32; 3],
-}
-
-impl Default for DungeonDef {
-    fn default() -> Self {
-        Self {
-            entrance: None,
-            rooms: Vec::new(),
-            count: [10, 16],
-            main_path: 0.5,
-            halls: 0.3,
-            corridor: [4, 9],
-            loops: 0.3,
-            floors: [1, 3],
-            floor_gap: 14,
-            depth: [12, 20],
-            caves: 48,
-            wall: None,
-            floor: None,
-            corridor_width: 3,
-            corridor_height: 3,
-            room_size: [7, 5, 7],
-            hall_size: [13, 7, 13],
-            loot_size: [5, 4, 5],
-            boss_size: [17, 9, 17],
-        }
-    }
-}
-
-/// What a room of a dungeon is for.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RoomRole {
-    /// Any room on the way: on the main path or a side branch.
-    #[default]
-    Any,
-    /// A great hall on the main path.
-    Hall,
-    /// A dead end at the end of a side branch, where the loot is.
-    Loot,
-    /// The room at the end of the main path.
-    Boss,
-}
-
-impl RoomRole {
-    pub const ALL: [RoomRole; 4] = [RoomRole::Any, RoomRole::Hall, RoomRole::Loot, RoomRole::Boss];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            RoomRole::Any => "Any",
-            RoomRole::Hall => "Hall",
-            RoomRole::Loot => "Loot",
-            RoomRole::Boss => "Boss",
-        }
-    }
-}
-
-/// One kind of room of a dungeon, by reference to a `.structure` with a
-/// model: its role, how often it is chosen against the others of its role,
-/// at most how many a floor has (0 for no limit), and how far from the
-/// floor's stair it stands, as a share of the way to its furthest room.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DungeonRoom {
-    pub structure: String,
-    pub role: RoomRole,
-    pub weight: f32,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub most: u32,
-    pub zone: [f32; 2],
-}
-
-impl Default for DungeonRoom {
-    fn default() -> Self {
-        Self { structure: String::new(), role: RoomRole::Any, weight: 1.0, most: 0, zone: [0.0, 1.0] }
-    }
-}
-
 /// One kind of house of a town, by reference to a `.structure` with a
 /// model: how often it is chosen against the others, at most how many a
 /// town has (0 for no limit), how far out from the middle it stands, as a
@@ -457,35 +312,6 @@ pub enum StructureBlocks {
     Plant { plant: PlantDef, wood: BlockId, leaves: BlockId, vine: BlockId, logs: Vec<(u8, BlockId)> },
     Town(Town),
     Dungeon(Dungeon),
-}
-
-/// A dungeon as a world builds it: its way in, its kinds of room with their
-/// roles (a kind's zone the share of the way from the stair to the furthest
-/// room), and the rest of its settings as its file has them, its blocks by
-/// the world's numbers.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Dungeon {
-    pub entrance: Option<TownPiece>,
-    pub rooms: Vec<(RoomRole, TownHouseKind)>,
-    pub count: [u32; 2],
-    pub main_path: f32,
-    pub halls: f32,
-    pub corridor: [u32; 2],
-    pub loops: f32,
-    pub floors: [u32; 2],
-    pub floor_gap: u32,
-    pub depth: [u32; 2],
-    /// How far one of its rooms breaks through to a cave of the world's, in
-    /// blocks: the nearest within this of any room. None at 0.
-    pub caves: u32,
-    pub wall: BlockId,
-    pub floor: BlockId,
-    pub corridor_width: u32,
-    pub corridor_height: u32,
-    pub room_size: [u32; 3],
-    pub hall_size: [u32; 3],
-    pub loot_size: [u32; 3],
-    pub boss_size: [u32; 3],
 }
 
 /// A piece of a town: a model and how the ground meets it.
@@ -620,7 +446,7 @@ impl PlacedStructure {
             // and buildings themselves (see `build`).
             StructureBlocks::Town(town) => town.middle.as_ref().map_or(3.0, TownPiece::radius) + 2.0,
             // A dungeon stands on the ground by its way in alone.
-            StructureBlocks::Dungeon(dungeon) => dungeon.entrance.as_ref().map_or(3.5, TownPiece::radius),
+            StructureBlocks::Dungeon(dungeon) => dungeon.footprint(),
         }
     }
 
@@ -667,7 +493,7 @@ fn turn([x, z]: [i32; 2], turns: u8) -> [i32; 2] {
 }
 
 /// A model's blocks, centred along x and z on its middle, from its foot up.
-fn model_pieces(size: [u32; 3], blocks: &[BlockId]) -> Vec<Piece> {
+pub(crate) fn model_pieces(size: [u32; 3], blocks: &[BlockId]) -> Vec<Piece> {
     let [sx, sy, sz] = size.map(|v| v as i32);
     let mut out = Vec::new();
     for y in 0..sy {
@@ -1019,559 +845,6 @@ impl Town {
     }
 }
 
-/// A dungeon's rooms and corridors as laid out: each room's middle, in
-/// blocks along x and z from the stair, its kind (none for a plain room),
-/// how far it reaches along x, up and along z, and how many corridors from
-/// the stair; what each room is for; and each corridor, the rooms it joins.
-struct DungeonPlan {
-    rooms: Vec<([i32; 2], Option<usize>, [i32; 3], u32)>,
-    roles: Vec<Spot>,
-    corridors: Vec<(usize, usize)>,
-}
-
-/// What a room of a dungeon is as laid out: the stair's foot, a room on
-/// the main path or a great hall on it, the boss's room at its end, a room
-/// on a side branch, or loot at a branch's end.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Spot {
-    Stair,
-    Path,
-    Hall,
-    Boss,
-    /// The end of a floor's main path, but the last's: a stair down.
-    Down,
-    Branch,
-    Loot,
-}
-
-impl Spot {
-    /// Whether a kind of room with `role` may stand here.
-    fn takes(self, role: RoomRole) -> bool {
-        match self {
-            Spot::Stair | Spot::Down => false,
-            Spot::Path | Spot::Branch => role == RoomRole::Any,
-            // A great hall only: where there is no kind of hall, a plain one as large as halls are.
-            Spot::Hall => role == RoomRole::Hall,
-            Spot::Boss => role == RoomRole::Boss,
-            Spot::Loot => role == RoomRole::Loot,
-        }
-    }
-}
-
-impl Dungeon {
-    /// The largest any room reaches from its middle along the ground, in
-    /// blocks.
-    fn room_half(&self) -> i32 {
-        let kinds = self.rooms.iter().map(|(_, kind)| kind.piece.size[0].max(kind.piece.size[2]));
-        let plain = [self.room_size, self.hall_size, self.loot_size, self.boss_size].map(|size| size[0].max(size[2]));
-        (kinds.chain(plain).max().unwrap_or(0) / 2) as i32
-    }
-
-    /// How far its rooms reach from its way in, in blocks: every room in a
-    /// line, each as large as the largest, a longest corridor between.
-    fn reach(&self) -> f32 {
-        let rooms = self.count[0].max(self.count[1]) as f32 + 1.0;
-        let step = (self.room_half() * 2) as f32 + self.corridor[0].max(self.corridor[1]) as f32 + 2.0;
-        // Rooms are placed outwards along a main path and branches, so few lie in a line; half of them is far.
-        // Each floor starts where the one over it ends.
-        // And as far again as a way broken through to a cave runs.
-        (rooms * 0.5 + 2.0) * step * self.floors[0].max(self.floors[1]).max(1) as f32 + self.caves as f32
-    }
-
-    /// How large a plain room of `place` is, a little more or less by `draws`.
-    fn plain_size(&self, place: Spot, draws: &mut Draws) -> [u32; 3] {
-        let size = match place {
-            Spot::Stair => return [5, 1, 5],
-            Spot::Hall => self.hall_size,
-            Spot::Boss => self.boss_size,
-            Spot::Loot => self.loot_size,
-            Spot::Path | Spot::Branch | Spot::Down => self.room_size,
-        };
-        // Odd along the ground, so a room has a middle block, and two blocks more or less now and then.
-        let vary = |v: u32, draws: &mut Draws| {
-            let v = (v as i32 + [0, 0, 2, -2][(draws.next() % 4) as usize]).max(3);
-            (v | 1) as u32
-        };
-        [vary(size[0], draws), size[1].max(3), vary(size[2], draws)]
-    }
-
-    /// Its rooms laid out: a main path out from the stair to the boss's
-    /// room, some of it halls, then side branches off it ending in loot, each
-    /// room fitted on beside the one it leaves, clear of the rest and of
-    /// their corridors; then loops between rooms that lie near each other but
-    /// are at least three corridors apart, never to the boss's room or a
-    /// loot room; then each room's kind, nearest the stair first.
-    fn plan(&self, draws: &mut Draws, bottom: bool) -> DungeonPlan {
-        let [least, most] = [self.count[0].min(self.count[1]), self.count[0].max(self.count[1])];
-        let wanted = (least + draws.next() % (most - least + 1).max(1)).max(2) as usize;
-        let main = ((wanted as f32 * self.main_path.clamp(0.1, 1.0)).round() as usize).clamp(2, wanted);
-        let ways = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-        let mut rooms: Vec<([i32; 2], Option<usize>, [i32; 3], u32)> = vec![([0, 0], None, [2, 1, 2], 0)];
-        let mut roles = vec![Spot::Stair];
-        let mut corridors: Vec<(usize, usize)> = Vec::new();
-        let mut kinds_built = vec![0u32; self.rooms.len()];
-        // A kind for a room of `place`, by weight among those of its role not yet as many as they may be.
-        let pick = |place: Spot, built: &[u32], draws: &mut Draws| -> Option<usize> {
-            let may = |at: usize| {
-                let (role, kind) = &self.rooms[at];
-                place.takes(*role) && (kind.most == 0 || built[at] < kind.most)
-            };
-            let total: f32 =
-                (0..self.rooms.len()).filter(|&at| may(at)).map(|at| self.rooms[at].1.weight.max(0.0)).sum();
-            if total <= 0.0 {
-                return None;
-            }
-            let mut left = draws.unit() * total;
-            (0..self.rooms.len()).filter(|&at| may(at)).find(|&at| {
-                left -= self.rooms[at].1.weight.max(0.0);
-                left < 0.0
-            })
-        };
-        // Fits a room of `place` on beside room `from`, heading `way` or turning from it: where it lands, its
-        // kind and size, or none where nothing fits.
-        let corridor = [self.corridor[0].min(self.corridor[1]) as i32, self.corridor[0].max(self.corridor[1]) as i32];
-        let fit = |rooms: &Vec<([i32; 2], Option<usize>, [i32; 3], u32)>,
-                   from: usize,
-                   way: [i32; 2],
-                   place: Spot,
-                   built: &[u32],
-                   draws: &mut Draws|
-         -> Option<([i32; 2], Option<usize>, [i32; 3], [i32; 2])> {
-            let kind = pick(place, built, draws);
-            let size = match kind {
-                Some(at) => self.rooms[at].1.piece.size,
-                None => self.plain_size(place, draws),
-            };
-            let half = [size[0] as i32 / 2, size[1] as i32, size[2] as i32 / 2];
-            let (start, start_half) = (rooms[from].0, rooms[from].2);
-            // Ahead or a turn to either side; never back the way it came.
-            let turns = [way, [-way[1], way[0]], [way[1], -way[0]]];
-            // A third of the time a turn is tried first, so paths wind rather than run on in a line.
-            let turn_first = draws.unit() < 0.35;
-            for attempt in 0..6 {
-                let ahead = (attempt < 2) != turn_first;
-                let dir = turns[if ahead { 0 } else { 1 + (draws.next() % 2) as usize }];
-                let length = corridor[0] + (draws.next() % (corridor[1] - corridor[0] + 1).max(1) as u32) as i32;
-                let along = if dir[0] != 0 { start_half[0] + half[0] } else { start_half[2] + half[2] } + length + 1;
-                // A little to one side, as far as its door still meets the corridor.
-                let room_side = if dir[0] != 0 { half[2].min(start_half[2]) } else { half[0].min(start_half[0]) };
-                let shift = (draws.next() % (room_side as u32 + 1)) as i32 - room_side / 2;
-                let middle = [
-                    start[0] + dir[0] * along + if dir[0] == 0 { shift } else { 0 },
-                    start[1] + dir[1] * along + if dir[1] == 0 { shift } else { 0 },
-                ];
-                // Clear of every room, a corridor's width and a wall between, and its corridor of every other room.
-                let clear = rooms.iter().enumerate().all(|(at, (other, _, other_half, _))| {
-                    let gap = 4;
-                    let apart = (other[0] - middle[0]).abs() > other_half[0] + half[0] + gap
-                        || (other[1] - middle[1]).abs() > other_half[2] + half[2] + gap;
-                    let crossed = at != from && crosses(start, middle, *other, *other_half);
-                    apart && !crossed
-                });
-                if clear {
-                    return Some((middle, kind, half, dir));
-                }
-            }
-            None
-        };
-        // The main path, out from the stair, heading one way and turning now and then.
-        let mut way = ways[(draws.next() % 4) as usize];
-        let mut last = 0;
-        for step in 0..main {
-            let end = step + 1 == main;
-            let place = if end && bottom {
-                Spot::Boss
-            } else if end {
-                Spot::Down
-            } else if step > 0 && draws.unit() < self.halls.clamp(0.0, 1.0) {
-                Spot::Hall
-            } else {
-                Spot::Path
-            };
-            let Some((middle, kind, half, dir)) = fit(&rooms, last, way, place, &kinds_built, draws) else { break };
-            if let Some(at) = kind {
-                kinds_built[at] += 1;
-            }
-            rooms.push((middle, kind, half, 0));
-            roles.push(place);
-            corridors.push((last, rooms.len() - 1));
-            last = rooms.len() - 1;
-            way = dir;
-        }
-        // Whatever ended the main path, its last room is the boss's, or the stair down from a floor but the last.
-        if let Some(role) = roles.last_mut().filter(|role| **role != Spot::Stair) {
-            *role = if bottom { Spot::Boss } else { Spot::Down };
-        }
-        // Side branches off the main path, one to three rooms, the last of each a loot room.
-        let mut tries = 0;
-        while rooms.len() - 1 < wanted && tries < wanted * 8 {
-            tries += 1;
-            let path: Vec<usize> =
-                (1..rooms.len()).filter(|&at| matches!(roles[at], Spot::Path | Spot::Hall)).collect();
-            if path.is_empty() {
-                break;
-            }
-            let mut from = path[(draws.next() as usize) % path.len()];
-            let length = (1 + draws.next() % 3).min((wanted + 1 - rooms.len()) as u32).max(1);
-            let mut way = ways[(draws.next() % 4) as usize];
-            for step in 0..length {
-                let place = if step + 1 == length { Spot::Loot } else { Spot::Branch };
-                let Some((middle, kind, half, dir)) = fit(&rooms, from, way, place, &kinds_built, draws) else {
-                    // A branch that cannot go on ends where it is: its last room is the loot.
-                    if step > 0
-                        && let Some(role) = roles.last_mut()
-                    {
-                        *role = Spot::Loot;
-                    }
-                    break;
-                };
-                if let Some(at) = kind {
-                    kinds_built[at] += 1;
-                }
-                rooms.push((middle, kind, half, 0));
-                roles.push(place);
-                corridors.push((from, rooms.len() - 1));
-                from = rooms.len() - 1;
-                way = dir;
-            }
-        }
-        // How many corridors each room is from the stair.
-        let away_from = |corridors: &[(usize, usize)], start: usize| {
-            let mut away = vec![u32::MAX; rooms.len()];
-            away[start] = 0;
-            let mut next = vec![start];
-            while let Some(room) = next.pop() {
-                for &(a, b) in corridors {
-                    let other = if a == room {
-                        b
-                    } else if b == room {
-                        a
-                    } else {
-                        continue;
-                    };
-                    if away[other] > away[room] + 1 {
-                        away[other] = away[room] + 1;
-                        next.push(other);
-                    }
-                }
-            }
-            away
-        };
-        // Loops: rooms near each other, both on the way (not the stair, the boss's room or loot), three corridors
-        // or more apart, joined by chance where their corridor crosses no other room.
-        let open = |at: usize| matches!(roles[at], Spot::Path | Spot::Hall | Spot::Branch);
-        for a in 1..rooms.len() {
-            for b in a + 1..rooms.len() {
-                if !open(a) || !open(b) {
-                    continue;
-                }
-                let (pa, pb) = (rooms[a].0, rooms[b].0);
-                let gap = (pa[0] - pb[0]).abs() - rooms[a].2[0] - rooms[b].2[0];
-                let gap = gap.max((pa[1] - pb[1]).abs() - rooms[a].2[2] - rooms[b].2[2]);
-                if gap > corridor[1] * 2 + 8 || away_from(&corridors, a)[b] < 3 {
-                    continue;
-                }
-                let crossed =
-                    (0..rooms.len()).filter(|&c| c != a && c != b).any(|c| crosses(pa, pb, rooms[c].0, rooms[c].2));
-                if !crossed && draws.unit() < self.loops.clamp(0.0, 1.0) {
-                    corridors.push((a, b));
-                }
-            }
-        }
-        let away = away_from(&corridors, 0);
-        for (room, distance) in rooms.iter_mut().zip(&away) {
-            room.3 = *distance;
-        }
-        // Kinds' zones: a kind out of its zone gives way to a plain room of its role.
-        let furthest = away.iter().copied().filter(|&d| d != u32::MAX).max().unwrap_or(1).max(1) as f32;
-        for room in rooms.iter_mut() {
-            if let Some(at) = room.1 {
-                let zone = self.rooms[at].1.zone;
-                let share = room.3 as f32 / furthest;
-                if share < zone[0].min(zone[1]) - 1e-4 || share > zone[0].max(zone[1]) + 1e-4 {
-                    room.1 = None;
-                }
-            }
-        }
-        DungeonPlan { rooms, roles, corridors }
-    }
-
-    /// Its blocks at a site whose middle is block `site` on `ground`, in the
-    /// order they are put: its way in at the surface, the stair winding down
-    /// to its first floor `depth` blocks under the site's ground, and each
-    /// floor's rooms and corridors, a stair winding down from the end of each
-    /// floor's main path to the next floor `floor_gap` blocks under it,
-    /// which starts there.
-    fn blocks(&self, seed: u32, site: [i32; 2], ground: &Ground, under: BlockId) -> Vec<([i32; 3], BlockId)> {
-        let mut draws = Draws(seed ^ 0x0D06_E0A5);
-        let surface = ground.top(site[0], site[1]);
-        let [least, most] = [self.depth[0].min(self.depth[1]), self.depth[0].max(self.depth[1])];
-        let mut level = surface - (least + draws.next() % (most - least + 1).max(1)) as i32;
-        let [fewest, floors] = [self.floors[0].min(self.floors[1]).max(1), self.floors[0].max(self.floors[1]).max(1)];
-        let floors = fewest + draws.next() % (floors - fewest + 1);
-        let (wall, floor_block) =
-            (if self.wall == AIR { under } else { self.wall }, if self.floor == AIR { under } else { self.floor });
-        let mut out: Vec<([i32; 3], BlockId)> = Vec::new();
-        // Its way in, on the ground over the stair.
-        if let Some(entrance) = &self.entrance {
-            for ([x, y, z], block) in model_pieces(entrance.size, &entrance.blocks) {
-                out.push(([site[0] + x, surface + 1 - entrance.sink + y, site[1] + z], block));
-            }
-        }
-        // The stair down from over the ground, its walls stopping at the ground.
-        stair(&mut out, site, (level, surface + 3, surface), (wall, floor_block));
-        let mut origin = site;
-        // Each room's middle, over its floor, and how far it reaches either way, on every floor.
-        let mut rooms: Vec<([i32; 3], [i32; 3])> = Vec::new();
-        for floor in 0..floors {
-            let last = floor + 1 == floors;
-            let mut floor_draws = Draws(seed ^ 0x0D06_E0A5 ^ (floor + 1).wrapping_mul(0x9E37_79B9));
-            let plan = self.plan(&mut floor_draws, last);
-            self.floor_blocks(&mut out, &plan, origin, level, (wall, floor_block));
-            for (&(middle, _, half, _), role) in plan.rooms.iter().zip(&plan.roles) {
-                if *role != Spot::Stair {
-                    rooms.push(([origin[0] + middle[0], level + 1, origin[1] + middle[1]], half));
-                }
-            }
-            if last {
-                break;
-            }
-            // A stair down from the middle of the room ending the main path, a hole in its floor, to the next floor.
-            let Some(down) = (0..plan.roles.len()).find(|&at| plan.roles[at] == Spot::Down) else { break };
-            let middle = plan.rooms[down].0;
-            // Far enough down that the tallest room under clears the floor over it.
-            let tallest = [self.room_size, self.hall_size, self.loot_size, self.boss_size]
-                .iter()
-                .map(|size| size[1])
-                .chain(self.rooms.iter().map(|(_, kind)| kind.piece.size[1]))
-                .max()
-                .unwrap_or(0);
-            let next = level - self.floor_gap.max(tallest + 3) as i32;
-            origin = [origin[0] + middle[0], origin[1] + middle[1]];
-            stair(&mut out, origin, (next, level, level), (wall, floor_block));
-            level = next;
-        }
-        out.extend(self.into_caves(seed, &rooms, ground));
-        out
-    }
-
-    /// A way broken through from the room of `rooms` nearest a cave of the
-    /// world's generator to that cave's nearest room, where one lies within
-    /// `caves` blocks of it and the way climbs or falls no steeper than it
-    /// runs along: a rough tunnel of air from the room's middle, over its
-    /// floor, to the cave room's floor, so the dungeon and the caves are
-    /// one. Nothing where none does.
-    fn into_caves(&self, seed: u32, rooms: &[([i32; 3], [i32; 3])], ground: &Ground) -> Vec<([i32; 3], BlockId)> {
-        let (Some(caves), Some(&(first, _))) = (ground.world.caves().filter(|_| self.caves > 0), rooms.first())
-        else {
-            return Vec::new();
-        };
-        let (size, [px, pz]) = (ground.size, ground.position);
-        let metres =
-            |[x, y, z]: [i32; 3]| [px + (x as f32 + 0.5) * size, y as f32 * size, pz + (z as f32 + 0.5) * size];
-        let block = |[x, y, z]: [f32; 3]| {
-            [((x - px) / size).floor() as i32, (y / size).floor() as i32, ((z - pz) / size).floor() as i32]
-        };
-        let near = caves.rooms_near(metres(first), (self.caves as f32 + self.reach()) * size);
-        // The room and the cave room nearest each other, their way no steeper than it runs.
-        let mut best: Option<(f32, [i32; 3], [i32; 3])> = None;
-        for (middle, half) in rooms {
-            for cave in &near {
-                let floor = block(cave.floor);
-                let end = [floor[0], floor[1] + 1, floor[2]];
-                let (dx, dy, dz) = (end[0] - middle[0], end[1] - middle[1], end[2] - middle[2]);
-                let along = ((dx * dx + dz * dz) as f32).sqrt();
-                let past = along - half[0].max(half[2]) as f32;
-                if past > self.caves as f32 || dy.abs() as f32 > along {
-                    continue;
-                }
-                if best.is_none_or(|(least, ..)| past < least) {
-                    best = Some((past, *middle, end));
-                }
-            }
-        }
-        let Some((_, from, to)) = best else { return Vec::new() };
-        // Cut along the way, two blocks either side and four high, wider here and there, rounded at its corners.
-        let mut draws = Draws(seed ^ 0xCA7E_0A11);
-        let steps = (0..3).map(|axis| (from[axis] - to[axis]).abs()).max().unwrap_or(0).max(1) * 2;
-        let mut cut = std::collections::BTreeSet::new();
-        for step in 0..=steps {
-            let t = step as f32 / steps as f32;
-            let at = |axis: usize| (from[axis] as f32 + (to[axis] - from[axis]) as f32 * t).round() as i32;
-            let wide = 2 + i32::from(draws.next() % 4 == 0);
-            for dz in -wide..=wide {
-                for dx in -wide..=wide {
-                    if dx.abs() + dz.abs() > wide + 1 {
-                        continue;
-                    }
-                    for dy in 0..=3 {
-                        cut.insert([at(0) + dx, at(1) + dy, at(2) + dz]);
-                    }
-                }
-            }
-        }
-        cut.into_iter().map(|at| (at, AIR)).collect()
-    }
-
-    /// One floor's rooms and corridors, its stair's foot at block `origin`
-    /// and its floor at block `level`: plain rooms of its walls and floor and
-    /// the rest their models, ground cleared out of each first; then the
-    /// corridors from one room's middle to the next, along x and then z, cut
-    /// through the ground, floored and lined with walls outside the rooms,
-    /// opening a room's wall where they reach it, a block over its floor.
-    fn floor_blocks(
-        &self,
-        out: &mut Vec<([i32; 3], BlockId)>,
-        plan: &DungeonPlan,
-        origin: [i32; 2],
-        level: i32,
-        (wall, floor_block): (BlockId, BlockId),
-    ) {
-        let floor = level;
-        let height = self.corridor_height.max(2) as i32;
-        let at = |offset: [i32; 2]| [origin[0] + offset[0], origin[1] + offset[1]];
-        let mut boxes: Vec<([i32; 2], [i32; 3])> = Vec::new();
-        let rooms = plan.rooms.iter().zip(&plan.roles).filter(|(_, role)| **role != Spot::Stair);
-        for (&(middle, kind, half, _), role) in rooms {
-            let middle = at(middle);
-            boxes.push((middle, half));
-            let tall = half[1];
-            for y in floor..floor + tall {
-                for dz in -half[2]..=half[2] {
-                    for dx in -half[0]..=half[0] {
-                        // The stair down's hole is left to the stair.
-                        if *role == Spot::Down && dx.abs() <= 2 && dz.abs() <= 2 && y == floor {
-                            continue;
-                        }
-                        let edge = dx.abs() == half[0] || dz.abs() == half[2] || y == floor || y == floor + tall - 1;
-                        let block = match (kind, edge) {
-                            (None, true) if y == floor => floor_block,
-                            (None, true) => wall,
-                            _ => AIR,
-                        };
-                        out.push(([middle[0] + dx, y, middle[1] + dz], block));
-                    }
-                }
-            }
-            if let Some(kind) = kind {
-                let piece = &self.rooms[kind].1.piece;
-                for ([x, y, z], block) in model_pieces(piece.size, &piece.blocks) {
-                    out.push(([middle[0] + x, floor + y, middle[1] + z], block));
-                }
-            }
-        }
-        let width = self.corridor_width.max(1) as i32;
-        let (from_w, to_w) = (-(width - 1) / 2, width / 2);
-        let inside = |cell: [i32; 2]| {
-            boxes
-                .iter()
-                .any(|(middle, half)| (cell[0] - middle[0]).abs() < half[0] && (cell[1] - middle[1]).abs() < half[2])
-        };
-        let in_wall = |cell: [i32; 2]| {
-            boxes
-                .iter()
-                .any(|(middle, half)| (cell[0] - middle[0]).abs() <= half[0] && (cell[1] - middle[1]).abs() <= half[2])
-        };
-        let mut cut: Vec<[i32; 2]> = Vec::new();
-        for &(a, b) in &plan.corridors {
-            let (a, b) = (at(plan.rooms[a].0), at(plan.rooms[b].0));
-            let mut line = Vec::new();
-            let (mut x, mut z) = (a[0], a[1]);
-            line.push([x, z]);
-            while x != b[0] {
-                x += (b[0] - x).signum();
-                line.push([x, z]);
-            }
-            while z != b[1] {
-                z += (b[1] - z).signum();
-                line.push([x, z]);
-            }
-            for [x, z] in line {
-                for d in from_w..=to_w {
-                    for cell in [[x + d, z], [x, z + d]] {
-                        if !cut.contains(&cell) {
-                            cut.push(cell);
-                        }
-                    }
-                }
-            }
-        }
-        // Not inside a room, nor inside the stair but for its doorway, and so not through a room's things.
-        let stair_at = |cell: [i32; 2]| (cell[0] - origin[0]).abs() <= 1 && (cell[1] - origin[1]).abs() <= 1;
-        cut.retain(|&cell| !inside(cell) && !stair_at(cell));
-        for &cell in &cut {
-            for y in floor + 1..floor + 1 + height {
-                out.push(([cell[0], y, cell[1]], AIR));
-            }
-            out.push(([cell[0], floor, cell[1]], floor_block));
-            if !in_wall(cell) {
-                out.push(([cell[0], floor + 1 + height, cell[1]], wall));
-            }
-        }
-        for &cell in &cut {
-            for beside in [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]] {
-                let next = [cell[0] + beside[0], cell[1] + beside[1]];
-                let by_stair = (next[0] - origin[0]).abs() <= 2 && (next[1] - origin[1]).abs() <= 2;
-                if cut.contains(&next) || in_wall(next) || by_stair {
-                    continue;
-                }
-                for y in floor..=floor + 1 + height {
-                    out.push(([next[0], y, next[1]], wall));
-                }
-            }
-        }
-    }
-}
-
-/// A stair at block `at`: a shaft five blocks a side lined with walls, a
-/// pillar in its middle, steps winding round it a block up for every block
-/// along, from block `bottom` up to `top`, its walls and pillar stopping at
-/// `walls_to`, a floor all round at its foot.
-fn stair(
-    out: &mut Vec<([i32; 3], BlockId)>,
-    at: [i32; 2],
-    (bottom, top, walls_to): (i32, i32, i32),
-    (wall, floor): (BlockId, BlockId),
-) {
-    let ring = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
-    for y in bottom..=top {
-        for dz in -2..=2i32 {
-            for dx in -2..=2i32 {
-                let edge = dx.abs() == 2 || dz.abs() == 2;
-                let block = if edge || (dx == 0 && dz == 0) {
-                    if y > walls_to { AIR } else { wall }
-                } else {
-                    let step = ring.iter().position(|cell| *cell == [dx, dz]).unwrap_or(0) as i32;
-                    if y == bottom || (y - bottom).rem_euclid(8) == step { floor } else { AIR }
-                };
-                out.push(([at[0] + dx, y, at[1] + dz], block));
-            }
-        }
-    }
-}
-
-/// Whether a corridor from `a` to `b`, along x and then along z, passes
-/// through the room at `middle` reaching `half` along x, up and along z,
-/// and a block round it.
-fn crosses(a: [i32; 2], b: [i32; 2], middle: [i32; 2], half: [i32; 3]) -> bool {
-    let near = |[x, z]: [i32; 2]| (x - middle[0]).abs() <= half[0] + 2 && (z - middle[1]).abs() <= half[2] + 2;
-    let (mut x, mut z) = (a[0], a[1]);
-    // Its ends are in the rooms it joins; the rest is what is looked at.
-    while x != b[0] {
-        x += (b[0] - x).signum();
-        if near([x, z]) {
-            return true;
-        }
-    }
-    while z != b[1] {
-        z += (b[1] - z).signum();
-        if near([x, z]) && [x, z] != b {
-            return true;
-        }
-    }
-    false
-}
-
 /// A street as grown: each step's place, in blocks, and the way it heads
 /// there.
 struct Street {
@@ -1619,31 +892,47 @@ pub fn plant_shore(structure: &PlacedStructure, biomes: Option<&WorldBiomes>) ->
 
 /// The ground under a place, for building: the generator's height there,
 /// in metres in its world.
-struct Ground<'a> {
-    world: &'a WorldGen,
-    size: f32,
-    position: [f32; 2],
-    biomes: Option<&'a WorldBiomes>,
+pub(crate) struct Ground<'a> {
+    pub(crate) world: &'a WorldGen,
+    pub(crate) size: f32,
+    pub(crate) position: [f32; 2],
+    pub(crate) biomes: Option<&'a WorldBiomes>,
     /// Whether its top is laid in half blocks (see `generate::BlockGenerate::slabs`).
-    halved: bool,
+    pub(crate) halved: bool,
 }
 
 impl Ground<'_> {
-    /// The highest whole block of ground in column `(x, z)`, in blocks from
-    /// the world's corner, as generated ground puts it: under the slab where
-    /// its top is laid in half blocks and one lies there, so what is built
-    /// stands in the slab's place, not half a block over it.
-    fn top(&self, x: i32, z: i32) -> i32 {
-        let height = self.world.height_at(
-            self.position[0] + (x as f32 + 0.5) * self.size,
-            self.position[1] + (z as f32 + 0.5) * self.size,
-        );
+    /// [`Ground::top`] of each of `columns`, the generator asked for all at
+    /// once.
+    pub(crate) fn tops(&self, columns: &[[i32; 2]]) -> Vec<i32> {
+        let xs: Vec<f32> = columns.iter().map(|c| self.position[0] + (c[0] as f32 + 0.5) * self.size).collect();
+        let zs: Vec<f32> = columns.iter().map(|c| self.position[1] + (c[1] as f32 + 0.5) * self.size).collect();
+        let mut heights = vec![0.0; columns.len()];
+        self.world.heights(&xs, &zs, &mut heights);
+        heights.into_iter().map(|height| self.top_of(height)).collect()
+    }
+
+    /// The highest whole block of ground under ground `height` metres high
+    /// (see [`Ground::top`]).
+    fn top_of(&self, height: f32) -> i32 {
         let surface = height / self.size;
         let slab = (surface - 0.25).floor();
         if self.halved && surface - slab < 0.75 {
             return slab as i32 - 1;
         }
         (surface - 0.5).ceil() as i32 - 1
+    }
+
+    /// The highest whole block of ground in column `(x, z)`, in blocks from
+    /// the world's corner, as generated ground puts it: under the slab where
+    /// its top is laid in half blocks and one lies there, so what is built
+    /// stands in the slab's place, not half a block over it.
+    pub(crate) fn top(&self, x: i32, z: i32) -> i32 {
+        let height = self.world.height_at(
+            self.position[0] + (x as f32 + 0.5) * self.size,
+            self.position[1] + (z as f32 + 0.5) * self.size,
+        );
+        self.top_of(height)
     }
 
     /// Which of the world's biomes column `(x, z)` is; none where it lists
@@ -1884,6 +1173,58 @@ pub fn build_over_standing(
     build_looking(set, structures, world, biomes, at, area, under, (&looks(structures, at.0), feet));
 }
 
+/// The dungeons `structures` lays out within `reach` metres of `near`, a
+/// point in metres in `world` (the generator's own world), in a world of
+/// blocks laid as `at` says (block size, corner, lowest block, half-block
+/// top): each structure's place in the list, its site, and the layout kept
+/// for it, as building its chunks finds it. Sites whose ground does not
+/// fit their placement are left out; a site an earlier structure keeps
+/// another from is not.
+pub fn dungeons_near(
+    structures: &WorldStructures,
+    world: &WorldGen,
+    biomes: Option<&WorldBiomes>,
+    at: (f32, [f32; 2], i32, bool),
+    near: [f32; 2],
+    reach: f32,
+) -> Vec<(usize, Site, std::sync::Arc<super::dungeon::DungeonLayout>)> {
+    let checks = SiteFits::new(world, biomes, at.0, structures);
+    let mut found = Vec::new();
+    for (which, structure) in structures.list.iter().enumerate() {
+        let StructureBlocks::Dungeon(dungeon) = &structure.blocks else { continue };
+        let far = reach + dungeon.reach() * at.0;
+        let sites = structure.placement.tries_near(world.seed(), near, near, far);
+        let fitting = checks.fits(structure, &sites);
+        for (site, fits) in sites.into_iter().zip(fitting) {
+            if !fits || kept_out(structures, &checks, which, &site, at.0, world.seed()) {
+                continue;
+            }
+            if let Some(layout) = super::dungeon::layout_at(dungeon, world, at, &site) {
+                found.push((which, site, layout));
+            }
+        }
+    }
+    found
+}
+
+/// Whether a site of structure `which` is kept out by a site of one listed
+/// before it standing too near: within both their footprints, or the
+/// distance either keeps. Towns' streets and buildings are not looked at.
+fn kept_out(structures: &WorldStructures, checks: &SiteFits, which: usize, site: &Site, size: f32, seed: u32) -> bool {
+    let own = &structures.list[which];
+    let (footprint, apart) = (own.footprint(), own.placement.apart.max(0.0) / size);
+    structures.list[..which].iter().any(|earlier| {
+        let reach = (footprint + earlier.footprint()).max(apart).max(earlier.placement.apart.max(0.0) / size) * size;
+        let sites = earlier.placement.tries_near(seed, site.at, site.at, reach);
+        let fitting = checks.fits(earlier, &sites);
+        sites.iter().zip(fitting).any(|(other, fits)| {
+            let d = ((other.at[0] - site.at[0]).powi(2) + (other.at[1] - site.at[1]).powi(2)).sqrt() / size;
+            let keeps = (earlier.placement.apart.max(0.0) / size).max(apart);
+            fits && (d < footprint + earlier.footprint() || d < keeps)
+        })
+    })
+}
+
 /// How far past the columns being built each structure's sites are looked
 /// for, in metres, for what is built there to be what any other columns
 /// would build: as far as it reaches itself, and as far as any site of a
@@ -2047,8 +1388,16 @@ fn build_looking(
                 }
             };
             if let StructureBlocks::Dungeon(dungeon) = &structure.blocks {
-                for ([x, y, z], block) in dungeon.blocks(site.seed, block, &ground, under) {
-                    put(x, y, z, block);
+                let key = super::dungeon::layout_key(dungeon, &ground, block, bottom);
+                let layout = super::dungeon::cached_layout(key, || {
+                    super::dungeon::plan(dungeon, &ground, block, site.seed, bottom)
+                });
+                if let Some(layout) = layout {
+                    let turn = |placed: BlockId, turns: u8| structures.turned_block(placed, turns, false);
+                    let columns = ([first[0] * side, first[1] * side], [end[0] * side - 1, end[1] * side - 1]);
+                    super::dungeon::build(dungeon, &layout, &ground, under, columns, &turn, &mut |at, placed| {
+                        set(at, placed)
+                    });
                 }
                 continue;
             }
@@ -2971,7 +2320,7 @@ mod tests {
         // trees, the trees last, kept clear of everything before them.
         let mut list = vec![
             placed(place(1, 300.0, 0.0), StructureBlocks::Town(village())),
-            placed(place(2, 240.0, 60.0), StructureBlocks::Dungeon(crypt())),
+            placed(place(2, 240.0, 60.0), StructureBlocks::Dungeon(crate::blocks::dungeon::tests::temple())),
         ];
         let mut thick = hut_and_trees().list;
         thick[0].placement = place(3, 70.0, 20.0);
@@ -3027,208 +2376,4 @@ mod tests {
         assert!(blocks > 500 && whole.len() > 500, "{blocks} blocks in six columns, {} in the area", whole.len());
     }
 
-    /// A dungeon of walls 30 and floors 31, with a throne room of block 33 for its boss and treasuries of block 32,
-    /// two at most, for its loot.
-    fn crypt() -> Dungeon {
-        let room = |size: [u32; 3], block: BlockId| TownPiece {
-            size,
-            blocks: vec![block; (size[0] * size[1] * size[2]) as usize],
-            ground: GroundFit::Leave,
-            sink: 0,
-        };
-        let kind = |piece: TownPiece, most: u32| TownHouseKind {
-            piece,
-            weight: 1.0,
-            most,
-            zone: [0.0, 1.0],
-            biomes: Vec::new(),
-        };
-        Dungeon {
-            entrance: None,
-            rooms: vec![
-                (RoomRole::Boss, kind(room([15, 8, 15], 33), 1)),
-                (RoomRole::Loot, kind(room([5, 4, 5], 32), 2)),
-            ],
-            count: [12, 16],
-            main_path: 0.5,
-            halls: 0.3,
-            corridor: [4, 9],
-            loops: 0.4,
-            floors: [1, 1],
-            floor_gap: 14,
-            depth: [24, 30],
-            caves: 0,
-            wall: 30,
-            floor: 31,
-            corridor_width: 3,
-            corridor_height: 3,
-            room_size: [7, 5, 7],
-            hall_size: [13, 7, 13],
-            loot_size: [5, 4, 5],
-            boss_size: [17, 9, 17],
-        }
-    }
-
-    #[test]
-    fn a_dungeon_has_a_main_path_to_its_boss_and_branches_ending_in_loot_every_room_reached() {
-        let dungeon = crypt();
-        let (mut loops, mut halls, mut treasuries, mut sizes) = (0, 0, 0, std::collections::HashSet::new());
-        for seed in 0..40u32 {
-            let plan = dungeon.plan(&mut Draws(seed), true);
-            let rooms = plan.rooms.len() - 1;
-            assert!(rooms >= 8 && rooms <= 16, "seed {seed}: {rooms} rooms");
-            assert!(plan.rooms.iter().all(|room| room.3 != u32::MAX), "seed {seed}: a room no corridor reaches");
-            let joins = |room: usize| plan.corridors.iter().filter(|&&(a, b)| a == room || b == room).count();
-            // One boss's room, a dead end, the throne room, and the furthest room on the main path.
-            let bosses: Vec<usize> = (0..plan.roles.len()).filter(|&at| plan.roles[at] == Spot::Boss).collect();
-            assert_eq!(bosses.len(), 1, "seed {seed}");
-            let boss = bosses[0];
-            assert_eq!(joins(boss), 1, "seed {seed}: the boss's room a dead end");
-            assert_eq!(plan.rooms[boss].1, Some(0), "seed {seed}: the throne room");
-            // Loot at dead ends, at most two treasuries, the rest plain loot rooms.
-            for at in (0..plan.roles.len()).filter(|&at| plan.roles[at] == Spot::Loot) {
-                assert_eq!(joins(at), 1, "seed {seed}: a loot room not a dead end");
-            }
-            let here = plan.rooms.iter().filter(|room| room.1 == Some(1)).count();
-            assert!(here <= 2, "seed {seed}: {here} treasuries");
-            treasuries += here;
-            halls += plan.roles.iter().filter(|role| **role == Spot::Hall).count();
-            // No two rooms overlap.
-            for (i, a) in plan.rooms.iter().enumerate() {
-                for b in &plan.rooms[i + 1..] {
-                    let apart = (a.0[0] - b.0[0]).abs() > a.2[0] + b.2[0] || (a.0[1] - b.0[1]).abs() > a.2[2] + b.2[2];
-                    assert!(apart, "seed {seed}: rooms at {:?} and {:?} overlap", a.0, b.0);
-                }
-                sizes.insert(a.2);
-            }
-            // Loops: more corridors than a tree's.
-            loops += plan.corridors.len() - (plan.rooms.len() - 1);
-        }
-        assert!(
-            loops >= 10 && halls >= 20 && treasuries >= 30,
-            "{loops} loops, {halls} halls, {treasuries} treasuries"
-        );
-        assert!(sizes.len() >= 6, "rooms of {} sizes", sizes.len());
-    }
-
-    #[test]
-    fn a_dungeon_is_built_under_the_ground_its_stair_open_from_the_surface_to_its_floor() {
-        let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
-        let dungeon = crypt();
-        let site = [40, -30];
-        let blocks = dungeon.blocks(5, site, &ground, 2);
-        let last = |at: [i32; 3]| blocks.iter().rev().find(|(place, _)| *place == at).map(|(_, block)| *block);
-        let surface = ground.top(site[0], site[1]);
-        // The stair's floor and the steps between, the pillar in its middle, open over them to the sky.
-        let floor = (surface - 30..=surface - 24)
-            .find(|&y| last([site[0], y, site[1]]) == Some(30) && last([site[0], y - 1, site[1]]).is_none())
-            .expect("the stair's foot");
-        for y in floor + 1..=surface + 3 {
-            let open = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]]
-                .iter()
-                .filter(|[dx, dz]| last([site[0] + dx, y, site[1] + dz]) == Some(AIR))
-                .count();
-            assert!(open >= 6, "{open} of eight open round the stair {} blocks up", y - floor);
-            let step =
-                [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]][((y - floor) % 8) as usize];
-            assert_eq!(last([site[0] + step[0], y, site[1] + step[1]]), Some(31), "a step {} blocks up", y - floor);
-        }
-        // Rooms at the floor's level: walls round air a block over the floor, and floors of the dungeon's floor block.
-        let rooms_open = blocks.iter().filter(|([_, y, _], block)| *y == floor + 2 && *block == AIR).count();
-        assert!(rooms_open > 300, "{rooms_open} blocks of open air at walking height");
-        // The same from the same seed.
-        assert_eq!(dungeon.blocks(5, site, &ground, 2), blocks);
-    }
-
-    #[test]
-    fn a_floor_over_the_last_ends_its_main_path_in_a_stair_down_and_has_no_boss() {
-        let dungeon = crypt();
-        for seed in 0..40u32 {
-            let plan = dungeon.plan(&mut Draws(seed), false);
-            let at = |spot: Spot| (0..plan.roles.len()).filter(|&at| plan.roles[at] == spot).collect::<Vec<_>>();
-            assert!(at(Spot::Boss).is_empty(), "seed {seed}: a boss over the last floor");
-            let down = at(Spot::Down);
-            assert_eq!(down.len(), 1, "seed {seed}");
-            assert_eq!(plan.rooms[down[0]].1, None, "seed {seed}: the stair down's room a plain one");
-            let joins = plan.corridors.iter().filter(|&&(a, b)| a == down[0] || b == down[0]).count();
-            assert_eq!(joins, 1, "seed {seed}: the stair down a dead end");
-            assert!(!at(Spot::Loot).is_empty(), "seed {seed}: no loot on the floor");
-        }
-    }
-
-    #[test]
-    fn a_dungeon_breaks_through_into_the_nearest_cave_and_with_no_reach_into_none() {
-        let world = crate::generate::starters().into_iter().find(|s| s.name == "Caves").unwrap().world(1, 1.0);
-        let caves = world.caves().expect("its caves");
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
-        let dungeon = Dungeon { depth: [30, 30], caves: 48, ..crypt() };
-        // Of a few sites, the dungeons that find a cave near enough.
-        let mut broken = 0;
-        for site in [[40, -30], [-120, 60], [200, 200], [-260, -180], [90, 330]] {
-            let way = dungeon.blocks(5, site, &ground, 2);
-            let none = Dungeon { caves: 0, ..dungeon.clone() }.blocks(5, site, &ground, 2);
-            let cut: Vec<[i32; 3]> = way[none.len()..].iter().map(|(at, _)| *at).collect();
-            assert!(way[none.len()..].iter().all(|(_, block)| *block == AIR), "the way through is air");
-            if cut.is_empty() {
-                continue;
-            }
-            broken += 1;
-            // It ends on a cave room's floor, within reach of the dungeon's rooms.
-            let near = caves.rooms_near([site[0] as f32, 0.0, site[1] as f32], 400.0);
-            let on_floor = near.iter().any(|room| {
-                let floor = room.floor.map(|v| v.floor() as i32);
-                let over = |at: &&[i32; 3]| (at[0] - floor[0]).abs() <= 1 && (at[2] - floor[2]).abs() <= 1;
-                cut.iter().filter(over).any(|at| at[1] == floor[1] + 1)
-            });
-            assert!(on_floor, "the way from {site:?} reaches no cave room's floor");
-            // Never steeper than it runs: four high all along, so it can be walked.
-            assert!(cut.len() > 40, "{} blocks cut", cut.len());
-        }
-        assert!(broken >= 1, "no dungeon of five broke into a cave");
-    }
-
-    #[test]
-    fn a_dungeon_of_three_floors_goes_down_floor_by_floor_its_boss_on_the_last() {
-        let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
-        let dungeon = Dungeon { floors: [3, 3], depth: [12, 12], ..crypt() };
-        let site = [40, -30];
-        let blocks = dungeon.blocks(5, site, &ground, 2);
-        let mut last = std::collections::HashMap::new();
-        for &(at, block) in &blocks {
-            last.insert(at, block);
-        }
-        // Floors: the levels with many blocks of floor, three of them, each further down by at least its gap.
-        let mut floors = std::collections::BTreeMap::new();
-        for (at, block) in &last {
-            if *block == 31 {
-                *floors.entry(at[1]).or_insert(0) += 1;
-            }
-        }
-        let levels: Vec<i32> = floors.iter().filter(|(_, count)| **count > 150).map(|(y, _)| *y).collect();
-        assert_eq!(levels.len(), 3, "floors at {floors:?}");
-        assert!(levels.windows(2).all(|pair| pair[1] - pair[0] >= 14), "floors at {levels:?}");
-        // The boss's throne on the lowest floor only, a treasury on more than one.
-        let throne: Vec<i32> = last.iter().filter(|(_, block)| **block == 33).map(|(at, _)| at[1]).collect();
-        assert!(!throne.is_empty() && throne.iter().all(|&y| y >= levels[0] && y < levels[1]), "throne at {throne:?}");
-        let treasuries: std::collections::HashSet<usize> = last
-            .iter()
-            .filter(|(_, block)| **block == 32)
-            .map(|(at, _)| levels.iter().rposition(|&y| at[1] >= y).unwrap_or(0))
-            .collect();
-        assert!(treasuries.len() >= 2, "treasuries on floors {treasuries:?}");
-        // Each floor's stair goes down to the floor under: a pillar all the way between, open round it.
-        let ring = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
-        for pair in levels.windows(2) {
-            let shaft = last.keys().filter(|at| at[1] == pair[0] + 1).any(|&[x, _, z]| {
-                (pair[0] + 1..pair[1]).all(|y| {
-                    let open = ring.iter().filter(|[dx, dz]| last.get(&[x + dx, y, z + dz]) != Some(&30)).count();
-                    last.get(&[x, y, z]) == Some(&30) && open >= 7
-                })
-            });
-            assert!(shaft, "no stair from {} down to {}", pair[1], pair[0]);
-        }
-        assert_eq!(dungeon.blocks(5, site, &ground, 2), blocks);
-    }
 }

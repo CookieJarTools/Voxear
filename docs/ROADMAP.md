@@ -2525,6 +2525,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Dungeons with design:**~~ done: dungeons are planned as a graph on each floor (a threshold, two ways round
+    through a gorge or by a long stair to a pillared hall, a flooded hall and a chasm on to the end, loot off the
+    side rooms, a shortcut home), at a third-person co-op camera's sizes (rooms 22 m across, halls 56 m long and
+    28 m high, gorges 26 m deep, arenas 40 m), and carved into natural rock with soft edges, built stone laid crisp
+    into them: columns and pointed arches, galleries, statues in alcoves, monoliths in water, an obelisk over a lava
+    pit, a throne. Every space keeps `cover` blocks of land over and round it, escarpments, slopes and lake beds
+    included; only the entrance comes up, sited from the land: a cliff gate, a temple door in a hillside, a sinkhole
+    stair, a grand stair down from it. Ruin, wear, vines, braziers, crystal and daylight shafts are passes. The easy
+    way in is a theme, a size and floors (Add Temple Dungeon makes the blocks and the structure); the full one sets
+    entrances, cover, blocks by role, passes, sizes and your own pieces by role. C# `Dungeons`, `vox editor call
+    dungeon.layouts` and `dungeon.starter`. Tests: every space under the land in rolling hills and on escarpments;
+    floors down through set pieces to one boss, every space reached; a column built alone as among its neighbours;
+    GPU renders of the entrances and every kind of space.
   - ~~**Few big caves, and trees off the shore:**~~ done: a world's own caves are a few wide ones by default:
     Tunnels at 72 m (lines some 6 m across), Chambers at 100 m, the Cave Network's rooms 192 m apart joined by
     tunnels 14 to 22 m wide; the ground beside river and lake water is kept whole where caves pass, so none opens

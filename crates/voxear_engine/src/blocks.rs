@@ -553,7 +553,7 @@ fn number_placed(content: &mut Content, file: &mut BlockFile, owner: &str, named
 /// is left out, with a warning.
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::blocks::structure::{
-        Dungeon, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
+        Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
     };
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
@@ -621,30 +621,51 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     };
                     rooms.push((room.role, kind));
                 }
-                let mut block = |named: &Option<String>| {
-                    named.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named))
+                let names = &dungeon.blocks;
+                // A dungeon written before themes names its walls and floors: its stone and floor.
+                let stone_name = names.stone.as_ref().or(dungeon.wall.as_ref());
+                let floor_name = names.floor.as_ref().or(dungeon.floor.as_ref());
+                let mut block = |named: Option<&String>| {
+                    named.map_or(0, |named| number_named(content, &mut file, reference, named))
                 };
-                let (wall, floor) = (block(&dungeon.wall), block(&dungeon.floor));
+                let mut blocks = DungeonBlocks {
+                    stone: block(stone_name),
+                    trim: block(names.trim.as_ref()),
+                    floor: block(floor_name),
+                    rubble: block(names.rubble.as_ref()),
+                    cracked: block(names.cracked.as_ref()),
+                    mossy: block(names.mossy.as_ref()),
+                    slab: block(names.slab.as_ref()),
+                    stairs: [0; 4],
+                    statue: block(names.statue.as_ref()),
+                    metal: block(names.metal.as_ref()),
+                    light: block(names.light.as_ref()),
+                    cold_light: block(names.cold_light.as_ref()),
+                    water: block(names.water.as_ref()),
+                    lava: block(names.lava.as_ref()),
+                    vine: block(names.vine.as_ref()),
+                };
+                // Stairs rising towards each way round.
+                if let Some(named) = names.stairs.as_deref() {
+                    use voxear_terrain::blocks::shape::BlockFacing;
+                    blocks.stairs = BlockFacing::AROUND.map(|facing| {
+                        let state = BlockState { facing, ..BlockState::default() };
+                        number_placed(content, &mut file, reference, named, Some(state))
+                    });
+                }
                 StructureBlocks::Dungeon(Dungeon {
+                    theme: dungeon.theme,
+                    size: dungeon.size,
+                    floors: dungeon.floors,
+                    entrances: dungeon.entrances.clone(),
+                    cover: dungeon.cover,
+                    caves: dungeon.caves,
+                    shafts: dungeon.shafts,
+                    blocks,
+                    passes: dungeon.passes,
+                    sizes: dungeon.sizes,
                     entrance,
                     rooms,
-                    count: dungeon.count,
-                    main_path: dungeon.main_path,
-                    halls: dungeon.halls,
-                    corridor: dungeon.corridor,
-                    loops: dungeon.loops,
-                    floors: dungeon.floors,
-                    floor_gap: dungeon.floor_gap,
-                    caves: dungeon.caves,
-                    depth: dungeon.depth,
-                    wall,
-                    floor,
-                    corridor_width: dungeon.corridor_width,
-                    corridor_height: dungeon.corridor_height,
-                    room_size: dungeon.room_size,
-                    hall_size: dungeon.hall_size,
-                    loot_size: dungeon.loot_size,
-                    boss_size: dungeon.boss_size,
                 })
             }
             (None, None) => {

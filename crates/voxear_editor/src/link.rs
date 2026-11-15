@@ -458,6 +458,24 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ generator, nodes, comments }",
     },
     CallInfo {
+        name: "dungeon.starter",
+        about: "Makes the starter temple dungeon for a Block World, as the Inspector's Add Temple Dungeon does: its blocks with their pictures in a Dungeon folder beside the world's Blocks, and Structures/Temple Dungeon.structure listed under the world's generator. Nothing a project made already is written over.",
+        args: &[arg("obj", ArgKind::Obj, "The Block World.")],
+        changes: true,
+        returns: "{ structure, changed }",
+    },
+    CallInfo {
+        name: "dungeon.layouts",
+        about: "The dungeons a Block World's generator lays out near a point: each one's entrance (its kind, where it stands and the way it faces), its floors, its spaces (kind, floor, middle, size, upper level, depth under its floor, whether on the main path, how far along its floor), its ways (kind, main, the spaces it joins by their place in the list, its middle line) and its lights, all in the level's metres.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Block World; every one when left out."),
+            maybe("near", ArgKind::Vector, "Where to look round, in metres; the editor's camera when left out."),
+            maybe("reach", ArgKind::Number, "How far round to look, in metres: 500 when left out."),
+        ],
+        changes: false,
+        returns: "{ dungeons: [{ world, structure, floors, entrance, spaces, ways, lights }] }",
+    },
+    CallInfo {
         name: "reflection_probe.capture",
         about: "Captures a Reflection Probe again, as its Capture button does: what it shows then stays until it is captured again or baked.",
         args: &[arg("obj", ArgKind::Obj, "An Obj with a Reflection Probe.")],

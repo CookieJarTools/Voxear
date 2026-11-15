@@ -10,7 +10,7 @@ A probe is a box. From its middle it takes a picture of everything round it, in 
 
 Click the Hierarchy's **+** button and choose **Reflection Probe**. It comes eight metres square and four high, the size of a room, and is captured once, as the level opens.
 
-Move it to the middle of the room and size its box to the room with the Scale tool, walls, floor and ceiling inside it. The Scene view draws the box, a second box round it as far as it blends out, and a small dot where it takes its picture.
+Move it to the middle of the room and size its box to the room with the Scale tool, walls, floor and ceiling inside it. The Scene view draws the box, a second box round it as far as it blends out, and an icon where it takes its picture.
 
 One probe for each room or hall is a good start. Out in the open, a large probe with Box Projection off gives the hills and buildings round a place in place of the plain sky.
 
@@ -31,7 +31,9 @@ One probe for each room or hall is a good start. Out in the open, a large probe 
 
 A probe captured once keeps what it saw. A door opening or a lamp going out in front of it does not change it until it is captured again: from the Inspector's Capture button, from a script with `Capture()`, or by baking.
 
-**Bake Reflection Probes**, in the command palette, or **Bake** on a level's page in the Inspector, captures every probe in the open level again and saves what they saw beside the level, as `Level.probes` next to `Level.level`. The level then opens with its probes ready, the same every time, and builds ship the file with the level. Bake again after changing what a room looks like.
+**Bake Reflection Probes**, in the command palette, or **Bake Probes** on a level's page in the Inspector, captures every probe in the open level again and saves what they saw beside the level, as `Level.probes` next to `Level.level`. The level then opens with its probes ready, the same every time, and builds ship the file with the level. Bake again after changing what a room looks like. Save the scene first: the bake finds each probe by its scene and its place in it.
+
+From a terminal, `vox editor call reflection_probes.bake` bakes the open level, and `vox editor call reflection_probe.capture obj="Hall Probe"` captures one probe again (see [[Driving the Editor from a Terminal]]).
 
 A probe the level has no bake for is captured a moment after the level opens, once its bounced light has settled.
 

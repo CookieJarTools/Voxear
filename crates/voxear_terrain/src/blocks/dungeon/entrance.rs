@@ -184,27 +184,38 @@ fn temple(kit: &Kit, grid: &mut Grid, frame: Frame) {
     }
 }
 
-/// A gate carved into a cliff: three frames stepping in and down into the
-/// rock, each lined with trim, a pillar in the middle of the innermost
-/// dividing the way in; great statues in the outer frame; a terrace before
-/// it.
+/// A gate carved into a cliff: four frames stepping in and down into the
+/// rock from its face, each lined with trim, a pillar in the middle of the
+/// innermost dividing the way in; great statues in the outer frame; the
+/// ground before the face cut level to it, and a terrace before that.
 fn cliff(kit: &Kit, grid: &mut Grid, frame: Frame) {
     let b = &kit.blocks;
-    terrace(kit, grid, frame, 1, 12, 10);
-    for band in 0..3 {
-        let half = 10 - band * 2;
-        let tall = 18 - band * 3;
-        for ahead in [-(band * 2), -(band * 2) - 1] {
+    let face = kit.layout.entrance.face.max(1);
+    terrace(kit, grid, frame, 1, 12, 13);
+    // The ground between the threshold and the face, cut away level, as wide as the outer frame.
+    for ahead in -(face - 1)..=0 {
+        for right in -15i32..=15 {
+            let at = frame.at(right, 0, ahead);
+            grid.keep(at, if right.abs() == 15 { b.trim } else { b.floor });
+            for up in 1..=30 {
+                grid.set(frame.at(right, up, ahead), AIR, Tag::Air);
+            }
+        }
+    }
+    for band in 0..4 {
+        let half = 14 - band * 3;
+        let tall = 26 - band * 5;
+        let outer = -(face - 1) - band * 2;
+        for ahead in [outer, outer - 1] {
             for right in -half - 1..=half + 1 {
                 for up in 0..=tall + 1 {
                     let at = frame.at(right, up, ahead);
                     let inside = right.abs() <= half && up >= 1 && up <= tall;
                     if inside {
-                        if up >= 1 {
-                            grid.set(at, AIR, Tag::Air);
-                        }
-                    } else {
-                        grid.build(at, b.trim);
+                        grid.set(at, AIR, Tag::Air);
+                    } else if up > 0 {
+                        // Banded every few blocks, as the stepped frames are carved.
+                        grid.build(at, if (up % 5 == 0) || right.abs() == half + 1 { b.trim } else { b.stone });
                     }
                 }
                 grid.keep(frame.at(right, 0, ahead), b.floor);
@@ -212,13 +223,15 @@ fn cliff(kit: &Kit, grid: &mut Grid, frame: Frame) {
         }
     }
     // The innermost frame's pillar.
-    for up in 1..=12 {
-        grid.build(frame.at(0, up, -5), if up == 1 || up == 12 { b.trim } else { b.stone });
-        grid.build(frame.at(0, up, -6), b.stone);
+    let inner = -(face - 1) - 6;
+    for up in 1..=11 {
+        for ahead in [inner, inner - 1] {
+            grid.build(frame.at(0, up, ahead), if up == 1 || up == 11 { b.trim } else { b.stone });
+        }
     }
     for side in [-1, 1] {
-        let foot = frame.at(side * 8, 0, -1);
-        pieces::statue(kit, grid, Frame { foot, facing: frame.facing }, 14, true);
+        let foot = frame.at(side * 10, 0, -(face - 1) - 1);
+        pieces::statue(kit, grid, Frame { foot, facing: frame.facing }, 20, true);
         pieces::caged_brazier(kit, grid, frame.at(side * 6, 1, 10));
     }
 }
@@ -270,6 +283,11 @@ fn sinkhole(kit: &Kit, grid: &mut Grid, frame: Frame) {
                     }
                     grid.keep([x, y - 1, z], b.floor);
                     grid.build([x, y - 2, z], b.stone);
+                    // A balustrade along its inner edge, over the drop.
+                    if d < radius - 3.8 {
+                        let floor_y = if surface % 2 == 0 { y - 1 } else { y };
+                        pieces::balustrade(kit, grid, [x, floor_y, z]);
+                    }
                     turn += 1;
                 }
             } else if d < radius + 2.0 {

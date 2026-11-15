@@ -252,12 +252,31 @@ fn hall(kit: &Kit, grid: &mut Grid, space: &Space, doors: &[Door]) {
             }
         }
     }
-    // A dais at the quiet end: a reliquary on it, a relief on the wall over it.
+    // At the quiet end, a broad flight of stairs as wide as the nave rises to an apse, a reliquary glowing on it
+    // and a relief on the wall over it; braziers in cages at the stair's head.
     let end = quiet_end(space, doors);
-    let dais = place(space, along, across, end * (long - 7), 0, floor);
     let facing = [-along[0] * end, -along[1] * end];
-    let frame = Frame { foot: dais, facing };
-    for (step, half) in [(1, 4), (2, 3)] {
+    let rise = (space.height / 3).clamp(4, 10);
+    let apse = long - 9;
+    let foot = apse - rise * 2;
+    let nave = row - thick / 2 - 2;
+    for a in foot..=long + 3 {
+        for c in -nave..=nave {
+            let at = place(space, along, across, end * a, c, 0);
+            if a < apse {
+                let surface = (floor + 1) * 2 + (a - foot) + 1;
+                tread(kit, grid, at, surface);
+            } else {
+                fill_down(kit, grid, [at[0], floor + rise, at[2]], b.stone, 0);
+            }
+        }
+    }
+    for side in [-1, 1] {
+        let head = place(space, along, across, end * apse, side * (nave + 1), floor + rise + 1);
+        pieces::caged_brazier(kit, grid, head);
+    }
+    let frame = Frame { foot: place(space, along, across, end * (long - 4), 0, floor + rise), facing };
+    for (step, half) in [(1, 2), (2, 1)] {
         for ahead in -half..=half {
             for right in -half..=half {
                 grid.build(frame.at(right, step, ahead), b.trim);
@@ -267,8 +286,8 @@ fn hall(kit: &Kit, grid: &mut Grid, space: &Space, doors: &[Door]) {
     let glow = if b.cold_light != AIR { b.cold_light } else { b.light };
     grid.build(frame.at(0, 3, 0), b.statue);
     grid.keep(frame.at(0, 4, 0), glow);
-    let wall = Frame { foot: place(space, along, across, end * (long - 1), 0, gallery + 1), facing };
-    pieces::relief(kit, grid, wall, (wide - aisle) | 1, (space.height / 3).max(6));
+    let wall = Frame { foot: place(space, along, across, end * (long - 1), 0, floor + rise + 6), facing };
+    pieces::relief(kit, grid, wall, (nave * 2 - 1) | 1, (space.height / 3).max(6));
 }
 
 /// A room where fights happen: pilasters round its walls, a raised edge
@@ -619,7 +638,7 @@ fn flooded(kit: &Kit, grid: &mut Grid, space: &Space, doors: &[Door]) {
     let b = &kit.blocks;
     let (along, across, long, wide) = axes(space);
     let floor = space.at[1];
-    let basin = (wide as f32 * 0.62) as i32;
+    let basin = (wide as f32 * 0.5) as i32;
     for (x, z) in columns(grid, space, 4) {
         let a = (x - space.at[0]) * along[0] + (z - space.at[2]) * along[1];
         let c = (x - space.at[0]) * across[0] + (z - space.at[2]) * across[1];
@@ -647,7 +666,8 @@ fn flooded(kit: &Kit, grid: &mut Grid, space: &Space, doors: &[Door]) {
     while a <= long - 12 {
         for s in [-1, 1] {
             let foot = place(space, along, across, a, s * (basin / 2), space.bottom());
-            pieces::monolith(kit, grid, foot, space.below + 2);
+            let facing = if s < 0 { across } else { [-across[0], -across[1]] };
+            pieces::monolith(kit, grid, Frame { foot, facing }, space.below + 1);
         }
         a += 14;
     }
@@ -753,6 +773,11 @@ fn descent(kit: &Kit, grid: &mut Grid, space: &Space, doors: &[Door]) {
                 break;
             }
             tread_ledge(kit, grid, [x, 0, z], surface);
+            // A balustrade along its inner edge, over the drop to the well.
+            if d < r - 3.8 {
+                let y = if surface % 2 == 0 { surface / 2 - 1 } else { surface.div_euclid(2) };
+                pieces::balustrade(kit, grid, [x, y, z]);
+            }
             turn += 1;
         }
     }

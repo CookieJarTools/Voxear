@@ -117,7 +117,7 @@ fn open(space: &Space, x: i32, y: i32, z: i32, floor: i32, top: i32) -> bool {
                 return false;
             }
             // The flooded hall's basin is narrower than the hall: walkways along its sides.
-            if y <= floor && across > 0.62 {
+            if y <= floor && across > 0.5 {
                 return false;
             }
             let wall = space.height as f32 * 0.62;

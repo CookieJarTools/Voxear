@@ -497,7 +497,7 @@ fn plan_floors(
             let along = 11.0 + (sizes.room[0] / 2) as f32;
             [entrance.at[0] as f32 + into[0] * along, entrance.at[2] as f32 + into[1] * along]
         } else {
-            let along = 3.0 + grand_length(fall) + (sizes.room[0] / 2 - 1) as f32;
+            let along = (entrance.mouth() + 2) as f32 + grand_length(fall) + (sizes.room[0] / 2 - 1) as f32;
             [entrance.at[0] as f32 + into[0] * along, entrance.at[2] as f32 + into[1] * along]
         };
         let laid = lay_floors(dungeon, sizes, land, start, into, floors, cover, seed)?;
@@ -874,8 +874,8 @@ fn finish(
         ]
     } else {
         [
-            entrance.at[0] as f32 + into[0] as f32 * 1.0,
-            entrance.at[2] as f32 + into[1] as f32 * 1.0,
+            entrance.at[0] as f32 + (into[0] * entrance.mouth()) as f32,
+            entrance.at[2] as f32 + (into[1] * entrance.mouth()) as f32,
             ((entrance.at[1] + 1) * 2) as f32,
         ]
     };
@@ -898,7 +898,7 @@ fn finish(
     if let Some(way) = into_caves(dungeon, &spaces, land.ground()) {
         ways.push(way);
     }
-    let shafts = if dungeon.shafts { shafts(&spaces, land) } else { Vec::new() };
+    let shafts = if dungeon.shafts { shafts(&spaces, &ways, land) } else { Vec::new() };
     let wanted = 1 + joins.iter().filter(|(a, b, _)| a != b && live(&spaces[*a]) && live(&spaces[*b])).count() as u32;
     let lights = lights(&spaces, &ways, dungeon);
     let mut low = [i32::MAX; 3];
@@ -930,26 +930,52 @@ fn finish(
     DungeonLayout { entrance, spaces, ways, lights, floors, joins: wanted, low, high, shaft_floor, shafts }
 }
 
-/// Where daylight falls into the great halls: over the middle of each hall
-/// and flooded hall of the first floor, where the land over it lies level
-/// for 12 blocks round and no more than 48 blocks of rock over its roof.
-fn shafts(spaces: &[Space], land: &Land) -> Vec<([i32; 2], [i32; 2])> {
+/// Where daylight falls into the great halls: over the apse at the quiet end
+/// of each hall of the first floor, and the middle of each flooded hall,
+/// where the land over it lies level for 12 blocks round and no more than
+/// 48 blocks of rock over its roof.
+fn shafts(spaces: &[Space], ways: &[Way], land: &Land) -> Vec<([i32; 2], [i32; 2])> {
     let mut shafts = Vec::new();
-    for space in spaces.iter().filter(|space| space.height >= 0 && space.floor == 0) {
-        if !matches!(space.kind, SpaceKind::Hall | SpaceKind::Flooded) {
-            continue;
-        }
-        let at = [space.at[0], space.at[2]];
+    for (index, space) in spaces.iter().enumerate().filter(|(_, space)| space.height >= 0 && space.floor == 0) {
+        let at = match space.kind {
+            SpaceKind::Hall => {
+                let end = quiet_end(space, index, ways);
+                let long = space.half[if space.along_x { 0 } else { 1 }] - 5;
+                if space.along_x {
+                    [space.at[0] + end * long, space.at[2]]
+                } else {
+                    [space.at[0], space.at[2] + end * long]
+                }
+            }
+            SpaceKind::Flooded => [space.at[0], space.at[2]],
+            _ => continue,
+        };
         let top = land.top(at);
         let level = [[12, 0], [-12, 0], [0, 12], [0, -12]]
             .iter()
             .all(|d| (land.top([at[0] + d[0], at[1] + d[1]]) - top).abs() <= 2);
         let roof = space.at[1] + space.height;
         if level && top - roof <= 48 && top > land.sea + 1 {
-            shafts.push((at, [roof - 2, top + 1]));
+            shafts.push((at, [roof - 4, top + 1]));
         }
     }
     shafts
+}
+
+/// The end of a space's length with fewer ways on the main path meeting it,
+/// +1 or -1 along its length: where its set piece faces the way in.
+pub(crate) fn quiet_end(space: &Space, index: usize, ways: &[Way]) -> i32 {
+    let along = if space.along_x { [1, 0] } else { [0, 1] };
+    let mut ends = [0, 0];
+    for way in ways.iter().filter(|way| way.main) {
+        let points = [(way.from, way.line.first()), (Some(way.to), way.line.last())];
+        for (at, point) in points {
+            let Some(p) = point.filter(|_| at == Some(index)) else { continue };
+            let a = (p[0].floor() as i32 - space.at[0]) * along[0] + (p[1].floor() as i32 - space.at[2]) * along[1];
+            ends[usize::from(a < 0)] += 1;
+        }
+    }
+    if ends[0] <= ends[1] { 1 } else { -1 }
 }
 
 /// A rough passage from the space nearest a cave of the world's generator

@@ -128,7 +128,7 @@ Each dungeon looks round its place, up to 48 m, for where the land offers an ent
 
 | Entrance | Where | What stands there |
 | --- | --- | --- |
-| Cliff gate | Where the land rises 12 m or more within 8 m: an escarpment's wall, a canyon's side | Three frames stepping into the rock, trim round each, a pillar dividing the way in, great armoured statues, a terrace before it |
+| Cliff gate | Where the land rises 12 m or more within 8 m: an escarpment's wall, a canyon's side | Four frames stepping into the rock from its face, trim round each, a pillar dividing the way in, great armoured statues, the ground before the face cut level, a terrace before it |
 | Temple door | A slope of 20 to 40 degrees | A stone front with a pointed arch over the door and a stepped gable, a portico running back into the hill, two hooded statues, a terrace, then stepping stones out past broken pillars |
 | Sinkhole stair | Level ground | A round shaft open to the sky, a stair winding down its wall, a kerb and broken columns round its rim |
 
@@ -152,12 +152,12 @@ Loot waits in **treasuries** off the side rooms, and a narrow **shortcut** behin
 | Space | Size (Medium) | What is in it |
 | --- | --- | --- |
 | Room | 22 m across, 12 m high | Pilasters, a raised edge with steps at its ends, two thick columns for cover, braziers in the corners |
-| Pillared hall | 56 m long, 28 m high | Columns down both sides, pointed arches carrying a gallery with a balustrade, armoured statues in the bays, ribs across the vault, a dais with a glowing reliquary under a carved relief |
+| Pillared hall | 56 m long, 28 m high | Columns down both sides, pointed arches carrying a gallery with a balustrade, armoured statues in the bays, ribs across the vault, and at its far end a broad flight of stairs up to an apse with a glowing reliquary under a carved relief, daylight falling on it where level land lies over the hall |
 | Gorge | 40 m long, 26 m deep | Layered walls, a terrace and a carved archway with caged braziers at its top, a stair down its walls, rubble on its flagstones, blue crystal in the rock |
 | Chasm | 44 m across, a 24 m pit | A walkway round a pit of lava, a balustrade at its edge, bridges on piers to an island with an obelisk, a ring of columns and arches |
-| Flooded hall | 48 m long | Green water round monoliths on pillars, walkways and steps down into the water, a relief on its far wall |
+| Flooded hall | 48 m long | Green water round carved stelae on pillars, wide walkways and steps down into the water, a relief on its far wall |
 | Boss's arena | 40 m across, 24 m high | Rings in its floor, a ring of columns and arches, a throne on a dais facing the way in |
-| Shaft down | 20 m across | A stair winding down its wall past a well that goes on down to lava |
+| Shaft down | 20 m across | A stair winding down its wall, a balustrade on its inner edge, past a well that goes on down to lava |
 
 Every space is cut out of the rock with an edge that wanders in and out, so natural rock rounds into it. Built stone is laid crisp into it after: flagstones, walls dressed in stone to head height, columns, arches and stairs. Then it is worn and lit:
 

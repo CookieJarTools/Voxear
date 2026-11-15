@@ -194,7 +194,12 @@ impl<'a> Land<'a> {
                     continue;
                 }
                 score -= distance / search * 0.5 + noise::unit(at[0], 0, at[1], seed) * 0.1;
-                let entrance = Entrance { kind, at: [at[0], height, at[1]], into };
+                // How far in the cliff's face stands, where the gate is cut.
+                let face = match kind {
+                    EntranceKind::Cliff => (1..=12).find(|&along| rise(into, along) >= 10).unwrap_or(4),
+                    _ => 0,
+                };
+                let entrance = Entrance { kind, at: [at[0], height, at[1]], into, face };
                 if best.as_ref().is_none_or(|(least, _)| score > *least) {
                     best = Some((score, entrance));
                 }
@@ -211,4 +216,18 @@ pub struct Entrance {
     pub kind: EntranceKind,
     pub at: [i32; 3],
     pub into: [i32; 2],
+    /// How many blocks in from its threshold a cliff's face stands; 0 for
+    /// the other kinds.
+    pub face: i32,
+}
+
+impl Entrance {
+    /// How many blocks in from its threshold its grand stair starts: behind
+    /// a cliff gate's innermost frame, a block in for a temple door.
+    pub fn mouth(&self) -> i32 {
+        match self.kind {
+            EntranceKind::Cliff => self.face + 8,
+            _ => 1,
+        }
+    }
 }

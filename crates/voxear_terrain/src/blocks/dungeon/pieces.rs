@@ -188,39 +188,55 @@ pub(crate) fn statue(kit: &Kit, grid: &mut Grid, frame: Frame, height: i32, armo
     // The sword before it, point down on the plinth, the hands on its hilt.
     let front = 2;
     let hilt = plinth + 1 + (body as f32 * 0.55) as i32;
-    for y in plinth + 1..=hilt + 1 {
+    // A blade two blocks thick from the plinth to the hands folded over its pommel.
+    for y in plinth + 1..=hilt {
         grid.build(frame.at(0, y, front), blade);
     }
     for right in -1..=1 {
-        grid.build(frame.at(right, hilt - 1, front), blade);
+        grid.build(frame.at(right, hilt + 1, front - 1), stone);
     }
-    grid.build(frame.at(0, hilt + 1, front - 1), stone);
 }
 
-/// A monolith on a pillar rising from `foot`: a pillar `pillar` blocks
-/// high, then a carved stone three wide and eight high, narrowing to a
-/// point, a face cut into each side.
-pub(crate) fn monolith(kit: &Kit, grid: &mut Grid, foot: [i32; 3], pillar: i32) {
+/// A monolith on a pillar at `frame`, facing out of it: a round-shouldered
+/// pillar `pillar` blocks high from its foot, then a carved stele five wide,
+/// two thick and eleven high, a border of trim round a dark panel with a
+/// robed figure standing proud of it, its top stepping in to a point.
+pub(crate) fn monolith(kit: &Kit, grid: &mut Grid, frame: Frame, pillar: i32) {
     let b = &kit.blocks;
-    for y in 1..=pillar {
-        grid.build([foot[0], foot[1] + y, foot[2]], b.stone);
+    for up in 1..=pillar {
+        let wide = up == pillar;
+        for ahead in -1..=1i32 {
+            for right in -1..=1i32 {
+                if !wide && ahead.abs() + right.abs() == 2 {
+                    continue;
+                }
+                grid.build(frame.at(right, up, ahead), if wide { b.trim } else { b.stone });
+            }
+        }
     }
-    let base = foot[1] + pillar;
-    for up in 1..=8 {
-        // Narrower at its top, a carved face on each side a third of the way down.
-        let half = if up >= 7 { 0 } else { 1 };
-        for dz in -half..=half {
-            for dx in -half..=half {
-                let band = up == 1;
-                let face = up == 5 && (dx == 0) != (dz == 0);
-                let block = if band {
+    let base = pillar;
+    for up in 1..=11 {
+        let half: i32 = match up {
+            11 => 0,
+            10 => 1,
+            _ => 2,
+        };
+        for right in -half..=half {
+            let border = right.abs() == half || up == 1 || up >= 9;
+            // A robed figure: a robe widening to its foot, a narrow body, a head, a block proud of the panel.
+            let figure = ((2..=4).contains(&up) && right.abs() <= 1) || ((5..=7).contains(&up) && right == 0);
+            for ahead in 0..=1 {
+                let block = if border {
                     b.trim
-                } else if face {
-                    b.cracked
+                } else if ahead == 0 {
+                    b.stone
                 } else {
-                    b.statue
+                    b.cracked
                 };
-                grid.build([foot[0] + dx, base + up, foot[2] + dz], block);
+                grid.build(frame.at(right, base + up, ahead), block);
+            }
+            if figure && !border {
+                grid.build(frame.at(right, base + up, 2), b.statue);
             }
         }
     }

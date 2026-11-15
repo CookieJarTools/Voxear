@@ -1333,15 +1333,41 @@ Done so far:
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests
   them the same way. A ray finding the back of a sheet (cut-out or foliage) no longer marks a probe as inside a
   wall. GPU tests: a wall cut away all over bounces nothing, a solid one bounces its colour, both tracers.
+- **Reflection probes:** a Reflection Probe component, a box (the Obj's unit cube) with a blend distance outside
+  it, box projection, intensity and importance, captured once or live every so often.
+  - **Capture on the GPU:** a ray from the probe's middle through each texel of a 128² cube, against the scene the
+    GI's rays see, by ray queries or the software tracer, hits lit as the GI's are; the faces averaged into mips,
+    then each of the probe's six mips filtered with GGX for its roughness (spaced quadratically, so near mirrors
+    stay sharp), with lower mips read for wide samples. All probes are one array of cubes (cube arrays added to
+    the RHI). One probe is captured or loaded a frame; one captured once stays as it was until asked again.
+  - **Shading:** probes in order of importance, then size, each taking its share of what those before left; box
+    projection bends each look-up to where the ray leaves the box. In scene files (`[obj.reflection_probe]`),
+    prefabs, the Inspector (with Capture), the Hierarchy's + menu (8×4×8, captured once), the Scene view (box, blend
+    box, capture point) and C# (`Obj.ReflectionProbe`, `AddReflectionProbe`, `Capture()`; script API 88).
+  - **Baked:** Bake Reflection Probes (palette, a level's Inspector, `reflection_probes.bake` over `vox editor
+    call` and `vox mcp`) captures every probe again and writes `Level.probes` beside the level: each probe's faces
+    as RGB9E5, LZ4-compressed, about 50 KB a probe. Levels load it, also from bundles, and content builds ship it.
+  - **Reflections fall back to them:** what a traced or screen-space ray does not find takes the reflection probes
+    round the surface, then the GI's probes from where the ray stopped, then the sky; shading takes the same where
+    a surface is too rough for the reflection pass.
+  - **Screen-space reflections walk a nearest-depth pyramid** (after Uludag 2014), the depth for the finest level:
+    whole cells where nothing is near the ray, pixel by pixel where something is, so thin posts and walls seen
+    edge on are not stepped over; out of steps (32), the rest in twelve strides refined by halving.
+  - Cost at 1080p on an RTX 3070 (Hello, least of 120 frames): shading with a probe in view +0.06 ms; a capture
+    0.07 ms by ray queries, 0.19 ms in software; ray-traced reflections unchanged (0.157 ms); screen-space ones
+    0.10 ms before, 0.21 ms now with the pyramid (0.02 ms of it).
+  - GPU tests: a mirror floor in a closed room shows its walls with a probe, the sky without, both tracers; box
+    projection lines the reflection up; a probe captured once keeps what it saw until captured again, and its bake
+    loads as captured; thin far poles show in a mirror floor; a screen-space miss shows the probe's wall behind the
+    camera. Editor test: bake a probe added with `obj.create`, and it loads with the level.
+  - Later: terrain, block worlds, water and plants in captures; metals' own shine in captures; a resolution
+    setting; letting a probe's capture point move off its box's middle.
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
-- Probe rays for reflections.
 - Virtual shadow maps.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
-- Baked lightmapper, light probes and reflection probes.
-- Reflections: falling back to reflection probes rather than the sky, and tracing against the depth pyramid,
-  for fewer misses on surfaces seen edge on.
+- Baked lightmapper and light probes.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
 - **HDR colour, end to end ✅** (in Done, above).

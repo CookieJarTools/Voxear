@@ -721,6 +721,9 @@ pub enum LightData {
         width: f32,
         #[serde(default = "one")]
         height: f32,
+        /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        soft_shadows: bool,
     },
     Disc {
         #[serde(default = "white")]
@@ -737,6 +740,9 @@ pub enum LightData {
         shadows: bool,
         #[serde(default = "half")]
         radius: f32,
+        /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        soft_shadows: bool,
     },
     /// A glowing capsule along the Obj's +X.
     Tube {
@@ -756,6 +762,9 @@ pub enum LightData {
         length: f32,
         #[serde(default = "default_tube_radius")]
         radius: f32,
+        /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        soft_shadows: bool,
     },
 }
 
@@ -794,6 +803,17 @@ impl LightData {
             | Self::Rectangle { shadows, .. }
             | Self::Disc { shadows, .. }
             | Self::Tube { shadows, .. } => shadows,
+        }
+    }
+
+    /// Whether a shaped light's shadow softens as wide as it is; any other's
+    /// has no shape to soften it.
+    pub fn soft_shadows(&self) -> bool {
+        match *self {
+            Self::Rectangle { soft_shadows, .. }
+            | Self::Disc { soft_shadows, .. }
+            | Self::Tube { soft_shadows, .. } => soft_shadows,
+            _ => true,
         }
     }
 
@@ -2532,7 +2552,7 @@ pub(crate) fn light_component(data: &LightData) -> Light {
             Light::tube(Vec3::from(linear(color)), intensity, range, length, radius)
         }
     };
-    Light { temperature: data.temperature(), shadows: data.shadows(), ..light }
+    Light { temperature: data.temperature(), shadows: data.shadows(), soft_shadows: data.soft_shadows(), ..light }
 }
 
 /// A light with its cookie and IES profile loaded, as a scene names them.
@@ -2554,7 +2574,7 @@ fn light_data(content: &Content, light: &Light) -> LightData {
     let temperature = light.temperature;
     let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
     let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
-    let shadows = light.shadows;
+    let (shadows, soft_shadows) = (light.shadows, light.soft_shadows);
     match light.kind {
         LightKind::Directional => LightData::Directional {
             color,
@@ -2583,14 +2603,24 @@ fn light_data(content: &Content, light: &Light) -> LightData {
         },
         LightKind::Rectangle => {
             let (width, height) = (light.width, light.height);
-            LightData::Rectangle { color, intensity, temperature, range: light.range, shadows, width, height }
+            LightData::Rectangle {
+                color,
+                intensity,
+                temperature,
+                range: light.range,
+                shadows,
+                width,
+                height,
+                soft_shadows,
+            }
         }
         LightKind::Disc => {
-            LightData::Disc { color, intensity, temperature, range: light.range, shadows, radius: light.radius }
+            let radius = light.radius;
+            LightData::Disc { color, intensity, temperature, range: light.range, shadows, radius, soft_shadows }
         }
         LightKind::Tube => {
             let (length, radius) = (light.length, light.radius);
-            LightData::Tube { color, intensity, temperature, range: light.range, shadows, length, radius }
+            LightData::Tube { color, intensity, temperature, range: light.range, shadows, length, radius, soft_shadows }
         }
     }
 }
@@ -2986,6 +3016,18 @@ mod tests {
             assert_eq!(toml::from_str::<LightData>(&toml::to_string(&none).unwrap()).unwrap(), none);
         }
         assert!(default_light(LightKind::Point).shadows, "a new light casts them too");
+    }
+
+    #[test]
+    fn a_shaped_lights_soft_shadows_are_on_unless_turned_off_and_left_out_when_on() {
+        for kind in ["rectangle", "disc", "tube"] {
+            let plain: LightData = toml::from_str(&format!("type = \"{kind}\"")).unwrap();
+            assert!(light_component(&plain).soft_shadows, "{kind} softens its shadow unless told not to");
+            assert!(!toml::to_string(&plain).unwrap().contains("soft_shadows"));
+            let hard: LightData = toml::from_str(&format!("type = \"{kind}\"\nsoft_shadows = false")).unwrap();
+            assert!(!light_component(&hard).soft_shadows, "{kind}");
+            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&hard).unwrap()).unwrap(), hard);
+        }
     }
 
     #[test]

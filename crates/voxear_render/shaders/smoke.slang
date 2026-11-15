@@ -454,7 +454,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         for (uint l = 0; l < buffers()->clusters[base]; l++)
         {
             Light lamp = buffers()->lights[buffers()->clusters[base + 1 + l]];
-            lamps += localLightInput(lamp, at, normalizeOr(lamp.position - at, way)).color;
+            lamps += localLightInput(lamp, at, normalizeOr(lamp.position - at, way), false).color;
         }
         // Its thin edges catch less of the sun than its body does, so each puff is darker round its rim and
         // stands out from the one behind.

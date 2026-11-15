@@ -79,7 +79,7 @@ float3 lightInFog(Light light, float3 position, float3 toCamera, float g)
     {
         facing = saturate(dot(-toLight, light.direction));
     }
-    float3 shadow = localShadow(push.frame, light, position, float3(0.0));
+    float3 shadow = localShadow(push.frame, light, position, float3(0.0), false);
     shadow *= localGlass(push.frame, light, position, float3(0.0));
     return light.color * facing * shadow * window / distanceSquared * miePhase(g, dot(-toLight, toCamera));
 }

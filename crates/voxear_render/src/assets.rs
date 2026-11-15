@@ -337,6 +337,12 @@ pub struct Assets {
     pub impostors: crate::impostors::ImpostorTable,
     /// Materials drawn as leaves are, so an impostor of a plant is too.
     foliage_materials: std::collections::HashSet<MaterialHandle>,
+    /// Materials whose vertices move as they are drawn, in the wind or by a
+    /// custom shader, so what they are on never stands still.
+    moving_materials: std::collections::HashSet<MaterialHandle>,
+    /// How many times a material has been written, so what keeps shadows
+    /// drawn with them knows when to draw them again.
+    material_writes: u64,
 }
 
 impl Assets {
@@ -409,6 +415,8 @@ impl Assets {
             decompressed_on_gpu: 0,
             impostors: Default::default(),
             foliage_materials: Default::default(),
+            moving_materials: Default::default(),
+            material_writes: 0,
             ltc: [TextureId(0); 2],
             smoke_noise: TextureId(0),
             particle_textures: [TextureId(0); 5],
@@ -926,6 +934,17 @@ impl Assets {
         self.foliage_materials.contains(&material)
     }
 
+    /// Whether a material moves the vertices it is drawn on, in the wind or
+    /// by a custom shader's vertex function.
+    pub fn moves_vertices(&self, material: MaterialHandle) -> bool {
+        self.moving_materials.contains(&material)
+    }
+
+    /// How many times any material has been written so far.
+    pub fn material_writes(&self) -> u64 {
+        self.material_writes
+    }
+
     pub fn add_material(&mut self, gpu: &Gpu, desc: &MaterialDesc) -> Result<MaterialHandle> {
         let slot = self.material_slots.alloc().context("too many materials")?;
         let handle = MaterialHandle(slot);
@@ -942,6 +961,12 @@ impl Assets {
         } else {
             self.foliage_materials.remove(&handle);
         }
+        if desc.wind_bend > 0.0 || desc.wind_flutter > 0.0 || desc.shader != STANDARD_SHADER {
+            self.moving_materials.insert(handle);
+        } else {
+            self.moving_materials.remove(&handle);
+        }
+        self.material_writes += 1;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         // Diced only as the standard shader, opaque and not glass, foliage or an impostor, draws it.
         let displaced = desc.height_texture.is_some()

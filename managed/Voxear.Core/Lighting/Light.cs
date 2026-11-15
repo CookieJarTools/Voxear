@@ -124,12 +124,22 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 
 	/// <summary>
 	/// How wide the sun looks, in degrees, which softens its shadows' edges the farther they fall: about 0.5 for the
-	/// real sun, 0 for hard edges.
+	/// real sun, 0 for hard edges. A Rectangle, Disc or Tube softens its shadow by its own size (see SoftShadows).
 	/// </summary>
 	public float Softness
 	{
 		get { return NativeLights.Number(Obj, NativeLights.Softness, 0f); }
 		set { Set(NativeLights.Softness, value); }
+	}
+
+	/// <summary>
+	/// Whether a Rectangle's, Disc's or Tube's shadow softens as wide as the light is, hard where things touch and softer
+	/// the farther it falls from them. On by default; off, its edges are hard and cost less to shade.
+	/// </summary>
+	public bool SoftShadows
+	{
+		get { return NativeLights.Number(Obj, NativeLights.SoftShadows, 1f) != 0f; }
+		set { Set(NativeLights.SoftShadows, value ? 1f : 0f); }
 	}
 
 	/// <summary>Takes the Light off its Obj.</summary>

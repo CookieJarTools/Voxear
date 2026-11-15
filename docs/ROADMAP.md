@@ -870,7 +870,7 @@ Done so far:
 - **Shadows from point, spot, area and tube lights:** a light's `shadows` (Shadows in the Inspector, on by
   default; `shadows = false` turns them off) draws what is in its reach into views of a 4096×3072 atlas of its own, 512 texels each: a spot light one
   along its cone, any other six, a cube's faces, each a little wider so the filter stays inside it at the rim. The
-  eight nearest the camera, 48 views between them, cast shadows in a frame; each has a list of its own that the
+  eight nearest the camera cast shadows in a frame, each in a slot of six views it keeps from frame to frame; each has a list of its own that the
   culling fills by its reach and draws into each of its views, on every culling path. Without depth clamping, so
   a flame or bulb round a light, nearer than its near plane, is clipped rather than shutting it in. Shading, glass,
   the fog's light shafts, reflections and the GI's rays all read them, with nine taps of 2×2 PCF and a normal
@@ -879,7 +879,30 @@ Done so far:
   every culling path.
 - **The C# `Light` API:** `Obj.Light` and `Obj.AddLight(kind)`, with its kind, colour (sRGB, kept linear),
   temperature, intensity, range, spot angles, shadows, shape and softness.
-- Still to come for lights: caching local shadows of what does not move, and soft shadows from area lights.
+- **Kept local shadows** (`shadow_cache`): each view keeps a second atlas, laid out as the first, of what stands
+  still in each shadowed light's reach: Objs that have stood just so for 16 frames (`INSTANCE_STILL`; not a Foliage's
+  plants, skinned instances, materials that move their vertices, or LODs that follow the camera), and worlds of
+  blocks' chunks, which now cast lamps' shadows too, their faces turned towards the lamp, leaves at rest. A light
+  draws its kept views only when it takes its slot, stops after moving, or what stands still in its reach changes: an
+  Obj stops, starts, comes or goes, a chunk's blocks change, a material is written. A cull lists only what stands
+  still for those lights, then only what moves for every kept light; a light with something moving in reach has its
+  kept views copied into the atlas and what moves drawn over them, and shading reads the copy or the kept views by
+  the list's count (`localShadowKept`). A light that moves draws its whole shadow each frame. On by default
+  (`ViewOptions::local_shadow_cache`; `vox render --no-shadow-cache` to compare). On an RTX 3070, the least of 60
+  frames: eight lamps over 64 block pillars 0.165 to 0.014 ms; eight lamps in a hall of 400 Objs, one ball moving
+  by a lamp, 0.132 to 0.058 ms; Sponza's demo at 1440p 0.258 to 0.138 ms, the same picture, its trees' leaves and
+  meadow, which sway in the wind, still drawn each frame. The frame graph now waits on every way a pass uses a buffer. Unit tests for the
+  slots; GPU tests: the same picture kept or not, on every culling path, with nothing drawn once all stands still;
+  a box moved, gone and the light moved, as drawn whole; a torch's shadow of a pillar gone when the pillar is dug.
+- **Soft shadows from area lights:** a rectangle, disc or tube light's shadow softens as wide as the light,
+  percentage-closer as the sun's: a blocker search within the light's sight of the point, then a filter as wide as
+  the light seen past the blockers (the average of a shape's half sizes), 12 and 16 taps turned each frame, up to 24
+  texels. Soft shadows on the light, on by default: the Inspector, `soft_shadows` in scenes, `Light.SoftShadows`.
+  The GI's rays, the fog, particles and smoke read the hard shadow. Eight overlapping 1 m panels over a hall of 400
+  Objs at 640×360 take the opaque pass from 0.21 to 0.31 ms. GPU test: a wall's shadow from a 1 m panel is
+  wider far from the wall than by its foot, wider than a 10 cm panel's, and than with Soft shadows off.
+- Still to come for lights' shadows: terrains casting lamps' shadows; a point or spot light's own size; a soft edge
+  that follows a tube's length rather than spreading evenly.
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's

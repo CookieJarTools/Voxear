@@ -412,14 +412,6 @@ float sunShadowHard(Frame* frame, float3 position, float3 normal)
     return lit / 9.0 * clouds;
 }
 
-// Points on a disc spread evenly by the golden angle, turned by `angle`.
-float2 vogelDisc(uint index, uint count, float angle)
-{
-    float radius = sqrt((float(index) + 0.5) / float(count));
-    float theta = float(index) * 2.39996323 + angle;
-    return radius * float2(cos(theta), sin(theta));
-}
-
 // Few taps, turned each frame and pixel, as TAA averages them.
 static const uint PCSS_BLOCKER_TAPS = 12;
 static const uint PCSS_FILTER_TAPS = 16;

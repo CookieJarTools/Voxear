@@ -1787,6 +1787,269 @@ fn local_lights_cast_shadows_unless_told_not_to() {
     }
 }
 
+/// The boxed light's scene (see `boxed_light_render`) in a world to change
+/// and draw again: the floor, the box, the light and its flame. Returns the
+/// box and the light.
+fn boxed_light_world(renderer: &mut Renderer, light: Light) -> (World, voxear_ecs::Entity, voxear_ecs::Entity) {
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let boxed = world.spawn((MeshRenderer::new(cube, material), box_at(Vec3::new(-1.0, 1.0, 0.0))));
+    let (at, down) = (Vec3::new(-2.0, 2.0, 0.0), Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    let lamp = world.spawn((light, Transform::new(at, down, Vec3::ONE)));
+    world.spawn((MeshRenderer::new(sphere, material), Transform::new(at, Quat::IDENTITY, Vec3::new(0.08, 0.14, 0.08))));
+    world.insert_resource(voxear_render::Sky { ambient: 0.0, ..voxear_render::Sky::default() });
+    let anti_aliasing =
+        voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
+    world.insert_resource(voxear_render::PostProcess { anti_aliasing, ..voxear_render::PostProcess::neutral() });
+    (world, boxed, lamp)
+}
+
+fn box_at(position: Vec3) -> Transform {
+    Transform::new(position, Quat::IDENTITY, Vec3::splat(0.6))
+}
+
+/// The pixels after `frames` more frames, and how many draws went into
+/// shadows in the last of them.
+fn draw_frames(renderer: &mut Renderer, world: &World, time: &mut f32, frames: u32) -> (Vec<u8>, u32) {
+    let stats = run(renderer, world, time, frames);
+    (renderer.read_pixels().unwrap().2, stats.shadow_draws)
+}
+
+/// The most two pictures differ by in any channel of any pixel.
+fn most_apart(a: &[u8], b: &[u8]) -> u8 {
+    a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0)
+}
+
+/// How far apart two pictures drawn after different numbers of frames may
+/// be: the dither over the output turns each frame, a level or two.
+const DITHER_APART: u8 = 3;
+
+#[test]
+fn kept_local_shadows_draw_the_same_image_as_drawing_them_whole_every_frame() {
+    let white = Vec3::ONE;
+    let kinds = [Light::point(white, 6.0, 10.0), Light::rectangle(white, 6.0, 10.0, 0.3, 0.3)];
+    let paths = [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders];
+    for (light, meshlets) in kinds.into_iter().flat_map(|light| paths.map(|meshlets| (light, meshlets))) {
+        let render = |caching: bool| {
+            let options = ViewOptions { local_shadow_cache: caching, ..ViewOptions::default() };
+            let mut renderer = renderer_culling(meshlets, options)?;
+            let (world, ..) = boxed_light_world(&mut renderer, light);
+            // Long enough for what stands still to be kept, and the stats to come back from the frames after.
+            Some(draw_frames(&mut renderer, &world, &mut 0.0, 24))
+        };
+        let (Some((kept, kept_draws)), Some((whole, whole_draws))) = (render(true), render(false)) else { continue };
+        keep_image(&format!("{:?} kept local shadow.png", light.kind), &kept);
+        assert!(whole_draws > 0, "{:?} {meshlets:?}: drawn whole, the light's shadow draws each frame", light.kind);
+        assert_eq!(
+            kept_draws, 0,
+            "{:?} {meshlets:?}: kept, nothing is drawn into it once all stands still",
+            light.kind
+        );
+        let apart = most_apart(&kept, &whole);
+        assert!(apart <= 1, "{:?} {meshlets:?}: the same picture, kept or not: {apart} apart", light.kind);
+    }
+}
+
+#[test]
+fn kept_local_shadows_follow_what_moves_comes_and_goes_and_the_light_moving() {
+    let light = Light::point(Vec3::ONE, 6.0, 10.0);
+    let (behind, clear) = (Vec3::new(0.2, 0.0, 0.0), Vec3::new(-4.2, 0.0, 0.0));
+    let moved = Vec3::new(-1.0, 1.0, 2.0);
+    let behind_moved = Vec3::new(0.2, 0.0, 4.0);
+    // What drawing it whole shows with the box moved, with no history to keep.
+    let whole = |box_place: Option<Vec3>, light_at: Vec3| {
+        let options = ViewOptions { local_shadow_cache: false, ..ViewOptions::default() };
+        let mut renderer = renderer_culling(Meshlets::Off, options)?;
+        let (mut world, boxed, lamp) = boxed_light_world(&mut renderer, light);
+        match box_place {
+            Some(place) => *world.get_mut::<Transform>(boxed).unwrap() = box_at(place),
+            None => {
+                world.despawn(boxed);
+            }
+        }
+        world.get_mut::<Transform>(lamp).unwrap().position = light_at;
+        Some(draw_frames(&mut renderer, &world, &mut 0.0, 3).0)
+    };
+    let Some(mut renderer) = renderer_culling(Meshlets::Off, ViewOptions::default()) else { return };
+    let (mut world, boxed, lamp) = boxed_light_world(&mut renderer, light);
+    let mut time = 0.0;
+    let (still, draws) = draw_frames(&mut renderer, &world, &mut time, 24);
+    assert_eq!(draws, 0, "all of it kept");
+    assert!(floor_brightness(&still, behind) * 4 < floor_brightness(&still, clear), "the box's shadow behind it");
+
+    // The box moves: its shadow goes with it the frame it moves, and stays once it is kept again.
+    *world.get_mut::<Transform>(boxed).unwrap() = box_at(moved);
+    let (moving, _) = draw_frames(&mut renderer, &world, &mut time, 1);
+    keep_image("kept local shadow, the box moved.png", &moving);
+    let Some(expected) = whole(Some(moved), Vec3::new(-2.0, 2.0, 0.0)) else { return };
+    let apart = most_apart(&moving, &expected);
+    assert!(apart <= DITHER_APART, "the frame the box moves, as drawn whole: {apart} apart");
+    assert!(floor_brightness(&moving, behind) * 4 > floor_brightness(&moving, clear) * 3, "lit where it stood");
+    assert!(floor_brightness(&moving, behind_moved) * 4 < floor_brightness(&moving, clear), "shadowed where it went");
+    let (kept_again, draws) = draw_frames(&mut renderer, &world, &mut time, 24);
+    assert_eq!(draws, 0, "kept again once it stands still");
+    let apart = most_apart(&kept_again, &expected);
+    assert!(apart <= DITHER_APART, "and drawn the same: {apart} apart");
+
+    // The box goes.
+    world.despawn(boxed);
+    let (gone, _) = draw_frames(&mut renderer, &world, &mut time, 1);
+    let Some(expected) = whole(None, Vec3::new(-2.0, 2.0, 0.0)) else { return };
+    keep_image("kept local shadow, the box gone.png", &gone);
+    keep_image("kept local shadow, the box gone, drawn whole.png", &expected);
+    let apart = most_apart(&gone, &expected);
+    assert!(apart <= DITHER_APART, "gone, its shadow goes too: {apart} apart");
+
+    // The light moves, drawn whole while it does.
+    let to = Vec3::new(-2.0, 2.0, 1.0);
+    world.get_mut::<Transform>(lamp).unwrap().position = to;
+    let (lamp_moved, _) = draw_frames(&mut renderer, &world, &mut time, 1);
+    let Some(expected) = whole(None, to) else { return };
+    let apart = most_apart(&lamp_moved, &expected);
+    assert!(apart <= DITHER_APART, "the light moved, its shadows with it: {apart} apart");
+}
+
+/// The local shadow passes' GPU time in a hall of 400 pillars and balls
+/// lit by eight lamps, each pass's least over 60 frames, summed, after the
+/// hall has stood still long enough to be kept; one ball circles by a lamp
+/// all along. With `caching` off, the lamps' shadows are drawn whole every
+/// frame. Not run with the rest: `cargo test -p voxear_render --test gpu
+/// -- --ignored --nocapture local_shadow_timings`.
+fn local_shadow_time(caching: bool) -> Option<(f32, Vec<(String, f32)>)> {
+    let least = hall_pass_times(caching, None)?;
+    let local: Vec<(String, f32)> = least.into_iter().filter(|(name, _)| name.contains("ocal shadow")).collect();
+    Some((local.iter().map(|(_, ms)| ms).sum(), local))
+}
+
+/// Each pass's least GPU time over 60 frames in the hall of pillars and
+/// balls, lit by eight point lights, or by eight rectangle lights a metre
+/// a side, facing down, with or without soft shadows.
+fn hall_pass_times(caching: bool, rectangles: Option<bool>) -> Option<Vec<(String, f32)>> {
+    let options = ViewOptions { local_shadow_cache: caching, ..ViewOptions::default() };
+    let mut renderer =
+        renderer_culling(Meshlets::MeshShaders, options.clone()).or_else(|| renderer_culling(Meshlets::Compute, options))?;
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.5, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 6.0, -14.0), looking, Vec3::ONE)));
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(80.0))));
+    for i in 0..20 {
+        for j in 0..20 {
+            let at = Vec3::new(i as f32 * 1.5 - 14.25, 0.0, j as f32 * 1.5 - 4.0);
+            let (mesh, place) = match (i + j) % 2 {
+                0 => (cube, Transform::new(at + Vec3::Y * 1.0, Quat::IDENTITY, Vec3::new(0.4, 2.0, 0.4))),
+                _ => (sphere, Transform::new(at + Vec3::Y * 0.5, Quat::IDENTITY, Vec3::ONE)),
+            };
+            world.spawn((MeshRenderer::new(mesh, material), place));
+        }
+    }
+    for lamp in 0..8 {
+        let at = Vec3::new((lamp % 4) as f32 * 7.0 - 10.5, 2.6, (lamp / 4) as f32 * 9.0 + 2.0);
+        let color = Vec3::new(1.0, 0.8, 0.6);
+        let light = match rectangles {
+            Some(soft) => Light { soft_shadows: soft, ..Light::rectangle(color, 8.0, 8.0, 1.0, 1.0) },
+            None => Light::point(color, 8.0, 8.0),
+        };
+        let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        world.spawn((light, Transform::new(at, down, Vec3::ONE)));
+    }
+    let ball = world.spawn((MeshRenderer::new(sphere, material), Transform::from_position(Vec3::new(-10.5, 0.5, 4.0))));
+    world.insert_resource(voxear_render::Sky { ambient: 0.05, ..voxear_render::Sky::default() });
+    let mut time = 0.0;
+    let mut least: Vec<(String, f32)> = Vec::new();
+    for frame in 0..100 {
+        let turn = frame as f32 * 0.1;
+        world.get_mut::<Transform>(ball).unwrap().position =
+            Vec3::new(-10.5 + turn.cos() * 1.2, 0.5, 2.0 + turn.sin() * 1.2);
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+        if frame < 40 {
+            continue;
+        }
+        for (name, ms) in renderer.timings() {
+            match least.iter_mut().find(|(known, _)| known == name) {
+                Some((_, kept)) => *kept = kept.min(*ms),
+                None => least.push((name.clone(), *ms)),
+            }
+        }
+    }
+    Some(least)
+}
+
+#[test]
+#[ignore]
+fn local_shadow_timings() {
+    let (Some((whole, whole_passes)), Some((kept, kept_passes))) = (local_shadow_time(false), local_shadow_time(true))
+    else {
+        return;
+    };
+    println!("drawn whole every frame: {whole:.3} ms {whole_passes:?}");
+    println!("what stands still kept:  {kept:.3} ms {kept_passes:?}");
+    let (Some(hard), Some(soft)) = (hall_pass_times(true, Some(false)), hall_pass_times(true, Some(true))) else {
+        return;
+    };
+    for (name, ms) in &soft {
+        let before = hard.iter().find(|(known, _)| known == name).map_or(0.0, |(_, ms)| *ms);
+        if (ms - before).abs() > 0.005 {
+            println!("{name}: {before:.3} ms with hard shadows, {ms:.3} ms soft");
+        }
+    }
+}
+
+/// The floor lit by a rectangle light `size` metres a side, three metres
+/// up and three to the left, facing down, beside a wall standing on the
+/// floor at its middle and running from there off along -z: its shadow's
+/// edge runs across the floor along +x from the wall's end, near the wall
+/// cast by its foot and far from it by higher up.
+fn area_shadow_render(size: f32, soft: bool) -> Option<Vec<u8>> {
+    let mut renderer = renderer()?;
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 3.0, -5.0), Quat::IDENTITY, Vec3::new(0.5, 6.0, 10.0));
+    world.spawn((MeshRenderer::new(cube, material), wall));
+    let light = Light { soft_shadows: soft, ..Light::rectangle(Vec3::ONE, 40.0, 20.0, size, size) };
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((light, Transform::new(Vec3::new(-3.0, 3.0, 0.0), down, Vec3::ONE)));
+    world.insert_resource(voxear_render::Sky { ambient: 0.0, ..voxear_render::Sky::default() });
+    let anti_aliasing =
+        voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
+    let mut post = voxear_render::PostProcess { anti_aliasing, ..voxear_render::PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn an_area_lights_shadow_softens_with_its_size_and_away_from_what_casts_it() {
+    assert!(Light::rectangle(Vec3::ONE, 1.0, 1.0, 1.0, 1.0).soft_shadows, "soft by default");
+    let (Some(small), Some(large), Some(hard)) =
+        (area_shadow_render(0.1, true), area_shadow_render(1.0, true), area_shadow_render(1.0, false))
+    else {
+        return;
+    };
+    keep_image("area light shadow small.png", &small);
+    keep_image("area light shadow large.png", &large);
+    keep_image("area light shadow hard.png", &hard);
+    let (near, far) = (penumbra_width(&large, 0.8), penumbra_width(&large, 4.5));
+    let (small_far, hard_far) = (penumbra_width(&small, 4.5), penumbra_width(&hard, 4.5));
+    assert!(far > near * 2.0, "softer far from the wall: {far} m against {near} m by its foot");
+    assert!(far > small_far * 2.0, "softer from a larger light: {far} m against {small_far} m");
+    assert!(far > hard_far * 2.0, "and softer than with soft shadows off: {far} m against {hard_far} m");
+}
+
 #[test]
 fn a_spot_lights_cookie_shapes_its_light() {
     let half_and_half = |renderer: &mut Renderer| {

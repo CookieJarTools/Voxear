@@ -34,6 +34,7 @@ use crate::{
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
+    shadow_cache::LOCAL_CULL_STILL,
     shadows::CASCADES,
     volumetric,
 };
@@ -50,12 +51,24 @@ pub struct Targets {
     pub shadows: Option<ImageId>,
     /// How many texels a side each of the sun's cascades has in it.
     pub cascade_size: u32,
-    /// The local lights' shadow atlas, with each light's first view and how
-    /// many it takes, when any local light casts a shadow this frame.
-    pub local_shadows: Option<(ImageId, Vec<(u32, u32)>)>,
+    /// The local lights' shadow atlases, when any local light casts a
+    /// shadow this frame.
+    pub local_shadows: Option<LocalShadows>,
     /// The glass shadow atlas and the panes drawn into it, when glass is in
     /// view and the sun or a local light casts shadows.
     pub glass_shadows: Option<(glass::Shadows, Vec<glass::Pane>)>,
+}
+
+/// What a view's local lights' shadows draw into: the local shadow atlas;
+/// the view's kept atlas of what stands still, where any light keeps it
+/// (see `shadow_cache`); each slot's first view and how many its light
+/// takes; and which slots keep what stands still and draw it again.
+#[derive(Clone)]
+pub struct LocalShadows {
+    pub atlas: ImageId,
+    pub kept: Option<ImageId>,
+    pub views: Vec<(u32, u32)>,
+    pub lamps: crate::shadow_cache::Lamps,
 }
 
 pub struct Draws {
@@ -310,44 +323,147 @@ pub fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
-    if let Some((atlas, lights)) = targets.local_shadows.clone() {
-        let count = lights.len() as u32;
+    if let Some(local) = targets.local_shadows.clone() {
+        let count = local.views.len() as u32;
+        let blocks = frame.blocks.clone();
+        let mut lamp_drawing = drawing.clone();
+        lamp_drawing
+            .extend(blocks.iter().flat_map(|blocks| blocks.pools.iter().map(|&id| (id, BufferAccess::ShaderRead))));
+        let tile_at = |view: u32| vk::Offset2D {
+            x: (view % LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
+            y: (view / LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
+        };
+        let tile = vk::Extent2D { width: LOCAL_SHADOW_TILE, height: LOCAL_SHADOW_TILE };
+        let shadow = mesh.map_or(pipelines.local_shadow, |mesh| mesh.local_shadow);
+        // What stands still round the lights that draw it again, into their kept views, cleared first.
+        if let (Some(kept), true) = (local.kept, local.lamps.redraw != 0) {
+            let redraw = local.lamps.redraw;
+            fg.add_pass("Local shadow cull (still)", &[], &culling, move |ctx| {
+                cull(
+                    ctx,
+                    pipelines.cull,
+                    &Push { level: LOCAL_CULL_STILL, output: redraw, ..push },
+                    LIST_LOCAL_SHADOW,
+                    instances,
+                    count,
+                );
+            });
+            meshlet_pass(fg, "Local shadow meshlets (still)", &[], [LIST_LOCAL_SHADOW, LIST_LOCAL_SHADOW + count]);
+            let (views, blocks) = (local.views.clone(), blocks.clone());
+            fg.add_pass("Kept local shadows", &[(kept, ImageAccess::DepthAttachment)], &lamp_drawing, move |ctx| {
+                let [width, height] = LOCAL_SHADOW_ATLAS;
+                let depth = attachment(ctx.view(kept), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+                begin_rendering(ctx, vk::Extent2D { width, height }, &[], Some(&depth));
+                let drawn: Vec<(u32, u32)> = views
+                    .iter()
+                    .enumerate()
+                    .filter(|(slot, _)| redraw >> slot & 1 != 0)
+                    .flat_map(|(slot, &(first, faces))| (first..first + faces).map(move |view| (slot as u32, view)))
+                    .collect();
+                let rects: Vec<vk::ClearRect> = drawn
+                    .iter()
+                    .map(|&(_, view)| vk::ClearRect {
+                        rect: vk::Rect2D { offset: tile_at(view), extent: tile },
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .collect();
+                let clear = vk::ClearAttachment::default()
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                    .clear_value(clear_depth(1.0));
+                unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &rects) };
+                bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                for &(slot, view) in &drawn {
+                    set_viewport(ctx, tile_at(view), tile);
+                    let list = LIST_LOCAL_SHADOW + slot;
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
+                    indirect.draw(ctx, list);
+                }
+                if let Some(blocks) = &blocks {
+                    bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                    for &(slot, view) in drawn.iter().filter(|(slot, _)| blocks.draws_for_lamp(*slot, true)) {
+                        set_viewport(ctx, tile_at(view), tile);
+                        crate::blocks::draw_lamp_runs(ctx, blocks, &push, slot, true, view);
+                    }
+                }
+                unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+            });
+            // The lights' lists empty again, for what moves.
+            fg.add_pass("Local shadow lists reset", &[], &[(draws.count, BufferAccess::TransferWrite)], move |ctx| {
+                let counts = cleared_draw_counts();
+                let (first, words) = (LIST_LOCAL_SHADOW as usize * 4, count as usize * 4);
+                let lists = bytemuck::cast_slice(&counts[first..first + words]);
+                let device = &ctx.gpu.device;
+                unsafe {
+                    device.cmd_update_buffer(ctx.cmd, count_handle, draw_count_offset(LIST_LOCAL_SHADOW), lists);
+                    device.cmd_fill_buffer(
+                        ctx.cmd,
+                        count_handle,
+                        meshlet_count_offset(LIST_LOCAL_SHADOW),
+                        u64::from(count) * 4,
+                        0,
+                    );
+                }
+            });
+        }
         fg.add_pass("Local shadow cull", &[], &culling, move |ctx| {
-            cull(ctx, pipelines.cull, &push, LIST_LOCAL_SHADOW, instances, count);
+            cull(ctx, pipelines.cull, &Push { level: 0, output: 0, ..push }, LIST_LOCAL_SHADOW, instances, count);
         });
         meshlet_pass(fg, "Local shadow meshlets", &[], [LIST_LOCAL_SHADOW, LIST_LOCAL_SHADOW + count]);
-        // Each light's list drawn into each of its views: a spot light's one, a cube's six.
-        fg.add_pass("Local shadows", &[(atlas, ImageAccess::DepthAttachment)], &drawing, move |ctx| {
+        // Each light's list drawn into each of its views: a spot light's one, a cube's six. Where a light keeps what
+        // stands still, its kept views are copied in first where anything moving is drawn over them; the copy reads
+        // the lists' counts to see.
+        let mut images = vec![(local.atlas, ImageAccess::DepthAttachment)];
+        images.extend(local.kept.map(|kept| (kept, ImageAccess::Sampled)));
+        lamp_drawing.push((draws.count, BufferAccess::ShaderRead));
+        let (atlas, views, lamps) = (local.atlas, local.views.clone(), local.lamps.clone());
+        let copies = local.kept.is_some() && lamps.cached != 0;
+        fg.add_pass("Local shadows", &images, &lamp_drawing, move |ctx| {
             let [width, height] = LOCAL_SHADOW_ATLAS;
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width, height }, &[], Some(&depth));
-            let shadow = mesh.map_or(pipelines.local_shadow, |mesh| mesh.local_shadow);
+            let all = || {
+                views
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(slot, &(first, faces))| (first..first + faces).map(move |view| (slot as u32, view)))
+            };
+            if copies {
+                bind(ctx, pipelines.kept_copy, vk::PipelineBindPoint::GRAPHICS, &push);
+                for (_, view) in all().filter(|&(slot, _)| lamps.is_cached(slot as usize)) {
+                    set_viewport(ctx, tile_at(view), tile);
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: view, ..push });
+                    unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+                }
+            }
             bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
-            for (light, &(first, faces)) in lights.iter().enumerate() {
-                let list = LIST_LOCAL_SHADOW + light as u32;
-                for view in first..first + faces {
-                    let offset = vk::Offset2D {
-                        x: (view % LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
-                        y: (view / LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
-                    };
-                    let size = vk::Extent2D { width: LOCAL_SHADOW_TILE, height: LOCAL_SHADOW_TILE };
-                    set_viewport(ctx, offset, size);
-                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
-                    indirect.draw(ctx, list);
+            for (slot, view) in all() {
+                set_viewport(ctx, tile_at(view), tile);
+                let list = LIST_LOCAL_SHADOW + slot;
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
+                indirect.draw(ctx, list);
+            }
+            if let Some(blocks) = &blocks {
+                bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                for (slot, view) in all().filter(|&(slot, _)| blocks.draws_for_lamp(slot, false)) {
+                    set_viewport(ctx, tile_at(view), tile);
+                    crate::blocks::draw_lamp_runs(ctx, blocks, &push, slot, false, view);
                 }
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
     if let Some((maps, panes)) = targets.glass_shadows.clone() {
-        let lights = targets.local_shadows.as_ref().map(|(_, lights)| lights.clone()).unwrap_or_default();
+        let lights = targets.local_shadows.as_ref().map(|local| local.views.clone()).unwrap_or_default();
         let sources = (targets.shadows.is_some(), lights);
         glass::record_shadows(fg, (pipelines, push), maps, panes, sources, draws.index_buffer);
     }
-    let local_atlas = targets.local_shadows.as_ref().map(|(atlas, _)| *atlas);
+    let local_atlas = targets.local_shadows.as_ref().map(|local| local.atlas);
+    let kept_atlas = targets.local_shadows.as_ref().and_then(|local| local.kept);
     let glass_maps = targets.glass_shadows.as_ref().map(|(maps, _)| maps.images());
     // What lights pass lamps' shadows and glass through, beside the sun's shadows.
-    let shadow_maps: Vec<ImageId> = local_atlas.into_iter().chain(glass_maps.into_iter().flatten()).collect();
+    let shadow_maps: Vec<ImageId> =
+        local_atlas.into_iter().chain(kept_atlas).chain(glass_maps.into_iter().flatten()).collect();
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;

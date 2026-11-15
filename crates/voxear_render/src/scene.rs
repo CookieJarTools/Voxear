@@ -12,8 +12,7 @@ use crate::{
     gpu::{
         CLUSTER_FAR, CLUSTER_GRID, DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_NONE, GpuFrame,
         GpuInstance, GpuLight, GpuLighting, LIGHT_DISC, LIGHT_POINT, LIGHT_RECTANGLE, LIGHT_SPOT, LIGHT_TUBE,
-        LOCAL_SHADOW_LIGHTS, LOCAL_SHADOW_VIEWS, MAX_CLUSTER_LIGHTS, NO_SHADOW, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT,
-        cols, vec3,
+        LOCAL_SHADOW_LIGHTS, MAX_CLUSTER_LIGHTS, NO_SHADOW, NO_TEXTURE, SKY_ATMOSPHERE, SKY_GRADIENT, cols, vec3,
     },
     post::{AmbientOcclusion, AntiAliasingMode, GlobalIllumination, PostProcess, taa_jitter},
     shadows::{self, CASCADES},
@@ -90,11 +89,17 @@ pub struct Light {
     /// light every `cookie_size` metres. Its colours tint the light.
     pub cookie: Option<TextureId>,
     pub cookie_size: f32,
-    /// How wide across, in degrees, the light's source looks from what it
+    /// How wide across, in degrees, the sun's disc looks from what it
     /// shines on, which softens its shadow's edges the farther they fall
     /// from what casts them; 0 for hard edges. The sun is about half a
-    /// degree. Only the sun's shadows soften yet.
+    /// degree. A rectangle, disc or tube softens its shadow by its own size
+    /// (see `soft_shadows`).
     pub softness: f32,
+    /// Whether a rectangle, disc or tube light's shadow softens as wide as
+    /// the light is, from hard where things touch to softer the farther it
+    /// falls from them; on by default. Off, its edges are hard, as a point
+    /// light's are, and cost less to shade.
+    pub soft_shadows: bool,
     /// Whether a point, spot, area or tube light casts shadows, as Unity's
     /// Shadow Type; on by default. Each that does draws what is round it
     /// again (six times over for any but a spot light), so the nearest
@@ -179,6 +184,7 @@ impl Light {
             cookie: None,
             cookie_size: 10.0,
             softness: 0.5,
+            soft_shadows: true,
             shadows: true,
             shadow_tint: Vec3::ZERO,
             profile: None,
@@ -259,9 +265,13 @@ pub struct ExtractedFrame {
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
     pub has_sun: bool,
-    /// Each local light casting a shadow this frame, in its list's order:
-    /// its first view of the local shadow atlas and how many it takes.
+    /// Each slot of the local shadow atlas, in its list's order: its first
+    /// view and how many its light takes this frame, none for a slot no
+    /// light has (see `shadow_cache`).
     pub local_shadows: Vec<(u32, u32)>,
+    /// The local lights that cast shadows this frame, the nearest the camera
+    /// first, for the view to give slots of the atlas.
+    pub shadow_lights: Vec<crate::shadow_cache::ShadowLight>,
     /// What each instance was made from, for tracking motion between frames.
     pub entities: Vec<Owner>,
     pub post: PostProcess,
@@ -339,6 +349,10 @@ pub struct ViewOptions {
     /// Draws the scene at this share of the view's size, whatever its
     /// post-processing says, as `vox render --render-scale` does.
     pub render_scale: Option<f32>,
+    /// Whether local lights keep their shadows of what stands still from
+    /// frame to frame, drawing only what moves each frame (see
+    /// `shadow_cache`). On by default; off, to compare.
+    pub local_shadow_cache: bool,
 }
 
 impl Default for ViewOptions {
@@ -352,6 +366,7 @@ impl Default for ViewOptions {
             gizmos: true,
             meshlet_culling: true,
             render_scale: None,
+            local_shadow_cache: true,
         }
     }
 }
@@ -679,7 +694,7 @@ pub fn extract(
         None => world.resource::<crate::looks::SunLook>().copied(),
     };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
-    for (_, light, transform) in lit {
+    for (entity, light, transform) in lit {
         // A look changes the sun's colour and strength, and gives what the light leaves at its default.
         let looked;
         let light = match (light.kind, sun_look) {
@@ -715,9 +730,11 @@ pub fn extract(
             }
             LightKind::Directional => {}
             _ => {
-                let gpu = gpu_light(light, transform, radiance);
+                let mut gpu = gpu_light(light, transform, radiance);
                 if light.shadows && light.range > 0.0 {
-                    shadowed.push((lights.len(), shadow_light(light, transform, &gpu)));
+                    let shadow = shadow_light(light, transform, &gpu);
+                    (gpu.shadow_near, gpu.shadow_far) = (shadow.near, shadows::local_far(&shadow));
+                    shadowed.push((lights.len(), entity, shadow));
                 }
                 lights.push(gpu);
             }
@@ -726,7 +743,7 @@ pub fn extract(
     frame.light_count = lights.len() as u32;
     // Lamps cast no shadows through a Portal.
     let shadowed = if through.is_some() { Vec::new() } else { shadowed };
-    let local_shadows = local_shadows(&mut frame, &mut lights, shadowed);
+    let shadow_lights = shadow_lights(&frame, shadowed);
     // What pushes through foliage, the nearest the camera first.
     let pushing = world.query_ref::<(Entity, &crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
     let walkers = world.resource::<crate::Walkers>().map(|walkers| walkers.0.as_slice()).unwrap_or_default();
@@ -926,7 +943,8 @@ pub fn extract(
         instances,
         lights,
         has_sun: sun_found,
-        local_shadows,
+        local_shadows: Vec::new(),
+        shadow_lights,
         entities,
         post,
         render_size: (width, height),
@@ -1011,42 +1029,27 @@ fn shadow_light(light: &Light, transform: &Transform, gpu: &GpuLight) -> shadows
     }
 }
 
-/// Gives the lights that cast shadows this frame their views of the atlas:
-/// those whose reach the camera is nearest first, up to
-/// `LOCAL_SHADOW_LIGHTS` of them and as many as the views go round. The
-/// rest light without a shadow this frame. Returns each one's first view
-/// and how many it takes.
-fn local_shadows(
-    frame: &mut GpuFrame,
-    lights: &mut [GpuLight],
-    mut shadowed: Vec<(usize, shadows::LocalLight)>,
-) -> Vec<(u32, u32)> {
+/// The lights that may cast shadows this frame: those in view whose reach
+/// the camera is nearest first, up to `LOCAL_SHADOW_LIGHTS` of them. The
+/// rest light without a shadow this frame.
+fn shadow_lights(
+    frame: &GpuFrame,
+    mut shadowed: Vec<(usize, Entity, shadows::LocalLight)>,
+) -> Vec<crate::shadow_cache::ShadowLight> {
     let camera = Vec3::from(frame.camera_position);
     let visible = |light: &shadows::LocalLight| {
         frame.planes.iter().all(|p| Vec3::new(p[0], p[1], p[2]).dot(light.position) + p[3] >= -light.range)
     };
-    shadowed.retain(|(_, light)| visible(light));
-    shadowed.sort_by(|(_, a), (_, b)| {
+    shadowed.retain(|(_, _, light)| visible(light));
+    shadowed.sort_by(|(_, _, a), (_, _, b)| {
         let reach = |light: &shadows::LocalLight| camera.distance(light.position) - light.range;
         reach(a).total_cmp(&reach(b))
     });
-    let mut views = 0;
-    let mut drawn = Vec::new();
-    for (index, light) in shadowed {
-        let faces = shadows::local_views(&light);
-        if drawn.len() == LOCAL_SHADOW_LIGHTS || views + faces.len() > LOCAL_SHADOW_VIEWS {
-            continue;
-        }
-        lights[index].shadow = views as u32;
-        frame.local_shadows.casters[drawn.len()] = [light.position.x, light.position.y, light.position.z, light.range];
-        drawn.push((views as u32, faces.len() as u32));
-        for face in faces {
-            frame.local_shadows.view_proj[views] = cols(face);
-            views += 1;
-        }
-    }
-    frame.local_shadows.count = drawn.len() as u32;
-    drawn
+    shadowed.truncate(LOCAL_SHADOW_LIGHTS);
+    shadowed
+        .into_iter()
+        .map(|(index, entity, light)| crate::shadow_cache::ShadowLight { index, entity, light })
+        .collect()
 }
 
 /// A local light as the shaders read it. A shape's size is halved, as they
@@ -1077,7 +1080,21 @@ fn gpu_light(light: &Light, transform: &Transform, radiance: Vec3) -> GpuLight {
             .filter(|_| matches!(light.kind, LightKind::Point | LightKind::Spot))
             .map_or(NO_TEXTURE, |profile| profile.0),
         shadow: NO_SHADOW,
-        _pad: [0; 3],
+        shadow_near: 0.0,
+        shadow_far: 0.0,
+        shadow_radius: if light.soft_shadows { shadow_radius(light.kind, size) } else { 0.0 },
+    }
+}
+
+/// How far a shape reaches round its middle, as its shadow softens by it:
+/// the average of its half width and half height, a disc's radius, a tube's
+/// half length and radius; none for a point or spot light. `size` is as
+/// `GpuLight::size` holds it.
+fn shadow_radius(kind: LightKind, size: [f32; 2]) -> f32 {
+    match kind {
+        LightKind::Rectangle | LightKind::Tube => (size[0] + size[1]) * 0.5,
+        LightKind::Disc => size[0],
+        _ => 0.0,
     }
 }
 

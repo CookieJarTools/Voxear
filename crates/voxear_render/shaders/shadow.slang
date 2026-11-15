@@ -26,3 +26,29 @@ float4 shadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex) : S
     }
     return transform(shadowViewProj(push.frame, push.list, push.level), world);
 }
+
+// A view of the kept atlas of what stands still (src/shadow_cache.rs) copied
+// into the same place in the local shadow atlas, for what moves to be drawn
+// over: one triangle over the view, for the view push.level names, where
+// something moving is drawn for its light this frame, and none elsewhere.
+[shader("vertex")]
+float4 keptCopyVertex(uint vertexId : SV_VertexID) : SV_Position
+{
+    uint slot = push.level / LOCAL_SHADOW_SLOT_VIEWS;
+    uint cached = push.frame->localShadows.cached;
+    bool moving = ((cached >> (KEPT_MOVING_SHIFT + slot)) & 1) != 0
+        || buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] != 0;
+    if (!moving)
+    {
+        return float4(0.0, 0.0, 2.0, 1.0);
+    }
+    float2 corner = float2((vertexId << 1) & 2, vertexId & 2);
+    return float4(corner * 2.0 - 1.0, 0.5, 1.0);
+}
+
+[shader("fragment")]
+float keptCopyFragment(float4 position : SV_Position) : SV_Depth
+{
+    Texture2D kept = textures[push.frame->localShadows.cache];
+    return kept.Load(int3(int2(position.xy), 0)).r;
+}

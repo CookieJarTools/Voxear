@@ -72,7 +72,8 @@ impl Editor {
         match id {
             "levels" => self.open_drawer(Some(Drawer::Levels)),
             "lighting" => self.open_drawer(Some(Drawer::Lighting)),
-            "project" => self.open_drawer(Some(Drawer::Project)),
+            // "project" is the Project panel, in the dock.
+            "project-settings" => self.open_drawer(Some(Drawer::Project)),
             "settings" => self.open_drawer(Some(Drawer::Settings)),
             _ => self.open_panel(id),
         }

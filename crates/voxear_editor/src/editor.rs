@@ -2359,12 +2359,21 @@ impl Editor {
                 self.ui.blur();
                 // A world of blocks still being made from a new file is let go, so it shows what the history puts back.
                 crate::block_props::stop_making(&mut self.game.engine.world);
+                let file = match command {
+                    Command::Undo => self.history.next_undo_is_file(),
+                    _ => self.history.next_redo_is_file(),
+                };
                 let game = &mut self.game;
                 let step = match command {
                     Command::Undo => self.history.undo(game, Some(renderer)),
                     _ => self.history.redo(game, Some(renderer)),
                 };
                 match step {
+                    // A settings file written back: it is the editor's own change, and the pages show it.
+                    Some(_) if file => {
+                        self.files_seen();
+                        self.refresh_lighting_page();
+                    }
                     Some(selected) => {
                         self.reselect(selected);
                         self.unsaved = true;

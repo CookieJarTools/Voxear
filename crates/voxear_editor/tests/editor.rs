@@ -7319,6 +7319,98 @@ fn a_definition_field_offers_only_its_own_types_data_assets() {
 }
 
 #[test]
+fn post_settings_change_on_the_lighting_page_and_in_a_post_volume_and_undo() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
+    let dusk = dir.path().join("Lighting/Dusk.lighting");
+    std::fs::write(&dusk, "# Dusk\nformat = 1\nlook = \"golden_hour\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let rail = editor.ui.find(editor.ui.root(), "rail-lighting").unwrap();
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let top = editor.ui.find(editor.ui.root(), "lighting-scene").unwrap();
+    let menu = first_with(&editor.ui, top, "value-choice").unwrap();
+    editor.ui.focus(menu);
+    let dusk_at = 1 + voxear_render::LookName::ALL.len();
+    while editor.ui.selected_option(menu) != dusk_at {
+        let key = if editor.ui.selected_option(menu) > dusk_at { Key::Up } else { Key::Down };
+        editor.ui.key_down(key);
+    }
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.lighting_shown(), Some("Lighting/Dusk.lighting"));
+    let post = |editor: &voxear_editor::Editor| *editor.game.engine.world.resource::<voxear_render::PostProcess>().unwrap();
+    let (looks_own, looks_lift) = (post(&editor).anti_aliasing.render_scale, post(&editor).grading.lift);
+    // A tab's settings are typed into once it shows, as a person would.
+    let tab = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, under: &str, name: &str| {
+        let mut tabs = Vec::new();
+        with_class(&editor.ui, editor.ui.find(editor.ui.root(), under).unwrap(), "settings-tab", &mut tabs);
+        let found = tabs.into_iter().find(|&tab| editor.ui.text(tab) == name && editor.ui.is_visible(tab));
+        click(&mut editor.ui, found.unwrap_or_else(|| panic!("a {name} tab")));
+        frame(editor, renderer);
+    };
+
+    // The Quality tab's render scale and the Colour tab's lift, three numbers in a row, written into the asset.
+    tab(&mut editor, &mut renderer, "drawer", "Quality");
+    let field = first_with(&editor.ui, editor.lighting_row("Render scale").unwrap(), "value-input").unwrap();
+    type_into(&mut editor.ui, field, "0.5");
+    frame(&mut editor, &mut renderer);
+    tab(&mut editor, &mut renderer, "drawer", "Colour");
+    let red = first_with(&editor.ui, editor.lighting_row("Lift").unwrap(), "value-input").unwrap();
+    type_into(&mut editor.ui, red, "0.2");
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(&dusk).unwrap();
+    assert!(text.contains("render_scale = 0.5") && text.contains("lift = [0.2, "), "{text}");
+    assert_eq!(post(&editor).anti_aliasing.render_scale, 0.5);
+    let lift = post(&editor).grading.lift;
+    assert!((lift[0] - 0.2).abs() < 1e-6 && (lift[1] - looks_lift[1]).abs() < 1e-3, "red alone changed: {lift:?}");
+
+    // Each is a step to undo, written back into the file and lighting the scene again; and to redo.
+    editor.ui.blur();
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!std::fs::read_to_string(&dusk).unwrap().contains("lift"));
+    assert_eq!(post(&editor).grading.lift, looks_lift);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(std::fs::read_to_string(&dusk).unwrap(), "# Dusk\nformat = 1\nlook = \"golden_hour\"\n");
+    assert_eq!(post(&editor).anti_aliasing.render_scale, looks_own);
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(post(&editor).anti_aliasing.render_scale, 0.5);
+
+    // A Post Volume's own settings, empty where it leaves them to the level, set in the Inspector, and undone.
+    let volume = editor.game.engine.world.spawn((
+        voxear_scene::Name("Cave".into()),
+        voxear_scene::Transform::default(),
+        voxear_render::PostVolume::default(),
+    ));
+    editor.select(Some(volume));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    tab(&mut editor, &mut renderer, "inspector", "Bloom");
+    let row = editor.post_volume_row("Intensity").expect("the volume's bloom intensity");
+    let field = first_with(&editor.ui, row, "value-input").unwrap();
+    assert_eq!(editor.ui.text(field), "", "left to the level");
+    type_into(&mut editor.ui, field, "0.5");
+    frame(&mut editor, &mut renderer);
+    let overrides = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<voxear_render::PostVolume>(volume).unwrap().overrides.clone()
+    };
+    assert_eq!(overrides(&editor)["bloom"]["intensity"].as_float(), Some(0.5), "{:?}", overrides(&editor));
+    editor.ui.blur();
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(overrides(&editor).is_empty(), "undone: {:?}", overrides(&editor));
+}
+
+#[test]
 fn a_scenes_inspector_shows_its_lighting_to_change() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

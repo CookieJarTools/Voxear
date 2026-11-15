@@ -103,6 +103,7 @@ pub struct ObjState {
     pub block_world: Option<Box<BlockWorldState>>,
     pub joint: Option<Box<Joint>>,
     pub portal: Option<Box<voxear_render::Portal>>,
+    pub post_volume: Option<Box<voxear_render::PostVolume>>,
     pub camera_follows: Option<voxear_render::CameraFollows>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
@@ -227,6 +228,7 @@ impl ObjState {
             block_world: BlockWorldState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             portal: world.get::<voxear_render::Portal>(entity).copied().map(Box::new),
+            post_volume: world.get::<voxear_render::PostVolume>(entity).cloned().map(Box::new),
             camera_follows: world.get::<voxear_render::CameraFollows>(entity).copied(),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
@@ -328,6 +330,7 @@ impl ObjState {
         put(world, entity, blocks.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.portal.as_deref().copied());
+        put(world, entity, self.post_volume.as_deref().cloned());
         put(world, entity, self.camera_follows);
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());
@@ -367,6 +370,9 @@ pub enum Edit {
     Group(Vec<Edit>),
     /// Objs linked to prefab instances otherwise, as unpacking one does.
     Linked(Vec<Link>),
+    /// A settings file of the project changed in place, as the Lighting page
+    /// changes lighting settings and look packs: its text before and after.
+    File { path: std::path::PathBuf, before: String, after: String },
 }
 
 /// An Obj's link to a prefab instance, before and after: the instance it
@@ -437,6 +443,13 @@ impl Edit {
                 links.iter().for_each(|link| link.apply(&mut game.engine.world, !undo));
                 (links.first().map(|link| link.entity), HashMap::new())
             }
+            Edit::File { path, before, after } => {
+                if let Err(error) = std::fs::write(&*path, if undo { &*before } else { &*after }) {
+                    tracing::error!("could not write {}: {error}", path.display());
+                }
+                settings_file_changed(game, path);
+                (None, HashMap::new())
+            }
             Edit::Group(edits) => {
                 let mut renderer = renderer;
                 let (mut selected, mut renamed) = (None, HashMap::new());
@@ -478,7 +491,32 @@ impl Edit {
             }
             Edit::Group(edits) => edits.iter_mut().for_each(|edit| edit.remap(renamed)),
             Edit::Linked(links) => links.iter_mut().for_each(|link| link.remap(renamed)),
+            Edit::File { .. } => {}
         }
+    }
+}
+
+/// A settings file written back by undo or redo: the lighting read again,
+/// and a look pack worn again, as they now are.
+fn settings_file_changed(game: &mut Game, path: &std::path::Path) {
+    let done = match path.extension().and_then(|e| e.to_str()) {
+        Some("lookpack") => {
+            game.content.forget_kind(voxear_assets::AssetKind::LookPack);
+            let worn = voxear_engine::look_packs::worn(&game.engine.world).map(str::to_string);
+            match worn {
+                Some(reference) => {
+                    voxear_engine::look_packs::wear(&mut game.engine.world, &mut game.content, &reference)
+                }
+                None => Ok(()),
+            }
+        }
+        _ => {
+            game.content.forget_kind(voxear_assets::AssetKind::Lighting);
+            game.levels.refresh_lighting(&mut game.engine, &mut game.content)
+        }
+    };
+    if let Err(error) = done {
+        tracing::error!("{error:#}");
     }
 }
 
@@ -511,6 +549,16 @@ impl History {
     pub fn record_step(&mut self, edit: Edit) {
         self.undone.clear();
         self.done.push((edit, Instant::now() - MERGE_WITHIN));
+    }
+
+    /// Whether the last step to undo is a settings file's.
+    pub fn next_undo_is_file(&self) -> bool {
+        matches!(self.done.last(), Some((Edit::File { .. }, _)))
+    }
+
+    /// Whether the last step to redo is a settings file's.
+    pub fn next_redo_is_file(&self) -> bool {
+        matches!(self.undone.last(), Some(Edit::File { .. }))
     }
 
     /// Takes back the last edit. `None` when there is none; otherwise the

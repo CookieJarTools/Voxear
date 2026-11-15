@@ -43,6 +43,8 @@ Give a material an **Emission** colour to make it glow. Emission's colour picker
 
 A glowing surface does not light up what is around it. To make a lamp that lights the room, put a Point Light beside its bulb. See [[Lights]].
 
+An **Emission** map can be an HDR picture, a `.exr` or `.hdr` file, whose light goes past white in its own right: a neon sign's tubes far brighter than its frame, or embers brighter than the ash round them, from one picture. HDR pictures are read as light, never as sRGB colours, and a build compresses them as BC6H (see [[HDR Displays]]).
+
 ## Leaves and grass
 
 Turn on **Foliage** for leaves, grass and anything else thin that light shines through. Foliage takes the sun differently:

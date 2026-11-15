@@ -8,6 +8,13 @@
 //! fitted along each block's principal axis, then refined by least squares
 //! once. BC5 stores two channels (a normal map's X and Y) as two BC4
 //! blocks; shaders rebuild Z.
+//!
+//! HDR pictures are kept as half floats, with mips built in linear light,
+//! and encoded as BC6H (unsigned) for the GPU, an eighth of their memory.
+//! BC6H uses its one-region mode with 10-bit endpoints and 16 steps (mode
+//! 11), as BC7 uses mode 6: one colour line per block, fitted along the
+//! block's principal axis in the half floats' own bits, where steps are
+//! even in brightness's logarithm, then refined by least squares once.
 
 /// BC7's 4-bit interpolation weights, out of 64.
 const BC7_WEIGHTS: [u32; 16] = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
@@ -253,6 +260,234 @@ impl BitWriter {
     }
 }
 
+/// A float as a half float's bits, rounded to the nearest, as the GPU reads
+/// R16G16B16A16_SFLOAT.
+pub(crate) fn f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let mantissa = bits & 0x7f_ffff;
+    if exponent == 0xff {
+        return sign | 0x7c00 | if mantissa != 0 { 0x200 } else { 0 };
+    }
+    let e = exponent - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    let round = |kept: u32, rest: u32, halfway: u32| kept + u32::from(rest > halfway || (rest == halfway && kept & 1 == 1));
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        let full = mantissa | 0x80_0000;
+        let shift = (14 - e) as u32;
+        return sign | round(full >> shift, full & ((1 << shift) - 1), 1 << (shift - 1)) as u16;
+    }
+    // A carry past the mantissa rounds up into the exponent, as it should, even to infinity.
+    sign | round(((e as u32) << 10) | (mantissa >> 13), mantissa & 0x1fff, 0x1000) as u16
+}
+
+/// A half float's bits as a float.
+pub(crate) fn f16_value(bits: u16) -> f32 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = i32::from((bits >> 10) & 0x1f);
+    let fraction = f32::from(bits & 0x3ff) / 1024.0;
+    match exponent {
+        0 => sign * fraction * 2f32.powi(-14),
+        31 if fraction == 0.0 => sign * f32::INFINITY,
+        31 => f32::NAN,
+        _ => sign * (1.0 + fraction) * 2f32.powi(exponent - 15),
+    }
+}
+
+/// Linear RGBA floats as half floats' bytes, eight a pixel.
+pub(crate) fn to_f16_bytes(pixels: &[[f32; 4]]) -> Vec<u8> {
+    pixels.iter().flatten().flat_map(|&value| f16_bits(value).to_le_bytes()).collect()
+}
+
+/// An HDR picture's mip chain, averaged in linear light, level 0 first.
+pub(crate) fn float_mip_chain(pixels: &[[f32; 4]], width: u32, height: u32) -> Vec<(u32, u32, Vec<[f32; 4]>)> {
+    let mut levels = vec![(width, height, pixels.to_vec())];
+    while let Some((w, h, pixels)) = levels.last().filter(|(w, h, _)| *w > 1 || *h > 1) {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![[0.0; 4]; (nw * nh) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut sum = [0.0f32; 4];
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                    let pixel = pixels[(sy * w + sx) as usize];
+                    sum.iter_mut().zip(pixel).for_each(|(total, value)| *total += value.max(0.0) / 4.0);
+                }
+                next[(y * nw + x) as usize] = sum;
+            }
+        }
+        levels.push((nw, nh, next));
+    }
+    levels
+}
+
+/// The largest finite half float, which BC6H's unsigned format reaches.
+const BC6H_TOP: f32 = 31743.0;
+
+/// BC6H's 4-bit interpolation weights, out of 64, as BC7's.
+const BC6H_WEIGHTS: [u32; 16] = BC7_WEIGHTS;
+
+pub(crate) fn encode_bc6h(pixels: &[[f32; 4]], width: u32, height: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity((width.div_ceil(4) * height.div_ceil(4) * 16) as usize);
+    for_each_block(width, height, |bx, by| {
+        let block: [[f32; 3]; 16] = std::array::from_fn(|i| {
+            let x = (bx * 4 + i as u32 % 4).min(width - 1);
+            let y = (by * 4 + i as u32 / 4).min(height - 1);
+            let [r, g, b, _] = pixels[(y * width + x) as usize];
+            // Unsigned: what is below black is black; the half float's bits are what BC6H steps through.
+            [r, g, b].map(|c| f32::from(f16_bits(c.max(0.0))).min(BC6H_TOP))
+        });
+        out.extend_from_slice(&bc6h_block(&block));
+    });
+    out
+}
+
+/// A 10-bit endpoint as BC6H's unsigned decoding widens it.
+fn bc6h_unquantize(e: u32) -> u32 {
+    match e {
+        0 => 0,
+        1023 => 0xffff,
+        _ => ((e << 16) + 0x8000) >> 10,
+    }
+}
+
+/// What the GPU makes of two endpoints at a weight: a half float's bits.
+fn bc6h_decode(e0: u32, e1: u32, weight: u32) -> u32 {
+    let (a, b) = (bc6h_unquantize(e0), bc6h_unquantize(e1));
+    (((64 - weight) * a + weight * b + 32) >> 6) * 31 >> 6
+}
+
+/// The 10-bit endpoint whose decoded value is nearest a half float's bits.
+fn bc6h_quantize(bits: f32) -> u32 {
+    ((bits.clamp(0.0, BC6H_TOP) - 15.0) / 31.0).round().clamp(0.0, 1023.0) as u32
+}
+
+/// One block of 16 pixels, each a half float's bits per channel, as BC6H
+/// mode 11: one colour line, 10-bit endpoints, 4-bit indices.
+fn bc6h_block(pixels: &[[f32; 3]; 16]) -> [u8; 16] {
+    let fitted = bc6h_fit_line(pixels);
+    let (indices, error) = bc6h_indices(pixels, &fitted);
+    let mut best = (fitted, indices, error);
+    // Least squares on the endpoints, given the weights picked.
+    if let Some(refined) = bc6h_refine(pixels, &best.1) {
+        let (indices, error) = bc6h_indices(pixels, &refined);
+        if error < best.2 {
+            best = (refined, indices, error);
+        }
+    }
+    let (mut ends, mut indices, _) = best;
+    // The first pixel's index has no top bit: where it would, the line is turned round.
+    if indices[0] >= 8 {
+        ends.swap(0, 1);
+        indices.iter_mut().for_each(|i| *i = 15 - *i);
+    }
+    let mut bits = 0u128;
+    let mut at = 0;
+    let mut put = |value: u128, count: u32| {
+        bits |= (value & ((1 << count) - 1)) << at;
+        at += count;
+    };
+    put(0b00011, 5);
+    for end in ends {
+        for channel in end {
+            put(u128::from(channel), 10);
+        }
+    }
+    for (i, index) in indices.iter().enumerate() {
+        put(u128::from(*index), if i == 0 { 3 } else { 4 });
+    }
+    bits.to_le_bytes()
+}
+
+/// Two quantized endpoints along the block's principal axis, spanning it.
+fn bc6h_fit_line(pixels: &[[f32; 3]; 16]) -> [[u32; 3]; 2] {
+    let mean: [f32; 3] = std::array::from_fn(|c| pixels.iter().map(|p| p[c]).sum::<f32>() / 16.0);
+    let mut covariance = [[0.0f32; 3]; 3];
+    for p in pixels {
+        let d: [f32; 3] = std::array::from_fn(|c| p[c] - mean[c]);
+        for (i, row) in covariance.iter_mut().enumerate() {
+            for (j, value) in row.iter_mut().enumerate() {
+                *value += d[i] * d[j];
+            }
+        }
+    }
+    let mut axis = [1.0f32, 1.0, 1.0];
+    for _ in 0..8 {
+        let next: [f32; 3] = std::array::from_fn(|i| (0..3).map(|j| covariance[i][j] * axis[j]).sum());
+        let length = next.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if length < 1e-6 {
+            break;
+        }
+        axis = next.map(|v| v / length);
+    }
+    let along = |p: &[f32; 3]| (0..3).map(|c| (p[c] - mean[c]) * axis[c]).sum::<f32>();
+    let (low, high) = pixels.iter().map(along).fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)));
+    let end = |t: f32| std::array::from_fn(|c| bc6h_quantize(mean[c] + axis[c] * t));
+    [end(low), end(high)]
+}
+
+/// The nearest step for each pixel between `ends`, as the GPU decodes them,
+/// and the error over the block.
+fn bc6h_indices(pixels: &[[f32; 3]; 16], ends: &[[u32; 3]; 2]) -> ([u8; 16], f32) {
+    let steps: [[f32; 3]; 16] =
+        std::array::from_fn(|i| std::array::from_fn(|c| bc6h_decode(ends[0][c], ends[1][c], BC6H_WEIGHTS[i]) as f32));
+    let mut indices = [0u8; 16];
+    let mut total = 0.0;
+    for (index, pixel) in indices.iter_mut().zip(pixels) {
+        let error = |step: &[f32; 3]| (0..3).map(|c| (step[c] - pixel[c]).powi(2)).sum::<f32>();
+        let (best, error) =
+            steps.iter().map(error).enumerate().fold((0, f32::MAX), |best, (i, e)| if e < best.1 { (i, e) } else { best });
+        *index = best as u8;
+        total += error;
+    }
+    (indices, total)
+}
+
+/// The endpoints that best fit the pixels at the weights picked, by least
+/// squares, quantized; none where every pixel has the same weight.
+fn bc6h_refine(pixels: &[[f32; 3]; 16], indices: &[u8; 16]) -> Option<[[u32; 3]; 2]> {
+    let (mut aa, mut ab, mut bb) = (0.0f32, 0.0f32, 0.0f32);
+    let (mut ax, mut bx) = ([0.0f32; 3], [0.0f32; 3]);
+    for (pixel, &index) in pixels.iter().zip(indices) {
+        let b = BC6H_WEIGHTS[index as usize] as f32 / 64.0;
+        let a = 1.0 - b;
+        (aa, ab, bb) = (aa + a * a, ab + a * b, bb + b * b);
+        for c in 0..3 {
+            ax[c] += a * pixel[c];
+            bx[c] += b * pixel[c];
+        }
+    }
+    let det = aa * bb - ab * ab;
+    if det.abs() < 1e-6 {
+        return None;
+    }
+    let e0 = std::array::from_fn(|c| bc6h_quantize((bb * ax[c] - ab * bx[c]) / det));
+    let e1 = std::array::from_fn(|c| bc6h_quantize((aa * bx[c] - ab * ax[c]) / det));
+    Some([e0, e1])
+}
+
+/// A mode 11 BC6H block, as `encode_bc6h` writes them, back to its pixels
+/// as the GPU decodes them; none for a block in another mode.
+pub(crate) fn decode_bc6h(block: &[u8; 16]) -> Option<[[f32; 3]; 16]> {
+    let bits = u128::from_le_bytes(*block);
+    let take = |at: u32, count: u32| ((bits >> at) & ((1 << count) - 1)) as u32;
+    if take(0, 5) != 0b00011 {
+        return None;
+    }
+    let ends: [[u32; 3]; 2] =
+        std::array::from_fn(|e| std::array::from_fn(|c| take(5 + (e as u32 * 3 + c as u32) * 10, 10)));
+    Some(std::array::from_fn(|i| {
+        let index = if i == 0 { take(65, 3) } else { take(68 + (i as u32 - 1) * 4, 4) };
+        std::array::from_fn(|c| f16_value(bc6h_decode(ends[0][c], ends[1][c], BC6H_WEIGHTS[index as usize]) as u16))
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +564,55 @@ mod tests {
             let mean: [u8; 4] = std::array::from_fn(|c| (pixels.iter().map(|p| p[c] as u32).sum::<u32>() / 16) as u8);
             assert!(psnr(&pixels, &decode_bc7(&bc7_block(&pixels))) >= psnr(&pixels, &[mean; 16]) - 0.1);
         }
+    }
+
+    #[test]
+    fn half_floats_round_trip() {
+        for value in [0.0, 1.0, 0.5, 0.1, 3.14159, 1000.0, 65504.0, 6.1e-5, 1e-6] {
+            let back = f16_value(f16_bits(value));
+            assert!((back - value).abs() <= value * 1e-3 + 6e-8, "{value} came back as {back}");
+        }
+        assert_eq!(f16_bits(1.0), 0x3c00);
+        assert_eq!(f16_bits(-2.0), 0xc000);
+        assert_eq!(f16_bits(1e9), 0x7c00, "too bright for a half float is infinite");
+        assert_eq!(to_f16_bytes(&[[1.0, 0.0, 0.0, 1.0]]), [0x00, 0x3c, 0, 0, 0, 0, 0x00, 0x3c]);
+    }
+
+    #[test]
+    fn bc6h_blocks_keep_bright_light_within_a_few_percent() {
+        // A gradient over many stops, as a sky's from its horizon to the sun.
+        let gradient: Vec<[f32; 4]> = (0..16).map(|i| {
+            let v = 2f32.powf(i as f32 * 0.6 - 3.0);
+            [v, v * 0.8, v * 0.5, 1.0]
+        }).collect();
+        let block = encode_bc6h(&gradient, 4, 4);
+        assert_eq!(block.len(), 16);
+        let decoded = decode_bc6h(&block.try_into().unwrap()).unwrap();
+        for (pixel, got) in gradient.iter().zip(decoded) {
+            for c in 0..3 {
+                let relative = (got[c] - pixel[c]).abs() / pixel[c];
+                assert!(relative < 0.25, "{:?} came back as {got:?}", pixel);
+            }
+        }
+        // A flat colour, far past white, comes back as it was.
+        let flat = vec![[40.0, 12.0, 3.5, 1.0]; 16];
+        let decoded = decode_bc6h(&encode_bc6h(&flat, 4, 4).try_into().unwrap()).unwrap();
+        for got in decoded {
+            for (c, want) in [40.0f32, 12.0, 3.5].iter().enumerate() {
+                assert!((got[c] - want).abs() / want < 0.02, "{got:?}");
+            }
+        }
+        // Black, and what is below it, is black.
+        let dark = decode_bc6h(&encode_bc6h(&vec![[-1.0, 0.0, 0.0, 1.0]; 16], 4, 4).try_into().unwrap()).unwrap();
+        assert!(dark.iter().flatten().all(|c| *c == 0.0), "{dark:?}");
+    }
+
+    #[test]
+    fn float_mips_keep_the_light_and_halve_to_one_pixel() {
+        let bright: Vec<[f32; 4]> = (0..16).map(|i| if i == 5 { [160.0, 16.0, 0.0, 1.0] } else { [0.0; 4] }).collect();
+        let mips = float_mip_chain(&bright, 4, 4);
+        assert_eq!(mips.iter().map(|(w, h, _)| (*w, *h)).collect::<Vec<_>>(), [(4, 4), (2, 2), (1, 1)]);
+        assert_eq!(mips[2].2[0], [10.0, 1.0, 0.0, 1.0 / 16.0], "a bright pixel's light, spread, not clamped");
     }
 
     #[test]

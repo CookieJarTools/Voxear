@@ -661,7 +661,10 @@ impl PostProcess {
             bloom_tint: linear(self.bloom.tint),
             exposure_night: self.exposure.night.clamp(0.0, 1.0),
             look_shader: 0,
-            _look_pad: [0; 3],
+            // The renderer sets them for the output the view draws into.
+            display_peak: 1.0,
+            display_image: 0,
+            _look_pad: 0,
             look_values: [[0.0; 4]; crate::looks::LOOK_VALUES],
         }
     }
@@ -680,6 +683,70 @@ impl PostProcess {
         // The lookup table is an asset, not a setting, so it stays as it was.
         blended.grading.lut = self.grading.lut;
         Ok(blended)
+    }
+}
+
+impl PostProcess {
+    /// These settings with `overrides` laid over them, as `[post]` writes
+    /// them. A `preset` or `look` among them starts from that preset's or
+    /// look's settings in place of these, as a scene's `[post]` does.
+    pub fn with_overrides(&self, overrides: &toml::Table) -> Result<Self> {
+        let mut rest = overrides.clone();
+        let look = rest.remove("look");
+        let preset = rest.remove("preset");
+        let base = match (preset, look) {
+            (Some(toml::Value::String(name)), _) => Self::preset(&name)?,
+            (Some(_), _) => bail!("`preset` must be a name such as \"voxear\""),
+            (None, Some(toml::Value::String(name))) => crate::looks::Look::of(crate::looks::LookName::parse(&name)?).post,
+            (None, Some(_)) => bail!("`look` must be a name such as \"storybook\""),
+            (None, None) => *self,
+        };
+        if let Some(toml::Value::Table(grading)) = rest.get_mut("grading") {
+            grading.remove("lut");
+        }
+        let mut with = base.blended(&rest, 1.0)?;
+        // A lookup table is an asset the level's settings hold, never a script's.
+        with.grading.lut = self.grading.lut;
+        Ok(with)
+    }
+}
+
+/// Post-processing settings scripts lay over the level's (`Post` in C#), as
+/// a world resource: kept through level changes until they are taken off,
+/// laid over the level's settings, a look pack's or the scene's, before post
+/// volumes blend in. Holds what it last worked out, so a frame whose level
+/// settings are as they were costs nothing more.
+#[derive(Debug, Default)]
+pub struct ScriptPost {
+    overrides: toml::Table,
+    worked_out: std::sync::Mutex<Option<(PostProcess, PostProcess)>>,
+}
+
+impl ScriptPost {
+    /// Settings laid over the level's, checked first: a setting that does
+    /// not exist, or a value that does not fit, is refused.
+    pub fn new(overrides: toml::Table) -> Result<Self> {
+        PostProcess::voxear().with_overrides(&overrides).context("reading the script's post-processing")?;
+        Ok(Self { overrides, worked_out: std::sync::Mutex::new(None) })
+    }
+
+    /// What it lays over the level's settings, as `[post]` writes them.
+    pub fn overrides(&self) -> &toml::Table {
+        &self.overrides
+    }
+
+    /// `level` with these settings over it.
+    pub fn over(&self, level: PostProcess) -> PostProcess {
+        let mut known = self.worked_out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((from, to)) = *known
+            && from == level
+        {
+            return to;
+        }
+        // Checked as they were set, so they read; should they not, the level's settings stand.
+        let with = level.with_overrides(&self.overrides).unwrap_or(level);
+        *known = Some((level, with));
+        with
     }
 }
 
@@ -748,6 +815,24 @@ mod tests {
         assert_eq!(gpu.ao_strength, 0.0);
         assert!(PostProcess::from_toml(&toml::from_str("[ambient_occlusion]\nquality = 3").unwrap()).is_err());
         assert!(!PostProcess::debug_view().ambient_occlusion.enabled, "debug views show surfaces as they are");
+    }
+
+    #[test]
+    fn script_settings_lay_over_the_level() {
+        let level = PostProcess::from_toml(&toml::from_str("[bloom]\nintensity = 0.3").unwrap()).unwrap();
+        let script = ScriptPost::new(toml::from_str("[exposure]\ncompensation = 2.0").unwrap()).unwrap();
+        let seen = script.over(level);
+        assert_eq!(seen.exposure.compensation, 2.0, "the script's own");
+        assert_eq!(seen.bloom.intensity, 0.3, "the level's, where the script writes nothing");
+        assert_eq!(script.over(level), seen, "the same again, from what it worked out");
+        let preset = ScriptPost::new(toml::from_str("preset = \"cinematic\"").unwrap()).unwrap();
+        assert_eq!(preset.over(level).tonemap.mapper, Tonemapper::Aces, "a preset starts afresh");
+        assert_eq!(preset.over(level).bloom.intensity, PostProcess::cinematic().bloom.intensity);
+        let look = ScriptPost::new(toml::from_str("look = \"storybook\"").unwrap()).unwrap();
+        let storybook = crate::looks::Look::of(crate::looks::LookName::Storybook).post;
+        assert_eq!(look.over(level), storybook);
+        assert!(ScriptPost::new(toml::from_str("[bloom]\nglow = 1.0").unwrap()).is_err(), "typos are refused");
+        assert!(ScriptPost::new(toml::from_str("preset = \"loud\"").unwrap()).is_err());
     }
 
     #[test]

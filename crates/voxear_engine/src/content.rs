@@ -526,6 +526,9 @@ pub struct Content {
     shaders: crate::shaders::ShaderRegistry,
     /// Colour grading lookup tables uploaded, by their pictures.
     luts: HashMap<AssetGuid, TextureId>,
+    /// The light of each picture a sky was drawn with: its sky, its horizon
+    /// and its ground (see `voxear_render::picture_sky_light`).
+    sky_lights: HashMap<AssetGuid, [voxear_core::math::Vec3; 3]>,
     prefabs: PrefabCache,
     sounds: SoundCache,
     /// What a world set aside still draws and plays, as the editor's edited
@@ -705,6 +708,7 @@ impl Content {
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
+            sky_lights: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
             aside: InUse::default(),
@@ -2244,6 +2248,46 @@ impl Content {
         Ok(texture)
     }
 
+    /// A picture a sky is drawn with, uploaded on first use, and its light:
+    /// its sky, its horizon and its ground, which light the scene.
+    pub fn sky_picture(
+        &mut self,
+        renderer: &mut Renderer,
+        guid: AssetGuid,
+    ) -> Result<(TextureId, [voxear_core::math::Vec3; 3])> {
+        let texture = self.picture(renderer, guid, false)?;
+        if let Some(&light) = self.sky_lights.get(&guid) {
+            return Ok((texture, light));
+        }
+        let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
+        let bytes = self.read(&path)?;
+        // Light is averaged from a small copy: a panorama 64 wide is plenty.
+        let (width, height, pixels) = if CookedPicture::is_cooked(&bytes) {
+            let cooked = CookedPicture::from_bytes(&bytes, &path)?;
+            cooked.small_pixels().with_context(|| format!("{path} cannot be read for its light"))?
+        } else {
+            let picture = match voxear_render::read_hdr(&bytes) {
+                Some(read) => read.with_context(|| format!("reading {path}"))?,
+                None => {
+                    let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+                    let linear = |c: u8| {
+                        let c = f32::from(c) / 255.0;
+                        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+                    };
+                    image::Rgba32FImage::from_fn(picture.width(), picture.height(), |x, y| {
+                        let [r, g, b, a] = picture.get_pixel(x, y).0;
+                        image::Rgba([linear(r), linear(g), linear(b), f32::from(a) / 255.0])
+                    })
+                }
+            };
+            let small = image::imageops::resize(&picture, 64, 32, image::imageops::FilterType::Triangle);
+            (64, 32, small.pixels().map(|pixel| pixel.0).collect())
+        };
+        let light = voxear_render::picture_sky_light(&pixels, width, height);
+        self.sky_lights.insert(guid, light);
+        Ok((texture, light))
+    }
+
     /// The IES profile asset a light's profile was uploaded from.
     pub fn light_profile_guid(&self, texture: TextureId) -> Option<AssetGuid> {
         self.light_profiles.iter().find(|(_, known)| **known == texture).map(|(guid, _)| *guid)
@@ -2266,6 +2310,18 @@ impl Content {
             self.pictures.insert((guid, srgb), texture);
             let (width, height) = cooked.size();
             self.picture_sizes.insert((guid, srgb), [width, height]);
+            return Ok(texture);
+        }
+        // An HDR picture is light as it is, at the size its import settings allow, never sRGB.
+        if let Some(read) = voxear_render::read_hdr(&bytes) {
+            let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
+            let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
+            let picture = voxear_render::sized_hdr(read.with_context(|| format!("reading {path}"))?, &settings);
+            let size = picture.dimensions();
+            let pixels: Vec<[f32; 4]> = picture.pixels().map(|pixel| pixel.0).collect();
+            let texture = renderer.add_hdr_texture(&path, size, &pixels)?;
+            self.pictures.insert((guid, srgb), texture);
+            self.picture_sizes.insert((guid, srgb), [size.0, size.1]);
             return Ok(texture);
         }
         let picture = self.source_picture(&path)?;

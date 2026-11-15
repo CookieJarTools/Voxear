@@ -21,6 +21,7 @@ mod layers;
 mod blocks;
 mod physics;
 mod plants;
+mod post;
 mod playing;
 mod runtime;
 mod saves;
@@ -35,7 +36,7 @@ mod ui_rows;
 mod windows;
 
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
-pub use display::CursorLock;
+pub use display::{CursorLock, HdrInfo};
 pub use interop::{
     ComponentKind, ComponentTexts, ComponentValues, LightValues, MotionMatcherTexts, NetCalls, NetFields, NetRaycast, NetRpcs, ParticleBlaster, RpcSend, RpcTaken, SmokeActions,
     set_particle_blaster,
@@ -47,6 +48,7 @@ pub use interop::{
     WeatherRequest, WeatherState,
 };
 pub use heat::{HeatEventData, HeatHooks, set_heat_hooks};
+pub use post::{POST_IN_EFFECT, POST_OVERRIDES, POST_RESET, POST_SET, PostCall, set_post_call};
 pub use storms::{STORM_NUMBERS, StormCall, StormState, set_storm_call, set_storm_state};
 pub use physics::{ParticleHitData, PhysicsEventData, vehicle_curve_texts};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};

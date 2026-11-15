@@ -161,6 +161,13 @@ pub struct SkyData {
     /// The sky's clouds, left out where they are as a new sky's: none.
     #[serde(default, skip_serializing_if = "no_clouds_set")]
     pub clouds: voxear_render::Clouds,
+    /// A gradient sky drawn as a picture of the whole sky, an equirectangular
+    /// panorama such as an HDR picture, by the picture's ID, and how far it
+    /// is turned round, in degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<voxear_assets::AssetGuid>,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub picture_turn: f32,
 }
 
 fn no_clouds_set(clouds: &voxear_render::Clouds) -> bool {
@@ -1572,6 +1579,8 @@ pub fn sky_data(sky: &Sky) -> SkyData {
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
         clouds: sky.clouds,
+        picture: sky.picture,
+        picture_turn: sky.picture_turn,
     }
 }
 
@@ -1593,6 +1602,9 @@ pub fn sky_from_data(sky: &SkyData) -> Sky {
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
         clouds: sky.clouds,
+        picture: sky.picture,
+        picture_turn: sky.picture_turn,
+        ..Sky::default()
     }
 }
 
@@ -2746,6 +2758,22 @@ fn default_outer() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sky_names_its_picture_by_id_and_keeps_it_through_a_save() {
+        let data: SkyData = toml::from_str(
+            "zenith = [0.2, 0.4, 0.8]\nhorizon = [0.6, 0.7, 0.8]\nground = [0.2, 0.2, 0.2]\n\
+             picture = \"5b0e2a7c41d94f3c8a1f0e6b2d9c7a13\"\npicture_turn = 45.0\n",
+        )
+        .unwrap();
+        let sky = sky_from_data(&data);
+        assert_eq!(sky.picture.map(|guid| guid.to_string()).as_deref(), Some("5b0e2a7c41d94f3c8a1f0e6b2d9c7a13"));
+        assert_eq!(sky.picture_turn, 45.0);
+        let written = toml::to_string(&sky_data(&sky)).unwrap();
+        assert!(written.contains("picture = \"5b0e2a7c41d94f3c8a1f0e6b2d9c7a13\"") && written.contains("picture_turn = 45"), "{written}");
+        let plain = toml::to_string(&sky_data(&Sky::default())).unwrap();
+        assert!(!plain.contains("picture"), "a sky without one writes none: {plain}");
+    }
 
     #[test]
     fn a_sky_is_a_gradient_unless_it_says_atmosphere() {

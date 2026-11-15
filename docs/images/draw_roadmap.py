@@ -18,7 +18,7 @@ MILESTONES = [
     ("M3", "Editor and Voxear UI", "The Unity-style editor and its UI toolkit, growing all along", "ongoing"),
     ("", "Packages", "Share code, tools and content from GitHub, as Unity's packages", "done"),
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, Jolt and Box2D", "done"),
-    ("M5", "Lighting", "Ray-traced probes, fog, soft shadows, clouds, weather, look packs", "now"),
+    ("M5", "Lighting", "Ray-traced probes, soft shadows, clouds, weather, HDR output", "now"),
     ("", "Vegetation", "Foliage swaying in the wind, pushed aside, turning with the seasons", "done"),
     ("", "Water", "The sea, pools, rivers and lava: shores, foam, going under, buoyancy", "done"),
     ("M6", "Animation", "GPU skinning, motion matching, rigs and IK, box models, state machines", "now"),

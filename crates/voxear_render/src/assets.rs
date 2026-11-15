@@ -904,6 +904,26 @@ impl Assets {
         Ok(id)
     }
 
+    /// Uploads an HDR picture's half floats (eight bytes a pixel), with mips
+    /// the GPU makes, in linear light.
+    pub fn add_hdr_texture(
+        &mut self,
+        gpu: &Gpu,
+        bindless: &mut Bindless,
+        name: &str,
+        (width, height): (u32, u32),
+        halves: &[u8],
+    ) -> Result<TextureId> {
+        ensure!(halves.len() == (width * height * 8) as usize, "{name}: pixel data does not match {width}×{height}");
+        let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC;
+        let format = vk::Format::R16G16B16A16_SFLOAT;
+        let image = gpu.create_image(name, ImageDesc::new(width, height, format, usage).with_mips())?;
+        gpu.upload_image(&image, halves)?;
+        let id = bindless.add_texture(gpu, image.view);
+        self.textures.insert(id, image);
+        Ok(id)
+    }
+
     /// Uploads a texture whose mips were made ahead of time, such as a
     /// block-compressed one from a cooked model. `mips` holds level 0 first.
     pub fn add_texture_mips(

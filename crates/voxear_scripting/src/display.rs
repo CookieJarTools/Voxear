@@ -64,3 +64,38 @@ pub(crate) unsafe extern "C" fn cursor_get(lock: *mut i32) -> i32 {
 pub(crate) unsafe extern "C" fn cursor_set(visible: i32, lock: i32) {
     with_services(|services| services.set_cursor(visible != 0, CursorLock::from_code(lock)));
 }
+
+/// The display's HDR output, as `Screen.Hdr` and its kin read and set it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrInfo {
+    /// What is asked for: 0 off, 1 HDR where the display offers it, 2 HDR10
+    /// alone, 3 scRGB alone.
+    pub mode: i32,
+    /// What the window shows: 0 SDR, 1 HDR10, 2 scRGB.
+    pub output: i32,
+    /// The HDR outputs the display offers, a bit each: 1 HDR10, 2 scRGB.
+    pub offered: i32,
+    /// How bright white paper is in nits: the brightness of the SDR picture,
+    /// and of the UI, on an HDR display.
+    pub paper_white: f32,
+    /// The display's brightest, in nits, which highlights roll off towards.
+    pub peak: f32,
+}
+
+impl Default for HdrInfo {
+    fn default() -> Self {
+        Self { mode: 0, output: 0, offered: 0, paper_white: 200.0, peak: 1000.0 }
+    }
+}
+
+/// `Screen.Hdr` and its kin: the HDR output as it is written to `out`, after
+/// it is set as `set` asks when it is given. 0, or -1 with no game.
+pub(crate) unsafe extern "C" fn screen_hdr(set: *const HdrInfo, out: *mut HdrInfo) -> i32 {
+    let asked = (!set.is_null()).then(|| unsafe { set.read_unaligned() });
+    let Some(now) = with_services(|services| services.hdr(asked)) else { return -1 };
+    if !out.is_null() {
+        unsafe { out.write_unaligned(now) };
+    }
+    0
+}

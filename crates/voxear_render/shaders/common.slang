@@ -569,7 +569,12 @@ struct Post
     // The look shader the finished picture is drawn with, by its number, 0 for none, and its properties' values
     // (src/looks.rs's LookShader; look_custom.slang).
     uint lookShader;
-    uint3 lookPad;
+    // How many times brighter than paper white the display shows at most: 1 for SDR. Highlights roll off towards it.
+    float displayPeak;
+    // 1 when the picture goes to a display image the encode pass then fits to the window (HDR, or SDR beside it),
+    // which dithers in its place.
+    uint displayImage;
+    uint lookPad;
     float4 lookValues[LOOK_VALUES];
 };
 
@@ -653,6 +658,11 @@ struct Lighting
     // 1 when the sky's light is the moon: its disc, and a night sky.
     uint moon;
     Clouds clouds;
+    // A gradient sky's picture, a panorama drawn in place of its colours, as its texture's index and one, so 0 is
+    // none; and how far it is turned round, in radians.
+    uint skyPicture;
+    float skyPictureTurn;
+    uint2 skyPad;
 };
 
 // How rough a world of blocks' sea is, and where (src/sea.rs's GpuSea; blockSwell in water.slang).

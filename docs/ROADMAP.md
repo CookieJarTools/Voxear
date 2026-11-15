@@ -856,8 +856,65 @@ Done so far:
   lot from one pixel to the next, as over a normal map's fine bumps, so its highlights and reflections do not
   sparkle as the camera moves. `specular_smoothing` in `[post.anti_aliasing]`, 0.5 by default, is Shimmer
   reduction in the Lighting panel. The depth passes write the same roughness, so reflections fade there too.
-- Still to come: the post-processing settings, AO's among them, in the editor and the C# API; today they are in a
-  scene's `[post]` section.
+- **Post-processing settings in the editor and in C#:**
+  - **The Lighting page** has every `[post]` setting: Exposure gains night, Meter from and Meter to; Colour gains
+    lift, gamma and gain (three numbers a row), the lookup table (a picker of the project's pictures) and how
+    much of it shows, and the vignette's softness and roundness; Fog its colour, unset to the horizon's; Shading
+    ambient occlusion's tint, quality and full resolution, contact shadows' length, thickness and steps, and
+    reflections' distance, thickness, roughness and steps; Lens the largest blur; and a **Quality** tab for
+    anti-aliasing, render scale, sharpening and TAA's history and jitter. 84 settings in all.
+  - **Undo:** every change from the page, a lighting asset's Inspector or a look pack's is a step
+    (`history::Edit::File`, the file's text before and after), which Ctrl+Z writes back and lights again.
+  - **Post Volumes:** their settings in the Inspector under **Settings**, the page's tabs and rows in a volume's
+    mode (`LightingFields::for_volume`, `volume_panel`): each row empty where the volume leaves the setting to
+    the level, colours typed as numbers. A Post Volume is part of an Obj's undo state, as other components are.
+  - **C#:** `Post`, laid over the level's settings as a world resource (`ScriptPost`), before post volumes,
+    kept through level changes until `Post.Reset()`. The easy way, `Post.UsePreset(PostPreset)`, the three
+    presets and every look's post-processing; the full way, `Post.Change(post => ...)` over `PostSettings`'
+    typed sections (`BloomSettings`, `AntiAliasingSettings` and the rest, with `AmbientOcclusionQuality`,
+    `AntiAliasingMode` and `Tonemapper`, and the lookup table as a `Texture`), laying only what the change sets
+    differently; `Post.Current`, `Set`, `IsChanged`, and `PostSettings.ToJson`/`FromJson` for an options file.
+    One native call (`post_call`), JSON both ways; the script API is version 87.
+  - Tests: script settings over the level's, presets and looks over them, and typos refused; the engine's
+    answers to `Post`; volume overrides written and pruned; managed tests of JSON both ways and of changes
+    made only of what changed; a C# system changing settings, checked against the engine, whose
+    `new PostSettings()` is checked against the Voxear Look setting by setting; an editor test typing render
+    scale and lift on their tabs, undoing and redoing them, and setting a Post Volume's bloom in the Inspector
+    and undoing it.
+- **HDR display output:** HDR10 (`HDR10_ST2084`, 10 bits) and scRGB (`EXTENDED_SRGB_LINEAR`, half floats)
+  swapchains where the display and its driver offer them (`VK_EXT_swapchain_colorspace`), the mastering
+  display's brightness told through `VK_EXT_hdr_metadata`, and SDR where neither is offered
+  (`voxear_rhi::choose_format`, `HdrChoice`, `Encoding`).
+  - With any output in HDR, the views and the UI draw into a display image of half floats (linear BT.709, 1
+    at paper white) and an **Encode** pass fits it to each window: PQ over BT.2020 with a code value of noise,
+    scRGB's 80 nits, or sRGB with dithering for an SDR window beside it. The pipelines are made again when
+    that changes. Without HDR nothing changes and nothing is added.
+  - Tonemapping that targets the display: the tonemapper and grade are as in SDR up to paper white, then each
+    pixel is lifted by how much brighter than paper white it was exposed, towards the display's peak
+    (`display::highlight_gain`, `highlightGain` in Composite); Finish sharpens within the same range.
+  - **Settings:** paper white (200 nits) and peak (1000 nits), `Renderer::set_display` and `display`; for
+    games, `Screen.Hdr` (`HdrMode` Off, On, Hdr10, ScRgb), `HdrOutput`, `HdrAvailable`, `PaperWhite`,
+    `PeakBrightness` and `SetHdr` (native call `screen_hdr`), which the player's window makes so after the
+    frame; `VOXEAR_HDR=on` to try a display.
+  - Tests: the format choice and fallback; PQ against ST 2084's table, the BT.2020 matrix, the roll-off and each
+    encoding's paper white; on the GPU, offscreen images as an HDR10 and an scRGB window's would be: midtones at
+    paper white's brightness as SDR shows them, a bright glow at 905 nits against the roll-off's 901 under a
+    1000-nit peak, and an SDR image beside an HDR one as SDR alone. Not tried on an HDR display: this machine's
+    display offers none.
+- **HDR pictures:** `.exr` and `.hdr` files are pictures (`image`'s OpenEXR and Radiance readers), read as light,
+  never sRGB (`read_hdr`): uploaded as half floats with mips the GPU makes, and cooked to BC6H (unsigned,
+  `TextureFormat::Bc6h`) with mips averaged in linear light, or to half floats (`Rgba16f`) when not compressed.
+  Voxear's own BC6H encoder: mode 11, one colour line per block along its principal axis in half floats'
+  bits, endpoints refined by least squares. Any material map takes one; a glow map shines past white, and a sky can be one. Tests:
+  half floats both ways, BC6H blocks within a few percent over nine stops, float mips, both files cooked, and on
+  the GPU a BC6H glow map shown as the same picture in half floats is.
+  - **Skies from pictures:** a gradient sky's `picture` (by ID) and `picture_turn`: an equirectangular panorama
+    drawn in place of its colours (`pictureSky` in `sky.slang`, `GpuLighting::sky_picture`), its light, averaged
+    over its sky, horizon and ground by solid angle (`picture_sky_light`, from a small copy, decoded from BC6H
+    in a build), lighting the scene in the colours' place. Picture and Picture turn on the Lighting page's Sky
+    tab. Tests: a picture's light; the file written and read; on the GPU, the sky drawn from its picture as it
+    is turned, past white.
+  - Still to come for them: reflections of the picture itself, and the light probes they will fill.
 - **Area and tube lights:** rectangle and disc lights shaded by linearly transformed cosines (Heitz et al. 2016,
   tables fitted to GGX ahead of time), and tube lights by Karis's representative point. In scenes, the
   Hierarchy's + menu, the Inspector and the Scene view, which shows each one's shape and reach.
@@ -1287,12 +1344,7 @@ Next:
   for fewer misses on surfaces seen edge on.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
-- **HDR colour, end to end.** Rendering is HDR already: a float target, emissive and lights above 1, exposure and
-  tonemapping, and script colours go past white with `[ColorUsage(hdr: true)]`. Still to come:
-  - HDR textures (`.exr` and `.hdr`) imported as half floats and cooked to BC6H, for skies, light probes and
-    emissive maps
-  - HDR display output: HDR10 and scRGB swapchains with paper-white and peak-brightness settings, and tonemapping
-    that targets the display
+- **HDR colour, end to end ✅** (in Done, above).
 
 ## Vegetation ✅ (done)
 

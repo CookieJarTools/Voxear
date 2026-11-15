@@ -28,5 +28,5 @@ pub use renderdoc::RenderDoc;
 pub use resources::{
     Buffer, GpuBatch, GpuMemory, Image, ImageDesc, Retired, Transition, full_mip_count, is_depth, mip_barrier,
 };
-pub use swapchain::Swapchain;
+pub use swapchain::{Encoding, HdrChoice, Offered, Swapchain, choose_format};
 pub use timer::GpuTimer;

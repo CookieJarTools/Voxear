@@ -33,6 +33,25 @@ ground = [0.02, 0.02, 0.03]
 ambient = 0.6
 ```
 
+## A sky from a picture
+
+A sky can be a picture of a whole sky round you: a panorama twice as wide as it is high, across it once round the horizon, straight up at its top and straight down at its bottom, as cameras that photograph the sky all round save them. An HDR picture, a `.exr` or `.hdr` file, gives a sky as bright as the real one, its sun far brighter than its clouds.
+
+On the Lighting page's **Sky** tab, with **Mode** at Gradient, pick the picture under **Picture**, and turn it with **Picture turn** to put its sun or its mountains where you want them. In a file, it is named by its ID:
+
+```toml
+[sky]
+zenith = [0.517, 0.701, 0.931]
+horizon = [0.809, 0.865, 0.936]
+ground = [0.506, 0.485, 0.461]
+picture = "5b0e2a7c41d94f3c8a1f0e6b2d9c7a13"
+picture_turn = 90
+```
+
+The picture is drawn in place of the three colours, and the scene is lit by its own light: the average of its sky overhead, round its horizon and below it, which take the colours' place for the sky's soft light, reflections and bounced light. Point the level's sun the way the picture's sun is. A build compresses an HDR sky as BC6H.
+
+Reflections show the sky's light, not the picture itself, for now.
+
 ## The atmosphere
 
 To use the atmosphere, set `mode`:

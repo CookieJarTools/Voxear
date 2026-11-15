@@ -119,7 +119,7 @@ impl AssetKind {
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         Some(match extension.as_str() {
             "gltf" | "glb" | "fbx" | "boxmodel" => Self::Model,
-            "png" | "jpg" | "jpeg" => Self::Texture,
+            "png" | "jpg" | "jpeg" | "exr" | "hdr" => Self::Texture,
             "material" => Self::Material,
             "scene" => Self::Scene,
             "level" => Self::Level,

@@ -218,6 +218,10 @@ pub struct Pipelines {
     pub finish: vk::Pipeline,
     /// The frame debugger's view of an image.
     pub frame_debug: vk::Pipeline,
+    /// A display image fitted to a window (see `display`), one for each
+    /// format a window may be in: the first window's own, HDR10's two and
+    /// scRGB's.
+    pub encode: [(vk::Format, vk::Pipeline); 4],
     pub ui: vk::Pipeline,
     /// A UI panel's UI into its texture, the panels over each view's
     /// finished picture, and each panel's texture's mips (see `ui_panels`).
@@ -264,7 +268,14 @@ pub struct Pipelines {
 }
 
 impl Pipelines {
-    pub fn new(gpu: &Gpu, bindless: &Bindless, output_format: vk::Format, shaders: &ShaderSet) -> Result<Self> {
+    /// Pipelines that draw the picture into `output_format`, and fit a
+    /// display image to windows in `window_format` or an HDR format.
+    pub fn new(
+        gpu: &Gpu,
+        bindless: &Bindless,
+        (output_format, window_format): (vk::Format, vk::Format),
+        shaders: &ShaderSet,
+    ) -> Result<Self> {
         let layout = bindless.pipeline_layout;
         let module = |name: &str| ShaderModule::new(gpu, &format!("{name}.slang"), shaders.get(name)?);
         let modules = [
@@ -827,6 +838,24 @@ impl Pipelines {
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
             frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
+            encode: {
+                let formats = [
+                    window_format,
+                    vk::Format::A2B10G10R10_UNORM_PACK32,
+                    vk::Format::A2R10G10B10_UNORM_PACK32,
+                    vk::Format::R16G16B16A16_SFLOAT,
+                ];
+                let mut encode = [(vk::Format::UNDEFINED, vk::Pipeline::null()); 4];
+                for (made, format) in encode.iter_mut().zip(formats) {
+                    let pipeline = graphics(&GraphicsPipelineDesc {
+                        color_formats: std::slice::from_ref(&format),
+                        cull: vk::CullModeFlags::NONE,
+                        ..GraphicsPipelineDesc::new("Encode", post, c"postVertex", c"encodeFragment")
+                    })?;
+                    *made = (format, pipeline);
+                }
+                encode
+            },
             ui: graphics(&GraphicsPipelineDesc {
                 color_formats: output,
                 cull: vk::CullModeFlags::NONE,
@@ -1096,9 +1125,17 @@ impl Pipelines {
         let mesh =
             self.mesh.iter().flat_map(|m| [m.shadow, m.local_shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
-        for pipeline in all.into_iter().chain(mesh).chain(traced) {
+        let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
+        for pipeline in all.into_iter().chain(mesh).chain(traced).chain(encode) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }
+    }
+}
+
+impl Pipelines {
+    /// What fits a display image to a window in `format`.
+    pub fn encoder(&self, format: vk::Format) -> Option<vk::Pipeline> {
+        self.encode.iter().find(|(made, _)| *made == format).map(|(_, pipeline)| *pipeline)
     }
 }
 

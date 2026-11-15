@@ -27,4 +27,44 @@ public static class Screen
 	{
 		Native.SetScreen(width, height, fullscreen);
 	}
+
+	/// <summary>
+	/// Whether the game asks for HDR output, as an options menu sets it. Off by default. Where the display or its driver
+	/// offers none of what is asked, the game shows SDR, and HdrOutput says so.
+	/// </summary>
+	public static HdrMode Hdr
+	{
+		get { return (HdrMode)Native.Hdr(null).Mode; }
+		set { SetHdr(value, PaperWhite, PeakBrightness); }
+	}
+
+	/// <summary>What the window shows now: SDR, or the HDR it was given.</summary>
+	public static HdrOutput HdrOutput => (Voxear.HdrOutput)Native.Hdr(null).Output;
+
+	/// <summary>Whether the display offers any HDR output, so an options menu can show its HDR settings.</summary>
+	public static bool HdrAvailable => Native.Hdr(null).Offered != 0;
+
+	/// <summary>
+	/// How bright white paper is on an HDR display, in nits: the brightness the picture's midtones and the UI are shown at.
+	/// 200 by default; 80 to 500 suit most rooms.
+	/// </summary>
+	public static float PaperWhite
+	{
+		get { return Native.Hdr(null).PaperWhite; }
+		set { SetHdr(Hdr, value, PeakBrightness); }
+	}
+
+	/// <summary>The brightest the display shows, in nits, which highlights roll off towards. 1000 by default.</summary>
+	public static float PeakBrightness
+	{
+		get { return Native.Hdr(null).Peak; }
+		set { SetHdr(Hdr, PaperWhite, value); }
+	}
+
+	/// <summary>Sets HDR output, paper white and the peak together, from the next frame.</summary>
+	public static void SetHdr(HdrMode mode, float paperWhite, float peakBrightness)
+	{
+		var asked = new HdrInfoData { Mode = (int)mode, PaperWhite = paperWhite, Peak = peakBrightness };
+		Native.Hdr(asked);
+	}
 }

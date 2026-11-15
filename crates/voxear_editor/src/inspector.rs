@@ -425,6 +425,9 @@ pub struct Inspector {
     block_panel: Option<crate::block_panel::BlockPanel>,
     /// A Foliage's tools (see `plants_panel`).
     plants_panel: Option<crate::plants_panel::PlantsPanel>,
+    /// A Post Volume's settings (see `volume_panel`), and the tab it showed.
+    volume_panel: Option<crate::volume_panel::VolumePanel>,
+    volume_group: Option<&'static str>,
     lod_eye: Option<LodEye>,
     /// The LOD bar's edge dragged this frame, for the Scene view to follow.
     lod_edge: Option<LodEdge>,
@@ -496,6 +499,8 @@ impl Inspector {
             terrain_panel: None,
             block_panel: None,
             plants_panel: None,
+            volume_panel: None,
+            volume_group: None,
             lod_eye: None,
             lod_edge: None,
             lod_level: 0,
@@ -1119,6 +1124,9 @@ impl Inspector {
         self.group_tabs.clear();
         self.group_foldouts.clear();
         (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
+        if let Some(panel) = self.volume_panel.take() {
+            self.volume_group = Some(panel.group());
+        }
         self.block_panel = None;
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
@@ -1440,6 +1448,10 @@ impl Inspector {
             if *part == Part::Renderer {
                 self.mesh_lods = Some(MeshLods::new(ui, rows));
             }
+            if *part == Part::PostVolume {
+                let panel = crate::volume_panel::VolumePanel::new(ui, rows, game, entity, self.volume_group);
+                self.volume_panel = Some(panel);
+            }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
                 let name = format!("{prefix}/{name}");
@@ -1490,6 +1502,11 @@ impl Inspector {
 
     /// Marks the rows and sections whose values the Obj shown changes from
     /// its prefab, as Unity does: a bar beside each, and its label bold.
+    /// The row of a setting of the Post Volume shown, by its title.
+    pub fn volume_row(&self, title: &str) -> Option<NodeId> {
+        self.volume_panel.as_ref()?.row_of(title)
+    }
+
     pub fn show_overrides(&mut self, ui: &mut Ui, overrides: Vec<ValuePath>) {
         if overrides != self.overrides {
             self.overrides = overrides;
@@ -1761,6 +1778,7 @@ impl Inspector {
             || self.terrain_panel.as_ref().is_some_and(|panel| panel.update(ui, game, entity))
             || self.block_panel.as_ref().is_some_and(|panel| panel.update(ui, game, renderer.as_deref_mut(), entity))
             || self.plants_panel.as_ref().is_some_and(|panel| panel.update(ui, game))
+            || self.volume_panel.as_mut().is_some_and(|panel| panel.update(ui, game, entity))
         {
             self.show(ui, game, Some(entity), playing);
             let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);

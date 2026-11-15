@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 86;
+pub(crate) const API_VERSION: u32 = 87;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -592,7 +592,10 @@ pub(crate) struct NativeApi {
     pub item_drops_near: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, out: *mut u64, capacity: i32) -> i32,
     /// `ItemDrop`'s item, count and place, and `ItemDrops.Take`.
     pub item_drop_read:
-        unsafe extern "C" fn(drop: u64, take: i32, buffer: *mut u8, capacity: i32, count: *mut i32, at: *mut [f32; 3]) -> i32,
+        unsafe extern "C" fn(drop: u64, take: i32, buffer: *mut u8, capacity: i32, count: *mut i32, at: *mut [f32; 3]) -> i32,    /// `Post`: the settings in effect or a script's own, as JSON, set or taken off.
+    pub post_call: unsafe extern "C" fn(what: i32, text: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
+    /// `Screen.Hdr`: the display's HDR output, as `HdrInfo` holds it; given `set`, made so first.
+    pub screen_hdr: unsafe extern "C" fn(set: *const crate::display::HdrInfo, out: *mut crate::display::HdrInfo) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2221,6 +2224,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         item_drop: crate::trees::item_drop,
         item_drops_near: crate::trees::item_drops_near,
         item_drop_read: crate::trees::item_drop_read,
+        post_call: crate::post::post_call,
+        screen_hdr: crate::display::screen_hdr,
     }
 }
 

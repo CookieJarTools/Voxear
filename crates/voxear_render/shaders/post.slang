@@ -615,6 +615,17 @@ float3 nightVision(float3 color, float light, float average, float night)
     return lerp(color, seen, rods * 0.85);
 }
 
+// How much brighter than the tonemapper's picture a pixel is shown on a
+// display `ratio` times as bright as paper white, from how bright it was
+// exposed (1 at paper white): not at all up to paper white, then more and
+// more, towards `ratio` for the brightest. As `highlight_gain` in
+// src/display.rs.
+float highlightGain(float exposed, float ratio)
+{
+    float over = max(exposed - 1.0, 0.0);
+    return 1.0 + max(ratio - 1.0, 0.0) * over / (over + max(ratio, 1.0));
+}
+
 // textures: x HDR colour, y bloom (or NO_TEXTURE). push.output is 1 when
 // this is the last pass, which then dithers.
 [shader("fragment")]
@@ -659,6 +670,8 @@ float4 compositeFragment(PostOut input) : SV_Target
     float l = luminance(color);
     color = max(l + post.gradingSaturation * (color - l), 0.0);
 
+    // How bright the pixel is exposed, before tonemapping fits it to paper white, for an HDR display's highlights.
+    float exposed = luminance(color);
     color = tonemap(color, post);
     color = post.gain * (color + post.lift * (1.0 - color));
     color = pow(max(color, 0.0), 1.0 / max(post.gamma, 0.01));
@@ -689,7 +702,13 @@ float4 compositeFragment(PostOut input) : SV_Target
         seen.time = frame->time;
         color = saturate(customLook(post.lookShader, seen));
     }
-    if (push.output != 0)
+    // An HDR display shows highlights brighter than paper white, up to its peak.
+    if (post.displayPeak > 1.0)
+    {
+        color *= highlightGain(exposed, post.displayPeak);
+    }
+    // A display image is dithered as the encode pass fits it to the window.
+    if (push.output != 0 && post.displayImage == 0)
     {
         color = dither(color, input.position.xy, frame->frameIndex);
     }
@@ -731,7 +750,7 @@ float3 fxaa(uint source, float2 uv, float2 texel)
 
 // Contrast-adaptive sharpening (AMD FidelityFX CAS): sharpens flat areas
 // more than edges, so it restores texture detail without halos.
-float3 sharpen(uint source, int2 pixel, float sharpness)
+float3 sharpen(uint source, int2 pixel, float sharpness, float peak)
 {
     float3 a = load(source, pixel + int2(-1, -1)).rgb;
     float3 b = load(source, pixel + int2(0, -1)).rgb;
@@ -746,9 +765,10 @@ float3 sharpen(uint source, int2 pixel, float sharpness)
     low += min(min(low, a), min(min(c, g), i));
     float3 high = max(max(max(d, e), max(f, b)), h);
     high += max(max(high, a), max(max(c, g), i));
-    float3 amount = sqrt(saturate(min(low, 2.0 - high) / max(high, 1e-5)));
+    // Measured in the picture's own range, paper white to the display's peak.
+    float3 amount = sqrt(saturate(min(low, 2.0 * peak - high) / max(high, 1e-5)));
     float3 weight = amount * (-1.0 / lerp(8.0, 5.0, saturate(sharpness)));
-    return saturate((b * weight + d * weight + f * weight + h * weight + e) / (1.0 + 4.0 * weight));
+    return clamp((b * weight + d * weight + f * weight + h * weight + e) / (1.0 + 4.0 * weight), 0.0, peak);
 }
 
 [shader("fragment")]
@@ -757,6 +777,59 @@ float4 finishFragment(PostOut input) : SV_Target
     Frame* frame = push.frame;
     float3 color = frame->post.fxaa != 0
         ? fxaa(push.textures.x, input.uv, 1.0 / float2(frame->viewport))
-        : sharpen(push.textures.x, viewPixel(input), frame->post.sharpness);
+        : sharpen(push.textures.x, viewPixel(input), frame->post.sharpness, max(frame->post.displayPeak, 1.0));
+    // A display image is dithered as the encode pass fits it to the window.
+    if (frame->post.displayImage != 0)
+    {
+        return float4(color, 1.0);
+    }
     return float4(dither(color, input.position.xy, frame->frameIndex), 1.0);
+}
+
+// ---------------------------------------------------------------- Encode
+
+// ST 2084's PQ curve: light from 0 to 1 for 0 to 10,000 nits, as a signal
+// from 0 to 1. As `pq` in src/display.rs.
+float3 pq(float3 light)
+{
+    static const float M1 = 2610.0 / 16384.0;
+    static const float M2 = 2523.0 / 4096.0 * 128.0;
+    static const float C1 = 3424.0 / 4096.0;
+    static const float C2 = 2413.0 / 4096.0 * 32.0;
+    static const float C3 = 2392.0 / 4096.0 * 32.0;
+    float3 y = pow(saturate(light), M1);
+    return pow((C1 + C2 * y) / (1.0 + C3 * y), M2);
+}
+
+// Linear BT.709 colours as BT.2020's.
+float3 bt709ToBt2020(float3 c)
+{
+    return float3(
+        dot(float3(0.6274039, 0.32928304, 0.04331306), c),
+        dot(float3(0.06909729, 0.9195404, 0.01136232), c),
+        dot(float3(0.01639144, 0.08801331, 0.8955952), c));
+}
+
+// The display image, linear BT.709 with 1 at paper white, fitted to the
+// window (see src/display.rs). push.output says how: 0 SDR, 1 HDR10, 2
+// scRGB. push.size holds paper white and the display's peak in nits, as
+// floats' bits; push.level the frame, for dithering.
+[shader("fragment")]
+float4 encodeFragment(PostOut input) : SV_Target
+{
+    float3 color = max(load(push.textures.x, int2(input.position.xy)).rgb, 0.0);
+    float paper = asfloat(push.size.x);
+    float peak = asfloat(push.size.y) / paper;
+    if (push.output == 1)
+    {
+        float3 signal = pq(clamp(bt709ToBt2020(color), 0.0, peak) * paper / 10000.0);
+        // Ten bits a channel: noise of one code value breaks up banding in dark gradients.
+        signal += (gradientNoise(input.position.xy, push.level) - 0.5) / 1023.0;
+        return float4(saturate(signal), 1.0);
+    }
+    if (push.output == 2)
+    {
+        return float4(min(color, peak) * paper / 80.0, 1.0);
+    }
+    return float4(dither(saturate(color), input.position.xy, push.level), 1.0);
 }

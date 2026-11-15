@@ -111,6 +111,7 @@ mod block_panel;
 mod block_props;
 mod block_tools;
 mod plants_panel;
+mod volume_panel;
 mod heat_props;
 mod storm_props;
 mod plants_props;

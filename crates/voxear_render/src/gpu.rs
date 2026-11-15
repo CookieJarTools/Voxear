@@ -699,6 +699,12 @@ pub struct GpuLighting {
     /// 1 when the sky's light is the moon: its disc, and a night sky.
     pub moon: u32,
     pub clouds: GpuClouds,
+    /// A gradient sky's picture, a panorama drawn in place of its colours,
+    /// as its texture's index and one, so 0, as a frame starts, is none; and
+    /// how far it is turned round, in radians.
+    pub sky_picture: u32,
+    pub sky_picture_turn: f32,
+    pub _sky_pad: [u32; 2],
 }
 
 /// The sky's clouds as the shaders read them (see `clouds`). Mirrors
@@ -875,7 +881,13 @@ pub struct GpuPost {
     /// The look shader the finished picture is drawn with, by its number,
     /// 0 for none, and its properties' values (`looks::LookShader`).
     pub look_shader: u32,
-    pub _look_pad: [u32; 3],
+    /// How many times brighter than paper white the display shows at most: 1
+    /// for SDR (see `display`).
+    pub display_peak: f32,
+    /// 1 when the picture goes to a display image the encode pass fits to
+    /// the window.
+    pub display_image: u32,
+    pub _look_pad: u32,
     pub look_values: [[f32; 4]; crate::looks::LOOK_VALUES],
 }
 
@@ -1370,7 +1382,7 @@ mod tests {
         let motion = 64 * 2 + 16;
         let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
-        let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>();
+        let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>() + 16;
         assert_eq!(size_of::<GpuClouds>(), 80);
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.

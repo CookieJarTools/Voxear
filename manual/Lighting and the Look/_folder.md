@@ -11,6 +11,7 @@ How a level looks comes from these:
 5. [[Bounced Light]]: light reflecting from one surface onto the next.
 6. [[Cameras]]: what the player sees through, and how bright the picture is.
 7. [[Post-Processing]]: the finishing touches on the picture, such as glow, mist and colour.
+8. [[HDR Displays]]: showing highlights brighter than white on a screen that can.
 
 [[Lighting Settings]] keep a level's sky, sun, post-processing and weather together in one file, to light any scene with or to change to as the game runs.
 

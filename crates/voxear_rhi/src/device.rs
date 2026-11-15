@@ -32,6 +32,8 @@ pub struct GpuInfo {
     pub ray_tracing: bool,
     /// GDeflate decompression on the GPU (`VK_NV_memory_decompression`).
     pub memory_decompression: bool,
+    /// `VK_EXT_hdr_metadata`, for telling an HDR display how bright pictures get.
+    pub hdr_metadata: bool,
     /// Nanoseconds per timestamp tick.
     pub timestamp_period: f32,
     /// Why the GPU cannot run Voxear, if it cannot.
@@ -59,6 +61,12 @@ pub struct Gpu {
     /// Builds acceleration structures for ray queries, where the GPU can. Set
     /// `VOXEAR_RAY_TRACING=0` to leave ray tracing off.
     pub acceleration_structure: Option<khr::acceleration_structure::Device>,
+    /// Tells the display how bright an HDR swapchain's pictures get
+    /// (`VK_EXT_hdr_metadata`), where the driver has it.
+    pub hdr_metadata: Option<ext::hdr_metadata::Device>,
+    /// Whether swapchains may be made in colour spaces other than sRGB's
+    /// (`VK_EXT_swapchain_colorspace`), which HDR output needs.
+    pub color_spaces: bool,
     /// Names and labels for RenderDoc, Nsight and validation messages.
     debug_utils: Option<ext::debug_utils::Device>,
     messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
@@ -102,6 +110,11 @@ impl Gpu {
         if debug_utils {
             extensions.push(ext::debug_utils::NAME.as_ptr());
         }
+        // A window's swapchain may offer HDR colour spaces (HDR10, scRGB) where the display and its driver do.
+        let color_spaces = window.is_some() && has_instance_extension(&entry, vk::EXT_SWAPCHAIN_COLORSPACE_NAME);
+        if color_spaces {
+            extensions.push(vk::EXT_SWAPCHAIN_COLORSPACE_NAME.as_ptr());
+        }
         let instance = create_instance(&entry, &extensions, validation)?;
         drop(loading);
         let messenger = (validation && debug_utils).then(|| create_messenger(&entry, &instance)).transpose()?;
@@ -137,7 +150,8 @@ impl Gpu {
             info.memory_decompression && std::env::var("VOXEAR_GPU_DECOMPRESSION").map(|v| v != "0").unwrap_or(true);
         let mesh_shaders = info.mesh_shaders && std::env::var("VOXEAR_MESH_SHADERS").map(|v| v != "0").unwrap_or(true);
         let ray_tracing = info.ray_tracing && std::env::var("VOXEAR_RAY_TRACING").map(|v| v != "0").unwrap_or(true);
-        let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing };
+        let hdr_metadata = color_spaces && info.hdr_metadata;
+        let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing, hdr_metadata };
         let device = create_device(&instance, physical, queue_family, optional)?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_loader = khr::swapchain::Device::new(&instance, &device);
@@ -171,6 +185,8 @@ impl Gpu {
             decompression: decompress.then(|| nv::memory_decompression::Device::new(&instance, &device)),
             mesh_shader: mesh_shaders.then(|| ext::mesh_shader::Device::new(&instance, &device)),
             acceleration_structure: ray_tracing.then(|| khr::acceleration_structure::Device::new(&instance, &device)),
+            hdr_metadata: hdr_metadata.then(|| ext::hdr_metadata::Device::new(&instance, &device)),
+            color_spaces,
             entry,
             instance,
             physical,
@@ -414,6 +430,7 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
             && has(khr::deferred_host_operations::NAME)
             && supports_ray_tracing(instance, physical),
         memory_decompression: has(nv::memory_decompression::NAME) && supports_decompression(instance, physical),
+        hdr_metadata: has(ext::hdr_metadata::NAME),
         timestamp_period: props.limits.timestamp_period,
         unsupported,
     }
@@ -649,13 +666,14 @@ struct Optional {
     decompression: bool,
     mesh_shaders: bool,
     ray_tracing: bool,
+    hdr_metadata: bool,
 }
 
 fn create_device(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
     queue_family: u32,
-    Optional { decompression, mesh_shaders, ray_tracing }: Optional,
+    Optional { decompression, mesh_shaders, ray_tracing, hdr_metadata }: Optional,
 ) -> Result<ash::Device> {
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
@@ -684,6 +702,9 @@ fn create_device(
             khr::deferred_host_operations::NAME.as_ptr(),
         ]);
         chain = chain.push_next(&mut structures).push_next(&mut queries);
+    }
+    if hdr_metadata {
+        extensions.push(ext::hdr_metadata::NAME.as_ptr());
     }
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)

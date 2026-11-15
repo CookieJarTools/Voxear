@@ -15,7 +15,10 @@ use crate::{
         chunk::{AIR, BlockId, Fill, fill_of},
         flow::{Water, surface_fill},
     },
-    generate::{NodeKind, OwnVoxels, WorldGen, nodes::Output},
+    generate::{
+        NodeKind, OwnVoxels, WorldGen,
+        nodes::{Output, Rivers},
+    },
 };
 
 /// How many blocks under the surface a world's own caves keep clear of, so
@@ -68,6 +71,10 @@ type Moved = Vec<((u64, [u32; 3], bool, u64), Arc<WorldGen>)>;
 static MOVED: Mutex<Moved> = Mutex::new(Vec::new());
 const MOVED_KEPT: usize = 16;
 
+/// How many hectares drain into a place before a river starts there, where
+/// the land lies in levels.
+const LEVEL_RIVERS: f32 = 40.0;
+
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.
 pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_size: f32) -> Source<'a> {
@@ -112,7 +119,7 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref()),
     };
     if rivered {
-        crate::generate::nodes::add_rivers(&mut graph);
+        crate::generate::nodes::add_rivers(&mut graph, rivers_of(generate));
     }
     if !voxels {
         graph.add_voxels(own, false);
@@ -258,6 +265,14 @@ fn detach(graph: &mut crate::generate::Graph) {
     }
 }
 
+/// The rivers `generate` runs down its ground. Land in levels lies on long
+/// even slopes, down which water runs side by side: fewer rivers, each from
+/// more ground, read better there.
+fn rivers_of(generate: &BlockGenerate) -> Rivers {
+    let source = if generate.levels.is_some() { LEVEL_RIVERS } else { Rivers::default().source };
+    Rivers { source, ..Rivers::default() }
+}
+
 /// The graph of `world`, the generator a world of blocks' ground is made
 /// by as its file has it, with the land `generate` lays into it as it
 /// makes ground written in as nodes of its own: its levels, its biomes'
@@ -305,7 +320,7 @@ pub fn write_land(
     );
     steps.land = (first, mark(&graph));
     if rivered {
-        crate::generate::nodes::add_rivers(&mut graph);
+        crate::generate::nodes::add_rivers(&mut graph, rivers_of(generate));
     }
     steps.rivers = (steps.land.1, mark(&graph));
     if !voxels {

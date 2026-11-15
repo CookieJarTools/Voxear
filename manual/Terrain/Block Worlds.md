@@ -59,17 +59,17 @@ Where a cave or a passage cuts under ground that leans out over it, the rock lef
 
 ### Levels
 
-With **Levels** on, the land lies at a few set heights, an area at a time, instead of on the generator's own hills and mountains. Each area, a few kilometres across, is level grass at one height, and where two areas of unlike height meet a sheer wall of rock stands between them. You can run across a plain to its edge and look straight down a wall onto another plain far below. The generator still says where the land is and where the sea is; a high area meets the sea in a cliff.
+With **Levels** on, the land climbs in escarpments instead of on the generator's own hills and mountains: long, gentle slopes rising one way, now and then ending in a sheer wall of rock. You can walk up a grassy slope for a kilometre or two and come to an edge, with the next slope's foot below; coming the other way, the wall stands across your way. The walls wind for kilometres, all facing much the same way, cut back by gullies between buttresses, with rubble and woods at their feet. Most of an escarpment fades away into slope, and no wall stands more than 55 m tall: however far apart the levels are, the rest of the climb is in the broad slopes. Lone rounded hills stand here and there, and mountains keep a kilometre or two away from where the world starts, so they rise on the skyline. The generator still says where the land is and where the sea is; high land meets the sea in a cliff no more than 25 m tall, and slopes down to the shore as the generator's ground does, only steeper.
 
 | Setting | What it does |
 | --- | --- |
-| Level count | How many heights there are |
-| Lowest level, Highest level | The lowest area's height and the highest's, in metres. The levels between are evenly spaced |
-| Area size | How wide an area is, in metres. Each area is one biome through, so it reads as one place |
-| Ramps | How much of the walls' length is a ramp instead of a wall, 0 to 1, so a player can climb between levels |
-| Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights (see [[Generator Nodes#Levels|Levels]]): open plain, rolling ground, broad steps, ravines with natural bridges over them, a field of spires, a cluster of lone peaks, or a basin sunk to the lowest level |
+| Level count | How many escarpments the land climbs from the lowest level to the highest, each rising as far as the gap between levels |
+| Lowest level, Highest level | How high the land lies at its lowest and its highest, in metres, before mountains |
+| Area size | How wide an area is, in metres. Each area is one biome through, its borders winding |
+| Ramps | How much of the walls' length is a ramp instead of a wall, 0 to 1, so a player can climb up |
+| Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights (see [[Generator Nodes#Levels|Levels]]): open plain, rolling ground, broad steps, ravines with natural bridges over them, spires in groups, a range of mountains 550 to 1200 m tall, or a basin sunk towards the lowest level |
 
-A biome's [[Biomes#Land|land]] rolls over its area's floor as much as the area's character says, and its mountains stand as lone massifs over the level, not ranges over all of it. Walls, their rubble and the peaks are bare rock, showing the biome's [[Biomes#Rock Layers|rock layers]] where it has them. A biome that keeps to a height, such as snow, counts that height from its area's floor, so snow lies on the peaks over a high level and not on every high level. With **Land from** set, the area where the world starts is open plain at the lowest level.
+A biome's [[Biomes#Land|land]] rolls over the slopes as much as its area's character says, and stands a quarter as tall past its first 45 m, so a biome of mountains rolls in broad hills: the mountains are the areas of peaks'. Walls, their rubble and the mountains' upper slopes are bare rock, showing the biome's [[Biomes#Rock Layers|rock layers]] where it has them. A biome that keeps to a height, such as snow, counts that height from the escarpments' ground, so snow lies on the mountains and not on every high slope. Rivers start only where a good deal of ground drains, so there are fewer of them, and larger. With **Land from** set, the area where the world starts sinks to the lowest level.
 
 There is no limit on how high the levels go. Land standing high costs more to make: a column of ground 330 m high has about four times the chunks of one 40 m high and takes about twice as long. Rock layers under high ground take some memory, since a chunk of one block takes almost none. What you build is saved and sent as it always is, however high the land.
 

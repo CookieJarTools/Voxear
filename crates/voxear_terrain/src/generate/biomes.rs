@@ -522,7 +522,7 @@ impl WorldBiomes {
     /// counted under it, as a ramp down from a high level is.
     pub fn lift(&self, x: f32, z: f32, height: f32) -> f32 {
         let Some(areas) = self.regions.as_ref().and_then(|regions| regions.areas()) else { return 0.0 };
-        let floor = areas.info(areas.area_at(x, z)).0 - areas.plan.low;
+        let floor = areas.floor_at(x, z) - areas.plan.low;
         floor.min(height - areas.plan.low).max(0.0)
     }
 

@@ -131,18 +131,18 @@ A mask wired into **Ramps** keeps the ramps to where it is over a half.
 
 ### Levels
 
-Land at a few set heights, an area at a time. Each area, a few kilometres across, is level ground at one of the heights, and where two areas of unlike height meet a sheer wall stands between them, with rubble at its foot and now and then a ramp up it. From the edge of a high area you look down a wall onto the next area's land, far below. Areas near one another tend to stand at like heights, with one here and there a level above or below.
+Land that climbs in escarpments: long, gentle slopes rising one way, now and then ending in a sheer wall, with rubble at its foot and now and then a ramp up it. From the edge you look down the wall onto the next slope's foot. The walls wind for kilometres, all facing much the same way; most of an escarpment fades away into the slope, and no wall stands more than 55 m tall. Under them the land climbs from Lowest to Highest over a broad pattern many areas wide. The land is also shared out in areas a few kilometres across, their borders winding, each with a character of its own.
 
 | Row | What it does |
 | --- | --- |
 | Size | How wide an area is, in metres |
-| Levels | How many heights there are, 1 to 12 |
-| Lowest, Highest | The lowest area's height and the highest's, in metres. The levels between are evenly spaced |
+| Levels | How many escarpments the land climbs from Lowest to Highest, each rising as far as the gap between them, 1 to 12 |
+| Lowest, Highest | How high the land lies at its lowest and its highest, in metres, before mountains |
 | Wall | How steep the walls stand |
 | Ramps | How much of the walls' length is a ramp instead, 0 to 1 |
 | Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights: see below |
 
-Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before an area stands at its full height, so a high area meets the sea in a cliff), **Seed**, and **Areas**: **Its Own**, laid out by the node, or **The World's Regions**, the biome regions of the world of blocks the generator makes ground for, so each area is one biome's.
+Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before the land stands over it; high land meets the sea in a cliff no more than 25 m tall, then stands over that ground no more than three and a half times as high as the ground stands over the sea), **Seed**, and **Areas**: **Its Own**, laid out by the node, or **The World's Regions**, the biome regions of the world of blocks the generator makes ground for, so each area is one biome's.
 
 Each area has a character:
 
@@ -151,12 +151,12 @@ Each area has a character:
 | Plains | Open ground, nearly level |
 | Rolling | Ground that rolls as its biome's land does |
 | Steps | Broad steps, each about 26 m high |
-| Canyons | Ravines 70 to 140 m deep cut through it, with natural bridges over them |
-| Spires | A field of rock spires |
-| Peaks | A cluster of lone peaks, 160 to 310 m high |
-| Basins | Sunk to the lowest level, so walls stand round it |
+| Canyons | Ravines 35 to 70 m deep cut through it, with natural bridges over them |
+| Spires | Rock spires 25 to 85 m tall, standing in groups |
+| Peaks | A range of mountains, 550 to 1200 m high, ridged, reaching a little past the area's border |
+| Basins | Sunk towards the lowest level, at most 70 m under the land round it, its sides steep |
 
-About a third of the areas also have a lone peak standing at their end, back from the wall down to a lower area.
+Nearly half the areas also have a lone hill, 50 to 130 m high, round and grown over, three or four times as wide as it is tall. The ranges keep a kilometre or two away from where a world of blocks starts.
 
 The ground wired into **Ground** says only where the land is and where the sea is: its hills and mountains are not kept.
 

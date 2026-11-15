@@ -137,7 +137,7 @@ A world can keep its biomes to regions: one biome across a whole region, a few h
 - **Where the regions lie.** The world is shared out among points about the Biome size apart, each moved a little by the seed. Every place belongs to the nearest, measured after a smooth warp. Borders wander and bend rather than running straight, and no region is ever broken in two.
 - **Which biome a region is.** The one its climate is nearest, read once at its middle at the sea's height, by the biomes' usual rules. A cold region is cold country through, a dry one dry. Neighbouring regions of the same biome read as one large one.
 - **Snow and other biomes that keep to a height or sunk ground** are not regions of their own. They lie over whichever region they are in, where a place's own climate, height and sinking are within all their ranges, as before: snow on the mountains of any cold region, a chasm's floor wherever there is one.
-- **In a world of [[Block Worlds#Levels|levels]]** the regions are its areas, as wide as its Area size, so each area at its height is one biome, and the area below a wall can be another. Snow counts its height from the area's floor.
+- **In a world of [[Block Worlds#Levels|levels]]** the regions are its areas, as wide as its Area size, their borders winding. Snow counts its height from the escarpments' ground, so it lies on mountains and not on every high slope.
 - **At the border** blocks change along a ragged line. Grass and leaves fade from one biome's tint to the next over a few dozen blocks, and each biome's [land](#land) blends into the next over about 96 m. So one kind of land goes on until the next, as one biome does.
 
 ## How a place picks its biome

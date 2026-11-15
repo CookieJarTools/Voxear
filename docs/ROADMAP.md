@@ -2554,6 +2554,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     comment round picked nodes, edited, moved with its nodes, resized and deleted; the calls on a generator closed
     and open in its panel, with undo; a world with levels, biome land, rivers and caves written out and read back
     making the same heights, climate and blocks to the bit.
+  - ~~**Escarpments, not shelves:**~~ done: a world of levels now climbs in escarpments, long gentle slopes rising
+    one way and now and then ending in a sheer wall, winding for kilometres and all facing much the same way, most
+    of each fading away into the slope, over a broad climb from the lowest level to the highest. No wall stands over
+    55 m and no basin sinks over 70 m, however far apart the levels are. Walls are cut back by gullies between
+    buttresses, round over at the brow and stand over long aprons of rubble and woods. Areas of peaks raise ridged
+    ranges of mountains 550 to 1200 m tall with foothills, kept a kilometre or two from the start; lone round hills
+    stand in nearly half the areas; canyons wind as long ravines; spires are fewer and smaller; a biome's own land
+    keeps a quarter of its height past 45 m. Areas' and biomes' borders bend hard so they wind instead of looking
+    many-sided. Rivers in a world of levels start only from 40 ha of ground, so fewer and larger.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

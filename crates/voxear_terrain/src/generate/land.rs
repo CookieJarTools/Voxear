@@ -36,8 +36,8 @@
 //! hand in a generator, and changed there.
 //!
 //! A world whose land lies in levels (see `nodes::levels`) lays a Levels
-//! node over the generator's ground first: level areas at set heights,
-//! walls between. Each biome's land then rolls over its area's floor as
+//! node over the generator's ground first: escarpments, long slopes each
+//! ending in a wall. Each biome's land then rolls over that ground as
 //! much as the area's character says, in place of rising out of the
 //! generator's own hills, and its mountains stand as lone massifs over the
 //! level, not ranges over all of it. Spires stand in areas of spires and
@@ -157,6 +157,11 @@ impl BiomeLand {
 /// rises out of it in full, in metres: so the coast stays where it was.
 const COAST: f32 = 2.0;
 const RISE: f32 = 40.0;
+
+/// In a world of levels, how tall a biome's own land stands in full over its
+/// floor, in metres, and how much of what it rises past that it keeps.
+const LEVEL_LAND: f32 = 45.0;
+const LEVEL_LAND_PAST: f32 = 0.25;
 
 /// How far a biome's land eases in past its climate's ranges: wider than
 /// the blocks' borders, so hills and mountains fall away over a stretch.
@@ -311,7 +316,13 @@ pub fn add_land(
         // The floors, and each biome's land over them as much as its area rolls; the generator's own ground within
         // the world's start.
         g.next();
-        let rolls = g.math2(Operation::Multiply, height, (levels, Levels::RELIEF));
+        // A biome's own land stands a quarter as tall past its first few tens of metres: in a world of levels the
+        // mountains are the areas of peaks', and a biome of high land rolls in broad hills over its floor.
+        let low = g.math(Operation::Min, height, LEVEL_LAND);
+        let low = g.math(Operation::Multiply, (low, 0), 1.0 - LEVEL_LAND_PAST);
+        let past = g.math(Operation::Multiply, height, LEVEL_LAND_PAST);
+        let softened = g.math2(Operation::Add, (low, 0), (past, 0));
+        let rolls = g.math2(Operation::Multiply, (softened, 0), (levels, Levels::RELIEF));
         let ground = g.math2(Operation::Add, (levels, Levels::HEIGHT), (rolls, 0));
         height = match shaped.open {
             Some(open) => {
@@ -460,12 +471,12 @@ pub fn add_land_volume(graph: &mut Graph, biomes: &[BiomeDef], shaped: &Shaped) 
             // Fields of spires in the areas of spires, and natural bridges over the ravines of the areas of canyons.
             g.next();
             let spires = Spires {
-                size_from: 16.0,
-                size_to: 55.0,
-                height_from: 60.0,
-                height_to: 210.0,
-                spacing: 150.0,
-                often: 0.75,
+                size_from: 14.0,
+                size_to: 38.0,
+                height_from: 25.0,
+                height_to: 85.0,
+                spacing: 200.0,
+                often: 0.45,
                 seed: 0x1E7E_5917,
                 ..Spires::default()
             };
@@ -917,11 +928,11 @@ mod tests {
         let (warm, warm_places) = stood(warmest, &|warmth| warmth > middle + TEMPERATURE_FEATHER);
         assert!(cold_places > 500 && warm_places > 500, "{cold_places} cold places, {warm_places} warm");
         assert_eq!(cold, 0, "pillars where the biome without them lies");
-        assert!(warm * 100 > warm_places, "pillars over {warm} of {warm_places} warm places");
+        assert!(warm * 200 > warm_places, "pillars over {warm} of {warm_places} warm places");
     }
 
     #[test]
-    fn where_the_land_lies_in_levels_a_high_level_is_as_warm_as_a_low_one() {
+    fn where_the_land_lies_in_levels_high_land_is_as_warm_as_low() {
         let (world, xs, zs) = hills(80, 150.0);
         let levels = Levels {
             size: 900.0,
@@ -944,12 +955,16 @@ mod tests {
         let now = heights(&landed, &xs, &zs);
         let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
         landed.climates(&xs, &zs, &now, &mut warmth, &mut wetness);
-        let mean = |floor: f32| {
-            let on: Vec<f32> = (0..xs.len()).filter(|&at| (now[at] - floor).abs() < 2.0).map(|at| warmth[at]).collect();
-            (on.iter().sum::<f32>() / on.len().max(1) as f32, on.len())
+        // The lowest quarter of the places against the highest.
+        let mut order: Vec<usize> = (0..xs.len()).collect();
+        order.sort_by(|&a, &b| now[a].total_cmp(&now[b]));
+        let quarter = order.len() / 4;
+        let mean = |places: &[usize]| {
+            let n = places.len().max(1) as f32;
+            (places.iter().map(|&at| warmth[at]).sum::<f32>() / n, places.iter().map(|&at| now[at]).sum::<f32>() / n)
         };
-        let ((low, lows), (high, highs)) = (mean(10.0), mean(610.0));
-        assert!(lows > 100 && highs > 100, "{lows} places low, {highs} high");
+        let ((low, low_at), (high, high_at)) = (mean(&order[..quarter]), mean(&order[order.len() - quarter..]));
+        assert!(high_at - low_at > 150.0, "high land at {high_at} m, low at {low_at} m");
         // Without counting from the floor, 600 m higher would be several degrees colder.
         let (cold, _) = world.climate(xs[0], zs[0], 610.0);
         let (warm, _) = world.climate(xs[0], zs[0], 10.0);

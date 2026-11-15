@@ -126,7 +126,7 @@ impl Regions {
     /// every high level.
     pub fn at(&self, x: f32, z: f32, mut climate: Place) -> Option<usize> {
         if let Some(areas) = &self.areas {
-            let floor = areas.info(areas.area_at(x, z)).0 - areas.plan.low;
+            let floor = areas.floor_at(x, z) - areas.plan.low;
             let over_lowest = climate.above_sea + self.world.sea_level() - areas.plan.low;
             climate.above_sea -= floor.min(over_lowest).max(0.0);
         }
@@ -166,10 +166,10 @@ impl Regions {
     }
 
     /// The place at `(x, z)` moved by the warps: the areas' own, where the
-    /// land lies in levels, so a region's border is its level's wall.
+    /// land lies in levels, so a region is its area.
     fn warped(&self, x: f32, z: f32) -> [f32; 2] {
         match &self.areas {
-            Some(areas) => areas.place(x, z),
+            Some(areas) => areas.region_place(x, z),
             None => self.sites.warped(x, z),
         }
     }

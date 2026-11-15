@@ -1,30 +1,41 @@
-//! The Levels node: land at a few set heights, each area of it, a few
-//! kilometres across, level ground at one of them, and a sheer wall where
-//! two areas of unlike height meet, rubble at its foot and now and then a
-//! ramp up it. From the edge of a high area one looks down a wall onto the
-//! next area's land, far below.
+//! The Levels node: land that climbs in escarpments, long gentle slopes
+//! rising one way, now and then ending in a sheer wall, rubble at the
+//! wall's foot and now and then a ramp up it. Walk up the slope and the
+//! land ends at an edge, with the next slope's foot below; come the other
+//! way and the wall stands across the way. The walls wind for kilometres,
+//! all facing much the same way. Most of an escarpment fades away into the
+//! slope, and no wall stands more than 55 m tall, however far apart the
+//! levels are.
 //!
-//! Size is how wide an area is; Levels how many heights there are, from
-//! Lowest to Highest. Wall is how steep a wall stands and Ramps how much of
-//! the walls' length is a ramp instead. The ground wired into Ground says
-//! where land is and where the sea: land rises out of the sea to its level
-//! over Coast metres of that ground's height, so a high area meets the sea
-//! in a cliff.
+//! Under the escarpments the land climbs from Lowest to Highest over a
+//! broad pattern many areas wide, and swells gently over hundreds of
+//! metres. Walls are cut back by gullies between buttresses, with more
+//! rubble at a gully's foot; here and there a stretch of wall is broken
+//! into steep slope, and the ground rounds over a wall's brow.
+//!
+//! Size is how wide an area is; Levels how many escarpments the land
+//! climbs between Lowest and Highest, each as tall as the gap between
+//! them. Wall is how steep a wall stands and Ramps how much of the walls'
+//! length is a ramp instead. The ground wired into Ground says where land
+//! is and where the sea: land rises out of the sea over Coast metres of
+//! that ground's height, high land in a cliff no more than 25 m tall, and
+//! slopes down to the shore as that ground does, a few times as steep.
 //!
 //! Each area has a character, picked by the weights: Plains are nearly
 //! level, Rolling ground rolls as its biome's land does, Steps rise in
 //! broad steps, Canyons are cut by ravines, Spires stand rock spires,
-//! Peaks raise a cluster of lone peaks and Basins sink to the lowest
-//! level. Now and then a peak stands at the end of a high area, over the
-//! wall.
+//! Peaks raise a range of mountains 550 to 1200 m tall, kept a kilometre
+//! or two from a world's start, and Basins sink towards the lowest level.
+//! Areas' borders bend hard, so they wind and send out lobes. Nearly half
+//! the areas have a lone round hill.
 //!
 //! Its Walls is 1 on the walls, the rubble and the peaks' rock, for an
 //! Output's Rock. Relief is how much of a biome's land should roll over
 //! each place, by its area's character; Spires and Bridges are masks of
 //! the areas of spires and of canyons, for a Spires and an Arches node.
-//! Floor is the height of each place's area's floor, for a climate that
-//! cools with the height over the floor and not with the floor's own, so
-//! a high level is as green as a low one.
+//! Floor is the height of the escarpments' ground at each place, before
+//! anything stands on it, for a climate that cools with the height over
+//! that and not with its own, so high land is as green as low.
 //!
 //! A world of blocks with levels lays this node for itself, its areas the
 //! same as its biomes' regions (see `areas`).
@@ -36,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use super::{Kind, Port, Value, ValueSpec, noise3d::seed_for};
 use crate::{
     generate::{
-        areas::{Areas, Character, LevelPlan, Sites, border_distance},
+        areas::{Areas, Character, LevelPlan, MOST_SINK, SINK_EDGE, Sites, border_distance},
         compile::{Compiler, Kernel, Key, Places, V},
         graph::NodeId,
     },
@@ -87,11 +98,11 @@ impl Default for Levels {
             coast: 6.0,
             plains: 1.0,
             rolling: 1.5,
-            steps: 0.6,
-            canyons: 0.6,
-            spires: 0.4,
-            peaks: 0.5,
-            basins: 0.25,
+            steps: 0.0,
+            canyons: 0.15,
+            spires: 0.1,
+            peaks: 0.3,
+            basins: 0.15,
             seed: 0,
             areas: None,
             world_areas: false,
@@ -218,7 +229,7 @@ impl Kind for Levels {
         let sea = cx.world.sea_level;
         let coast = if self.coast.is_finite() { self.coast.clamp(0.5, 200.0) } else { 6.0 };
         // With no ground wired in, all of it is land.
-        let ground = cx.input(node, Self::GROUND, at).unwrap_or_else(|| cx.constant(sea + coast * 2.0));
+        let ground = cx.input(node, Self::GROUND, at).unwrap_or_else(|| cx.constant(sea + 2000.0));
         let lay = Lay {
             areas,
             wall: if self.wall.is_finite() { self.wall.clamp(0.3, 100.0) } else { 12.0 },
@@ -231,9 +242,11 @@ impl Kind for Levels {
     }
 }
 
-/// How much of a wall's drop lies as rubble at its foot, at most, in metres.
-const TALUS: f32 = 0.06;
-const MOST_TALUS: f32 = 24.0;
+/// How much of a wall's drop lies as a slope of rubble at its foot, and
+/// how high that slope stands at most, in metres: a wall stands over a long
+/// apron, bare scree near it, grown over and wooded further down.
+const TALUS: f32 = 0.2;
+const MOST_TALUS: f32 = 70.0;
 
 /// How steep rubble lies, and a ramp, as rise over run.
 const RUBBLE: f32 = 0.7;
@@ -256,6 +269,59 @@ const CHARACTER_BLEND: f32 = 200.0;
 /// A step's height, in metres, and how many there are.
 const STEP: f32 = 26.0;
 const STEPS: f32 = 4.0;
+
+/// How far apart two areas' ground must be over their border before it
+/// starts to end in a wall, and over how many metres more it becomes a
+/// whole wall; and over how many metres either side of a border two areas
+/// alike run into each other.
+const CLIFF_FROM: f32 = 25.0;
+
+/// How tall a range of mountains is, from and to, in metres, and how high
+/// up it the rock is bare.
+const RANGE_FROM: f32 = 550.0;
+const RANGE_TO: f32 = 1200.0;
+const RANGE_BARE: f32 = 260.0;
+
+/// How steep a mountain's flank must be to be bare rock, rise over run.
+const RANGE_STEEP: f32 = 0.8;
+
+/// How far past its area's border a range of mountains reaches, in metres.
+const RANGE_SPILL: f32 = 900.0;
+const CLIFF_OVER: f32 = 45.0;
+
+/// The tallest a cliff stands where high land meets the sea, in metres, and
+/// how many metres past that the land may stand over the ground wired in
+/// for each metre that ground stands over the sea.
+const SEA_CLIFF: f32 = 25.0;
+const SLOPE_BACK: f32 = 3.5;
+
+/// How many areas have a lone hill, and how tall one stands, from and to,
+/// in metres.
+const HILLS: f32 = 0.45;
+const HILL_FROM: f32 = 50.0;
+const HILL_TO: f32 = 130.0;
+const RUN_ON: f32 = 260.0;
+
+/// How steep a gully cut back into a wall is, and a stretch of wall broken
+/// into steep slope, as rise over run; and how far apart gullies are, about.
+const GULLY: f32 = 1.5;
+const BROKEN: f32 = 2.4;
+const GULLY_SIZE: f32 = 70.0;
+
+/// How far under the higher ground a wall stops at most, in metres, and
+/// over how many metres that ground rounds down to it.
+const BROW: f32 = 9.0;
+const BROW_WIDTH: f32 = 34.0;
+
+/// What a wall is like at a place: how much in a gully and in a broken
+/// stretch, how much of a ramp, 0 to 1 each, and how wide its ledges are.
+#[derive(Clone, Copy, Debug)]
+struct Face {
+    gully: f32,
+    broken: f32,
+    ramp: f32,
+    ledge: f32,
+}
 
 /// The levels' ground, walls and masks at each place, from rows of its x,
 /// z and the ground wired in.
@@ -291,49 +357,63 @@ impl Lay {
         let spacing = sites.spacing();
         let seed = sites.seed();
         let at = self.areas.place(x, z);
-        let (own, nine) = sites.nearest(at);
+        let cell_at = self.areas.region_place(x, z);
+        let lie = self.areas.lie(at, cell_at);
+        let (own, nine) = sites.nearest(cell_at);
         let own_at = sites.site(own);
-        let (floor, character) = self.areas.info(own);
+        let character = self.areas.info(own).1;
 
-        // The ramps: stretches of wall where a broad pattern is high, the same on both sides of a border.
-        let pattern = noise::gradient(at[0] / (spacing * 0.22), at[1] / (spacing * 0.22), seed ^ 0x2A3F);
-        let ramp = ((pattern - (0.62 - 1.25 * self.ramps)) / 0.15).clamp(0.0, 1.0);
         // Ledges along the walls, wider in some stretches, none in others.
         let ledges = noise::gradient(at[0] / 140.0, at[1] / 140.0, seed ^ 0x1ED6);
         let ledge = LEDGE * ((ledges + 0.2) / 0.8).clamp(0.0, 1.0);
+        // The ramps: stretches of wall where a broad pattern is high.
+        let pattern = noise::gradient(at[0] / (spacing * 0.22), at[1] / (spacing * 0.22), seed ^ 0x2A3F);
+        // Gullies cut back into the walls between buttresses, and stretches of wall broken into steep slopes.
+        let gullies = noise::fractal(NoiseStyle::Ridged, at[0] / GULLY_SIZE, at[1] / GULLY_SIZE, 2, seed ^ 0x6011);
+        let broken = noise::gradient(at[0] / 380.0, at[1] / 380.0, seed ^ 0x6012);
+        let face = Face {
+            gully: ((gullies - 0.45) / 0.25).clamp(0.0, 1.0),
+            broken: ((0.1 - broken) / 0.4).clamp(0.0, 1.0),
+            ramp: ((pattern - (0.62 - 1.25 * self.ramps)) / 0.15).clamp(0.0, 1.0),
+            ledge,
+        };
 
-        let mut low_side = floor;
-        let mut high_side = f32::MIN;
+        // The escarpment: up its long slope, then over the wall at its edge onto the foot of the next.
+        let foot = lie.climb + lie.swell;
+        let tread = |slope: f32| foot + lie.rise * (0.65 * slope + 0.35 * smooth(slope));
+        let (lower, higher, into) = match lie.slope > 0.5 {
+            true => (foot, tread(lie.slope), (1.0 - lie.slope) * lie.length),
+            false => (tread(lie.slope), foot + lie.rise, -lie.slope * lie.length),
+        };
+        let soft = lower + (higher - lower) * smooth(0.5 + into / (2.0 * RUN_ON));
+        let cliff = smooth((lie.rise - CLIFF_FROM) / CLIFF_OVER);
         let mut rock: f32 = 0.0;
+        let mut height = soft;
+        if cliff > 0.0 {
+            let (walled, bare) = self.pair(lower, higher, into, &face);
+            height += (walled - soft) * cliff;
+            rock = bare * cliff;
+        }
+        // Basins and the area round the start sink in from their edge, the steep of the sides bare.
+        if lie.sunk > 0.0 {
+            let drop = (height - (self.areas.plan.low + lie.swell)).clamp(0.0, MOST_SINK);
+            height -= drop * smooth(lie.sunk);
+            if drop * 6.0 * lie.sunk * (1.0 - lie.sunk) / (spacing * SINK_EDGE) > 1.0 {
+                rock = 1.0;
+            }
+        }
+
         let mut inside = f32::MAX;
         let mut other_character = (f32::MAX, character);
         for &cell in nine.iter().filter(|&&cell| cell != own) {
-            let distance = border_distance(at, own_at, sites.site(cell));
-            if distance > spacing {
-                continue;
-            }
+            let distance = border_distance(cell_at, own_at, sites.site(cell));
             inside = inside.min(distance);
-            let (beside, its_character) = self.areas.info(cell);
+            let its_character = self.areas.info(cell).1;
             if its_character != character && distance < other_character.0 {
                 other_character = (distance, its_character);
             }
-            if (beside - floor).abs() < 0.5 {
-                continue;
-            }
-            // How far into the higher of the two areas the place is, and the ground the pair of them makes there.
-            let (lower, higher, into_higher) = match beside < floor {
-                true => (beside, floor, distance),
-                false => (floor, beside, -distance),
-            };
-            let (height, bare) = self.pair(lower, higher, into_higher, ramp, ledge);
-            rock = rock.max(bare);
-            if beside < floor {
-                low_side = low_side.min(height);
-            } else {
-                high_side = high_side.max(height);
-            }
         }
-        let mut height = low_side.max(high_side);
+        let laid = height;
 
         // What stands within an area, faded out towards its borders.
         let kept = ((inside - 40.0) / KEEP_IN).clamp(0.0, 1.0);
@@ -349,15 +429,15 @@ impl Lay {
                 }
             }
             Character::Canyons => {
-                let lines = noise::fractal(
-                    NoiseStyle::Ridged,
-                    at[0] / (spacing * 0.3),
-                    at[1] / (spacing * 0.3),
-                    2,
-                    seed ^ 0xCA41,
-                );
-                let cut = ((lines - 0.8) / 0.035).clamp(0.0, 1.0);
-                let deep = 70.0 + 70.0 * sites.pick(own, 11);
+                // Long winding ravines along where a broad pattern crosses its middle, wider in some stretches.
+                let size = spacing * 0.3;
+                let wind =
+                    |part: u32| size * 0.25 * noise::gradient(at[0] / (size * 0.4), at[1] / (size * 0.4), seed ^ part);
+                let (x, z) = (at[0] + wind(0xCA42), at[1] + wind(0xCA43));
+                let line = noise::gradient(x / size, z / size, seed ^ 0xCA41).abs();
+                let wide = 0.03 + 0.02 * noise::gradient(at[0] / 300.0, at[1] / 300.0, seed ^ 0xCA44);
+                let cut = ((wide - line) / 0.012).clamp(0.0, 1.0);
+                let deep = 35.0 + 35.0 * sites.pick(own, 11);
                 height -= deep * cut * kept;
                 if cut > 0.0 && cut < 1.0 {
                     rock = rock.max(kept);
@@ -365,18 +445,43 @@ impl Lay {
             }
             _ => {}
         }
-        let peak = self.peaks(at, own, own_at, &nine, floor, character);
-        if peak > 0.0 {
-            height += peak;
-            rock = rock.max(((peak - 15.0) / 30.0).clamp(0.0, 1.0));
+        let hill = self.hills(at, &nine);
+        if hill > 0.0 {
+            height += hill;
+        }
+        // A range of mountains in an area of peaks, spreading a little past its border.
+        let (range, of, into) = nine
+            .iter()
+            .filter(|&&cell| self.areas.info(cell).1 == Character::Peaks)
+            .map(|&cell| {
+                let into = match cell == own {
+                    true => inside,
+                    false => border_distance(cell_at, sites.site(cell), own_at),
+                };
+                (self.range(at, cell, into) * lie.open, cell, into)
+            })
+            .fold((0.0, own, 0.0), |best, next| if next.0 > best.0 { next } else { best });
+        if range > 0.0 {
+            height += range;
+            // Bare rock where its flanks are steep, grass and snow where they lie back.
+            let step = 4.0;
+            let steep =
+                |dx: f32, dz: f32| (self.range([at[0] + dx, at[1] + dz], of, into) * lie.open - range).abs() / step;
+            if range > RANGE_BARE * 0.25 && steep(step, 0.0).max(steep(0.0, step)) > RANGE_STEEP {
+                rock = 1.0;
+            }
         }
 
-        // Out of the sea: the ground wired in says where the land is.
+        // Out of the sea: the ground wired in says where the land is. High land meets it in a cliff of no more than
+        // 25 m, and stands over it no more than a few times as high as that ground stands over the sea, so mountains
+        // and high levels slope down to the shore as that ground does, only steeper.
         let land = smooth((ground - self.sea) / self.coast);
-        if land < 1.0 && height - ground > 20.0 {
+        let over = height - ground;
+        let stands = over.min(SEA_CLIFF + SLOPE_BACK * (ground - self.sea).max(0.0));
+        if land < 1.0 && stands > 20.0 {
             rock = rock.max(1.0 - land);
         }
-        let height = ground + (height - ground) * land;
+        let height = ground + stands * land;
 
         // How much of a biome's land rolls here, blended into the next area's character over its border.
         let relief = match other_character.0 < CHARACTER_BLEND {
@@ -387,96 +492,120 @@ impl Lay {
             false => character.relief(),
         };
         let mask = |of: Character| if character == of { kept } else { 0.0 };
-        let floor_here = ground + (floor - ground) * land;
+        let floor_here = ground + (laid - ground) * land;
         [height, rock, relief * land, mask(Character::Spires) * land, mask(Character::Canyons) * land, floor_here]
     }
 
     /// The ground two areas at `lower` and `higher` make at a place `into`
-    /// metres into the higher, out of it where negative, with `ramp` of a
-    /// ramp there and ledges `ledge` metres wide: a wall standing over
-    /// rubble, stepped back at its ledges, or a ramp; and how bare.
-    fn pair(&self, lower: f32, higher: f32, into: f32, ramp: f32, ledge: f32) -> (f32, f32) {
+    /// metres into the higher, out of it where negative, with the wall's
+    /// `face` there: a wall standing over rubble, stepped back at its
+    /// ledges, cut back in gullies, or a ramp; and how bare.
+    fn pair(&self, lower: f32, higher: f32, into: f32, face: &Face) -> (f32, f32) {
+        let Face { gully, broken, ramp, ledge } = *face;
         let drop = higher - lower;
-        let talus = (drop * TALUS).min(MOST_TALUS);
+        let talus = (drop * TALUS * (1.0 + 1.5 * gully)).min(MOST_TALUS * (1.0 + gully));
         if into >= 0.0 {
-            let slope = (self.wall + (RAMP - self.wall) * ramp).max(0.05);
+            let wall = self.wall + (self.wall.min(BROKEN) - self.wall) * broken;
+            let wall = wall + (wall.min(GULLY) - wall) * gully;
+            let slope = (wall + (RAMP - wall) * ramp).max(0.05);
             let face = drop - talus;
             // Each band of the wall rises sheer, then a ledge runs back before the next.
             let ledge = ledge * (1.0 - ramp);
             let band = (LEDGE_EVERY / slope + ledge).max(0.5);
+            // The wall stops short of the top, and the higher ground rounds over its brow down to it.
+            let brow = (face * 0.1).min(BROW) * (1.0 - ramp);
+            let under = face - brow;
             let bands = (into / band).floor();
             let up = into - bands * band;
-            let rise = (bands * LEDGE_EVERY + (up * slope).min(LEDGE_EVERY)).min(face);
-            let on_face = rise < face && up * slope < LEDGE_EVERY;
-            let bare = if on_face { 1.0 - ramp } else { 0.0 };
-            (lower + talus + rise, bare)
+            let rise = bands * LEDGE_EVERY + (up * slope).min(LEDGE_EVERY);
+            if rise < under {
+                let on_face = up * slope < LEDGE_EVERY;
+                let bare = if on_face { (1.0 - ramp) * (1.0 - 0.6 * gully) } else { 0.0 };
+                return (lower + talus + rise, bare);
+            }
+            let whole = (under / LEDGE_EVERY).floor();
+            let top_at = whole * band + (under - whole * LEDGE_EVERY) / slope;
+            let over = (1.0 - (into - top_at) / BROW_WIDTH).clamp(0.0, 1.0);
+            (lower + talus + under + brow * (1.0 - over * over), 0.0)
         } else {
             let reach = (talus / RUBBLE).max(0.5);
             let left = (1.0 + into / reach).max(0.0);
             // The rubble is bare where it lies steep against the wall, grown over at its foot.
-            let bare = if left > 0.5 { 1.0 - ramp } else { 0.0 };
+            let bare = if left > 0.78 { 1.0 - ramp } else { 0.0 };
             (lower + talus * left * left, bare)
         }
     }
 
-    /// How high the peaks of an area stand over its floor at `at`: a
-    /// cluster where it is an area of peaks, and now and then one at the
-    /// end of a high area, over the wall down to a lower.
-    fn peaks(
-        &self,
-        at: [f32; 2],
-        own: [i32; 2],
-        own_at: [f32; 2],
-        nine: &[[i32; 2]; 9],
-        floor: f32,
-        character: Character,
-    ) -> f32 {
+    /// How high the range of mountains of site `own`'s area of peaks
+    /// stands at `at`, `inside` metres in from its border, out of it where
+    /// negative: rising from a little way past its border to a height of
+    /// its own, 550 to 1200 m, in ridges with valleys between.
+    fn range(&self, at: [f32; 2], own: [i32; 2], inside: f32) -> f32 {
         let sites = &self.areas.sites;
         let spacing = sites.spacing();
-        let mut tallest: f32 = 0.0;
         let seed = sites.seed();
-        let mut stand = |middle: [f32; 2], height: f32| {
-            let radius = height * 1.1;
-            // Its outline bent by a warp a third of its width, so no two are round alike.
-            let bend = radius * 0.32;
-            let (wx, wz) = (at[0] / (radius * 0.7), at[1] / (radius * 0.7));
-            let (dx, dz) = (
+        let tall = RANGE_FROM + (RANGE_TO - RANGE_FROM) * sites.pick(own, 60);
+        let rise = smooth((inside + RANGE_SPILL) / (spacing * 0.9));
+        if rise <= 0.0 {
+            return 0.0;
+        }
+        // Its ridges, bent so they wander, each sharpened by the one before so spurs run off them and crests stand
+        // sharp; crags along the crests; and valleys between, grown over.
+        let size = spacing * 0.42;
+        let bend = size * 0.35;
+        let (wx, wz) = (at[0] / size, at[1] / size);
+        let (x, z) = (
+            at[0] + bend * noise::gradient(wx, wz, seed ^ 0x9A01),
+            at[1] + bend * noise::gradient(wx, wz, seed ^ 0x9A02),
+        );
+        let ridges = noise::fractal(NoiseStyle::Ridged, x / size, z / size, 3, seed ^ 0x9A03);
+        let crags = noise::fractal(NoiseStyle::Ridged, x / (size * 0.11), z / (size * 0.11), 2, seed ^ 0x9A04);
+        let ridge = ridges * (0.5 + 0.9 * ridges);
+        let massif = rise;
+        tall * massif * (0.16 + 0.84 * ridge + 0.03 * crags * ridge)
+    }
+
+    /// How high the lone hills stand at `at`: now and then one in an area,
+    /// round and grown over, 50 to 130 m tall and three or four times as wide,
+    /// its outline bent and drawn out one way, so none is round alike. Every
+    /// area's hill is asked for, so a hill near a border runs on over it.
+    fn hills(&self, at: [f32; 2], nine: &[[i32; 2]; 9]) -> f32 {
+        let sites = &self.areas.sites;
+        let spacing = sites.spacing();
+        let seed = sites.seed();
+        let mut tallest: f32 = 0.0;
+        for &cell in nine {
+            if sites.pick(cell, 17) >= HILLS {
+                continue;
+            }
+            let site = sites.site(cell);
+            let middle = [
+                site[0] + spacing * 0.3 * (sites.pick(cell, 18) - 0.5),
+                site[1] + spacing * 0.3 * (sites.pick(cell, 19) - 0.5),
+            ];
+            // Never so tall that it would reach out of a small area.
+            let height = (HILL_FROM + (HILL_TO - HILL_FROM) * sites.pick(cell, 20)).min(spacing * 0.05);
+            let reach = height * (3.0 + 1.5 * sites.pick(cell, 21));
+            let bend = reach * 0.3;
+            let (wx, wz) = (at[0] / (reach * 0.8), at[1] / (reach * 0.8));
+            let (mut dx, mut dz) = (
                 at[0] + bend * noise::gradient(wx, wz, seed ^ 0x9E01) - middle[0],
                 at[1] + bend * noise::gradient(wx, wz, seed ^ 0x9E02) - middle[1],
             );
-            let away = dx * dx + dz * dz;
-            if away >= radius * radius {
-                return;
+            // Drawn out along one way, a third shorter across it.
+            let (lx, lz) = (sites.pick(cell, 80) - 0.5, sites.pick(cell, 90) - 0.5);
+            let length = (lx * lx + lz * lz).sqrt().max(0.01);
+            let along = (dx * lx + dz * lz) / length;
+            dx -= 0.35 * along * lx / length;
+            dz -= 0.35 * along * lz / length;
+            let away = (dx * dx + dz * dz) / (reach * reach);
+            if away >= 1.0 {
+                continue;
             }
-            let t = away.sqrt() / radius;
-            // Ridges running down its flanks and a sharp, broken top, in bands of cliff.
-            let ridges =
-                noise::fractal(NoiseStyle::Ridged, at[0] / (radius * 0.35), at[1] / (radius * 0.35), 3, seed ^ 0x9EA6);
-            let rise = height * (1.0 - t) * (1.0 - t) * (1.0 + 0.6 * t) * (0.7 + 0.45 * ridges);
-            let band = 14.0;
-            let k = rise / band;
-            let rise = band * (k.floor() + smooth((k - k.floor() - 0.55) / 0.45));
-            tallest = tallest.max(rise);
-        };
-        if character == Character::Peaks {
-            let count = 3 + (sites.pick(own, 13) * 4.0) as u32;
-            for k in 0..count {
-                let offset = [sites.pick(own, 20 + k) - 0.5, sites.pick(own, 40 + k) - 0.5];
-                let middle = [own_at[0] + offset[0] * spacing * 0.5, own_at[1] + offset[1] * spacing * 0.5];
-                stand(middle, 160.0 + 150.0 * sites.pick(own, 60 + k));
-            }
-        }
-        // A peak at the end of a high area, standing back from its wall down to a lower one.
-        if sites.pick(own, 17) < 0.35 {
-            let start = (sites.pick(own, 18) * 9.0) as usize;
-            let lower = (0..9)
-                .map(|k| nine[(start + k) % 9])
-                .find(|&cell| cell != own && self.areas.info(cell).0 < floor - 1.0);
-            if let Some(lower) = lower {
-                let there = sites.site(lower);
-                let middle = [own_at[0] + (there[0] - own_at[0]) * 0.36, own_at[1] + (there[1] - own_at[1]) * 0.36];
-                stand(middle, 180.0 + 140.0 * sites.pick(own, 19));
-            }
+            // Round over its top, easing out at its foot; its flanks a little uneven.
+            let dome = (1.0 - away) * (1.0 - away);
+            let uneven = 1.0 + 0.12 * noise::gradient(at[0] / (reach * 0.35), at[1] / (reach * 0.35), seed ^ 0x9EA6);
+            tallest = tallest.max(height * dome * uneven);
         }
         tallest
     }
@@ -493,28 +622,32 @@ mod tests {
     use crate::generate::{NodeKind, nodes::testing};
 
     #[test]
-    fn levels_lay_level_land_at_set_heights_with_sheer_walls_between() {
-        let levels = Levels { size: 1200.0, peaks: 0.0, steps: 0.0, canyons: 0.0, ..Levels::default() };
+    fn levels_climb_in_long_gentle_slopes_ending_in_sheer_walls() {
+        let levels = Levels { size: 1200.0, peaks: 0.0, steps: 0.0, canyons: 0.0, basins: 0.0, ..Levels::default() };
         let world = testing::world_of(NodeKind::Levels(levels), 0, &[]);
-        // A row 12 km long at 2 m: most of it at one of the four levels, or close over one.
-        let xs: Vec<f32> = (0..6000).map(|k| k as f32 * 2.0).collect();
-        let zs = vec![300.0; xs.len()];
-        let mut heights = vec![0.0; xs.len()];
-        world.heights(&xs, &zs, &mut heights);
-        let floors = [8.0, 138.67, 269.33, 400.0];
-        let near_floor =
-            heights.iter().filter(|&&h| floors.iter().any(|&f: &f32| h >= f - 1.0 && h < f + 45.0)).count();
-        assert!(near_floor * 10 > heights.len() * 9, "{near_floor} of {} on a level", heights.len());
-        let seen: Vec<bool> = floors.iter().map(|&f| heights.iter().any(|&h| (h - f).abs() < 1.0)).collect();
-        assert!(seen.iter().filter(|&&s| s).count() >= 3, "{seen:?}");
-        // Walls: somewhere the land drops 100 m within 20 m, and the drops are walls, not long slopes.
-        let sheer = heights.windows(10).any(|w| (w[0] - w[9]).abs() > 100.0);
+        // Four rows 12 km long at 2 m.
+        let rows: Vec<Vec<f32>> = [300.0, 4300.0, 8300.0, 12300.0]
+            .iter()
+            .map(|&z| {
+                let xs: Vec<f32> = (0..6000).map(|k| k as f32 * 2.0).collect();
+                let zs = vec![z; xs.len()];
+                let mut heights = vec![0.0; xs.len()];
+                world.heights(&xs, &zs, &mut heights);
+                heights
+            })
+            .collect();
+        // Between the lowest level and the highest, with an escarpment's rise of up to 55 m and a lone hill over it.
+        let all: Vec<f32> = rows.iter().flatten().copied().collect();
+        let (least, most) = all.iter().fold((f32::MAX, f32::MIN), |(l, m), &h| (l.min(h), m.max(h)));
+        assert!(least > 7.0 && most < 400.0 + 200.0, "{least} to {most}");
+        assert!(most - least > 150.0, "the land climbs: {least} to {most}");
+        // Mostly long, gentle slopes: most steps rise less than one in three.
+        let steps: Vec<f32> = rows.iter().flat_map(|row| row.windows(2).map(|p| (p[1] - p[0]).abs())).collect();
+        let gentle = steps.iter().filter(|&&d| d < 0.66).count();
+        assert!(gentle * 100 > steps.len() * 85, "{gentle} of {} gentle", steps.len());
+        // Somewhere one ends in a sheer wall: the land drops 35 m within 20 m.
+        let sheer = rows.iter().any(|row| row.windows(10).any(|w| (w[0] - w[9]).abs() > 35.0));
         assert!(sheer, "a sheer wall");
-        let long_slopes = heights.windows(50).filter(|w| {
-            let d = (w[0] - w[49]).abs();
-            d > 60.0 && w.windows(2).all(|p| (p[0] - p[1]).abs() < 2.5)
-        });
-        assert!(long_slopes.count() < 400, "few long even slopes: ramps only");
     }
 
     #[test]
@@ -548,3 +681,4 @@ mod tests {
         assert!(cut > 0, "ravines under the floors");
     }
 }
+

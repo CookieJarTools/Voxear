@@ -192,12 +192,23 @@ pub struct LevelPlan {
 }
 
 /// How far a world of levels' ragged warp moves a place, in metres, over
-/// how many metres, and again close up: under a third of a metre for every
-/// metre along all told, so it never folds.
-const RAGGED: f32 = 9.0;
+/// how many metres: in bays and headlands along a wall, then ragged, and
+/// again close up. A little more than a third of a metre for every metre
+/// along all told, so now and then a scrap of an area is cut off from it,
+/// as a stack stands off a cliff.
+const BAYS: f32 = 38.0;
+const BAYS_SIZE: f32 = 230.0;
+const RAGGED: f32 = 7.0;
 const RAGGED_SIZE: f32 = 56.0;
 const ROUGH: f32 = 3.5;
 const ROUGH_SIZE: f32 = 14.0;
+
+/// How far the areas' borders are bent, in spacings, over how many
+/// spacings, in lobes and again in curls.
+const LOBES: f32 = 0.3;
+const LOBES_SIZE: f32 = 0.75;
+const CURLS: f32 = 0.11;
+const CURLS_SIZE: f32 = 0.27;
 
 /// How far apart the broad pattern that sets areas' levels rises and
 /// falls, in spacings: several areas side by side stand at like heights.
@@ -206,6 +217,57 @@ const LEVEL_SIZE: f32 = 3.2;
 /// How many areas in a hundred stand a level above or below what the broad
 /// pattern says.
 const ODD_LEVEL: f32 = 0.3;
+
+/// How much of the way to the next level up a level's ground swells at
+/// most, and the most it swells in metres, and over how many metres it
+/// rolls.
+const SWELL: f32 = 0.16;
+const MOST_SWELL: f32 = 26.0;
+const SWELL_SIZE: f32 = 700.0;
+
+/// How far apart the land's broad climb rises and falls, and the pattern
+/// that sets how tall escarpments are, in spacings; how long an
+/// escarpment's slope is, in spacings; and over how many spacings in from
+/// its edge a basin sinks, a broad bowl.
+const CLIMB_SIZE: f32 = 2.6;
+const RISE_SIZE: f32 = 0.9;
+const SLOPE_LENGTH: f32 = 2.2;
+pub const SINK_EDGE: f32 = 0.32;
+
+/// The tallest an escarpment's wall stands, and the deepest a basin sinks
+/// under the land round it, in metres, however far apart the levels are:
+/// past that the land climbs in its broad slopes instead, so a high world
+/// is reached over long rises and not by walls hundreds of metres tall.
+pub const MOST_RISE: f32 = 55.0;
+pub const MOST_SINK: f32 = 70.0;
+
+/// How far from where the world starts the land lies low, in metres, and
+/// over how many spacings past that it climbs to its full height.
+const START_LOW: f32 = 400.0;
+const START_CLIMB: f32 = 1.4;
+
+/// How far from where the world starts the land is all its own, mountains
+/// and all, in metres: from the first to the second.
+const START_OPEN: [f32; 2] = [900.0, 2600.0];
+
+/// How the land lies at a place in a world of levels: its ground, the
+/// broad climb under it, how tall its escarpment rises, how far up that
+/// escarpment's slope it is, 0 at its foot to 1 at its edge, how long that
+/// slope is in metres, how much its ground swells, and how far in from a
+/// basin's edge it is, 0 at the edge to 1 where it has sunk all the way;
+/// and how far from where the world starts, 0 close by to 1 far enough
+/// away for mountains.
+#[derive(Clone, Copy, Debug)]
+pub struct Lie {
+    pub ground: f32,
+    pub climb: f32,
+    pub rise: f32,
+    pub slope: f32,
+    pub length: f32,
+    pub swell: f32,
+    pub sunk: f32,
+    pub open: f32,
+}
 
 /// The areas of a world of levels.
 #[derive(Clone, Debug, PartialEq)]
@@ -290,6 +352,23 @@ impl Areas {
         self.plan.low + (self.plan.high - self.plan.low) * self.level(cell) as f32 / top
     }
 
+    /// How far the ground of a level standing at `floor` swells over it at
+    /// the place `at`, moved by [`Areas::place`]: 0 to about a sixth of the
+    /// way to the next level, rolling over hundreds of metres. Areas at one
+    /// level swell alike, so they meet without a step, and a wall between
+    /// two levels is taller in some stretches than in others.
+    pub fn swell(&self, floor: f32, at: [f32; 2]) -> f32 {
+        let gap = (self.plan.high - self.plan.low) / (self.plan.levels - 1).max(1) as f32;
+        let most = (gap * SWELL).min(MOST_SWELL);
+        if most <= 0.0 {
+            return 0.0;
+        }
+        let seed = self.sites.seed() ^ floor.to_bits().wrapping_mul(0x9E37_79B1);
+        let broad = noise::gradient(at[0] / SWELL_SIZE, at[1] / SWELL_SIZE, seed ^ 0x5E11);
+        let close = noise::gradient(at[0] / (SWELL_SIZE * 0.27), at[1] / (SWELL_SIZE * 0.27), seed ^ 0x5E12);
+        most * (0.5 + 0.5 * (0.75 * broad + 0.3 * close)).clamp(0.0, 1.0)
+    }
+
     /// The character of site `cell`'s area.
     pub fn character(&self, cell: [i32; 2]) -> Character {
         if self.kept == Some(cell) {
@@ -313,15 +392,118 @@ impl Areas {
         let [wx, wz] = self.sites.warped(x, z);
         let seed = self.sites.seed();
         let shift = |part: u32| {
-            RAGGED * noise::gradient(x / RAGGED_SIZE, z / RAGGED_SIZE, seed ^ part)
+            BAYS * noise::gradient(x / BAYS_SIZE, z / BAYS_SIZE, seed ^ (part + 2))
+                + RAGGED * noise::gradient(x / RAGGED_SIZE, z / RAGGED_SIZE, seed ^ part)
                 + ROUGH * noise::gradient(x / ROUGH_SIZE, z / ROUGH_SIZE, seed ^ (part + 1))
         };
         [wx + shift(0x4AC3), wz + shift(0x4AD3)]
     }
 
+    /// The height of the floor under the place at `(x, z)`: the
+    /// escarpments' ground there, before anything stands on it.
+    pub fn floor_at(&self, x: f32, z: f32) -> f32 {
+        self.lie(self.place(x, z), self.region_place(x, z)).ground
+    }
+
+    /// How the land lies at the place `at`, moved by [`Areas::place`], and
+    /// `region_at`, moved by [`Areas::region_place`]: on
+    /// which escarpment's slope, how far up it, and how high its ground is.
+    ///
+    /// The land climbs from Lowest to Highest over a broad pattern many
+    /// areas wide, and on that climb lie escarpments: long even slopes
+    /// rising one way, each ending in a drop as tall as it rose, all facing
+    /// much the same way and winding as they go. Some drops are a level
+    /// tall, others fade away into the slope. Basins sink to the lowest
+    /// level, and round the world's start the land lies low, climbing away
+    /// from it.
+    pub fn lie(&self, at: [f32; 2], region_at: [f32; 2]) -> Lie {
+        let spacing = self.sites.spacing();
+        let seed = self.sites.seed();
+        let gap = (self.plan.high - self.plan.low) / (self.plan.levels - 1).max(1) as f32;
+        let gap = if self.plan.levels < 2 { 0.0 } else { gap };
+        // The broad climb.
+        let size = spacing * CLIMB_SIZE;
+        let broad = noise::fractal(noise::NoiseStyle::Fractal, at[0] / size, at[1] / size, 3, seed ^ 0xC11B);
+        let top = (self.plan.high - self.plan.low - gap.min(MOST_RISE)).max(0.0);
+        // Round where the world starts the land lies low, and climbs away from it over a few kilometres.
+        let (away, open) = match self.plan.keep {
+            Some(keep) => {
+                let start = self.place(keep[0], keep[1]);
+                let far = ((at[0] - start[0]) * (at[0] - start[0]) + (at[1] - start[1]) * (at[1] - start[1])).sqrt();
+                let ease = |t: f32| {
+                    let t = t.clamp(0.0, 1.0);
+                    t * t * (3.0 - 2.0 * t)
+                };
+                let open = ease((far - START_OPEN[0]) / (START_OPEN[1] - START_OPEN[0]));
+                (ease((far - START_LOW) / (spacing * START_CLIMB)), open)
+            }
+            None => (1.0, 1.0),
+        };
+        let climb = self.plan.low + top * ((broad - 0.5) * 1.5 + 0.5).clamp(0.0, 1.0) * away;
+        // How tall the escarpments are here.
+        let size = spacing * RISE_SIZE;
+        let tall = noise::gradient(at[0] / size, at[1] / size, seed ^ 0x7A11);
+        // Most of an escarpment's length fades into slope; here and there it stands as a wall.
+        let walled = ((tall - 0.22) / 0.3).clamp(0.0, 1.0);
+        let rise = gap.min(MOST_RISE) * (0.12 + 0.88 * walled * walled * (3.0 - 2.0 * walled)) * away;
+        // How far up its slope the place is: along the way they face, wound by a broad warp.
+        let length = spacing * SLOPE_LENGTH;
+        let wind = |part: u32, size: f32| noise::gradient(at[0] / size, at[1] / size, seed ^ part);
+        let q = [
+            at[0] + length * (0.55 * wind(0xE501, length * 1.6) + 0.07 * wind(0xE503, length * 0.35)),
+            at[1] + length * (0.55 * wind(0xE502, length * 1.6) + 0.07 * wind(0xE504, length * 0.35)),
+        ];
+        let way = self.way();
+        let along = (q[0] * way[0] + q[1] * way[1]) / length + 0.6 * wind(0xE505, length * 2.2);
+        let slope = along - along.floor();
+        let swell = self.swell(0.0, at);
+        let eased = slope * slope * (3.0 - 2.0 * slope);
+        let mut ground = climb + rise * (0.65 * slope + 0.35 * eased) + swell;
+        // Basins sink, over a broad slope in from their edge.
+        let (own, nine) = self.sites.nearest(region_at);
+        let mut sunk = 0.0;
+        if self.kept != Some(own) && self.character(own) == Character::Basin {
+            let own_at = self.sites.site(own);
+            let inside = nine
+                .iter()
+                .filter(|&&cell| cell != own)
+                .map(|&cell| border_distance(region_at, own_at, self.sites.site(cell)))
+                .fold(f32::MAX, f32::min);
+            sunk = (inside / (spacing * SINK_EDGE)).clamp(0.0, 1.0);
+            let eased = sunk * sunk * (3.0 - 2.0 * sunk);
+            ground -= (ground - self.plan.low - swell).clamp(0.0, MOST_SINK) * eased;
+        }
+        Lie { ground, climb, rise, slope, length, swell, sunk, open }
+    }
+
+    /// Which way along the ground the escarpments climb, a length of 1.
+    fn way(&self) -> [f32; 2] {
+        let seed = self.sites.seed();
+        let share = |part: u32| (mix(seed, [0, 0], part) >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+        let (x, z) = (share(0x3A1), share(0x3A2));
+        let length = (x * x + z * z).sqrt();
+        if length < 1e-3 { [1.0, 0.0] } else { [x / length, z / length] }
+    }
+
+    /// The place at `(x, z)` moved as the areas' borders are: bent hard
+    /// over several sizes, so an area winds and sends out lobes, and now
+    /// and then a scrap of it lies off in its neighbour, as country does,
+    /// where straight borders would make the areas many-sided.
+    pub fn region_place(&self, x: f32, z: f32) -> [f32; 2] {
+        let [px, pz] = self.place(x, z);
+        let spacing = self.sites.spacing();
+        let seed = self.sites.seed();
+        let bend = |part: u32| {
+            let (lobes, curls) = (spacing * LOBES_SIZE, spacing * CURLS_SIZE);
+            spacing * LOBES * noise::gradient(x / lobes, z / lobes, seed ^ part)
+                + spacing * CURLS * noise::gradient(x / curls, z / curls, seed ^ (part + 1))
+        };
+        [px + bend(0x10B5), pz + bend(0x10C5)]
+    }
+
     /// The site of the area the place at `(x, z)` is in.
     pub fn area_at(&self, x: f32, z: f32) -> [i32; 2] {
-        self.sites.nearest(self.place(x, z)).0
+        self.sites.nearest(self.region_place(x, z)).0
     }
 }
 

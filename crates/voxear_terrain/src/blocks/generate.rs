@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn where_the_land_lies_in_levels_it_stands_level_at_set_heights_with_walls_between_and_the_mountains_are_gone() {
+    fn where_the_land_lies_in_levels_it_climbs_in_long_slopes_without_snow_and_the_mountains_are_gone() {
         use crate::generate::{
             BiomeBlocks, BiomeDef, Biomes, Graph, LevelPlan, NodeKind, Regions, WorldBiomes,
             nodes::{Levels, Noise, Output},
@@ -360,10 +360,10 @@ mod tests {
         let world = WorldGen::new(5, 1.0, 0.0, graph);
         file.blocks.truncate(3);
         file.blocks.push(BlockKind::colored("Grass", [0.3, 0.5, 0.2]));
-        // Snow over 20 m, which counts from each area's floor: none on the level ground at 34 m and 64 m.
+        // Snow over 20 m, which counts from the escarpments' ground: none on it, however high it climbs.
         let cover = BlockCover { temperature: None, humidity: None, height: Some([20.0, 10_000.0]), depth: 1 };
         file.blocks.push(BlockKind { cover: Some(cover), ..BlockKind::colored("Snow", [0.95; 3]) });
-        // Areas 90 m across at three levels, 4 m to 64 m, open plains alone: level ground over the Alpine mountains.
+        // Areas 90 m across, the land climbing from 4 m to 64 m in escarpments, open plains alone, over the mountains.
         let levels = Levels {
             size: 90.0,
             levels: 3,
@@ -389,22 +389,20 @@ mod tests {
         let map = file.make_ground(Some(&world));
         let top = |x: i32, z: i32| (-100..400).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
         let tops: Vec<i32> = (0..64 * 64).map(|k| top(k % 64, k / 64)).collect();
-        // The floors in blocks of 2 m: 4 m, 34 m and 64 m are blocks 1, 16 and 31, the top block the one under each.
-        let floors = [1, 16, 31];
-        let level = tops.iter().filter(|&&y| floors.iter().any(|&f: &i32| (y - (f - 1)).abs() <= 1)).count();
         let mut counts = std::collections::BTreeMap::new();
         tops.iter().for_each(|&y| *counts.entry(y).or_insert(0) += 1);
-        assert!(level * 10 > tops.len() * 7, "{level} of {} columns level: {counts:?}, sea {}", tops.len(), world.sea_level());
-        let seen = floors.iter().filter(|&&f| tops.iter().any(|&y| (y - (f - 1)).abs() <= 1)).count();
-        assert!(seen >= 2, "more than one level in 128 m");
-        // Walls: columns side by side 20 m and more apart in height.
-        let walls = (0..63 * 64).filter(|&k| (tops[k] - tops[k + 1]).abs() >= 10 && (k + 1) % 64 != 0).count();
-        assert!(walls > 0, "a wall between two levels");
-        let high = (0..64 * 64).filter(|&k| (tops[k] - 15).abs() <= 1 || (tops[k] - 30).abs() <= 1).collect::<Vec<_>>();
-        assert!(!high.is_empty(), "some of the higher levels");
-        let snowed = high.iter().filter(|&&k| map.get([k as i32 % 64, tops[k], k as i32 / 64]) == 5).count();
-        let where_: Vec<(usize, i32)> = high.iter().filter(|&&k| map.get([k as i32 % 64, tops[k], k as i32 / 64]) == 5).map(|&k| (k, tops[k])).take(12).collect();
-        assert_eq!(snowed, 0, "snow on a higher level's floor: {where_:?}");
+        // The mountains, up to 300 m, are gone: the land lies between the lowest level, 4 m, and the highest, 64 m,
+        // with an escarpment's rise of up to about 36 m over it, in blocks of 2 m.
+        assert!(tops.iter().all(|&y| (-2..=52).contains(&y)), "{counts:?}");
+        assert!(counts.len() > 4, "the land climbs: {counts:?}");
+        // Mostly long even slopes: side by side, columns mostly within a block of each other.
+        let pairs = (0..64 * 64).filter(|&k| (k + 1) % 64 != 0).collect::<Vec<_>>();
+        let gentle = pairs.iter().filter(|&&k| (tops[k] - tops[k + 1]).abs() <= 1).count();
+        assert!(gentle * 10 > pairs.len() * 8, "{gentle} of {} side by side alike: {counts:?}", pairs.len());
+        // Snow over 20 m counts from the escarpments' ground, so none lies on it, high or low.
+        let snowed: Vec<(usize, i32)> =
+            (0..64 * 64).filter(|&k| map.get([k as i32 % 64, tops[k], k as i32 / 64]) == 5).map(|k| (k, tops[k])).take(12).collect();
+        assert!(snowed.is_empty(), "snow on the escarpments' ground: {snowed:?}");
     }
 
     #[test]
@@ -1330,7 +1328,7 @@ mod tests {
         // A landmass, as generators written before graphs are, with no water but its sea.
         let world = Preset::Archipelago.world();
         let mut graph = world.graph().clone();
-        assert!(crate::generate::nodes::add_rivers(&mut graph));
+        assert!(crate::generate::nodes::add_rivers(&mut graph, crate::generate::nodes::Rivers::default()));
         let rivered = world.with_graph(graph);
         // A river's water, well over the sea, somewhere.
         let (xs, zs): (Vec<f32>, Vec<f32>) =

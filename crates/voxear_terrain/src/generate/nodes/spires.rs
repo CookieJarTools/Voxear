@@ -1,6 +1,6 @@
 //! The Spires node: towers of rock standing up out of the ground, from
 //! squat stacks to needles many times as tall as they are wide, sheer-sided
-//! and banded, their tops rounded and grown over.
+//! and banded, their crowns broken and grown over.
 //!
 //! Size From and Size To are how wide a spire is at its foot, Height From
 //! and Height To how high its top stands over the ground at its foot, and
@@ -205,7 +205,7 @@ struct Spire {
 
 /// How much wider a spire's lobes and flared foot let it be than its
 /// radius: as far from its axis as any of it reaches.
-const WIDEST: f32 = 1.6;
+const WIDEST: f32 = 1.9;
 
 impl Spire {
     /// Where its axis is at height `y`.
@@ -224,8 +224,8 @@ impl Spire {
         }
         let up = ((y - self.foot) / tall).max(0.0);
         let mut width = self.radius * (1.0 - taper * up);
-        // Its top rounded over, in the last of its height as tall as it is wide there.
-        let cap = (width * 1.2).min(tall * 0.5);
+        // Its top rounded over at its shoulders, in the last of its height about half as tall as it is wide there.
+        let cap = (width * 0.55).min(tall * 0.5);
         let under_top = self.top - y;
         if under_top < cap {
             let t = 1.0 - under_top / cap;
@@ -249,18 +249,27 @@ impl Spire {
         if width <= 0.0 {
             return (self.top - y).min(-away);
         }
-        // Lobes and fluting run up it, wandering a little as they go.
-        let lobe = self.radius * 0.8;
-        let rough = gradient3(x / lobe, y / (lobe * 2.5), z / lobe, self.seed);
-        let mut width = width * (1.0 + 0.2 * rough);
-        // Grooves round it where softer layers weathered back.
+        // Its crown broken: the top lower in some parts than others, as blocks fell from it.
+        let crown_size = self.radius * 0.7;
+        let crown = self.radius
+            * 0.9
+            * (0.5 + 0.5 * gradient(x / crown_size, z / crown_size, self.seed ^ 0xC0A1)).clamp(0.0, 1.0);
+        let under_crown = self.top - crown - y;
+        // Lobes, and narrower flutes where water ran down it, wandering a little as they go.
+        let lobe = self.radius * 0.9;
+        let rough = gradient3(x / lobe, y / (lobe * 2.0), z / lobe, self.seed);
+        let flute = self.radius * 0.4;
+        let fluted = gradient3(x / flute, y / (flute * 4.0), z / flute, self.seed ^ 0xF107);
+        let mut width = width * (1.0 + 0.15 * rough + 0.17 * fluted);
+        // Grooves round it where softer layers weathered back, not quite level.
         if bands > 0.0 {
-            let phase = ((y - self.foot) / bands).fract();
+            let tilt = 0.25 * bands * gradient(x / 40.0, z / 40.0, self.seed ^ 0xBA2D);
+            let phase = ((y - self.foot + tilt) / bands).rem_euclid(1.0);
             let groove = 1.0 - (phase - 0.5).abs() * 2.0;
             let groove = groove * groove * groove * groove;
             width *= 1.0 - 0.14 * groove * groove;
         }
-        width - away
+        (width - away).min(under_crown)
     }
 }
 
@@ -451,7 +460,7 @@ impl Kernel for Over {
                         reach = y;
                     }
                     // Well within its plain width, lobes and grooves leave it solid.
-                    if whole && away <= width * 0.6 - 1.0 {
+                    if whole && away <= width * 0.5 - 1.0 && y <= spire.top - spire.radius * 0.9 {
                         solid = y;
                     } else {
                         whole = false;

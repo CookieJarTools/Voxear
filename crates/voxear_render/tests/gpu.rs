@@ -4918,7 +4918,7 @@ fn surge_render(time: f32) -> Option<Vec<u8>> {
     // Six cubes stacked a metre each, its origin at its foot, so it bends from there along its length as a plant's
     // mesh does, not leaning whole from its foot as one long cube would.
     let cube = voxear_render::MeshData::primitive(Primitive::Cube);
-    let mut pole = voxear_render::MeshData { vertices: Vec::new(), indices: Vec::new(), skin: Vec::new() };
+    let mut pole = voxear_render::MeshData::default();
     for segment in 0..6 {
         let first = pole.vertices.len() as u32;
         pole.vertices.extend(cube.vertices.iter().map(|vertex| {

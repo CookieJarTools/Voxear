@@ -276,6 +276,7 @@ impl RoughSea {
             places: places.to_vec(),
             pools: self.whirlpools.clone(),
             origin,
+            maps: crate::weather_maps::WeatherMaps::default(),
         }
     }
 }
@@ -291,6 +292,8 @@ pub struct SeaSampler {
     places: Vec<WeatherPlace>,
     pools: Vec<Whirlpool>,
     origin: [f64; 2],
+    /// How deep the sea is near the viewer and where it is frozen.
+    maps: crate::weather_maps::WeatherMaps,
 }
 
 /// The sea at a point: how far under its faces it stands, in metres, how
@@ -303,9 +306,17 @@ pub struct SeaPoint {
     /// How far into a whirlpool it is, from 0 at its rim to 1 at its
     /// middle; 0 outside any.
     pub whirlpool: f32,
+    /// How much of the sea is frozen over there, from 0 to 1.
+    pub ice: f32,
 }
 
 impl SeaSampler {
+    /// The same sea, calmed in the shallows and still under ice as the
+    /// weather's grids say (`crate::weather_maps`), as it is drawn.
+    pub fn with_maps(self, maps: crate::weather_maps::WeatherMaps) -> Self {
+        Self { maps, ..self }
+    }
+
     /// Whether the sea is flat everywhere: nothing to work out.
     pub fn is_calm(&self) -> bool {
         self.everywhere <= 0.0 && self.pools.is_empty() && self.places.iter().all(|place| place.rough <= 0.0)
@@ -321,7 +332,8 @@ impl SeaSampler {
     /// How far under its faces the sea stands at a point, in metres, at
     /// `time`; how near a crest it is there, and how rough.
     fn sunk(&self, x: f32, z: f32, time: f64) -> (f32, f32, f32) {
-        let mut rough = self.rough_at(x, z);
+        // Ice holds the sea still under it.
+        let mut rough = self.rough_at(x, z) * (1.0 - self.maps.ice_at(x, z));
         let period = f64::from(PERIOD);
         let at = [f64::from(x) + self.origin[0], f64::from(z) + self.origin[1]].map(|v| v.rem_euclid(period));
         let mut swell = 0.0;
@@ -336,6 +348,10 @@ impl SeaSampler {
         // few hundredths of the sea.
         let crest = ((swell - 0.12) / 0.65).clamp(0.0, 1.0);
         let mut sunk = self.height * rough * (1.0 - crest);
+        // In the shallows the swell calms, never drawing the water down to the floor.
+        if let Some(depth) = self.maps.sea_depth(x, z).filter(|&depth| depth < crate::weather_maps::FLOOR_REACH) {
+            sunk = (sunk * smooth(0.0, 2.0 * self.height + 0.5, depth)).min(depth * 0.6);
+        }
         for pool in &self.pools {
             let far = Vec2::new(x, z).distance(pool.middle) / pool.radius.max(1.0);
             if far < 1.0 {
@@ -381,7 +397,7 @@ impl SeaSampler {
             flow.z += moving.y;
             flow.y -= pool.depth * 0.5 * smooth(1.0 - POOL_CORE * 1.5, 1.0, into);
         }
-        SeaPoint { sunk, flow, rough, whirlpool }
+        SeaPoint { sunk, flow, rough, whirlpool, ice: self.maps.ice_at(x, z) }
     }
 
     /// The way the sea's surface faces at a point.

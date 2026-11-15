@@ -786,12 +786,15 @@ float wetNoise(float2 p)
 
 // What the weather has left on a surface at `world`, facing `normal` (src/weather.rs): wet from the rain, darker
 // and glossier, what faces up most; and snow settled on what faces up, in patches while there is little of it.
-// It lies under roofs too: nothing here knows what is over a surface.
+// Within the lying grid each by place, snow by the surface's height (src/weather_maps.rs); beyond it the level's
+// own. Nothing lies under a roof, a tree or an overhang: the cover is read a little out from the surface, so a wall
+// that faces the open is in the open and a ceiling is under its roof.
 void weatherSurface(Frame* frame, float3 world, float3 normal, inout float3 albedo, inout float roughness)
 {
-    float wet = frame->seasons.weatherWet;
-    float snow = frame->seasons.weatherSnow;
-    if (wet <= 0.0 && snow <= 0.0)
+    float4 lying = lyingAt(world);
+    float wet = lerp(frame->seasons.weatherWet, lying.x, lying.w);
+    float snow = lerp(frame->seasons.weatherSnow, lying.y, lying.w);
+    if ((wet <= 0.0 && snow <= 0.0) || underCover(world + normal * 0.3))
     {
         return;
     }

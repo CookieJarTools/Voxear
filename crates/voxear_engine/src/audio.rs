@@ -534,6 +534,8 @@ pub struct GameAudio {
     /// The music's ducking as a script has set it so far, kept while it is
     /// off, as its amount turns it on.
     ducking: Ducking,
+    /// The weather's rain, wind, surf and thunder.
+    storm: crate::storm_sounds::StormSounds,
 }
 
 /// A voice playing, as the editor's Audio panel lists it: what the mixer
@@ -590,6 +592,7 @@ impl GameAudio {
             paths_read: false,
             shots: HashMap::new(),
             ducking: Ducking::default(),
+            storm: crate::storm_sounds::StormSounds::default(),
         }
     }
 
@@ -706,6 +709,7 @@ impl GameAudio {
         if let Some(listener) = hearing.filter(|_| self.reverb_on) {
             self.hear_room(world, &listener);
         }
+        self.storm.update(&mut self.audio, world, dt);
     }
 
     /// Gives the mixer how the listener's room rings, as Steam Audio last
@@ -882,6 +886,7 @@ impl GameAudio {
                         (Some(entity), name, path(playback.applied.sound))
                     }
                     None if report.id == self.preview => (None, "Preview".to_string(), self.preview_path.clone()),
+                    None if self.storm.voices().contains(&report.id) => (None, "Weather".to_string(), String::new()),
                     None => (None, "One-shot".to_string(), path(self.shots.get(&report.id).copied())),
                 };
                 HeardVoice { report, source, name, sound }
@@ -894,6 +899,7 @@ impl GameAudio {
     /// Stops every game voice and forgets every source, as when play stops,
     /// and puts the volumes scripts set back to full for the next run.
     pub fn stop_game(&mut self) {
+        self.storm.quiet(&mut self.audio);
         self.audio.stop_game();
         self.sources.clear();
         self.set_reverb(false);

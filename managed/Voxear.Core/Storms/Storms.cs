@@ -80,7 +80,8 @@ public static class Storms
 			Lightning = numbers[6],
 			Dust = numbers[7],
 		};
-		return new WeatherAt(amounts, (StormWeather)(int)numbers[8], numbers[9], new Storm((uint)storm), numbers[10], numbers[11]);
+		var ground = new WeatherGround(numbers[12], numbers[13], numbers[14], numbers[15] != 0f);
+		return new WeatherAt(amounts, (StormWeather)(int)numbers[8], numbers[9], new Storm((uint)storm), numbers[10], numbers[11], ground);
 	}
 
 	/// <summary>Every storm near the viewer, natural and made, the nearest first, then every other made one.</summary>
@@ -121,6 +122,13 @@ public static class Storms
 	{
 		get => StormCalls.Rule(StormCalls.Largest);
 		set => StormCalls.SetRule(StormCalls.Largest, value);
+	}
+
+	/// <summary>How loud the weather's own sounds are, its rain, wind, surf and thunder, from 0 for none to 1.</summary>
+	public static float Sounds
+	{
+		get => StormCalls.Rule(StormCalls.Sounds);
+		set => StormCalls.SetRule(StormCalls.Sounds, value);
 	}
 
 	/// <summary>Whether great storms stand for ever at places of their own, each round a calm eye.</summary>

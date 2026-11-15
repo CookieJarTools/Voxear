@@ -21,11 +21,12 @@ pub enum StormField {
     Whirlpools,
     Maelstroms,
     Glow,
+    Sounds,
 }
 
 use StormField as F;
 
-const ALL: [StormField; 10] = [
+const ALL: [StormField; 11] = [
     F::Natural,
     F::Frequency,
     F::Largest,
@@ -36,6 +37,7 @@ const ALL: [StormField; 10] = [
     F::Whirlpools,
     F::Maelstroms,
     F::Glow,
+    F::Sounds,
 ];
 
 /// The values the component shows, in order: how often and how large only
@@ -59,6 +61,7 @@ pub fn label(field: StormField) -> String {
         F::Whirlpools => "Storm Whirlpools",
         F::Maelstroms => "Maelstroms",
         F::Glow => "Night Glow",
+        F::Sounds => "Sounds",
     };
     label.into()
 }
@@ -76,6 +79,7 @@ pub fn key(field: StormField) -> &'static str {
         F::Whirlpools => "whirlpools",
         F::Maelstroms => "maelstroms",
         F::Glow => "glow",
+        F::Sounds => "sounds",
     }
 }
 
@@ -90,6 +94,7 @@ pub fn range(field: StormField) -> Option<[f32; 2]> {
         F::Largest => Some([250.0, 4000.0]),
         F::Swell => Some([0.0, 8.0]),
         F::Glow => Some([0.0, 2.0]),
+        F::Sounds => Some([0.0, 1.0]),
         _ => None,
     }
 }
@@ -109,6 +114,7 @@ pub fn get(game: &Game, entity: Entity, field: StormField) -> Option<Value> {
         F::Whirlpools => Value::Toggle(rules.whirlpools),
         F::Maelstroms => Value::Toggle(rules.maelstroms),
         F::Glow => Value::Number(rules.glow),
+        F::Sounds => Value::Number(rules.sounds),
     })
 }
 
@@ -130,6 +136,7 @@ pub fn set(game: &mut Game, entity: Entity, field: StormField, value: Value) -> 
         (F::Largest, _) => rules.largest = number.unwrap_or(rules.largest).clamp(250.0, 20_000.0),
         (F::Swell, _) => rules.swell = number.unwrap_or(rules.swell).clamp(0.0, 16.0),
         (F::Glow, _) => rules.glow = number.unwrap_or(rules.glow).clamp(0.0, 4.0),
+        (F::Sounds, _) => rules.sounds = number.unwrap_or(rules.sounds).clamp(0.0, 1.0),
         _ => return false,
     }
     true

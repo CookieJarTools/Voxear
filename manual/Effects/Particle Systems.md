@@ -109,6 +109,8 @@ Set **Collision** to **Depth** and particles land on what's in front of the came
 - **Life Lost**: how much of the life it has left it loses each time it strikes something. 1 and it dies there, as a raindrop does.
 - **Hit Events**: scripts hear of each strike, for a hiss where a spark lands or a clink where a shell case does. See [Hearing of hits](#hearing-of-hits).
 
+**Sheltered** keeps a system's particles out from under roofs, with or without Collision: a particle under anything that would keep rain off, a roof of blocks, a tree or a collider that does not move, is not drawn, so rain and snow end on the roof and never fall indoors. It goes by what is over the fifty metres round the camera, where that is known. The weather's own rain and snow are sheltered.
+
 Depth collision reads what the main camera sees, which costs next to nothing. The price is that particles only meet what's in view: one that falls behind a wall, or off the edge of the screen, meets nothing there. That suits sparks, rain and debris in front of the player. Particles are for looks: nothing they hit feels it, so anything that must hurt or push is a physics body with a Particle System on it.
 
 ## Forces

@@ -64,6 +64,7 @@ const TRAILS: i32 = 42;
 const TRAIL_TIME: i32 = 43;
 const TRAIL_WIDTH: i32 = 44;
 const HIT_EVENTS: i32 = 45;
+const SHELTERED: i32 = 46;
 
 /// The time Particle Systems are played and stopped by, and blasts go off
 /// in: the engine's, but for how the editor's preview holds it back; and
@@ -584,6 +585,7 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         TRAIL_TIME => number(system.trail_time),
         TRAIL_WIDTH => number(system.trail_width),
         HIT_EVENTS => flag(system.hit_events),
+        SHELTERED => flag(system.sheltered),
         _ => return None,
     })
 }
@@ -635,6 +637,7 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         TRAIL_TIME => system.trail_time = x.max(0.01),
         TRAIL_WIDTH => system.trail_width = x.max(0.0),
         HIT_EVENTS => system.hit_events = x != 0.0,
+        SHELTERED => system.sheltered = x != 0.0,
         _ => {}
     }
 }

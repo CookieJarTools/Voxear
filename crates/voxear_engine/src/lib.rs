@@ -47,6 +47,7 @@ mod mist;
 pub mod particles;
 pub mod portals;
 pub mod smoke;
+pub mod storm_sounds;
 pub mod storms;
 pub mod tick_smoothing;
 pub use voxear_localization as localization;
@@ -80,6 +81,7 @@ pub mod upgrade;
 pub mod walkers;
 pub mod water;
 pub mod weather;
+pub mod weather_maps;
 mod windowed;
 
 pub use content::{

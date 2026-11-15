@@ -123,6 +123,8 @@ fn layer_system(what: Fall, index: usize) -> ParticleSystem {
         size: base.size.map(|size| size * what.size),
         box_size: [SIDE, base.box_size[1], SIDE],
         space: ParticleSpace::World,
+        // Rain and snow end on roofs, and never fall indoors.
+        sheltered: true,
         seed: 0x5EED_0000 + what.starter as u32 * 16 + index as u32,
         ..base
     }

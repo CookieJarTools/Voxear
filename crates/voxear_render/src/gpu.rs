@@ -996,6 +996,9 @@ pub struct GpuBuffers {
     pub particle_hits: u64,
     /// This view's Portals' openings (see `portals`).
     pub portal_quads: u64,
+    /// What the weather has left lying by place, what is over the ground
+    /// near the viewer, and how deep the sea is (see `weather_maps`).
+    pub weather_maps: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1389,7 +1392,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 67 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 68 * 8);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
         // then its motions' and moving blocks' addresses and how many of each, how it is turned, and its far tints'

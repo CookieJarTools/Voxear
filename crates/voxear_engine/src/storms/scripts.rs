@@ -65,6 +65,7 @@ const SWELL: u32 = 5;
 const WHIRLPOOLS: u32 = 6;
 const MAELSTROMS: u32 = 7;
 const GLOW: u32 = 8;
+const SOUNDS: u32 = 9;
 
 /// The level's first storm rules' Obj.
 fn rules_obj(world: &World) -> Option<Entity> {
@@ -76,7 +77,7 @@ fn rules_obj(world: &World) -> Option<Entity> {
 
 /// The level's storm rules as they are: its first Obj's with any, else
 /// what scripts last asked for, else the usual with no natural storms.
-fn rules(world: &World) -> StormRules {
+pub(crate) fn rules(world: &World) -> StormRules {
     let of_obj = rules_obj(world).and_then(|entity| world.get::<StormRules>(entity).copied());
     let asked = world.resource::<Storms>().and_then(|storms| storms.asked);
     of_obj.or(asked).unwrap_or(StormRules { natural: false, ..StormRules::default() })
@@ -94,6 +95,7 @@ fn rule(rules: &StormRules, which: u32) -> f32 {
         WHIRLPOOLS => flag(rules.whirlpools),
         MAELSTROMS => flag(rules.maelstroms),
         GLOW => rules.glow,
+        SOUNDS => rules.sounds,
         _ => f32::NAN,
     }
 }
@@ -110,6 +112,7 @@ fn set_rule(rules: &mut StormRules, which: u32, value: f32) -> bool {
         WHIRLPOOLS => rules.whirlpools = on,
         MAELSTROMS => rules.maelstroms = on,
         GLOW => rules.glow = value.max(0.0),
+        SOUNDS => rules.sounds = value.clamp(0.0, 1.0),
         _ => return false,
     }
     true
@@ -142,10 +145,13 @@ fn call(world: &mut World, what: i32, id: u32, v: &mut [f32; STORM_NUMBERS]) -> 
             id as i32
         }
         WEATHER_AT => {
-            let at = super::weather_at(world, Vec3::new(v[0], v[1], v[2]));
+            let position = Vec3::new(v[0], v[1], v[2]);
+            let at = super::weather_at(world, position);
             v[..8].copy_from_slice(&at.amounts.to_array());
             v[8] = at.falling.index() as f32;
             (v[9], v[10], v[11]) = (at.strength, at.celsius, at.humidity);
+            let ground = crate::weather_maps::ground_at(world, position);
+            (v[12], v[13], v[14], v[15]) = (ground.wet, ground.snow, ground.ice, f32::from(u8::from(ground.sheltered)));
             at.storm as i32
         }
         POOL_ADD => super::add_whirlpool(world, Vec3::new(v[0], v[1], v[2]), v[3], v[4]) as i32,

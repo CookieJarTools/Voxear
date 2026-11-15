@@ -105,6 +105,11 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
     {
         return particleNone(system, corner);
     }
+    if ((system.flags & PARTICLES_SHELTERED) != 0 && underCover(now.at))
+    {
+        // Under a roof: it ended on it.
+        return particleNone(system, corner);
+    }
     return particlePlaceGoing(frame, system, now.at, now.going, now.age, now.aged, corner, now.h, 1.0);
 }
 

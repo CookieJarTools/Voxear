@@ -503,6 +503,7 @@ pub enum Prop {
     ParticleTrailWidth,
     /// Whether scripts hear of its particles' strikes.
     ParticleHitEvents,
+    ParticleSheltered,
     /// A VoxShade particle graph that moves and draws its particles.
     ParticleGraph,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
@@ -1011,6 +1012,7 @@ impl Prop {
             | Prop::ParticleTrailTime
             | Prop::ParticleTrailWidth
             | Prop::ParticleHitEvents
+            | Prop::ParticleSheltered
             | Prop::ParticleGraph => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
@@ -1375,6 +1377,7 @@ impl Prop {
             Prop::ParticleTrailTime => "trail_time",
             Prop::ParticleTrailWidth => "trail_width",
             Prop::ParticleHitEvents => "hit_events",
+            Prop::ParticleSheltered => "sheltered",
             Prop::ParticleGraph => "graph",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
@@ -2171,7 +2174,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if system.collision != ParticleCollision::Off {
                 props.extend([Prop::ParticleBounce, Prop::ParticleFriction, Prop::ParticleLifeLost, Prop::ParticleHitEvents]);
             }
-            props.extend([Prop::ParticleSeed, Prop::ParticleSimulated]);
+            props.extend([Prop::ParticleSheltered, Prop::ParticleSeed, Prop::ParticleSimulated]);
             props
         }
         // The swell and wind only for Custom weather: the others set their own.
@@ -2484,6 +2487,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleTrailTime => "Trail Time",
         Prop::ParticleTrailWidth => "Trail Width",
         Prop::ParticleHitEvents => "Hit Events",
+        Prop::ParticleSheltered => "Sheltered",
         Prop::ParticleGraph => "Graph",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
@@ -3440,7 +3444,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleTrails
         | Prop::ParticleTrailTime
         | Prop::ParticleTrailWidth
-        | Prop::ParticleHitEvents => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleHitEvents
+        | Prop::ParticleSheltered => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
         Prop::ParticleMesh => Value::Asset(match world.get::<ParticleSystem>(entity)?.mesh {
             None => "None".into(),
             Some(ParticleMesh::Builtin(mesh)) => mesh.name().into(),
@@ -5504,6 +5509,7 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleTrailTime => Value::Number(system.trail_time),
         Prop::ParticleTrailWidth => Value::Number(system.trail_width),
         Prop::ParticleHitEvents => Value::Toggle(system.hit_events),
+        Prop::ParticleSheltered => Value::Toggle(system.sheltered),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -5584,6 +5590,7 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleTrailTime, Value::Number(n)) => system.trail_time = n.max(0.01),
         (Prop::ParticleTrailWidth, Value::Number(n)) => system.trail_width = n.max(0.0),
         (Prop::ParticleHitEvents, Value::Toggle(on)) => system.hit_events = on,
+        (Prop::ParticleSheltered, Value::Toggle(on)) => system.sheltered = on,
         _ => {}
     }
 }

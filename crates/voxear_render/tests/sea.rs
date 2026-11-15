@@ -11,6 +11,7 @@ use voxear_render::{
     Sky, SurfaceLook,
     sea::{RoughSea, SeaLook, Whirlpool},
     weather::{Weather, WeatherKind, WeatherPlace, WeatherPlaces},
+    weather_maps::{COVER_CELL, COVER_SIDE, FLOOR_CELL, FLOOR_REACH, FLOOR_SIDE, Grid, LYING_CELL, Lying, WeatherMaps},
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::{
@@ -397,4 +398,193 @@ fn under_a_seas_faces_the_camera_is_under_water_only_under_its_swell() {
     keep_image("sea in a trough.png", &in_trough);
     let over = mean(&in_trough, 0..HEIGHT / 6);
     assert!(near(over, calm, 14), "the sky from the trough {over:?}, from over a calm sea {calm:?}");
+}
+
+/// How high the island's ground stands at `x`, `z`, as [`sea`] makes it, in blocks: over the water within nine
+/// blocks of its middle, shelving away to the floor.
+fn island_ground(x: f32, z: f32) -> f32 {
+    let middle = SIDE as f32 * 0.5;
+    let far = ((x.floor() - middle).powi(2) + (z.floor() - middle).powi(2)).sqrt();
+    (TOP as f32 + 2.0 - (far - 7.0).max(0.0) * 0.55).round().max(1.0)
+}
+
+/// A grid of `side` cells `cell` wide from `corner`, each as `value` says at its middle.
+fn grid<T: Copy>(corner: Vec2, cell: f32, side: usize, value: impl Fn(f32, f32) -> T) -> Grid<T> {
+    let cells: Vec<T> = (0..side * side)
+        .map(|n| value(corner.x + ((n % side) as f32 + 0.5) * cell, corner.y + ((n / side) as f32 + 0.5) * cell))
+        .collect();
+    Grid { corner, cell, side, cells: cells.into() }
+}
+
+/// How many pixels in `rows` are white water: bright, and nearly grey.
+fn white_pixels(pixels: &[u8], rows: std::ops::Range<u32>) -> usize {
+    rows.flat_map(|y| (0..WIDTH).map(move |x| ((y * WIDTH + x) * 4) as usize))
+        .filter(|&i| {
+            let [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]].map(i32::from);
+            r.min(g).min(b) > 150 && r.max(g).max(b) - r.min(g).min(b) < 45
+        })
+        .count()
+}
+
+#[test]
+fn a_rough_sea_calms_in_the_shallows_round_an_island_and_breaks_on_its_shore() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    // A long gentle beach along the sea's east side, rising a block in seven out of the floor to over the water.
+    let beach = |x: f32| (1.0 + (x - 100.0) / 7.0).floor().clamp(1.0, top + 1.0);
+    let blocks = world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    {
+        let world_of = world.get_mut::<BlockWorld>(blocks).unwrap();
+        let mut map = (*world_of.blocks).clone();
+        // The sea's own sand and water, from a column out at sea.
+        let (sand, water) = (map.get([10, 0, 10]), map.get([10, TOP - 1, 10]));
+        for x in 100..SIDE {
+            for z in 0..SIDE {
+                let ground = beach(x as f32) as i32;
+                for y in 0..TOP + 2 {
+                    let block = if y < ground { sand } else if y < TOP { water } else { 0 };
+                    map.set([x, y, z], block);
+                }
+            }
+        }
+        let faces: Vec<_> = world_of.faces.to_vec();
+        *world_of = BlockWorld::new(map, &faces, 1.0);
+    }
+    let ground = |x: f32, z: f32| if x >= 100.0 { beach(x) } else { island_ground(x, z) };
+    let floor = grid(Vec2::new(middle - 128.0, middle - 128.0), FLOOR_CELL, FLOOR_SIDE, |x, z| (top - ground(x, z)).clamp(0.0, FLOOR_REACH));
+    world.insert_resource(RoughSea { look: SeaLook::SmallCubes, everywhere: 1.0, heading: 0.6, time: 20.0, ..RoughSea::default() });
+    // The beach from out at sea, the swell running in to it.
+    let camera = (Vec3::new(88.0, top + 9.0, middle - 20.0), Vec3::new(150.0, top - 4.0, middle + 6.0));
+    let open = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea shore before.png", &open);
+    world.insert_resource(WeatherMaps { floor: Some(floor), ..WeatherMaps::default() });
+    let shore = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea shore breakers.png", &shore);
+    let later = seen(&mut renderer, &mut world, camera, 22.0);
+    keep_image("sea shore breakers later.png", &later);
+    let close = (Vec3::new(118.0, top + 12.0, middle - 22.0), Vec3::new(146.0, top, middle + 4.0));
+    for (n, seconds) in [20.0, 21.5, 23.0].into_iter().enumerate() {
+        keep_image(&format!("sea shore breakers close {n}.png"), &seen(&mut renderer, &mut world, close, seconds));
+    }
+    let above = (Vec3::new(128.0, top + 45.0, middle - 0.5), Vec3::new(128.5, top, middle));
+    keep_image("sea shore breakers above.png", &seen(&mut renderer, &mut world, above, 20.0));
+    // White water along the shore where it breaks, more than the open swell's crests give there.
+    let rows = HEIGHT / 3..HEIGHT;
+    let (before, after) = (white_pixels(&open, rows.clone()), white_pixels(&shore, rows.clone()));
+    assert!(after > before + 2000, "white water by the shore: {after} pixels, against {before}");
+    // And the breakers move: two seconds on, they are somewhere else.
+    let moved = shore.chunks(4).zip(later.chunks(4)).filter(|(a, b)| (i32::from(a[0]) - i32::from(b[0])).abs() > 40).count();
+    assert!(moved > 2000, "{moved} pixels changed");
+}
+
+#[test]
+fn a_frozen_sea_is_ice_still_in_a_storm_with_floes_where_it_is_part_frozen() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    world.insert_resource(RoughSea { look: SeaLook::SmallCubes, everywhere: 1.0, heading: 0.6, time: 20.0, ..RoughSea::default() });
+    // Frozen hard west of the island, part frozen across its middle, open water east of it.
+    let lying = grid(Vec2::new(-16.0, -16.0), LYING_CELL, 7, |x, _| Lying {
+        ice: if x < middle - 16.0 { 1.0 } else if x < middle + 16.0 { 0.5 } else { 0.0 },
+        celsius: -6.0,
+        height: top,
+        ..Lying::default()
+    });
+    world.insert_resource(WeatherMaps { lying: Some(lying), ..WeatherMaps::default() });
+    let camera = (Vec3::new(middle, top + 40.0, middle + 45.0), Vec3::new(middle, top, middle - 10.0));
+    let pixels = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea frozen.png", &pixels);
+    // West, on the right as the camera looks north, pale and grey as ice; east, on the left, the sea's own blue.
+    let colour = |x0: u32, x1: u32| {
+        let mut sum = [0i64; 3];
+        let rows = HEIGHT / 4..HEIGHT / 2;
+        let count = (rows.len() as u32 * (x1 - x0)) as i64;
+        for y in rows {
+            for x in x0..x1 {
+                let i = ((y * WIDTH + x) * 4) as usize;
+                for c in 0..3 {
+                    sum[c] += i64::from(pixels[i + c]);
+                }
+            }
+        }
+        sum.map(|s| (s / count) as i32)
+    };
+    let (ice, sea) = (colour(WIDTH * 4 / 5, WIDTH - 20), colour(20, WIDTH / 5));
+    let brightness = |c: [i32; 3]| c.iter().sum::<i32>() / 3;
+    assert!(brightness(ice) > brightness(sea) + 40, "ice {ice:?}, sea {sea:?}");
+    assert!(ice[2] - ice[0] < sea[2] - sea[0], "the ice less blue than the sea: {ice:?}, {sea:?}");
+}
+
+#[test]
+fn under_a_roof_the_ground_stays_dry_and_rain_kept_out_from_under_roofs_falls_on_it() {
+    use voxear_render::{ParticlePlayback, ParticleSpace, ParticleSystem, Starter};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    // A roof of stone twelve blocks a side, four blocks over the island's grass.
+    let roof = top + 6.0;
+    let blocks = world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    {
+        let world_of = world.get_mut::<BlockWorld>(blocks).unwrap();
+        let mut map = (*world_of.blocks).clone();
+        for x in 74..86 {
+            for z in 74..86 {
+                map.set([x, roof as i32, z], 3);
+            }
+        }
+        let faces: Vec<_> = world_of.faces.to_vec();
+        *world_of = BlockWorld::new(map, &faces, 1.0);
+    }
+    let under = |x: f32, z: f32| (74.0..86.0).contains(&x) && (74.0..86.0).contains(&z);
+    let cover = grid(Vec2::new(middle - 24.0, middle - 24.0), COVER_CELL, COVER_SIDE, |x, z| {
+        if under(x, z) { roof + 1.0 } else { island_ground(x, z).max(top) }
+    });
+    let lying = grid(Vec2::new(-16.0, -16.0), LYING_CELL, 7, |_, _| Lying { wet: 1.0, celsius: 15.0, height: top, ..Lying::default() });
+    // From under the roof's edge, looking in under it across the grass.
+    let camera = (Vec3::new(middle, top + 3.5, middle - 10.0), Vec3::new(middle, top + 2.0, middle + 6.0));
+    let plain = seen(&mut renderer, &mut world, camera, 20.0);
+    world.insert_resource(WeatherMaps { lying: Some(lying.clone()), ..WeatherMaps::default() });
+    let wet = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("roof wet everywhere.png", &wet);
+    world.insert_resource(WeatherMaps { lying: Some(lying.clone()), cover: Some(cover.clone()), ..WeatherMaps::default() });
+    let sheltered = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("roof dry under it.png", &sheltered);
+    // The grass under the roof, low in the middle of the view, is as it is in dry weather when the roof keeps the
+    // rain off it, and darker and glossier when nothing does.
+    let changed = |a: &[u8], b: &[u8]| {
+        let mut count = 0;
+        for y in HEIGHT / 2 + 10..HEIGHT * 7 / 10 {
+            for x in WIDTH * 2 / 5..WIDTH * 3 / 5 {
+                let i = ((y * WIDTH + x) * 4) as usize;
+                count += usize::from((0..3).any(|c| (i32::from(a[i + c]) - i32::from(b[i + c])).abs() > 6));
+            }
+        }
+        count
+    };
+    let (soaked, kept_dry) = (changed(&wet, &plain), changed(&sheltered, &plain));
+    assert!(soaked > 3000, "wet without the roof's cover: {soaked} pixels changed");
+    assert!(kept_dry * 20 < soaked, "and dry with it: {kept_dry} pixels changed against {soaked}");
+
+    // Rain falling over the roof: through it unless it is kept out from under roofs.
+    let base = Starter::Rain.effect().emitters[0].system;
+    let rain = |sheltered: bool| ParticleSystem {
+        box_size: [12.0, base.box_size[1], 12.0],
+        rate: base.rate * 4.0,
+        space: ParticleSpace::World,
+        sheltered,
+        ..base
+    };
+    let over = Transform::from_position(Vec3::new(middle, roof + 8.0, middle));
+    let dry = seen(&mut renderer, &mut world, camera, 20.0);
+    let falling = world.spawn((rain(false), ParticlePlayback { started: 0.0, stopped: None }, over));
+    let through = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("roof rain through.png", &through);
+    *world.get_mut::<ParticleSystem>(falling).unwrap() = rain(true);
+    let kept_out = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("roof rain kept out.png", &kept_out);
+    let differs = |a: &[u8], b: &[u8]| a.chunks(4).zip(b.chunks(4)).filter(|(a, b)| (0..3).any(|c| (i32::from(a[c]) - i32::from(b[c])).abs() > 12)).count();
+    let (seen_through, seen_kept) = (differs(&through, &dry), differs(&kept_out, &dry));
+    assert!(seen_through > 500, "rain falls through the roof without it: {seen_through} pixels");
+    assert!(seen_kept * 10 < seen_through, "and none under it with it: {seen_kept} pixels against {seen_through}");
 }

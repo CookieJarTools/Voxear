@@ -33,6 +33,8 @@ static const uint PARTICLES_RIBBON_FED = 2048;
 static const uint PARTICLES_MESH = 4096;
 // Its particles' strikes on what they meet are written out for the CPU, for scripts to hear of.
 static const uint PARTICLES_HITS = 8192;
+// Its particles are not drawn under anything that stops rain (underCover): rain and snow end on a roof.
+static const uint PARTICLES_SHELTERED = 16384;
 // How fast a simulated mesh particle must be going, in metres a second, to tumble at its system's full Spin: slower,
 // it turns less, and at rest not at all. How far it has turned is kept in the low half of its number
 // (PARTICLE_TURNED), in 65536ths of a turn, which leaves the high half to pick its random numbers.

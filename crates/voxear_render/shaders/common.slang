@@ -1536,6 +1536,9 @@ struct Buffers
     ParticleHit* particleHits;
     // This view's Portals' openings (portal.slang).
     PortalQuad* portalQuads;
+    // What the weather has left lying by place, how high what stops the rain is near the viewer, and how deep the
+    // sea is (src/weather_maps.rs): a header, then each grid's cells.
+    uint* weatherMaps;
 };
 
 struct Push
@@ -1558,6 +1561,135 @@ struct Push
 Buffers* buffers()
 {
     return push.buffers;
+}
+
+// ---------------------------------------------------------------- The weather's grids (src/weather_maps.rs)
+
+// How much colder the air is a metre higher, in °C.
+static const float WEATHER_LAPSE = 0.0065;
+// A cell with nothing over it, and the deepest a sea floor's grid tells of.
+static const float WEATHER_OPEN = -1.0e30;
+static const float WEATHER_FLOOR_REACH = 16.0;
+
+// Grid `slot`'s side (0 for none), how wide a cell is, its corner along x and z, and where its cells start.
+bool weatherGrid(uint slot, out uint side, out float cell, out float2 corner, out uint start)
+{
+    uint* maps = buffers()->weatherMaps;
+    side = maps[slot * 4];
+    cell = asfloat(maps[slot * 4 + 1]);
+    corner = float2(asfloat(maps[slot * 4 + 2]), asfloat(maps[slot * 4 + 3]));
+    start = maps[12 + slot];
+    return side > 0;
+}
+
+// How much snow lies at `height` in a lying cell (Lying::snow_at): the cell's own, more of what fell where it is
+// colder, none where it is warm, and snow that never melts where it is bitter.
+float lyingSnow(uint bytes, float celsius, float cellHeight, float height)
+{
+    float t = celsius + WEATHER_LAPSE * (cellHeight - height);
+    float snow = float((bytes >> 8) & 0xFF) / 255.0;
+    float fallen = float((bytes >> 16) & 0xFF) / 255.0;
+    float cold = 1.0 - smoothstep(0.0, 2.0, t);
+    float kept = max(snow, fallen * cold) * (1.0 - smoothstep(1.5, 4.0, t));
+    return saturate(max(kept, 0.9 * (1.0 - smoothstep(-9.0, -4.0, t))));
+}
+
+// How wet a surface at `height` is in a lying cell (Lying::wet_at).
+float lyingWet(uint bytes, float celsius, float cellHeight, float height)
+{
+    float t = celsius + WEATHER_LAPSE * (cellHeight - height);
+    return float(bytes & 0xFF) / 255.0 * smoothstep(-1.0, 1.0, t);
+}
+
+// What the weather has left lying at `world`, blended between the cells round it: wet, snow by its height, and how
+// much of the sea is frozen; and in w, how far inside the grid it is, 1 well in and 0 at its edge and beyond.
+float4 lyingAt(float3 world)
+{
+    uint side;
+    float cell;
+    float2 corner;
+    uint start;
+    if (!weatherGrid(0, side, cell, corner, start))
+    {
+        return 0.0;
+    }
+    float2 at = (world.xz - corner) / cell;
+    float inside = saturate(min(min(at.x, at.y), min(float(side) - at.x, float(side) - at.y)) / 2.0);
+    if (inside <= 0.0)
+    {
+        return 0.0;
+    }
+    float2 low = floor(at - 0.5);
+    float2 part = at - 0.5 - low;
+    uint* maps = buffers()->weatherMaps;
+    float3 sum = 0.0;
+    for (uint n = 0; n < 4; n++)
+    {
+        int2 c = clamp(int2(low) + int2(n & 1, n >> 1), 0, int(side) - 1);
+        uint index = start + (uint(c.y) * side + uint(c.x)) * 3;
+        uint bytes = maps[index];
+        float celsius = asfloat(maps[index + 1]);
+        float height = asfloat(maps[index + 2]);
+        float weight = ((n & 1) != 0 ? part.x : 1.0 - part.x) * ((n >> 1) != 0 ? part.y : 1.0 - part.y);
+        float3 here = float3(lyingWet(bytes, celsius, height, world.y), lyingSnow(bytes, celsius, height, world.y), float(bytes >> 24) / 255.0);
+        sum += here * weight;
+    }
+    return float4(sum, inside);
+}
+
+// How high the highest thing over `xz` is that stops rain, in the world: WEATHER_OPEN where nothing is, or the grid
+// does not reach.
+float coverAt(float2 xz)
+{
+    uint side;
+    float cell;
+    float2 corner;
+    uint start;
+    if (!weatherGrid(1, side, cell, corner, start))
+    {
+        return WEATHER_OPEN;
+    }
+    int2 c = int2(floor((xz - corner) / cell));
+    if (any(c < 0) || any(c >= int(side)))
+    {
+        return WEATHER_OPEN;
+    }
+    return asfloat(buffers()->weatherMaps[start + uint(c.y) * side + uint(c.x)]);
+}
+
+// Whether something keeps the rain off `world`: more than a little over it (WeatherMaps::covered).
+bool underCover(float3 world)
+{
+    return coverAt(world.xz) > world.y + 0.2;
+}
+
+// How deep the sea is at `xz`, in metres, blended between cells: nothing on land, at most WEATHER_FLOOR_REACH, and
+// as deep where the grid does not reach.
+float seaFloorDepth(float2 xz)
+{
+    uint side;
+    float cell;
+    float2 corner;
+    uint start;
+    if (!weatherGrid(2, side, cell, corner, start))
+    {
+        return WEATHER_FLOOR_REACH;
+    }
+    float2 at = (xz - corner) / cell;
+    if (any(at < 0.0) || any(at >= float(side)))
+    {
+        return WEATHER_FLOOR_REACH;
+    }
+    float2 low = floor(at - 0.5);
+    float2 part = at - 0.5 - low;
+    uint* maps = buffers()->weatherMaps;
+    float depth[4];
+    for (uint n = 0; n < 4; n++)
+    {
+        int2 c = clamp(int2(low) + int2(n & 1, n >> 1), 0, int(side) - 1);
+        depth[n] = asfloat(maps[start + uint(c.y) * side + uint(c.x)]);
+    }
+    return lerp(lerp(depth[0], depth[1], part.x), lerp(depth[2], depth[3], part.x), part.y);
 }
 
 // What the composite multiplies the scene by to expose it, last frame's, so a

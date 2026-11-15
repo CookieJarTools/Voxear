@@ -28,6 +28,68 @@ static const float BAKE_PATH_MOST = 64.0;
 static const float BAKE_OFFSET = 0.003;
 static const float BAKE_OFFSET_TEXEL = 0.05;
 
+// The sun's light and the sky's from all round as the bake takes them: under the atmosphere, worked out once a frame
+// (lightBakeSkyMain) as at the level's middle on its ground, straight from the scattering, rather than the frame's
+// own, which are as where the camera is (atmosphere.slang's sunThroughAtmosphere and atmosphereAmbient), so the bake
+// does not change with where the camera stands. Lightning's flash, which comes and goes, is left out.
+static float3 bakeSunLight = 0.0;
+static float3 bakeSkyLight = 0.0;
+
+// Reads the sun's and the sky's light the frame's first pass of the bake worked out.
+void bakeAtmosphere(Frame* frame, BakeJob* job)
+{
+    bakeSunLight = frame->lighting.sky == SKY_ATMOSPHERE ? job->sky[0].rgb : frame->sunColor;
+    bakeSkyLight = job->sky[1].rgb;
+}
+
+// One thread, before the frame's dispatches: the sun's and the sky's light, into the job's `sky`.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void lightBakeSkyMain()
+{
+    Frame* frame = push.frame;
+    BakeJob* job = buffers()->bakeJob + push.level;
+    if (frame->lighting.sky != SKY_ATMOSPHERE)
+    {
+        job->sky[0] = float4(frame->sunColor, 0.0);
+        job->sky[1] = 0.0;
+        return;
+    }
+    Lighting lighting = frame->lighting;
+    float height = max(levelHeight(frame, 0.0) * 0.001 + lighting.atmosphere.bottomRadius,
+        lighting.atmosphere.bottomRadius + GROUND_OFFSET);
+    float3 origin = float3(0.0, height, 0.0);
+    float3 sun = towardsSun(frame);
+    float3 sunLight = frame->sunColor * transmittanceToSpace(lighting, height, sun.y);
+    float3 zenith = integrate(lighting, sun, origin, float3(0.0, 1.0, 0.0), 1e9, 30, true, false, true).luminance;
+    float3 horizon = 0.0;
+    for (uint i = 0; i < 4; i++)
+    {
+        float around = float(i) * 0.5 * PI;
+        float3 direction = normalize(float3(cos(around), 0.15, sin(around)));
+        horizon += integrate(lighting, sun, origin, direction, 1e9, 30, true, false, true).luminance * 0.25;
+    }
+    float3 sky = lerp(horizon, zenith, 0.5) * frame->sunColor;
+    // Greyer under clouds, as the frame's own is.
+    float cover = lighting.clouds.cover;
+    sky = lerp(sky, dot(sky, float3(0.2126, 0.7152, 0.0722)), cover * cover);
+    job->sky[0] = float4(sunLight, 0.0);
+    job->sky[1] = float4(sky, 0.0);
+}
+
+// The sky's light from a direction, as the GI's rays take it (ddgiSky), from the bake's own sky light.
+float3 bakeSky(Frame* frame, float3 direction)
+{
+    if (frame->lighting.sky != SKY_ATMOSPHERE)
+    {
+        return ddgiSky(frame, direction);
+    }
+    float up = direction.y * 0.5 + 0.5;
+    float3 albedo = frame->lighting.atmosphere.groundAlbedo;
+    float3 ground = albedo * (bakeSunLight * saturate(towardsSun(frame).y) / PI + bakeSkyLight);
+    return lerp(ground, bakeSkyLight, up) * frame->ambient;
+}
+
 uint bakeHash(uint a, uint b)
 {
     return ddgiHash(a * 1664525u + ddgiHash(b ^ 0x9E3779B9u));
@@ -137,9 +199,7 @@ float3 bakeDirect(Frame* frame, float3 position, float3 normal, uint lights, boo
         float facing = dot(normal, toSun);
         if (facing > 0.0 && !ddgiBlocked(frame, origin, toSun, 1e4))
         {
-            bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
-            float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-            float3 lit = sunLight * facing / PI;
+            float3 lit = bakeSunLight * facing / PI;
             light += lit;
             way += float4(toSun, 1.0) * bakeLuminance(lit);
         }
@@ -188,7 +248,7 @@ float3 bakePath(Frame* frame, float3 origin, float3 direction, uint bounces, ino
         Hit hit = traceScene(frame, origin, direction, 1e4, false);
         if (!hit.found)
         {
-            light += throughput * ddgiSky(frame, direction);
+            light += throughput * bakeSky(frame, direction);
             break;
         }
         // Textures blurred well down, as the GI's rays read them: a texel's light is an average over many paths.
@@ -224,6 +284,7 @@ void lightBakeTexelsMain(uint3 id : SV_DispatchThreadID)
     bakeTracing = true;
     Frame* frame = push.frame;
     BakeJob* job = buffers()->bakeJob + push.level;
+    bakeAtmosphere(frame, job);
     uint index = job->firstTexel + id.x;
     if (id.x >= push.size.x || index >= job->texelCount)
     {
@@ -271,6 +332,7 @@ void lightBakeProbesMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThread
     bakeTracing = true;
     Frame* frame = push.frame;
     BakeJob* job = buffers()->bakeJob + push.level;
+    bakeAtmosphere(frame, job);
     uint probe = group.x;
     if (probe >= job->probeCount)
     {

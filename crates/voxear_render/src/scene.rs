@@ -766,9 +766,20 @@ pub fn extract(
         None => world.resource::<crate::looks::SunLook>().copied(),
     };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
-    // Baked lights first, then Mixed, then Realtime, so the shaders tell them apart by where they are in the list.
+    // Baked lights first, then Mixed, then Realtime, so the shaders tell them apart by where they are in the list;
+    // and among each, by where they are and what they are, never by how the world happens to keep them, so a
+    // lighting bake, which takes each lamp's random numbers in turn, comes out the same in every run.
     let mut lit: Vec<_> = lit.collect();
-    lit.sort_by_key(|(_, light, _)| light.mode.order());
+    lit.sort_by(|(_, a, at), (_, b, bt)| {
+        let key = |light: &Light, at: &Transform| {
+            let p = at.position;
+            [p.x, p.y, p.z, light.kind as u8 as f32, light.intensity, light.color.x, light.color.y, light.color.z]
+        };
+        let (ka, kb) = (key(a, at), key(b, bt));
+        a.mode.order().cmp(&b.mode.order()).then_with(|| {
+            ka.iter().zip(&kb).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
     let source = post.global_illumination.source;
     let mut bake = crate::gpu::GpuBake {
         source: match source {

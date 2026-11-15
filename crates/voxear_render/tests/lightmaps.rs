@@ -337,3 +337,93 @@ fn the_closed_room_bakes_about_the_light_the_real_time_probes_find() {
         eprintln!("{what}: baked {}, real-time {}", brightness(&baked, at(point)), brightness(&realtime, at(point)));
     }
 }
+
+/// The room with what makes ties for the rays: a red rug lying exactly in the floor's top and a green panel
+/// exactly in the west wall's face, so their triangles and the floor's and wall's meet rays at the same distance,
+/// and a scatter of small blocks for the hierarchies to sort; and two lamps, spawned in either order, so the world
+/// keeps them in either order.
+fn tied_room(renderer: &mut Renderer, lamps_reversed: bool) -> World {
+    let mut room = build_room(renderer, GiSource::Baked);
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let mut material = |color: [f32; 4]| {
+        renderer.add_material(&MaterialDesc { base_color: color, ..MaterialDesc::default() }).unwrap()
+    };
+    let (red, green, grey) =
+        (material([0.8, 0.1, 0.1, 1.0]), material([0.1, 0.8, 0.1, 1.0]), material([0.6, 0.6, 0.6, 1.0]));
+    let world = &mut room.world;
+    let rug = Transform::new(Vec3::new(0.5, -0.05, 0.3), Quat::IDENTITY, Vec3::new(3.0, 0.1, 2.0));
+    world.spawn((MeshRenderer::new(cube, red), rug, Lightmap::default()));
+    let panel = Transform::new(Vec3::new(-3.05, 1.5, 0.5), Quat::IDENTITY, Vec3::new(0.1, 2.0, 3.0));
+    world.spawn((MeshRenderer::new(cube, green), panel, Lightmap::default()));
+    for i in 0..40 {
+        let (x, z) = ((i % 8) as f32 * 0.7 - 2.5, (i / 8) as f32 * 0.9 - 2.2);
+        let block = Transform::new(Vec3::new(x, 0.15, z), Quat::from_rotation_y(i as f32), Vec3::splat(0.3));
+        world.spawn((MeshRenderer::new(cube, grey), block, Lightmap::default()));
+    }
+    room.world.spawn((
+        LightProbeGroup::default(),
+        Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::IDENTITY, Vec3::new(5.0, 2.0, 5.0)),
+    ));
+    let mut lamps = vec![
+        (Light::point(Vec3::new(1.0, 0.6, 0.3), 8.0, 6.0), Vec3::new(-1.5, 2.5, -1.0)),
+        (Light { radius: 0.3, ..Light::disc(Vec3::new(0.3, 0.5, 1.0), 10.0, 6.0, 0.3) }, Vec3::new(1.5, 2.8, 1.5)),
+    ];
+    if lamps_reversed {
+        lamps.reverse();
+    }
+    for (light, at) in lamps {
+        let down = Quat::from_rotation_arc(Vec3::Z, Vec3::NEG_Y);
+        room.world.spawn((light, Transform::new(at, down, Vec3::ONE)));
+    }
+    room.world
+}
+
+/// Bakes the tied room in a renderer of its own, after `wait` frames, `pace` dispatches a frame, under an
+/// atmosphere sky with the camera at `eye`; after more than ten frames, its lamps spawned the other way round.
+fn tied_bake(software: bool, wait: u32, pace: usize, eye: Vec3) -> Option<LightBake> {
+    let mut renderer = renderer(software)?;
+    let mut time = 0.0;
+    let mut world = tied_room(&mut renderer, wait > 10);
+    world.insert_resource(Sky { mode: voxear_render::SkyMode::Atmosphere, ..Sky::default() });
+    let camera = world.query_ref::<(Entity, &Camera)>().into_iter().next().unwrap().0;
+    world.get_mut::<Transform>(camera).unwrap().position = eye;
+    run(&mut renderer, &world, &mut time, wait);
+    renderer.set_light_bake_pace(pace);
+    renderer.start_light_bake(&world).unwrap();
+    for _ in 0..2000 {
+        run(&mut renderer, &world, &mut time, 1);
+        if let Some(made) = renderer.take_light_bake() {
+            return Some(made.unwrap());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("the bake did not finish");
+}
+
+fn same_in_another_renderer(software: bool) {
+    let moved = EYE + Vec3::new(1.5, 0.7, 2.0);
+    let (Some(first), Some(second)) = (tied_bake(software, 3, 16, EYE), tied_bake(software, 40, 3, moved)) else {
+        return;
+    };
+    let texels: usize = first.atlases.iter().map(|a| a.light.len()).sum();
+    let differing: usize = first
+        .atlases
+        .iter()
+        .zip(&second.atlases)
+        .map(|(a, b)| a.light.chunks(16).zip(b.light.chunks(16)).filter(|(x, y)| x != y).count())
+        .sum();
+    assert_eq!(differing, 0, "{differing} of {} blocks differ", texels / 16);
+    assert!(first.atlases == second.atlases, "the directions too");
+    assert_eq!(first.places, second.places);
+    assert_eq!(first.probes, second.probes, "and the probes");
+}
+
+#[test]
+fn a_bake_comes_out_the_same_in_another_renderer_where_surfaces_meet_rays_together() {
+    same_in_another_renderer(false);
+}
+
+#[test]
+fn a_bake_traced_in_software_comes_out_the_same_in_another_renderer() {
+    same_in_another_renderer(true);
+}

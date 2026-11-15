@@ -2,7 +2,7 @@
 order: 3
 ---
 
-[[Bounced Light]] can be worked out as the game runs, or **baked**: traced once, in the editor, and saved beside the level. Baked light costs almost nothing to draw, shows finer detail (soft shadows in corners, light pooling under a window) and is the same every time the level opens. It does not follow what moves: a door that opens or a lamp carried through a room does not change it.
+[[Bounced Light]] can be worked out as the game runs, or **baked**: traced once, in the editor, and saved beside the level. Baked light costs almost nothing to draw, shows finer detail (soft shadows in corners, light pooling under a window) and is the same every time the level opens. The same scene always bakes the same file, wherever the editor's camera stands. It does not follow what moves: a door that opens or a lamp carried through a room does not change it.
 
 A bake makes two things:
 

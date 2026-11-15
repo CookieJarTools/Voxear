@@ -951,6 +951,8 @@ struct BakeJob
     // The probes' places, and their nine harmonics' light summed, then backs in the first's alpha.
     float4* probes;
     float4* probeLight;
+    // The sun's light and the sky's from all round as the bake takes them, worked out once a frame.
+    float4* sky;
     uint texelCount;
     uint probeCount;
     // This dispatch's texels, from firstTexel, and paths, from firstSample, for each.

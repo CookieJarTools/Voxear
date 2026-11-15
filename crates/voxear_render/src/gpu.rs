@@ -513,6 +513,7 @@ pub struct GpuBakeJob {
     pub directions: u64,
     pub probes: u64,
     pub probe_light: u64,
+    pub sky: u64,
     pub texel_count: u32,
     pub probe_count: u32,
     pub first_texel: u32,
@@ -1545,7 +1546,7 @@ mod tests {
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 72 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
-        assert_eq!(size_of::<GpuBakeJob>(), 5 * 8 + 32);
+        assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,

@@ -169,9 +169,10 @@ pub fn prepare(parts: &[BakePart], probes: Vec<Vec3>, settings: BakeSettings) ->
         })
         .collect();
     let mut order: Vec<usize> = (0..squares.len()).collect();
+    // Tallest first, and between equals by where they are, so the layout never hangs on how the world keeps them.
     order.sort_by(|&a, &b| {
-        let key = |s: &Square| (std::cmp::Reverse(s.side), parts[s.part].entity.to_bits(), parts[s.part].part);
-        key(&squares[a]).cmp(&key(&squares[b]))
+        let (sa, sb) = (&squares[a], &squares[b]);
+        sb.side.cmp(&sa.side).then_with(|| placed_order(&parts[sa.part], &parts[sb.part]))
     });
     // Rows, tallest first, each lightmap filled before the next is begun.
     let size = settings.lightmap_size;
@@ -592,6 +593,8 @@ struct Traced {
     directions: Buffer,
     probes: Buffer,
     probe_light: Buffer,
+    /// The sun's and the sky's light as the bake takes them, worked out once a frame.
+    sky: Buffer,
     /// A buffer of `MOST_DISPATCHES` jobs for each frame in flight.
     jobs: Vec<Buffer>,
 }
@@ -642,6 +645,7 @@ impl Baking {
         let probes = gpu.create_buffer("bake probes", probe_count * 16, storage, local)?;
         gpu.upload_buffer(&probes, 0, bytemuck::cast_slice(&positions))?;
         let probe_light = zeroes("bake probe light", probe_count * 9)?;
+        let sky = zeroes("bake sky", 2)?;
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
         let jobs = (0..slots)
             .map(|slot| {
@@ -652,7 +656,7 @@ impl Baking {
         let schedule = schedule(layout.texels.len() as u32, layout.probes.len() as u32, layout.settings.samples);
         Ok(Self {
             layout: Arc::new(layout),
-            traced: Some(Traced { texels, light, directions, probes, probe_light, jobs }),
+            traced: Some(Traced { texels, light, directions, probes, probe_light, sky, jobs }),
             schedule,
             next: 0,
             last_frame: 0,
@@ -693,6 +697,7 @@ impl Baking {
                 directions: traced.directions.address,
                 probes: traced.probes.address,
                 probe_light: traced.probe_light.address,
+                sky: traced.sky.address,
                 texel_count: self.layout.texels.len() as u32,
                 probe_count: self.layout.probes.len() as u32,
                 first_texel: d.first_texel,
@@ -768,19 +773,27 @@ impl Baking {
     }
 }
 
-/// Records this frame's dispatches of a bake, with `pipelines` the texels'
-/// and the probes', after the scene its rays trace is built. Each adds to
-/// the sums the last left, so each waits for the one before, this frame's or
-/// the last's.
+/// Records this frame's dispatches of a bake, with `pipelines` the texels',
+/// the probes' and the sky's, after the scene its rays trace is built and
+/// the atmosphere's tables in `sampled` are drawn: first
+/// the sun's and the sky's light, once, then the dispatches. Each adds to the
+/// sums the last left, so each waits for the one before, this frame's or the
+/// last's.
 pub(crate) fn record(
     fg: &mut crate::graph::FrameGraph<'_>,
-    pipelines: [vk::Pipeline; 2],
+    pipelines: [vk::Pipeline; 3],
     push: crate::gpu::Push,
     bake: &BakeFrame,
+    sampled: &[crate::graph::ImageId],
 ) {
     let dispatches = bake.dispatches.clone();
     let probes = bake.probes;
-    fg.add_pass("Lightmap bake", &[], &[], move |ctx| {
+    let images: Vec<_> = sampled.iter().map(|&image| (image, crate::graph::ImageAccess::Sampled)).collect();
+    fg.add_pass("Lightmap bake", &images, &[], move |ctx| {
+        barrier(ctx);
+        let first = crate::gpu::Push { level: dispatches.first().map_or(0, |(job, _)| *job), ..push };
+        crate::passes::bind(ctx, pipelines[2], vk::PipelineBindPoint::COMPUTE, &first);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, 1, 1, 1) };
         for (job, dispatch) in &dispatches {
             barrier(ctx);
             let traced = crate::gpu::Push { level: *job, size: [dispatch.count, 0], ..push };
@@ -806,10 +819,24 @@ fn barrier(ctx: &crate::graph::PassContext) {
 }
 
 fn destroy(gpu: &Gpu, traced: Traced) {
-    let Traced { texels, light, directions, probes, probe_light, jobs } = traced;
-    for buffer in [texels, light, directions, probes, probe_light].into_iter().chain(jobs) {
+    let Traced { texels, light, directions, probes, probe_light, sky, jobs } = traced;
+    for buffer in [texels, light, directions, probes, probe_light, sky].into_iter().chain(jobs) {
         gpu.destroy_buffer(buffer);
     }
+}
+
+/// Parts in an order that comes from the scene alone: by where they are
+/// placed, then which part; their Objs' numbers, which follow how the world
+/// happened to make them, only between parts placed alike.
+fn placed_order(a: &BakePart, b: &BakePart) -> std::cmp::Ordering {
+    matrix_order(&a.model, &b.model).then(a.part.cmp(&b.part)).then(a.entity.to_bits().cmp(&b.entity.to_bits()))
+}
+
+fn matrix_order(a: &Mat4, b: &Mat4) -> std::cmp::Ordering {
+    let (a, b) = (a.to_cols_array(), b.to_cols_array());
+    // The translation first, then the rest.
+    let keys = [12, 13, 14, 0, 1, 2, 4, 5, 6, 8, 9, 10];
+    keys.iter().map(|&i| a[i].total_cmp(&b[i])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// Each mesh's triangles read once for a bake, as several parts share them.
@@ -874,14 +901,16 @@ pub(crate) fn gather(
             }
         }
     }
-    parts.sort_by_key(|part| (part.entity.to_bits(), part.part));
+    parts.sort_by(placed_order);
     let mut probes = Vec::new();
     let groups = world
         .query_ref::<(Entity, &crate::LightProbeGroup, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>();
     let mut groups: Vec<_> =
         groups.into_iter().filter(|(entity, ..)| switched.is_on(world, *entity, Switch::LightProbeGroup)).collect();
-    groups.sort_by_key(|(entity, ..)| entity.to_bits());
+    groups.sort_by(|(ea, _, ta, pa), (eb, _, tb, pb)| {
+        matrix_order(&matrix(*ta, *pa), &matrix(*tb, *pb)).then(ea.to_bits().cmp(&eb.to_bits()))
+    });
     for (_, group, transform, placed) in groups {
         probes.extend(group.probes(&matrix(transform, placed)));
     }

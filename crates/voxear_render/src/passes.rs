@@ -191,7 +191,7 @@ pub struct Frame {
     /// The frame's sound rays, which the first camera's own view traces.
     pub sound_job: Option<(crate::sound_rays::SoundPass, crate::sound_rays::SoundPipelines)>,
     /// This frame's share of a lighting bake, with its pipelines.
-    pub bake: Option<(crate::lightmapper::BakeFrame, [vk::Pipeline; 2])>,
+    pub bake: Option<(crate::lightmapper::BakeFrame, [vk::Pipeline; 3])>,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
@@ -778,7 +778,8 @@ pub fn record(
         crate::sound_rays::record(fg, sound_pipelines, push, pass);
     }
     if let Some((bake, bake_pipelines)) = &frame.bake {
-        crate::lightmapper::record(fg, *bake_pipelines, push, bake);
+        let tables: Vec<ImageId> = frame.atmosphere.map(|tables| tables.all().to_vec()).unwrap_or_default();
+        crate::lightmapper::record(fg, *bake_pipelines, push, bake, &tables);
     }
     if let Some(volume) = frame.volume {
         let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(shadow_maps.iter().copied()).collect();

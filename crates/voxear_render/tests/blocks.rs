@@ -1868,7 +1868,8 @@ fn generated_view_with(
         let (each, wide) = (TINT_TILE as usize, (tiles * TINT_TILE) as usize);
         let mut points = vec![0u32; wide * wide * 2];
         for (tz, tx) in (0..tiles).flat_map(|tz| (0..tiles).map(move |tx| (tz, tx))) {
-            let tile = tint_tile(file.generate.as_ref().unwrap(), world, size, [tx + first, tz + first]).expect("tints");
+            let tile =
+                tint_tile(file.generate.as_ref().unwrap(), world, size, [tx + first, tz + first], &[]).expect("tints");
             for z in 0..each {
                 let row = (tz as usize * each + z) * wide + tx as usize * each;
                 points[row * 2..(row + each) * 2].copy_from_slice(&tile[z * each * 2..(z + 1) * each * 2]);
@@ -1881,6 +1882,8 @@ fn generated_view_with(
             points: points.into(),
             far_corner: [0; 2],
             far_points: std::sync::Arc::from([]),
+            cover: [0.0; 2],
+            covered: [0; 8],
         };
         late = Some((spawned, tints));
     }

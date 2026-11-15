@@ -9,9 +9,17 @@
 //! line. A point's tints come from where it is alone, so every tile, and
 //! every machine, agrees on each. The renderer reads between the points, so
 //! a face's colour changes smoothly across it.
+//!
+//! Each point also keeps what grows thick enough there to colour the grass
+//! where its plants are too far off to be drawn (see
+//! `blocks::grow::Cover`): their colour and how much of their side they
+//! show, in the bytes its two tints leave over.
 
 use super::BlockGenerate;
-use crate::generate::{WorldGen, biomes::Place};
+use crate::{
+    blocks::grow::Cover,
+    generate::{WorldGen, biomes::Place},
+};
 
 /// How many blocks apart the lattice's points are.
 pub const TINT_STEP: i32 = 4;
@@ -26,15 +34,29 @@ pub const TINT_FAR: i32 = 16;
 /// How many points each way a point's tints are averaged over.
 pub const TINT_BLEND: i32 = 3;
 
+/// The most side its plants show for each square metre of ground that a
+/// point keeps; more counts as this.
+pub const MOST_COVER: f32 = 0.5;
+
 /// The tints of tile `[tx, tz]` of the lattice of the world `generate`
 /// makes of blocks `block_size` metres a side with generator `world`: for
 /// each of its points, row by row along x, its grass tint and then its
-/// foliage tint, each as four bytes, red, green, blue and none, each part
-/// out of 2 (see `generate::BiomeTints`). None where the world's biomes
-/// have no tints.
-pub fn tint_tile(generate: &BlockGenerate, world: &WorldGen, block_size: f32, [tx, tz]: [i32; 2]) -> Option<Vec<u32>> {
-    let placed = generate.placed.as_deref().filter(|placed| placed.biomes.list().iter().any(|b| !b.tints.is_none()))?;
-    let biomes = &placed.biomes;
+/// foliage tint, each as three bytes, red, green and blue, each part out of
+/// 2 (see `generate::BiomeTints`). Their fourth bytes keep what `covers`
+/// grow there (see [`cover_of`]). None where the world's biomes have no
+/// tints and nothing covers its ground; white where only plants do.
+pub fn tint_tile(
+    generate: &BlockGenerate,
+    world: &WorldGen,
+    block_size: f32,
+    [tx, tz]: [i32; 2],
+    covers: &[Cover],
+) -> Option<Vec<u32>> {
+    let tinted = |placed: &&crate::generate::WorldBiomes| placed.biomes.list().iter().any(|b| !b.tints.is_none());
+    let placed = generate.placed.as_deref().filter(tinted);
+    if placed.is_none() && covers.is_empty() {
+        return None;
+    }
     let size = block_size.max(0.01);
     // The tile's points and as many again round it as each is averaged over.
     let wide = (TINT_TILE + 2 * TINT_BLEND) as usize;
@@ -46,11 +68,13 @@ pub fn tint_tile(generate: &BlockGenerate, world: &WorldGen, block_size: f32, [t
     world.heights(&xs, &zs, &mut heights);
     let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
     world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
-    let sunk = placed.any_sunk().then(|| world.sunk(&xs, &zs, &heights)).flatten();
+    let sunk = placed.filter(|placed| placed.any_sunk()).and_then(|_| world.sunk(&xs, &zs, &heights));
     let sea = world.sea_level();
     // Each point's own tints, the grass's three parts then the foliage's.
     let own: Vec<[f32; 6]> = (0..xs.len())
         .map(|k| {
+            let Some(placed) = placed else { return [1.0; 6] };
+            let biomes = &placed.biomes;
             let sunk = sunk.as_ref().map_or(0.0, |sunk| sunk[k]);
             let place = Place { temperature: warmth[k], humidity: wetness[k], above_sea: heights[k] - sea, sunk };
             let [grass, foliage] =
@@ -75,6 +99,25 @@ pub fn tint_tile(generate: &BlockGenerate, world: &WorldGen, block_size: f32, [t
     }
     let byte = |part: f32| ((part / crate::generate::BiomeTints::MOST).clamp(0.0, 1.0) * 255.0).round() as u32;
     let pack = |rgb: &[f32]| byte(rgb[0]) | byte(rgb[1]) << 8 | byte(rgb[2]) << 16;
+    // What covers each of the tile's own points, from where it is alone, as each machine works it out alike.
+    let across = TINT_STEP as f32 * size;
+    let seed = world.seed();
+    let cover = |x: usize, z: usize| {
+        let k = (z + reach) * wide + x + reach;
+        let rise = |a: usize, b: usize| (heights[b] - heights[a]) / (2.0 * across);
+        let slope = rise(k - 1, k + 1).hypot(rise(k - wide, k + wide));
+        let at =
+            |cover: &Cover| cover.at(seed, [xs[k], zs[k]], across, (heights[k] - sea, slope), (warmth[k], wetness[k]));
+        let amounts: Vec<f32> = covers.iter().map(at).collect();
+        let total: f32 = amounts.iter().sum();
+        let color = match total > 0.0 {
+            true => covers.iter().zip(&amounts).fold([0.0; 3], |sum, (cover, &amount)| {
+                std::array::from_fn(|part| sum[part] + cover.color[part] * amount / total)
+            }),
+            false => [0.0; 3],
+        };
+        cover_of(color, total)
+    };
     let mut tints = Vec::with_capacity(tile * tile * 2);
     for z in 0..tile {
         for x in 0..tile {
@@ -84,10 +127,32 @@ pub fn tint_tile(generate: &BlockGenerate, world: &WorldGen, block_size: f32, [t
                 (0..6).for_each(|part| sum[part] += row[part]);
             }
             let mean = sum.map(|part| part / count);
-            tints.extend([pack(&mean[..3]), pack(&mean[3..])]);
+            let [grass_over, foliage_over] = if covers.is_empty() { [0; 2] } else { cover(x, z) };
+            tints.extend([pack(&mean[..3]) | grass_over << 24, pack(&mean[3..]) | foliage_over << 24]);
         }
     }
     Some(tints)
+}
+
+/// What covers a point as the fourth bytes of its grass tint and its
+/// foliage tint keep it: the plants' colour, linear, red and green in the
+/// first and blue in the second, four bits each, and how much side they
+/// show for each square metre, out of [`MOST_COVER`], in the second's last
+/// four. Each kept as its square root, finer where it is small.
+pub fn cover_of(color: [f32; 3], amount: f32) -> [u32; 2] {
+    let nibble = |part: f32| (part.clamp(0.0, 1.0).sqrt() * 15.0).round() as u32;
+    let [r, g, b] = color.map(nibble);
+    [r | g << 4, b | nibble(amount / MOST_COVER) << 4]
+}
+
+/// A point's cover from the fourth bytes of its two tints, as [`cover_of`]
+/// keeps it: the plants' colour and how much side they show.
+pub fn cover_from(grass: u32, foliage: u32) -> ([f32; 3], f32) {
+    let part = |word: u32, shift: u32| {
+        let nibble = ((word >> 24 >> shift) & 15) as f32 / 15.0;
+        nibble * nibble
+    };
+    ([part(grass, 0), part(grass, 4), part(foliage, 0)], part(foliage, 4) * MOST_COVER)
 }
 
 /// A packed tint's three parts, each out of 2.
@@ -127,9 +192,9 @@ mod tests {
         let mut lattice = vec![[0u32; 2]; side * side];
         for tz in -4..4 {
             for tx in -4..4 {
-                let tile = tint_tile(&generate, &world, 1.0, [tx, tz]).expect("tints");
+                let tile = tint_tile(&generate, &world, 1.0, [tx, tz], &[]).expect("tints");
                 assert_eq!(tile.len(), (TINT_TILE * TINT_TILE * 2) as usize);
-                assert_eq!(tile, tint_tile(&generate, &world, 1.0, [tx, tz]).unwrap(), "the same every time");
+                assert_eq!(tile, tint_tile(&generate, &world, 1.0, [tx, tz], &[]).unwrap(), "the same every time");
                 for k in 0..(TINT_TILE * TINT_TILE) as usize {
                     let (x, z) = (k % TINT_TILE as usize, k / TINT_TILE as usize);
                     let (lx, lz) =
@@ -166,6 +231,59 @@ mod tests {
             .collect();
         placed.biomes = Biomes::new(list, 15.0, 0.3, world.seed());
         plain.placed = Some(Arc::new(placed));
-        assert!(tint_tile(&plain, &world, 1.0, [0, 0]).is_none());
+        assert!(tint_tile(&plain, &world, 1.0, [0, 0], &[]).is_none());
+    }
+
+    #[test]
+    fn plants_colour_the_points_they_grow_round_in_their_patches_and_a_world_of_no_tints_gets_them_too() {
+        use crate::blocks::grow::{Cover, GrowRule};
+        let (_, world) = split();
+        // Red flowers in patches 14 m across, and grass everywhere, on a world whose biomes have no tints.
+        let flowers = Cover {
+            rule: GrowRule { patches: 14.0, slope: 89.0, ..GrowRule::default() },
+            color: [0.8, 0.1, 0.05],
+            amount: 0.04,
+        };
+        let grass =
+            Cover { rule: GrowRule { slope: 89.0, ..GrowRule::default() }, color: [0.1, 0.3, 0.05], amount: 0.3 };
+        let plain = BlockGenerate::default();
+        let tile =
+            tint_tile(&plain, &world, 1.0, [0, 0], std::slice::from_ref(&flowers)).expect("tints for the plants alone");
+        let covers: Vec<([f32; 3], f32)> = tile.chunks_exact(2).map(|point| cover_from(point[0], point[1])).collect();
+        assert!(tile.chunks_exact(2).all(|point| point[0] & 0xFF_FFFF == 0x80_8080), "white tints");
+        // Some points in a patch and some out of one, each as its place has it, the same every time.
+        let (inside, outside) =
+            (covers.iter().filter(|c| c.1 > 0.0).count(), covers.iter().filter(|c| c.1 == 0.0).count());
+        assert!(inside > 10 && outside > 10, "{inside} in patches, {outside} not");
+        assert_eq!(tile, tint_tile(&plain, &world, 1.0, [0, 0], std::slice::from_ref(&flowers)).unwrap());
+        let (color, amount) = covers.iter().copied().find(|c| c.1 > 0.0).unwrap();
+        assert!((amount - 0.04).abs() < 0.01 && color[0] > 0.6 && color[1] < 0.2, "{color:?} {amount}");
+        // With grass too, every point is covered, mostly green, the flowers' red in it where they grow.
+        let both = tint_tile(&plain, &world, 1.0, [0, 0], &[flowers, grass]).unwrap();
+        let covers: Vec<([f32; 3], f32)> = both.chunks_exact(2).map(|point| cover_from(point[0], point[1])).collect();
+        assert!(covers.iter().all(|(color, amount)| *amount > 0.25 && color[1] > color[0] * 0.5));
+        // Seen far off, the far view's points, 64 blocks apart, take in what share of each is in a patch.
+        let far = tint_tile(&plain, &world, 16.0, [0, 0], &[Cover { amount: 0.4, ..flowers_at_cover() }]).unwrap();
+        let shares: Vec<f32> = far.chunks_exact(2).map(|point| cover_from(point[0], point[1]).1).collect();
+        assert!(shares.iter().any(|&share| share > 0.0 && share < 0.35), "some partly in patches: {shares:?}");
+    }
+
+    fn flowers_at_cover() -> crate::blocks::grow::Cover {
+        let rule = crate::blocks::grow::GrowRule { patches: 14.0, slope: 89.0, ..Default::default() };
+        crate::blocks::grow::Cover { rule, color: [0.8, 0.1, 0.05], amount: 0.04 }
+    }
+
+    #[test]
+    fn a_points_cover_reads_back_as_it_was_kept() {
+        // Kept in the fourth bytes of a point's two tints, beside their own parts.
+        let kept = |color: [f32; 3], amount: f32| {
+            let [grass, foliage] = cover_of(color, amount);
+            cover_from(0x80_8080 | grass << 24, 0x80_8080 | foliage << 24)
+        };
+        let (color, amount) = kept([0.25, 0.5, 1.0], 0.2);
+        assert!(color.iter().zip([0.25, 0.5, 1.0]).all(|(a, b)| (a - b).abs() < 0.05), "{color:?}");
+        assert!((amount - 0.2).abs() < 0.02, "{amount}");
+        assert_eq!(kept([0.0; 3], 0.0), ([0.0; 3], 0.0));
+        assert_eq!(kept([1.0; 3], 9.0).1, MOST_COVER, "more is the most a point keeps");
     }
 }

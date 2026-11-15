@@ -752,8 +752,8 @@ fn a_block_worlds_colours_stay_loaded_while_its_look_draws_with_them() {
     let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
     game.start(Some(&mut renderer)).unwrap();
     let look = game.engine.world.query_ref::<&BlockLook>().into_iter().next().expect("its look").clone();
-    // Changing level lets go of what nothing draws with, as stopping play does: grass is drawn with its colour.
-    let grass = MaterialSource::Inline(MaterialData { color: [0.33, 0.52, 0.2], ..default_material() });
+    // Changing level lets go of what nothing draws with, as stopping play does: grass is drawn with its colour, matt.
+    let grass = MaterialSource::Inline(MaterialData { color: [0.33, 0.52, 0.2], roughness: 1.0, ..default_material() });
     assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept as the level loaded");
     game.release_unused(Some(&mut renderer));
     assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept after");

@@ -196,6 +196,7 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     // Bounced light is read where the block stands, and a moving part's pictures where it rests.
     o.moved = swayed + b.posedBy;
     o.hidden = 0.0;
+    o.lightmapUv = 0.0;
     return o;
 }
 

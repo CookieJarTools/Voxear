@@ -446,6 +446,25 @@ public readonly struct Obj : IEquatable<Obj>
 		NativeComponent.Set(NativeComponent.ReverbProbe, this, NativeComponent.Add, Vector4.Zero);
 		return new ReverbProbe(this);
 	}
+	/// <summary>The Obj's Lightmap, which keeps it still for lighting, so a bake gives it a lightmap. Not valid when it has none.</summary>
+	public Lightmap Lightmap => new Lightmap(this);
+
+	/// <summary>Gives the Obj a Lightmap, unless it has one, and returns it.</summary>
+	public Lightmap AddLightmap()
+	{
+		NativeComponent.Set(NativeComponent.Lightmap, this, NativeComponent.Add, Vector4.Zero);
+		return new Lightmap(this);
+	}
+
+	/// <summary>The Obj's Light Probe Group, the light probes a bake bakes. Not valid when it has none.</summary>
+	public LightProbeGroup LightProbeGroup => new LightProbeGroup(this);
+
+	/// <summary>Gives the Obj a Light Probe Group, filling its box every 2 metres, unless it has one, and returns it.</summary>
+	public LightProbeGroup AddLightProbeGroup()
+	{
+		NativeComponent.Set(NativeComponent.LightProbeGroup, this, NativeComponent.Add, Vector4.Zero);
+		return new LightProbeGroup(this);
+	}
 
 	/// <summary>The Obj's Heat Body, which takes the temperature of where it is. Not valid when it has none.</summary>
 	public HeatBody HeatBody => new HeatBody(this);

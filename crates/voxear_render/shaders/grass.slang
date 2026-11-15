@@ -236,5 +236,6 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.moved = 0.0;
     o.hidden = 0.0;
+    o.lightmapUv = 0.0;
     return o;
 }

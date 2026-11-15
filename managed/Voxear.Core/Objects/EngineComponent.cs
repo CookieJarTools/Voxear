@@ -25,4 +25,5 @@ public enum EngineComponent
 	Foliage,
 	TrackMaker,
 	ReflectionProbe,
+	LightProbeGroup,
 }

@@ -83,6 +83,7 @@ impl Engine {
         crate::portals::register();
         crate::reflection_probes::register();
         crate::reverb_probes::register();
+        crate::lightmaps::register();
         crate::ui_panels::register();
         crate::screen_ui::register();
         crate::localized_text::register();

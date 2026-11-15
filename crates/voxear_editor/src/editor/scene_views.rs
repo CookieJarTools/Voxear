@@ -82,9 +82,9 @@ pub(super) struct SceneView {
     /// The camera it looks through, which the Hierarchy leaves out.
     pub(super) camera: Entity,
     pub(super) fly: FlyCamera,
-    /// The shading menu's choice: Lit, Unlit, Wireframe, Lit Wireframe or
+    /// The shading menu's choice: Lit, Unlit, Wireframe, Lit Wireframe,
     /// Heat, the lit scene with the ground tinted by temperature (see
-    /// `heat_view`).
+    /// `heat_view`), or Lightmap Density, each lightmapped surface's texels.
     pub(super) shading: usize,
     pub(super) show_gizmos: bool,
     /// The camera's rotation as the axis gizmo last showed it.
@@ -149,6 +149,7 @@ impl SceneView {
             1 => DEBUG_VIEW_UNLIT,
             2 => DEBUG_VIEW_WIREFRAME,
             3 => DEBUG_VIEW_LIT_WIREFRAME,
+            5 => voxear_render::DEBUG_VIEW_LIGHTMAP_DENSITY,
             _ => DEBUG_VIEW_NONE,
         }
     }

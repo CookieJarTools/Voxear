@@ -26,6 +26,7 @@ const RADIUS: i32 = 11;
 const LENGTH: i32 = 12;
 const SOFTNESS: i32 = 13;
 const SOFT_SHADOWS: i32 = 14;
+const MODE: i32 = 15;
 
 /// As `LightKind` in Voxear.Core numbers them.
 const KINDS: [LightKind; 6] =
@@ -80,6 +81,7 @@ fn read(light: &Light, what: i32) -> Option<[f32; 4]> {
         LENGTH => number(light.length),
         SOFTNESS => number(light.softness),
         SOFT_SHADOWS => flag(light.soft_shadows),
+        MODE => number(voxear_render::LightMode::ALL.iter().position(|m| *m == light.mode).unwrap_or(1) as f32),
         _ => return None,
     })
 }
@@ -95,6 +97,7 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
                 intensity: was.intensity,
                 shadows: was.shadows,
                 soft_shadows: was.soft_shadows,
+                mode: was.mode,
                 ..default_light(kind_of(x))
             };
         }
@@ -112,6 +115,7 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
         LENGTH => light.length = x.max(0.0),
         SOFTNESS => light.softness = x.clamp(0.0, 10.0),
         SOFT_SHADOWS => light.soft_shadows = x != 0.0,
+        MODE => light.mode = voxear_render::LightMode::ALL[(x.max(0.0) as usize).min(2)],
         _ => {}
     }
 }

@@ -317,6 +317,7 @@ impl Levels {
         let loaded = self.load_scene(engine, content, renderer, &target)?;
         self.scenes.push(loaded);
         crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
+        crate::light_bakes::put_on_level(self, &mut engine.world, content);
         // Loading a scene puts its own sky up; the active scene's goes back.
         self.apply_environment(engine)?;
         Ok(true)
@@ -451,6 +452,7 @@ impl Levels {
         self.apply_environment(engine)?;
         self.current = Some(level_path);
         crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
+        crate::light_bakes::put_on_level(self, &mut engine.world, content);
         Ok(change)
     }
 
@@ -658,6 +660,11 @@ impl Levels {
             copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs, lighting, sky, post });
         }
         copy.apply_environment(play)?;
+        // The level's lighting bake goes with it, as baked, even before the level is saved.
+        crate::light_bakes::copy_to(&edit.world, &mut play.world, |entity| {
+            let (scene, path) = self.place_of(entity)?;
+            copy.entity_at(scene, &path)
+        });
         // The reflection probes' bakes go with them, as baked, even before the level is saved.
         for scene in &self.scenes {
             for (path, entity) in &scene.objs {

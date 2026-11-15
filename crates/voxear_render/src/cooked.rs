@@ -31,8 +31,9 @@ use crate::{
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
 /// and clips. 11: whether a material's pixels are drawn sharp. 12: what part of
 /// a body each bone moves, for a model that says. 13: how much a material
-/// bends and flutters in the wind, for a plant that is a box model.
-pub const COOKED_VERSION: u32 = 13;
+/// bends and flutters in the wind, for a plant that is a box model. 14:
+/// meshes' lightmap UVs in the payload.
+pub const COOKED_VERSION: u32 = 14;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -71,6 +72,11 @@ pub(crate) struct CookedMesh {
     /// Where a skinned mesh's skin data starts in the payload, one for each
     /// vertex; none for a rigid one.
     pub skin: (u64, u32),
+    /// Where its lightmap UVs start, one for each vertex; none for a mesh
+    /// without. And how much of the 0-to-1 square they cover, with the
+    /// mesh's surface's area.
+    pub lightmap_uvs: (u64, u32),
+    pub lightmap_areas: (f32, f32),
 }
 
 pub(crate) struct CookedTexture {
@@ -108,8 +114,12 @@ impl PreparedModel {
             let lods = counts.map(|(lod, &meshlets)| (lod.error, lod.indices.len() as u32, meshlets)).collect();
             let (center, radius) = mesh.bounds();
             let skin = (place(bytemuck::cast_slice(&mesh.skin)), mesh.skin.len() as u32);
+            let lightmap_uvs = (place(bytemuck::cast_slice(&mesh.lightmap_uvs)), mesh.lightmap_uvs.len() as u32);
+            let lightmap_areas = crate::lightmap_uvs::areas(mesh);
             meshes.push(CookedMesh {
                 skin,
+                lightmap_uvs,
+                lightmap_areas,
                 vertices,
                 indices,
                 lods,
@@ -209,10 +219,13 @@ impl CookedModel {
                 w.u32(count);
                 w.u32(meshlets);
             }
-            for (offset, count) in [mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.skin] {
+            let parts = [mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.skin, mesh.lightmap_uvs];
+            for (offset, count) in parts {
                 w.u64(offset);
                 w.u32(count);
             }
+            w.f32(mesh.lightmap_areas.0);
+            w.f32(mesh.lightmap_areas.1);
         }
         w.u32(self.textures.len() as u32);
         for texture in &self.textures {
@@ -311,8 +324,12 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let (meshlets, meshlet_vertices, meshlet_triangles) =
             ((r.u64()?, r.u32()?), (r.u64()?, r.u32()?), (r.u64()?, r.u32()?));
         let skin = (r.u64()?, r.u32()?);
+        let lightmap_uvs = (r.u64()?, r.u32()?);
+        let lightmap_areas = (r.f32()?, r.f32()?);
         meshes.push(CookedMesh {
             skin,
+            lightmap_uvs,
+            lightmap_areas,
             vertices,
             indices,
             lods,
@@ -426,6 +443,11 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             "a mesh's skin data is not one for each vertex"
         );
         ensure!(fits((mesh.skin.0, u64::from(mesh.skin.1) * 16)), "a mesh's skin data lies outside the payload");
+        ensure!(
+            mesh.lightmap_uvs.1 == 0 || mesh.lightmap_uvs.1 == mesh.vertices.1,
+            "a mesh's lightmap UVs are not one for each vertex"
+        );
+        ensure!(fits((mesh.lightmap_uvs.0, u64::from(mesh.lightmap_uvs.1) * 8)), "a mesh's lightmap UVs lie outside the payload");
     }
     for texture in &textures {
         ensure!(

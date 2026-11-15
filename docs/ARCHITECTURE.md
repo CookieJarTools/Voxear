@@ -1290,10 +1290,34 @@ from a mip as blurred as the surface is rough, and what the GI's rays that miss 
 
 **Global illumination** comes in two forms:
 
-- **Baked:**
-  - A GPU path-traced lightmapper, using hardware ray tracing when available and a compute BVH otherwise.
-  - Light probes (L2 SH, placed automatically) and reflection probes.
-  - Bakes are progressive in the editor viewport.
+- **Baked** *(implemented)*: `voxear_render::lightmapper`, `lightmaps`, `lightmap_uvs`; `shaders/light_bake.slang`
+  and `shaders/lightmaps.slang`; `voxear_engine::light_bakes` for the file.
+  - **Lightmap UVs** are a second set of UVs per vertex, kept in a buffer of their own beside the vertex buffer at
+    the vertex's own place (`Assets::lightmap_uvs`), in cooked models too. A model's own (glTF's `TEXCOORD_1`) are
+    used, or made at import (`lightmap_uvs::generate`): charts grown over triangles facing within 60° of their
+    average, laid flat, turned into their smallest box (over each convex hull edge), packed in rows with margins
+    sized in texels, vertices split where charts meet; before LODs, so LODs keep the splits.
+  - **What is baked:** an Obj with a `Lightmap` (scale, cast, receive) gets lightmaps for its Mesh Renderer or
+    Model Renderer parts; a `LightProbeGroup` places probes, by hand or filling its box. Each `Light` has a mode:
+    Realtime, Mixed (bounce baked) or Baked (bounce and direct on lightmapped surfaces).
+  - **The bake** runs in the renderer a few dispatches a frame (`Renderer::start_light_bake`, `light_bake_progress`,
+    `take_light_bake`, `cancel_light_bake`): parts are given squares in atlases by area and texels a metre, their
+    triangles drawn into them on the CPU (texel centres, then the texels only touched, at the nearest point), and
+    each texel traces cosine-spread paths through the frame's top level or software hierarchy (`traceScene`, as the
+    GI's rays), each bounce lit by the sun and the bake's lights through shadow rays to points on their shapes;
+    probes trace over the sphere into L2 SH. Instances without a casting Lightmap are marked
+    `INSTANCE_NO_BAKE_CAST` and passed through. The work is cut the same way whatever the frame rate, and every
+    path's randomness comes from its texel and number, so bakes are deterministic. Read back, the sums are finished
+    on a thread: an edge-stopping à-trous filter, dilation round charts, BC6H light and BC7 directions.
+  - **Storage:** `Level.lightmaps` beside the level, LZ4 over the GPU blocks, part places by scene GUID and Obj path,
+    probes as half floats; loaded with the level (`light_bakes::put_on_level`) into a `BakedLighting` resource and a
+    `LightmapBake` on each Obj, from bundles too, and shipped by content builds.
+  - **Shading:** each instance gets a `BakedInstance` (its lightmap's place, or SH blended from the eight nearest
+    probes at its middle with modified Shepard weights, kept while it stands still). Directional lightmaps bend the
+    light by the shading normal against the bake's. `[post.global_illumination] source` picks Realtime, Baked (the
+    DDGI probes are not traced) or Both: lights are ordered Baked, Mixed, Realtime, and beside a bake the DDGI rays
+    take only Realtime lights and no sky, so nothing is counted twice; reflection rays read the bake at their hits.
+  - Reflection probes are baked on their own (`reflection_bakes`).
 - **Real-time voxel GI**, all in Rust and Slang on the GPU:
   1. **Voxelise** the scene into camera-centred **clipmap cascades**, for example 4–6 levels of sparse 64³ bricks.
      Brick storage is sparse, so only surface bricks exist. Cascades scroll toroidally, so moving the camera only

@@ -32,6 +32,9 @@ internal static unsafe class NativeComponent
 	public const int LocalizedText = 27;
 	public const int ReflectionProbe = 28;
 	public const int ReverbProbe = 29;
+	public const int Lightmap = 30;
+	public const int LightProbeGroup = 31;
+	public const int BakedLighting = 32;
 
 	/// <summary>The value every kind reads as 1 when the Obj has one.</summary>
 	public const int Has = 0;

@@ -443,6 +443,7 @@ VertexOut dicedPoint(uint vertexId, uint drawId)
     o.previousClip = transform(frame->prevViewProj, before);
     o.moved = 0.0;
     o.hidden = 0.0;
+    o.lightmapUv = 0.0;
     return o;
 }
 

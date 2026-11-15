@@ -9,10 +9,11 @@ How a level looks comes from these:
 3. [[Weather]]: cloud, fog, wind, rain and snow over the level's lighting, which scripts can turn.
 4. [[Storms]]: weather with a place, that drifts over the level, rains where it is mild and snows where it is cold.
 5. [[Bounced Light]]: light reflecting from one surface onto the next.
-6. [[Reflection Probes]]: what shiny surfaces reflect of the room round them.
-7. [[Cameras]]: what the player sees through, and how bright the picture is.
-8. [[Post-Processing]]: the finishing touches on the picture, such as glow, mist and colour.
-9. [[HDR Displays]]: showing highlights brighter than white on a screen that can.
+6. [[Lightmaps and Light Probes]]: bounced light baked once and saved with the level.
+7. [[Reflection Probes]]: what shiny surfaces reflect of the room round them.
+8. [[Cameras]]: what the player sees through, and how bright the picture is.
+9. [[Post-Processing]]: the finishing touches on the picture, such as glow, mist and colour.
+10. [[HDR Displays]]: showing highlights brighter than white on a screen that can.
 
 [[Lighting Settings]] keep a level's sky, sun, post-processing and weather together in one file, to light any scene with or to change to as the game runs.
 

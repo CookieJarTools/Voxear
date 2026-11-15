@@ -485,6 +485,37 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{}",
     },
     CallInfo {
+        name: "lighting.bake",
+        about: "Bakes the open level's lighting, as Bake Lighting does: the light falling on every Obj with a Lightmap goes into lightmaps, and on every Light Probe Group's probes into spherical harmonics, traced on the GPU at the level's [post.global_illumination] settings, then written beside the level as its .lightmaps file, which the game loads with the level. Answers once it is written.",
+        args: &[],
+        changes: true,
+        returns: "{ file, bytes, parts, lightmaps, probes, texels, seconds }",
+    },
+    CallInfo {
+        name: "lighting.bake_cancel",
+        about: "Gives up the lighting bake under way, if one is: the level keeps the bake it had.",
+        args: &[],
+        changes: false,
+        returns: "{ cancelled }",
+    },
+    CallInfo {
+        name: "lighting.bake_status",
+        about: "Whether a lighting bake is under way and how far it has gone, from 0 to 1, how the last one ended, and how many lightmaps and light probes the open level has baked.",
+        args: &[],
+        changes: false,
+        returns: "{ baking, progress, last, lightmaps, probes }",
+    },
+    CallInfo {
+        name: "lighting.probe_light",
+        about: "The baked light probes' light at a point, blended from the probes round it as an Obj there is lit: the light a surface facing `normal` takes, the average from every way, and the nine spherical harmonics, red, green and blue each.",
+        args: &[
+            arg("position", ArgKind::Vector, "Metres, in the world."),
+            maybe("normal", ArgKind::Vector, "The way the surface faces; up when left out."),
+        ],
+        changes: false,
+        returns: "{ found, light, average, harmonics }",
+    },
+    CallInfo {
         name: "reflection_probes.bake",
         about: "Bakes the open level's reflection probes, as Bake Reflection Probes does: each probe captured once is captured again, then written beside the level as its .probes file, which the game loads with the level. Answers once it is written.",
         args: &[],
@@ -962,6 +993,8 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::PostVolume
             | Part::ReflectionProbe
             | Part::ReverbProbe
+            | Part::Lightmap
+            | Part::LightProbeGroup
             | Part::WindZone
             | Part::ParticleSystem
             | Part::ForceField
@@ -1304,6 +1337,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Font => ("font", false),
         AssetKind::Paths => ("paths", false),
         AssetKind::ReflectionProbes => ("probes", false),
+        AssetKind::Lightmaps => ("lightmaps", false),
         AssetKind::AssetTable => ("assettable", true),
         AssetKind::LightProfile => ("lightprofile", true),
         AssetKind::Lighting => ("lighting", true),

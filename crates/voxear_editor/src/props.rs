@@ -2039,13 +2039,19 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                     Prop::LightCookie,
                     Prop::LightCookieSize,
                 ]),
-                LightKind::Point => props.push(Prop::LightProfile),
-                LightKind::Spot => props.extend([Prop::SpotInner, Prop::SpotOuter, Prop::LightCookie, Prop::LightProfile]),
+                LightKind::Point => props.extend([Prop::LightProfile, Prop::LightRadius]),
+                LightKind::Spot => props.extend([
+                    Prop::SpotInner,
+                    Prop::SpotOuter,
+                    Prop::LightCookie,
+                    Prop::LightProfile,
+                    Prop::LightRadius,
+                ]),
                 LightKind::Rectangle => props.extend([Prop::LightWidth, Prop::LightHeight]),
                 LightKind::Disc => props.push(Prop::LightRadius),
                 LightKind::Tube => props.extend([Prop::LightLength, Prop::LightRadius]),
             }
-            if kind.has_shape() {
+            if kind != LightKind::Directional {
                 props.push(Prop::LightSoftShadows);
             }
             props.push(Prop::LightMode);

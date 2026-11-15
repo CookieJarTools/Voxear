@@ -143,10 +143,26 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     float radius = meshlet.radius * culler.scale + culler.grow;
     if (culler.list >= LIST_LOCAL_SHADOW)
     {
+        // A lamp page's draw tests its own page.
+        if (push.level >= LAMP_PAGE_VIEW)
+        {
+            Mat4 page = lampPageViewProj(frame, push.level - LAMP_PAGE_VIEW);
+            return insideProjection(page, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+        }
         return insideLocalShadow(frame, culler.list - LIST_LOCAL_SHADOW, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
     }
     if (culler.list >= LIST_SHADOW)
     {
+        // A virtual shadow page's draw tests its own page; a pass for pages, their level's.
+        if (push.level >= VSM_PAGE_VIEW)
+        {
+            return insideVsmPage(frame, push.level - VSM_PAGE_VIEW, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+        }
+        uint level = vsmCullLevel(frame, culler.list, push.level, push.output);
+        if (level < VSM_LEVELS)
+        {
+            return insideVsmLevel(frame, level, push.level == VSM_CULL_MOVING, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+        }
         return insidePlanes(frame->cascadePlanes[culler.list - LIST_SHADOW], center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
     }
     if (!insidePlanes(frame->planes, center, radius))

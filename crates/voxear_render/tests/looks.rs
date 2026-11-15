@@ -67,6 +67,8 @@ fn floor_under(renderer: &mut Renderer, canopy: f32) -> Vec<u8> {
         shadow_distance: voxear_render::SHADOW_DISTANCE,
         shadow_split: voxear_render::SHADOW_SPLIT,
         canopy,
+        sun_shadows: voxear_render::SunShadows::Virtual,
+        lamp_shadows: voxear_render::LampShadows::Virtual,
     });
     world.insert_resource(plain_post());
     render(renderer, &world)

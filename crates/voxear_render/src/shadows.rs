@@ -25,6 +25,66 @@ pub const SHADOW_DISTANCE: f32 = 80.0;
 /// sharp, and even spacing (0), which gives the far ones more.
 pub const SHADOW_SPLIT: f32 = 0.85;
 
+/// How the sun's shadows are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SunShadows {
+    /// Virtual shadow maps (see `vsm`): only the pages of a large shadow
+    /// map the view needs, as fine as each pixel needs them, kept from frame
+    /// to frame; sharp by the camera and out to kilometres, with no seams.
+    #[default]
+    Virtual,
+    /// Four cascades over the shadow distance, drawn every frame.
+    Cascades,
+}
+
+impl SunShadows {
+    pub const ALL: [Self; 2] = [Self::Virtual, Self::Cascades];
+
+    /// Its name in lighting files and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Virtual => "virtual",
+            Self::Cascades => "cascades",
+        }
+    }
+
+    /// The way named so, if any.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|way| way.name() == name)
+    }
+}
+
+/// How lamps' shadows are drawn: local lights casting shadows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LampShadows {
+    /// Virtual shadow maps (see `lamp_vsm`): only the pages of each view
+    /// the view needs, as fine as each pixel needs them, up to eight times
+    /// the atlas's, kept while the lamp stands still; what moves is drawn
+    /// into the atlas each frame.
+    #[default]
+    Virtual,
+    /// A view of the atlas each, of what stands still kept while the lamp
+    /// does.
+    Atlas,
+}
+
+impl LampShadows {
+    pub const ALL: [Self; 2] = [Self::Virtual, Self::Atlas];
+
+    /// Its name in lighting files and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Virtual => "virtual",
+            Self::Atlas => "atlas",
+        }
+    }
+
+    /// The way named so, if any.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|way| way.name() == name)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Cascade {
     pub view_proj: Mat4,

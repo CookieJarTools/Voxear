@@ -80,6 +80,7 @@ mod previews;
 mod scene;
 pub mod sea;
 mod seasons;
+mod lamp_vsm;
 mod shadow_cache;
 mod shadows;
 mod sound_rays;
@@ -87,6 +88,7 @@ mod texture_codec;
 mod ui_pass;
 mod ui_panels;
 mod volumetric;
+mod vsm;
 mod water;
 pub mod water_bodies;
 pub mod weather;
@@ -143,7 +145,7 @@ pub use previews::{
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
 pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
-pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
+pub use shadows::{LampShadows, SHADOW_DISTANCE, SHADOW_SPLIT, SunShadows};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeResolution, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
 pub use sound_rays::{
@@ -256,6 +258,16 @@ pub struct RenderStats {
     /// The simulated particles: how many are alive, and what their systems
     /// hold of the project's budget.
     pub particles: ParticleCounts,
+    /// The main view's virtual shadow pages for the sun: how many it holds
+    /// in its pool, how many it drew this frame, and how many it copied for
+    /// what moves to be drawn over.
+    pub virtual_shadow_pages: u32,
+    pub virtual_shadow_drawn: u32,
+    pub virtual_shadow_moving: u32,
+    /// The main view's virtual shadow pages for lamps: how many it holds in
+    /// its pool, and how many it drew this frame.
+    pub lamp_shadow_pages: u32,
+    pub lamp_shadow_drawn: u32,
 }
 
 impl RenderStats {
@@ -285,6 +297,11 @@ impl RenderStats {
             average_luminance: exposure[2],
             blocks: BlockCounts::default(),
             particles: ParticleCounts::default(),
+            virtual_shadow_pages: 0,
+            virtual_shadow_drawn: 0,
+            virtual_shadow_moving: 0,
+            lamp_shadow_pages: 0,
+            lamp_shadow_drawn: 0,
         }
     }
 }
@@ -430,11 +447,69 @@ struct FrameBuffers {
     /// The meshlets the cull queues for the meshlet pass, laid out as the lists.
     meshlet_work: Buffer,
     meshlet_capacity: u32,
+    /// The sun's virtual shadow pages' table and what the frame asks for,
+    /// made when first needed (see `vsm`).
+    vsm: Option<VsmBuffers>,
+    /// The same for the lamps' virtual shadow pages (see `lamp_vsm`).
+    lamp_vsm: Option<VsmBuffers>,
     /// What its buffers' names start with.
     prefix: String,
 }
 
+/// A frame in flight's virtual shadow buffers: the page table it reads,
+/// and the pages its view asks for, in GPU memory, where the requests'
+/// atomics are fast, and copied out for the CPU to read when the frame comes
+/// round again, if it asked.
+struct VsmBuffers {
+    /// The page table as the CPU writes it, and the copy in GPU memory
+    /// shading reads, as each pixel reads it once a light.
+    table: Buffer,
+    gpu_table: Buffer,
+    requests: Buffer,
+    readback: Buffer,
+    asked: bool,
+}
+
+impl VsmBuffers {
+    /// Buffers named from `name`, for a table and requests of so many words.
+    fn new(gpu: &Gpu, name: &str, slot: usize, (table_words, request_words): (usize, usize)) -> Result<Self> {
+        let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
+        let (table_size, source) = ((table_words * 4) as u64, vk::BufferUsageFlags::TRANSFER_SRC);
+        let table = gpu.create_buffer(&format!("{name} table {slot}"), table_size, source, MemoryLocation::CpuToGpu)?;
+        let usage = storage | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC;
+        let gpu_table =
+            gpu.create_buffer(&format!("{name} gpu table {slot}"), table_size, usage, MemoryLocation::GpuOnly)?;
+        let size = (request_words * 4) as u64;
+        let requests = gpu.create_buffer(&format!("{name} requests {slot}"), size, usage, MemoryLocation::GpuOnly)?;
+        let readback = gpu.create_buffer(
+            &format!("{name} requests readback {slot}"),
+            size,
+            vk::BufferUsageFlags::TRANSFER_DST,
+            MemoryLocation::GpuToCpu,
+        )?;
+        Ok(Self { table, gpu_table, requests, readback, asked: false })
+    }
+}
+
 impl FrameBuffers {
+    /// Makes the virtual shadow buffers, the first time they are needed.
+    fn fit_vsm(&mut self, gpu: &Gpu, slot: usize) -> Result<&mut VsmBuffers> {
+        if self.vsm.is_none() {
+            let words = (vsm::LEVELS * (vsm::WINDOW * vsm::WINDOW) as usize, vsm::REQUEST_WORDS);
+            self.vsm = Some(VsmBuffers::new(gpu, &format!("{}vsm", self.prefix), slot, words)?);
+        }
+        Ok(self.vsm.as_mut().expect("made above"))
+    }
+
+    /// Makes the lamps' virtual shadow buffers, the first time they are needed.
+    fn fit_lamp_vsm(&mut self, gpu: &Gpu, slot: usize) -> Result<&mut VsmBuffers> {
+        if self.lamp_vsm.is_none() {
+            let words = (lamp_vsm::TABLE_WORDS, lamp_vsm::REQUEST_WORDS);
+            self.lamp_vsm = Some(VsmBuffers::new(gpu, &format!("{}lamp vsm", self.prefix), slot, words)?);
+        }
+        Ok(self.lamp_vsm.as_mut().expect("made above"))
+    }
+
     /// Makes sure the meshlet lists have room for `needed`, making them
     /// again half as large again when they do not, so a growing scene does
     /// not make them every frame. The caller has waited for this slot's last
@@ -758,7 +833,17 @@ impl Renderer {
     }
 
     pub fn stats(&self) -> RenderStats {
-        RenderStats { blocks: self.views[0].block_counts, ..self.stats }
+        let [virtual_shadow_pages, virtual_shadow_drawn, virtual_shadow_moving] = self.views[0].vsm_counts;
+        let [lamp_shadow_pages, lamp_shadow_drawn] = self.views[0].lamp_counts;
+        RenderStats {
+            blocks: self.views[0].block_counts,
+            virtual_shadow_pages,
+            virtual_shadow_drawn,
+            virtual_shadow_moving,
+            lamp_shadow_pages,
+            lamp_shadow_drawn,
+            ..self.stats
+        }
     }
 
     /// The first 3D view's camera and look.
@@ -2008,6 +2093,11 @@ struct View {
     top_level_built: Vec<(u64, Vec<voxear_rhi::Instance>)>,
     /// What it drew of its worlds of blocks in its last frame.
     block_counts: BlockCounts,
+    /// The virtual shadow pages it held, drew and copied for what moves in
+    /// its last frame.
+    vsm_counts: [u32; 3],
+    /// The lamps' virtual shadow pages it held and drew in its last frame.
+    lamp_counts: [u32; 2],
     /// Without ray tracing, the scene's hierarchy over its instances and the
     /// instances it names, one pair a frame in flight, made when first needed.
     scene_hierarchies: Vec<Option<(Buffer, Buffer)>>,
@@ -2070,6 +2160,10 @@ struct View {
     /// longer needs, freed once no frame uses them (`retire_fsr3`).
     fsr3: std::sync::Arc<std::sync::Mutex<Option<fsr3::Fsr3State>>>,
     fsr3_retired: std::sync::Arc<std::sync::Mutex<Vec<fsr3::Fsr3State>>>,
+    /// The sun's virtual shadow pages it keeps (see `vsm`).
+    vsm: vsm::VirtualShadows,
+    /// The lamps' virtual shadow pages it keeps (see `lamp_vsm`).
+    lamp_pages: lamp_vsm::LampPages,
 }
 
 /// A view through a Portal, kept by the view it is seen in for as long as
@@ -2230,6 +2324,8 @@ impl View {
             top_levels: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             top_level_built: (0..FRAMES_IN_FLIGHT).map(|_| (0, Vec::new())).collect(),
             block_counts: BlockCounts::default(),
+            vsm_counts: [0; 3],
+            lamp_counts: [0; 2],
             scene_hierarchies: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             output: OutputId::MAIN,
             rect: None,
@@ -2261,6 +2357,8 @@ impl View {
             shadow_cache: shadow_cache::ShadowCache::default(),
             fsr3: Default::default(),
             fsr3_retired: Default::default(),
+            vsm: vsm::VirtualShadows::default(),
+            lamp_pages: lamp_vsm::LampPages::default(),
         })
     }
 
@@ -2322,8 +2420,13 @@ impl View {
                 meshlet_draw_instances,
                 meshlet_work,
                 stats_readback,
+                vsm,
+                lamp_vsm,
                 ..
             } = buffers;
+            for buffer in vsm.into_iter().chain(lamp_vsm).flat_map(|vsm| [vsm.table, vsm.gpu_table, vsm.requests, vsm.readback]) {
+                frames.retire(Retired::Buffer(buffer));
+            }
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
             let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws];
@@ -2764,7 +2867,12 @@ impl View {
         // The local lights' slots of their atlases, and what of the shadows of what stands still they keep.
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let shadowing = !extracted.shadow_lights.is_empty();
-        let caching = shadowing && self.options.local_shadow_cache;
+        // Lamps' virtual shadow pages keep what stands still in place of the kept atlas.
+        let virtual_lamps = shadowing
+            && self.options.local_shadow_cache
+            && portal.is_none()
+            && extracted.lamp_shadows == LampShadows::Virtual;
+        let caching = shadowing && self.options.local_shadow_cache && !virtual_lamps;
         let [atlas_width, atlas_height] = gpu::LOCAL_SHADOW_ATLAS;
         let atlas_desc = ImageDesc::new(atlas_width, atlas_height, DEPTH_FORMAT, depth_usage);
         let local_shadows = match shadowing {
@@ -2775,22 +2883,118 @@ impl View {
             true => Some(fg.history_image(gpu, bindless, "kept local shadows", atlas_desc)?),
             false => None,
         };
-        let lamps = if shadowing {
-            if caching {
-                self.shadow_cache.mark_still(&mut extracted, opaque_count, assets);
-                self.shadow_cache.note_blocks(&setup.blocks);
-            } else {
-                self.shadow_cache.forget();
-            }
+        // The sun's shadows as virtual shadow maps, which, as the lamps' kept shadows, follow what stands still.
+        let virtual_sun = extracted.has_sun && portal.is_none() && extracted.sun_shadows == SunShadows::Virtual;
+        if caching || virtual_sun || virtual_lamps {
+            self.shadow_cache.mark_still(&mut extracted, opaque_count, assets);
+            self.shadow_cache.note_blocks(&setup.blocks);
+            self.shadow_cache.note_terrains(&setup.terrains);
+        } else {
+            self.shadow_cache.forget();
+        }
+        let mut lamps = if shadowing {
             let fresh = kept_shadows.is_some_and(|kept| fg.is_new(kept));
             let lights = std::mem::take(&mut extracted.shadow_lights);
             let parts = (&mut extracted.frame.local_shadows, extracted.lights.as_mut_slice());
-            let (lamps, views) = self.shadow_cache.give_slots(&lights, parts, (caching, fresh, setup.frame_index));
+            let keeping = (caching || virtual_lamps, fresh, setup.frame_index);
+            let (lamps, views) = self.shadow_cache.give_slots(&lights, parts, keeping);
             extracted.local_shadows = views;
             lamps
         } else {
-            self.shadow_cache.forget();
             shadow_cache::Lamps::default()
+        };
+        // The lamps' pages: a lamp is read from them, and keeps what stands still out of the atlas, once it stands
+        // still and its coarsest pages are drawn; those it draws this frame take what stands still into them.
+        let lamp_pages = match virtual_lamps {
+            true => {
+                let desc = ImageDesc::new(lamp_vsm::POOL, lamp_vsm::POOL, DEPTH_FORMAT, depth_usage);
+                let pool = fg.history_image(gpu, bindless, "lamp virtual shadow pool", desc)?;
+                if fg.is_new(pool) {
+                    self.lamp_pages.forget();
+                }
+                let buffers = self.buffers[slot].fit_lamp_vsm(gpu, slot)?;
+                let read = buffers.readback.read();
+                let asked: Option<&[u32]> =
+                    buffers.asked.then(|| bytemuck::cast_slice(&read[..lamp_vsm::REQUEST_WORDS * 4]));
+                let shadows = &extracted.frame.local_shadows;
+                let views: Vec<Vec<gpu::Mat4Cols>> = extracted
+                    .local_shadows
+                    .iter()
+                    .map(|&(first, count)| shadows.view_proj[first as usize..(first + count) as usize].to_vec())
+                    .collect();
+                // The tangent of half the angle each slot's views take in, border and all, from their first row.
+                let tan_halves: [f32; gpu::LOCAL_SHADOW_LIGHTS] = std::array::from_fn(|at| {
+                    views.get(at).and_then(|views| views.first()).map_or(1.0, |view| {
+                        let across = voxear_core::math::Vec3::new(view[0][0], view[1][0], view[2][0]).length();
+                        1.0 / across.max(1e-6)
+                    })
+                });
+                let (changed, everything) = self.shadow_cache.for_lamps();
+                let input =
+                    lamp_vsm::LampInput { views, frame_index: setup.frame_index, slot, asked, changed, everything };
+                let drawn = self.lamp_pages.update(input);
+                self.lamp_counts = [drawn.held as u32, drawn.drawn.len() as u32];
+                buffers.table.write(0, &drawn.table);
+                buffers.asked = true;
+                lamps.cached &= drawn.ready;
+                lamps.redraw = drawn.drawing();
+                extracted.frame.local_shadows.cached = lamps.cached;
+                let addresses = (buffers.gpu_table.address, buffers.requests.address);
+                let textures = fg.texture(pool).0;
+                extracted.frame.lamp_vsm =
+                    lamp_vsm::gpu(&drawn, &extracted.local_shadows, &tan_halves, addresses, textures);
+                Some((pool, drawn))
+            }
+            false => {
+                self.lamp_pages.forget();
+                self.lamp_counts = [0; 2];
+                None
+            }
+        };
+        let (moving, changed, everything) = self.shadow_cache.take_for_sun();
+        let virtual_shadows = match virtual_sun {
+            true => {
+                let desc = ImageDesc::new(vsm::POOL, vsm::POOL, DEPTH_FORMAT, depth_usage);
+                let pool = fg.history_image(gpu, bindless, "virtual shadow pool", desc)?;
+                if fg.is_new(pool) {
+                    self.vsm.forget();
+                }
+                let buffers = self.buffers[slot].fit_vsm(gpu, slot)?;
+                let read = buffers.readback.read();
+                let asked: Option<&[u32]> =
+                    buffers.asked.then(|| bytemuck::cast_slice(&read[..vsm::REQUEST_WORDS * 4]));
+                let input = vsm::VsmInput {
+                    sun: voxear_core::math::Vec3::from(extracted.frame.sun_direction),
+                    camera: voxear_core::math::Vec3::from(extracted.frame.camera_position),
+                    frame_index: setup.frame_index,
+                    slot,
+                    asked,
+                    moving,
+                    changed: &changed,
+                    everything,
+                };
+                let drawn = self.vsm.update(input);
+                self.vsm_counts = [drawn.held as u32, drawn.drawn.len() as u32, drawn.moving.len() as u32];
+                buffers.table.write(0, &drawn.table);
+                buffers.asked = true;
+                // This frame's copies of the pages what moves stands in, with it drawn over them.
+                let moving_pool = match drawn.moving.is_empty() {
+                    false => {
+                        let usage = depth_usage | vk::ImageUsageFlags::TRANSFER_DST;
+                        let desc = ImageDesc::new(vsm::MOVING_POOL, vsm::MOVING_POOL, DEPTH_FORMAT, usage);
+                        Some(fg.create_image(gpu, bindless, "virtual shadow moving pool", desc)?)
+                    }
+                    true => None,
+                };
+                let textures = (fg.texture(pool).0, moving_pool.map_or(NO_TEXTURE, |image| fg.texture(image).0));
+                extracted.frame.vsm = vsm::gpu(&drawn, (buffers.gpu_table.address, buffers.requests.address), textures);
+                Some((pool, drawn, moving_pool))
+            }
+            false => {
+                self.vsm.forget();
+                self.vsm_counts = [0; 3];
+                None
+            }
         };
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
         let taa_reset = self.taa_history != Some(extent);
@@ -2824,8 +3028,15 @@ impl View {
         let tracks_id = fg.import_buffer(&self.tracks);
         let no_terrains: &[terrain::Drawn] = &[];
         let terrains = if portal.is_some() { no_terrains } else { &setup.terrains };
+        // Each level of the sun's virtual shadow maps with pages drawn this frame, and the planes round them.
+        let sun_pages: Vec<(usize, [[f32; 4]; 6])> = virtual_shadows
+            .as_ref()
+            .map(|(_, drawn, _)| {
+                drawn.levels().into_iter().map(|level| (level, extracted.frame.vsm.planes[level])).collect()
+            })
+            .unwrap_or_default();
         let view_terrains =
-            terrain::gather(terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
+            terrain::gather(terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain, &lamps, &sun_pages)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let view_blocks = blocks::gather(
@@ -2834,6 +3045,7 @@ impl View {
             &buffers.blocks,
             (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows, portal.is_none()),
             &lamps,
+            &sun_pages,
         );
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
@@ -2864,7 +3076,7 @@ impl View {
         };
         let pyramid_desc = pyramid_desc(extent);
         let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
-        let shadows = if extracted.has_sun && sun_shadows {
+        let shadows = if extracted.has_sun && sun_shadows && virtual_shadows.is_none() {
             // A quarter the size through a Portal, whose far side shows in part of the picture.
             let side = if portal.is_some() { ATLAS_RESOLUTION / 2 } else { ATLAS_RESOLUTION };
             let desc = ImageDesc::new(side, side, DEPTH_FORMAT, depth_usage);
@@ -3114,7 +3326,8 @@ impl View {
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
         };
         // Glass filters the light of whatever casts shadows through it.
-        let glass_shadows = match !panes.is_empty() && (shadows.is_some() || local_shadows.is_some()) {
+        let sunlit_glass = shadows.is_some() || virtual_shadows.is_some();
+        let glass_shadows = match !panes.is_empty() && (sunlit_glass || local_shadows.is_some()) {
             true => Some((glass::Shadows::new(fg, (gpu, bindless))?, panes.clone())),
             false => None,
         };
@@ -3456,6 +3669,21 @@ impl View {
             }
             _ => (None, None),
         };
+        let requests_ids = self.buffers[slot]
+            .vsm
+            .as_ref()
+            .filter(|_| virtual_shadows.is_some())
+            .map(|vsm| (fg.import_buffer(&vsm.requests), fg.import_buffer(&vsm.readback), table_copy(fg, vsm)));
+        let lamp_pages = lamp_pages.map(|(pool, drawn)| {
+            let buffers = self.buffers[slot].lamp_vsm.as_ref().expect("made with the pool");
+            passes::LampPages {
+                pool,
+                drawn: drawn.drawn.iter().map(|(page, slot)| (u32::from(page.slot), *slot)).collect(),
+                requests: (fg.import_buffer(&buffers.requests), buffers.requests.handle),
+                readback: (fg.import_buffer(&buffers.readback), buffers.readback.handle),
+                table: table_copy(fg, buffers),
+            }
+        });
         let targets = passes::Targets {
             hdr,
             velocity,
@@ -3467,11 +3695,42 @@ impl View {
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
             shadows,
             cascade_size: if portal.is_some() { shadows::CASCADE_RESOLUTION / 2 } else { shadows::CASCADE_RESOLUTION },
+            virtual_shadows: virtual_shadows.as_ref().map(|(pool, drawn, moving_pool)| {
+                let buffers = self.buffers[slot].vsm.as_ref().expect("made with the pool");
+                let (requests, readback) = (buffers.requests.handle, buffers.readback.handle);
+                let mut levels: Vec<(usize, Vec<(u32, u16)>)> = Vec::new();
+                for (page, (key, slot)) in drawn.drawn.iter().enumerate() {
+                    match levels.last_mut() {
+                        Some((level, pages)) if *level == key.level as usize => pages.push((page as u32, *slot)),
+                        _ => levels.push((key.level as usize, vec![(page as u32, *slot)])),
+                    }
+                }
+                let (requests_id, readback_id, table) = requests_ids.expect("imported");
+                // After the pages drawn, those what moves stands in, by level: each its place among the frame's pages,
+                // its slot, and its slot in the moving pool.
+                let mut moving: Vec<(usize, Vec<(u32, u16, u16)>)> = Vec::new();
+                for (at, (key, slot, moving_slot)) in drawn.moving.iter().enumerate() {
+                    let page = (drawn.drawn.len() + at) as u32;
+                    match moving.last_mut() {
+                        Some((level, pages)) if *level == key.level as usize => pages.push((page, *slot, *moving_slot)),
+                        _ => moving.push((key.level as usize, vec![(page, *slot, *moving_slot)])),
+                    }
+                }
+                passes::VirtualShadows {
+                    pool: *pool,
+                    levels,
+                    moving: moving_pool.map(|image| (image, moving)),
+                    requests: (requests_id, requests),
+                    readback: (readback_id, readback),
+                    table,
+                }
+            }),
             local_shadows: local_shadows.map(|atlas| passes::LocalShadows {
                 atlas,
                 kept: kept_shadows,
                 views: extracted.local_shadows.clone(),
                 lamps: lamps.clone(),
+                pages: lamp_pages,
             }),
             glass_shadows,
         };
@@ -3826,6 +4085,15 @@ fn free_portal_views(
 const PORTAL_VIEW_NUMBERS: usize = 64;
 
 /// A triangle over all of `target`, drawn with `pipeline`.
+/// The copy of a page table the CPU wrote into the one shading reads.
+fn table_copy(fg: &mut FrameGraph<'_>, buffers: &VsmBuffers) -> passes::TableCopy {
+    passes::TableCopy {
+        from: (fg.import_buffer(&buffers.table), buffers.table.handle),
+        to: (fg.import_buffer(&buffers.gpu_table), buffers.gpu_table.handle),
+        size: buffers.table.size,
+    }
+}
+
 /// Copies the view's own depth into `kept`, as it is once its surfaces are
 /// drawn and before its sky, water and glass, for [`lay_nearer_depth`].
 fn keep_own_depth(fg: &mut FrameGraph<'_>, (pipelines, push): (&Pipelines, Push), depth: ImageId, kept: ImageId) {
@@ -4072,6 +4340,8 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         meshlet_draw_instances,
         meshlet_work,
         meshlet_capacity: FIRST_MESHLET_CAPACITY,
+        vsm: None,
+        lamp_vsm: None,
         prefix: prefix.to_string(),
     })
 }

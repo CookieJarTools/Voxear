@@ -36,7 +36,11 @@ void shadowMesh(
         float4 world = transform(drawn.data.model, float4(v.position, 1.0));
         Instance data = drawn.data;
         float3 normal = normalize(data.normal0.xyz * v.normal.x + data.normal1.xyz * v.normal.y + data.normal2.xyz * v.normal.z);
-        world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
+        // A virtual shadow page is kept from frame to frame, so what sways is drawn into it at rest.
+        if (push.level < VSM_PAGE_VIEW)
+        {
+            world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
+        }
         if (material.shader != STANDARD_SHADER)
         {
             float3 level = levelPosition(push.frame, world.xyz, 4096.0);

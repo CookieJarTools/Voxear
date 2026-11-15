@@ -211,6 +211,11 @@ pub const INSTANCE_RAYS_ONLY: u32 = 32;
 /// its shadow from frame to frame (see `shadow_cache`).
 pub const INSTANCE_STILL: u32 = 64;
 
+/// An instance that moves, as the sun's virtual shadow maps see it: drawn
+/// over a copy of the still part of each page it is in, every frame (see
+/// `vsm`). A Foliage's plants never count as moving.
+pub const INSTANCE_MOVING: u32 = 1 << 16;
+
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
 /// Area lights, shining from one face along their direction.
@@ -441,6 +446,8 @@ pub struct GpuFrame {
     /// one that cuts nothing for every other view.
     pub cut: [f32; 4],
     pub bake: GpuBake,
+    pub vsm: GpuVirtualShadows,
+    pub lamp_vsm: GpuLampShadows,
 }
 
 /// How the level's bake lights it, as `Bake` in the shaders: its lights come
@@ -522,6 +529,98 @@ pub struct GpuBakeJob {
     pub bounces: u32,
     pub pad: [u32; 2],
 }
+
+/// The lamps' virtual shadow maps this frame, as shaders read them
+/// (`LampShadows` in `shaders/common.slang`; see `lamp_vsm`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuLampShadows {
+    /// The page table: a word a page of every level of every view of every
+    /// slot, its slot of the pool plus one, or 0 for none.
+    pub table: u64,
+    /// Where each frame's requests go: a bit a page.
+    pub requests: u64,
+    /// The pool, or `NO_TEXTURE` while lamps' shadows are drawn whole into
+    /// the atlas.
+    pub pool: u32,
+    /// How many pages this frame draws.
+    pub drawn: u32,
+    /// Added to the level each pixel asks for: below 0 for sharper shadows,
+    /// above for coarser and cheaper.
+    pub bias: f32,
+    pub pad: u32,
+    /// Each slot's first view and how many it has, and the tangent of half
+    /// the angle a view takes in, border and all.
+    pub lights: [[f32; 4]; LOCAL_SHADOW_LIGHTS],
+    /// The pages drawn this frame: view, level, column and row.
+    pub pages: [[i32; 4]; crate::lamp_vsm::PAGES_A_FRAME],
+}
+
+impl Default for GpuLampShadows {
+    fn default() -> Self {
+        Self { pool: NO_TEXTURE, ..bytemuck::Zeroable::zeroed() }
+    }
+}
+
+/// Where a lamp's virtual shadow page's draws are told apart from its
+/// views': a view at this or past it is page `view - LAMP_PAGE_VIEW` of
+/// this frame's (`GpuLampShadows::pages`).
+pub const LAMP_PAGE_VIEW: u32 = 0x20000;
+
+/// The sun's virtual shadow maps this frame, as shaders read them
+/// (`VirtualShadows` in `shaders/common.slang`; see `vsm`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuVirtualShadows {
+    /// The sun's space: across, up and along its light; the finest level's
+    /// texel, and where its depth starts and how far it reaches, in metres.
+    pub right: [f32; 3],
+    pub finest_texel: f32,
+    pub up: [f32; 3],
+    pub depth_min: f32,
+    pub direction: [f32; 3],
+    pub depth_range: f32,
+    /// The page table: each level's window of pages, a slot plus one each,
+    /// or 0 for none (`VsmFrame::table`).
+    pub table: u64,
+    /// Where each frame's requests go: a bit a page of each window.
+    pub requests: u64,
+    /// The pool, or `NO_TEXTURE` while the sun's shadows are cascades.
+    pub pool: u32,
+    /// How many pages this frame draws.
+    pub drawn: u32,
+    /// Added to the level each pixel asks for: below 0 for sharper shadows,
+    /// above for coarser and cheaper.
+    pub bias: f32,
+    /// The moving pool, or `NO_TEXTURE` when nothing moves in any page.
+    pub moving_pool: u32,
+    /// Each level's window's first page: column and row.
+    pub origins: [[i32; 4]; crate::vsm::LEVELS],
+    /// Inward planes round each level's pages drawn this frame, the sixth
+    /// cutting nothing, which culling tests them against.
+    pub planes: [[[f32; 4]; 6]; crate::vsm::LEVELS],
+    /// The same round each level's pages what moves stands in this frame.
+    pub moving_planes: [[[f32; 4]; 6]; crate::vsm::LEVELS],
+    /// The pages drawn this frame, then those what moves stands in: level,
+    /// slot (in the moving pool for the latter), column and row.
+    pub pages: [[i32; 4]; crate::vsm::PAGES_A_FRAME + crate::vsm::MOVING_SLOTS],
+}
+
+impl Default for GpuVirtualShadows {
+    fn default() -> Self {
+        Self { pool: NO_TEXTURE, moving_pool: NO_TEXTURE, ..bytemuck::Zeroable::zeroed() }
+    }
+}
+
+/// Where a virtual shadow page's draws are told apart from a cascade's: a
+/// view at this or past it is page `view - VSM_PAGE_VIEW` of this frame's
+/// (`GpuVirtualShadows::pages`).
+pub const VSM_PAGE_VIEW: u32 = 0x10000;
+/// The cull that lists casters for virtual shadow pages, in `Push::level`,
+/// with each list's level in a byte of `Push::output`.
+pub const VSM_CULL: u32 = 2;
+/// The same for what moves, drawn over the copies of the pages it stands in.
+pub const VSM_CULL_MOVING: u32 = 3;
 
 /// The plane in `GpuFrame::cut` that cuts nothing.
 pub const NO_CUT: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -1539,10 +1638,17 @@ mod tests {
         let tracks = 32 * crate::tracks::MAX_TRACK_MAKERS + 32;
         assert_eq!(size_of::<crate::tracks::GpuTracks>(), tracks);
         assert_eq!(size_of::<GpuLocalShadows>(), local_shadows);
+        // The sun's space and the pool's words, then each level's origin and planes, then each page drawn.
+        let vsm = 48 + 32 + 16 * crate::vsm::LEVELS * 13 + 16 * (crate::vsm::PAGES_A_FRAME + crate::vsm::MOVING_SLOTS);
+        assert_eq!(size_of::<GpuVirtualShadows>(), vsm);
+        let lamp_vsm = 32 + 16 * LOCAL_SHADOW_LIGHTS + 16 * crate::lamp_vsm::PAGES_A_FRAME;
+        assert_eq!(size_of::<GpuLampShadows>(), lamp_vsm);
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
             64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
+                + vsm
+                + lamp_vsm
         );
         assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuOcean>(), 352);

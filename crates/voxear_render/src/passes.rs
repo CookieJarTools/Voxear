@@ -30,7 +30,9 @@ use crate::{
     ambient_occlusion, atmosphere, ddgi, glass,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
-        LIST_LOCAL_SHADOW, LIST_SHADOW, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS, LOCAL_SHADOW_TILE, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
+        LAMP_PAGE_VIEW, LIST_LOCAL_SHADOW, LIST_SHADOW, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS, LOCAL_SHADOW_TILE, Push, VSM_CULL,
+        VSM_CULL_MOVING, VSM_PAGE_VIEW, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list,
+        stat,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
@@ -54,9 +56,29 @@ pub struct Targets {
     /// The local lights' shadow atlases, when any local light casts a
     /// shadow this frame.
     pub local_shadows: Option<LocalShadows>,
+    /// The sun's virtual shadow maps, in place of `shadows`.
+    pub virtual_shadows: Option<VirtualShadows>,
     /// The glass shadow atlas and the panes drawn into it, when glass is in
     /// view and the sun or a local light casts shadows.
     pub glass_shadows: Option<(glass::Shadows, Vec<glass::Pane>)>,
+}
+
+/// What a view's virtual shadow maps draw into and read (see `vsm`): the
+/// pool; each level with pages drawn this frame and those pages, each by
+/// its place among the frame's pages and its slot; and where the view asks
+/// for the pages it needs.
+#[derive(Clone)]
+pub struct VirtualShadows {
+    pub pool: ImageId,
+    pub levels: Vec<(usize, Vec<(u32, u16)>)>,
+    /// The moving pool and, by level, the pages what moves stands in this
+    /// frame: each its place among the frame's pages, its slot in the pool
+    /// and in the moving pool.
+    pub moving: Option<(ImageId, Vec<(usize, Vec<(u32, u16, u16)>)>)>,
+    pub requests: (BufferId, vk::Buffer),
+    /// Where the requests are copied for the CPU to read.
+    pub readback: (BufferId, vk::Buffer),
+    pub table: TableCopy,
 }
 
 /// What a view's local lights' shadows draw into: the local shadow atlas;
@@ -69,6 +91,42 @@ pub struct LocalShadows {
     pub kept: Option<ImageId>,
     pub views: Vec<(u32, u32)>,
     pub lamps: crate::shadow_cache::Lamps,
+    /// The lamps' virtual shadow pages, where lamps have them.
+    pub pages: Option<LampPages>,
+}
+
+/// The lamps' virtual shadow pages a frame draws (see `lamp_vsm`): the
+/// pool; each page drawn, in the frame's order, by its lamp's slot and its
+/// slot of the pool; and the frame's requests and where they are copied
+/// for the CPU.
+#[derive(Clone)]
+pub struct LampPages {
+    pub pool: ImageId,
+    pub drawn: Vec<(u32, u16)>,
+    pub requests: (BufferId, vk::Buffer),
+    pub readback: (BufferId, vk::Buffer),
+    pub table: TableCopy,
+}
+
+/// A page table as the CPU wrote it this frame, and the buffer in GPU
+/// memory shading reads it from, and its size.
+#[derive(Clone, Copy)]
+pub struct TableCopy {
+    pub from: (BufferId, vk::Buffer),
+    pub to: (BufferId, vk::Buffer),
+    pub size: u64,
+}
+
+/// Copies a page table into the buffer shading reads, before anything
+/// reads it.
+fn copy_table(fg: &mut FrameGraph<'_>, name: &str, table: TableCopy) {
+    let ((from, from_handle), (to, to_handle)) = (table.from, table.to);
+    let copying = [(from, BufferAccess::TransferRead), (to, BufferAccess::TransferWrite)];
+    fg.add_pass(name, &[], &copying, move |ctx| unsafe {
+        let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: table.size };
+        ctx.gpu.device.cmd_copy_buffer(ctx.cmd, from_handle, to_handle, &[region]);
+    });
+    fg.sync_buffer(to, BufferAccess::ShaderRead);
 }
 
 pub struct Draws {
@@ -333,18 +391,27 @@ pub fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    if let Some(vsm) = targets.virtual_shadows.clone() {
+        record_virtual_shadows(fg, frame, &vsm, (&culling, &meshlet_culling, &drawing), draws, indirect);
+    }
     if let Some(local) = targets.local_shadows.clone() {
         let count = local.views.len() as u32;
-        let blocks = frame.blocks.clone();
+        let (blocks, terrains) = (frame.blocks.clone(), frame.terrain.clone());
         let mut lamp_drawing = drawing.clone();
-        lamp_drawing
-            .extend(blocks.iter().flat_map(|blocks| blocks.pools.iter().map(|&id| (id, BufferAccess::ShaderRead))));
+        let pools = blocks.iter().flat_map(|blocks| blocks.pools.iter());
+        let grounds = terrains.iter().flat_map(|terrains| terrains.heights.iter());
+        lamp_drawing.extend(pools.chain(grounds).map(|&id| (id, BufferAccess::ShaderRead)));
         let tile_at = |view: u32| vk::Offset2D {
             x: (view % LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
             y: (view / LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
         };
         let tile = vk::Extent2D { width: LOCAL_SHADOW_TILE, height: LOCAL_SHADOW_TILE };
         let shadow = mesh.map_or(pipelines.local_shadow, |mesh| mesh.local_shadow);
+        if let Some(pages) = local.pages.clone() {
+            let lamps = (local.lamps.redraw, count);
+            let lists = (&culling[..], &meshlet_culling[..], &lamp_drawing[..]);
+            record_lamp_pages(fg, frame, &pages, lamps, lists, draws, indirect);
+        }
         // What stands still round the lights that draw it again, into their kept views, cleared first.
         if let (Some(kept), true) = (local.kept, local.lamps.redraw != 0) {
             let redraw = local.lamps.redraw;
@@ -359,7 +426,7 @@ pub fn record(
                 );
             });
             meshlet_pass(fg, "Local shadow meshlets (still)", &[], [LIST_LOCAL_SHADOW, LIST_LOCAL_SHADOW + count]);
-            let (views, blocks) = (local.views.clone(), blocks.clone());
+            let (views, blocks, terrains) = (local.views.clone(), blocks.clone(), terrains.clone());
             fg.add_pass("Kept local shadows", &[(kept, ImageAccess::DepthAttachment)], &lamp_drawing, move |ctx| {
                 let [width, height] = LOCAL_SHADOW_ATLAS;
                 let depth = attachment(ctx.view(kept), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
@@ -394,6 +461,16 @@ pub fn record(
                     for &(slot, view) in drawn.iter().filter(|(slot, _)| blocks.draws_for_lamp(*slot, true)) {
                         set_viewport(ctx, tile_at(view), tile);
                         crate::blocks::draw_lamp_runs(ctx, blocks, &push, slot, true, view);
+                    }
+                }
+                // The ground, drawn for a lamp only when its kept views are.
+                if let Some(terrains) = &terrains {
+                    bind(ctx, pipelines.terrain_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                    for &(slot, view) in
+                        drawn.iter().filter(|(slot, _)| crate::terrain::draws_for_lamp(terrains, *slot))
+                    {
+                        set_viewport(ctx, tile_at(view), tile);
+                        crate::terrain::draw_lamp(ctx, terrains, &push, slot, view);
                     }
                 }
                 unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -460,20 +537,33 @@ pub fn record(
                     crate::blocks::draw_lamp_runs(ctx, blocks, &push, slot, false, view);
                 }
             }
+            // The ground, each frame for a lamp that keeps nothing.
+            if let Some(terrains) = &terrains {
+                bind(ctx, pipelines.terrain_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                let each_frame =
+                    |slot: u32| !lamps.is_cached(slot as usize) && crate::terrain::draws_for_lamp(terrains, slot);
+                for (slot, view) in all().filter(|&(slot, _)| each_frame(slot)) {
+                    set_viewport(ctx, tile_at(view), tile);
+                    crate::terrain::draw_lamp(ctx, terrains, &push, slot, view);
+                }
+            }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
     if let Some((maps, panes)) = targets.glass_shadows.clone() {
         let lights = targets.local_shadows.as_ref().map(|local| local.views.clone()).unwrap_or_default();
-        let sources = (targets.shadows.is_some(), lights);
+        let sources = (targets.shadows.is_some() || targets.virtual_shadows.is_some(), lights);
         glass::record_shadows(fg, (pipelines, push), maps, panes, sources, draws.index_buffer);
     }
     let local_atlas = targets.local_shadows.as_ref().map(|local| local.atlas);
+    let pool = targets.virtual_shadows.as_ref().map(|vsm| vsm.pool);
+    let moving_pool = targets.virtual_shadows.as_ref().and_then(|vsm| vsm.moving.as_ref().map(|(image, _)| *image));
     let kept_atlas = targets.local_shadows.as_ref().and_then(|local| local.kept);
+    let lamp_pool = targets.local_shadows.as_ref().and_then(|local| local.pages.as_ref().map(|pages| pages.pool));
     let glass_maps = targets.glass_shadows.as_ref().map(|(maps, _)| maps.images());
     // What lights pass lamps' shadows and glass through, beside the sun's shadows.
     let shadow_maps: Vec<ImageId> =
-        local_atlas.into_iter().chain(kept_atlas).chain(glass_maps.into_iter().flatten()).collect();
+        local_atlas.into_iter().chain(kept_atlas).chain(lamp_pool).chain(pool).chain(moving_pool).chain(glass_maps.into_iter().flatten()).collect();
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
@@ -691,6 +781,47 @@ pub fn record(
             build_pyramid(ctx, pipelines.pyramid, &push, depth_texture, pyramid_texture, &pyramid_mips, pyramid_size)
         },
     );
+
+    // The pages of the sun's virtual shadow maps the view asks for, from the pyramid's third level, as far as the
+    // early pass drew, read when this frame in flight comes round. The pyramid, not the depth, so the depth's own
+    // layout is left as it is.
+    if let Some(vsm) = &targets.virtual_shadows {
+        let ((requests, requests_handle), (readback, readback_handle)) = (vsm.requests, vsm.readback);
+        const MIP: u32 = 2;
+        let size = [(pyramid_size[0] >> MIP).max(1), (pyramid_size[1] >> MIP).max(1)];
+        let mark = Push { texture: pyramid_texture.0, size, level: MIP, ..push };
+        let images = [(pyramid, ImageAccess::Sampled)];
+        fg.add_pass("Virtual shadow requests", &images, &[(requests, BufferAccess::ComputeWrite)], move |ctx| {
+            bind(ctx, pipelines.vsm_mark, vk::PipelineBindPoint::COMPUTE, &mark);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
+        });
+        let words = (crate::vsm::REQUEST_WORDS * 4) as u64;
+        let copy = [(requests, BufferAccess::TransferRead), (readback, BufferAccess::TransferWrite)];
+        fg.add_pass("Virtual shadow requests readback", &[], &copy, move |ctx| unsafe {
+            let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: words };
+            ctx.gpu.device.cmd_copy_buffer(ctx.cmd, requests_handle, readback_handle, &[region]);
+        });
+        fg.sync_buffer(readback, BufferAccess::HostRead);
+    }
+    // The same for the lamps' pages.
+    if let Some(pages) = targets.local_shadows.as_ref().and_then(|local| local.pages.as_ref()) {
+        let ((requests, requests_handle), (readback, readback_handle)) = (pages.requests, pages.readback);
+        const MIP: u32 = 2;
+        let size = [(pyramid_size[0] >> MIP).max(1), (pyramid_size[1] >> MIP).max(1)];
+        let mark = Push { texture: pyramid_texture.0, size, level: MIP, ..push };
+        let images = [(pyramid, ImageAccess::Sampled)];
+        fg.add_pass("Lamp shadow requests", &images, &[(requests, BufferAccess::ComputeWrite)], move |ctx| {
+            bind(ctx, pipelines.lamp_mark, vk::PipelineBindPoint::COMPUTE, &mark);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
+        });
+        let words = (crate::lamp_vsm::REQUEST_WORDS * 4) as u64;
+        let copy = [(requests, BufferAccess::TransferRead), (readback, BufferAccess::TransferWrite)];
+        fg.add_pass("Lamp shadow requests readback", &[], &copy, move |ctx| unsafe {
+            let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: words };
+            ctx.gpu.device.cmd_copy_buffer(ctx.cmd, requests_handle, readback_handle, &[region]);
+        });
+        fg.sync_buffer(readback, BufferAccess::HostRead);
+    }
 
     // With mesh shaders, the late pass's task shaders sample the pyramid too, after this pass.
     let late_pyramid = if mesh.is_some() { ImageAccess::SampledWithTasks } else { ImageAccess::Sampled };
@@ -940,6 +1071,294 @@ impl Indirect {
                 DRAW_COMMAND_SIZE as u32,
             );
         }
+    }
+}
+
+/// **Virtual shadow pages** (see `vsm`): the pages drawn this frame, four
+/// levels at a time, the sun's lists culled for each level's pages and
+/// drawn into each page's slot of the pool, cleared first; then the
+/// terrains' patches and the worlds of blocks' faces each level takes. The
+/// lists are emptied again between rounds. The view's requests are cleared
+/// first, for the frame to ask afresh.
+fn record_virtual_shadows(
+    fg: &mut FrameGraph<'_>,
+    frame: &Frame,
+    vsm: &VirtualShadows,
+    (culling, meshlet_culling, drawing): (
+        &[(BufferId, BufferAccess)],
+        &[(BufferId, BufferAccess)],
+        &[(BufferId, BufferAccess)],
+    ),
+    draws: &Draws,
+    indirect: Indirect,
+) {
+    let (push, pipelines, instances) = (frame.push, frame.pipelines, frame.instance_count);
+    let draw_push = Push { source: if indirect.meshlets.is_some() { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
+    copy_table(fg, "Virtual shadow table", vsm.table);
+    let (requests, requests_handle) = vsm.requests;
+    let words = (crate::vsm::REQUEST_WORDS * 4) as u64;
+    fg.add_pass("Virtual shadow requests clear", &[], &[(requests, BufferAccess::TransferWrite)], move |ctx| unsafe {
+        ctx.gpu.device.cmd_fill_buffer(ctx.cmd, requests_handle, 0, words, 0);
+    });
+    let (blocks, terrains) = (frame.blocks.clone(), frame.terrain.clone());
+    let mut page_drawing = drawing.to_vec();
+    let pools = blocks.iter().flat_map(|blocks| blocks.pools.iter());
+    let grounds = terrains.iter().flat_map(|terrains| terrains.heights.iter());
+    page_drawing.extend(pools.chain(grounds).map(|&id| (id, BufferAccess::ShaderRead)));
+    let count_handle = draws.count_handle;
+    let mesh = if indirect.tasks { pipelines.mesh } else { None };
+    let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
+    let pool = vsm.pool;
+    for (round, batch) in vsm.levels.chunks(CASCADES).enumerate() {
+        let batch = batch.to_vec();
+        let count = batch.len() as u32;
+        if round > 0 {
+            fg.add_pass("Virtual shadow lists reset", &[], &[(draws.count, BufferAccess::TransferWrite)], move |ctx| {
+                reset_lists(ctx, count_handle, LIST_SHADOW, CASCADES as u32);
+            });
+        }
+        let levels = batch.iter().enumerate().fold(0u32, |bits, (at, (level, _))| bits | (*level as u32) << (8 * at));
+        let cull_push = Push { level: VSM_CULL, output: levels, ..push };
+        fg.add_pass("Virtual shadow cull", &[], culling, move |ctx| {
+            cull(ctx, pipelines.cull, &cull_push, LIST_SHADOW, instances, count);
+        });
+        if indirect.meshlets.is_some() && !indirect.tasks {
+            fg.add_pass("Virtual shadow meshlets", &[], meshlet_culling, move |ctx| {
+                cull_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, LIST_SHADOW..LIST_SHADOW + count);
+            });
+        }
+        let (blocks, terrains) = (blocks.clone(), terrains.clone());
+        fg.add_pass("Virtual shadow pages", &[(pool, ImageAccess::DepthAttachment)], &page_drawing, move |ctx| {
+            let side = crate::vsm::POOL;
+            let depth = attachment(ctx.view(pool), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+            begin_rendering(ctx, vk::Extent2D { width: side, height: side }, &[], Some(&depth));
+            let slot_at = |slot: u16| {
+                let (column, row) =
+                    (u32::from(slot) % crate::vsm::POOL_SLOTS, u32::from(slot) / crate::vsm::POOL_SLOTS);
+                vk::Offset2D { x: (column * crate::vsm::SLOT) as i32, y: (row * crate::vsm::SLOT) as i32 }
+            };
+            let extent = vk::Extent2D { width: crate::vsm::SLOT, height: crate::vsm::SLOT };
+            let pages: Vec<(u32, usize, u32, u16)> = batch
+                .iter()
+                .enumerate()
+                .flat_map(|(at, (level, pages))| pages.iter().map(move |&(page, slot)| (at as u32, *level, page, slot)))
+                .collect();
+            let rects: Vec<vk::ClearRect> = pages
+                .iter()
+                .map(|&(.., slot)| vk::ClearRect {
+                    rect: vk::Rect2D { offset: slot_at(slot), extent },
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .collect();
+            let clear =
+                vk::ClearAttachment::default().aspect_mask(vk::ImageAspectFlags::DEPTH).clear_value(clear_depth(1.0));
+            unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &rects) };
+            bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+            for &(at, _, page, slot) in &pages {
+                set_viewport(ctx, slot_at(slot), extent);
+                let list = LIST_SHADOW + at;
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: VSM_PAGE_VIEW + page, ..draw_push });
+                indirect.draw(ctx, list);
+            }
+            if let Some(terrains) = &terrains {
+                bind(ctx, pipelines.terrain_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                for &(_, level, page, slot) in &pages {
+                    set_viewport(ctx, slot_at(slot), extent);
+                    crate::terrain::draw_sun_page(ctx, terrains, &push, level, VSM_PAGE_VIEW + page);
+                }
+            }
+            if let Some(blocks) = &blocks {
+                bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+                for &(_, level, page, slot) in &pages {
+                    set_viewport(ctx, slot_at(slot), extent);
+                    crate::blocks::draw_sun_page(ctx, blocks, &push, level, VSM_PAGE_VIEW + page);
+                }
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    let Some((moving_pool, moving)) = vsm.moving.clone() else { return };
+    // Each page what moves stands in copied, still part and border, into its slot of the moving pool.
+    let slot_corner = |slot: u16, slots: u32| {
+        let (column, row) = (u32::from(slot) % slots, u32::from(slot) / slots);
+        vk::Offset3D { x: (column * crate::vsm::SLOT) as i32, y: (row * crate::vsm::SLOT) as i32, z: 0 }
+    };
+    let regions: Vec<vk::ImageCopy> = moving
+        .iter()
+        .flat_map(|(_, pages)| pages.iter())
+        .map(|&(_, slot, moving_slot)| {
+            let layers = vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1);
+            vk::ImageCopy::default()
+                .src_subresource(layers)
+                .dst_subresource(layers)
+                .src_offset(slot_corner(slot, crate::vsm::POOL_SLOTS))
+                .dst_offset(slot_corner(moving_slot, crate::vsm::MOVING_POOL_SLOTS))
+                .extent(vk::Extent3D { width: crate::vsm::SLOT, height: crate::vsm::SLOT, depth: 1 })
+        })
+        .collect();
+    let copying = [(pool, ImageAccess::TransferSrc), (moving_pool, ImageAccess::TransferDst)];
+    fg.add_pass("Virtual shadow moving copies", &copying, &[], move |ctx| unsafe {
+        let (from, to) = (ctx.image(pool), ctx.image(moving_pool));
+        let (src, dst) = (vk::ImageLayout::TRANSFER_SRC_OPTIMAL, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        ctx.gpu.device.cmd_copy_image(ctx.cmd, from, src, to, dst, &regions);
+    });
+    // What moves over each copy, four levels at a time, as the pages were drawn.
+    for (round, batch) in moving.chunks(CASCADES).enumerate() {
+        let batch = batch.to_vec();
+        let count = batch.len() as u32;
+        if round > 0 || !vsm.levels.is_empty() {
+            fg.add_pass("Virtual shadow lists reset", &[], &[(draws.count, BufferAccess::TransferWrite)], move |ctx| {
+                reset_lists(ctx, count_handle, LIST_SHADOW, CASCADES as u32);
+            });
+        }
+        let levels = batch.iter().enumerate().fold(0u32, |bits, (at, (level, _))| bits | (*level as u32) << (8 * at));
+        let cull_push = Push { level: VSM_CULL_MOVING, output: levels, ..push };
+        fg.add_pass("Virtual shadow moving cull", &[], culling, move |ctx| {
+            cull(ctx, pipelines.cull, &cull_push, LIST_SHADOW, instances, count);
+        });
+        if indirect.meshlets.is_some() && !indirect.tasks {
+            fg.add_pass("Virtual shadow moving meshlets", &[], meshlet_culling, move |ctx| {
+                cull_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, LIST_SHADOW..LIST_SHADOW + count);
+            });
+        }
+        fg.add_pass(
+            "Virtual shadow moving pages",
+            &[(moving_pool, ImageAccess::DepthAttachment)],
+            drawing,
+            move |ctx| {
+                let side = crate::vsm::MOVING_POOL;
+                let depth = attachment(ctx.view(moving_pool), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+                begin_rendering(ctx, vk::Extent2D { width: side, height: side }, &[], Some(&depth));
+                let extent = vk::Extent2D { width: crate::vsm::SLOT, height: crate::vsm::SLOT };
+                bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                for (at, (_, pages)) in batch.iter().enumerate() {
+                    for &(page, _, moving_slot) in pages {
+                        let corner = slot_corner(moving_slot, crate::vsm::MOVING_POOL_SLOTS);
+                        set_viewport(ctx, vk::Offset2D { x: corner.x, y: corner.y }, extent);
+                        let list = LIST_SHADOW + at as u32;
+                        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: VSM_PAGE_VIEW + page, ..draw_push });
+                        indirect.draw(ctx, list);
+                    }
+                }
+                unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+            },
+        );
+    }
+}
+
+/// **Lamp shadow pages** (see `lamp_vsm`): the frame's requests cleared,
+/// for it to ask afresh; then, where pages are drawn, what stands still
+/// round their lamps (`redraw`) culled into the lamps' lists and drawn into
+/// each page's slot of the pool, cleared first, with the worlds of blocks'
+/// faces and the terrains' patches each lamp keeps; and the lists emptied
+/// again for what moves.
+fn record_lamp_pages(
+    fg: &mut FrameGraph<'_>,
+    frame: &Frame,
+    pages: &LampPages,
+    (redraw, count): (u32, u32),
+    (culling, meshlet_culling, drawing): (
+        &[(BufferId, BufferAccess)],
+        &[(BufferId, BufferAccess)],
+        &[(BufferId, BufferAccess)],
+    ),
+    draws: &Draws,
+    indirect: Indirect,
+) {
+    let (push, pipelines, instances) = (frame.push, frame.pipelines, frame.instance_count);
+    let draw_push = Push { source: if indirect.meshlets.is_some() { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
+    copy_table(fg, "Lamp shadow table", pages.table);
+    let (requests, requests_handle) = pages.requests;
+    let words = (crate::lamp_vsm::REQUEST_WORDS * 4) as u64;
+    fg.add_pass("Lamp shadow requests clear", &[], &[(requests, BufferAccess::TransferWrite)], move |ctx| unsafe {
+        ctx.gpu.device.cmd_fill_buffer(ctx.cmd, requests_handle, 0, words, 0);
+    });
+    if pages.drawn.is_empty() {
+        return;
+    }
+    let count_handle = draws.count_handle;
+    let mesh = if indirect.tasks { pipelines.mesh } else { None };
+    let shadow = mesh.map_or(pipelines.local_shadow, |mesh| mesh.local_shadow);
+    let cull_push = Push { level: LOCAL_CULL_STILL, output: redraw, ..push };
+    fg.add_pass("Lamp shadow cull", &[], culling, move |ctx| {
+        cull(ctx, pipelines.cull, &cull_push, LIST_LOCAL_SHADOW, instances, count);
+    });
+    if indirect.meshlets.is_some() && !indirect.tasks {
+        fg.add_pass("Lamp shadow meshlets", &[], meshlet_culling, move |ctx| {
+            cull_meshlets(
+                ctx,
+                pipelines.meshlet_cull,
+                &cull_push,
+                count_handle,
+                LIST_LOCAL_SHADOW..LIST_LOCAL_SHADOW + count,
+            );
+        });
+    }
+    let (blocks, terrains) = (frame.blocks.clone(), frame.terrain.clone());
+    let (pool, drawn) = (pages.pool, pages.drawn.clone());
+    fg.add_pass("Lamp shadow pages", &[(pool, ImageAccess::DepthAttachment)], drawing, move |ctx| {
+        let side = crate::lamp_vsm::POOL;
+        let depth = attachment(ctx.view(pool), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+        begin_rendering(ctx, vk::Extent2D { width: side, height: side }, &[], Some(&depth));
+        let slot_at = |slot: u16| {
+            let (column, row) =
+                (u32::from(slot) % crate::lamp_vsm::POOL_SLOTS, u32::from(slot) / crate::lamp_vsm::POOL_SLOTS);
+            vk::Offset2D { x: (column * crate::vsm::SLOT) as i32, y: (row * crate::vsm::SLOT) as i32 }
+        };
+        let extent = vk::Extent2D { width: crate::vsm::SLOT, height: crate::vsm::SLOT };
+        let rects: Vec<vk::ClearRect> = drawn
+            .iter()
+            .map(|&(_, slot)| vk::ClearRect {
+                rect: vk::Rect2D { offset: slot_at(slot), extent },
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .collect();
+        let clear =
+            vk::ClearAttachment::default().aspect_mask(vk::ImageAspectFlags::DEPTH).clear_value(clear_depth(1.0));
+        unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &rects) };
+        bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+        for (page, &(lamp, slot)) in drawn.iter().enumerate() {
+            set_viewport(ctx, slot_at(slot), extent);
+            let list = LIST_LOCAL_SHADOW + lamp;
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: LAMP_PAGE_VIEW + page as u32, ..draw_push });
+            indirect.draw(ctx, list);
+        }
+        if let Some(blocks) = &blocks {
+            bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+            for (page, &(lamp, slot)) in
+                drawn.iter().enumerate().filter(|(_, (lamp, _))| blocks.draws_for_lamp(*lamp, true))
+            {
+                set_viewport(ctx, slot_at(slot), extent);
+                crate::blocks::draw_lamp_runs(ctx, blocks, &push, lamp, true, LAMP_PAGE_VIEW + page as u32);
+            }
+        }
+        if let Some(terrains) = &terrains {
+            bind(ctx, pipelines.terrain_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+            for (page, &(lamp, slot)) in
+                drawn.iter().enumerate().filter(|(_, (lamp, _))| crate::terrain::draws_for_lamp(terrains, *lamp))
+            {
+                set_viewport(ctx, slot_at(slot), extent);
+                crate::terrain::draw_lamp(ctx, terrains, &push, lamp, LAMP_PAGE_VIEW + page as u32);
+            }
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+    // The lamps' lists empty again, for what moves.
+    fg.add_pass("Lamp shadow lists reset", &[], &[(draws.count, BufferAccess::TransferWrite)], move |ctx| {
+        reset_lists(ctx, count_handle, LIST_LOCAL_SHADOW, count);
+    });
+}
+
+/// Empties `count` lists from `first` on, as the frame starts them.
+fn reset_lists(ctx: &PassContext, count_buffer: vk::Buffer, first: u32, count: u32) {
+    let counts = cleared_draw_counts();
+    let (start, words) = (first as usize * 4, count as usize * 4);
+    let lists = bytemuck::cast_slice(&counts[start..start + words]);
+    unsafe {
+        ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_buffer, draw_count_offset(first), lists);
+        ctx.gpu.device.cmd_fill_buffer(ctx.cmd, count_buffer, meshlet_count_offset(first), u64::from(count) * 4, 0);
     }
 }
 

@@ -17,6 +17,7 @@
 #include "reflection_probes.slang"
 #include "seasons.slang"
 #include "terrain_ground.slang"
+#include "virtual_shadows.slang"
 #include "wind.slang"
 
 struct VertexOut
@@ -360,7 +361,8 @@ ShadowLookup shadowLookup(Frame* frame, float3 position, float3 normal)
     ShadowLookup lookup;
     lookup.found = false;
     uint cascade = cascadeAt(frame, position);
-    if (frame->shadowTexture == NO_TEXTURE || cascade >= CASCADES)
+    // Without a cascade atlas the cascades still place the glass shadow atlas's tiles (glassSun).
+    if (cascade >= CASCADES)
     {
         return lookup;
     }
@@ -388,8 +390,12 @@ float sunShadowHard(Frame* frame, float3 position, float3 normal)
 {
     // Under the clouds' shadow too, wherever the point is.
     float clouds = cloudShadowAt(frame, position);
+    if (frame->vsm.pool != NO_TEXTURE)
+    {
+        return vsmShadowHard(frame, position, normal) * clouds;
+    }
     ShadowLookup lookup = shadowLookup(frame, position, normal);
-    if (!lookup.found)
+    if (!lookup.found || frame->shadowTexture == NO_TEXTURE)
     {
         return clouds;
     }
@@ -415,6 +421,75 @@ static const float PCSS_SEARCH_METRES = 8.0;
 // whatever its width, so a wide edge costs no more, only spreads them.
 static const float PCSS_MAX_METRES = 1.5;
 
+// The sun's shadow from its virtual shadow maps, soft as the sun's disc makes it, as sunShadow is from the cascades:
+// the blockers searched for, then the filter, each over the level whose texels spread its reach over about
+// VSM_SOFT_TEXELS of them, no finer than the level the point asks for, so a wide soft edge reads a coarse level and
+// one where things touch the finest. Hard where the sun has no width.
+float vsmShadowSoft(Frame* frame, float3 position, float3 normal, float tanHalfAngle)
+{
+    uint finest = vsmLevelFor(frame, position);
+    if (tanHalfAngle <= 0.0)
+    {
+        return vsmShadowHard(frame, position, normal);
+    }
+    float angle = frac(52.9829189 * frac(dot(position.xz * 37.0, float2(0.06711056, 0.00583715)))) * 2.0 * PI;
+    angle += float(frame->frameIndex % 64) * 2.39996323;
+
+    float searchMetres = min(PCSS_SEARCH_METRES * tanHalfAngle, PCSS_MAX_METRES);
+    uint searchLevel = vsmLevelForWidth(frame, searchMetres, VSM_SOFT_TEXELS, finest);
+    VsmTap centre = vsmTap(frame, vsmAcross(frame, position), searchLevel);
+    if (!centre.found)
+    {
+        return 1.0;
+    }
+    float3 offset = position + normal * centre.texel * 1.5;
+    float depth = vsmDepth(frame, offset);
+    float2 across = vsmAcross(frame, offset);
+    searchMetres = max(searchMetres, centre.texel);
+    float blockers = 0.0;
+    float blockerDepth = 0.0;
+    Texture2D pool = textures[NonUniformResourceIndex(centre.texture)];
+    for (uint i = 0; i < PCSS_BLOCKER_TAPS; i++)
+    {
+        float2 at = vsmUvIn(centre, across + vogelDisc(i, PCSS_BLOCKER_TAPS, angle) * searchMetres);
+        float found = pool.SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], at, 0.0).r;
+        if (found < depth)
+        {
+            blockers += 1.0;
+            blockerDepth += found;
+        }
+    }
+    // Nothing round it is above it, or everything is: wholly lit or wholly shaded, with no edge to soften.
+    if (blockers == 0.0)
+    {
+        return 1.0;
+    }
+    if (blockers == float(PCSS_BLOCKER_TAPS))
+    {
+        return 0.0;
+    }
+    float above = (depth - blockerDepth / blockers) * frame->vsm.depthRange;
+    float filterMetres = clamp(above * tanHalfAngle * 2.0, 0.0, PCSS_MAX_METRES);
+    uint filterLevel = vsmLevelForWidth(frame, filterMetres, VSM_SOFT_TEXELS, finest);
+    VsmTap filterCentre = vsmTap(frame, across, filterLevel);
+    if (!filterCentre.found)
+    {
+        return 1.0;
+    }
+    // The filter's own level pushes the point off its surface by its own texels.
+    float3 filterOffset = position + normal * filterCentre.texel * 1.5;
+    float filterDepth = vsmDepth(frame, filterOffset);
+    float2 filterAcross = vsmAcross(frame, filterOffset);
+    filterMetres = max(filterMetres, filterCentre.texel);
+    float lit = 0.0;
+    for (uint i = 0; i < PCSS_FILTER_TAPS; i++)
+    {
+        float2 at = filterAcross + vogelDisc(i, PCSS_FILTER_TAPS, angle) * filterMetres;
+        lit += vsmLit(filterCentre, at, filterDepth);
+    }
+    return lit / float(PCSS_FILTER_TAPS);
+}
+
 // The sun's shadow, soft as the sun's disc makes it: percentage-closer soft
 // shadows (Fernando 2005). Blockers are found round the point first; the
 // farther they are above it, the wider the filter, so shadows stay sharp
@@ -428,8 +503,12 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
         return sunShadowHard(frame, position, normal);
     }
     float clouds = cloudShadowAt(frame, position);
+    if (frame->vsm.pool != NO_TEXTURE)
+    {
+        return vsmShadowSoft(frame, position, normal, tanHalfAngle) * clouds;
+    }
     ShadowLookup lookup = shadowLookup(frame, position, normal);
-    if (!lookup.found)
+    if (!lookup.found || frame->shadowTexture == NO_TEXTURE)
     {
         return clouds;
     }
@@ -1253,7 +1332,15 @@ FragmentOut fragmentMain(VertexOut input)
     }
     else if (frame->debugView == DEBUG_VIEW_CASCADES)
     {
-        color *= lerp(float3(1.0), debugColor(cascadeAt(frame, input.worldPosition)), 0.5);
+        // With virtual shadow maps, the level each pixel reads, round the palette, coarser where the page it asks for is
+        // not drawn yet; red beyond every page.
+        uint shown = cascadeAt(frame, input.worldPosition);
+        if (frame->vsm.pool != NO_TEXTURE)
+        {
+            VsmTap tap = vsmTap(frame, vsmAcross(frame, input.worldPosition), vsmLevelFor(frame, input.worldPosition));
+            shown = tap.found ? tap.level % 5 + (tap.level >= 5 ? 1 : 0) : 3;
+        }
+        color *= lerp(float3(1.0), debugColor(shown), 0.5);
     }
     else if (frame->debugView == DEBUG_VIEW_LIGHT_COMPLEXITY)
     {

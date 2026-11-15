@@ -342,6 +342,12 @@ enum Commands {
         /// Draw local lights' shadows whole every frame rather than keeping what stands still, to compare.
         #[arg(long)]
         no_shadow_cache: bool,
+        /// Draw the sun's shadows as `virtual` shadow maps or `cascades`, whatever the lighting says, to compare.
+        #[arg(long, value_parser = ["virtual", "cascades"])]
+        sun_shadows: Option<String>,
+        /// Draw lamps' shadows as `virtual` shadow maps or into the `atlas`, whatever the lighting says, to compare.
+        #[arg(long, value_parser = ["virtual", "atlas"])]
+        lamp_shadows: Option<String>,
         /// Cull meshlets with a compute pass and indirect draws even where the GPU has mesh shaders, to compare.
         #[arg(long)]
         no_mesh_shaders: bool,
@@ -540,6 +546,8 @@ fn main() -> Result<()> {
             stats,
             no_meshlet_culling,
             no_shadow_cache,
+            sun_shadows,
+            lamp_shadows,
             no_mesh_shaders,
             render_scale,
             upscaler,
@@ -588,6 +596,8 @@ fn main() -> Result<()> {
                 render_scale: render_scale.or(quality.map(UpscaleQuality::scale)),
                 upscaler,
                 local_shadow_cache,
+                sun_shadows: sun_shadows.as_deref().and_then(voxear_render::SunShadows::named),
+                lamp_shadows: lamp_shadows.as_deref().and_then(voxear_render::LampShadows::named),
                 ..ViewOptions::default()
             };
             let prepare = Prepare { build: !no_build, bundles, overlays };

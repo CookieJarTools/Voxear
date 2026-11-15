@@ -919,6 +919,12 @@ pub enum LightData {
         /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
         #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
         mode: LightModeData,
+        /// Its bulb's radius, which softens its shadow (see `Light::radius`).
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        radius: f32,
+        /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        soft_shadows: bool,
     },
     Spot {
         #[serde(default = "white")]
@@ -944,6 +950,12 @@ pub enum LightData {
         /// What of it a lighting bake keeps: `"realtime"`, `"mixed"` (the default) or `"baked"`.
         #[serde(default, skip_serializing_if = "LightModeData::is_mixed")]
         mode: LightModeData,
+        /// Its bulb's radius, which softens its shadow (see `Light::radius`).
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        radius: f32,
+        /// Whether its shadow softens as wide as it is (see `Light::soft_shadows`).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        soft_shadows: bool,
     },
     /// A panel shining from its face along the Obj's +Z, `width` along +X.
     Rectangle {
@@ -1093,10 +1105,12 @@ impl LightData {
     /// has no shape to soften it.
     pub fn soft_shadows(&self) -> bool {
         match *self {
-            Self::Rectangle { soft_shadows, .. }
+            Self::Point { soft_shadows, .. }
+            | Self::Spot { soft_shadows, .. }
+            | Self::Rectangle { soft_shadows, .. }
             | Self::Disc { soft_shadows, .. }
             | Self::Tube { soft_shadows, .. } => soft_shadows,
-            _ => true,
+            Self::Directional { .. } => true,
         }
     }
 
@@ -2868,9 +2882,11 @@ pub(crate) fn light_component(data: &LightData) -> Light {
                 ..Light::directional(Vec3::from(linear(color)), intensity)
             }
         }
-        LightData::Point { color, intensity, range, .. } => Light::point(Vec3::from(linear(color)), intensity, range),
-        LightData::Spot { color, intensity, range, inner_angle, outer_angle, .. } => {
-            Light::spot(Vec3::from(linear(color)), intensity, range, inner_angle, outer_angle)
+        LightData::Point { color, intensity, range, radius, .. } => {
+            Light { radius, ..Light::point(Vec3::from(linear(color)), intensity, range) }
+        }
+        LightData::Spot { color, intensity, range, inner_angle, outer_angle, radius, .. } => {
+            Light { radius, ..Light::spot(Vec3::from(linear(color)), intensity, range, inner_angle, outer_angle) }
         }
         LightData::Rectangle { color, intensity, range, width, height, .. } => {
             Light::rectangle(Vec3::from(linear(color)), intensity, range, width, height)
@@ -2927,7 +2943,17 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             },
             mode,
         },
-        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, shadows, profile, mode },
+        LightKind::Point => LightData::Point {
+            color,
+            intensity,
+            temperature,
+            range: light.range,
+            shadows,
+            profile,
+            radius: light.radius,
+            soft_shadows,
+            mode,
+        },
         LightKind::Spot => LightData::Spot {
             color,
             intensity,
@@ -2939,6 +2965,8 @@ fn light_data(content: &Content, light: &Light) -> LightData {
             cookie,
             profile,
             mode,
+            radius: light.radius,
+            soft_shadows,
         },
         LightKind::Rectangle => {
             let (width, height) = (light.width, light.height);
@@ -3414,14 +3442,26 @@ mod tests {
     }
 
     #[test]
-    fn a_shaped_lights_soft_shadows_are_on_unless_turned_off_and_left_out_when_on() {
-        for kind in ["rectangle", "disc", "tube"] {
+    fn a_lights_soft_shadows_are_on_unless_turned_off_and_left_out_when_on() {
+        for kind in ["point", "spot", "rectangle", "disc", "tube"] {
             let plain: LightData = toml::from_str(&format!("type = \"{kind}\"")).unwrap();
             assert!(light_component(&plain).soft_shadows, "{kind} softens its shadow unless told not to");
             assert!(!toml::to_string(&plain).unwrap().contains("soft_shadows"));
             let hard: LightData = toml::from_str(&format!("type = \"{kind}\"\nsoft_shadows = false")).unwrap();
             assert!(!light_component(&hard).soft_shadows, "{kind}");
             assert_eq!(toml::from_str::<LightData>(&toml::to_string(&hard).unwrap()).unwrap(), hard);
+        }
+    }
+
+    #[test]
+    fn a_point_or_spot_lights_radius_reads_and_writes_back_and_is_left_out_at_none() {
+        for kind in ["point", "spot"] {
+            let plain: LightData = toml::from_str(&format!("type = \"{kind}\"")).unwrap();
+            assert_eq!(light_component(&plain).radius, 0.0, "{kind}: a point of light unless it says");
+            assert!(!toml::to_string(&plain).unwrap().contains("radius"));
+            let bulb: LightData = toml::from_str(&format!("type = \"{kind}\"\nradius = 0.05")).unwrap();
+            assert_eq!(light_component(&bulb).radius, 0.05, "{kind}");
+            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&bulb).unwrap()).unwrap(), bulb);
         }
     }
 

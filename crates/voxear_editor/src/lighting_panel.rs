@@ -82,6 +82,7 @@ const ALWAYS: When = &[];
 const GRADIENT_SKY: When = &[(&["sky", "mode"], "gradient")];
 const ATMOSPHERE: When = &[(&["sky", "mode"], "atmosphere")];
 const AUTO_EXPOSURE: When = &[(&["post", "exposure", "auto"], "true")];
+const CASCADES: When = &[(&["sun", "shadows"], "cascades")];
 const AGX: When = &[(&["post", "tonemap", "mapper"], "agx")];
 const BLOOM: When = &[(&["post", "bloom", "enabled"], "true")];
 const FOG: When = &[(&["post", "fog", "enabled"], "true")];
@@ -115,6 +116,8 @@ const CUSTOM_WEATHER: When = &[(&["weather", "kind"], "custom")];
 const CLOUD_KINDS: &[(&str, &str)] = &[("Soft", "soft"), ("Blocks", "blocks")];
 const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
+const SUN_SHADOWS: &[(&str, &str)] = &[("Virtual", "virtual"), ("Cascades", "cascades")];
+const LAMP_SHADOWS: &[(&str, &str)] = &[("Virtual", "virtual"), ("Atlas", "atlas")];
 const AO_QUALITIES: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra")];
 const AA_MODES: &[(&str, &str)] = &[("Off", "off"), ("FXAA", "fxaa"), ("TAA", "taa")];
 const UPSCALERS: &[(&str, &str)] =
@@ -208,12 +211,16 @@ const SETTINGS: &[Info] = &[
         help: "How soft the sun's shadows are, as its width in degrees. 0 gives hard, crisp shadows; higher blurs their edges, as through thin cloud." },
     Info { path: &["sun", "shadow_tint"], title: "Shadow tint", group: "Sun", kind: Kind::Color, when: ALWAYS,
         help: "The colour shadows lean towards. Black leaves them neutral; a warm brown or cool blue gives shade a mood." },
-    Info { path: &["sun", "shadow_distance"], title: "Shadow distance", group: "Sun", kind: number(5.0, 1000.0, "m"), when: ALWAYS,
+    Info { path: &["sun", "shadows"], title: "Shadow maps", group: "Sun", kind: Kind::Choice(SUN_SHADOWS), when: ALWAYS,
+        help: "Virtual draws only the parts of a very large shadow map the view needs, as fine as each pixel needs them, and keeps them from frame to frame: sharp by the camera and out to kilometres. Cascades draw four shadow maps over the shadow distance every frame." },
+    Info { path: &["sun", "shadow_distance"], title: "Shadow distance", group: "Sun", kind: number(5.0, 1000.0, "m"), when: CASCADES,
         help: "How far from the camera the sun casts shadows. Nearer keeps the shadows by the camera sharper; farther shows them over a wider view, each softer." },
-    Info { path: &["sun", "shadow_split"], title: "Cascade split", group: "Sun", kind: number(0.0, 1.0, ""), when: ALWAYS,
+    Info { path: &["sun", "shadow_split"], title: "Cascade split", group: "Sun", kind: number(0.0, 1.0, ""), when: CASCADES,
         help: "How the sun's four shadow maps share the shadow distance. Near 1, the nearest is small and very sharp and the farthest wide; near 0, they share it evenly, so far shadows are sharper and near ones softer." },
     Info { path: &["sun", "canopy"], title: "Canopy", group: "Sun", kind: number(0.0, 1000.0, "m"), when: ALWAYS,
         help: "Leaves overhead: the sun falls through them in soft flecks, the pattern repeating every so many metres. 0 for open sky. A light with a cookie of its own keeps it." },
+    Info { path: &["lamps", "shadows"], title: "Shadow maps", group: "Lamps", kind: Kind::Choice(LAMP_SHADOWS), when: ALWAYS,
+        help: "Virtual draws only the parts of each lamp's shadow map the view needs, up to eight times as sharp as the atlas, and keeps them while the lamp stands still. Atlas gives each lamp's views a fixed size." },
     Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS,
         help: "Lets the camera adjust its brightness to the scene, like an eye: brighter in dark places, darker in bright ones. Off keeps it fixed." },
     Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS,
@@ -797,7 +804,7 @@ impl LightingFields {
     fn build(ui: &mut Ui, tab_bar: NodeId, view: NodeId, mode: Mode) -> Self {
         let (first, last) = PACK_SETTINGS.split_at(1);
         let pack = mode != Mode::Lighting;
-        let lighting = SETTINGS.iter().filter(|info| !pack || info.group != "Weather");
+        let lighting = SETTINGS.iter().filter(|info| !pack || !level_only(info.group));
         let infos: Vec<&'static Info> = match mode {
             Mode::Pack => first.iter().chain(lighting).chain(last).collect(),
             Mode::Lighting => lighting.collect(),
@@ -1060,6 +1067,12 @@ pub fn pictures(game: &Game) -> Vec<(String, String)> {
     found
 }
 
+/// Whether a group of settings is the level's alone, which a look pack does
+/// not change: the weather, and how lamps draw their shadows.
+fn level_only(group: &str) -> bool {
+    group == "Weather" || group == "Lamps"
+}
+
 /// What a group of settings is for, shown when the pointer rests on its tab.
 fn group_help(group: &str) -> &'static str {
     match group {
@@ -1067,6 +1080,7 @@ fn group_help(group: &str) -> &'static str {
         "Clouds" => "The clouds in the sky, and the shadows they cast as they drift.",
         "Weather" => "The weather laid over this lighting: a kind, or amounts of your own. Scripts can turn it too.",
         "Sun" => "How the sun looks: its colour, brightness and shadows. Where it shines from is the sun Obj's rotation.",
+        "Lamps" => "How lamps draw their shadows.",
         "Exposure" => "How bright the picture is, and how the camera adjusts to light and dark, as an eye does.",
         "Colour" => "The colour grade: contrast, saturation, warmth and lens effects over the finished picture.",
         "Bloom" => "The soft glow round bright lights and highlights.",
@@ -1154,7 +1168,11 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     sun.insert("shadow_distance".into(), toml::Value::Float(f64::from(lighting.sun.shadow_distance)));
     sun.insert("shadow_split".into(), toml::Value::Float(f64::from(lighting.sun.shadow_split)));
     sun.insert("canopy".into(), toml::Value::Float(f64::from(lighting.sun.canopy)));
+    sun.insert("shadows".into(), toml::Value::String(lighting.sun.sun_shadows.name().into()));
     table.insert("sun".into(), toml::Value::Table(sun));
+    let mut lamps = toml::Table::new();
+    lamps.insert("shadows".into(), toml::Value::String(lighting.sun.lamp_shadows.name().into()));
+    table.insert("lamps".into(), toml::Value::Table(lamps));
     let post = PostProcess::from_toml(&lighting.post)?;
     let mut post_table = toml::Table::try_from(post)?;
     // A lookup table is a picture the settings name, which they do not hold as a value.
@@ -1591,7 +1609,7 @@ mod tests {
         assert!(PACK_SETTINGS.iter().all(|info| info.help.len() > 20 && !group_help(info.group).is_empty()));
         assert_eq!(PACK_SETTINGS[0].path, ["description"], "its description comes first");
         // What packs most often write has a row: the sun's shade, the glow, the clouds' kind, and the pack's own.
-        let rows = || SETTINGS.iter().filter(|info| info.group != "Weather").chain(PACK_SETTINGS);
+        let rows = || SETTINGS.iter().filter(|info| !level_only(info.group)).chain(PACK_SETTINGS);
         let wanted: [&[&str]; 5] = [
             &["sun", "shadow_tint"],
             &["post", "bloom", "intensity"],
@@ -1603,7 +1621,7 @@ mod tests {
             assert!(rows().any(|info| info.path == path), "no row for {path:?}");
         }
         // The weather is the level's: a pack's file refuses it, so it has no rows for it.
-        assert!(rows().all(|info| info.path[0] != "weather"));
+        assert!(rows().all(|info| info.path[0] != "weather" && info.path[0] != "lamps"));
         assert!(voxear_engine::look_packs::LookPackFile::parse("[weather]\nkind = \"rain\"").is_err());
     }
 
@@ -1645,6 +1663,19 @@ mod tests {
         assert_eq!(lighting.resolve().unwrap().weather.weather().now().snow, 0.4);
         let shown = effective(&lighting).unwrap();
         assert!(amounts.clone().all(|info| applies(&shown, info.when) && find(&shown, info.path).is_some()));
+    }
+
+    #[test]
+    fn the_lamps_shadow_maps_are_written_and_read_back_and_left_out_of_packs() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Cellar.lighting");
+        std::fs::write(&file, "format = 1\n").unwrap();
+        let read = |file: &Path| toml::from_str::<LightingFile>(&std::fs::read_to_string(file).unwrap()).unwrap();
+        let shown = effective(&read(&file)).unwrap();
+        assert_eq!(find(&shown, &["lamps", "shadows"]).and_then(|v| v.as_str()), Some("virtual"), "virtual unless set");
+        write_setting(&file, &["lamps", "shadows"], Some("atlas".into())).unwrap();
+        assert_eq!(read(&file).resolve().unwrap().sun.lamp_shadows, voxear_render::LampShadows::Atlas);
+        assert!(level_only("Lamps"), "a look pack leaves the lamps' shadows to the level");
     }
 
     #[test]

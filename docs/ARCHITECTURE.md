@@ -1022,9 +1022,54 @@ foundations Nanite is built on, so this is a later step rather than a rewrite:
 - sky light and emissive surfaces
 - IES profiles and light cookies
 
-**Shadows.** Cascaded shadow maps for the sun first, then virtual shadow maps. Soft shadows use PCSS, and contact
-shadows cover small detail. Local lights that ask for shadows share an atlas of their own: a spot light one view, a
-point, area or tube light a cube's six, the nearest eight lights a frame.
+**Shadows.** The sun's shadows are virtual shadow maps (`src/vsm.rs`, `shaders/virtual_shadows.slang`), with four
+cascades over a shadow distance kept as a setting (`[sun] shadows = "cascades"`, `SunShadows`). Soft shadows use
+PCSS, and contact shadows cover small detail.
+
+- **Virtual shadow maps.** A clipmap of ten levels round the camera, each a window of 64×64 pages of 128 texels, the
+  finest 2 mm a texel and each level's twice the last's. Pages are placed in the sun's own space from the world's
+  middle, so a page keeps its place as the camera moves. Each frame, once the depth pyramid is built, `markMain` asks,
+  for each texel of the pyramid's third level, for the page of the level whose texels are no wider than a pixel there
+  (or the first level whose window reaches it), and the two coarser,
+  in a bit field the CPU reads when that frame in flight comes round. The CPU gives each page asked for a slot of a
+  4608² pool (32×32 slots of 144 texels: a page and 8 texels of border), the coarsest first, keeps a few coarse pages
+  round the camera always for what the view cannot ask for (the fog, the GI's rays), and draws at most 96 pages a
+  frame: those new, then those gone stale. A page holds what stands still: it goes stale when something in it comes,
+  goes, stops or starts moving (`ShadowCache::take_for_sun`), a chunk of blocks or a terrain changes, a material is
+  written, or the sun turns by more than 0.05°. Each page what moves (`INSTANCE_MOVING`) stands in is copied each
+  frame into a slot of a 16×16 moving pool and what moves drawn over the copy (`VSM_CULL_MOVING`); the page table's
+  high half points shading there. Drawing goes four levels at a time through the cascades' lists: a cull against the planes round
+  each level's pages (`VSM_CULL`, the level in a byte of `output`), the meshlet pass, then each page into its slot
+  with its own projection (`vsmPageViewProj`, views from `VSM_PAGE_VIEW` on; task shaders cull meshlets per page);
+  terrains and worlds of blocks pick their patches and faces per level on the CPU. Wind is left out of pages, as
+  they are kept. A caster under two texels of a level neither is drawn into it nor makes its pages stale. Shading
+  reads a page table (each level's window, a slot each) once for a filter's middle, walking to the next coarser level
+  where no page is drawn, and every tap from that page's slot, whose border holds them: soft shadows search and
+  filter at the level whose texels spread their reach over no more than 7.
+- **Local lights** that ask for shadows share an atlas: each of the nearest eight a slot of six views it keeps from
+  frame to frame (a spot light uses one), a cube's faces for any but a spot light. A second, kept atlas holds what
+  stands still in each light's reach (`src/shadow_cache.rs`): Objs still for 16 frames (`INSTANCE_STILL`), worlds of
+  blocks and terrains, drawn only when the light takes its slot, stops moving or what stands still in its reach
+  changes. Each frame a cull lists what moves; a light with something moving has its kept views copied in
+  (`keptCopyVertex`, which reads the list's count) and what moves drawn over; shading reads the copy or the kept
+  views (`localShadowKept`). Rectangle, disc, tube, and point or spot lights with a radius soften their shadows by
+  PCSS shaped as the light (`localLightAcross`): along a tube's length more than across it.
+- **Lamps' virtual shadow maps** (`src/lamp_vsm.rs`, the default; `[lamps] shadows = "atlas"`, `LampShadows`, keeps the
+  kept atlas instead). Each view of a slot is a virtual map 4096 texels across over the view's own projection, six
+  levels each half as fine, cut into 128-texel pages: a page table of a word a page of every level of every view of
+  every slot (8 × 6 × 1365). `markLampsMain` asks, for each texel of the pyramid's third level within a lamp's reach,
+  for the page of the face it falls in, at the level whose texels are no wider than a pixel but no coarser than the
+  atlas's (level 3, 512 across), and the two coarser. The CPU gives pages slots of a 4608² pool as for the sun, keeps
+  every view's coarsest page, and draws at most 64 a frame. A slot whose views changed since last frame (a lamp that
+  came, went or moved) forgets its pages; one standing still is read from its pages once its coarsest are drawn
+  (`LampFrame::ready`, folded into `Lamps::cached`), and until then is drawn whole into the atlas. Pages hold what
+  stands still (`LOCAL_CULL_STILL`, the redraw bits the slots drawing pages this frame, and the worlds of blocks' and
+  terrains' lamp lists), drawn with the view's projection narrowed to the page and its border (`lampPageViewProj`,
+  views from `LAMP_PAGE_VIEW` on; task shaders cull meshlets against it, `insideProjection`); a change under a page
+  marks it stale by the box its sphere covers in each view. What moves is drawn each frame into the atlas's views as
+  with the kept atlas, and shading takes the darker of the page and the atlas where anything moved there
+  (`lampShadow`, `lampMoving`). Hard shadows filter 3×3 at the finest level drawn; soft ones search and filter at the
+  level whose texels spread their reach over no more than 7, so every tap stays within the page's border.
 
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.

@@ -19,6 +19,9 @@
 //! temperature = 4500
 //! strength = 1.2
 //!
+//! [lamps]
+//! shadows = "atlas"
+//!
 //! [post.bloom]
 //! intensity = 0.2
 //! ```
@@ -59,6 +62,9 @@ pub struct LightingFile {
     pub sky: Option<toml::Table>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sun: Option<SunData>,
+    /// How lamps cast their shadows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lamps: Option<LampsData>,
     /// Post-processing, as a scene's `[post]` writes it, over the look's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post: Option<toml::Table>,
@@ -138,6 +144,55 @@ pub struct SunData {
     /// own; 0 for open sky.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canopy: Option<f32>,
+    /// How its shadows are drawn: `virtual`, the default, or `cascades`
+    /// over the shadow distance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<SunShadowsData>,
+}
+
+/// How the sun's shadows are drawn, as a lighting file writes it (see
+/// `voxear_render::SunShadows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SunShadowsData {
+    Virtual,
+    Cascades,
+}
+
+impl SunShadowsData {
+    pub fn sun_shadows(self) -> voxear_render::SunShadows {
+        match self {
+            Self::Virtual => voxear_render::SunShadows::Virtual,
+            Self::Cascades => voxear_render::SunShadows::Cascades,
+        }
+    }
+}
+
+/// The lamps' settings in a lighting file, as `[lamps]` writes them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LampsData {
+    /// How their shadows are drawn: `virtual`, the default, or `atlas`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<LampShadowsData>,
+}
+
+/// How lamps' shadows are drawn, as a lighting file writes it (see
+/// `voxear_render::LampShadows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LampShadowsData {
+    Virtual,
+    Atlas,
+}
+
+impl LampShadowsData {
+    pub fn lamp_shadows(self) -> voxear_render::LampShadows {
+        match self {
+            Self::Virtual => voxear_render::LampShadows::Virtual,
+            Self::Atlas => voxear_render::LampShadows::Atlas,
+        }
+    }
 }
 
 impl SunData {
@@ -159,6 +214,9 @@ impl SunData {
         sun.shadow_distance = self.shadow_distance.unwrap_or(sun.shadow_distance).clamp(5.0, 1000.0);
         sun.shadow_split = self.shadow_split.unwrap_or(sun.shadow_split).clamp(0.0, 1.0);
         sun.canopy = self.canopy.unwrap_or(sun.canopy).clamp(0.0, 1000.0);
+        if let Some(shadows) = self.shadows {
+            sun.sun_shadows = shadows.sun_shadows();
+        }
     }
 }
 
@@ -183,6 +241,8 @@ pub fn plain_sun() -> SunLook {
         shadow_distance: voxear_render::SHADOW_DISTANCE,
         shadow_split: voxear_render::SHADOW_SPLIT,
         canopy: 0.0,
+        sun_shadows: voxear_render::SunShadows::Virtual,
+        lamp_shadows: voxear_render::LampShadows::Virtual,
     }
 }
 
@@ -206,6 +266,9 @@ impl LightingFile {
         let mut sun = look.map_or_else(plain_sun, |look| look.sun);
         if let Some(over) = self.sun {
             over.lay_over(&mut sun);
+        }
+        if let Some(shadows) = self.lamps.and_then(|lamps| lamps.shadows) {
+            sun.lamp_shadows = shadows.lamp_shadows();
         }
         let mut post = toml::Table::new();
         if let Some(name) = &self.look {
@@ -303,6 +366,24 @@ mod tests {
         let wild: LightingFile = toml::from_str("[sun]\nshadow_distance = -3.0\nshadow_split = 4.0").unwrap();
         let sun = wild.resolve().unwrap().sun;
         assert_eq!((sun.shadow_distance, sun.shadow_split), (5.0, 1.0), "kept to what works");
+    }
+
+    #[test]
+    fn the_sun_s_shadows_are_virtual_unless_the_lighting_says_cascades() {
+        let plain = LightingFile::default().resolve().unwrap().sun;
+        assert_eq!(plain.sun_shadows, voxear_render::SunShadows::Virtual);
+        let file: LightingFile = toml::from_str("[sun]\nshadows = \"cascades\"").unwrap();
+        assert_eq!(file.resolve().unwrap().sun.sun_shadows, voxear_render::SunShadows::Cascades);
+        assert!(toml::from_str::<LightingFile>("[sun]\nshadows = \"blobs\"").is_err(), "only the ways there are");
+    }
+
+    #[test]
+    fn lamps_shadows_are_virtual_unless_the_lighting_says_atlas() {
+        let plain = LightingFile::default().resolve().unwrap().sun;
+        assert_eq!(plain.lamp_shadows, voxear_render::LampShadows::Virtual);
+        let file: LightingFile = toml::from_str("[lamps]\nshadows = \"atlas\"").unwrap();
+        assert_eq!(file.resolve().unwrap().sun.lamp_shadows, voxear_render::LampShadows::Atlas);
+        assert!(toml::from_str::<LightingFile>("[lamps]\nshadows = \"blobs\"").is_err(), "only the ways there are");
     }
 
     #[test]

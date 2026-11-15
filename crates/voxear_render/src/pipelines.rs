@@ -69,6 +69,11 @@ pub struct Pipelines {
     /// A view of the kept atlas of what stands still copied into the local
     /// shadow atlas, for what moves to be drawn over (see `shadow_cache`).
     pub kept_copy: vk::Pipeline,
+    /// The pages of the sun's virtual shadow maps the view's depth asks for
+    /// (see `vsm`).
+    pub vsm_mark: vk::Pipeline,
+    /// What the view asks of the lamps' virtual shadow pages (see `lamp_vsm`).
+    pub lamp_mark: vk::Pipeline,
     pub forward: vk::Pipeline,
     /// The opaque lists as depth alone, drawn first when ambient occlusion
     /// is on, so it can work from the frame's whole depth.
@@ -185,6 +190,8 @@ pub struct Pipelines {
     pub terrain_forward_on_depth: vk::Pipeline,
     pub terrain_wireframe: vk::Pipeline,
     pub terrain_shadow: vk::Pipeline,
+    /// As `terrain_shadow`, into lamps' views, without clamping depth.
+    pub terrain_local_shadow: vk::Pipeline,
     /// Worlds of blocks' quads (see `blocks`), as terrain's: shaded, as
     /// depth, shaded over the depth passes' depth, as edges, and into the
     /// sun's cascades.
@@ -469,6 +476,8 @@ impl Pipelines {
                 depth_bias: Some(SHADOW_BIAS),
                 ..GraphicsPipelineDesc::depth_only("Local shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
             })?,
+            vsm_mark: create_compute_pipeline(gpu, layout, "Virtual shadow requests", shadow, c"markMain")?,
+            lamp_mark: create_compute_pipeline(gpu, layout, "Lamp shadow requests", shadow, c"markLampsMain")?,
             kept_copy: graphics(&GraphicsPipelineDesc {
                 cull: vk::CullModeFlags::NONE,
                 depth_compare: vk::CompareOp::ALWAYS,
@@ -803,6 +812,17 @@ impl Pipelines {
                 fragment_entry: Some(c"terrainShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (terrain)", terrain, c"terrainShadowVertex", DEPTH_FORMAT)
             })?,
+            terrain_local_shadow: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                fragment_entry: Some(c"terrainShadowFragment"),
+                ..GraphicsPipelineDesc::depth_only(
+                    "Local shadows (terrain)",
+                    terrain,
+                    c"terrainShadowVertex",
+                    DEPTH_FORMAT,
+                )
+            })?,
             block_forward: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -1079,6 +1099,8 @@ impl Pipelines {
             self.shadow,
             self.local_shadow,
             self.kept_copy,
+            self.vsm_mark,
+            self.lamp_mark,
             self.forward,
             self.depth,
             self.forward_on_depth,
@@ -1161,6 +1183,7 @@ impl Pipelines {
             self.terrain_forward_on_depth,
             self.terrain_wireframe,
             self.terrain_shadow,
+            self.terrain_local_shadow,
             self.block_forward,
             self.block_depth,
             self.block_forward_on_depth,

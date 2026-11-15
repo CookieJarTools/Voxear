@@ -115,7 +115,10 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 		set { Set(NativeLights.Size, new Vector4(value.X, value.Y, 0f, 0f)); }
 	}
 
-	/// <summary>A Disc's or a Tube's radius, in metres.</summary>
+	/// <summary>
+	/// A Disc's or a Tube's radius, in metres; for a Point or Spot light, its bulb's or flame's, which softens its
+	/// shadow (0 for hard edges).
+	/// </summary>
 	public float Radius
 	{
 		get { return NativeLights.Number(Obj, NativeLights.Radius, 0f); }
@@ -140,8 +143,9 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 	}
 
 	/// <summary>
-	/// Whether a Rectangle's, Disc's or Tube's shadow softens as wide as the light is, hard where things touch and softer
-	/// the farther it falls from them. On by default; off, its edges are hard and cost less to shade.
+	/// Whether a local light's shadow softens as wide as the light is, hard where things touch and softer the farther it
+	/// falls from them: a Rectangle, Disc or Tube by its shape, a Point or Spot light by its Radius. On by default; off,
+	/// its edges are hard and cost less to shade.
 	/// </summary>
 	public bool SoftShadows
 	{

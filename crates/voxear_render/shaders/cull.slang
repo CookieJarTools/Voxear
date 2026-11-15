@@ -173,8 +173,37 @@ void emitFading(Frame* frame, uint list, uint instance, Mesh mesh, uint selected
 // How many times the error a plant's shadow may show, against its own drawing.
 static const float PLANT_SHADOW_COARSER = 4.0;
 
+// Casters within the pages of a level of the sun's virtual shadow maps drawn this frame, at the LOD its texels ask
+// for; none under two texels across.
+void cullVirtualShadow(Frame* frame, uint list, uint level, uint instance, Mesh mesh, float3 center, float radius, float scale)
+{
+    // The pages keep what stands still; what moves is drawn over their copies each frame.
+    Instance drawn = buffers()->instances[instance];
+    bool moving = push.level == VSM_CULL_MOVING;
+    if (((drawn.flags & INSTANCE_MOVING) != 0) != moving)
+    {
+        return;
+    }
+    float texel = frame->vsm.finestTexel * float(1u << level);
+    if (!insideVsmLevel(frame, level, moving, center, radius) || radius < texel * 2.0)
+    {
+        return;
+    }
+    bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
+    float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
+    uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / texel, threshold);
+    emit(list, instance, mesh, lod, 0);
+    count(STAT_SHADOW_DRAWS);
+}
+
 void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 center, float radius, float scale)
 {
+    uint vsmLevel = vsmCullLevel(frame, LIST_SHADOW + cascade, push.level, push.output);
+    if (vsmLevel < VSM_LEVELS)
+    {
+        cullVirtualShadow(frame, LIST_SHADOW + cascade, vsmLevel, instance, mesh, center, radius, scale);
+        return;
+    }
     // A caster only a few of the cascade's texels across casts no shadow anyone would see there.
     static const float SMALLEST_TEXELS = 2.0;
     if (!insidePlanes(frame->cascadePlanes[cascade], center, radius) || radius < frame->cascadeTexel[cascade] * SMALLEST_TEXELS)
@@ -283,8 +312,9 @@ void cullMain(uint3 id : SV_DispatchThreadID)
             cullLocalShadow(frame, list - LIST_LOCAL_SHADOW, id.x, mesh, center, radius, scale);
             return;
         }
-        // A displaced surface's pieces cast its sun shadow, drawn once diced (dice.slang).
-        if ((material.flags & MATERIAL_DISPLACED) != 0)
+        // A displaced surface's pieces cast its sun shadow, drawn once diced (dice.slang); its virtual shadow pages,
+        // kept from frame to frame, take it whole.
+        if ((material.flags & MATERIAL_DISPLACED) != 0 && push.level != VSM_CULL && push.level != VSM_CULL_MOVING)
         {
             return;
         }

@@ -111,7 +111,8 @@ fn write(light: &mut Light, what: i32, [x, y, z, _]: [f32; 4]) {
         TEMPERATURE => light.temperature = (x > 0.0).then(|| x.clamp(1000.0, 20000.0)),
         SHADOWS => light.shadows = x != 0.0,
         SIZE => (light.width, light.height) = (x.max(0.01), y.max(0.01)),
-        RADIUS => light.radius = x.max(0.001),
+        // A point or spot light may be a point; a disc or tube needs a size.
+        RADIUS => light.radius = if light.kind.has_shape() { x.max(0.001) } else { x.max(0.0) },
         LENGTH => light.length = x.max(0.0),
         SOFTNESS => light.softness = x.clamp(0.0, 10.0),
         SOFT_SHADOWS => light.soft_shadows = x != 0.0,

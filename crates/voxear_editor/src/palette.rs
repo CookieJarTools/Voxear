@@ -440,6 +440,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
                 AssetKind::ReflectionProbes => ("Reflection probes", "globe"),
+                AssetKind::Lightmaps => ("Baked lighting", "light"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
                 AssetKind::Shader => ("Shader", "shader"),
                 AssetKind::VoxShade => ("VoxShade", "nodes"),
@@ -498,6 +499,8 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Bake Sound Paths", "", "branch", Command::BakePaths),
         ("Bake Reflection Probes", "", "globe", Command::BakeProbes),
         ("Bake Reverb Probes", "", "audio", Command::BakeReverb),
+        ("Bake Lighting", "", "light", Command::BakeLighting),
+        ("Cancel Lighting Bake", "", "stop", Command::CancelLightingBake),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

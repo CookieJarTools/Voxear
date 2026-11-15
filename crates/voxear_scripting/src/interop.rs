@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 91;
+pub(crate) const API_VERSION: u32 = 92;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -649,10 +649,17 @@ pub enum ComponentKind {
     ReflectionProbe = 28,
     /// A box of probes of how long sound rings, baked for the level.
     ReverbProbe = 29,
+    /// Still for lighting: a lighting bake gives its meshes a lightmap.
+    Lightmap = 30,
+    /// Light probes a lighting bake bakes.
+    LightProbeGroup = 31,
+    /// The level's baked lighting, which no one Obj has: its lightmaps, its
+    /// light probes' light at a point, and a bake under way.
+    BakedLighting = 32,
 }
 
 /// The most kinds `kind_value` answers.
-const KINDS: usize = 32;
+const KINDS: usize = 40;
 static KIND_VALUES: [std::sync::OnceLock<ComponentValues>; KINDS] = [const { std::sync::OnceLock::new() }; KINDS];
 
 /// Sets what answers a kind of component in scripts; the first set is kept.

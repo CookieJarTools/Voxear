@@ -391,6 +391,10 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.reflection_probe = instance.reflection_probe.or(root.reflection_probe);
     root.reverb_probe = instance.reverb_probe.or(root.reverb_probe);
+    root.lightmap = instance.lightmap.or(root.lightmap);
+    if instance.light_probe_group.is_some() {
+        root.light_probe_group = instance.light_probe_group.clone();
+    }
     if instance.renderer.is_some() {
         root.renderer = instance.renderer.clone();
     }
@@ -503,6 +507,8 @@ pub struct TemplateObj {
     pub post_volume: Option<PostVolume>,
     pub reflection_probe: Option<voxear_render::ReflectionProbe>,
     pub reverb_probe: Option<crate::reverb_probes::ReverbProbe>,
+    pub lightmap: Option<voxear_render::Lightmap>,
+    pub light_probe_group: Option<voxear_render::LightProbeGroup>,
     pub renderer: Option<MeshRenderer>,
     /// The mesh a mesh collider takes its shape from, where there is no
     /// renderer to draw it, as on a server.
@@ -684,6 +690,12 @@ impl Template {
             }
             if let Some(probe) = obj.reverb_probe {
                 world.insert(entity, probe);
+            }
+            if let Some(lightmap) = obj.lightmap {
+                world.insert(entity, lightmap);
+            }
+            if let Some(group) = &obj.light_probe_group {
+                world.insert(entity, group.clone());
             }
             if let Some(renderer) = obj.renderer {
                 world.insert(entity, renderer);
@@ -1346,6 +1358,8 @@ pub(crate) fn resolve_obj(
         post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
         reflection_probe: data.reflection_probe.as_ref().map(crate::scene_file::ReflectionProbeData::component),
         reverb_probe: data.reverb_probe.as_ref().map(crate::scene_file::ReverbProbeData::component),
+        lightmap: data.lightmap.as_ref().map(crate::scene_file::LightmapData::component),
+        light_probe_group: data.light_probe_group.as_ref().map(crate::scene_file::LightProbeGroupData::component),
         renderer,
         collider_mesh,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,

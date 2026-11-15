@@ -116,6 +116,9 @@ pub struct Light {
     /// What a directional light is in the sky: the sun, or the moon, which
     /// the sky draws as its disc, and under which the sky is a night sky.
     pub body: SkyBody,
+    /// What of it a lighting bake keeps (see `lightmaps`): nothing, its
+    /// bounce, or its bounce and its direct light on lightmapped surfaces.
+    pub mode: crate::LightMode,
 }
 
 /// What a directional light shows as in the sky.
@@ -189,6 +192,7 @@ impl Light {
             shadow_tint: Vec3::ZERO,
             profile: None,
             body: SkyBody::Sun,
+            mode: crate::LightMode::Mixed,
         }
     }
 }
@@ -762,6 +766,32 @@ pub fn extract(
         None => world.resource::<crate::looks::SunLook>().copied(),
     };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
+    // Baked lights first, then Mixed, then Realtime, so the shaders tell them apart by where they are in the list;
+    // and among each, by where they are and what they are, never by how the world happens to keep them, so a
+    // lighting bake, which takes each lamp's random numbers in turn, comes out the same in every run.
+    let mut lit: Vec<_> = lit.collect();
+    lit.sort_by(|(_, a, at), (_, b, bt)| {
+        let key = |light: &Light, at: &Transform| {
+            let p = at.position;
+            [p.x, p.y, p.z, light.kind as u8 as f32, light.intensity, light.color.x, light.color.y, light.color.z]
+        };
+        let (ka, kb) = (key(a, at), key(b, bt));
+        a.mode.order().cmp(&b.mode.order()).then_with(|| {
+            ka.iter().zip(&kb).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+    let source = post.global_illumination.source;
+    let mut bake = crate::gpu::GpuBake {
+        source: match source {
+            crate::GiSource::Realtime => crate::gpu::GI_REALTIME,
+            crate::GiSource::Baked => crate::gpu::GI_BAKED,
+            crate::GiSource::Both => crate::gpu::GI_BOTH,
+        },
+        sun_mode: crate::LightMode::Realtime.order(),
+        strength: post.global_illumination.strength.max(0.0),
+        texels_per_metre: post.global_illumination.texels_per_metre,
+        ..Default::default()
+    };
     for (entity, light, transform) in lit {
         // A look changes the sun's colour and strength, and gives what the light leaves at its default.
         let looked;
@@ -785,6 +815,9 @@ pub fn extract(
         match light.kind {
             LightKind::Directional if !sun_found => {
                 sun_found = true;
+                if source.uses_bake() {
+                    bake.sun_mode = light.mode.order();
+                }
                 frame.sun_direction = vec3(forward);
                 frame.sun_color = vec3(radiance * weather.sun());
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
@@ -809,9 +842,14 @@ pub fn extract(
                     shadowed.push((lights.len(), entity, shadow));
                 }
                 lights.push(gpu);
+                if source.uses_bake() {
+                    bake.baked_lights += u32::from(light.mode == crate::LightMode::Baked);
+                    bake.bake_lights += u32::from(light.mode != crate::LightMode::Realtime);
+                }
             }
         }
     }
+    frame.bake = bake;
     frame.light_count = lights.len() as u32;
     // Lamps cast no shadows through a Portal.
     let shadowed = if through.is_some() { Vec::new() } else { shadowed };

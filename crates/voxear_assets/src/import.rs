@@ -52,6 +52,9 @@ pub struct ModelImport {
     /// Where a plant's wind masks come from, which say how its leaves
     /// flutter and its branches sway apart from its trunk.
     pub wind_masks: WindMasks,
+    /// Where each mesh's lightmap UVs come from, the second set of UVs a
+    /// baked lightmap is laid over.
+    pub lightmap_uvs: LightmapUvs,
 }
 
 impl Default for ModelImport {
@@ -66,6 +69,7 @@ impl Default for ModelImport {
             own_lods: true,
             materials: true,
             wind_masks: WindMasks::None,
+            lightmap_uvs: LightmapUvs::Import,
         }
     }
 }
@@ -536,6 +540,33 @@ impl WindMasks {
             WindMasks::None => "None",
             WindMasks::Colors => "From vertex colours",
             WindMasks::Generate => "Generate",
+        }
+    }
+}
+
+/// Where a model's lightmap UVs come from: a second set of UVs in which no
+/// two triangles overlap, which a baked lightmap is laid over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LightmapUvs {
+    /// The file's own second UVs, or made where a mesh has none.
+    #[default]
+    Import,
+    /// Made from the mesh's shape, whatever the file has.
+    Generate,
+    /// None: the model cannot be baked into lightmaps, and light probes
+    /// light it instead.
+    None,
+}
+
+impl LightmapUvs {
+    pub const ALL: [LightmapUvs; 3] = [LightmapUvs::Import, LightmapUvs::Generate, LightmapUvs::None];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LightmapUvs::Import => "Import or generate",
+            LightmapUvs::Generate => "Generate",
+            LightmapUvs::None => "None",
         }
     }
 }

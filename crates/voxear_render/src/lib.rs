@@ -33,6 +33,9 @@ pub mod display;
 mod graph;
 mod hot_reload;
 mod ies;
+pub mod lightmap_uvs;
+pub mod lightmapper;
+mod lightmaps;
 mod lod;
 mod looks;
 mod map;
@@ -118,7 +121,7 @@ pub use gltf_import::{
 };
 pub use gpu::{
     DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_LIGHT_COMPLEXITY,
-    DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT,
+    DEBUG_VIEW_LIGHTMAP_DENSITY, DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT,
     DEBUG_VIEW_WIREFRAME, MATERIAL_PROPERTIES, NO_TEXTURE, STANDARD_SHADER,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
@@ -130,7 +133,7 @@ pub use skinning::{HiddenBones, Pose};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
-    GlobalIllumination, Reflections,
+    GiSource, GlobalIllumination, Reflections,
     Grading, MotionBlur, PostProcess, ScriptPost, Tonemap, Tonemapper, UpscaleQuality, Upscaler, Vignette,
 };
 pub use previews::{
@@ -146,6 +149,11 @@ pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeResolution, ProbeUpdat
 pub use sound_rays::{
     MAX_SOUND_RAYS, MAX_SOUND_SOURCES, MAX_SOUND_SPOTS, MAX_SOURCE_RAYS, SOUND_FIELD, SOUND_FIXED, SOUND_MATERIALS,
     SoundHeard, SoundMaterial, SoundRays, SoundSource,
+};
+pub use lightmapper::{BakeProgress, BakeStage, LightBake};
+pub use lightmaps::{
+    BAND_SHARES, BakedAtlas, BakedLighting, BakedProbes, LightBakeState, LightMode, LightProbeGroup, Lightmap, LightmapBake,
+    LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
@@ -508,6 +516,16 @@ pub struct Renderer {
     captures: capture::Captures,
     reflection_probes: reflection_probes::ReflectionProbes,
     sound_rays: sound_rays::SoundRayWork,
+    /// A lighting bake under way, or done and not yet taken (see `lightmapper`).
+    baking: Option<lightmapper::Baking>,
+    /// How many of a bake's dispatches a frame records, whether that was set
+    /// rather than worked out from how long they take, and how many the last
+    /// frame recorded.
+    bake_pace: usize,
+    bake_pace_set: bool,
+    bake_recorded: usize,
+    /// The level's bake's lightmaps, on the GPU.
+    baked_textures: lightmaps::BakedTextures,
 }
 
 impl Renderer {
@@ -619,6 +637,11 @@ impl Renderer {
             captures: Default::default(),
             reflection_probes: Default::default(),
             sound_rays: Default::default(),
+            baking: None,
+            bake_pace: 2,
+            bake_pace_set: false,
+            bake_recorded: 0,
+            baked_textures: Default::default(),
         })
     }
 
@@ -655,6 +678,53 @@ impl Renderer {
     /// What the sound rays of a finished frame found, the latest, once.
     pub fn sound_heard(&mut self) -> Option<SoundHeard> {
         self.sound_rays.take_heard()
+    }
+    /// Starts baking the world's lighting (see `lightmapper`): every Obj
+    /// with a Lightmap that receives, and every Light Probe Group's probes,
+    /// at the settings in its `[post.global_illumination]`. The bake traces
+    /// a little each frame from then on; [`light_bake_progress`](Self::light_bake_progress)
+    /// says how far it has gone and [`take_light_bake`](Self::take_light_bake)
+    /// gives what it made once done. A bake under way is given up for it.
+    /// Returns how many parts, texels and probes it bakes.
+    pub fn start_light_bake(&mut self, world: &World) -> Result<(usize, usize, usize)> {
+        self.cancel_light_bake();
+        let assets = self.assets.as_ref().expect("assets live until drop");
+        let (parts, probes, settings) = lightmapper::gather(world, (&self.gpu, assets))?;
+        let layout = lightmapper::prepare(&parts, probes, settings);
+        let counts = (layout.places.len(), layout.texels.len(), layout.probes.len());
+        self.baking = Some(lightmapper::Baking::start(&self.gpu, layout, FRAMES_IN_FLIGHT)?);
+        Ok(counts)
+    }
+
+    /// How far the lighting bake under way has gone; none when there is
+    /// none, or once it is done.
+    pub fn light_bake_progress(&self) -> Option<BakeProgress> {
+        self.baking.as_ref().filter(|baking| baking.done.is_none()).map(|baking| baking.progress())
+    }
+
+    /// What the lighting bake made, once it is done, taken once.
+    pub fn take_light_bake(&mut self) -> Option<Result<LightBake>> {
+        if self.baking.as_ref().is_some_and(|baking| baking.done.is_some()) {
+            return self.baking.take().and_then(|mut baking| baking.done.take());
+        }
+        None
+    }
+
+    /// Gives up the lighting bake under way, if any.
+    pub fn cancel_light_bake(&mut self) {
+        if let Some(baking) = self.baking.take() {
+            baking.cancel(&self.gpu);
+        }
+    }
+
+    /// How many of a lighting bake's dispatches each frame records, each up
+    /// to `lightmapper::PATHS_PER_DISPATCH` paths: more bakes sooner and
+    /// slows the frames it runs in more. Unset, as many as take about
+    /// `lightmapper::BAKE_FRAME_MS` of the GPU's time a frame. What a bake
+    /// makes is the same either way.
+    pub fn set_light_bake_pace(&mut self, dispatches: usize) {
+        self.bake_pace = dispatches.clamp(1, lightmapper::MOST_DISPATCHES);
+        self.bake_pace_set = true;
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
@@ -1402,6 +1472,17 @@ impl Renderer {
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
+        // A lighting bake reads its sums back once traced, and finishes on a thread of its own; while it traces, as
+        // many dispatches a frame as take about a frame's share of the GPU, by how long the last ones took.
+        if let Some(baking) = &mut self.baking {
+            baking.update(&self.gpu, self.frame_index);
+            let took = self.graph.timings().iter().find(|(name, _)| name == "Lightmap bake").map(|(_, ms)| *ms);
+            if let (false, Some(ms), 1..) = (self.bake_pace_set, took, self.bake_recorded) {
+                self.bake_pace = lightmapper::pace(self.bake_pace, ms / self.bake_recorded as f32);
+            }
+        }
+        // The level's bake's lightmaps, uploaded when they change.
+        self.baked_textures.update(world, (&self.gpu, &mut self.bindless), assets, self.frame_index)?;
         // Impostors asked for last frame are made, to bake before this frame's views draw them.
         self.impostor_bakes.prepare(assets, &self.gpu, &mut self.bindless)?;
         // Every posed model's skinned parts, for all the views.
@@ -1474,6 +1555,9 @@ impl Renderer {
             clear,
             mesh_shaders,
             software_rays,
+            baking,
+            bake_pace,
+            baked_textures,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -1498,6 +1582,10 @@ impl Renderer {
         let mut probe_job_done = false;
         let sound = sound_rays.prepare(gpu, frame.slot)?;
         let mut sound_done = false;
+        // A lighting bake's dispatches for this frame, which the first camera's own view records.
+        let mut bake = baking.as_mut().and_then(|baking| baking.frame(frame.slot, *bake_pace));
+        let baked_frame = baked_textures.frame(baking.as_ref().is_some_and(|baking| baking.tracing()));
+        let mut bake_dispatches = 0;
         let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
         let (panel_textures, (panel_quads, panel_values)) =
             ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, (&ui.quads, &ui.values), (0, 0))?;
@@ -1579,6 +1667,8 @@ impl Renderer {
                 blocks: block_draws.clone(),
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
                 sound: sound.filter(|_| !sound_done),
+                baked: baked_frame.clone(),
+                bake: bake.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
@@ -1587,6 +1677,10 @@ impl Renderer {
             }
             probe_job_done |= recorded.probe_job_done;
             sound_done |= recorded.sound_done;
+            if recorded.bake_dispatches > 0 {
+                bake_dispatches = recorded.bake_dispatches;
+                bake = None;
+            }
             for (entity, size) in recorded.panel_sizes {
                 ui_panels.saw(entity, size);
             }
@@ -1604,6 +1698,10 @@ impl Renderer {
         if sound_done {
             sound_rays.recorded(frame.slot);
         }
+        if let Some(baking) = baking.as_mut().filter(|_| bake_dispatches > 0) {
+            baking.recorded(bake_dispatches, frame_index);
+        }
+        self.bake_recorded = bake_dispatches;
         // An output no view drew into is cleared for its UI.
         for (&image, cleared) in images.iter().zip(&cleared) {
             if let (Some((output, _)), false) = (image, cleared) {
@@ -1859,6 +1957,10 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         self.gpu.wait_idle();
         let gpu = &self.gpu;
+        if let Some(baking) = self.baking.take() {
+            baking.cancel(gpu);
+        }
+        self.baked_textures.destroy(gpu);
         self.pipelines.destroy(gpu);
         self.reflection_probes.destroy(gpu);
         self.skinning.destroy(gpu);
@@ -1932,6 +2034,8 @@ struct View {
     prev_entities: Vec<scene::Owner>,
     /// Every Foliage's plants, built once (see `foliage`).
     foliage: foliage::FoliageCache,
+    /// Its instances' baked light (see `lightmaps`).
+    baked: lightmaps::ViewBaked,
     /// It has said its scene has more instances than it can draw.
     warned_instances: bool,
     prev_view_proj: Option<Mat4Cols>,
@@ -2073,6 +2177,10 @@ struct ViewSetup {
     probes: Option<reflection_probes::ProbeFrame>,
     /// This frame's sound rays, which the first camera's own view records.
     sound: Option<sound_rays::SoundPass>,
+    /// The level's bake as every view lights with it, and a bake's dispatches
+    /// the first camera's own view records, until one has.
+    baked: lightmaps::BakedFrame,
+    bake: Option<lightmapper::BakeFrame>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2087,6 +2195,8 @@ struct ViewRecorded {
     probe_job_done: bool,
     /// It recorded this frame's sound rays.
     sound_done: bool,
+    /// How many of a lighting bake's dispatches it recorded.
+    bake_dispatches: usize,
     /// The Portals a view through a Portal sees in turn, for the view it
     /// is seen in to draw the far sides of.
     sees: Option<Sees>,
@@ -2134,6 +2244,7 @@ impl View {
             prev_models: HashMap::new(),
             prev_entities: Vec::new(),
             foliage: foliage::FoliageCache::default(),
+            baked: Default::default(),
             warned_instances: false,
             prev_view_proj: None,
             prev_camera: None,
@@ -2162,11 +2273,14 @@ impl View {
     }
 
     /// Lets its buffers go once no frame in flight uses them.
-    fn retire(self, frames: &mut Frames) {
+    fn retire(mut self, frames: &mut Frames) {
         self.retire_fsr3(frames);
         let state = self.fsr3.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
         if let Some(state) = state {
             state.retire(frames);
+        }
+        for buffer in self.baked.take_buffers() {
+            frames.retire(Retired::Buffer(buffer));
         }
         for child in self.portals {
             child.view.retire(frames);
@@ -2338,7 +2452,10 @@ impl View {
                     m[0][0], m[1][0], m[2][0], m[3][0], m[0][1], m[1][1], m[2][1], m[3][1], m[0][2], m[1][2], m[2][2],
                     m[3][2],
                 ];
-                let opaque = !assets.is_cut_out(MaterialHandle(instance.material));
+                // Cut out, or left out of a lighting bake that traces this frame: its triangles come back as
+                // candidates, each kept or passed through.
+                let skipped = instance.flags & gpu::INSTANCE_NO_BAKE_CAST != 0;
+                let opaque = !assets.is_cut_out(MaterialHandle(instance.material)) && !skipped;
                 Some(voxear_rhi::Instance { mesh, transform, id: id as u32, opaque })
             })
             .collect();
@@ -2614,6 +2731,26 @@ impl View {
         }
         // Glass after the rest, past what culling, shadows and the GI's rays see.
         let opaque = glass::sort_last(&mut extracted.instances, &mut extracted.entities, camera, assets);
+        // Each instance's baked light, from the level's bake, and while a bake traces, what is to be in it.
+        let gi = extracted.post.global_illumination;
+        let wanted = (gi.enabled && gi.source.uses_bake()) || self.options.debug_view == gpu::DEBUG_VIEW_LIGHTMAP_DENSITY;
+        let baked_instances = self.baked.assign(
+            (gpu, world, assets),
+            &setup.baked,
+            (&mut extracted.instances, &extracted.entities),
+            (wanted, gi.texels_per_metre, offset),
+            slot,
+        )?;
+        if !(gi.enabled && gi.source.uses_bake()) {
+            extracted.frame.bake = gpu::GpuBake { sun_mode: LightMode::Realtime.order(), ..extracted.frame.bake };
+            extracted.frame.bake.source = gpu::GI_REALTIME;
+            (extracted.frame.bake.baked_lights, extracted.frame.bake.bake_lights) = (0, 0);
+        } else if let Some((address, size, cell, origin)) = setup.baked.volume {
+            let bake = &mut extracted.frame.bake;
+            (bake.volume, bake.volume_size, bake.volume_cell) = (address, size, cell);
+            // Into the view's own space, as the instances are.
+            bake.volume_origin = (voxear_core::math::Vec3::from(origin) - offset).to_array();
+        }
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
@@ -2825,7 +2962,8 @@ impl View {
         let mut traced_reflections = false;
         // How the scene is traced this frame, if it is: in software (true) or by the GPU's rays.
         let mut traced_by = None;
-        if lit.enabled && !wireframe {
+        // A level lit by its bake alone traces no probes round the camera.
+        if lit.enabled && lit.source.uses_probes() && !wireframe {
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
                 let hierarchy = &mut self.scene_hierarchies[slot];
@@ -2949,6 +3087,28 @@ impl View {
             None => None,
         };
         let sound_done = sound_job.is_some();
+        // The first camera's own view traces this frame's share of a lighting bake, through the scene its GI or
+        // reflections trace, or one built for it.
+        let bake = setup.bake.as_ref().filter(|_| self.number == 0 && portal.is_none() && !wireframe);
+        if bake.is_some() && traced_by.is_none() {
+            if setup.software_rays || pipelines.light_bake.is_none() {
+                let hierarchy = &mut self.scene_hierarchies[slot];
+                scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
+                traced_by = Some(true);
+            } else {
+                let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
+                if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                    frame_data.ddgi.scene = scene;
+                    traced_by = Some(false);
+                }
+            }
+        }
+        let bake = bake.zip(match traced_by {
+            Some(false) => pipelines.light_bake,
+            Some(true) => Some(pipelines.light_bake_software),
+            None => None,
+        });
+        let bake_dispatches = bake.map_or(0, |(bake, _)| bake.dispatches.len());
         let panes = match wireframe || portal.is_some() {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
@@ -3172,6 +3332,9 @@ impl View {
                 reflection_probes: setup.probes.map_or(0, |probes| probes.list),
                 portal_quads: buffers.portal_quads.address,
                 weather_maps: buffers.weather_maps.address,
+                lightmap_uvs: assets.lightmap_uvs.address,
+                baked_instances,
+                bake_job: bake.map_or(0, |(bake, _)| bake.jobs),
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -3378,6 +3541,7 @@ impl View {
             through: portal.is_some(),
             probe_job,
             sound_job,
+            bake: bake.map(|(bake, pipelines)| (bake.clone(), pipelines)),
         };
         // A camera's own view draws the far sides of the Portals it sees once its own surfaces are in, and those
         // seen through them after each; a view through a Portal leaves its own to the view it is seen in.
@@ -3404,7 +3568,15 @@ impl View {
             return Err(error);
         }
         if portal.is_some() {
-            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done, sound_done });
+            return Ok(ViewRecorded {
+                push,
+                backdrop: None,
+                panel_sizes: Vec::new(),
+                sees,
+                probe_job_done,
+                sound_done,
+                bake_dispatches,
+            });
         }
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -3461,7 +3633,7 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done, sound_done })
+        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done, sound_done, bake_dispatches })
     }
 }
 

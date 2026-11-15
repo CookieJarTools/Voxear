@@ -131,6 +131,7 @@ VertexOut terrainVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instan
     o.previousClip = transform(frame->prevViewProj, world);
     o.moved = 0.0;
     o.hidden = 0.0;
+    o.lightmapUv = 0.0;
     return o;
 }
 

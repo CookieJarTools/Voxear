@@ -94,6 +94,13 @@ public readonly struct Light : IEquatable<Light>, IObjComponent
 		set { Set(NativeLights.Temperature, value ?? 0f); }
 	}
 
+	/// <summary>What of it a lighting bake keeps: nothing, its bounce (the default), or its direct light too.</summary>
+	public LightMode Mode
+	{
+		get { return (LightMode)(int)NativeLights.Number(Obj, NativeLights.Mode, 1f); }
+		set { Set(NativeLights.Mode, (float)(int)value); }
+	}
+
 	/// <summary>Whether it casts shadows. A Directional light always casts its own.</summary>
 	public bool Shadows
 	{

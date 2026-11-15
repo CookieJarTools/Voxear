@@ -21,6 +21,24 @@ float glowNoise(float t)
 }
 
 // How much of its emission a material gives now, on what stands at `origin`.
+// How bright a material's glow is on average over time, as its motion has
+// it: what a lighting bake keeps, so it does not depend on when it ran.
+float glowAverage(Material material)
+{
+    switch ((material.flags >> MATERIAL_GLOW_SHIFT) & 3u)
+    {
+    case 0:
+        return 1.0;
+    case 1:
+        return 0.5;
+    case 2:
+        // 0.15 + 0.85 times the mean of a raised sine cubed, 5/16.
+        return 0.415625;
+    default:
+        return 0.675;
+    }
+}
+
 float glowAmount(Frame* frame, Material material, float3 origin)
 {
     uint motion = (material.flags >> MATERIAL_GLOW_SHIFT) & 3u;

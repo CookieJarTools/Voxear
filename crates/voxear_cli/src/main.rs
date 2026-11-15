@@ -28,6 +28,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_LIGHT_COMPLEXITY,
+    DEBUG_VIEW_LIGHTMAP_DENSITY,
     DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, PostProcess, Renderer, RendererSettings,
     ViewOptions,
 };
@@ -327,10 +328,11 @@ enum Commands {
         #[arg(long)]
         renderdoc: bool,
         /// Show `lod`, shadow `cascades`, `lights` per cluster, `normals`, `meshlets`, ambient occlusion (`ao`) or
-        /// the light the GI's probes find (`gi`) instead of normal shading.
+        /// the light the GI's probes find (`gi`), or lightmapped surfaces' texels (`lightmaps`) instead of normal
+        /// shading.
         #[arg(
             long,
-            value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets", "ao", "gi"],
+            value_parser = ["none", "lod", "cascades", "lights", "normals", "meshlets", "ao", "gi", "lightmaps"],
             default_value = "none"
         )]
         debug_view: String,
@@ -559,6 +561,7 @@ fn main() -> Result<()> {
                 "meshlets" => DEBUG_VIEW_MESHLETS,
                 "ao" => DEBUG_VIEW_AMBIENT_OCCLUSION,
                 "gi" => DEBUG_VIEW_GLOBAL_ILLUMINATION,
+                "lightmaps" => DEBUG_VIEW_LIGHTMAP_DENSITY,
                 _ => DEBUG_VIEW_NONE,
             };
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
@@ -1387,6 +1390,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Font => "font",
             AssetKind::Paths => "paths",
             AssetKind::ReflectionProbes => "probes",
+            AssetKind::Lightmaps => "lightmaps",
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",

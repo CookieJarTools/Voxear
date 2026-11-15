@@ -101,11 +101,29 @@ impl Editor {
             LightingAction::WearTextures(reference) => {
                 voxear_engine::texture_packs::wear(&mut self.game.content, reference.as_deref().unwrap_or_default())
             }
+            LightingAction::Bake => {
+                match self.baking_lighting() {
+                    true => self.cancel_lighting_bake(renderer),
+                    false => self.bake_lighting(renderer),
+                }
+                Ok(())
+            }
         };
         if let Err(error) = done {
             tracing::error!("{error:#}");
         }
         self.refresh_lighting_page();
+    }
+
+    /// Shows on the Lighting page how the bake under way has gone, or how
+    /// the last one ended.
+    pub(super) fn show_lighting_bake(&mut self, renderer: &Renderer) {
+        let progress = self.lighting_bake_fraction(renderer);
+        let last = self.lighting_bake_end().map(|end| match end {
+            Ok(baked) => format!("Baked: {} lightmaps, {} probes, {:.1} s", baked.lightmaps, baked.probes, baked.seconds),
+            Err(error) => format!("Not baked: {error}"),
+        });
+        self.lighting_panel.show_bake(&mut self.ui, progress, last);
     }
 
     /// Writes a setting into a lighting settings or look pack file, as a step
@@ -131,7 +149,10 @@ impl Editor {
     /// file.
     pub(super) fn scene_lighting_action(&mut self, scene: &str, action: LightingAction, renderer: &mut Renderer) {
         let done = match action {
-            LightingAction::Set { .. } | LightingAction::Wear(_) | LightingAction::WearTextures(_) => {
+            LightingAction::Set { .. }
+            | LightingAction::Wear(_)
+            | LightingAction::WearTextures(_)
+            | LightingAction::Bake => {
                 return self.lighting_action(action, renderer);
             }
             LightingAction::SetScene(reference) => self.set_lighting_of(scene, reference.as_deref()),

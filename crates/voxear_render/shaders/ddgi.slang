@@ -36,11 +36,22 @@ struct Hit
     float2 barycentrics;
 };
 
+// Whether a lightmap bake is tracing (light_bake.slang): what neither shades nor bounces light in it is passed
+// through, as a cut-out instance's holes are.
+static bool bakeTracing = false;
+
+bool skippedByBake(uint id)
+{
+    return bakeTracing && (buffers()->instances[id].flags & INSTANCE_NO_BAKE_CAST) != 0;
+}
+
 // Whether a material is cut out: drawn only where its picture's alpha
-// reaches its cutoff, as a card of leaves or a chain-link fence.
+// reaches its cutoff, as a card of leaves or a chain-link fence. While a bake
+// traces, an instance it leaves out is taken for one, so its rays are tested
+// against it and pass through.
 bool cutOutMaterial(uint id)
 {
-    return buffers()->materials[buffers()->instances[id].material].alphaCutoff > 0.0;
+    return buffers()->materials[buffers()->instances[id].material].alphaCutoff > 0.0 || skippedByBake(id);
 }
 
 // Whether a ray passes through a cut-out instance's triangle where it meets
@@ -49,6 +60,10 @@ bool cutOutMaterial(uint id)
 // and the shade under a tree was a dark square.
 bool passesThrough(uint id, uint primitive, float2 barycentrics)
 {
+    if (skippedByBake(id))
+    {
+        return true;
+    }
     Instance instance = buffers()->instances[id];
     Material material = buffers()->materials[instance.material];
     Mesh mesh = buffers()->meshes[instance.mesh];
@@ -186,19 +201,32 @@ bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
     return traceScene(frame, origin, direction, far, true).found;
 }
 
-// The light a surface sends back along a ray that hit it, where it hit, and
-// whether the ray found the surface's back, as from inside something. For a
-// GI probe's ray, its diffuse light alone; for a reflection's or a reflection
-// probe's, its shine too, so metals show what they mirror rather than black.
-float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
-    float3 position, float3 direction, float mip, bool fromProbe, out bool back)
+// What a ray met: the surface's normal, turned to face the ray, its colour
+// as diffuse light sees it, its shine, its glow, its lightmap UVs, and
+// whether the ray met its back, as from inside something.
+struct HitSurface
+{
+    float3 normal;
+    float3 albedo;
+    float3 f0;
+    float metal;
+    float rough;
+    float3 emissive;
+    float2 lightmapUv;
+    bool back;
+};
+
+HitSurface hitSurface(Frame* frame, uint id, uint primitive, float2 barycentrics, float3 direction, float mip)
 {
     Instance instance = buffers()->instances[id];
     Mesh mesh = buffers()->meshes[instance.mesh];
     uint first = mesh.lods[0].indexOffset + primitive * 3;
-    Vertex a = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first]];
-    Vertex b = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 1]];
-    Vertex c = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 2]];
+    uint ia = buffers()->indices[first];
+    uint ib = buffers()->indices[first + 1];
+    uint ic = buffers()->indices[first + 2];
+    Vertex a = buffers()->vertices[mesh.vertexOffset + ia];
+    Vertex b = buffers()->vertices[mesh.vertexOffset + ib];
+    Vertex c = buffers()->vertices[mesh.vertexOffset + ic];
     float3 weights = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics.x, barycentrics.y);
     float3 local = a.normal * weights.x + b.normal * weights.y + c.normal * weights.z;
     float3 normal = normalize(instance.normal0.xyz * local.x + instance.normal1.xyz * local.y + instance.normal2.xyz * local.z);
@@ -208,9 +236,10 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     bool painted = (instance.flags & INSTANCE_RAYS_ONLY) != 0 && (a.wind & PROXY_MATERIAL) != 0;
     Material material = buffers()->materials[painted ? a.wind & ~PROXY_MATERIAL : instance.material];
     bool sheet = material.alphaCutoff > 0.0 || (material.flags & MATERIAL_FOLIAGE) != 0;
-    back = dot(normal, direction) > 0.0 && !sheet;
+    HitSurface hit;
+    hit.back = dot(normal, direction) > 0.0 && !sheet;
     // Both faces of a surface take light, as its front does.
-    normal = dot(normal, direction) > 0.0 ? -normal : normal;
+    hit.normal = dot(normal, direction) > 0.0 ? -normal : normal;
     float2 uv = a.uv * weights.x + b.uv * weights.y + c.uv * weights.z;
     float4 base = material.baseColor
         * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip);
@@ -219,11 +248,45 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
         * textures[NonUniformResourceIndex(material.metallicRoughnessTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).b;
     // As the season has it, so bounced light and reflections turn with the year too.
     float rough = material.roughness;
-    seasonalSurface(frame, material, instance.model.c3.xyz, normal, base.rgb, rough);
-    float3 albedo = base.rgb * (1.0 - metal);
-    float3 emissive = material.emissive
+    seasonalSurface(frame, material, instance.model.c3.xyz, hit.normal, base.rgb, rough);
+    hit.albedo = base.rgb * (1.0 - metal);
+    hit.f0 = lerp(float3(0.04), base.rgb, metal);
+    hit.metal = metal;
+    hit.rough = rough;
+    hit.emissive = material.emissive
         * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb
-        * glowAmount(frame, material, instance.model.c3.xyz);
+        * (bakeTracing ? glowAverage(material) : glowAmount(frame, material, instance.model.c3.xyz));
+    hit.lightmapUv = 0.0;
+    if (instance.baked != 0)
+    {
+        float2* uvs = buffers()->lightmapUvs + mesh.vertexOffset;
+        hit.lightmapUv = uvs[ia] * weights.x + uvs[ib] * weights.y + uvs[ic] * weights.z;
+    }
+    return hit;
+}
+
+// The light a surface sends back along a ray that hit it, where it hit, and
+// whether the ray found the surface's back, as from inside something. For a
+// GI probe's ray, its diffuse light alone; for a reflection's or a reflection
+// probe's, its shine too, so metals show what they mirror rather than black.
+// Beside a bake, a probe's own rays take only the Realtime lights and their
+// bounce, as the bake holds the rest; a reflection's take the bake's light
+// where what they meet has some, and leave out of its direct light what its
+// lightmap holds.
+float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
+    float3 position, float3 direction, float mip, bool fromProbe, out bool back)
+{
+    HitSurface hit = hitSurface(frame, id, primitive, barycentrics, direction, mip);
+    back = hit.back;
+    float3 normal = hit.normal;
+    float3 albedo = hit.albedo;
+    BakedInstance baked;
+    bool baking = frame->bake.source != GI_REALTIME;
+    bool hasBaked = baking && bakedInstance(id, baked);
+    bool ownLightmap = hasBaked && lightmapped(baked);
+    bool beside = fromProbe && frame->bake.source == GI_BOTH;
+    uint firstLight = beside ? frame->bake.bakeLights : (ownLightmap ? frame->bake.bakedLights : 0);
+    bool sunLit = beside ? frame->bake.sunMode == LIGHT_MODE_REALTIME : !(ownLightmap && frame->bake.sunMode == LIGHT_MODE_BAKED);
 
     float3 toSun = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
@@ -231,22 +294,21 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float facing = dot(normal, toSun);
     // Shine only where it shows: metals, whose colour is all shine, and not the GI's rays, which gather light
     // from all round, nor a near-white dielectric's few percent.
-    float3 f0 = lerp(float3(0.04), base.rgb, metal);
-    bool shiny = !fromProbe && metal > 0.05;
+    bool shiny = !fromProbe && hit.metal > 0.05;
     Surface s;
     s.normal = normal;
     s.view = -direction;
     s.diffuse = albedo;
-    s.f0 = shiny ? f0 : 0.0;
+    s.f0 = shiny ? hit.f0 : 0.0;
     // Not sharper than a capture's texels can show: a mirror's highlight would be one bright texel.
-    s.roughness = shiny ? max(rough, 0.2) : 1.0;
+    s.roughness = shiny ? max(hit.rough, 0.2) : 1.0;
     float3 lit = 0.0;
-    if (facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
+    if (sunLit && facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
     {
         float3 sun = sunLight * glassSun(frame, position, normal);
         lit += shiny ? shade(s, toSun, sun) : albedo / PI * sun * facing;
     }
-    for (uint i = 0; i < frame->lightCount; i++)
+    for (uint i = firstLight; i < frame->lightCount; i++)
     {
         Light lamp = buffers()->lights[i];
         if (distance(lamp.position, position) < lamp.range + 2.0 * max(lamp.size.x, lamp.size.y))
@@ -262,9 +324,30 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // reflection's ray comes from the thing reflecting, and back towards a chrome ball the probes round it are
     // inside it or have it in their way, so straight out from the surface instead.
     float3 towards = fromProbe ? -direction : normal;
-    // Without the GI, reflections still trace the scene, and what they meet takes the sky's light alone, as
-    // shading does then.
-    float3 around = frame->ddgi.enabled != 0 ? ddgiIrradiance(frame, position, normal, towards, sky) : sky;
+    bool both = frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0;
+    float3 around;
+    float3 bakedLight;
+    float3 volume;
+    if (!fromProbe && hasBaked && bakedIrradiance(baked, hit.lightmapUv, normal, bakedLight))
+    {
+        around = bakedLight * frame->bake.strength + (both ? ddgiIrradiance(frame, position, normal, towards, 0.0) : 0.0);
+    }
+    // Under a bake, what has no baked light of its own takes its probes' grid's.
+    else if (!fromProbe && probeVolumeLight(frame, position, normal, volume))
+    {
+        around = volume + (both ? ddgiIrradiance(frame, position, normal, towards, 0.0) : 0.0);
+    }
+    else if (frame->ddgi.enabled != 0)
+    {
+        around = frame->bake.source == GI_BOTH ? ddgiIrradiance(frame, position, normal, towards, 0.0) + (beside ? 0.0 : sky)
+            : ddgiIrradiance(frame, position, normal, towards, sky);
+    }
+    else
+    {
+        // Without the GI, reflections still trace the scene, and what they meet takes the sky's light alone, as
+        // shading does then.
+        around = sky;
+    }
     float3 mirrored = 0.0;
     if (shiny)
     {
@@ -272,11 +355,11 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
         // as a reflection that finds nothing of its own takes them; dimmed by Fresnel as shading's is.
         float3 outward = reflect(direction, normal);
         float nv = saturate(dot(normal, -direction));
-        float3 fresnel = f0 + (max(float3(1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
+        float3 fresnel = hit.f0 + (max(float3(1.0 - hit.rough), hit.f0) - hit.f0) * pow(1.0 - nv, 5.0);
         float3 off = position + normal * 0.05;
-        mirrored = fresnel * reflectionFallback(frame, off, off, normal, outward, rough, around, atmosphere, true);
+        mirrored = fresnel * reflectionFallback(frame, off, off, normal, outward, hit.rough, around, atmosphere, true);
     }
-    return lit + albedo * around + mirrored + emissive;
+    return lit + albedo * around + mirrored + hit.emissive;
 }
 
 // The sky's light from a direction, as the plain sky light has it; a
@@ -319,7 +402,8 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     float4 result;
     if (!hit.found)
     {
-        result = float4(ddgiSky(frame, direction), 1e4);
+        // Beside a bake, which holds the sky's light, the probes hold none of it.
+        result = float4(frame->bake.source == GI_BOTH ? 0.0 : ddgiSky(frame, direction), 1e4);
     }
     else
     {
@@ -675,3 +759,4 @@ void probeCaptureMain(uint3 id : SV_DispatchThreadID)
 }
 
 #include "sound_rays.slang"
+#include "light_bake.slang"

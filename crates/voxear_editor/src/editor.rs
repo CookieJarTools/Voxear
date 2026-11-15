@@ -48,6 +48,7 @@ mod particle_effects;
 mod path_bakes;
 mod probe_bakes;
 mod reverb_bakes;
+mod lighting_bakes;
 mod placing;
 mod play;
 mod prefab_mode;
@@ -245,6 +246,10 @@ pub(crate) enum Command {
     BakeProbes,
     /// Bake the open level's reverb probes.
     BakeReverb,
+    /// Bake the open level's lighting, its lightmaps and light probes, or
+    /// give up the bake under way.
+    BakeLighting,
+    CancelLightingBake,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -356,6 +361,9 @@ pub struct Editor {
     probe_bake_end: Option<Result<probe_bakes::ProbesBaked, String>>,
     reverb_bake: Option<reverb_bakes::ReverbBake>,
     reverb_bake_end: Option<Result<reverb_bakes::ReverbBaked, String>>,
+    /// The open level's lighting baking, and how the last bake ended.
+    lighting_bake: Option<lighting_bakes::LightingBake>,
+    lighting_bake_end: Option<Result<lighting_bakes::LightingBaked, String>>,
     /// The panel whose window menu is open, and what each of its items does.
     window_menu: Option<(String, Vec<Option<windows::WindowAction>>)>,
     /// What the rail's drawer shows, if it is open.
@@ -715,6 +723,8 @@ impl Editor {
             probe_bake_end: None,
             reverb_bake: None,
             reverb_bake_end: None,
+            lighting_bake: None,
+            lighting_bake_end: None,
             window_menu: None,
             drawer: None,
             prefab: None,
@@ -1152,6 +1162,8 @@ impl Editor {
         self.finish_path_bake();
         self.update_probe_bake(renderer);
         self.update_reverb_bake();
+        self.update_lighting_bake(renderer);
+        self.show_lighting_bake(renderer);
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
@@ -2372,6 +2384,8 @@ impl Editor {
             Command::BakePaths => self.bake_paths(),
             Command::BakeProbes => self.bake_probes(),
             Command::BakeReverb => self.bake_reverb(),
+            Command::BakeLighting => self.bake_lighting(renderer),
+            Command::CancelLightingBake => self.cancel_lighting_bake(renderer),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
@@ -3102,7 +3116,12 @@ impl Editor {
         let notice = self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs_f32() < NOTICE_SECONDS);
         let status = match notice {
             Some((text, _)) => text.clone(),
-            None => match self.path_bake_status().or_else(|| self.probe_bake_status()).or_else(|| self.reverb_bake_status()) {
+            None => match self
+                .path_bake_status()
+                .or_else(|| self.probe_bake_status())
+                .or_else(|| self.reverb_bake_status())
+                .or_else(|| self.lighting_bake_status(renderer))
+            {
                 Some(baking) => baking,
                 None if self.unsaved && !self.is_playing() => "Unsaved changes · Ctrl+S".to_string(),
                 None => self.play.status().to_string(),
@@ -3113,7 +3132,8 @@ impl Editor {
             || self.describing.is_some()
             || self.path_bake.is_some()
             || self.probe_bake.is_some()
-            || self.reverb_bake.is_some();
+            || self.reverb_bake.is_some()
+            || self.lighting_bake.is_some();
         self.ui.set_class(self.nodes.status_dot, "busy", busy);
         self.status.0 += 1;
         self.status.1 += delta;

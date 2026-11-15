@@ -802,6 +802,8 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "Portal" => |world, entity| world.has::<voxear_render::Portal>(entity),
         "ReflectionProbe" => |world, entity| world.has::<voxear_render::ReflectionProbe>(entity),
         "ReverbProbe" => |world, entity| world.has::<voxear_engine::reverb_probes::ReverbProbe>(entity),
+        "Lightmap" => |world, entity| world.has::<voxear_render::Lightmap>(entity),
+        "LightProbeGroup" => |world, entity| world.has::<voxear_render::LightProbeGroup>(entity),
         "Rigidbody" => |world, entity| world.has::<Rigidbody>(entity),
         "Rigidbody2D" => |world, entity| world.has::<Rigidbody2D>(entity),
         "ScreenUi" => |world, entity| world.has::<voxear_engine::screen_ui::ScreenUi>(entity),

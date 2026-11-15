@@ -128,6 +128,7 @@ pub fn shapes(
         post_volume(&mut shapes, world, camera, entity);
         reflection_probe(&mut shapes, world, camera, entity);
         reverb_probe(&mut shapes, world, camera, entity);
+        light_probe_group(&mut shapes, world, camera, entity);
         ui_panel(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
         force_field(&mut shapes, world, camera, entity);
@@ -456,6 +457,24 @@ fn reverb_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, ent
     if let Some(at) = camera.project(middle) {
         let at = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
         shapes.push(Shape::Icon { name: "audio", center: at, size: SPEAKER, color });
+    }
+}
+/// A Light Probe Group's probes, a dot each, and with a fill, the box it
+/// fills.
+fn light_probe_group(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(group) = world.get::<voxear_render::LightProbeGroup>(entity) else { return };
+    let matrix = voxear_scene::world_matrix(world, entity);
+    let color = Color::hex(REACH);
+    if group.fill.is_some() {
+        let (scale, rotation, position) = matrix.to_scale_rotation_translation();
+        let faint = Color { a: (u16::from(color.a) * 2 / 5) as u8, ..color };
+        wire_box(shapes, camera, position, rotation, scale.abs().max(Vec3::splat(1e-4)) * 0.5, faint);
+    }
+    for probe in group.probes(&matrix) {
+        if let Some(at) = camera.project(probe) {
+            let center = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
+            shapes.push(Shape::Circle { center, radius: 3.0, fill: color, border: None });
+        }
     }
 }
 

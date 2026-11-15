@@ -47,6 +47,10 @@ pub struct MeshData {
     /// For a skinned mesh, which bones move each vertex, one for each of
     /// `vertices`; empty for a rigid one.
     pub skin: Vec<crate::skeleton::SkinVertex>,
+    /// A second set of UVs, one for each of `vertices`, in which no two
+    /// triangles overlap, for a lightmap (see `lightmap_uvs`); empty for a
+    /// mesh that has none.
+    pub lightmap_uvs: Vec<[f32; 2]>,
 }
 
 /// A mesh's triangles, for physics and the editor's picking: its points,

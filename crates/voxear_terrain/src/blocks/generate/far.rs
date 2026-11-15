@@ -55,7 +55,7 @@ const VERSION: u8 = 1;
 
 /// The way tiles are made, counted up when it changes, so tiles kept on
 /// disk made another way are made again (see `stream::BlockMaking`).
-pub const MADE_AS: u32 = 4;
+pub const MADE_AS: u32 = 5;
 
 /// How the sea of `block`, its top `top` blocks up, stands at block `y` of
 /// a far tile's column whose ground's surface is `surface`: as `Sea::at`
@@ -304,6 +304,16 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
                 }
                 tile.add(place, to - 1, to, cover);
             }
+        }
+    }
+    // The floor, under whatever the ground or its water put there: its coarser blocks may hold the ground's top or
+    // the sea (see `columns::lay_floor`).
+    let floor = generate.floor_top().map(|top| (top.div_euclid(scale as i32), generate.floor_block(file)));
+    if let Some((high, block)) = floor.filter(|(_, block)| *block != AIR) {
+        for at in 0..CHUNK * CHUNK {
+            let place = [at % CHUNK, at / CHUNK];
+            let lowest = tile.column(place).first().map_or(high + 1, |run| run.from);
+            tile.add(place, low, lowest.min(high + 1), block);
         }
     }
     tile

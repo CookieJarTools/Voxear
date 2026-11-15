@@ -132,6 +132,61 @@ pub struct BlockGenerate {
     /// filled in as `placed` is.
     #[serde(skip)]
     pub built: Option<std::sync::Arc<super::structure::WorldStructures>>,
+    /// The floor at its bottom that nothing digs through or falls past: on,
+    /// two blocks deep of the world's bottom block, unless its file says
+    /// otherwise.
+    #[serde(skip_serializing_if = "BlockFloor::is_default")]
+    pub floor: BlockFloor,
+}
+
+/// The floor under a generated world: its lowest `depth` blocks, from its
+/// bottom up, of block `block` (by its place in the list from 1; air for the
+/// world's own bottom block), where it is `on`. Its ground, caves, basins and
+/// what its generator builds stop on it, and its blocks cannot be changed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockFloor {
+    pub on: bool,
+    #[serde(skip_serializing_if = "is_air")]
+    pub block: BlockId,
+    pub depth: u32,
+}
+
+impl Default for BlockFloor {
+    fn default() -> Self {
+        Self { on: true, block: AIR, depth: 2 }
+    }
+}
+
+impl BlockFloor {
+    /// The most blocks deep a floor is.
+    pub const DEEPEST: u32 = 64;
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl BlockGenerate {
+    /// The highest block of its floor, in blocks from the world's corner;
+    /// none where it has none.
+    pub fn floor_top(&self) -> Option<i32> {
+        let depth = self.floor.depth.min(BlockFloor::DEEPEST);
+        (self.floor.on && depth > 0).then(|| self.bottom + depth as i32 - 1)
+    }
+
+    /// The lowest block anything built or changed on its ground may be: over
+    /// its floor, else its bottom.
+    pub fn lowest_open(&self) -> i32 {
+        self.floor_top().map_or(self.bottom, |top| top + 1)
+    }
+
+    /// Its floor's block in a world of `file`'s blocks: its own, else the
+    /// world's bottom block, else its first.
+    pub fn floor_block(&self, file: &super::file::BlockFile) -> BlockId {
+        let known = |block: BlockId| block != AIR && usize::from(block) <= file.blocks.len();
+        [self.floor.block, file.ground.bottom, 1].into_iter().find(|&block| known(block)).unwrap_or(AIR)
+    }
 }
 
 fn is_nothing(value: &f32) -> bool {
@@ -165,6 +220,7 @@ impl Default for BlockGenerate {
             placed: None,
             structures: Vec::new(),
             built: None,
+            floor: BlockFloor::default(),
         }
     }
 }
@@ -249,6 +305,58 @@ mod tests {
         generate::Preset,
         surfaces::Biome,
     };
+
+    #[test]
+    fn a_generated_worlds_floor_lies_under_everything_near_and_far_and_no_change_reaches_it() {
+        // Rolling hills down to block -6, its valleys and sea floor lower, hollowed by caves; block 4 the floor.
+        let world = Preset::RollingHills.world();
+        let mut file = BlockFile {
+            ground: Ground { size: [48, 48], ..Ground::default() },
+            generate: Some(BlockGenerate {
+                position: [300.0, -150.0],
+                bottom: -6,
+                caves: 1.0,
+                ..BlockGenerate::default()
+            }),
+            ..BlockFile::default()
+        };
+        file.blocks.push(BlockKind::colored("Bedrock", [0.2; 3]));
+        let generate = file.generate.as_mut().unwrap();
+        generate.floor.block = 4;
+        generate.floor.depth = 3;
+        assert_eq!(generate.floor_top(), Some(-4));
+        let map = file.make_ground(Some(&world));
+        for z in 0..48 {
+            for x in 0..48 {
+                for y in -6..=-4 {
+                    assert_eq!(map.get([x, y, z]), 4, "the floor at ({x}, {y}, {z})");
+                }
+                assert_eq!(map.get([x, -7, z]), AIR, "nothing under the floor at ({x}, {z})");
+            }
+        }
+        // Somewhere the ground stands over the floor, and caves or lower ground do not cut it.
+        assert!((0..48).any(|x| map.get([x, -3, 7]) != 4), "the floor is all the ground there is");
+        // Far off, its coarser blocks go down to the floor: nothing open under them.
+        let generate = file.generate.clone().unwrap();
+        for level in [1u32, 3] {
+            let far = far::far_tile(&file, &generate, &world, level, [0, 0]);
+            for at in [[0, 0], [17, 5], [31, 31]] {
+                let lowest = far.column(at).first().copied().expect("a column");
+                assert_eq!(lowest.from, (-6i32).div_euclid(1 << level), "level {level} at {at:?}");
+            }
+        }
+        // No change reaches the floor; over it, changes are made.
+        let mut blocks = crate::blocks::BlockWorld::new(map.clone(), &file.faces().1, 1.0);
+        blocks.floor = generate.floor_top();
+        let changed = blocks.set_blocks([([5, -5, 5], AIR), ([5, -4, 6], AIR), ([5, 60, 5], 1)]);
+        assert_eq!(changed, 1);
+        assert_eq!((blocks.blocks.get([5, -5, 5]), blocks.blocks.get([5, -4, 6])), (4, 4));
+        // Off, and the world's lowest blocks are its ground's, or air.
+        let mut open = file.clone();
+        open.generate.as_mut().unwrap().floor.on = false;
+        let map = open.make_ground(Some(&world));
+        assert!((0..48).all(|x| map.get([x, -6, 7]) != 4), "a floor when it is off");
+    }
 
     fn generated(caves: f32, overhangs: f32) -> (BlockFile, WorldGen) {
         // Mountains 300 m high in a cold world, so some of it is snowed.
@@ -908,6 +1016,7 @@ mod tests {
     #[test]
     fn generated_chunks_are_the_same_blocks_to_the_bit_as_cubes_and_smooth_near_and_far() {
         // As they were made before generators were graphs: covered by climate, hollowed by caves, with a sea.
+        // Pinned again when worlds got a floor at their bottom: at its own level only, coarser ones reach it.
         let (mut file, world) = generated(0.5, 0.0);
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
         file.generate.as_mut().unwrap().sea = file.blocks.len() as BlockId;
@@ -915,7 +1024,7 @@ mod tests {
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xc4a8_ae72_922e_e33a, 0x06fa_ee9e_a714_aca3, 0x56ad_b1e9_cadc_ac61],
+            [0xd19f_bcfb_1482_1762, 0x06fa_ee9e_a714_aca3, 0x1376_7000_d96b_a031],
             "generated blocks changed: were they meant to? {hashes:#x?}"
         );
     }
@@ -1162,13 +1271,14 @@ mod tests {
     fn generated_chunks_with_overhangs_are_the_same_blocks_to_the_bit() {
         // Apart from those without. Pinned again when overhangs became a node: they push steep ground alone,
         // layers are counted down from the open air, and smooth fills are distances. At level 2 the blocks, 8 m
-        // a side, are too large to hold a bulge, so the far ground is the ground with no overhangs.
+        // a side, are too large to hold a bulge, so the far ground is the ground with no overhangs. And again
+        // when worlds got a floor.
         let (file, world) = generated(0.5, 6.0);
         let smooth = BlockFile { smooth: true, ..file.clone() };
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0x5391_a2b4_0bdd_5252, 0x06fa_ee9e_a714_aca3, 0x5346_5916_77b2_355f],
+            [0xbc6a_d0ff_4a8e_707a, 0x06fa_ee9e_a714_aca3, 0x39b0_93be_2127_d05c],
             "overhanging blocks changed: were they meant to? {hashes:#x?}"
         );
     }

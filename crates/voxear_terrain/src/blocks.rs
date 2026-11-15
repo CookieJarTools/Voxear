@@ -430,6 +430,10 @@ pub struct BlockWorld {
     /// Its own clock, in seconds, by which its blocks move: on as its game
     /// or editor goes on (see [`BlockWorld::tick`]).
     pub clock: f64,
+    /// The highest block of the floor under its generated ground, in blocks
+    /// from its corner (see `generate::BlockFloor`): no change reaches it or
+    /// anything under it. None where it has no floor.
+    pub floor: Option<i32>,
 }
 
 impl Component for BlockWorld {}
@@ -498,6 +502,7 @@ impl BlockWorld {
             moving: Arc::default(),
             pressed: Arc::default(),
             clock: 0.0,
+            floor: None,
         }
     }
 
@@ -722,8 +727,9 @@ impl BlockWorld {
         let blocks = Arc::make_mut(&mut self.blocks);
         // How far into a chunk from either side a block is in the next chunk's padded blocks.
         let (first, last) = if self.smooth { (smooth::REACH_AFTER, smooth::REACH_BELOW) } else { (0, CHUNK - 1) };
+        let floor = self.floor.unwrap_or(i32::MIN);
         for (at, block, fill) in changes {
-            if blocks.get(at) == block && blocks.fill(at) == fill {
+            if at[1] <= floor || blocks.get(at) == block && blocks.fill(at) == fill {
                 continue;
             }
             blocks.set_cell(at, block, fill);

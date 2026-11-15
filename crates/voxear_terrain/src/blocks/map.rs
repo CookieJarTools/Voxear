@@ -444,7 +444,7 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
             sets.insert(at, block);
         }
     };
-    let at = (file.block_size.max(0.01), generate.position, generate.bottom, super::generate::halved(generate));
+    let at = (file.block_size.max(0.01), generate.position, generate.lowest_open(), super::generate::halved(generate));
     // In a coarser ring, each stands on the ring's own ground, its highest block of the world's own blocks: else on a
     // sharp ridge or in a saddle, where the generator has the ground well over or under the middle of the ring's
     // block, a tree would hang in the air or sink into the ground.

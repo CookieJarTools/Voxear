@@ -84,6 +84,16 @@ public static unsafe partial class Blocks
 		return Native.IsConnected ? (ushort)Native.Api->BlockAt(&position, null) : Air;
 	}
 
+	/// <summary>
+	/// How high the top of the floor under a generated Block World stands, in metres, under
+	/// <paramref name="position"/>: nothing digs through it or falls past it, and <see cref="Set(Vector3, ushort)"/>
+	/// changes none of its blocks or any under them. NaN where no Block World has one.
+	/// </summary>
+	public static float FloorHeight(Vector3 position)
+	{
+		return Native.IsConnected ? Native.Api->BlockFloor(&position, null) : float.NaN;
+	}
+
 	/// <summary>Sets the block at <paramref name="position"/> to <paramref name="block"/>; whether it changed.</summary>
 	public static bool Set(Vector3 position, ushort block)
 	{

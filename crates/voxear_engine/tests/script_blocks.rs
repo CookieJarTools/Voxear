@@ -46,6 +46,7 @@ public sealed class Builder : Behaviour
 	private void Build()
 	{
 		Log.Info($"top {Blocks.At(new Vector3(0.5f, 7.5f, 0.5f))}, under {Blocks.At(new Vector3(0.5f, 2.5f, 0.5f))}, air {Blocks.At(new Vector3(0.5f, 9.5f, 0.5f))}");
+		Log.Info($"floor {(float.IsNaN(Blocks.FloorHeight(Vector3.Zero)) ? "none" : "some")}");
 		if (Blocks.Raycast(new Vector3(0.5f, 20f, 0.5f), -Vector3.UnitY, out var hit))
 		{
 			Log.Info($"ray met {hit.Obj.Name} block {hit.Block} at {hit.Point.Y:0.0}, {hit.Distance:0.0} down, normal {hit.Normal.Y}");
@@ -128,6 +129,8 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
     let said = |text: &str| lines.iter().any(|line| line == text);
     assert!(said("top 1, under 3, air 0"), "grass over stone: {lines:?}");
+    // Flat ground has no floor under it.
+    assert!(said("floor none"), "a floor under flat ground: {lines:?}");
     assert!(said("ray met Blocks block 1 at 8.0, 12.0 down, normal 1"), "{lines:?}");
     assert!(said("placed True, placed again False"), "the same face, where the first went: {lines:?}");
     // The blocks within 2 m of a block's middle: 33, less the one above the ground.

@@ -939,8 +939,52 @@ pub fn column_chunks(
         // Built up under with the world's own under block.
         let under = file.ground.under;
         let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };
-        let at = (size, generate.position, generate.bottom, halves.is_some());
+        // Nothing is built into the floor.
+        let at = (size, generate.position, generate.lowest_open(), halves.is_some());
         crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under);
     }
+    // The floor last, over whatever the ground, its caves or its water put there.
+    lay_floor(&mut chunks, (file, generate, level), [cx, cz], (across, along));
     chunks.into_iter().map(|(at, chunk)| (at, chunk.tidied())).collect()
+}
+
+/// Lays `generate`'s floor into `chunks`, those of chunk column `[cx, cz]`
+/// at `level`, over its columns `across` along x and `along` along z: its
+/// blocks from the world's bottom up, as many at a coarser level as cover
+/// its depth, one at least. At its own level over whatever is there; at a
+/// coarser one, where a block of the floor may hold the ground's top or the
+/// sea, only into air.
+fn lay_floor(
+    chunks: &mut Vec<([i32; 3], Chunk)>,
+    (file, generate, level): (&BlockFile, &BlockGenerate, u32),
+    [cx, cz]: [i32; 2],
+    (across, along): (std::ops::Range<i32>, std::ops::Range<i32>),
+) {
+    let (Some(top), block) = (generate.floor_top(), generate.floor_block(file)) else { return };
+    if block == AIR {
+        return;
+    }
+    let scale = 1i32 << level.min(16);
+    let side = CHUNK as i32;
+    let (low, high) = (generate.bottom.div_euclid(scale), top.div_euclid(scale));
+    for y in low..=high {
+        let key = [cx, y.div_euclid(side), cz];
+        let at = match chunks.iter().position(|(k, _)| *k == key) {
+            Some(at) => at,
+            None => {
+                chunks.push((key, Chunk::filled(AIR)));
+                chunks.len() - 1
+            }
+        };
+        let chunk = &mut chunks[at].1;
+        for z in along.clone() {
+            for x in across.clone() {
+                let (lx, ly, lz) = ((x - cx * side) as u32, y.rem_euclid(side) as u32, (z - cz * side) as u32);
+                if level == 0 || chunk.get(lx, ly, lz) == AIR {
+                    chunk.set(lx, ly, lz, block);
+                }
+            }
+        }
+    }
+    chunks.sort_by_key(|(key, _)| key[1]);
 }

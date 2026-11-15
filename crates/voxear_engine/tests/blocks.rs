@@ -505,9 +505,9 @@ fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_
     assert!((said["color"][2].as_f64().unwrap() - 0.3).abs() < 1e-6);
     assert!(biome_json(&mut game.content, "Biomes/Gone.biome").is_err());
 
-    // Something built in its lowest blocks, then the cool biome saved with clay on top: the world listing it is
-    // made again in the next frame, clay where moss was, the sand as it was, and what was built kept.
-    let built = [5, -8, 5];
+    // Something built in its lowest blocks over its floor, then the cool biome saved with clay on top: the world
+    // listing it is made again in the next frame, clay where moss was, the sand as it was, and what was built kept.
+    let built = [5, -6, 5];
     game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks([(built, 1)]);
     write("Biomes/Cool.biome", &cool("Blocks/Clay.block"));
     game.content.forget_biome(cool_guid);

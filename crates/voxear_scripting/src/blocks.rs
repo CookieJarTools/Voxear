@@ -76,6 +76,27 @@ pub(crate) unsafe extern "C" fn block_at(at: *const [f32; 3], obj: *mut u64) -> 
     i32::from(block)
 }
 
+/// How high the top of the floor under a world of blocks' generated ground
+/// stands, in metres, under `at`: the first world with a floor's, its Obj
+/// put in `obj`. Nothing changes its blocks or any under them. NaN where
+/// none has one.
+pub(crate) unsafe extern "C" fn block_floor(at: *const [f32; 3], obj: *mut u64) -> f32 {
+    if at.is_null() {
+        return f32::NAN;
+    }
+    let found = with_world(|world| {
+        worlds(world).into_iter().find_map(|(entity, corner)| {
+            let blocks = world.get::<BlockWorld>(entity)?;
+            Some((entity, corner.y + (blocks.floor? + 1) as f32 * blocks.block_size))
+        })
+    });
+    let Some((entity, top)) = found else { return f32::NAN };
+    if !obj.is_null() {
+        unsafe { *obj = entity.to_bits() };
+    }
+    top
+}
+
 /// What `block_set` changes: one block, a box between two points, or a ball.
 const ONE: i32 = 0;
 const BOX: i32 = 1;

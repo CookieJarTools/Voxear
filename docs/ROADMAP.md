@@ -2563,6 +2563,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     stand in nearly half the areas; canyons wind as long ravines; spires are fewer and smaller; a biome's own land
     keeps a quarter of its height past 45 m. Areas' and biomes' borders bend hard so they wind instead of looking
     many-sided. Rivers in a world of levels start only from 40 ha of ground, so fewer and larger.
+  - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
+    deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
+    `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the
+    ground, its caves and its water, near and in the far view; nothing a generator builds goes into it. Far off,
+    plants and houses stand on the ground the world lays in, out of its rivers and lakes. Tests: far plants in no
+    lake a world lays in; the floor near and far, kept by edits, gone when off.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

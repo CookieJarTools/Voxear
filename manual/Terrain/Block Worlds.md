@@ -39,6 +39,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Generator | The `.worldgen` its ground comes from |
 | Offset | Where its corner is in the generator's world, in metres |
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
+| Floor | Whether its lowest blocks are a [[Block Worlds#The floor|floor]] nothing digs through or falls past, and of which **Floor block**, how many **Floor depth** deep. On, two deep of the base block, unless you change it |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
@@ -86,6 +87,14 @@ Water lies on whole blocks: there are no slabs under a river, a lake or the sea,
 Nothing limits how high a generator's ground stands or how far down **Lowest block** goes: mountains and tablelands hundreds of blocks high, with rock hundreds of blocks deep under them for caves in many layers. Set Lowest block as far under the world's corner as the deepest cave you want, and a little more.
 
 Depth costs little. Rock that nothing is hollowed out of is kept as whole chunks of one block, which are not made a block at a time, take almost no memory and are never drawn. A Cave Network, Arches and Raised Land say how high and how low they reach over each column, so only the cells between are asked about. A chunk column of plain ground takes about 3 ms at 256 blocks tall and 4 ms at 1024; one over three layers of caves about 28 ms and 39 ms. Tunnels, Chambers and Noise 3D can hollow rock at any depth, so with those every block down to Lowest block is asked about: keep such a world shallower.
+
+### The floor
+
+A generated world's lowest blocks are its floor: from **Lowest block** up, as many as **Floor depth** says, two by default, of the **Floor block**, or the base block where it names none. Nothing changes them: not the brush, not a script's `Blocks.Set`, `Blocks.Fill` or `Blocks.Break`, not mining or a blast. So nobody digs down into the void or falls past the bottom of the world.
+
+The floor is laid last, over whatever the ground put there. A cave, a basin, a canyon or a sea whose bed reaches down to it stops on it, and nothing the generator builds is built into it. Far off, the far view's coarser blocks have the floor too. Ground that would sink under the floor, as a deep basin or sea floor under a shallow Lowest block does, has the floor block for its bed there, so set Lowest block deeper than the deepest ground you want.
+
+Turn **Floor** off for a world that should open onto nothing underneath, such as islands floating in the sky. A world made before worlds had floors has one, on, at its own Lowest block.
 
 ### Deep ground
 
@@ -529,6 +538,7 @@ Blocks.Break(impact, 2f);
 | `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
 | `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is. A [[Blocks#Blocks of parts|block of parts]] is met where its parts are: a slab lying low on its top, half a block down |
 | `Blocks.Set(position, block)` | Sets one block |
+| `Blocks.FloorHeight(position)` | How high the top of a generated world's [[Block Worlds#The floor|floor]] stands, in metres: nothing changes a block there or under it. NaN where no world has one |
 | `Blocks.Fill(from, to, block)` | Sets every block in a box |
 | `Blocks.Ball(middle, radius, block)` | Sets every block in a ball |
 | `Blocks.Break(middle, radius)` | Takes away every block in a ball |

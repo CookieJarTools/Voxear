@@ -1020,6 +1020,7 @@ pub fn make(file: &Resolved, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -
         edits.apply(&mut blocks);
     }
     let mut world = BlockWorld::made(blocks, &faces, file.block_size, file.smooth);
+    world.floor = file.generate.as_ref().and_then(|generate| generate.floor_top());
     if let Some(edits) = edits.filter(|edits| !edits.links.is_empty()) {
         world.set_links(&edits.links);
     }

@@ -1313,7 +1313,10 @@ from a mip as blurred as the surface is rough, and what the GI's rays that miss 
     probes as half floats; loaded with the level (`light_bakes::put_on_level`) into a `BakedLighting` resource and a
     `LightmapBake` on each Obj, from bundles too, and shipped by content builds.
   - **Shading:** each instance gets a `BakedInstance` (its lightmap's place, or SH blended from the eight nearest
-    probes at its middle with modified Shepard weights, kept while it stands still). Directional lightmaps bend the
+    probes at its middle with modified Shepard weights, kept while it stands still). The probes are also resampled
+    as the bake loads onto a grid of L1 harmonics (`ProbeVolume`, at most 48 cells along its longest side, in a
+    buffer), which fog, water, terrain, particles, glass and the rays' hits read where they have no bake of their
+    own (`probeVolumeLight`). Directional lightmaps bend the
     light by the shading normal against the bake's. `[post.global_illumination] source` picks Realtime, Baked (the
     DDGI probes are not traced) or Both: lights are ordered Baked, Mixed, Realtime, and beside a bake the DDGI rays
     take only Realtime lights and no sky, so nothing is counted twice; reflection rays read the bake at their hits.

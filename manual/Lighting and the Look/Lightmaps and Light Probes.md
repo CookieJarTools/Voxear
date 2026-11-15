@@ -92,7 +92,7 @@ Each Obj without a lightmap is lit by the eight nearest probes, each counting le
 
 ## What a bake sees
 
-A bake traces against the meshes of Objs whose Lightmap casts, and terrain and worlds of blocks. Objs without a Lightmap, plants and particles are left out, so a character standing in a room while it bakes leaves no shadow in it. Baked light reaches the meshes of Objs with a Lightmap, and the probes reach other Objs with meshes; terrain, worlds of blocks, water and particles take the sky's light where the level is baked alone.
+A bake traces against the meshes of Objs whose Lightmap casts, and terrain and worlds of blocks. Objs without a Lightmap, plants and particles are left out, so a character standing in a room while it bakes leaves no shadow in it. Baked light reaches the meshes of Objs with a Lightmap, and the probes reach other Objs with meshes. As the level opens, the probes' light is also laid on a grid over them, which fog, water, terrain, worlds of blocks, particles and reflections read where they are, so a baked hall's fog is as dim as the hall. Past the probes, they take the sky's light.
 
 ## From the terminal
 

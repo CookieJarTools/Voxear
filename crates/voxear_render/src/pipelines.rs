@@ -15,6 +15,8 @@ pub const BLOOM_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
 /// The tonemapped image when a finishing pass still follows. Kept at 16 bits
 /// so the finish's dither can still break up banding.
 pub const LDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+/// FSR's exposure, a 1×1 picture whose red is what the scene is multiplied by.
+pub const FSR_EXPOSURE_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 /// Ambient occlusion within a frame: a visibility from 0 to 1.
 pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
 /// Each pixel's normal, folded flat (octahedral) in red and green, and its
@@ -225,6 +227,10 @@ pub struct Pipelines {
     /// format a window may be in: the first window's own, HDR10's two and
     /// scRGB's.
     pub encode: [(vk::Format, vk::Pipeline); 4],
+    /// AMD FSR 3.1's passes, where the GPU can run them (see `fsr3`), and the
+    /// pass that writes FSR the frame's exposure.
+    pub fsr3: Option<crate::fsr3::Fsr3Pipelines>,
+    pub fsr_exposure: vk::Pipeline,
     pub ui: vk::Pipeline,
     /// A UI panel's UI into its texture, the panels over each view's
     /// finished picture, and each panel's texture's mips (see `ui_panels`).
@@ -859,6 +865,11 @@ impl Pipelines {
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
             frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
+            fsr3: match gpu.info.storage_without_format {
+                true => Some(crate::fsr3::Fsr3Pipelines::new(gpu)?),
+                false => None,
+            },
+            fsr_exposure: fullscreen("FSR exposure", c"fsrExposureFragment", &[FSR_EXPOSURE_FORMAT], Blend::Opaque)?,
             encode: {
                 let formats = [
                     window_format,
@@ -1149,6 +1160,10 @@ impl Pipelines {
         let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
         let probes = [self.nearest_pyramid, self.probe_capture_software, self.probe_downsample, self.probe_filter];
         let traced = traced.chain(self.probe_capture).chain(probes);
+        if let Some(fsr3) = &self.fsr3 {
+            fsr3.destroy(gpu);
+        }
+        let encode = encode.chain(std::iter::once(self.fsr_exposure));
         for pipeline in all.into_iter().chain(mesh).chain(traced).chain(encode) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }

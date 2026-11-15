@@ -391,6 +391,8 @@ impl Editor {
                 let from = self.console.log().lock().map_or(0, |log| log.total);
                 Ok(Outcome::Later(Waiting::Scripts { from, began: false }))
             }
+            "lighting.get" => self.lighting_get(renderer),
+            "lighting.set" => self.lighting_set(args, renderer),
             "settings.get" => done(self.settings_json()),
             "settings.set" => self.settings_set(args),
             "project.get" => {

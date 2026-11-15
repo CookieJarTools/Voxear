@@ -116,6 +116,16 @@ const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
 const AO_QUALITIES: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra")];
 const AA_MODES: &[(&str, &str)] = &[("Off", "off"), ("FXAA", "fxaa"), ("TAA", "taa")];
+const UPSCALERS: &[(&str, &str)] =
+    &[("Voxear", "voxear"), ("AMD FSR 3", "fsr"), ("NVIDIA DLSS", "dlss"), ("Intel XeSS", "xess")];
+const UPSCALE_QUALITIES: &[(&str, &str)] = &[
+    ("Render scale", ""),
+    ("Native", "native"),
+    ("Quality", "quality"),
+    ("Balanced", "balanced"),
+    ("Performance", "performance"),
+    ("Ultra Performance", "ultra_performance"),
+];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
 
@@ -333,6 +343,10 @@ const SETTINGS: &[Info] = &[
         help: "How much moving things blur." },
     Info { path: &["post", "anti_aliasing", "mode"], title: "Anti-aliasing", group: "Quality", kind: Kind::Choice(AA_MODES), when: ALWAYS,
         help: "How edges are smoothed. TAA is smooth and steady, and reflections and render scale need it; FXAA is cheap and a little soft." },
+    Info { path: &["post", "anti_aliasing", "upscaler"], title: "Upscaler", group: "Quality", kind: Kind::Choice(UPSCALERS), when: TAA,
+        help: "What builds the full picture from the scene drawn smaller: Voxear's own, or AMD FSR 3. One this computer cannot run is greyed out, and Voxear's own stands in for it." },
+    Info { path: &["post", "anti_aliasing", "quality"], title: "Upscale quality", group: "Quality", kind: Kind::Choice(UPSCALE_QUALITIES), when: TAA,
+        help: "How much smaller the scene is drawn: Quality two thirds of each side, Balanced three fifths, Performance half, Ultra Performance a third. Render scale leaves it to the Render scale row." },
     Info { path: &["post", "anti_aliasing", "render_scale"], title: "Render scale", group: "Quality", kind: number(0.25, 1.0, "×"), when: TAA,
         help: "The share of the screen's width and height the scene is drawn at, TAA filling in the rest. 0.67 draws under half the pixels, far cheaper and a little softer." },
     Info { path: &["post", "anti_aliasing", "sharpness"], title: "Sharpening", group: "Quality", kind: number(0.0, 1.0, ""), when: ALWAYS,
@@ -657,6 +671,11 @@ impl LightingPanel {
         self.fields.color_clicked(ui)
     }
 
+    /// Greys out the upscalers this computer cannot run, each with why.
+    pub fn set_upscalers(&self, ui: &mut Ui, upscalers: &[(voxear_render::Upscaler, Option<String>)]) {
+        self.fields.set_upscalers(ui, upscalers);
+    }
+
     /// The setting a page shows, by its title, for tests and the palette.
     pub fn row_of(&self, title: &str) -> Option<NodeId> {
         self.fields.row_of(title)
@@ -887,6 +906,22 @@ impl LightingFields {
         })
     }
 
+    /// Greys out the upscalers this computer cannot run, each with why.
+    pub fn set_upscalers(&self, ui: &mut Ui, upscalers: &[(voxear_render::Upscaler, Option<String>)]) {
+        let Some(row) = self.rows.iter().find(|row| row.info.path == ["post", "anti_aliasing", "upscaler"]) else { return };
+        let keys: Vec<String> =
+            upscalers.iter().map(|(upscaler, _)| serde_json::to_value(upscaler).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()).collect();
+        let unavailable: Vec<(usize, String)> = upscalers
+            .iter()
+            .zip(&keys)
+            .filter_map(|((_, why), key)| {
+                let at = UPSCALERS.iter().position(|(_, value)| value == key)?;
+                Some((at + usize::from(row.pack), why.clone()?))
+            })
+            .collect();
+        ui.set_unavailable_options(row.control.node(), &unavailable);
+    }
+
     /// The tab shown.
     pub fn group(&self) -> &'static str {
         self.group
@@ -946,6 +981,30 @@ impl LightingFields {
             ui.set_visible(row.row, row.info.group == self.group && does);
         }
     }
+}
+
+/// A setting by its path as a `.lighting` file writes it, `post.bloom.intensity`,
+/// as the page's rows name it.
+pub fn setting_path(dotted: &str) -> Option<&'static [&'static str]> {
+    SETTINGS.iter().map(|info| info.path).find(|path| path.join(".") == dotted)
+}
+
+/// Every setting's path as the page has it, for tools to list.
+pub fn setting_paths() -> Vec<String> {
+    SETTINGS.iter().map(|info| info.path.join(".")).collect()
+}
+
+/// The open scene's lighting as the page shows it: the settings it names,
+/// their file when it is the project's to change, and every setting in
+/// effect, laid out as a `.lighting` file writes them.
+pub fn scene_effective(game: &mut Game) -> Result<(Option<String>, Option<PathBuf>, toml::Table)> {
+    let current = game.levels.scene_lighting().map(str::to_string);
+    let file = current.as_deref().and_then(|reference| project_file(game, reference));
+    let lighting = match current.as_deref() {
+        Some(reference) => read(game, reference)?,
+        None => world_own(game)?,
+    };
+    Ok((current, file, effective(&lighting)?))
 }
 
 /// The project's pictures, by their project paths, as a picture setting's

@@ -451,6 +451,15 @@ Dropdown:focus-visible {
     color: var(--vx-accent);
 }
 
+/* An option that cannot be picked here, as an upscaler this GPU cannot run. */
+.dropdown-option.unavailable {
+    opacity: 0.45;
+}
+
+.dropdown-option.unavailable:hover {
+    background-color: transparent;
+}
+
 /* Context menus float like a dropdown's list, with a column for ticks. */
 
 .menu-popup {

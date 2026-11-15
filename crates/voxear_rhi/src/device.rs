@@ -34,6 +34,9 @@ pub struct GpuInfo {
     pub memory_decompression: bool,
     /// `VK_EXT_hdr_metadata`, for telling an HDR display how bright pictures get.
     pub hdr_metadata: bool,
+    /// Storage images read and written without a format in the shader,
+    /// which the FSR upscaler's passes need.
+    pub storage_without_format: bool,
     /// Nanoseconds per timestamp tick.
     pub timestamp_period: f32,
     /// Why the GPU cannot run Voxear, if it cannot.
@@ -151,7 +154,8 @@ impl Gpu {
         let mesh_shaders = info.mesh_shaders && std::env::var("VOXEAR_MESH_SHADERS").map(|v| v != "0").unwrap_or(true);
         let ray_tracing = info.ray_tracing && std::env::var("VOXEAR_RAY_TRACING").map(|v| v != "0").unwrap_or(true);
         let hdr_metadata = color_spaces && info.hdr_metadata;
-        let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing, hdr_metadata };
+        let storage_without_format = info.storage_without_format;
+        let optional = Optional { decompression: decompress, mesh_shaders, ray_tracing, hdr_metadata, storage_without_format };
         let device = create_device(&instance, physical, queue_family, optional)?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_loader = khr::swapchain::Device::new(&instance, &device);
@@ -431,6 +435,11 @@ fn describe(instance: &ash::Instance, physical: vk::PhysicalDevice) -> GpuInfo {
             && supports_ray_tracing(instance, physical),
         memory_decompression: has(nv::memory_decompression::NAME) && supports_decompression(instance, physical),
         hdr_metadata: has(ext::hdr_metadata::NAME),
+        storage_without_format: {
+            let features = Features::query(instance, physical).core.features;
+            features.shader_storage_image_read_without_format == vk::TRUE
+                && features.shader_storage_image_write_without_format == vk::TRUE
+        },
         timestamp_period: props.limits.timestamp_period,
         unsupported,
     }
@@ -669,18 +678,23 @@ struct Optional {
     mesh_shaders: bool,
     ray_tracing: bool,
     hdr_metadata: bool,
+    storage_without_format: bool,
 }
 
 fn create_device(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
     queue_family: u32,
-    Optional { decompression, mesh_shaders, ray_tracing, hdr_metadata }: Optional,
+    Optional { decompression, mesh_shaders, ray_tracing, hdr_metadata, storage_without_format }: Optional,
 ) -> Result<ash::Device> {
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family).queue_priorities(&priorities)];
     let mut extensions = vec![khr::swapchain::NAME.as_ptr()];
     let mut features = Features::required();
+    if storage_without_format {
+        features.core.features.shader_storage_image_read_without_format = vk::TRUE;
+        features.core.features.shader_storage_image_write_without_format = vk::TRUE;
+    }
     let mut chain =
         features.core.push_next(&mut features.v11).push_next(&mut features.v12).push_next(&mut features.v13);
     let mut decompress = vk::PhysicalDeviceMemoryDecompressionFeaturesNV::default().memory_decompression(true);

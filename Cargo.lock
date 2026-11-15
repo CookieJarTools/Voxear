@@ -4260,6 +4260,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "toml",
  "tracing",
  "ufbx",

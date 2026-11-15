@@ -264,6 +264,8 @@ pub struct ExtractedFrame {
     /// The sun shines through the canopy cookie, its look's, whose picture
     /// the renderer has.
     pub canopy_cookie: bool,
+    /// The camera's vertical field of view, in radians, for an upscaler.
+    pub fov_y: f32,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
@@ -352,6 +354,8 @@ pub struct ViewOptions {
     /// Draws the scene at this share of the view's size, whatever its
     /// post-processing says, as `vox render --render-scale` does.
     pub render_scale: Option<f32>,
+    /// The upscaler in place of the post-processing's, to compare them.
+    pub upscaler: Option<crate::post::Upscaler>,
     /// Whether local lights keep their shadows of what stands still from
     /// frame to frame, drawing only what moves each frame (see
     /// `shadow_cache`). On by default; off, to compare.
@@ -369,6 +373,7 @@ impl Default for ViewOptions {
             gizmos: true,
             meshlet_culling: true,
             render_scale: None,
+            upscaler: None,
             local_shadow_cache: true,
         }
     }
@@ -637,6 +642,13 @@ pub fn extract(
             PostProcess { fog, ..blended }
         }
     };
+    let scene_post = match options.upscaler {
+        Some(upscaler) => PostProcess {
+            anti_aliasing: crate::post::AntiAliasing { upscaler, ..scene_post.anti_aliasing },
+            ..scene_post
+        },
+        None => scene_post,
+    };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
         DEBUG_VIEW_AMBIENT_OCCLUSION => PostProcess {
@@ -653,7 +665,7 @@ pub fn extract(
     let output_height = height;
     let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
     let scale = match taa {
-        true => options.render_scale.unwrap_or(post.anti_aliasing.render_scale).clamp(0.25, 1.0),
+        true => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
         false => 1.0,
     };
     let (width, height) = render_size((width, height), scale);
@@ -998,6 +1010,7 @@ pub fn extract(
 
     ExtractedFrame {
         canopy_cookie,
+        fov_y: camera.fov_y_degrees.to_radians(),
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),
         frame,

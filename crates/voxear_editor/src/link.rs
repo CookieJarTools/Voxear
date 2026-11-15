@@ -521,6 +521,25 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{}",
     },
     CallInfo {
+        name: "lighting.get",
+        about: "The open scene's lighting as the Lighting page shows it: every setting in effect, laid out as a \
+                .lighting file writes them, the paths `lighting.set` takes, and which upscalers run on this GPU.",
+        args: &[],
+        changes: false,
+        returns: "{ lighting, changeable, settings, paths: [path], upscalers: [{ name, runs, why }] }",
+    },
+    CallInfo {
+        name: "lighting.set",
+        about: "Changes one setting of the open scene's lighting settings, as the Lighting page does, as a step to \
+                undo: `post.anti_aliasing.upscaler` to `fsr`, `post.anti_aliasing.quality` to `performance`.",
+        args: &[
+            arg("path", ArgKind::Text, "As `lighting.get` lists them under `paths`."),
+            arg("value", ArgKind::Value, "A switch, a number, a word or a list of numbers; null takes it out."),
+        ],
+        changes: true,
+        returns: "As lighting.get",
+    },
+    CallInfo {
         name: "assets.list",
         about: "The project's assets and its packages', each with its GUID, path and kind.",
         args: &[

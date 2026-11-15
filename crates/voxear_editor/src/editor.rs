@@ -32,6 +32,7 @@ mod input_files;
 mod inspectors;
 mod languages;
 mod lighting;
+mod lighting_calls;
 mod level_edits;
 mod link_calls;
 mod material_drops;
@@ -619,6 +620,7 @@ impl Editor {
         let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
+        lighting_panel.set_upscalers(&mut ui, &renderer.upscalers());
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);

@@ -791,6 +791,20 @@ float4 finishFragment(PostOut input) : SV_Target
     return float4(dither(color, input.position.xy, frame->frameIndex), 1.0);
 }
 
+// ---------------------------------------------------------------- FSR
+
+// FSR's exposure, a 1×1 picture: what the composite multiplies the scene by,
+// in red, so FSR's own tonemapping, for what it keeps of each pixel, sees the
+// scene as the picture shows it.
+[shader("fragment")]
+float4 fsrExposureFragment(PostOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    Post post = frame->post;
+    float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;
+    return float4(frame->exposure * exp2(ev), 0.0, 0.0, 1.0);
+}
+
 // ---------------------------------------------------------------- Encode
 
 // ST 2084's PQ curve: light from 0 to 1 for 0 to 10,000 nits, as a signal

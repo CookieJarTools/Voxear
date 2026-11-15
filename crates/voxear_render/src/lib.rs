@@ -626,11 +626,11 @@ impl Renderer {
         reflection_probes::read_back(&self.gpu, image, slot).map(Some)
     }
 
-    /// Whether every reflection probe in the world has been captured or
-    /// loaded, so a bake can read them all.
-    pub fn reflection_probes_ready(&self, world: &World) -> bool {
-        let probes = world.query_ref::<(voxear_ecs::Entity, &ReflectionProbe)>();
-        probes.into_iter().all(|(entity, _)| self.reflection_probes.slot_of(entity).is_some())
+    /// The `captures` a reflection probe's Obj had when its cube was last
+    /// filled, by a capture or a load: none until it has been. A bake that
+    /// asks for a capture knows it has been taken once this has caught up.
+    pub fn reflection_probe_captured(&self, entity: voxear_ecs::Entity) -> Option<u32> {
+        self.reflection_probes.captured(entity)
     }
 
     /// GPU milliseconds per pass from the latest completed frame.

@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 87;
+pub(crate) const API_VERSION: u32 = 88;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -640,6 +640,8 @@ pub enum ComponentKind {
     Vehicle = 26,
     /// Text in the world or on a document shown from a string table's key.
     LocalizedText = 27,
+    /// A box whose surfaces reflect what can be seen from its middle.
+    ReflectionProbe = 28,
 }
 
 /// The most kinds `kind_value` answers.

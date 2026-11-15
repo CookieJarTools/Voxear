@@ -11,6 +11,16 @@ impl AssetGuid {
     pub fn new_random() -> Self {
         Self(uuid::Uuid::new_v4().as_u128())
     }
+
+    /// The GUID as one number, as a binary file keeps it.
+    pub const fn to_u128(self) -> u128 {
+        self.0
+    }
+
+    /// The GUID a binary file kept as one number.
+    pub const fn from_u128(bits: u128) -> Self {
+        Self(bits)
+    }
 }
 
 impl fmt::Display for AssetGuid {

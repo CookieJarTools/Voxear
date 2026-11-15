@@ -4130,6 +4130,7 @@ dependencies = [
  "image",
  "libc",
  "libloading 0.9.0",
+ "lz4_flex",
  "png",
  "raw-window-handle",
  "semver",

@@ -40,7 +40,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Portal, PostVolume, Renderer,
+    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Portal, PostVolume, ProbeUpdate, ReflectionProbe, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
     BuiltinMesh, BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleMesh, ParticleTexture, ParticleTrails, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
 };
@@ -76,6 +76,9 @@ const CAVE_MODES: [&str; 2] = ["Carve", "Fill"];
 const VOLUME_SHAPES: [&str; 3] = ["Global", "Box", "Sphere"];
 /// The volume shapes in `VOLUME_SHAPES`'s order.
 const VOLUME_SHAPE_ORDER: [VolumeShape; 3] = [VolumeShape::Global, VolumeShape::Box, VolumeShape::Sphere];
+/// When a reflection probe is captured, in `PROBE_UPDATE_ORDER`'s order.
+const PROBE_UPDATES: [&str; 2] = ["Once", "Live"];
+const PROBE_UPDATE_ORDER: [ProbeUpdate; 2] = [ProbeUpdate::Once, ProbeUpdate::Live];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
 
@@ -98,6 +101,8 @@ pub enum Part {
     Vehicle,
     Wheel,
     PostVolume,
+    /// A Reflection Probe: a box whose surfaces reflect what its middle sees.
+    ReflectionProbe,
     WindZone,
     ParticleSystem,
     /// A Force Field: what moves the particles round its Obj.
@@ -181,6 +186,7 @@ impl Part {
             Part::Vehicle => "vehicle".into(),
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
+            Part::ReflectionProbe => "reflection_probe".into(),
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
             Part::ForceField => "force_field".into(),
@@ -258,6 +264,7 @@ impl Part {
             Part::Vehicle => "Vehicle",
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
+            Part::ReflectionProbe => "Reflection Probe",
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
             Part::ForceField => "Force Field",
@@ -321,6 +328,7 @@ impl Part {
             Part::Vehicle => Switch::Vehicle,
             Part::Wheel => Switch::Wheel,
             Part::PostVolume => Switch::PostVolume,
+            Part::ReflectionProbe => Switch::ReflectionProbe,
             Part::WindZone => Switch::WindZone,
             Part::Seasons => Switch::Seasons,
             Part::FoliageInteraction => Switch::FoliageInteraction,
@@ -348,6 +356,7 @@ impl Part {
             Part::Vehicle => "move",
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
+            Part::ReflectionProbe => "globe",
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
             Part::ForceField => "move",
@@ -523,6 +532,13 @@ pub enum Prop {
     SmokePlayOnStart,
     /// A Mist's trail: whether it is left now, how wide and thick it is, its
     /// colour, how long it lingers, and which swirls.
+    /// When a Reflection Probe is captured: once, or live.
+    ProbeUpdate,
+    ProbeInterval,
+    ProbeBlend,
+    ProbeBoxProjection,
+    ProbeIntensity,
+    ProbeImportance,
     MistEmitting,
     MistWidth,
     MistDensity,
@@ -949,6 +965,12 @@ impl Prop {
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure | Prop::CameraFollows => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
+            Prop::ProbeUpdate
+            | Prop::ProbeInterval
+            | Prop::ProbeBlend
+            | Prop::ProbeBoxProjection
+            | Prop::ProbeIntensity
+            | Prop::ProbeImportance => Part::ReflectionProbe,
             Prop::WindStrength
             | Prop::WindGusts
             | Prop::WindGustSize
@@ -1317,6 +1339,12 @@ impl Prop {
             Prop::VolumeBlend => "blend_distance",
             Prop::VolumeWeight => "weight",
             Prop::VolumePriority => "priority",
+            Prop::ProbeUpdate => "update",
+            Prop::ProbeInterval => "interval",
+            Prop::ProbeBlend => "blend_distance",
+            Prop::ProbeBoxProjection => "box_projection",
+            Prop::ProbeIntensity => "intensity",
+            Prop::ProbeImportance => "importance",
             Prop::WindStrength => "strength",
             Prop::WindGusts => "gusts",
             Prop::WindGustSize => "gust_size",
@@ -1727,6 +1755,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<PostVolume>(entity) {
         parts.push(Part::PostVolume);
     }
+    if world.has::<ReflectionProbe>(entity) {
+        parts.push(Part::ReflectionProbe);
+    }
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
@@ -1935,6 +1966,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure, Prop::CameraFollows],
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
+        Part::ReflectionProbe => {
+            // Only a live probe is captured every so often.
+            let live = world.get::<ReflectionProbe>(entity).is_some_and(|probe| probe.update == ProbeUpdate::Live);
+            let mut props = vec![Prop::ProbeUpdate];
+            if live {
+                props.push(Prop::ProbeInterval);
+            }
+            props.extend([Prop::ProbeBlend, Prop::ProbeBoxProjection, Prop::ProbeIntensity, Prop::ProbeImportance]);
+            props
+        }
         Part::WindZone => {
             // A Global one's gusts for the plants; a Sphere's or a Box's size over the sea.
             match world.get::<WindZone>(entity).map_or(WindShape::Global, |wind| wind.shape) {
@@ -2426,6 +2467,12 @@ pub fn label(prop: &Prop) -> String {
         Prop::VolumeBlend => "Blend distance",
         Prop::VolumeWeight => "Weight",
         Prop::VolumePriority => "Priority",
+        Prop::ProbeUpdate => "Update",
+        Prop::ProbeInterval => "Interval",
+        Prop::ProbeBlend => "Blend Distance",
+        Prop::ProbeBoxProjection => "Box Projection",
+        Prop::ProbeIntensity => "Intensity",
+        Prop::ProbeImportance => "Importance",
         Prop::WindStrength => "Strength",
         Prop::WindGusts => "Gusts",
         Prop::WindGustSize => "Gust size",
@@ -2933,6 +2980,9 @@ pub fn add(
         Part::PostVolume => {
             world.insert(entity, PostVolume::default());
         }
+        Part::ReflectionProbe => {
+            world.insert(entity, ReflectionProbe::default());
+        }
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
@@ -3067,6 +3117,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
+        Part::ReflectionProbe => {
+            world.remove::<ReflectionProbe>(entity);
+            world.remove::<voxear_render::ReflectionProbeBake>(entity);
+        }
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::Smoke => {
             world.remove::<voxear_render::Smoke>(entity);
@@ -3376,6 +3430,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::VolumeBlend => Value::Number(world.get::<PostVolume>(entity)?.blend_distance),
         Prop::VolumeWeight => Value::Number(world.get::<PostVolume>(entity)?.weight),
         Prop::VolumePriority => Value::Number(world.get::<PostVolume>(entity)?.priority as f32),
+        Prop::ProbeUpdate
+        | Prop::ProbeInterval
+        | Prop::ProbeBlend
+        | Prop::ProbeBoxProjection
+        | Prop::ProbeIntensity
+        | Prop::ProbeImportance => probe_value(world.get::<ReflectionProbe>(entity)?, prop)?,
         Prop::WindStrength => Value::Number(world.get::<WindZone>(entity)?.strength),
         Prop::WindGusts => Value::Number(world.get::<WindZone>(entity)?.gusts),
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
@@ -5061,6 +5121,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
         }
+        (prop, value) if prop.part() == Part::ReflectionProbe => {
+            with(world, entity, |probe: &mut ReflectionProbe| set_probe(probe, prop, value))
+        }
         (prop, value) if prop.part() == Part::UiPanel => {
             with(world, entity, |panel: &mut voxear_render::UiPanel| set_panel(panel, prop, value))
         }
@@ -5375,6 +5438,41 @@ fn set_panel(panel: &mut voxear_render::UiPanel, prop: &Prop, value: Value) {
         (Prop::UiPanelFaceCamera, Value::Toggle(on)) => panel.face_camera = on,
         (Prop::UiPanelTwoSided, Value::Toggle(on)) => panel.two_sided = on,
         (Prop::UiPanelClickable, Value::Toggle(on)) => panel.clickable = on,
+        _ => {}
+    }
+}
+
+/// A Reflection Probe's field as the Inspector shows it.
+fn probe_value(probe: &ReflectionProbe, prop: &Prop) -> Option<Value> {
+    Some(match prop {
+        Prop::ProbeUpdate => {
+            let index = PROBE_UPDATE_ORDER.iter().position(|&known| known == probe.update).unwrap_or(0);
+            Value::Choice(index, PROBE_UPDATES.iter().map(|u| u.to_string()).collect())
+        }
+        Prop::ProbeInterval => Value::Number(probe.interval),
+        Prop::ProbeBlend => Value::Number(probe.blend_distance),
+        Prop::ProbeBoxProjection => Value::Toggle(probe.box_projection),
+        Prop::ProbeIntensity => Value::Number(probe.intensity),
+        Prop::ProbeImportance => Value::Whole(i64::from(probe.importance)),
+        _ => return None,
+    })
+}
+
+/// Sets a Reflection Probe's field from the Inspector, kept within what it
+/// can be.
+fn set_probe(probe: &mut ReflectionProbe, prop: &Prop, value: Value) {
+    match (prop, value) {
+        (Prop::ProbeUpdate, Value::Choice(index, _)) => {
+            probe.update = PROBE_UPDATE_ORDER[index.min(PROBE_UPDATE_ORDER.len() - 1)];
+        }
+        (Prop::ProbeInterval, Value::Number(n)) => probe.interval = n.clamp(0.0, 3600.0),
+        (Prop::ProbeBlend, Value::Number(n)) => probe.blend_distance = n.max(0.0),
+        (Prop::ProbeBoxProjection, Value::Toggle(on)) => probe.box_projection = on,
+        (Prop::ProbeIntensity, Value::Number(n)) => probe.intensity = n.max(0.0),
+        (Prop::ProbeImportance, Value::Whole(n)) => {
+            probe.importance = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        }
+        (Prop::ProbeImportance, Value::Number(n)) => probe.importance = n.round() as i32,
         _ => {}
     }
 }

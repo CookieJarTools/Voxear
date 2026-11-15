@@ -417,7 +417,8 @@ fn gather(
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
                 // Textures load with their models and lights, as light profiles do, scripts load
                 // UI documents themselves, and the game reads its input actions and string tables
-                // when it starts, and its sound the paths round the level's walls once it plays.
+                // when it starts, and its sound the paths round the level's walls once it plays. A level reads
+                // its reflection probes' bakes as it opens.
                 // Shaders are compiled into the renderer's own before anything loads, and scripts read data
                 // assets as they load them.
                 AssetKind::Texture
@@ -432,6 +433,7 @@ fn gather(
                 | AssetKind::AssetTable
                 | AssetKind::Font
                 | AssetKind::Paths
+                | AssetKind::ReflectionProbes
                 | AssetKind::Data
                 | AssetKind::PromptIcons
                 | AssetKind::WorldGen

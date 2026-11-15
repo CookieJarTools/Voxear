@@ -374,6 +374,8 @@ pub struct Inspector {
     open_excerpts: std::collections::HashSet<String>,
     /// The `[Button]`s shown, each with its behaviour and method.
     buttons: Vec<(NodeId, String, String)>,
+    /// A Reflection Probe's Capture button.
+    capture: Option<NodeId>,
     /// `[OnValueChanged]` methods to call for fields changed this frame, each
     /// with its behaviour.
     callbacks: Vec<(String, String)>,
@@ -478,6 +480,7 @@ impl Inspector {
             excerpts: Vec::new(),
             open_excerpts: std::collections::HashSet::new(),
             buttons: Vec::new(),
+            capture: None,
             callbacks: Vec::new(),
             answers: ScriptAnswers::default(),
             validation_boxes: Vec::new(),
@@ -713,6 +716,11 @@ impl Inspector {
             return Some(PrefabAction::Open(buttons.path.clone()));
         }
         ui.clicked(buttons.select).then(|| PrefabAction::Select(buttons.path.clone()))
+    }
+
+    /// Whether a Reflection Probe's Capture button was clicked this frame.
+    pub fn capture_clicked(&self, ui: &Ui) -> bool {
+        self.capture.is_some_and(|button| ui.clicked(button))
     }
 
     /// A module a component's Turn On button asked for this frame.
@@ -1112,6 +1120,7 @@ impl Inspector {
         self.module_buttons.clear();
         self.excerpts.clear();
         self.buttons.clear();
+        self.capture = None;
         self.validation_boxes.clear();
         self.pagers.clear();
         self.palette_swatches.clear();
@@ -1451,6 +1460,14 @@ impl Inspector {
             if *part == Part::PostVolume {
                 let panel = crate::volume_panel::VolumePanel::new(ui, rows, game, entity, self.volume_group);
                 self.volume_panel = Some(panel);
+            }
+            // A Reflection Probe captures again when asked, as after what it sees changed.
+            if *part == Part::ReflectionProbe {
+                let bar = ui.panel(rows, Style::column());
+                ui.add_class(bar, "attr-buttons-column");
+                let capture = ui.button(bar, "Capture");
+                ui.add_class(capture, "attr-button");
+                self.capture = Some(capture);
             }
             let prefix = part.lock_key();
             for (name, tabs) in groups.tabs {
@@ -2262,6 +2279,7 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::Camera, "Rendering"),
         (Part::LodGroup, "Rendering"),
         (Part::PostVolume, "Rendering"),
+        (Part::ReflectionProbe, "Rendering"),
         (Part::WindZone, "Rendering"),
         (Part::ParticleSystem, "Effects"),
         (Part::ForceField, "Effects"),
@@ -2994,6 +3012,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Vehicle) => "vehicle",
         Some(Part::Wheel) => "wheel",
         Some(Part::PostVolume) => "post_volume",
+        Some(Part::ReflectionProbe) => "reflection_probe",
         Some(Part::WindZone) => "wind_zone",
         Some(Part::ParticleSystem) => "particles",
         Some(Part::ForceField) => "force_field",

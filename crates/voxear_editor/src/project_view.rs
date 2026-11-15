@@ -255,6 +255,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
                 FileKind::Asset(AssetKind::Font) => "edit",
                 FileKind::Asset(AssetKind::Paths) => "branch",
+                FileKind::Asset(AssetKind::ReflectionProbes) => "globe",
                 FileKind::Asset(AssetKind::LightProfile) => "light",
                 FileKind::Asset(AssetKind::Shader) => "shader",
                 FileKind::Asset(AssetKind::VoxShade) => "nodes",

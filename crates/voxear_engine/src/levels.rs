@@ -313,6 +313,7 @@ impl Levels {
         let target = Target { guid: scene, path: entry.path.clone(), reload: false, required: true };
         let loaded = self.load_scene(engine, content, renderer, &target)?;
         self.scenes.push(loaded);
+        crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
         // Loading a scene puts its own sky up; the active scene's goes back.
         self.apply_environment(engine)?;
         Ok(true)
@@ -446,6 +447,7 @@ impl Levels {
         }
         self.apply_environment(engine)?;
         self.current = Some(level_path);
+        crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
         Ok(change)
     }
 
@@ -653,6 +655,15 @@ impl Levels {
             copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs, lighting, sky, post });
         }
         copy.apply_environment(play)?;
+        // The reflection probes' bakes go with them, as baked, even before the level is saved.
+        for scene in &self.scenes {
+            for (path, entity) in &scene.objs {
+                let Some(bake) = edit.world.get::<voxear_render::ReflectionProbeBake>(*entity).cloned() else { continue };
+                if let Some(played) = copy.entity_at(scene.guid, path) {
+                    play.world.insert(played, bake);
+                }
+            }
+        }
         Ok(copy)
     }
 

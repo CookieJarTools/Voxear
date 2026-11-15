@@ -800,6 +800,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "MotionMatcher" => |world, entity| world.has::<animation::MotionMatcher>(entity),
         "ParticleSystem" => |world, entity| world.has::<voxear_render::ParticleSystem>(entity),
         "Portal" => |world, entity| world.has::<voxear_render::Portal>(entity),
+        "ReflectionProbe" => |world, entity| world.has::<voxear_render::ReflectionProbe>(entity),
         "Rigidbody" => |world, entity| world.has::<Rigidbody>(entity),
         "Rigidbody2D" => |world, entity| world.has::<Rigidbody2D>(entity),
         "ScreenUi" => |world, entity| world.has::<voxear_engine::screen_ui::ScreenUi>(entity),

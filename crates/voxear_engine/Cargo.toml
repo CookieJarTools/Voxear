@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 # The developer's own Steamworks library, when they put it beside their game.
 libloading.workspace = true
+lz4_flex.workspace = true
 voxear_core.workspace = true
 voxear_ecs.workspace = true
 voxear_scene.workspace = true

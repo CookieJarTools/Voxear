@@ -81,6 +81,7 @@ impl Engine {
         crate::mist::register();
         crate::cameras::register();
         crate::portals::register();
+        crate::reflection_probes::register();
         crate::ui_panels::register();
         crate::screen_ui::register();
         crate::localized_text::register();

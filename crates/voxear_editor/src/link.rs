@@ -458,6 +458,20 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ generator, nodes, comments }",
     },
     CallInfo {
+        name: "reflection_probe.capture",
+        about: "Captures a Reflection Probe again, as its Capture button does: what it shows then stays until it is captured again or baked.",
+        args: &[arg("obj", ArgKind::Obj, "An Obj with a Reflection Probe.")],
+        changes: false,
+        returns: "{}",
+    },
+    CallInfo {
+        name: "reflection_probes.bake",
+        about: "Bakes the open level's reflection probes, as Bake Reflection Probes does: each probe captured once is captured again, then written beside the level as its .probes file, which the game loads with the level. Answers once it is written.",
+        args: &[],
+        changes: true,
+        returns: "{ probes, file, bytes }",
+    },
+    CallInfo {
         name: "commands",
         about: "Every command the command palette runs: the editor's own, those code adds, and the scripts' [Command] methods.",
         args: &[],
@@ -853,6 +867,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Vehicle
             | Part::Wheel
             | Part::PostVolume
+            | Part::ReflectionProbe
             | Part::WindZone
             | Part::ParticleSystem
             | Part::ForceField
@@ -1194,6 +1209,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Strings => ("strings", true),
         AssetKind::Font => ("font", false),
         AssetKind::Paths => ("paths", false),
+        AssetKind::ReflectionProbes => ("probes", false),
         AssetKind::AssetTable => ("assettable", true),
         AssetKind::LightProfile => ("lightprofile", true),
         AssetKind::Lighting => ("lighting", true),

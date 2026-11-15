@@ -439,6 +439,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Font => ("Font", "edit"),
                 AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
+                AssetKind::ReflectionProbes => ("Reflection probes", "globe"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
                 AssetKind::Shader => ("Shader", "shader"),
                 AssetKind::VoxShade => ("VoxShade", "nodes"),
@@ -495,6 +496,7 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Edit Layers", "", "layers", Command::Layers),
         ("Pseudo-localise Text", "", "globe", Command::PseudoText),
         ("Bake Sound Paths", "", "branch", Command::BakePaths),
+        ("Bake Reflection Probes", "", "globe", Command::BakeProbes),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

@@ -30,6 +30,7 @@ internal static unsafe class NativeComponent
 	public const int Portal = 25;
 	public const int Vehicle = 26;
 	public const int LocalizedText = 27;
+	public const int ReflectionProbe = 28;
 
 	/// <summary>The value every kind reads as 1 when the Obj has one.</summary>
 	public const int Has = 0;

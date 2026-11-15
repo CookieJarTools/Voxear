@@ -347,6 +347,12 @@ impl ReflectionProbes {
         Some(job)
     }
 
+    /// The `captures` a probe had when its cube was last filled, if it has
+    /// been.
+    pub fn captured(&self, entity: Entity) -> Option<u32> {
+        self.known.get(&entity).filter(|known| known.filled).map(|known| known.captures)
+    }
+
     /// The cube a probe's capture is in, if it has one yet.
     pub fn slot_of(&self, entity: Entity) -> Option<u32> {
         self.known.get(&entity).filter(|known| known.filled).map(|known| known.slot)

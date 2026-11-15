@@ -63,6 +63,8 @@ pub mod previews;
 pub mod prompt_icons;
 mod project;
 pub mod local_link;
+pub mod reflection_bakes;
+mod reflection_probes;
 pub mod remote_console;
 pub mod saplings;
 pub mod scene_file;

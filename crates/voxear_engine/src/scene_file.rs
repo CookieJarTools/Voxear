@@ -64,7 +64,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_terrain::generate::{CaveExit, CaveShape};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
+    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, ProbeUpdate, ReflectionProbe, Renderer,
     DryArea, ForceField, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
@@ -283,6 +283,10 @@ pub struct ObjData {
     /// into it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_volume: Option<PostVolumeData>,
+    /// A reflection probe, whose box reflects what can be seen from its
+    /// middle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_probe: Option<ReflectionProbeData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
     /// A whole model drawn by the Obj, each part where the model puts it.
@@ -471,6 +475,7 @@ impl ObjData {
             camera: None,
             light: None,
             post_volume: None,
+            reflection_probe: None,
             renderer: None,
             model: None,
             audio: None,
@@ -640,6 +645,83 @@ impl PostVolumeData {
             weight: volume.weight,
             priority: volume.priority,
             post: volume.overrides.clone(),
+        }
+    }
+}
+
+/// A reflection probe as a scene writes it, each value left out at its
+/// default:
+///
+/// ```toml
+/// [obj.reflection_probe]
+/// update = "live"          # or "once", the default: as the level opens, or from its bake
+/// interval = 0.5           # a live probe's seconds between captures, 0 for every frame
+/// blend_distance = 1.0     # metres outside its box that it fades out over
+/// box_projection = true
+/// intensity = 1.0
+/// importance = 0           # where boxes overlap, the higher first
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReflectionProbeData {
+    #[serde(default, skip_serializing_if = "ProbeUpdateData::is_once")]
+    pub update: ProbeUpdateData,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub interval: f32,
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub blend_distance: f32,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub box_projection: bool,
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub intensity: f32,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub importance: i32,
+}
+
+/// When a reflection probe is captured, as a scene names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProbeUpdateData {
+    #[default]
+    Once,
+    Live,
+}
+
+impl ProbeUpdateData {
+    fn is_once(&self) -> bool {
+        *self == Self::Once
+    }
+}
+
+impl ReflectionProbeData {
+    pub fn component(&self) -> ReflectionProbe {
+        let update = match self.update {
+            ProbeUpdateData::Once => ProbeUpdate::Once,
+            ProbeUpdateData::Live => ProbeUpdate::Live,
+        };
+        ReflectionProbe {
+            update,
+            interval: self.interval.max(0.0),
+            blend_distance: self.blend_distance.max(0.0),
+            box_projection: self.box_projection,
+            intensity: self.intensity.max(0.0),
+            importance: self.importance,
+            captures: 0,
+        }
+    }
+
+    pub fn of(probe: &ReflectionProbe) -> Self {
+        let update = match probe.update {
+            ProbeUpdate::Once => ProbeUpdateData::Once,
+            ProbeUpdate::Live => ProbeUpdateData::Live,
+        };
+        Self {
+            update,
+            interval: probe.interval,
+            blend_distance: probe.blend_distance,
+            box_projection: probe.box_projection,
+            intensity: probe.intensity,
+            importance: probe.importance,
         }
     }
 }
@@ -1774,6 +1856,9 @@ fn capture_instance(
     if root.post_volume.is_some() && root.post_volume != prefab_root.post_volume {
         instance.post_volume = root.post_volume.clone();
     }
+    if root.reflection_probe.is_some() && root.reflection_probe != prefab_root.reflection_probe {
+        instance.reflection_probe = root.reflection_probe;
+    }
     if root.light.is_some() && root.light != prefab_root.light {
         instance.light = root.light;
     }
@@ -2007,6 +2092,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(volume) = actual.post_volume.as_ref().filter(|v| Some(*v) != expected.post_volume.as_ref()) {
         put("post_volume", toml::Value::try_from(volume)?);
+    }
+    if let Some(probe) = actual.reflection_probe.filter(|p| Some(*p) != expected.reflection_probe) {
+        put("reflection_probe", toml::Value::try_from(probe)?);
     }
     if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
@@ -2373,6 +2461,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         world.get::<Camera>(entity).map(|c| CameraData { fov: c.fov_y_degrees, exposure: c.exposure, near: c.near });
     obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
     obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
+    obj.reflection_probe = world.get::<ReflectionProbe>(entity).map(ReflectionProbeData::of);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {
@@ -2516,6 +2605,7 @@ pub fn has_component(world: &World, entity: Entity, switch: Switch) -> bool {
         Switch::FoliageInteraction => world.has::<FoliageInteraction>(entity),
         Switch::Foliage => world.has::<FoliageSource>(entity),
         Switch::TrackMaker => world.has::<voxear_render::TrackMaker>(entity),
+        Switch::ReflectionProbe => world.has::<ReflectionProbe>(entity),
     }
 }
 
@@ -2885,6 +2975,25 @@ mod tests {
         assert_eq!((back.path, back.stream), (obj.path, obj.stream));
         let raft: ObjData = toml::from_str("id = 4\n[buoyancy]\nsubmerged = 0.3").unwrap();
         assert_eq!(raft.buoyancy.map(|b| (b.submerged, b.drag)), Some((0.3, crate::water::Buoyancy::default().drag)));
+    }
+
+    #[test]
+    fn a_reflection_probe_reads_and_writes_back_its_defaults_left_out() {
+        let text = "id = 1\nname = \"Hall\"\n[reflection_probe]\nupdate = \"live\"\ninterval = 0.5\nbox_projection = false\nimportance = 2";
+        let obj: ObjData = toml::from_str(text).unwrap();
+        let probe = obj.reflection_probe.expect("the probe is read").component();
+        assert_eq!((probe.update, probe.interval, probe.box_projection, probe.importance), (ProbeUpdate::Live, 0.5, false, 2));
+        let fresh = ReflectionProbe::default();
+        assert_eq!((probe.blend_distance, probe.intensity), (fresh.blend_distance, fresh.intensity), "the rest as a new one has");
+        let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
+        assert_eq!(back.reflection_probe, obj.reflection_probe);
+        assert_eq!(ReflectionProbeData::of(&probe).component(), probe);
+        // One as it starts writes only its table, and reads back as it was.
+        let plain = ObjData { reflection_probe: Some(ReflectionProbeData::of(&fresh)), ..ObjData::new(2, "Room") };
+        let written = toml::to_string(&plain).unwrap();
+        assert!(written.contains("[reflection_probe]") && !written.contains("update"), "{written}");
+        let back: ObjData = toml::from_str(&written).unwrap();
+        assert_eq!(back.reflection_probe.map(|data| data.component()), Some(fresh));
     }
 
     #[test]

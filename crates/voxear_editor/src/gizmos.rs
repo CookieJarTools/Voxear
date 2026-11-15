@@ -126,6 +126,7 @@ pub fn shapes(
     cave_rooms(&mut shapes, world, camera, selected);
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
+        reflection_probe(&mut shapes, world, camera, entity);
         ui_panel(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
         force_field(&mut shapes, world, camera, entity);
@@ -412,6 +413,25 @@ fn post_volume(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, enti
                 }
             }
         }
+    }
+}
+
+/// A reflection probe's box, and round it, fainter, where it fades out,
+/// with a mark where it is captured from, its middle.
+fn reflection_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(probe) = world.get::<voxear_render::ReflectionProbe>(entity) else { return };
+    let matrix = voxear_scene::world_matrix(world, entity);
+    let (scale, rotation, position) = matrix.to_scale_rotation_translation();
+    let scale = scale.abs().max(Vec3::splat(1e-4));
+    let color = Color::hex(REACH);
+    let faint = Color { a: (u16::from(color.a) * 2 / 5) as u8, ..color };
+    wire_box(shapes, camera, position, rotation, scale * 0.5, color);
+    if probe.blend_distance > 0.0 {
+        wire_box(shapes, camera, position, rotation, scale * 0.5 + probe.blend_distance, faint);
+    }
+    if let Some(at) = camera.project(position) {
+        let at = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
+        shapes.push(Shape::Icon { name: "globe", center: at, size: SPEAKER, color });
     }
 }
 

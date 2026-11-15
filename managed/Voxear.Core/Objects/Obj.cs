@@ -423,6 +423,18 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Portal(this);
 	}
 
+	/// <summary>
+	/// The Obj's Reflection Probe, whose box reflects what can be seen from its middle. Not valid when it has none.
+	/// </summary>
+	public ReflectionProbe ReflectionProbe => new ReflectionProbe(this);
+
+	/// <summary>Gives the Obj a Reflection Probe, captured once, unless it has one, and returns it.</summary>
+	public ReflectionProbe AddReflectionProbe()
+	{
+		NativeComponent.Set(NativeComponent.ReflectionProbe, this, NativeComponent.Add, Vector4.Zero);
+		return new ReflectionProbe(this);
+	}
+
 	/// <summary>The Obj's Heat Body, which takes the temperature of where it is. Not valid when it has none.</summary>
 	public HeatBody HeatBody => new HeatBody(this);
 

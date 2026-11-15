@@ -94,6 +94,8 @@ pub(super) enum Waiting {
         from: u64,
         began: bool,
     },
+    /// The open level's reflection probes baking.
+    ProbeBake,
 }
 
 /// A call done, or one that answers later.
@@ -285,6 +287,26 @@ impl Editor {
                 self.refuse_while_playing("write a world's land into its generator")?;
                 self.block_world_write_land(args, renderer)
             }
+            "reflection_probe.capture" => {
+                let entity = self.obj_arg(args)?;
+                let probe = self.game.engine.world.get_mut::<voxear_render::ReflectionProbe>(entity);
+                let probe = probe.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Reflection Probe"))?;
+                probe.capture();
+                done(json!({}))
+            }
+            "reflection_probes.bake" => {
+                self.refuse_while_playing("bake the reflection probes")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                if !self.baking_probes() {
+                    self.bake_probes();
+                }
+                match self.probe_bake_end() {
+                    Some(Err(error)) if !self.baking_probes() => Err(refuse(ErrorKind::Failed, error.clone())),
+                    _ => Ok(Outcome::Later(Waiting::ProbeBake)),
+                }
+            }
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -419,6 +441,14 @@ impl Editor {
             Waiting::Capture { view, path, settle, asked } => {
                 self.go_on_capturing_for_tool(view, path, settle, asked, renderer)
             }
+            Waiting::ProbeBake => match (self.baking_probes(), self.probe_bake_end()) {
+                (false, Some(Ok(baked))) => {
+                    done(json!({ "probes": baked.probes, "file": baked.file, "bytes": baked.bytes }))
+                }
+                (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
+                (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
+                (true, _) => Ok(Outcome::Later(Waiting::ProbeBake)),
+            },
             Waiting::Scripts { from, began } => {
                 let building = self.describing.is_some() || self.rebuild_scripts;
                 if building || !began {
@@ -991,7 +1021,8 @@ impl Editor {
             let call = step.get("call").and_then(Json::as_str).unwrap_or_default();
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
-                "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit" => {
+                "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
+                | "reflection_probes.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),

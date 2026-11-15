@@ -1334,6 +1334,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Strings => "strings",
             AssetKind::Font => "font",
             AssetKind::Paths => "paths",
+            AssetKind::ReflectionProbes => "probes",
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",

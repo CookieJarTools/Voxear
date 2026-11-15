@@ -28,7 +28,7 @@ use crate::project_view::AssetPart;
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
 /// says, the new Obj's name, the rest of its scene file entry, and the
 /// module it needs, without which the menus leave it out.
-pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 23] = [
+pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 24] = [
     ("Empty", "Obj", "", None),
     ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\"", None),
     ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\"", None),
@@ -46,6 +46,7 @@ pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 23] = [
     ("Tube Light", "Tube Light", "[obj.light]\ntype = \"tube\"", None),
     ("Camera", "Camera", "[obj.camera]", None),
     ("Post Volume", "Post Volume", "scale = [10.0, 4.0, 10.0]\n[obj.post_volume]", None),
+    ("Reflection Probe", "Reflection Probe", "scale = [8.0, 4.0, 8.0]\n[obj.reflection_probe]", None),
     ("Audio Source", "Audio Source", "[obj.audio]", None),
     ("Particle System", "Particle System", "[obj.particles]", None),
     ("Force Field", "Force Field", "[obj.force_field]", None),

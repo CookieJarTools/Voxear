@@ -389,6 +389,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.post_volume.is_some() {
         root.post_volume = instance.post_volume.clone();
     }
+    root.reflection_probe = instance.reflection_probe.or(root.reflection_probe);
     if instance.renderer.is_some() {
         root.renderer = instance.renderer.clone();
     }
@@ -499,6 +500,7 @@ pub struct TemplateObj {
     pub camera: Option<Camera>,
     pub light: Option<Light>,
     pub post_volume: Option<PostVolume>,
+    pub reflection_probe: Option<voxear_render::ReflectionProbe>,
     pub renderer: Option<MeshRenderer>,
     /// The mesh a mesh collider takes its shape from, where there is no
     /// renderer to draw it, as on a server.
@@ -674,6 +676,9 @@ impl Template {
             }
             if let Some(volume) = &obj.post_volume {
                 world.insert(entity, volume.clone());
+            }
+            if let Some(probe) = &obj.reflection_probe {
+                world.insert(entity, probe.clone());
             }
             if let Some(renderer) = obj.renderer {
                 world.insert(entity, renderer);
@@ -1334,6 +1339,7 @@ pub(crate) fn resolve_obj(
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light,
         post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
+        reflection_probe: data.reflection_probe.as_ref().map(crate::scene_file::ReflectionProbeData::component),
         renderer,
         collider_mesh,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,

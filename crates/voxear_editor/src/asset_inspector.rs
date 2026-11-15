@@ -227,6 +227,8 @@ pub enum AssetAction {
     },
     /// Bake the sound paths of the level at this path.
     BakePaths(String),
+    /// Bake the reflection probes of the level at this path.
+    BakeProbes(String),
     /// Show where the asset at this path is in the Project panel.
     Ping(String),
     /// Play the sound at this path in the editor, or stop it.
@@ -312,6 +314,8 @@ pub struct AssetView {
     strings: Option<StringsFields>,
     /// A level's Bake Paths button.
     bake: Option<NodeId>,
+    /// A level's Bake Probes button.
+    bake_probes: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
     lighting: Option<(LightingFields, PathBuf)>,
     /// A shader's state, compiled or not, and the state it shows.
@@ -494,6 +498,7 @@ impl AssetView {
             listen: None,
             strings: None,
             bake: None,
+            bake_probes: None,
             lighting: None,
             scene_lighting: None,
             shader_state: None,
@@ -633,6 +638,7 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Level) => {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
+                view.bake_probes = Some(reflection_probes(ui, root, &item.path, game));
             }
             ItemKind::Asset(AssetKind::Font) => font_sample(ui, root, game, &item.path),
             ItemKind::Asset(AssetKind::Strings) => {
@@ -703,6 +709,7 @@ impl AssetView {
             listen: None,
             strings: None,
             bake: None,
+            bake_probes: None,
             lighting: None,
             scene_lighting: None,
             shader_state: None,
@@ -733,6 +740,9 @@ impl AssetView {
         }
         if self.bake.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakePaths(self.item.path.clone()));
+        }
+        if self.bake_probes.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::BakeProbes(self.item.path.clone()));
         }
         if let Some((listen, playing)) = self.listen
             && ui.clicked(listen.button)
@@ -1257,6 +1267,23 @@ fn sound_paths(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
         &baked.map_or_else(|| "Not baked".to_string(), |bytes| format!("Baked · {}", size(bytes))),
     );
     let button = ui.button(rows, "Bake Paths");
+    ui.add_class(button, "add-component");
+    button
+}
+
+/// Whether a level's reflection probes are baked, and the button that
+/// bakes them, which this returns.
+fn reflection_probes(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
+    let rows = part(ui, root, "Reflection Probes", "globe");
+    let file = game.project.root.join(voxear_engine::reflection_bakes::probes_file(level));
+    let baked = std::fs::metadata(file).map(|meta| meta.len()).ok();
+    text_row(
+        ui,
+        rows,
+        "Probes",
+        &baked.map_or_else(|| "Not baked".to_string(), |bytes| format!("Baked · {}", size(bytes))),
+    );
+    let button = ui.button(rows, "Bake Probes");
     ui.add_class(button, "add-component");
     button
 }
@@ -1796,6 +1823,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Font) => "Font",
         ItemKind::Asset(AssetKind::AssetTable) => "Asset table",
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
+        ItemKind::Asset(AssetKind::ReflectionProbes) => "Reflection probes",
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
@@ -1834,6 +1862,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Strings | AssetKind::AssetTable) => "globe",
         ItemKind::Asset(AssetKind::Paths) => "branch",
         ItemKind::Asset(AssetKind::Font) => "edit",
+        ItemKind::Asset(AssetKind::ReflectionProbes) => "globe",
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::LookPack) => "eye",

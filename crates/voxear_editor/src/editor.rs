@@ -45,6 +45,7 @@ mod modules;
 mod multiplayer;
 mod particle_effects;
 mod path_bakes;
+mod probe_bakes;
 mod placing;
 mod play;
 mod prefab_mode;
@@ -238,6 +239,8 @@ pub(crate) enum Command {
     PseudoText,
     /// Bake the open level's sound paths.
     BakePaths,
+    /// Bake the open level's reflection probes.
+    BakeProbes,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -344,6 +347,9 @@ pub struct Editor {
     notice: Option<(String, Instant)>,
     /// The open level's sound paths, while they bake.
     path_bake: Option<path_bakes::PathBake>,
+    /// The open level's reflection probes baking, and how the last bake ended.
+    probe_bake: Option<probe_bakes::ProbeBake>,
+    probe_bake_end: Option<Result<probe_bakes::ProbesBaked, String>>,
     /// The panel whose window menu is open, and what each of its items does.
     window_menu: Option<(String, Vec<Option<windows::WindowAction>>)>,
     /// What the rail's drawer shows, if it is open.
@@ -691,6 +697,8 @@ impl Editor {
             discard_armed: None,
             notice: None,
             path_bake: None,
+            probe_bake: None,
+            probe_bake_end: None,
             window_menu: None,
             drawer: None,
             prefab: None,
@@ -1019,6 +1027,7 @@ impl Editor {
         }
         self.update_drawer();
         self.update_modules();
+        self.update_probe_captures();
         self.update_particle_preview();
         self.update_lighting(renderer);
         self.update_side_bar();
@@ -1125,6 +1134,7 @@ impl Editor {
         self.mark_viewport_areas(&views);
         self.update_axis_gizmos();
         self.finish_path_bake();
+        self.update_probe_bake(renderer);
         self.update_status(renderer, delta);
         self.update_tooltip(delta);
         self.update_debug_draw(view, delta);
@@ -1418,6 +1428,7 @@ impl Editor {
             AssetAction::DropRemap { model, part, source } => self.drop_remap(&model, &part, &source, renderer),
             AssetAction::ExtractMaterials(model) => self.extract_materials(&model, renderer),
             AssetAction::BakePaths(level) => self.bake_level_paths(&level),
+            AssetAction::BakeProbes(level) => self.bake_level_probes(&level),
         }
     }
 
@@ -2341,6 +2352,7 @@ impl Editor {
             Command::Layers => self.inspect_layers(),
             Command::PseudoText => self.toggle_pseudo_text(),
             Command::BakePaths => self.bake_paths(),
+            Command::BakeProbes => self.bake_probes(),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
@@ -3071,14 +3083,17 @@ impl Editor {
         let notice = self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs_f32() < NOTICE_SECONDS);
         let status = match notice {
             Some((text, _)) => text.clone(),
-            None => match self.path_bake_status() {
+            None => match self.path_bake_status().or_else(|| self.probe_bake_status()) {
                 Some(baking) => baking,
                 None if self.unsaved && !self.is_playing() => "Unsaved changes · Ctrl+S".to_string(),
                 None => self.play.status().to_string(),
             },
         };
         self.ui.set_text(self.nodes.status_left, &status);
-        let busy = self.play.is_building() || self.describing.is_some() || self.path_bake.is_some();
+        let busy = self.play.is_building()
+            || self.describing.is_some()
+            || self.path_bake.is_some()
+            || self.probe_bake.is_some();
         self.ui.set_class(self.nodes.status_dot, "busy", busy);
         self.status.0 += 1;
         self.status.1 += delta;

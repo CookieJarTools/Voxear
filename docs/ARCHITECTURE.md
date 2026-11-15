@@ -3707,7 +3707,14 @@ again. From the third ring out (`stream::FAR_FROM`) a ring's columns come from t
 columns of runs made from the generator's heights, climate and sea, with no block's depth asked of its Volume, kept
 compressed under `.voxear/FarView`, and filled into chunks for the same meshing and drawing as the nearer rings.
 Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
-ring's block. Models of small coloured
+ring's block. Rings fade into each other round where the world is looked at from (`blocks::RingFades`): each ring is
+drawn whole out to as far as its window always reaches and fades out over its last column, the next ring kept
+showing under that band; and a coarse column whose finer columns all come after it fades out over
+`RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
+columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
+blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
+and a world drawn smooth draw their rings as before. Leaves past the sun's cascades take the share of sun a crown's
+leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the
@@ -3856,6 +3863,14 @@ stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the r
 top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
 plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
 plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
+
+Plants too small for a wood colour the ground instead where they are too far off to be drawn (`grow::Cover`): the
+engine takes each growing Foliage's colour from its box model and how much side it shows per square metre from its
+mesh's box and rule (`grown_plants::covers`), and each tint point keeps, in the fourth bytes of its two tints, the
+plants' colour and that amount where its rule grows them, the share of the point in their patches far off
+(`tints::cover_of`). The renderer flags the tops of the blocks they grow on (`TERRAIN_SURFACE_COVERED`) and lays the
+colour over them as the plants fade out, as much as they would hide seen from the camera: little from above, most
+along the ground (`blockCovered`).
 
 A rule may keep its plants near something (`grow::Near`). Near another Foliage's plants: the engine finds the
 world's other growing Foliages by the model each draws (`GrowData::near_plants` names models) and puts their rules in

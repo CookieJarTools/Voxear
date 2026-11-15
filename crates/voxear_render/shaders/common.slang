@@ -1363,7 +1363,9 @@ struct BlockWorld
     float2 ringAt;
     float ringReach;
     float ringBand;
-    uint2 pad;
+    // How far from the camera its grass takes the colour of the plants on it, in metres: from where they begin to
+    // fade, over how far (blockCover in blocks.slang).
+    float2 cover;
 };
 
 // How long a coarse column takes to fade into the finer ones over it, in seconds (voxear_terrain::blocks::
@@ -1377,6 +1379,10 @@ static const float BLOCK_TINT_STEP = 4.0;
 // at most, after which the far ones lie.
 static const float BLOCK_TINT_FAR = 16.0;
 static const uint BLOCK_TINT_MOST = 65536;
+
+// The most side the plants covering a tint point show for each square metre of ground (voxear_terrain::blocks::
+// generate::tints::MOST_COVER).
+static const float BLOCK_MOST_COVER = 0.5;
 
 // A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
 // along it (in sixteenths of a block), and how the way on to the next key goes (0 linear, 1 smooth, 2 step).
@@ -1482,6 +1488,8 @@ static const uint TERRAIN_SURFACE_MIXED = 64;
 // A world of blocks' surface's tint (src/terrain.rs, SurfaceLook::tint): two bits from the eighth, 1 its biome's grass
 // tint and 2 its foliage tint (blockTint in blocks.slang).
 static const uint TERRAIN_SURFACE_TINT_SHIFT = 7;
+// A world of blocks' surface the plants on it colour far off, where they are not drawn (blockCovered in blocks.slang).
+static const uint TERRAIN_SURFACE_COVERED = 512;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

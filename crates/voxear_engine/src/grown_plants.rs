@@ -615,6 +615,94 @@ pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Ar
     built
 }
 
+/// What grows under the Block World on `entity` thick enough to colour its
+/// grass where its plants are too far off to be drawn (see
+/// `voxear_terrain::blocks::grow::Cover`), and how far from the camera
+/// they stop being drawn: where the nearest begin to fade, and over how far
+/// the furthest are gone; and the surfaces they colour, a bit each: the
+/// tops of the blocks they grow on, and those surfaces' twins. A Foliage's
+/// plants show their model's colour, a box model's; those of any other
+/// model colour nothing, nor do those that keep near to others or grow
+/// under water.
+pub fn covers(world: &World, content: &mut Content, entity: Entity) -> Covers {
+    let (Some(asset), Some(blocks)) = (world.get::<BlockWorldAsset>(entity), world.get::<BlockWorld>(entity)) else {
+        return (Vec::new(), [0.0; 2], [0; 8]);
+    };
+    let mut surfaces = [0u32; 8];
+    let mut colours = |surface: u8| {
+        for at in [surface & 0x7F, surface | 0x80] {
+            surfaces[usize::from(at >> 5)] |= 1 << (at & 31);
+        }
+    };
+    let boxes = world.resource::<crate::mesh_boxes::MeshBoxes>();
+    let mut covers = Vec::new();
+    let (mut from, mut to) = (f32::MAX, 0.0f32);
+    for grower in growers(world).into_iter().filter(|grower| grower.world == entity) {
+        let Some(foliage) = grower.look.foliage.as_ref() else { continue };
+        let rule = grower.data.rule(|block| {
+            let (guid, _) = content.block(block)?;
+            asset.drawn.number_of(guid)
+        });
+        if rule.near.is_some() || rule.under_water {
+            continue;
+        }
+        let Some((least, most)) = boxes.and_then(|boxes| boxes.of(foliage.mesh)) else { continue };
+        let Some(color) = model_color(content, &grower.mesh) else { continue };
+        // Its side, as wide as it is and as high, at its middle size, by how many stand on each square metre.
+        let scale = (rule.scale[0] + rule.scale[1]) * 0.5;
+        let side = (most.x - least.x).max(most.z - least.z).max(0.0) * (most.y - least.y).max(0.0) * scale * scale;
+        let spacing = rule.spacing.max(0.1);
+        let amount = rule.chance.clamp(0.0, 1.0) * side / (spacing * spacing);
+        if amount <= 0.0 {
+            continue;
+        }
+        let draw = grower.draw_distance.max(0.0);
+        from = from.min((draw - foliage.fade_distance.max(0.0)).max(0.0));
+        to = to.max(draw);
+        // The tops of the blocks it grows on; of every block where it grows on any.
+        match rule.on.is_empty() {
+            true => blocks.faces.iter().for_each(|faces| colours(faces.top)),
+            false => {
+                rule.on.iter().filter_map(|&id| blocks.faces.get(usize::from(id))).for_each(|faces| colours(faces.top))
+            }
+        }
+        covers.push(voxear_terrain::blocks::grow::Cover { rule, color, amount });
+    }
+    match covers.is_empty() {
+        true => (covers, [0.0; 2], [0; 8]),
+        false => (covers, [from, (to - from).max(1.0)], surfaces),
+    }
+}
+
+/// What covers a world's grass far off (see [`covers`]): the plants, how
+/// far from the camera they stop being drawn, and the surfaces they colour.
+pub type Covers = (Vec<voxear_terrain::blocks::grow::Cover>, [f32; 2], [u32; 8]);
+
+/// The colour a model shows on average, linear, where `mesh` (a part of a
+/// model, as a scene names it) is of a box model; worked out once while its
+/// file stays the same, as it is asked for every frame.
+fn model_color(content: &mut Content, mesh: &str) -> Option<[f32; 3]> {
+    type Kept = std::collections::HashMap<AssetGuid, (Option<std::time::SystemTime>, Option<[f32; 3]>)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = std::cell::RefCell::new(Kept::new());
+    }
+    let guid = content.parse(mesh).ok()?.guid()?;
+    let path = content.db().get(guid)?.path.clone();
+    if !voxear_render::is_box_model(&path) {
+        return None;
+    }
+    let changed = std::fs::metadata(content.db().root().join(&path)).and_then(|file| file.modified()).ok();
+    if let Some(color) =
+        KEPT.with_borrow(|kept| kept.get(&guid).filter(|(at, _)| *at == changed).map(|(_, color)| *color))
+    {
+        return color;
+    }
+    let color =
+        content.read_text(&path).ok().and_then(|text| voxear_render::BoxModel::parse(&text).ok()?.average_color());
+    KEPT.with_borrow_mut(|kept| kept.insert(guid, (changed, color)));
+    color
+}
+
 /// A number for `structures`, worked out once while they stay the same:
 /// it is asked for every frame, and writing out every structure to hash it
 /// takes a while.

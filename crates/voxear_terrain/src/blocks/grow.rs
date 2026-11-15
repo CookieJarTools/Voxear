@@ -152,6 +152,63 @@ impl GrowRule {
     }
 }
 
+/// Plants that colour the ground they grow on where they are too far off to
+/// be drawn, as a meadow of red flowers stays red (see
+/// `generate::tints`): where its `rule` grows them, their `color`, linear,
+/// and `amount`, how much of their side the plants show for each square
+/// metre of ground, their width by their height by how many stand there.
+/// How much of the ground they hide comes of that and how low it is seen
+/// from: from above little, along the ground most of it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cover {
+    pub rule: GrowRule,
+    pub color: [f32; 3],
+    pub amount: f32,
+}
+
+impl Cover {
+    /// How much of their side its plants show for each square metre round
+    /// `place`, in metres in the world its generator with `seed` makes,
+    /// over a square `across` metres wide whose ground lies `above_sea`
+    /// metres over the sea, rising `slope` for every metre along, in a
+    /// `climate` (°C, and how wet): its amount where they grow, less where
+    /// only some of the square is in their patches, nothing where they grow
+    /// not. A rule whose plants keep near to others, or grow under water,
+    /// colours no ground.
+    pub fn at(
+        &self,
+        seed: u32,
+        place: [f32; 2],
+        across: f32,
+        (above_sea, slope): (f32, f32),
+        climate: (f32, f32),
+    ) -> f32 {
+        let rule = &self.rule;
+        if rule.near.is_some() || rule.under_water || above_sea < 0.0 {
+            return 0.0;
+        }
+        if !rule.stands_on(above_sea, slope) || !rule.likes(climate) {
+            return 0.0;
+        }
+        if rule.patches <= 0.0 {
+            return self.amount;
+        }
+        // In patches, as the plants are tried (see `tries`): the share of the square in them, from a few places
+        // across it where the patches are smaller than it.
+        let patch = seed ^ rule.seed.wrapping_mul(0x9E37_79B9);
+        let size = rule.patches.max(1.0);
+        let samples = (across / size * 2.0).ceil().clamp(1.0, 4.0) as u32;
+        let step = across / samples as f32;
+        let inside = (0..samples * samples)
+            .filter(|k| {
+                let offset = |i: u32| (i as f32 + 0.5) * step - across * 0.5;
+                patchy(patch, [place[0] + offset(k % samples), place[1] + offset(k / samples)], size) >= 0.5
+            })
+            .count();
+        self.amount * inside as f32 / (samples * samples) as f32
+    }
+}
+
 /// The ground plants grow on: a world's blocks as they were made, how its
 /// blocks are drawn, and the generator that made it, where one did.
 #[derive(Clone, Copy)]

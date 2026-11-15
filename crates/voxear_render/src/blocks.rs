@@ -167,7 +167,11 @@ impl Component for BlockLook {}
 /// is drawn untinted.
 /// And its far tints, as many points a side as packed alike, each
 /// `TINT_FAR` times further apart, for the far view past its near
-/// ones: their first point and their points.
+/// ones: their first point and their points. And how far from the camera
+/// the plants that colour its ground far off (see `tints::cover_of`) stop
+/// being drawn, in metres: where they begin to fade, and over how far, the
+/// ground taking their colour as they go; and the surfaces they colour, a
+/// bit each by number.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockTints {
     pub corner: [i32; 2],
@@ -175,7 +179,13 @@ pub struct BlockTints {
     pub points: Arc<[u32]>,
     pub far_corner: [i32; 2],
     pub far_points: Arc<[u32]>,
+    pub cover: [f32; 2],
+    pub covered: [u32; 8],
 }
+
+/// A world of blocks' surface the plants on it colour far off (see
+/// [`BlockTints::covered`]): `TERRAIN_SURFACE_COVERED` in `common.slang`.
+const SURFACE_COVERED: u32 = 512;
 
 impl Component for BlockTints {}
 
@@ -199,6 +209,8 @@ const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_STEP == 4);
 // And its BLOCK_TINT_FAR the far view's, and BLOCK_TINT_MOST how many points the near ones take.
 const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_FAR == 16);
 const _: () = assert!(MOST_TINT_POINTS == 65536);
+// And its BLOCK_MOST_COVER the most cover a point keeps.
+const _: () = assert!(voxear_terrain::blocks::generate::tints::MOST_COVER == 0.5);
 
 /// The most points a side a world's tints have.
 pub const MOST_TINT_POINTS_SIDE: usize = 256;
@@ -276,7 +288,10 @@ pub struct GpuBlockWorld {
     pub ring_coarsest: u32,
     pub fades: u64,
     pub rings: [f32; 4],
-    pub pad: [u32; 2],
+    /// How far from the camera its grass takes the colour of the plants on
+    /// it, in metres: from where they begin to fade, over how far (see
+    /// [`BlockTints::cover`]).
+    pub cover: [f32; 2],
 }
 
 // The shaders' RING_FADE_SECONDS (common.slang) is the streamer's.
@@ -981,6 +996,10 @@ pub(crate) struct DrawnBlocks {
     /// Its tints in its pool, where it has any: the point they start from
     /// and how many a side.
     pub tints: Option<([i32; 2], u32, Option<[i32; 2]>)>,
+    /// How far off its ground takes the colour of the plants on it, and
+    /// which surfaces (see [`BlockTints::cover`]).
+    pub cover: [f32; 2],
+    pub covered: [u32; 8],
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -1279,6 +1298,8 @@ impl BlockWorlds {
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
                 tints: pool.tinted.as_ref().map(|&(_, corner, size, far)| (corner, size, far)),
+                cover: world.get::<BlockTints>(entity).map_or([0.0; 2], |tints| tints.cover),
+                covered: world.get::<BlockTints>(entity).map_or([0; 8], |tints| tints.covered),
                 id: None,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
@@ -1491,12 +1512,13 @@ pub(crate) fn gather(
     let mut water = Vec::new();
     for (number, blocks) in drawn.iter().take(MAX_BLOCK_WORLDS).enumerate() {
         let looks = &blocks.look.surfaces[..blocks.look.surfaces.len().min(MAX_BLOCK_SURFACES)];
-        for (place, look) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks) {
+        for (at, (place, look)) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks).enumerate() {
             *place = GpuTerrainSurface {
                 material: look.material.0,
                 uv_scale: 1.0 / look.size.max(0.01),
                 sharpness: 0.0,
-                flags: surface_flags(look),
+                flags: surface_flags(look)
+                    | if blocks.covered[at >> 5] >> (at & 31) & 1 != 0 { SURFACE_COVERED } else { 0 },
                 tracks: 0.0,
                 fills_in: 0.0,
             };
@@ -1550,7 +1572,7 @@ pub(crate) fn gather(
                 true => [fades.at[0], fades.at[1], fades.reach, fades.band],
                 false => [0.0; 4],
             },
-            pad: [0; 2],
+            cover: blocks.cover,
         });
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();

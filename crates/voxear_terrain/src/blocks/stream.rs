@@ -1701,10 +1701,11 @@ mod tests {
             // Each level's columns drawn: the near ones, and every ring's.
             let mut drawn: HashSet<(i32, [i32; 2])> = streamer.drawn.iter().map(|at| (0, *at)).collect();
             drawn.extend(world.far.keys().map(|key| (key[0], [key[1], key[3]])));
-            // No column draws where the four finer ones under it are drawn.
+            // No column draws where the four finer ones under it are drawn, but to fade into them (see `RingFades`).
             for &(level, [x, z]) in drawn.iter().filter(|(level, _)| *level > 0) {
                 let finer = (0..4).all(|i| drawn.contains(&(level - 1, [x * 2 + (i & 1), z * 2 + (i >> 1)])));
-                assert!(!finer, "level {level} column {x}, {z} over the finer ones under it");
+                let fading = world.fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX);
+                assert!(!finer || fading, "level {level} column {x}, {z} over the finer ones under it");
             }
             // And the ground is drawn all the way out, at one level or another.
             let column = CHUNK as f32 * 2.0;

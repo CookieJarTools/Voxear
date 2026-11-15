@@ -28,6 +28,8 @@ pub(super) struct LightingBaked {
     pub file: String,
     pub bytes: u64,
     pub seconds: f32,
+    /// Of `seconds`, tracing on the GPU.
+    pub tracing_seconds: f32,
 }
 
 impl Editor {
@@ -144,6 +146,7 @@ impl Editor {
             file,
             bytes: bytes.len() as u64,
             seconds: made.seconds,
+            tracing_seconds: made.tracing_seconds,
         };
         self.end_lighting_bake(&name, Ok(baked));
     }
@@ -161,9 +164,10 @@ impl Editor {
                     format!("{} lightmaps", baked.lightmaps)
                 };
                 tracing::info!(
-                    "baked {name}'s lighting into {} in {:.1} s: {} parts, {lightmaps}, {} texels, {} probes, {size}",
+                    "baked {name}'s lighting into {} in {:.1} s ({:.2} s tracing): {} parts, {lightmaps}, {} texels, {} probes, {size}",
                     baked.file,
                     baked.seconds,
+                    baked.tracing_seconds,
                     baked.parts,
                     baked.texels,
                     baked.probes

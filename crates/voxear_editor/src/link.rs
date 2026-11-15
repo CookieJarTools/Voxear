@@ -489,7 +489,7 @@ pub const CALLS: &[CallInfo] = &[
         about: "Bakes the open level's lighting, as Bake Lighting does: the light falling on every Obj with a Lightmap goes into lightmaps, and on every Light Probe Group's probes into spherical harmonics, traced on the GPU at the level's [post.global_illumination] settings, then written beside the level as its .lightmaps file, which the game loads with the level. Answers once it is written.",
         args: &[],
         changes: true,
-        returns: "{ file, bytes, parts, lightmaps, probes, texels, seconds }",
+        returns: "{ file, bytes, parts, lightmaps, probes, texels, seconds, tracing_seconds }",
     },
     CallInfo {
         name: "lighting.bake_cancel",

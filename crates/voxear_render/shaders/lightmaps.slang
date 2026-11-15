@@ -95,6 +95,46 @@ bool bakedIrradiance(BakedInstance baked, float2 lightmapUv, float3 normal, out 
     return false;
 }
 
+// The light probes' light at a point, from the grid it was resampled on as
+// the level's bake loaded (src/lightmaps.rs's ProbeVolume), blended from the
+// eight cells round it, for a surface facing `normal`; or with no normal,
+// the light from every way averaged. False outside the grid, past a cell
+// from its edge, or with none.
+bool probeVolumeLight(Frame* frame, float3 position, float3 normal, out float3 light)
+{
+    light = 0.0;
+    uint3 size = frame->bake.volumeSize;
+    if (size.x < 2 || frame->bake.source == GI_REALTIME)
+    {
+        return false;
+    }
+    float3 at = (position - frame->bake.volumeOrigin) / frame->bake.volumeCell;
+    if (any(at < -1.0) || any(at > float3(size)))
+    {
+        return false;
+    }
+    at = clamp(at, 0.0, float3(size - 1));
+    int3 low = min(int3(floor(at)), int3(size) - 2);
+    float3 f = at - float3(low);
+    float4 red = 0.0;
+    float4 green = 0.0;
+    float4 blue = 0.0;
+    for (uint corner = 0; corner < 8; corner++)
+    {
+        int3 step = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        int3 cell = low + step;
+        float3 w = select(step == 1, f, 1.0 - f);
+        float weight = w.x * w.y * w.z;
+        uint index = ((uint(cell.z) * size.y + uint(cell.y)) * size.x + uint(cell.x)) * 3;
+        red += frame->bake.volume[index] * weight;
+        green += frame->bake.volume[index + 1] * weight;
+        blue += frame->bake.volume[index + 2] * weight;
+    }
+    float4 basis = float4(0.282095, 0.488603 * normal.y, 0.488603 * normal.z, 0.488603 * normal.x);
+    light = max(float3(dot(red, basis), dot(green, basis), dot(blue, basis)), 0.0) * frame->bake.strength;
+    return true;
+}
+
 // The lightmap texel density view: a checker of the texels a bake gives a
 // surface, green at the level's texels a metre, bluer for fewer and redder
 // for more; grey where the light probes light it.

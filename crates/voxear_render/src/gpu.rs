@@ -460,6 +460,14 @@ pub struct GpuBake {
     pub strength: f32,
     pub texels_per_metre: f32,
     pub pad: [u32; 2],
+    /// The probes' light resampled on a grid (see `lightmaps::ProbeVolume`):
+    /// three rows a cell, its cells across, how wide one is, and where the
+    /// first cell's middle is; 0 cells across for none.
+    pub volume: u64,
+    pub volume_size: [u32; 3],
+    pub volume_cell: f32,
+    pub volume_origin: [f32; 3],
+    pub volume_pad: f32,
 }
 
 pub const GI_REALTIME: u32 = 0;
@@ -1526,8 +1534,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + 32
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
         );
+        assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuOcean>(), 352);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);

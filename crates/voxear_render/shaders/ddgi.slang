@@ -255,7 +255,7 @@ HitSurface hitSurface(Frame* frame, uint id, uint primitive, float2 barycentrics
     hit.rough = rough;
     hit.emissive = material.emissive
         * textures[NonUniformResourceIndex(material.emissiveTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb
-        * glowAmount(frame, material, instance.model.c3.xyz);
+        * (bakeTracing ? glowAverage(material) : glowAmount(frame, material, instance.model.c3.xyz));
     hit.lightmapUv = 0.0;
     if (instance.baked != 0)
     {
@@ -327,9 +327,15 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     bool both = frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0;
     float3 around;
     float3 bakedLight;
+    float3 volume;
     if (!fromProbe && hasBaked && bakedIrradiance(baked, hit.lightmapUv, normal, bakedLight))
     {
         around = bakedLight * frame->bake.strength + (both ? ddgiIrradiance(frame, position, normal, towards, 0.0) : 0.0);
+    }
+    // Under a bake, what has no baked light of its own takes its probes' grid's.
+    else if (!fromProbe && probeVolumeLight(frame, position, normal, volume))
+    {
+        around = volume + (both ? ddgiIrradiance(frame, position, normal, towards, 0.0) : 0.0);
     }
     else if (frame->ddgi.enabled != 0)
     {

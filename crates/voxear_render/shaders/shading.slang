@@ -525,6 +525,14 @@ float3 ambientLight(Frame* frame, float3 position, Surface s, float3 sunLight, b
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+    // Under a bake, its light probes' grid, where it reaches: what is not baked itself, as terrain, water and
+    // particles, takes the probes' light round it, not the open sky's.
+    float3 volume;
+    if (probeVolumeLight(frame, position, s.normal, volume))
+    {
+        bool both = frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0;
+        return volume + (both ? ddgiIrradiance(frame, position, s.normal, s.view, 0.0) : 0.0);
+    }
     if (frame->ddgi.enabled != 0)
     {
         // Beside a bake, the probes hold only the Realtime lights' bounce, and the bake the sky's: where nothing is

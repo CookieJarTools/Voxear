@@ -268,3 +268,72 @@ fn light_probes_light_a_ball_moving_through_the_room() {
     assert!(seen[1] > seen[0], "and more of it beside the sunlit patch: {seen:?}");
     assert!(below(over) > below(corner) * 3.0, "the probes over the sunlit patch take far more from below");
 }
+
+/// A wide floor under an open sky, no sun, seen from above: what lights it
+/// is the sky alone, all of which it sees. `gi` none for no bounced light.
+fn open_floor(renderer: &mut Renderer, gi: Option<GiSource>) -> World {
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 3.0, -3.0);
+    world.spawn((Camera::default(), Transform::new(eye, Quat::from_rotation_x(0.7), Vec3::ONE)));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let desc = MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+    let grey = renderer.add_material(&desc).unwrap();
+    let floor = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(200.0, 1.0, 200.0));
+    world.spawn((MeshRenderer::new(cube, grey), floor, Lightmap { scale: 0.05, ..Lightmap::default() }));
+    world.insert_resource(Sky::default());
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.reflections.enabled = false;
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    let lit = &mut post.global_illumination;
+    (lit.enabled, lit.samples, lit.texels_per_metre) = (gi.is_some(), 128, 2.0);
+    lit.source = gi.unwrap_or_default();
+    world.insert_resource(post);
+    world
+}
+
+#[test]
+fn an_open_floor_bakes_the_skys_light_as_plain_shading_gives_it() {
+    let middle = (WIDTH / 2, HEIGHT / 2);
+    let mut seen = Vec::new();
+    for gi in [None, Some(GiSource::Baked), Some(GiSource::Realtime)] {
+        let Some(mut renderer) = renderer(false) else { return };
+        let mut time = 0.0;
+        let mut world = open_floor(&mut renderer, gi);
+        if gi == Some(GiSource::Baked) {
+            let made = bake(&mut renderer, &world, &mut time);
+            put_on(&mut world, &made);
+        }
+        run(&mut renderer, &world, &mut time, 60);
+        let pixels = renderer.read_pixels().unwrap().2;
+        keep_image(&format!("open floor, {gi:?}.png"), &pixels);
+        seen.push(brightness(&pixels, middle));
+    }
+    eprintln!("an open floor: {seen:?} plain, baked and real-time");
+    assert!((seen[1] - seen[0]).abs() < seen[0] * 0.08 + 3.0, "baked as the plain sky light gives it: {seen:?}");
+}
+
+#[test]
+fn the_closed_room_bakes_about_the_light_the_real_time_probes_find() {
+    let Some(mut renderer) = renderer(false) else { return };
+    let mut time = 0.0;
+    let mut room = build_room(&mut renderer, GiSource::Baked);
+    let made = bake(&mut renderer, &room.world, &mut time);
+    put_on(&mut room.world, &made);
+    run(&mut renderer, &room.world, &mut time, 3);
+    let baked = renderer.read_pixels().unwrap().2;
+    let Some(mut renderer) = self::renderer(false) else { return };
+    let room = build_room(&mut renderer, GiSource::Realtime);
+    run(&mut renderer, &room.world, &mut time, 240);
+    let realtime = renderer.read_pixels().unwrap().2;
+    keep_image("room through a window, real-time.png", &realtime);
+    let at = |point: Vec3| pixel_of(point, EYE, camera_rotation());
+    for (what, point) in [
+        ("ceiling", Vec3::new(0.0, 3.0, 2.0)),
+        ("far wall", Vec3::new(-1.5, 1.4, 3.0)),
+        ("shaded floor", Vec3::new(-2.0, 0.0, 2.0)),
+    ] {
+        eprintln!("{what}: baked {}, real-time {}", brightness(&baked, at(point)), brightness(&realtime, at(point)));
+    }
+}

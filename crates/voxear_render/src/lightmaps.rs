@@ -333,14 +333,58 @@ impl BakedLighting {
     }
 }
 
+/// The most cells a probe volume has along its longest side.
+const VOLUME_CELLS: f32 = 48.0;
+
+/// A bake's probes' light resampled on a grid over them, as blended for each
+/// cell's middle, keeping the first two bands (L1) of each colour: what
+/// shading reads, cell by cell, for what has no baked light of its own,
+/// fog, water, terrain, particles and the rays' hits, which would otherwise
+/// take the open sky's light even deep indoors.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProbeVolume {
+    pub origin: Vec3,
+    pub cell: f32,
+    pub size: [u32; 3],
+    /// Three rows a cell, x fastest, then y, then z: red, green and blue,
+    /// each its band 0 and its band 1's y, z and x, as `harmonics` orders them.
+    pub rows: Vec<[f32; 4]>,
+}
+
+impl ProbeVolume {
+    pub(crate) fn of(probes: &BakedProbes) -> Option<Self> {
+        let first = *probes.positions.first()?;
+        let (low, high) = probes.positions.iter().fold((first, first), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+        let extent = (high - low).max(Vec3::splat(0.5));
+        let cell = (extent.max_element() / VOLUME_CELLS).max(0.25);
+        let size = ((extent / cell).ceil().as_uvec3() + 1).max(voxear_core::math::UVec3::splat(2)).to_array();
+        let mut rows = Vec::with_capacity((size[0] * size[1] * size[2] * 3) as usize);
+        for z in 0..size[2] {
+            for y in 0..size[1] {
+                for x in 0..size[0] {
+                    let at = low + Vec3::new(x as f32, y as f32, z as f32) * cell;
+                    let light = probes.light_at(at).unwrap_or_default();
+                    for c in 0..3 {
+                        rows.push([light.0[0][c], light.0[1][c], light.0[2][c], light.0[3][c]]);
+                    }
+                }
+            }
+        }
+        Some(Self { origin: low, cell, size, rows })
+    }
+}
+
 /// The level's lightmaps on the GPU, uploaded once each time its bake
-/// changes, and its probes.
+/// changes, its probes, and their volume.
 #[derive(Default)]
 pub(crate) struct BakedTextures {
     id: u64,
     /// Each lightmap's light and directions.
     textures: Vec<(TextureId, Option<TextureId>)>,
     probes: Option<Arc<BakedProbes>>,
+    volume: Option<(Buffer, ProbeVolume)>,
+    /// Volumes replaced, freed once the frames that read them are done.
+    retired: Vec<(u64, Buffer)>,
 }
 
 /// What every view this frame lights its instances with from the bake.
@@ -352,6 +396,9 @@ pub(crate) struct BakedFrame {
     pub id: u64,
     /// A bake is tracing: what is not to be in it is marked.
     pub baking: bool,
+    /// The probes' volume: its buffer, cells across, cell width and first
+    /// cell's middle.
+    pub volume: Option<(u64, [u32; 3], f32, [f32; 3])>,
 }
 
 impl BakedTextures {
@@ -364,10 +411,21 @@ impl BakedTextures {
         assets: &mut Assets,
         frame: u64,
     ) -> Result<()> {
+        let finished: Vec<Buffer> = {
+            let (done, kept): (Vec<_>, Vec<_>) = self.retired.drain(..).partition(|(at, _)| *at + 4 <= frame);
+            self.retired = kept;
+            done.into_iter().map(|(_, buffer)| buffer).collect()
+        };
+        for buffer in finished {
+            gpu.destroy_buffer(buffer);
+        }
         let baked = world.resource::<BakedLighting>();
         let id = baked.map_or(0, |baked| baked.id);
         if id == self.id {
             return Ok(());
+        }
+        if let Some((buffer, _)) = self.volume.take() {
+            self.retired.push((frame, buffer));
         }
         for (light, directions) in self.textures.drain(..) {
             assets.free_texture(light, frame);
@@ -378,6 +436,19 @@ impl BakedTextures {
         self.id = id;
         self.probes = baked.map(|baked| baked.probes.clone()).filter(|probes| !probes.positions.is_empty());
         let Some(baked) = baked else { return Ok(()) };
+        if let Some(volume) = ProbeVolume::of(&baked.probes) {
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+            let size = (volume.rows.len() * 16) as u64;
+            let buffer = gpu.create_buffer("light probe volume", size, usage, MemoryLocation::GpuOnly)?;
+            gpu.upload_buffer(&buffer, 0, bytemuck::cast_slice(&volume.rows))?;
+            tracing::info!(
+                "light probe volume: {:?} cells {:.2} m wide from {}",
+                volume.size,
+                volume.cell,
+                volume.origin
+            );
+            self.volume = Some((buffer, volume));
+        }
         for (index, atlas) in baked.atlases.iter().enumerate() {
             let size = (atlas.width, atlas.height);
             let blocks = (atlas.width.div_ceil(4) * atlas.height.div_ceil(4) * 16) as usize;
@@ -413,7 +484,15 @@ impl BakedTextures {
     pub(crate) fn frame(&self, baking: bool) -> BakedFrame {
         let textures =
             self.textures.iter().map(|(light, directions)| (light.0, directions.map_or(NO_TEXTURE, |d| d.0))).collect();
-        BakedFrame { textures, probes: self.probes.clone(), id: self.id, baking }
+        let volume = self.volume.as_ref().map(|(buffer, v)| (buffer.address, v.size, v.cell, v.origin.to_array()));
+        BakedFrame { textures, probes: self.probes.clone(), id: self.id, baking, volume }
+    }
+
+    /// Frees what it holds on the GPU but its textures, which the assets free.
+    pub(crate) fn destroy(&mut self, gpu: &Gpu) {
+        for buffer in self.volume.take().map(|(b, _)| b).into_iter().chain(self.retired.drain(..).map(|(_, b)| b)) {
+            gpu.destroy_buffer(buffer);
+        }
     }
 }
 
@@ -597,5 +676,25 @@ mod tests {
             last = now;
         }
         assert!(BakedProbes::default().light_at(Vec3::ZERO).is_none());
+    }
+
+    #[test]
+    fn a_probe_volume_covers_the_probes_and_keeps_their_light_where_they_are() {
+        let lit = |v: f32| ProbeLight(std::array::from_fn(|i| if i < 4 { [v, v * 0.5, 0.0] } else { [9.0; 3] }));
+        let positions = vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 6.0)];
+        let probes = BakedProbes { positions, lights: vec![lit(1.0), lit(3.0), lit(2.0)] };
+        let volume = ProbeVolume::of(&probes).unwrap();
+        assert_eq!(volume.origin, Vec3::ZERO);
+        let [x, y, z] = volume.size;
+        assert!(
+            x as f32 * volume.cell >= 10.0 && y >= 2 && z as f32 * volume.cell >= 6.0,
+            "{:?} at {}",
+            volume.size,
+            volume.cell
+        );
+        assert_eq!(volume.rows.len() as u32, x * y * z * 3);
+        assert_eq!(volume.rows[0], [1.0, 1.0, 1.0, 1.0], "red's L0 and L1 at the first probe");
+        assert_eq!(volume.rows[1], [0.5; 4], "green's");
+        assert!(ProbeVolume::of(&BakedProbes::default()).is_none());
     }
 }

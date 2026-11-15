@@ -52,6 +52,16 @@ const LEAST_PART: u32 = 8;
 pub const PATHS_PER_DISPATCH: u32 = 1 << 19;
 /// How many dispatches a frame may record.
 pub const MOST_DISPATCHES: usize = 16;
+/// About how long a bake's dispatches take of a frame's GPU time, in
+/// milliseconds, so the editor stays usable while it bakes.
+pub const BAKE_FRAME_MS: f32 = 8.0;
+
+/// How many dispatches the next frame records, from how many the last did
+/// and how long each took, half way towards as many as fit `BAKE_FRAME_MS`.
+pub(crate) fn pace(now: usize, each_ms: f32) -> usize {
+    let fits = (BAKE_FRAME_MS / each_ms.max(0.01)).floor() as usize;
+    ((now + fits).div_ceil(2)).clamp(1, MOST_DISPATCHES)
+}
 /// Of a texel's paths, the share that first meets the backs of surfaces from
 /// which it is taken to lie inside something.
 const INSIDE: f32 = 0.4;

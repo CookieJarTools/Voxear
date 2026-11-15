@@ -893,6 +893,13 @@ struct Bake
     // The level's lightmap texels a metre, for the density view.
     float texelsPerMetre;
     uint2 pad;
+    // The light probes' light resampled on a grid (src/lightmaps.rs's ProbeVolume): each cell's L1 harmonics, a row
+    // for red, green and blue; its cells across, 0 for none; how wide a cell is; where the first cell's middle is.
+    float4* volume;
+    uint3 volumeSize;
+    float volumeCell;
+    float3 volumeOrigin;
+    float volumePad;
 };
 
 static const uint GI_REALTIME = 0;

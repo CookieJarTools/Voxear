@@ -121,6 +121,12 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
     // With GI, the light round the froxel instead, which walls and bounced light change.
     float3 around = frame->ddgi.enabled != 0 ? ddgiLightAround(frame, position, toCamera, sky) : sky;
+    // Under a bake, the light its probes' grid holds there, from every way.
+    float3 baked;
+    if (probeVolumeLight(frame, position, float3(0.0), baked))
+    {
+        around = baked + (frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0 ? around : 0.0);
+    }
     light += around / (4.0 * PI);
     float4 current = float4(frame->post.fogColor * light * density, density);
 

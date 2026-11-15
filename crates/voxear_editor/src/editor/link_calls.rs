@@ -328,6 +328,7 @@ impl Editor {
                     Some(Ok(baked)) => json!({
                         "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
                         "probes": baked.probes, "texels": baked.texels, "seconds": baked.seconds,
+                        "tracing_seconds": baked.tracing_seconds,
                     }),
                     Some(Err(error)) => json!({ "error": error }),
                     None => Json::Null,
@@ -536,6 +537,7 @@ impl Editor {
                 (false, Some(Ok(baked))) => done(json!({
                     "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
                     "probes": baked.probes, "texels": baked.texels, "seconds": baked.seconds,
+                        "tracing_seconds": baked.tracing_seconds,
                 })),
                 (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
                 (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),

@@ -518,8 +518,12 @@ pub struct Renderer {
     sound_rays: sound_rays::SoundRayWork,
     /// A lighting bake under way, or done and not yet taken (see `lightmapper`).
     baking: Option<lightmapper::Baking>,
-    /// How many of a bake's dispatches a frame records.
+    /// How many of a bake's dispatches a frame records, whether that was set
+    /// rather than worked out from how long they take, and how many the last
+    /// frame recorded.
     bake_pace: usize,
+    bake_pace_set: bool,
+    bake_recorded: usize,
     /// The level's bake's lightmaps, on the GPU.
     baked_textures: lightmaps::BakedTextures,
 }
@@ -635,6 +639,8 @@ impl Renderer {
             sound_rays: Default::default(),
             baking: None,
             bake_pace: 2,
+            bake_pace_set: false,
+            bake_recorded: 0,
             baked_textures: Default::default(),
         })
     }
@@ -713,9 +719,12 @@ impl Renderer {
 
     /// How many of a lighting bake's dispatches each frame records, each up
     /// to `lightmapper::PATHS_PER_DISPATCH` paths: more bakes sooner and
-    /// slows the frames it runs in more. 2 by default.
+    /// slows the frames it runs in more. Unset, as many as take about
+    /// `lightmapper::BAKE_FRAME_MS` of the GPU's time a frame. What a bake
+    /// makes is the same either way.
     pub fn set_light_bake_pace(&mut self, dispatches: usize) {
         self.bake_pace = dispatches.clamp(1, lightmapper::MOST_DISPATCHES);
+        self.bake_pace_set = true;
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
@@ -1463,9 +1472,14 @@ impl Renderer {
         // This slot's previous frame has finished, and with it every frame that could use what was freed before it.
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
-        // A lighting bake reads its sums back once traced, and finishes on a thread of its own.
+        // A lighting bake reads its sums back once traced, and finishes on a thread of its own; while it traces, as
+        // many dispatches a frame as take about a frame's share of the GPU, by how long the last ones took.
         if let Some(baking) = &mut self.baking {
             baking.update(&self.gpu, self.frame_index);
+            let took = self.graph.timings().iter().find(|(name, _)| name == "Lightmap bake").map(|(_, ms)| *ms);
+            if let (false, Some(ms), 1..) = (self.bake_pace_set, took, self.bake_recorded) {
+                self.bake_pace = lightmapper::pace(self.bake_pace, ms / self.bake_recorded as f32);
+            }
         }
         // The level's bake's lightmaps, uploaded when they change.
         self.baked_textures.update(world, (&self.gpu, &mut self.bindless), assets, self.frame_index)?;
@@ -1685,6 +1699,7 @@ impl Renderer {
         if let Some(baking) = baking.as_mut().filter(|_| bake_dispatches > 0) {
             baking.recorded(bake_dispatches, frame_index);
         }
+        self.bake_recorded = bake_dispatches;
         // An output no view drew into is cleared for its UI.
         for (&image, cleared) in images.iter().zip(&cleared) {
             if let (Some((output, _)), false) = (image, cleared) {
@@ -1943,6 +1958,7 @@ impl Drop for Renderer {
         if let Some(baking) = self.baking.take() {
             baking.cancel(gpu);
         }
+        self.baked_textures.destroy(gpu);
         self.pipelines.destroy(gpu);
         self.reflection_probes.destroy(gpu);
         self.skinning.destroy(gpu);
@@ -2727,6 +2743,11 @@ impl View {
             extracted.frame.bake = gpu::GpuBake { sun_mode: LightMode::Realtime.order(), ..extracted.frame.bake };
             extracted.frame.bake.source = gpu::GI_REALTIME;
             (extracted.frame.bake.baked_lights, extracted.frame.bake.bake_lights) = (0, 0);
+        } else if let Some((address, size, cell, origin)) = setup.baked.volume {
+            let bake = &mut extracted.frame.bake;
+            (bake.volume, bake.volume_size, bake.volume_cell) = (address, size, cell);
+            // Into the view's own space, as the instances are.
+            bake.volume_origin = (voxear_core::math::Vec3::from(origin) - offset).to_array();
         }
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);

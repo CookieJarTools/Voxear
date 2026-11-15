@@ -15,6 +15,7 @@ pub mod blocks;
 pub mod brush;
 pub mod budget;
 pub mod composite;
+pub mod coord_hash;
 pub mod dig;
 pub mod endless;
 pub mod erosion;

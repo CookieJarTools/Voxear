@@ -14,15 +14,13 @@
 //! apart, with the water after the opaque scene (`water::record`): every
 //! one of a chunk the view sees, seen from either side, casting no shadow.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, KeptBatch, MemoryLocation, Retired, vk};
+use voxear_terrain::coord_hash::CoordSet;
 use voxear_terrain::blocks::{
     fell::LooseBlocks,
     BlockWorld, ChunkMeshes, RingFades,
@@ -504,8 +502,8 @@ pub(crate) fn pick(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
     (facing, detail): (Facing, Option<Detail>),
-    seen: Option<&HashSet<[i32; 3]>>,
-    shown: Option<&HashSet<[i32; 3]>>,
+    seen: Option<&CoordSet<[i32; 3]>>,
+    shown: Option<&CoordSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
     pick_parts(chunks, planes, (facing, detail), (seen, shown), Parts::With)
 }
@@ -525,7 +523,7 @@ fn pick_parts(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
     (facing, detail): (Facing, Option<Detail>),
-    (seen, shown): (Option<&HashSet<[i32; 3]>>, Option<&HashSet<[i32; 3]>>),
+    (seen, shown): (Option<&CoordSet<[i32; 3]>>, Option<&CoordSet<[i32; 3]>>),
     parts: Parts,
 ) -> Vec<[u32; 2]> {
     // Turned towards the light, the faces whose way out goes against it.
@@ -615,8 +613,8 @@ fn turned_away([x, y, z, spread]: [f32; 4], [low, high]: [Vec3; 2], facing: Faci
 pub(crate) fn pick_water(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
-    seen: Option<&HashSet<[i32; 3]>>,
-    shown: Option<&HashSet<[i32; 3]>>,
+    seen: Option<&CoordSet<[i32; 3]>>,
+    shown: Option<&CoordSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
     let picked = chunks.iter().filter(|chunk| chunk.water[1] > 0).filter(|chunk| {
         let [level, x, y, z] = chunk.key;
@@ -2203,10 +2201,10 @@ mod tests {
         let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], (Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None), None, None);
         assert_eq!(ahead, vec![[40, 40]]);
         // Only the columns shown from where the view looks, where the world says which: the second's.
-        let shown = HashSet::from([[0, 1, 0]]);
+        let shown = CoordSet::from_iter([[0, 1, 0]]);
         assert_eq!(pick(&whole, &[], (from, None), None, Some(&shown)), vec![[40, 40]]);
         // Only the chunks the camera can see into, where it is known which.
-        let seen = HashSet::from([[1, 0, 0]]);
+        let seen = CoordSet::from_iter([[1, 0, 0]]);
         assert_eq!(pick(&whole, &[], (from, None), Some(&seen), None), vec![[40, 40]]);
         // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
         let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0, rings: None };
@@ -2252,7 +2250,7 @@ mod tests {
         assert_eq!(pick_water(&chunks, &[], None, None), vec![[60, 5], [185, 7]]);
         // Only those in view, and those the camera can see into.
         assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None, None), vec![[185, 7]]);
-        let seen = HashSet::from([[0, 0, 0]]);
+        let seen = CoordSet::from_iter([[0, 0, 0]]);
         assert_eq!(pick_water(&chunks, &[], Some(&seen), None), vec![[60, 5]]);
     }
 

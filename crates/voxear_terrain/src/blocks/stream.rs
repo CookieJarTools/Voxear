@@ -30,13 +30,15 @@
 //! `smooth::mesh_skirted`).
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
 };
+
+use crate::coord_hash::{CoordMap, CoordSet};
 
 use super::{
     BlockMap, BlockWorld, RING_FADE_SECONDS, RingFades,
@@ -316,17 +318,17 @@ pub struct BlockStreamer {
     number: u64,
     latest: Arc<AtomicU64>,
     /// The coarse columns made, by level and place: their chunks' faces.
-    coarse: HashMap<(u32, [i32; 2]), Vec<([i32; 3], Arc<ChunkMesh>)>>,
+    coarse: CoordMap<(u32, [i32; 2]), Vec<([i32; 3], Arc<ChunkMesh>)>>,
     /// The blocks of a smooth world's coarse columns, by level and place.
-    coarse_blocks: HashMap<(u32, [i32; 2]), ColumnChunks>,
+    coarse_blocks: CoordMap<(u32, [i32; 2]), ColumnChunks>,
     /// The smooth coarse columns whose faces are being made.
-    joining: HashSet<(u32, [i32; 2])>,
+    joining: CoordSet<(u32, [i32; 2])>,
     /// The near columns whose blocks are made, by place.
-    near: HashSet<[i32; 2]>,
+    near: CoordSet<[i32; 2]>,
     /// The near columns drawn: their faces made.
-    drawn: HashSet<[i32; 2]>,
+    drawn: CoordSet<[i32; 2]>,
     /// The near columns whose faces are being made.
-    meshing: HashSet<[i32; 2]>,
+    meshing: CoordSet<[i32; 2]>,
     /// The world's faces as the last update left them, to find faces made
     /// since, by changes to its blocks, for columns not drawn.
     seen: Option<Arc<HashMap<[i32; 3], Arc<ChunkMesh>>>>,
@@ -335,15 +337,15 @@ pub struct BlockStreamer {
     /// Whether faces made were let go, their blocks changed since, to be
     /// asked for again.
     again: bool,
-    asked: HashSet<(u32, [i32; 2])>,
+    asked: CoordSet<(u32, [i32; 2])>,
     /// Coarse columns made before changes were kept for the ground under
     /// them, made again to show what was built, the old drawn till then.
-    stale: HashSet<(u32, [i32; 2])>,
+    stale: CoordSet<(u32, [i32; 2])>,
     /// For each coarse column made round where the world is looked at
     /// from, by level and place: when its finer columns were all made, on
     /// `fade_clock`, or `f32::MAX` while it shows with them not made yet
     /// (see [`RingFades::covered`]).
-    covered_since: HashMap<(u32, [i32; 2]), f32>,
+    covered_since: CoordMap<(u32, [i32; 2]), f32>,
     /// Whether a coarse column is fading into the finer ones over it, and
     /// when the first of those fades is over, on `fade_clock`.
     fading: bool,
@@ -352,7 +354,7 @@ pub struct BlockStreamer {
     /// time; and the columns shown, with those numbers, as the far chunks
     /// were last put together from them, and those far chunks (see
     /// [`Self::show_coarse`]).
-    coarse_made: HashMap<(u32, [i32; 2]), u64>,
+    coarse_made: CoordMap<(u32, [i32; 2]), u64>,
     made_count: u64,
     far_from: (u64, Option<Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>>),
     waiting: usize,
@@ -373,21 +375,21 @@ impl Default for BlockStreamer {
             making: None,
             number: 0,
             latest: Arc::new(AtomicU64::new(0)),
-            coarse: HashMap::new(),
-            coarse_blocks: HashMap::new(),
-            joining: HashSet::new(),
-            near: HashSet::new(),
-            drawn: HashSet::new(),
-            meshing: HashSet::new(),
+            coarse: CoordMap::default(),
+            coarse_blocks: CoordMap::default(),
+            joining: CoordSet::default(),
+            near: CoordSet::default(),
+            drawn: CoordSet::default(),
+            meshing: CoordSet::default(),
             seen: None,
             windows: None,
             again: false,
-            asked: HashSet::new(),
-            stale: HashSet::new(),
-            covered_since: HashMap::new(),
+            asked: CoordSet::default(),
+            stale: CoordSet::default(),
+            covered_since: CoordMap::default(),
             fading: false,
             fade_over: 0.0,
-            coarse_made: HashMap::new(),
+            coarse_made: CoordMap::default(),
             made_count: 0,
             far_from: (0, None),
             waiting: 0,
@@ -481,10 +483,10 @@ impl BlockStreamer {
             world.columns = Some(Arc::default());
             // Its floor is the world's settings', made anew with them.
             world.floor = making.generate.floor_top();
-            (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
-            (self.coarse, self.asked, self.stale) = (HashMap::new(), HashSet::new(), HashSet::new());
+            (self.near, self.drawn, self.meshing) = Default::default();
+            (self.coarse, self.asked, self.stale) = Default::default();
             self.covered_since.clear();
-            (self.coarse_blocks, self.joining) = (HashMap::new(), HashSet::new());
+            (self.coarse_blocks, self.joining) = Default::default();
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.far_tiles = making.far_tiles();
             self.making = Some(Arc::new(making));
@@ -638,7 +640,7 @@ impl BlockStreamer {
         // The changes kept for columns come near made, before their faces are; past the columns made, water
         // shows no faces.
         if !came.is_empty() {
-            world.columns = Some(Arc::new(self.near.clone()));
+            world.columns = Some(Arc::new(self.near.iter().copied().collect()));
             let mut theirs = BlockEdits::default();
             Arc::make_mut(pending).chunks.retain(|key, change| {
                 let mine = came.contains(&[key[0], key[2]]);
@@ -700,7 +702,7 @@ impl BlockStreamer {
             self.near.remove(at);
             self.drawn.remove(at);
         }
-        world.columns = Some(Arc::new(self.near.clone()));
+        world.columns = Some(Arc::new(self.near.iter().copied().collect()));
         let undrawn = |key: &[i32; 3]| gone.contains(&[key[0], key[2]]) || hidden.contains(&[key[0], key[2]]);
         Arc::make_mut(&mut world.meshes).retain(|key, _| !undrawn(key));
         true
@@ -909,7 +911,7 @@ impl BlockStreamer {
         covered_since.retain(|key, _| self.coarse.contains_key(key));
         let mut fades = RingFades::default();
         let mut fade_over = f32::MAX;
-        let mut shown_columns: HashSet<(u32, [i32; 2])> = HashSet::new();
+        let mut shown_columns: CoordSet<(u32, [i32; 2])> = CoordSet::default();
         let mut places = Vec::with_capacity(by_place.len());
         for (number, (windows, place)) in by_place.iter().zip(from).enumerate() {
             let top = windows.len() - 1;
@@ -924,7 +926,7 @@ impl BlockStreamer {
                 fades = RingFades { at: place.at, reach, band, coarsest: top as u32, ..RingFades::default() };
             }
             let own = self.drawn.iter().filter(|at| windows[0].contains(**at));
-            let mut columns: HashSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
+            let mut columns: CoordSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
             for (level, at) in self.coarse.keys() {
                 let index = *level as usize;
                 let mine = index >= top || windows[index].contains(*at);
@@ -1129,6 +1131,8 @@ pub fn all_changes(base: &BlockMap, blocks: &BlockMap, pending: &BlockEdits) -> 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         blocks::{
@@ -1901,8 +1905,8 @@ mod tests {
             settle(&mut streamer, &mut world, &mut base, &mut pending, [10.0, 10.0], None);
             // Drawn just within the window, their blocks made a column further.
             let window = windows(&making.file, 100.0, 300.0, [10.0, 10.0])[0];
-            assert_eq!(streamer.drawn, window.columns().collect::<HashSet<_>>(), "smooth: {smooth}");
-            assert_eq!(streamer.near, window.grown().columns().collect::<HashSet<_>>(), "smooth: {smooth}");
+            assert_eq!(streamer.drawn, window.columns().collect::<CoordSet<_>>(), "smooth: {smooth}");
+            assert_eq!(streamer.near, window.grown().columns().collect::<CoordSet<_>>(), "smooth: {smooth}");
             // Every drawn chunk's faces as the whole world's blocks make them; none for columns not drawn.
             let whole = |world: &BlockWorld, streamer: &BlockStreamer| {
                 for (key, mesh) in world.meshes.iter() {

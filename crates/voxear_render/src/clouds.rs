@@ -23,9 +23,17 @@
 //! the cubes are mist: each takes out only some of the light, less at a
 //! cloud's edges, and the walk goes on through them.
 //!
-//! The sky pass lays that picture over the sky it draws, sun, moon and stars
-//! behind it. Clouds are only ever behind what is drawn: a peak higher than
-//! their undersides is not hidden in them.
+//! 3. **Cloud panorama** marches them the same way all round the camera, into
+//!    a small picture across once round the horizon and from straight up to
+//!    straight down, a quarter of it a frame with fewer steps, the rest kept: what reflections, reflection
+//!    probes' captures and screen-space reflections' misses take of the sky
+//!    show the clouds from it.
+//!
+//! The sky pass lays the Clouds picture over the sky it draws, sun, moon and
+//! stars behind it; shading lays it over what is drawn as well, as much of it
+//! as lies in front (`cloudsBefore` in `shaders/clouds.slang`): a far range
+//! beyond the clouds' layer, a peak that rises into them, and the ground round
+//! a camera inside them or above them are seen through them.
 
 use anyhow::Result;
 use voxear_rhi::{Bindless, Gpu, ImageDesc, vk};
@@ -45,6 +53,16 @@ const SHADOW_SIDE: u32 = 256;
 pub const SHADOW_REACH: f32 = 6000.0;
 
 const HISTORY_NAMES: [&str; 2] = ["clouds 0", "clouds 1"];
+const PANORAMA_NAMES: [&str; 2] = ["cloud panorama 0", "cloud panorama 1"];
+
+/// The clouds' panorama, texels across and down: about 2.8 degrees a texel,
+/// as fine as a reflection, which blurs them, shows them. One block of 8 by
+/// 4 texels in `PANORAMA_EVERY` is marched each frame, with 12 steps where
+/// the screen's take 40, and the rest kept: the clouds drift slowly, and the
+/// whole of it at 256 by 128 with the screen's steps cost 1.4 ms.
+pub const PANORAMA: [u32; 2] = [128, 64];
+/// As `CLOUD_PANORAMA_EVERY` in `shaders/sky.slang`.
+pub const PANORAMA_EVERY: u32 = 4;
 
 /// A sky's clouds as the shaders read them, before a frame gives them their
 /// pictures and how far they have drifted.
@@ -66,6 +84,7 @@ pub fn gpu(clouds: &Clouds) -> GpuClouds {
         view: NO_TEXTURE,
         shadow_map: NO_TEXTURE,
         noise: NO_TEXTURE,
+        panorama: NO_TEXTURE,
         ..GpuClouds::default()
     }
 }
@@ -78,6 +97,9 @@ pub struct CloudImages {
     pub current: ImageId,
     /// The sun let through, over the ground round the camera.
     pub shadows: ImageId,
+    /// The clouds all round, last frame's and this frame's, for the camera's
+    /// own view; a view through a Portal reflects the clouds without them.
+    pub panorama: Option<[ImageId; 2]>,
     /// The only part of the picture marched, where only part of it shows,
     /// as through a Portal's opening: its lowest and highest x and y, from
     /// -1 to 1.
@@ -102,17 +124,24 @@ impl CloudImages {
             usage,
         );
         let shadows = ImageDesc::new(SHADOW_SIDE, SHADOW_SIDE, TABLE_FORMAT, usage);
+        let panorama = ImageDesc::new(PANORAMA[0], PANORAMA[1], TABLE_FORMAT, usage);
         Ok(Self {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], half)?,
             current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], half)?,
             shadows: fg.create_image(gpu, bindless, "cloud shadows", shadows)?,
+            panorama: Some([
+                fg.history_image(gpu, bindless, PANORAMA_NAMES[1 - history], panorama)?,
+                fg.history_image(gpu, bindless, PANORAMA_NAMES[history], panorama)?,
+            ]),
             within: None,
         })
     }
 
     /// The pictures later passes sample.
-    pub fn sampled(&self) -> [ImageId; 2] {
-        [self.current, self.shadows]
+    pub fn sampled(&self) -> Vec<ImageId> {
+        let mut sampled = vec![self.current, self.shadows];
+        sampled.extend(self.panorama.map(|[_, current]| current));
+        sampled
     }
 }
 
@@ -130,7 +159,7 @@ pub fn shadow_middle(camera: [f32; 2], drift: [f32; 2]) -> [f32; 2] {
 /// Records the two passes. `tables` are the atmosphere's, where the sky is
 /// the atmosphere, which light the clouds and haze them.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clouds: CloudImages, tables: &[ImageId]) {
-    let CloudImages { previous, current, shadows, within } = clouds;
+    let CloudImages { previous, current, shadows, panorama, within } = clouds;
     // Drawn only in part, each picture is cleared first when it is made: what lies outside that part is read as
     // last frame's where the sky has turned into it, and a new image holds whatever its memory held, NaN among it,
     // which the blend would keep from frame to frame.
@@ -161,6 +190,12 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clo
         None => draw(ctx, pipelines.clouds, &march, current),
         Some(rect) => draw_within(ctx, pipelines.clouds, &march, current, rect),
     });
+    if let Some([before, now]) = panorama {
+        let march = Push { textures: [fg.texture(before).0, 0, 0, 0], ..push };
+        let mut images = vec![(before, ImageAccess::Sampled), (now, ImageAccess::ColorAttachment)];
+        images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
+        fg.add_pass("Cloud panorama", &images, &[], move |ctx| draw(ctx, pipelines.cloud_panorama, &march, now));
+    }
 }
 
 /// A pass that writes the texels of `target` within `rect` of it (lowest

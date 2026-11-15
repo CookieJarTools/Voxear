@@ -187,7 +187,9 @@ bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
 }
 
 // The light a surface sends back along a ray that hit it, where it hit, and
-// whether the ray found the surface's back, as from inside something.
+// whether the ray found the surface's back, as from inside something. For a
+// GI probe's ray, its diffuse light alone; for a reflection's or a reflection
+// probe's, its shine too, so metals show what they mirror rather than black.
 float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float3 position, float3 direction, float mip, bool fromProbe, out bool back)
 {
@@ -202,7 +204,9 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float3 normal = normalize(instance.normal0.xyz * local.x + instance.normal1.xyz * local.y + instance.normal2.xyz * local.z);
     // Its normals, not its winding, say which side is its front. A sheet, a cut-out card of leaves or a plant,
     // has no inside: its back is no sign of a probe within a wall, and probes in a tree's crown were set aside.
-    Material material = buffers()->materials[instance.material];
+    // A terrain's mesh for rays says its surfaces' materials point by point (src/mesh.rs's PROXY_MATERIAL).
+    bool painted = (instance.flags & INSTANCE_RAYS_ONLY) != 0 && (a.wind & PROXY_MATERIAL) != 0;
+    Material material = buffers()->materials[painted ? a.wind & ~PROXY_MATERIAL : instance.material];
     bool sheet = material.alphaCutoff > 0.0 || (material.flags & MATERIAL_FOLIAGE) != 0;
     back = dot(normal, direction) > 0.0 && !sheet;
     // Both faces of a surface take light, as its front does.
@@ -225,17 +229,23 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float facing = dot(normal, toSun);
-    float3 lit = 0.0;
-    if (facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
-    {
-        lit += albedo / PI * sunLight * facing * glassSun(frame, position, normal);
-    }
+    // Shine only where it shows: metals, whose colour is all shine, and not the GI's rays, which gather light
+    // from all round, nor a near-white dielectric's few percent.
+    float3 f0 = lerp(float3(0.04), base.rgb, metal);
+    bool shiny = !fromProbe && metal > 0.05;
     Surface s;
     s.normal = normal;
     s.view = -direction;
     s.diffuse = albedo;
-    s.f0 = 0.0;
-    s.roughness = 1.0;
+    s.f0 = shiny ? f0 : 0.0;
+    // Not sharper than a capture's texels can show: a mirror's highlight would be one bright texel.
+    s.roughness = shiny ? max(rough, 0.2) : 1.0;
+    float3 lit = 0.0;
+    if (facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
+    {
+        float3 sun = sunLight * glassSun(frame, position, normal);
+        lit += shiny ? shade(s, toSun, sun) : albedo / PI * sun * facing;
+    }
     for (uint i = 0; i < frame->lightCount; i++)
     {
         Light lamp = buffers()->lights[i];
@@ -255,16 +265,34 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // Without the GI, reflections still trace the scene, and what they meet takes the sky's light alone, as
     // shading does then.
     float3 around = frame->ddgi.enabled != 0 ? ddgiIrradiance(frame, position, normal, towards, sky) : sky;
-    return lit + albedo * around + emissive;
+    float3 mirrored = 0.0;
+    if (shiny)
+    {
+        // What it mirrors: the reflection probes round it, as last captured, then the GI's light, then the sky,
+        // as a reflection that finds nothing of its own takes them; dimmed by Fresnel as shading's is.
+        float3 outward = reflect(direction, normal);
+        float nv = saturate(dot(normal, -direction));
+        float3 fresnel = f0 + (max(float3(1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
+        float3 off = position + normal * 0.05;
+        mirrored = fresnel * reflectionFallback(frame, off, off, normal, outward, rough, around, atmosphere, true);
+    }
+    return lit + albedo * around + mirrored + emissive;
 }
 
-// The sky's light from a direction, as the plain sky light has it.
+// The sky's light from a direction, as the plain sky light has it; a
+// gradient sky's picture as it is that way, blurred over about a radian, so
+// the GI's probes take its light from where it comes, a bright side of it
+// lighting the side of things that faces it.
 float3 ddgiSky(Frame* frame, float3 direction)
 {
     float up = direction.y * 0.5 + 0.5;
     if (frame->lighting.sky == SKY_ATMOSPHERE)
     {
         return atmosphereAmbient(frame, up, sunThroughAtmosphere(frame));
+    }
+    if (frame->lighting.skyPicture != 0)
+    {
+        return skyPictureSeen(frame, direction, 0.7) * 0.35 * frame->ambient;
     }
     float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
     return lerp(frame->groundColor, above, up) * 0.35 * frame->ambient;
@@ -550,6 +578,71 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
 // wide as the texel spreads; where it meets nothing, the sky. A thread a
 // texel, a face for each z. push.textures.xyz: the probe's middle, as
 // floats' bits; push.output: the capture's first mip.
+// What a reflection probe's ray sees where it crosses the sea's top or a
+// Pool's before it meets anything (`far` along it): the water, reflecting
+// what is above it by Fresnel, and through it `beyond`, what the ray met,
+// dimmed and tinted by the depth it goes through, or the water's own colour
+// where it is deep. Water is not among the scene's triangles, so the ray is
+// checked against each flat top here.
+float3 probeCaptureWater(Frame* frame, float3 origin, float3 direction, float far, float3 beyond, bool atmosphere)
+{
+    if (direction.y > -1e-4 || (frame->ocean.enabled == 0 && frame->ocean.pools == 0))
+    {
+        return beyond;
+    }
+    float nearest = far;
+    float3 deep = frame->ocean.deep;
+    float3 absorb = frame->ocean.absorb;
+    for (uint i = 0; i <= frame->ocean.pools; i++)
+    {
+        bool sea = i == frame->ocean.pools;
+        if (sea && frame->ocean.enabled == 0)
+        {
+            break;
+        }
+        WaterBody pool;
+        if (!sea)
+        {
+            pool = buffers()->waterBodies[i];
+            if (pool.liquid != LIQUID_WATER)
+            {
+                continue;
+            }
+        }
+        float top = sea ? frame->ocean.level : pool.toWorld.c3.y;
+        float t = (top - origin.y) / direction.y;
+        if (origin.y <= top || t <= 0.0 || t >= nearest)
+        {
+            continue;
+        }
+        // Water there, of this top: not a Pool's top beyond its sides, nor the sea's in a Dry Area.
+        float found;
+        float3 taken;
+        if (waterSurface(frame, origin + direction * t - float3(0.0, 0.02, 0.0), found, taken) && abs(found - top) < 0.01)
+        {
+            nearest = t;
+            deep = sea ? frame->ocean.deep : pool.deep;
+            absorb = taken;
+        }
+    }
+    if (nearest >= far)
+    {
+        return beyond;
+    }
+    float3 at = origin + direction * nearest;
+    float3 up = float3(0.0, 1.0, 0.0);
+    float facing = saturate(-direction.y);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
+    float3 around = reflectionAmbient(frame, at + up * 0.05, up, atmosphere);
+    float3 mirrored = reflectionFallback(frame, at, at, up, reflect(direction, up), 0.05, around, atmosphere, true);
+    // Through it to what the ray met, as far below as it is along the ray; the water's own colour, lit from above,
+    // for what it takes away.
+    float3 through = exp(-absorb * max(far - nearest, 0.0));
+    float3 sun = (atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor) * saturate(-frame->sunDirection.y);
+    float3 water = deep * (around + sun / PI);
+    return lerp(beyond * through + water * (1.0 - through), mirrored, fresnel);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void probeCaptureMain(uint3 id : SV_DispatchThreadID)
@@ -575,6 +668,7 @@ void probeCaptureMain(uint3 id : SV_DispatchThreadID)
     {
         light = reflectedSky(frame, direction, atmosphere);
     }
+    light = probeCaptureWater(frame, origin, direction, hit.found ? hit.t : REFLECTION_REACH, light, atmosphere);
     // Kept within what half floats hold, and nothing that is not a number, which would spread through the mips.
     light = select(isnan(light) || isinf(light), float3(0.0), min(light, 60000.0));
     storageArraysRgba16f[push.output][id] = float4(light, 1.0);

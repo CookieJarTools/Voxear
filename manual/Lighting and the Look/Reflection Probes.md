@@ -4,7 +4,7 @@ order: 3
 
 A reflection probe shows shiny surfaces what is round them. Without one, a polished floor in a closed room reflects the sky, as if the room had no ceiling; with one, it reflects the room's walls, and a rough floor their soft light rather than the sky's.
 
-A probe is a box. From its middle it takes a picture of everything round it, in every direction, and the surfaces inside the box reflect that picture.
+A probe is a box. From its middle, or from a point moved off it, it takes a picture of everything round it, in every direction, and the surfaces inside the box reflect that picture.
 
 ## Adding one
 
@@ -24,6 +24,8 @@ One probe for each room or hall is a good start. Out in the open, a large probe 
 | Box Projection | Bends each reflection to where it meets the box, so a room's walls line up in a polished floor from anywhere in the room, not only from the probe's middle. Leave it on for a probe that fits a room; turn it off for one out in the open |
 | Intensity | How bright what it shows is. 1 is as captured |
 | Importance | Where boxes overlap, the more important probe shows first; between equals, the smaller |
+| Resolution | How many pixels across each side of its picture is: 64, 128, 256 or 512. 128 suits most rooms; 256 or 512 for a large polished floor seen up close, for four or sixteen times the memory and a dearer capture |
+| Capture Offset | Where it takes its picture from, in metres from its box's middle along the box's own sides. Move it where the box's middle is inside a wall or a pillar, or down to where a player's eyes are. Box Projection still lines reflections up with the box |
 
 **Capture** takes its picture again now.
 
@@ -33,11 +35,11 @@ A probe captured once keeps what it saw. A door opening or a lamp going out in f
 
 **Bake Reflection Probes**, in the command palette, or **Bake Probes** on a level's page in the Inspector, captures every probe in the open level again and saves what they saw beside the level, as `Level.probes` next to `Level.level`. The level then opens with its probes ready, the same every time, and builds ship the file with the level. Bake again after changing what a room looks like. Save the scene first: the bake finds each probe by its scene and its place in it.
 
-From a terminal, `vox editor call reflection_probes.bake` bakes the open level, and `vox editor call reflection_probe.capture obj="Hall Probe"` captures one probe again (see [[Driving the Editor from a Terminal]]).
+From a terminal, `vox editor call reflection_probes.bake` bakes the open level; `vox editor call reflection_probe.capture obj="Hall Probe"` captures one probe again; and `vox editor call field.set obj="Hall Probe" component=reflection_probe field=resolution value='"256"'` sets one of its settings, as the Inspector does (see [[Driving the Editor from a Terminal]]).
 
 A probe the level has no bake for is captured a moment after the level opens, once its bounced light has settled.
 
-The file is small: each probe's six faces, 128 pixels square, packed and compressed.
+The file is small: each probe's six faces, at its resolution, packed and compressed; about 50 KB for a probe of 128.
 
 ## Live probes
 
@@ -45,7 +47,15 @@ A live probe follows what changes: a sunset, a fire, a door. It costs a little e
 
 ## What a probe sees
 
-A probe sees what the [[Bounced Light]]'s rays see: Objs with models, lit by the sun, lamps, glowing materials and the bounced light, with the sky behind them. Terrain, worlds of blocks, water, plants and particles are not in its picture yet.
+A probe sees what the [[Bounced Light]]'s rays see, and more:
+
+- Objs with models, lit by the sun, lamps, glowing materials and the bounced light. Metals show their shine: what the probe round them saw as it was last captured, so a metal's reflection fills in over two captures.
+- Terrain, each part with the surface painted most on it there, and worlds of blocks, a little coarser than they are drawn, all in one material.
+- The sea and Pools, seen from above: their own colour, what lies under them through the water, and what they reflect.
+- The plants of a Foliage within 64 metres of where it takes its picture, as many as 8,192.
+- The sky behind them all: the atmosphere, a gradient sky's colours or its picture, and the clouds.
+
+Grass, particles and water seen from under it are not in its picture.
 
 ## How reflections fit together
 
@@ -61,6 +71,7 @@ For each pixel of a shiny surface, Voxear looks for a reflection in this order:
 ```csharp
 namespace MyGame;
 
+using System.Numerics;
 using Voxear;
 
 public sealed class Lightning : Behaviour
@@ -79,6 +90,9 @@ public sealed class Lightning : Behaviour
 		probe.Update = ReflectionProbeUpdate.Live;
 		probe.Interval = 0.5f;
 		probe.BoxProjection = false;
+		probe.Resolution = ReflectionProbeResolution.Size256;
+		// Its picture taken at eye height, a metre and a half under the box's middle.
+		probe.CaptureOffset = new Vector3(0f, -1.5f, 0f);
 	}
 }
 ```
@@ -98,4 +112,6 @@ blend_distance = 1.0
 box_projection = true
 intensity = 1.0
 importance = 0
+resolution = 128     # 64, 128, 256 or 512
+capture_offset = [0.0, 0.0, 0.0]  # where it takes its picture, from its box's middle
 ```

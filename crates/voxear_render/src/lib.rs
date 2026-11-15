@@ -142,7 +142,7 @@ pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, Ma
 pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
+pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeResolution, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
 pub use sound_rays::{
     MAX_SOUND_RAYS, MAX_SOUND_SOURCES, MAX_SOUND_SPOTS, MAX_SOURCE_RAYS, SOUND_FIELD, SOUND_FIXED, SOUND_MATERIALS,
     SoundHeard, SoundMaterial, SoundRays, SoundSource,
@@ -630,8 +630,8 @@ impl Renderer {
     /// GPU for a bake to save: none until it has been captured. Waits for
     /// the GPU.
     pub fn reflection_probe_pixels(&self, entity: voxear_ecs::Entity) -> Result<Option<ProbePixels>> {
-        let Some(slot) = self.reflection_probes.slot_of(entity) else { return Ok(None) };
-        let Some(image) = self.graph.kept_image("reflection probes") else { return Ok(None) };
+        let Some((resolution, slot)) = self.reflection_probes.slot_of(entity) else { return Ok(None) };
+        let Some(image) = self.graph.kept_image(&reflection_probes::array_name(resolution)) else { return Ok(None) };
         reflection_probes::read_back(&self.gpu, image, slot).map(Some)
     }
 
@@ -2256,7 +2256,7 @@ impl View {
     fn trace_scene(
         hierarchy: &mut Option<(Buffer, Buffer)>,
         (gpu, assets): (&Gpu, &Assets),
-        instances: &[gpu::GpuInstance],
+        (instances, ids): (&[gpu::GpuInstance], &[u32]),
         slot: usize,
     ) -> Result<(u64, u64)> {
         use voxear_core::math::{Mat4, Vec3};
@@ -2269,9 +2269,9 @@ impl View {
                 gpu.create_buffer(&format!("scene instances {slot}"), instances_size, usage, MemoryLocation::CpuToGpu)?,
             ));
         }
-        let traced: Vec<_> = instances
+        let traced: Vec<_> = ids
             .iter()
-            .enumerate()
+            .map(|&id| (id as usize, &instances[id as usize]))
             .filter(|(_, instance)| instance.flags & gpu::INSTANCE_IMPOSTOR == 0)
             .filter_map(|(id, instance)| {
                 let (low, high) = assets.mesh_bounds(MeshHandle(instance.mesh))?;
@@ -2305,13 +2305,13 @@ impl View {
 
     /// The scene's slot in the bindless set's `scenes` for frame slot `slot`,
     /// its top level built from this frame's instances by a pass recorded
-    /// into `fg`: each instance with a bottom level, its number its place in
-    /// the instance list. `None` without ray tracing.
+    /// into `fg`: each of `ids`' instances with a bottom level, its number
+    /// its place in the instance list. `None` without ray tracing.
     fn build_scene(
         (top_level, built, number): (&mut Option<TopLevel>, &mut (u64, Vec<voxear_rhi::Instance>), usize),
         fg: &mut FrameGraph<'_>,
         (gpu, bindless, assets): (&Gpu, &Bindless, &Assets),
-        instances: &[gpu::GpuInstance],
+        (instances, ids): (&[gpu::GpuInstance], &[u32]),
         slot: usize,
     ) -> Result<Option<u32>> {
         if gpu.acceleration_structure.is_none() {
@@ -2327,9 +2327,10 @@ impl View {
             *top_level = Some(level);
         }
         let level = top_level.as_mut().expect("made above");
-        let placed: Vec<voxear_rhi::Instance> = instances
+        let placed: Vec<voxear_rhi::Instance> = ids
             .iter()
-            .enumerate()
+            .map(|&id| (id as usize, &instances[id as usize]))
+            .filter(|(_, instance)| instance.flags & gpu::INSTANCE_IMPOSTOR == 0)
             .filter_map(|(id, instance)| {
                 let mesh = assets.bottom_level(MeshHandle(instance.mesh))?;
                 let m = instance.model;
@@ -2802,9 +2803,24 @@ impl View {
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
         // Plants of a Foliage come after the Objs; rays leave them out, as thousands of small moving meshes cost far
-        // more to trace than they change the bounced light or a reflection.
+        // more to trace than they change the bounced light or a reflection. A frame that captures a reflection
+        // probe takes those round it as well, so a probe in a garden shows its hedges; the frame's other rays see
+        // them too, for that one frame, which the GI's slow blend hides.
         let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
-        let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
+        let objs = objs.unwrap_or(opaque_count);
+        let capture_point = setup
+            .probes
+            .filter(|_| self.number == 0 && portal.is_none() && !wireframe)
+            .and_then(|probes| probes.job)
+            .and_then(|job| match job.kind {
+                reflection_probes::JobKind::Capture { point } => Some(voxear_core::math::Vec3::from(point)),
+                reflection_probes::JobKind::Load { .. } => None,
+            });
+        let mut traced_ids: Vec<u32> = (0..objs as u32).collect();
+        if let Some(point) = capture_point {
+            traced_ids.extend(reflection_probes::plants_near(&extracted.instances[objs..opaque_count], point, objs as u32));
+        }
+        let traced = (&extracted.instances[..], &traced_ids[..]);
         // Whether reflections trace the scene's triangles, by the GPU's ray queries, rather than the screen.
         let mut traced_reflections = false;
         // How the scene is traced this frame, if it is: in software (true) or by the GPU's rays.
@@ -3023,8 +3039,11 @@ impl View {
                 // Through a Portal at half the size again: its far side shows in part of the picture.
                 let shrink = if portal.is_some() { 4 } else { 2 };
                 let mut images = clouds::CloudImages::new(fg, (gpu, bindless), (extent, shrink), history)?;
-                // Through a Portal, only the part of the sky its opening shows.
+                // Through a Portal, only the part of the sky its opening shows, and the clouds' panorama is left out.
                 images.within = portal.map(|pass| pass.rect);
+                if portal.is_some() {
+                    images.panorama = None;
+                }
                 Some(images)
             }
             false => None,
@@ -3045,6 +3064,7 @@ impl View {
             seen.drift = [0, 1].map(|axis| (self.cloud_drift[axis] - middle[axis] as f64) as f32);
             seen.view = fg.texture(images.current).0;
             seen.shadow_map = fg.texture(images.shadows).0;
+            seen.panorama = images.panorama.map_or(NO_TEXTURE, |[_, current]| fg.texture(current).0);
             seen.noise = assets.smoke_noise.0;
             seen.shadow_reach = clouds::SHADOW_REACH;
             seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]], seen.drift);

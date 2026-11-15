@@ -33,20 +33,14 @@ float3 blockTintPoint(BlockWorld world, uint from, int2 at, uint kind)
     return float3(packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF) * (2.0 / 255.0);
 }
 
-// The colour a face of surface `flags` takes at `place`, in metres from the world's corner, from the biomes round it:
-// its tint read between the four points round it, so it fades smoothly from biome to biome; past its near tints, its
-// far ones, and past those the nearest at their edge. White for a face that takes none, or a world without tints.
-float3 blockTint(BlockWorld world, uint flags, float3 place)
+// Where `place`, in metres from the world's corner, falls among a world's tint points: its near ones', or past them
+// its far ones' `from` on, where it has them, and past those the nearest at their edge; the point before it each
+// way, and how far on to the next.
+void blockTintLattice(BlockWorld world, float3 place, out uint from, out int2 low, out float2 f)
 {
-    uint kind = (flags >> TERRAIN_SURFACE_TINT_SHIFT) & 3;
-    if (kind == 0 || kind > 2 || world.tintSize < 2)
-    {
-        return float3(1.0);
-    }
     float last = float(world.tintSize - 1);
     float2 at = place.xz / (BLOCK_TINT_STEP * world.blockSize) - float2(world.tintCorner);
-    uint from = 0;
-    // Past its near tints, its far ones', where it has them.
+    from = 0;
     bool past = any(at < 0.0) || any(at > last);
     if (past && world.farTintCorner.x != int(0x80000000))
     {
@@ -54,11 +48,68 @@ float3 blockTint(BlockWorld world, uint flags, float3 place)
         from = BLOCK_TINT_MOST * 2;
     }
     at = clamp(at, 0.0, last);
-    int2 low = int2(min(floor(at), last - 1.0));
-    float2 f = at - float2(low);
+    low = int2(min(floor(at), last - 1.0));
+    f = at - float2(low);
+}
+
+// The colour a face of surface `flags` takes at `place`, in metres from the world's corner, from the biomes round it:
+// its tint read between the four points round it, so it fades smoothly from biome to biome. White for a face that
+// takes none, or a world without tints.
+float3 blockTint(BlockWorld world, uint flags, float3 place)
+{
+    uint kind = (flags >> TERRAIN_SURFACE_TINT_SHIFT) & 3;
+    if (kind == 0 || kind > 2 || world.tintSize < 2)
+    {
+        return float3(1.0);
+    }
+    uint from;
+    int2 low;
+    float2 f;
+    blockTintLattice(world, place, from, low, f);
     float3 nearer = lerp(blockTintPoint(world, from, low, kind), blockTintPoint(world, from, low + int2(1, 0), kind), f.x);
     float3 further = lerp(blockTintPoint(world, from, low + int2(0, 1), kind), blockTintPoint(world, from, low + int2(1, 1), kind), f.x);
     return lerp(nearer, further, f.y);
+}
+
+// What covers the ground at one of a world's tint points (voxear_terrain::blocks::generate::tints::cover_of): the
+// plants' colour, linear, times how much side they show for each square metre, and that.
+float4 blockCoverPoint(BlockWorld world, uint from, int2 at)
+{
+    uint index = from + (uint(at.y) * world.tintSize + uint(at.x)) * 2;
+    uint grass = world.tints[index] >> 24;
+    uint foliage = world.tints[index + 1] >> 24;
+    float4 kept = float4(grass & 15, grass >> 4, foliage & 15, foliage >> 4) / 15.0;
+    kept *= kept;
+    float amount = kept.a * BLOCK_MOST_COVER;
+    return float4(kept.rgb * amount, amount);
+}
+
+// The top of a block plants grow on, at `place` in metres from the world's corner and `position` in the world, its
+// colour `base`, as it looks once the plants on it are too far off to be drawn: as much their colour as they would
+// hide of it seen from the camera, little from above and most of it along the ground, from where they begin to fade.
+float3 blockCovered(BlockWorld world, float3 place, float3 position, float3 base)
+{
+    float3 view = position - push.frame->cameraPosition;
+    float gone = saturate((length(view) - world.cover.x) / max(world.cover.y, 1e-3));
+    if (gone <= 0.0 || world.tintSize < 2)
+    {
+        return base;
+    }
+    uint from;
+    int2 low;
+    float2 f;
+    blockTintLattice(world, place, from, low, f);
+    float4 nearer = lerp(blockCoverPoint(world, from, low), blockCoverPoint(world, from, low + int2(1, 0)), f.x);
+    float4 further =
+        lerp(blockCoverPoint(world, from, low + int2(0, 1)), blockCoverPoint(world, from, low + int2(1, 1)), f.x);
+    float4 cover = lerp(nearer, further, f.y);
+    if (cover.a <= 0.0)
+    {
+        return base;
+    }
+    float steep = abs(view.y) / max(length(view.xz), 1e-3);
+    float hidden = 1.0 - exp(-cover.a / max(steep, 0.03));
+    return lerp(base, cover.rgb / cover.a, hidden * gone);
 }
 
 // A number from 0 to 1 for a corner of the world's blocks, from whole numbers alone.
@@ -824,8 +875,12 @@ bool terrainShading(
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.
         TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
         Material material = buffers()->materials[surface.material];
-        // Grass and leaves take their biome's tint.
+        // Grass and leaves take their biome's tint; the top of what plants grow on, far off, their colour.
         layer.base.rgb *= blockTint(world, surface.flags, spot.place);
+        if ((surface.flags & TERRAIN_SURFACE_COVERED) != 0 && normal.y > 0.5 && world.cover.y > 0.0)
+        {
+            layer.base.rgb = blockCovered(world, spot.place, input.worldPosition, layer.base.rgb);
+        }
         float cutoff = material.alphaCutoff;
         if (cutoff > 0.0 && layer.base.a < cutoff)
         {

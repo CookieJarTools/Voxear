@@ -2607,6 +2607,7 @@ FragmentOut waterFragment(WaterOut input)
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
@@ -2916,6 +2917,7 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
@@ -3399,6 +3401,7 @@ FragmentOut wallFragment(WallOut input)
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), input.world, color);
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
@@ -4062,6 +4065,7 @@ FragmentOut blockIceLit(Frame* frame, BlockWaterOut input, float2 corner, float 
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(at - frame->cameraPosition));
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
+    color = cloudsBefore(frame, pixel / float2(frame->viewport), at, color);
     FragmentOut o;
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);

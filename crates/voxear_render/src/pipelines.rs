@@ -90,6 +90,7 @@ pub struct Pipelines {
     /// The sky's clouds and their shadows (see `clouds`).
     pub clouds: vk::Pipeline,
     pub cloud_shadows: vk::Pipeline,
+    pub cloud_panorama: vk::Pipeline,
     /// Volumetric fog's passes: the volume, its integration, and laying it
     /// over the scene.
     pub volume_scatter: vk::Pipeline,
@@ -509,6 +510,7 @@ impl Pipelines {
             aerial_perspective: table("Aerial perspective", c"aerialPerspectiveFragment")?,
             clouds: table("Clouds", c"cloudsFragment")?,
             cloud_shadows: table("Cloud shadows", c"cloudShadowsFragment")?,
+            cloud_panorama: table("Cloud panorama", c"cloudPanoramaFragment")?,
             gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,
             ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
@@ -1072,6 +1074,7 @@ impl Pipelines {
             self.aerial_perspective,
             self.clouds,
             self.cloud_shadows,
+            self.cloud_panorama,
             self.gtao,
             self.ao_denoise,
             self.ao_temporal,

@@ -50,7 +50,7 @@ picture_turn = 90
 
 The picture is drawn in place of the three colours, and the scene is lit by its own light: the average of its sky overhead, round its horizon and below it, which take the colours' place for the sky's soft light, reflections and bounced light. Point the level's sun the way the picture's sun is. A build compresses an HDR sky as BC6H.
 
-Reflections show the sky's light, not the picture itself, for now.
+Reflections show the picture itself, blurred on rougher surfaces, and so do [[Reflection Probes]]. The [[Bounced Light]] takes its light from the picture too, each way from where that part of the picture is: a bright side of the sky lights the sides of things that face it.
 
 ## The atmosphere
 
@@ -155,7 +155,7 @@ softness = 0.7
 The clouds are the same every time the level loads, and with no cover they cost nothing.
 
 > [!NOTE]
-> Clouds are drawn behind everything in the level, so a mountain taller than their undersides is not hidden in them, and a camera that flies up into them sees them only against the sky. They do not show in reflections yet.
+Clouds are in front of what lies beyond them: far hills past the edge of their layer show through them, a peak taller than their undersides goes up into them, and a camera that flies up into them sees the ground through them, or looks down on their tops. They show in reflections and in [[Reflection Probes]] as well, from a small picture of the clouds all round the camera, about three degrees to a pixel, each part of it brought up to date every four frames.
 
 ## Night: the moon and the stars
 

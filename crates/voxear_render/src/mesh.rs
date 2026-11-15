@@ -28,6 +28,12 @@ pub struct Vertex {
 /// leaves fluttering, in phase with the plant, and no branch sway.
 pub const NO_WIND_MASKS: [u8; 4] = [255, 0, 0, 0];
 
+/// In a mesh for rays alone, a vertex's wind word with this bit is no wind
+/// but the material its triangles are shaded with, in the bits below it, in
+/// place of the instance's: as a terrain's surfaces paint its ground. As
+/// `PROXY_MATERIAL` in the shaders.
+pub const PROXY_MATERIAL: u32 = 1 << 31;
+
 impl Default for Vertex {
     fn default() -> Self {
         Self { position: [0.0; 3], normal: [0.0; 3], uv: [0.0; 2], tangent: [0.0; 4], wind: NO_WIND_MASKS }

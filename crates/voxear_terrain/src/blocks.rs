@@ -45,6 +45,7 @@ pub mod sapling;
 pub mod shape;
 pub mod sight;
 pub mod smooth;
+pub mod dungeon;
 pub mod structure;
 pub mod stream;
 pub mod usable;

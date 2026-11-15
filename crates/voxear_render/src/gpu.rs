@@ -783,6 +783,10 @@ pub struct GpuClouds {
     /// How much light lightning adds to the sky's this moment, against a
     /// sun of 1.
     pub flash: f32,
+    /// The clouds all round the camera, as reflections take them
+    /// (`clouds::PANORAMA`): a texture, or `NO_TEXTURE`.
+    pub panorama: u32,
+    pub pad: [u32; 3],
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's
@@ -1423,7 +1427,7 @@ mod tests {
         let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>() + 16;
-        assert_eq!(size_of::<GpuClouds>(), 80);
+        assert_eq!(size_of::<GpuClouds>(), 96);
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;

@@ -375,44 +375,11 @@ void skyLightMain()
 
 // ---------------------------------------------------------------- Clouds
 
-// How far the clouds are marched from the camera, in metres, fading out over the last third; how many steps through
-// them, and towards the sun from each.
-static const float CLOUD_REACH = 36000.0;
+// How many steps through the clouds, and towards the sun from each (their reach is CLOUD_REACH, in clouds.slang).
 static const uint CLOUD_STEPS = 40;
 static const uint CLOUD_SUN_STEPS = 4;
 // How much of last frame's picture this frame's keeps.
 static const float CLOUD_KEPT = 0.9;
-// The Earth's radius, in metres.
-static const float CLOUD_EARTH = 6360000.0;
-
-// The two distances along a ray from a camera `camera` metres over the ground, climbing `climb` a metre, to
-// `height` over the ground round the Earth; false where it never reaches it. Worked out from the heights' difference,
-// which stays exact where the radii's squares would not.
-bool cloudShell(float camera, float climb, float height, out float near, out float far)
-{
-    float b = (CLOUD_EARTH + camera) * climb;
-    float c = (camera - height) * (2.0 * CLOUD_EARTH + camera + height);
-    float discriminant = b * b - c;
-    near = 0.0;
-    far = 0.0;
-    if (discriminant < 0.0)
-    {
-        return false;
-    }
-    float root = sqrt(discriminant);
-    if (b >= 0.0)
-    {
-        near = -(b + root);
-        far = near != 0.0 ? c / near : 0.0;
-    }
-    else
-    {
-        far = root - b;
-        far = max(far, 1e-6);
-        near = c / far;
-    }
-    return true;
-}
 
 // The sun's light on the clouds and the sky's, as the frame has them.
 void cloudLight(Frame* frame, out float3 sun, out float3 sky)
@@ -753,6 +720,45 @@ float4 cloudsFragment(LutOut input) : SV_Target0
     }
     float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], was, 0.0);
     // Nothing that is not a number is kept: it would stay from frame to frame.
+    if (any(isnan(kept)) || any(isinf(kept)))
+    {
+        return seen;
+    }
+    return lerp(seen, kept, CLOUD_KEPT);
+}
+
+// The clouds all round the camera, across once round the horizon and from straight up at the top to straight down at
+// the bottom (clouds.slang's cloudsToward), marched as the Clouds pass marches the screen's and blended with last
+// frame's at the same texel: what reflections take of the sky shows them. push.textures.x: last frame's.
+[shader("fragment")]
+float4 cloudPanoramaFragment(LutOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    Clouds clouds = frame->lighting.clouds;
+    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float3 sun, sky;
+    cloudLight(frame, sun, sky);
+    float3 direction = cloudPanoramaDirection(input.uv);
+    bool blocks = clouds.kind == CLOUDS_BLOCKS;
+    float distance;
+    float reach = blocks ? CLOUD_BLOCK_REACH : CLOUD_REACH;
+    float4 seen = blocks ? cloudBlocksSeen(frame, direction, camera, sun, sky, distance)
+        : cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance);
+    float covered = 1.0 - seen.a;
+    if (covered > 0.0)
+    {
+        // Hazed towards the horizon's colour with distance, and gone into it before the march's end.
+        float3 horizon = frame->lighting.sky == SKY_ATMOSPHERE ? skyToward(frame, normalize(float3(direction.x, 0.02, direction.z))) * skyLook(frame)
+            : frame->skyHorizon;
+        float3 color = lerp(seen.rgb, horizon * covered, smoothstep(0.2, 1.0, distance / CLOUD_REACH) * 0.6);
+        float far = 1.0 - smoothstep(0.65, 1.0, distance / reach);
+        seen = float4(color * far, 1.0 - covered * far);
+    }
+    if (clouds.reset != 0)
+    {
+        return seen;
+    }
+    float4 kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.uv, 0.0);
     if (any(isnan(kept)) || any(isinf(kept)))
     {
         return seen;

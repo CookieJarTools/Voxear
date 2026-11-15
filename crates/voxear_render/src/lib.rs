@@ -3037,8 +3037,11 @@ impl View {
                 // Through a Portal at half the size again: its far side shows in part of the picture.
                 let shrink = if portal.is_some() { 4 } else { 2 };
                 let mut images = clouds::CloudImages::new(fg, (gpu, bindless), (extent, shrink), history)?;
-                // Through a Portal, only the part of the sky its opening shows.
+                // Through a Portal, only the part of the sky its opening shows, and the clouds' panorama is left out.
                 images.within = portal.map(|pass| pass.rect);
+                if portal.is_some() {
+                    images.panorama = None;
+                }
                 Some(images)
             }
             false => None,
@@ -3059,6 +3062,7 @@ impl View {
             seen.drift = [0, 1].map(|axis| (self.cloud_drift[axis] - middle[axis] as f64) as f32);
             seen.view = fg.texture(images.current).0;
             seen.shadow_map = fg.texture(images.shadows).0;
+            seen.panorama = images.panorama.map_or(NO_TEXTURE, |[_, current]| fg.texture(current).0);
             seen.noise = assets.smoke_noise.0;
             seen.shadow_reach = clouds::SHADOW_REACH;
             seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]], seen.drift);

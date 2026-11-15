@@ -644,6 +644,9 @@ struct Clouds
     float softness;
     // How much light lightning adds to the sky's this moment.
     float flash;
+    // The clouds all round the camera, as reflections take them (clouds.slang's cloudsToward), or NO_TEXTURE.
+    uint panorama;
+    uint3 pad;
 };
 
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.

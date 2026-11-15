@@ -16,15 +16,38 @@
 #include "atmosphere.slang"
 #include "ddgi_sample.slang"
 
-// The sky in a direction, as a surface reflects it: the atmosphere, or the
-// plain sky's colours, scaled as the sky's other light is, so a night
-// scene's floor does not mirror a day sky.
-float3 reflectedSky(Frame* frame, float3 direction, bool atmosphere)
+// A gradient sky's picture in a direction, as `pictureSky` in sky.slang
+// draws it, blurred as a surface `roughness` rough reflects it: read from
+// the mip whose texels are as wide as its reflection's spread.
+float3 skyPictureSeen(Frame* frame, float3 direction, float roughness)
+{
+    Texture2D picture = textures[NonUniformResourceIndex(frame->lighting.skyPicture - 1)];
+    uint width, height, mips;
+    picture.GetDimensions(0, width, height, mips);
+    float around = atan2(direction.x, direction.z) + frame->lighting.skyPictureTurn;
+    float2 uv = float2(frac(around / (2.0 * PI) + 0.5), acos(clamp(direction.y, -1.0, 1.0)) / PI);
+    // Its spread, in radians, about twice GGX's alpha; a texel of the finest mip is a turn over its width.
+    float spread = 2.0 * roughness * roughness;
+    float mip = clamp(log2(max(spread * float(width) / (2.0 * PI), 1e-4)), 0.0, float(mips - 1));
+    // Round the horizon it repeats; from top to bottom it does not, or straight up would take in straight down.
+    float rows = float(max(height >> uint(ceil(mip)), 1u));
+    uv.y = clamp(uv.y, 0.5 / rows, 1.0 - 0.5 / rows);
+    return picture.SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).rgb;
+}
+
+// The sky in a direction, as a surface `roughness` rough reflects it: the
+// atmosphere, or a gradient sky's picture, or its colours, scaled as the
+// sky's other light is, so a night scene's floor does not mirror a day sky.
+float3 reflectedSky(Frame* frame, float3 direction, bool atmosphere, float roughness = 0.0)
 {
     float3 sky;
     if (atmosphere)
     {
         sky = skyToward(frame, direction) * skyLook(frame);
+    }
+    else if (frame->lighting.skyPicture != 0)
+    {
+        sky = skyPictureSeen(frame, direction, roughness);
     }
     else
     {
@@ -33,7 +56,9 @@ float3 reflectedSky(Frame* frame, float3 direction, bool atmosphere)
         float3 below = lerp(frame->skyHorizon, frame->groundColor, pow(saturate(-up), 0.35));
         sky = up >= 0.0 ? above : below;
     }
-    return sky * frame->ambient;
+    // The clouds in front of it, as the sky pass lays them over the sky.
+    float4 clouds = cloudsToward(frame, direction);
+    return (sky * clouds.a + clouds.rgb) * frame->ambient;
 }
 
 // The direction a cube map's texel looks along, from its face (+x, -x, +y,
@@ -175,7 +200,7 @@ float3 reflectionFallback(Frame* frame, float3 position, float3 end, float3 away
     float3 rest = ambient;
     if (blur < 1.0)
     {
-        float3 sky = reflectedSky(frame, direction, atmosphere);
+        float3 sky = reflectedSky(frame, direction, atmosphere, roughness);
         if (gi && frame->ddgi.enabled != 0)
         {
             sky = ddgiIrradianceAlong(frame, end, direction, away, sky);

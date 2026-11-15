@@ -290,6 +290,10 @@ float3 ddgiSky(Frame* frame, float3 direction)
     {
         return atmosphereAmbient(frame, up, sunThroughAtmosphere(frame));
     }
+    if (frame->lighting.skyPicture != 0)
+    {
+        return skyPictureSeen(frame, direction, 0.7) * 0.35 * frame->ambient;
+    }
     float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
     return lerp(frame->groundColor, above, up) * 0.35 * frame->ambient;
 }

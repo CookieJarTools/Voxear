@@ -279,3 +279,125 @@ float cloudShadowAt(Frame* frame, float3 position)
     lit = lerp(1.0 - 0.7 * clouds.cover, lit, inside);
     return lerp(1.0, lit, clouds.shadows * smoothstep(0.02, 0.12, toSun.y));
 }
+
+// How far the clouds are marched from the camera, in metres, fading out over the last third.
+static const float CLOUD_REACH = 36000.0;
+// The Earth's radius, in metres.
+static const float CLOUD_EARTH = 6360000.0;
+
+// The two distances along a ray from a camera `camera` metres over the ground, climbing `climb` a metre, to
+// `height` over the ground round the Earth; false where it never reaches it. Worked out from the heights' difference,
+// which stays exact where the radii's squares would not.
+bool cloudShell(float camera, float climb, float height, out float near, out float far)
+{
+    float b = (CLOUD_EARTH + camera) * climb;
+    float c = (camera - height) * (2.0 * CLOUD_EARTH + camera + height);
+    float discriminant = b * b - c;
+    near = 0.0;
+    far = 0.0;
+    if (discriminant < 0.0)
+    {
+        return false;
+    }
+    float root = sqrt(discriminant);
+    if (b >= 0.0)
+    {
+        near = -(b + root);
+        far = near != 0.0 ? c / near : 0.0;
+    }
+    else
+    {
+        far = root - b;
+        far = max(far, 1e-6);
+        near = c / far;
+    }
+    return true;
+}
+
+// The stretch of a ray from a camera `camera` metres over the ground, climbing `climb` a metre, that lies in the
+// clouds' layer, as the Clouds pass marches it (sky.slang's cloudsMarched): from where it goes in to where it comes
+// out, no further than the march goes. False where it never goes in, or meets the ground first.
+bool cloudSpan(Frame* frame, float camera, float climb, out float from, out float to)
+{
+    Clouds clouds = frame->lighting.clouds;
+    float top = clouds.base + clouds.thickness;
+    float topNear, topFar, baseNear, baseFar, groundNear, groundFar;
+    from = 0.0;
+    to = 0.0;
+    if (!cloudShell(camera, climb, top, topNear, topFar) || topFar <= 0.0)
+    {
+        return false;
+    }
+    from = max(topNear, 0.0);
+    to = topFar;
+    if (cloudShell(camera, climb, clouds.base, baseNear, baseFar))
+    {
+        if (baseNear > from)
+        {
+            to = min(to, baseNear);
+        }
+        else
+        {
+            from = max(from, baseFar);
+        }
+    }
+    if (cloudShell(camera, climb, 0.0, groundNear, groundFar) && groundNear > 0.0 && groundNear < from)
+    {
+        return false;
+    }
+    to = min(min(to, CLOUD_REACH), from + clouds.thickness * 12.0);
+    return to > from;
+}
+
+// `color`, of what lies at `world`, seen through the clouds in front of it: a far mountain beyond the clouds' layer,
+// a peak that rises into them, or the ground round a camera inside them or looking down on them. The Clouds pass
+// marches each pixel's ray through the whole layer, so the share of it before `world` is taken as the share of its
+// length there; the sky pass lays the rest over the sky. `screenUv` is where `world` is on screen.
+float3 cloudsBefore(Frame* frame, float2 screenUv, float3 world, float3 color)
+{
+    Clouds clouds = frame->lighting.clouds;
+    if (clouds.cover <= 0.0 || clouds.view == NO_TEXTURE)
+    {
+        return color;
+    }
+    float3 offset = world - frame->cameraPosition;
+    float distance = length(offset);
+    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float from, to;
+    if (distance <= 0.0 || !cloudSpan(frame, camera, offset.y / distance, from, to) || distance <= from)
+    {
+        return color;
+    }
+    float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], screenUv, 0.0);
+    float share = saturate((distance - from) / max(to - from, 1.0));
+    float covered = 1.0 - seen.a;
+    if (covered <= 1e-4)
+    {
+        return color;
+    }
+    float through = pow(max(seen.a, 1e-4), share);
+    return color * through + seen.rgb * ((1.0 - through) / covered);
+}
+
+// The clouds' panorama (src/clouds.rs's PANORAMA) in a direction from the camera, as reflections take them: what they
+// add, and in alpha how much of what is behind shows through.
+float4 cloudsToward(Frame* frame, float3 direction)
+{
+    Clouds clouds = frame->lighting.clouds;
+    if (clouds.cover <= 0.0 || clouds.panorama == NO_TEXTURE)
+    {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    float2 uv = float2(frac(atan2(direction.x, direction.z) / (2.0 * PI) + 0.5), acos(clamp(direction.y, -1.0, 1.0)) / PI);
+    // Its 128 rows (PANORAMA) kept apart at the top and bottom, which the sampler would wrap together.
+    uv.y = clamp(uv.y, 0.5 / 128.0, 1.0 - 0.5 / 128.0);
+    return textures[NonUniformResourceIndex(clouds.panorama)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0);
+}
+
+// The direction a texel of the clouds' panorama looks along, from where it is on it from 0 to 1.
+float3 cloudPanoramaDirection(float2 uv)
+{
+    float around = (uv.x - 0.5) * 2.0 * PI;
+    float down = uv.y * PI;
+    return float3(sin(around) * sin(down), cos(down), cos(around) * sin(down));
+}

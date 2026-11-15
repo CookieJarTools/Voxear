@@ -46,6 +46,11 @@ internal static class PostJson
 		return JsonValue.Create(Key(choice.ToString()));
 	}
 
+	public static JsonNode? Of<T>(T? choice) where T : struct, Enum
+	{
+		return choice is { } set ? Of(set) : null;
+	}
+
 	public static void Read(JsonObject from, string key, ref bool value)
 	{
 		if (from[key] is JsonValue read && read.TryGetValue(out bool on))
@@ -101,6 +106,21 @@ internal static class PostJson
 		{
 			value = string.IsNullOrEmpty(reference) ? Texture.None : Texture.Load(reference);
 		}
+	}
+
+	public static void ReadChoice<T>(JsonObject from, string key, ref T? value) where T : struct, Enum
+	{
+		if (!from.ContainsKey(key))
+		{
+			return;
+		}
+		T read = default;
+		var found = from[key] is JsonValue;
+		if (found)
+		{
+			ReadChoice(from, key, ref read);
+		}
+		value = found ? read : null;
 	}
 
 	public static void ReadChoice<T>(JsonObject from, string key, ref T value) where T : struct, Enum

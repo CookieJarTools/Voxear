@@ -44,7 +44,7 @@ look = "storybook"
 | Look | What it gives |
 | --- | --- |
 | `soft_overcast` | Hazy, bright and calm, like daylight through big windows on a cloudy day. The sky is the main light; the sun is weak and warm, with soft shadows and light shafts in a thin blue mist. Bounced light is on |
-| `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. Bounced light is on |
+| `storybook` | A warm sun breaking through a canopy into a cool forest, as in It Takes Two or Ori. A teal sky and mist, shadows tinted a warm purple, golden glow and rich colour. The sun falls through a canopy of leaves in soft flecks, leaves and grass right in front of the camera soften, and bounced light is on |
 | `golden_hour` | A low, warm sun in dusty air, as in Arc Raiders. The haze glows round the sun and swallows the distance, light shafts cut through it, a wide glare spreads from the sun, and shade stays deep but never black. Bounced light is on. Point the sun low, 5 to 20 degrees up |
 
 Seven looks are after the places of Arc Raiders:
@@ -226,6 +226,7 @@ With `volumetric = true`, the mist takes its light from the sun, the sky and eve
 | `focus_distance = 10` | How far away is sharp, in metres |
 | `aperture = 2.8` | As on a real camera: lower blurs more |
 | `max_blur = 12` | The most blur, in pixels |
+| `far = true` | Whether what lies beyond the focus blurs too. `false` blurs only the near foreground, such as leaves right in front of the camera, and keeps the distance sharp, as the `storybook` look does |
 
 **Movement**, `[post.motion_blur]`: `enabled = false`, and `intensity = 0.5` for how strong it is.
 
@@ -276,6 +277,40 @@ Everything that works on the scene as drawn, such as lighting, shadows, ambient 
 Things moving fast, and things just come into view, have no earlier frames to build from, so they show the smaller picture for a moment. Without TAA, `render_scale` is not used.
 
 To compare, `vox render --render-scale 0.67` draws one picture at a given scale.
+
+## Upscalers
+
+Voxear's own upscaler is what `render_scale` uses. **AMD FSR 3** is a second choice, built in from AMD's own source, for any GPU that can run it, NVIDIA's and Intel's too. NVIDIA DLSS and Intel XeSS are on the list as well, greyed out, with the reasons below.
+
+```toml
+[post.anti_aliasing]
+mode = "taa"
+upscaler = "fsr"         # "voxear" (the default), "fsr", "dlss" or "xess"
+quality = "performance"  # in place of render_scale
+```
+
+| `quality` | Share of each side drawn | Pixels drawn |
+| --- | --- | --- |
+| `native` | All of it: anti-aliasing alone | All of them |
+| `quality` | Two thirds | Under half |
+| `balanced` | About three fifths | About a third |
+| `performance` | Half | A quarter |
+| `ultra_performance` | A third | A ninth |
+
+Leave `quality` out and `render_scale` says how small the scene is drawn, as before. On the Lighting page the **Quality** tab has **Upscaler** and **Upscale quality**. An upscaler this computer cannot run is greyed out there, and the pointer resting on it says why. One a scene names that cannot run here is Voxear's own in its place, so a game made with FSR still runs everywhere.
+
+From a script, `Post.Change(post => { post.AntiAliasing.Upscaler = Upscaler.Fsr; post.AntiAliasing.Quality = UpscaleQuality.Performance; })`, as a settings menu might offer. Tools reach the same through `vox editor call lighting.get`, which also lists which upscalers run here, and `lighting.set`. To compare them, `vox render --upscaler fsr --quality performance` draws one picture and prints each pass's GPU time.
+
+FSR takes TAA's place: it builds each picture from the scene as drawn, its depth, its motion, the camera's sub-pixel jitter and the exposure, and keeps its own history. Sharpening is still Voxear's, after it.
+
+| Upscaler | What it needs | Why it may be greyed out |
+| --- | --- | --- |
+| Voxear | Any GPU | Never |
+| AMD FSR 3 | A GPU that reads and writes storage images without a format: every recent NVIDIA, AMD and Intel GPU | An older GPU or driver |
+| NVIDIA DLSS | An NVIDIA RTX GPU, and NVIDIA's own library | Not built in: NVIDIA's licence lets its SDK ship only inside a finished game, never in an engine's open source, and asks for NVIDIA's marks in the credits, notice to NVIDIA before the game is sold, and lets NVIDIA update it over the air |
+| Intel XeSS | Intel's own library | Not built in: Intel makes it for Windows alone |
+
+FSR's shaders and their licence are in the engine's `crates/voxear_render/fsr3` folder. They are AMD's, under the MIT licence, which asks only that AMD's copyright notice stays with them.
 
 ## Colour lookup tables
 

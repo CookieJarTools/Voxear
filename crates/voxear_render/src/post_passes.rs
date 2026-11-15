@@ -74,6 +74,24 @@ pub struct PostInput {
     /// Each pixel's normal and roughness, when the depth passes wrote them,
     /// which TAA reads to tell mirrors by (`post.surface_texture`).
     pub surface: Option<ImageId>,
+    /// AMD FSR 3.1, to take TAA's place where the settings choose it and the
+    /// GPU can run it.
+    pub fsr3: Option<Fsr3Input>,
+}
+
+/// What FSR 3.1 needs of a view beyond the post-processing's own inputs.
+pub struct Fsr3Input {
+    pub pipelines: crate::fsr3::Fsr3Pipelines,
+    /// The view's FSR images, made or remade here at the sizes it is drawn
+    /// and shown at, and those it no longer needs, for the renderer to free.
+    pub state: std::sync::Arc<std::sync::Mutex<Option<crate::fsr3::Fsr3State>>>,
+    pub retired: std::sync::Arc<std::sync::Mutex<Vec<crate::fsr3::Fsr3State>>>,
+    pub jitter: [f32; 2],
+    pub fov_y: f32,
+    pub near: f32,
+    pub delta_time: f32,
+    pub reset: bool,
+    pub slot: usize,
 }
 
 /// Steps the backdrop's blur halves the view's size by.
@@ -108,6 +126,21 @@ pub fn record(
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
     }
+    // FSR's reactive mask is made from the scene before and after what is drawn over it.
+    let fsr_chosen = input.fsr3.is_some()
+        && settings.anti_aliasing.mode == AntiAliasingMode::Taa
+        && settings.anti_aliasing.upscaler == crate::post::Upscaler::Fsr;
+    let drawn_over = input.smoke.is_some() || input.particles.is_some() || input.under_water.is_some();
+    let opaque = match fsr_chosen && drawn_over {
+        true => {
+            let copy = fg.create_image(gpu, bindless, "FSR opaque only", drawn(HDR_FORMAT))?;
+            let push = Push { textures: [fg.texture(hdr).0, 0, 0, 0], ..push };
+            let images = [(hdr, ImageAccess::Sampled), (copy, ImageAccess::ColorAttachment)];
+            fg.add_pass("FSR opaque copy", &images, &[], move |ctx| draw(ctx, pipelines.fsr_copy, &push, copy, false));
+            Some(copy)
+        }
+        false => None,
+    };
     if let Some(smoke) = input.smoke.clone() {
         let target = (smoke, hdr, render_extent, input.history);
         crate::smoke::record(fg, (gpu, bindless), (pipelines, push), target, input.fog_volume)?;
@@ -139,7 +172,12 @@ pub fn record(
         scene = target;
     }
 
-    if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
+    let fsr3 = input.fsr3.as_ref().filter(|_| {
+        settings.anti_aliasing.mode == AntiAliasingMode::Taa && settings.anti_aliasing.upscaler == crate::post::Upscaler::Fsr
+    });
+    if let Some(fsr3) = fsr3 {
+        scene = record_fsr3(fg, gpu, bindless, input, fsr3, (scene, velocity, depth), opaque)?;
+    } else if settings.anti_aliasing.mode == AntiAliasingMode::Taa {
         let current = taa_history(fg, gpu, bindless, extent, input.history)?;
         let previous = taa_history(fg, gpu, bindless, extent, 1 - input.history)?;
         let textures = [fg.texture(scene).0, fg.texture(previous).0, fg.texture(velocity).0, depth_texture];
@@ -231,6 +269,95 @@ pub fn record(
     Ok(finish.then_some(composited))
 }
 
+/// AMD FSR 3.1 in TAA's place: the frame's exposure as FSR reads it, then
+/// FSR's passes, from the scene as drawn to the output's size; and the result
+/// copied into TAA's history, which reflections read next frame. Returns the
+/// upscaled picture.
+fn record_fsr3(
+    fg: &mut FrameGraph<'_>,
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    input: &PostInput,
+    fsr3: &Fsr3Input,
+    (scene, velocity, depth): (ImageId, ImageId, ImageId),
+    opaque: Option<ImageId>,
+) -> Result<ImageId> {
+    let (render, upscale) = (input.render_extent, input.extent);
+    let (render, upscale) = ([render.width, render.height], [upscale.width, upscale.height]);
+    {
+        let mut state = fsr3.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.as_ref().is_some_and(|state| state.fits(render, upscale)) {
+            if let Some(old) = state.take() {
+                fsr3.retired.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(old);
+            }
+            *state = Some(crate::fsr3::Fsr3State::new(gpu, render, upscale)?);
+        }
+    }
+    let pipelines = input.pipelines;
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    let exposure_desc = ImageDesc::new(1, 1, crate::pipelines::FSR_EXPOSURE_FORMAT, usage);
+    let exposure = fg.create_image(gpu, bindless, "FSR exposure", exposure_desc)?;
+    let push = input.push;
+    let buffers = [(input.exposure, BufferAccess::ShaderRead)];
+    fg.add_pass("FSR exposure", &[(exposure, ImageAccess::ColorAttachment)], &buffers, move |ctx| {
+        draw(ctx, pipelines.fsr_exposure, &push, exposure, false)
+    });
+    let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
+    let output = fg.create_image(gpu, bindless, "FSR output", ImageDesc::new(upscale[0], upscale[1], HDR_FORMAT, usage))?;
+    let mut images = vec![
+        (scene, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
+        (velocity, ImageAccess::Sampled),
+        (exposure, ImageAccess::Sampled),
+        (output, ImageAccess::StorageWrite),
+    ];
+    images.extend(opaque.map(|opaque| (opaque, ImageAccess::Sampled)));
+    let state = fsr3.state.clone();
+    let (fsr, jitter, fov_y, near, delta_time, reset, slot) =
+        (fsr3.pipelines, fsr3.jitter, fsr3.fov_y, fsr3.near, fsr3.delta_time, fsr3.reset, fsr3.slot);
+    fg.add_pass("FSR 3", &images, &[], move |ctx| {
+        let frame = crate::fsr3::Fsr3Frame {
+            color: ctx.view(scene),
+            opaque: opaque.map(|opaque| ctx.view(opaque)),
+            depth: ctx.view(depth),
+            motion: ctx.view(velocity),
+            exposure: ctx.view(exposure),
+            output: ctx.view(output),
+            render,
+            upscale,
+            jitter,
+            fov_y,
+            near,
+            delta_time,
+            reset,
+            slot,
+        };
+        let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(state) = state.as_mut() {
+            state.record(ctx.gpu, ctx.cmd, &fsr, &frame);
+        }
+    });
+    // Reflections read last frame's finished picture from TAA's history.
+    let current = taa_history(fg, gpu, bindless, input.extent, input.history)?;
+    let copy = [(output, ImageAccess::TransferSrc), (current, ImageAccess::TransferDst)];
+    fg.add_pass("FSR into history", &copy, &[], move |ctx| {
+        let layers = vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1);
+        let extent = vk::Extent3D { width: upscale[0], height: upscale[1], depth: 1 };
+        let region = vk::ImageCopy::default().src_subresource(layers).dst_subresource(layers).extent(extent);
+        unsafe {
+            ctx.gpu.device.cmd_copy_image(
+                ctx.cmd,
+                ctx.image(output),
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                ctx.image(current),
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            )
+        };
+    });
+    Ok(output)
+}
+
 /// One of TAA's two history images for a view of `extent`: the one a
 /// frame writes, or the other, last frame's finished picture, which
 /// screen-space reflections read before post-processing has run.
@@ -241,7 +368,8 @@ pub fn taa_history(
     extent: vk::Extent2D,
     which: usize,
 ) -> Result<ImageId> {
-    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    // Copied into from FSR 3's output, where FSR takes TAA's place.
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
     fg.history_image(gpu, bindless, HISTORY_NAMES[which], ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage))
 }
 

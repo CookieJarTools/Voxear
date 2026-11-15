@@ -36,7 +36,7 @@ use voxear_core::math::Vec3;
 
 use crate::{
     post::{
-        AmbientOcclusion, Bloom, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper,
+        AmbientOcclusion, Bloom, DepthOfField, Exposure, Fog, GlobalIllumination, Grading, PostProcess, Tonemap, Tonemapper,
         Vignette,
     },
     scene::{Clouds, Sky, SkyMode, temperature_color},
@@ -122,6 +122,10 @@ pub struct SunLook {
     /// its four cascades share that (see `SHADOW_SPLIT`).
     pub shadow_distance: f32,
     pub shadow_split: f32,
+    /// Leaves over the level: the sun shines through the dappled canopy
+    /// cookie (see `canopy`), repeating every so many metres, where the
+    /// light has no cookie of its own; 0 for open sky.
+    pub canopy: f32,
 }
 
 /// What the level is drawn with while a look pack is worn, as a world
@@ -301,6 +305,7 @@ impl Look {
             shadow_tint: linear([0.12, 0.09, 0.07]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -344,6 +349,7 @@ impl Look {
             shadow_tint: Vec3::ZERO,
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -363,6 +369,8 @@ impl Look {
             fog: Fog { density: 0.012, height_falloff: 0.08, color: Some([0.48, 0.72, 0.72]), ..base.fog },
             ambient_occlusion: AmbientOcclusion { strength: 1.3, tint: [0.32, 0.2, 0.3], ..base.ambient_occlusion },
             global_illumination: GlobalIllumination { enabled: true, strength: 1.2, ..base.global_illumination },
+            // Leaves and grass right in front of the camera soften, as a storybook's foreground; the rest stays sharp.
+            depth_of_field: DepthOfField { enabled: true, focus_distance: 2.0, aperture: 2.0, far: false, ..base.depth_of_field },
             ..base
         };
         let sky = Sky {
@@ -383,6 +391,8 @@ impl Look {
             shadow_tint: linear([0.42, 0.3, 0.38]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            // A canopy overhead: the sun falls through it in flecks.
+            canopy: 12.0,
         };
         Self { post, sky, sun }
     }
@@ -432,6 +442,7 @@ impl Look {
             shadow_tint: linear([0.08, 0.11, 0.07]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -484,6 +495,7 @@ impl Look {
             shadow_tint: linear([0.16, 0.1, 0.06]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -532,6 +544,7 @@ impl Look {
             shadow_tint: Vec3::ZERO,
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -581,6 +594,7 @@ impl Look {
             shadow_tint: linear([0.08, 0.12, 0.22]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -628,6 +642,7 @@ impl Look {
             shadow_tint: Vec3::ZERO,
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -678,6 +693,7 @@ impl Look {
             shadow_tint: linear([0.02, 0.03, 0.06]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -727,6 +743,7 @@ impl Look {
             shadow_tint: Vec3::ZERO,
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -777,6 +794,7 @@ impl Look {
             shadow_tint: linear([0.1, 0.06, 0.04]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -825,6 +843,8 @@ impl Look {
             shadow_tint: linear([0.03, 0.07, 0.06]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            // Deep woods: the sun only breaks through the leaves in patches.
+            canopy: 14.0,
         };
         Self { post, sky, sun }
     }
@@ -873,6 +893,7 @@ impl Look {
             shadow_tint: Vec3::ZERO,
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -919,6 +940,7 @@ impl Look {
             shadow_tint: linear([0.06, 0.08, 0.14]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -968,6 +990,7 @@ impl Look {
             shadow_tint: linear([0.04, 0.03, 0.09]),
             shadow_distance: SHADOW_DISTANCE,
             shadow_split: SHADOW_SPLIT,
+            canopy: 0.0,
         };
         Self { post, sky, sun }
     }
@@ -976,6 +999,19 @@ impl Look {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_storybook_has_its_canopy_its_probes_and_a_soft_foreground() {
+        let storybook = Look::of(LookName::Storybook);
+        assert!(storybook.sun.canopy > 0.0, "the sun falls through a canopy");
+        assert!(storybook.post.global_illumination.enabled, "its bounced light comes from the ray-traced probes");
+        let focus = storybook.post.depth_of_field;
+        assert!(focus.enabled && !focus.far && focus.focus_distance <= 3.0, "only the near foreground blurs: {focus:?}");
+        assert_eq!(Look::of(LookName::SoftOvercast).sun.canopy, 0.0, "an open sky has none");
+        assert!(Look::of(LookName::SoftOvercast).post.global_illumination.enabled);
+        assert!(Look::of(LookName::DarkForest).sun.canopy > 0.0);
+        assert!(PostProcess::voxear().depth_of_field.far, "blurring both ways unless a look says otherwise");
+    }
 
     #[test]
     fn looks_are_found_by_name_and_differ() {

@@ -261,6 +261,11 @@ impl MeshRenderer {
 /// Everything the GPU needs for one view of the world.
 pub struct ExtractedFrame {
     pub frame: GpuFrame,
+    /// The sun shines through the canopy cookie, its look's, whose picture
+    /// the renderer has.
+    pub canopy_cookie: bool,
+    /// The camera's vertical field of view, in radians, for an upscaler.
+    pub fov_y: f32,
     pub instances: Vec<GpuInstance>,
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
@@ -349,6 +354,8 @@ pub struct ViewOptions {
     /// Draws the scene at this share of the view's size, whatever its
     /// post-processing says, as `vox render --render-scale` does.
     pub render_scale: Option<f32>,
+    /// The upscaler in place of the post-processing's, to compare them.
+    pub upscaler: Option<crate::post::Upscaler>,
     /// Whether local lights keep their shadows of what stands still from
     /// frame to frame, drawing only what moves each frame (see
     /// `shadow_cache`). On by default; off, to compare.
@@ -366,6 +373,7 @@ impl Default for ViewOptions {
             gizmos: true,
             meshlet_culling: true,
             render_scale: None,
+            upscaler: None,
             local_shadow_cache: true,
         }
     }
@@ -634,6 +642,13 @@ pub fn extract(
             PostProcess { fog, ..blended }
         }
     };
+    let scene_post = match options.upscaler {
+        Some(upscaler) => PostProcess {
+            anti_aliasing: crate::post::AntiAliasing { upscaler, ..scene_post.anti_aliasing },
+            ..scene_post
+        },
+        None => scene_post,
+    };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
         DEBUG_VIEW_AMBIENT_OCCLUSION => PostProcess {
@@ -650,7 +665,7 @@ pub fn extract(
     let output_height = height;
     let taa = post.anti_aliasing.mode == AntiAliasingMode::Taa;
     let scale = match taa {
-        true => options.render_scale.unwrap_or(post.anti_aliasing.render_scale).clamp(0.25, 1.0),
+        true => options.render_scale.map_or_else(|| post.anti_aliasing.drawn_scale(), |scale| scale.clamp(0.25, 1.0)),
         false => 1.0,
     };
     let (width, height) = render_size((width, height), scale);
@@ -740,6 +755,7 @@ pub fn extract(
     // The local lights that may cast shadows, by their index in `lights`.
     let mut shadowed = Vec::new();
     let mut sun_found = false;
+    let mut canopy_cookie = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
     let sun_look = match worn {
         Some(worn) => worn.sun,
@@ -757,6 +773,7 @@ pub fn extract(
                     intensity: light.intensity * look.strength,
                     softness: if light.softness == 0.5 { look.softness } else { light.softness },
                     shadow_tint: if light.shadow_tint == Vec3::ZERO { look.shadow_tint } else { light.shadow_tint },
+                    cookie_size: if light.cookie.is_none() && look.canopy > 0.0 { look.canopy } else { light.cookie_size },
                     ..*light
                 };
                 &looked
@@ -773,12 +790,15 @@ pub fn extract(
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
-                if let Some(cookie) = light.cookie {
-                    frame.lighting.sun_cookie = cookie.0;
+                // A look's canopy where the light has no cookie: the renderer names its picture.
+                let canopy = light.cookie.is_none() && sun_look.is_some_and(|look| look.canopy > 0.0);
+                if light.cookie.is_some() || canopy {
+                    frame.lighting.sun_cookie = light.cookie.map_or(NO_TEXTURE, |cookie| cookie.0);
                     frame.lighting.sun_cookie_size = light.cookie_size;
                     frame.lighting.sun_right = vec3(transform.rotation * Vec3::X);
                     frame.lighting.sun_up = vec3(transform.rotation * Vec3::Y);
                 }
+                canopy_cookie = canopy;
             }
             LightKind::Directional => {}
             _ => {
@@ -989,6 +1009,8 @@ pub fn extract(
     }
 
     ExtractedFrame {
+        canopy_cookie,
+        fov_y: camera.fov_y_degrees.to_radians(),
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),
         frame,

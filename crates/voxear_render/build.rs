@@ -8,6 +8,7 @@ include!("shader_build.rs");
 
 fn main() {
     println!("cargo:rerun-if-changed=shaders");
+    println!("cargo:rerun-if-changed=fsr3");
     println!("cargo:rerun-if-changed=shader_build.rs");
     println!("cargo:rerun-if-env-changed=SLANGC");
     let slangc = env::var("SLANGC").unwrap_or_else(|_| "slangc".into());
@@ -39,4 +40,85 @@ fn main() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    fsr3(&slangc, &out);
+}
+
+/// The FSR 3.1 upscaler's passes, from AMD's HLSL in `fsr3/amd`, as Voxear
+/// uses them: HDR colour, motion vectors at the drawn size, reverse-Z depth.
+/// Each is compiled to SPIR-V with its resources' bindings kept apart by kind
+/// (constant buffers from 0, textures from 16, storage images from 48,
+/// samplers from 80), and its reflection turned into the table `fsr3` binds
+/// from: Voxear's permutation table, one entry a pass.
+fn fsr3(slangc: &str, out: &std::path::Path) {
+    const PASSES: [&str; 8] = [
+        "prepare_inputs",
+        "luma_pyramid",
+        "shading_change_pyramid",
+        "shading_change",
+        "prepare_reactivity",
+        "luma_instability",
+        "accumulate",
+        // The reactive mask, from the scene before and after what is drawn over it.
+        "autogen_reactive",
+    ];
+    let root = std::path::Path::new("fsr3/amd");
+    let mut table = String::from("// Made by build.rs from slangc's reflection of AMD's FSR 3.1 passes.\n");
+    table.push_str("pub(crate) const FSR3_PASSES: [Fsr3PassInfo; 8] = [\n");
+    for pass in PASSES {
+        let source = root.join(format!("upscalers/fsr3/internal/shaders/ffx_fsr3upscaler_{pass}_pass.hlsl"));
+        let spirv = out.join(format!("fsr3_{pass}.spv"));
+        let reflection = out.join(format!("fsr3_{pass}.json"));
+        let output = Command::new(slangc)
+            .arg(&source)
+            .args(["-entry", "CS", "-stage", "compute", "-target", "spirv", "-profile", "sm_6_5"])
+            .arg("-I")
+            .arg(root.join("upscalers/fsr3/include/gpu"))
+            .arg("-I")
+            .arg(root.join("api/internal/gpu"))
+            .args(["-DFFX_GPU=1", "-DFFX_HLSL=1", "-DFFX_HALF=0", "-DFFX_HLSL_SM=62"])
+            .args([
+                "-DFFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT=1",
+                "-DFFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS=1",
+                "-DFFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS=0",
+                "-DFFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH=1",
+                "-DFFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING=0",
+                "-DFFX_FSR3UPSCALER_OPTION_REPROJECT_USE_LANCZOS_TYPE=0",
+            ])
+            .args(["-fvk-b-shift", "0", "0", "-fvk-t-shift", "16", "0", "-fvk-u-shift", "48", "0"])
+            .args(["-fvk-s-shift", "80", "0", "-o"])
+            .arg(&spirv)
+            .arg("-reflection-json")
+            .arg(&reflection)
+            .output()
+            .unwrap_or_else(|e| panic!("could not run `{slangc}` ({e})"));
+        assert!(
+            output.status.success(),
+            "failed to compile {}:\n{}",
+            source.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&reflection).unwrap()).unwrap();
+        let size = &json["entryPoints"][0]["threadGroupSize"];
+        let group: Vec<u64> = (0..3).map(|i| size[i].as_u64().unwrap_or(1)).collect();
+        table.push_str(&format!(
+            "    Fsr3PassInfo {{ name: \"{pass}\", spirv: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/fsr3_{pass}.spv\")), \
+             group: [{}, {}, {}], bindings: &[\n",
+            group[0], group[1], group[2]
+        ));
+        for parameter in json["parameters"].as_array().unwrap() {
+            let name = parameter["name"].as_str().unwrap();
+            let binding = parameter["binding"]["index"].as_u64().unwrap();
+            let kind = match parameter["binding"]["kind"].as_str().unwrap() {
+                "constantBuffer" => "Uniform",
+                "samplerState" => "Sampler",
+                "shaderResource" => "Texture",
+                "unorderedAccess" => "Storage",
+                other => panic!("{pass}: a binding of a kind FSR's host does not bind: {other}"),
+            };
+            table.push_str(&format!("        (\"{name}\", Fsr3Binding::{kind}, {binding}),\n"));
+        }
+        table.push_str("    ] },\n");
+    }
+    table.push_str("];\n");
+    std::fs::write(out.join("fsr3_passes.rs"), table).unwrap();
 }

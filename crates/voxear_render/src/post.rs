@@ -174,10 +174,65 @@ pub enum AntiAliasingMode {
     Taa,
 }
 
+/// What builds the full picture from the scene drawn smaller, with TAA.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Upscaler {
+    /// Voxear's own temporal upscaler, on every GPU.
+    #[default]
+    Voxear,
+    /// AMD FSR 3.1, from AMD's own source, on GPUs that can read and write
+    /// storage images without a format (`fsr3`).
+    Fsr,
+    /// NVIDIA DLSS, from a library its user supplies: not yet built in.
+    Dlss,
+    /// Intel XeSS, from a library its user supplies: not yet built in.
+    Xess,
+}
+
+/// How much smaller than the output the scene is drawn, by name, as the
+/// upscalers' own modes are: the share of each side, in place of
+/// `render_scale`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpscaleQuality {
+    /// Full size: anti-aliasing alone.
+    Native,
+    /// Two thirds of each side.
+    Quality,
+    /// About three fifths.
+    Balanced,
+    /// Half.
+    Performance,
+    /// A third.
+    UltraPerformance,
+}
+
+impl UpscaleQuality {
+    /// The share of each side of the output the scene is drawn at.
+    pub fn scale(self) -> f32 {
+        match self {
+            Self::Native => 1.0,
+            Self::Quality => 1.0 / 1.5,
+            Self::Balanced => 1.0 / 1.7,
+            Self::Performance => 0.5,
+            Self::UltraPerformance => 1.0 / 3.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AntiAliasing {
     pub mode: AntiAliasingMode,
+    /// With TAA, what builds the full picture from the frames drawn: Voxear's
+    /// own, or AMD FSR 3.1 where the GPU can run it. One that cannot run here
+    /// is Voxear's in its place.
+    pub upscaler: Upscaler,
+    /// With TAA, the share of each side the scene is drawn at, by name, in
+    /// place of `render_scale`; none leaves `render_scale` to say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<UpscaleQuality>,
     /// Contrast-adaptive sharpening after anti-aliasing, 0 to 1.
     pub sharpness: f32,
     /// Advanced: how much of last frame TAA keeps, 0.8 to 0.97. Higher is
@@ -335,6 +390,10 @@ pub struct DepthOfField {
     pub aperture: f32,
     /// Advanced: the largest blur radius, in pixels at 1080p.
     pub max_blur: f32,
+    /// Whether what lies beyond the focus blurs too. Off blurs only the
+    /// near foreground, as leaves or grass right in front of the camera,
+    /// and leaves the distance sharp.
+    pub far: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -368,6 +427,8 @@ impl Default for AntiAliasing {
     fn default() -> Self {
         Self {
             mode: AntiAliasingMode::Taa,
+            upscaler: Upscaler::Voxear,
+            quality: None,
             sharpness: 0.25,
             taa_history: 0.97,
             taa_jitter: 1.0,
@@ -445,7 +506,7 @@ impl Default for Fog {
 
 impl Default for DepthOfField {
     fn default() -> Self {
-        Self { enabled: false, focus_distance: 10.0, aperture: 2.8, max_blur: 12.0 }
+        Self { enabled: false, focus_distance: 10.0, aperture: 2.8, max_blur: 12.0, far: true }
     }
 }
 
@@ -647,7 +708,7 @@ impl PostProcess {
             contact_steps: self.contact_shadows.steps.clamp(1, 64),
             // The renderer names the table once it knows it.
             lut_texture: crate::gpu::NO_TEXTURE,
-            _lut_pad0: 0,
+            dof_far: u32::from(self.depth_of_field.far),
             lut_contribution: self.grading.lut_contribution.clamp(0.0, 1.0),
             surface_texture: crate::gpu::NO_TEXTURE,
             // The renderer names the image once it has made it.
@@ -684,6 +745,18 @@ impl PostProcess {
         // The lookup table is an asset, not a setting, so it stays as it was.
         blended.grading.lut = self.grading.lut;
         Ok(blended)
+    }
+}
+
+impl AntiAliasing {
+    /// The share of each side of the output the scene is drawn at: the
+    /// quality mode's where one is set, `render_scale` otherwise, and the
+    /// whole of it without TAA.
+    pub fn drawn_scale(&self) -> f32 {
+        match self.mode {
+            AntiAliasingMode::Taa => self.quality.map_or(self.render_scale, UpscaleQuality::scale).clamp(0.25, 1.0),
+            _ => 1.0,
+        }
     }
 }
 

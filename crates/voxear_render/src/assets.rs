@@ -324,6 +324,8 @@ pub struct Assets {
     pub ltc: [TextureId; 2],
     /// The smoke's and mist's noise, baked once (see `smoke::noise_atlas`).
     pub smoke_noise: TextureId,
+    /// The dappled light under leaves, a cookie for the sun (see `canopy`).
+    pub canopy: TextureId,
     /// The built-in textures particles are drawn with, made once, as
     /// `effects::BuiltinTexture::PICTURES` lists them.
     pub particle_textures: [TextureId; 5],
@@ -419,6 +421,7 @@ impl Assets {
             material_writes: 0,
             ltc: [TextureId(0); 2],
             smoke_noise: TextureId(0),
+            canopy: TextureId(0),
             particle_textures: [TextureId(0); 5],
             puff_light_maps: [TextureId(0); 2],
             particle_meshes: [MeshHandle(0); 4],
@@ -436,6 +439,9 @@ impl Assets {
         let (side, noise) = crate::smoke::noise_atlas();
         let format = vk::Format::R8G8B8A8_UNORM;
         assets.smoke_noise = assets.add_texture_mips(gpu, bindless, "smoke noise", (side, side), format, &[noise])?;
+        let side = crate::canopy::CANOPY_SIZE;
+        let canopy = crate::canopy::canopy_cookie();
+        assets.canopy = assets.add_texture(gpu, bindless, &TextureSource { name: "canopy", width: side, height: side, rgba: &canopy, srgb: true })?;
         for (slot, texture) in crate::effects::BuiltinTexture::PICTURES.into_iter().enumerate() {
             let Some((side, rgba)) = texture.picture() else { continue };
             let name = format!("particle {}", texture.name().to_lowercase());

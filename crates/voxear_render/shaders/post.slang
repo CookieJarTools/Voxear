@@ -341,6 +341,11 @@ float circleOfConfusion(float depth)
 {
     Frame* frame = push.frame;
     float distance = linearDepth(depth);
+    // With the far blur off, only what is nearer than the focus blurs.
+    if (frame->post.dofFar == 0 && distance >= frame->post.dofFocus)
+    {
+        return 0.0;
+    }
     float blur = abs(1.0 - frame->post.dofFocus / distance) * 24.0 / max(frame->post.dofAperture, 0.5);
     return min(blur, frame->post.dofMaxBlur) * float(frame->viewport.y) / 1080.0;
 }
@@ -784,6 +789,28 @@ float4 finishFragment(PostOut input) : SV_Target
         return float4(color, 1.0);
     }
     return float4(dither(color, input.position.xy, frame->frameIndex), 1.0);
+}
+
+// ---------------------------------------------------------------- FSR
+
+// FSR's exposure, a 1×1 picture: what the composite multiplies the scene by,
+// in red, so FSR's own tonemapping, for what it keeps of each pixel, sees the
+// scene as the picture shows it.
+[shader("fragment")]
+float4 fsrExposureFragment(PostOut input) : SV_Target
+{
+    Frame* frame = push.frame;
+    Post post = frame->post;
+    float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;
+    return float4(frame->exposure * exp2(ev), 0.0, 0.0, 1.0);
+}
+
+// The scene as it is, copied before smoke and particles are drawn over it,
+// for FSR's reactive mask.
+[shader("fragment")]
+float4 fsrCopyFragment(PostOut input) : SV_Target
+{
+    return load(push.textures.x, int2(input.position.xy));
 }
 
 // ---------------------------------------------------------------- Encode

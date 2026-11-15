@@ -881,7 +881,9 @@ pub struct GpuPost {
     /// The colour grading lookup table, or `NO_TEXTURE`, and how much of it
     /// shows; the shader reads its size from the table.
     pub lut_texture: u32,
-    pub _lut_pad0: u32,
+    /// 1 when depth of field blurs what lies beyond its focus as well as
+    /// what is nearer.
+    pub dof_far: u32,
     pub lut_contribution: f32,
     /// Each pixel's normal and roughness as the depth passes wrote them, or
     /// `NO_TEXTURE`, for TAA to tell mirrors by.

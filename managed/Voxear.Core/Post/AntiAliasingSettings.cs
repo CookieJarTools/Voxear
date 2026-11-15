@@ -8,6 +8,12 @@ public sealed class AntiAliasingSettings
 	/// <summary>Temporal, FXAA or off.</summary>
 	public AntiAliasingMode Mode = AntiAliasingMode.Taa;
 
+	/// <summary>With TAA, what builds the full picture from the frames drawn. One the GPU cannot run is Voxear's own in its place.</summary>
+	public Upscaler Upscaler = Upscaler.Voxear;
+
+	/// <summary>With TAA, how much smaller the scene is drawn, by name, in place of RenderScale; null leaves RenderScale to say.</summary>
+	public UpscaleQuality? Quality;
+
 	/// <summary>Contrast-adaptive sharpening after anti-aliasing, 0 to 1.</summary>
 	public float Sharpness = 0.25f;
 
@@ -26,6 +32,8 @@ public sealed class AntiAliasingSettings
 	internal void Read(JsonObject from)
 	{
 		PostJson.ReadChoice(from, "mode", ref Mode);
+		PostJson.ReadChoice(from, "upscaler", ref Upscaler);
+		PostJson.ReadChoice(from, "quality", ref Quality);
 		PostJson.Read(from, "sharpness", ref Sharpness);
 		PostJson.Read(from, "taa_history", ref TaaHistory);
 		PostJson.Read(from, "taa_jitter", ref TaaJitter);
@@ -36,6 +44,8 @@ public sealed class AntiAliasingSettings
 	internal void Write(JsonObject to)
 	{
 		to["mode"] = PostJson.Of(Mode);
+		to["upscaler"] = PostJson.Of(Upscaler);
+		to["quality"] = PostJson.Of(Quality);
 		to["sharpness"] = Sharpness;
 		to["taa_history"] = TaaHistory;
 		to["taa_jitter"] = TaaJitter;

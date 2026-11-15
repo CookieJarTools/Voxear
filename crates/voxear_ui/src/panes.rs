@@ -62,6 +62,8 @@ pub(crate) struct Dropdown {
     pub popup: Option<taffy::NodeId>,
     /// The list's width when set, instead of as wide as its longest option.
     pub popup_width: Option<f32>,
+    /// Options shown greyed out, each with why, that cannot be picked.
+    pub unavailable: Vec<(usize, String)>,
 }
 
 impl Ui {
@@ -264,7 +266,14 @@ impl Ui {
         self.add_class(label, "dropdown-label");
         let arrow = self.icon(dropdown, "chevron-down");
         self.add_class(arrow, "dropdown-arrow");
-        let state = Dropdown { label: label.0, options: Vec::new(), selected: 0, popup: None, popup_width: None };
+        let state = Dropdown {
+            label: label.0,
+            options: Vec::new(),
+            selected: 0,
+            popup: None,
+            popup_width: None,
+            unavailable: Vec::new(),
+        };
         if let Some(element) = self.element_mut(dropdown) {
             element.control = Some(Control::Dropdown(state));
         }
@@ -300,6 +309,22 @@ impl Ui {
         self.set_text(label, &text);
     }
 
+    /// Greys out options of a dropdown that cannot be picked here, each with
+    /// why, shown as the pointer rests on it; the rest can be.
+    pub fn set_unavailable_options(&mut self, dropdown: NodeId, unavailable: &[(usize, String)]) {
+        if let Some(Control::Dropdown(state)) = self.element_mut(dropdown).and_then(|e| e.control.as_mut()) {
+            state.unavailable = unavailable.to_vec();
+        }
+    }
+
+    /// Whether an option of a dropdown can be picked.
+    pub fn option_available(&self, dropdown: NodeId, index: usize) -> bool {
+        match self.element(dropdown).and_then(|e| e.control.as_ref()) {
+            Some(Control::Dropdown(state)) => !state.unavailable.iter().any(|(at, _)| *at == index),
+            _ => true,
+        }
+    }
+
     /// Fixes how wide a dropdown's list is, or with `None` lets it be as wide
     /// as its longest option, and never narrower than the dropdown.
     pub fn set_dropdown_popup_width(&mut self, dropdown: NodeId, width: Option<f32>) {
@@ -321,6 +346,7 @@ impl Ui {
         self.close_popup();
         let Some(Control::Dropdown(state)) = self.element(dropdown).and_then(|e| e.control.as_ref()) else { return };
         let (options, selected, fixed) = (state.options.clone(), state.selected, state.popup_width);
+        let unavailable = state.unavailable.clone();
         let [x, y, width, height] = self.rect(dropdown);
         let layer = self.popup_layer_in(self.window_of(dropdown));
         let mut style = Style::column();
@@ -345,6 +371,10 @@ impl Ui {
             let row = self.add(popup, row);
             self.add_class(row, "dropdown-option");
             self.set_checked(row, index == selected);
+            if let Some((_, why)) = unavailable.iter().find(|(at, _)| *at == index) {
+                self.add_class(row, "unavailable");
+                self.set_tooltip(row, why, None);
+            }
             self.add(row, Element { text: Some(Text::new(option)), ..Element::new(Kind::Label, Style::default()) });
         }
         if let Some(Control::Dropdown(state)) = self.element_mut(dropdown).and_then(|e| e.control.as_mut()) {
@@ -438,6 +468,9 @@ impl Ui {
 
     /// The user picked an option.
     fn choose(&mut self, dropdown: NodeId, index: usize) {
+        if !self.option_available(dropdown, index) {
+            return;
+        }
         if self.selected_option(dropdown) != index {
             self.set_selected_option(dropdown, index);
             self.mark_changed(dropdown);

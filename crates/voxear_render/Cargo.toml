@@ -33,3 +33,6 @@ toml.workspace = true
 [dev-dependencies]
 voxear_core.workspace = true
 png.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true

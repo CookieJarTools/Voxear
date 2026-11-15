@@ -2750,6 +2750,7 @@ fn a_sun_look_colours_the_sun_and_tints_its_shadows() {
         shadow_tint: Vec3::new(0.0, 0.0, 0.4),
         shadow_distance: voxear_render::SHADOW_DISTANCE,
         shadow_split: voxear_render::SHADOW_SPLIT,
+        canopy: 0.0,
     };
     let (Some(before), Some(after)) = (shadow_tint_render(light, None), shadow_tint_render(light, Some(look))) else {
         return;

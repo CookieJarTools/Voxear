@@ -7385,6 +7385,23 @@ fn post_settings_change_on_the_lighting_page_and_in_a_post_volume_and_undo() {
     frame(&mut editor, &mut renderer);
     assert_eq!(post(&editor).anti_aliasing.render_scale, 0.5);
 
+    // Tools set the same settings, as the page does, the upscaler and its quality among them, and read which run.
+    let asked = editor.call("lighting.set", serde_json::json!({ "path": "post.anti_aliasing.upscaler", "value": "fsr" }));
+    frame(&mut editor, &mut renderer);
+    let answer = asked.try_recv().expect("answered in a frame").expect("set");
+    assert!(answer["upscalers"].as_array().is_some_and(|all| all.len() == 4), "{answer}");
+    assert!(answer["upscalers"][0]["runs"] == serde_json::json!(true), "Voxear's own runs: {answer}");
+    let asked = editor.call("lighting.set", serde_json::json!({ "path": "post.anti_aliasing.quality", "value": "performance" }));
+    frame(&mut editor, &mut renderer);
+    asked.try_recv().expect("answered in a frame").expect("set");
+    let text = std::fs::read_to_string(&dusk).unwrap();
+    assert!(text.contains("upscaler = \"fsr\"") && text.contains("quality = \"performance\""), "{text}");
+    assert_eq!(post(&editor).anti_aliasing.upscaler, voxear_render::Upscaler::Fsr);
+    assert_eq!(post(&editor).anti_aliasing.drawn_scale(), 0.5);
+    let wrong = editor.call("lighting.set", serde_json::json!({ "path": "post.bloom.glow", "value": 1 }));
+    frame(&mut editor, &mut renderer);
+    assert!(wrong.try_recv().expect("answered in a frame").is_err(), "a setting that does not exist");
+
     // A Post Volume's own settings, empty where it leaves them to the level, set in the Inspector, and undone.
     let volume = editor.game.engine.world.spawn((
         voxear_scene::Name("Cave".into()),

@@ -116,6 +116,16 @@ const BLOCK_CLOUDS: When = &[(&["sky", "clouds", "kind"], "blocks")];
 const SKY_MODES: &[(&str, &str)] = &[("Gradient", "gradient"), ("Atmosphere", "atmosphere")];
 const AO_QUALITIES: &[(&str, &str)] = &[("Low", "low"), ("Medium", "medium"), ("High", "high"), ("Ultra", "ultra")];
 const AA_MODES: &[(&str, &str)] = &[("Off", "off"), ("FXAA", "fxaa"), ("TAA", "taa")];
+const UPSCALERS: &[(&str, &str)] =
+    &[("Voxear", "voxear"), ("AMD FSR 3", "fsr"), ("NVIDIA DLSS", "dlss"), ("Intel XeSS", "xess")];
+const UPSCALE_QUALITIES: &[(&str, &str)] = &[
+    ("Render scale", ""),
+    ("Native", "native"),
+    ("Quality", "quality"),
+    ("Balanced", "balanced"),
+    ("Performance", "performance"),
+    ("Ultra Performance", "ultra_performance"),
+];
 const TONEMAPPERS: &[(&str, &str)] =
     &[("AgX", "agx"), ("ACES", "aces"), ("Neutral", "neutral"), ("Reinhard", "reinhard"), ("None", "none")];
 
@@ -201,6 +211,8 @@ const SETTINGS: &[Info] = &[
         help: "How far from the camera the sun casts shadows. Nearer keeps the shadows by the camera sharper; farther shows them over a wider view, each softer." },
     Info { path: &["sun", "shadow_split"], title: "Cascade split", group: "Sun", kind: number(0.0, 1.0, ""), when: ALWAYS,
         help: "How the sun's four shadow maps share the shadow distance. Near 1, the nearest is small and very sharp and the farthest wide; near 0, they share it evenly, so far shadows are sharper and near ones softer." },
+    Info { path: &["sun", "canopy"], title: "Canopy", group: "Sun", kind: number(0.0, 1000.0, "m"), when: ALWAYS,
+        help: "Leaves overhead: the sun falls through them in soft flecks, the pattern repeating every so many metres. 0 for open sky. A light with a cookie of its own keeps it." },
     Info { path: &["post", "exposure", "auto"], title: "Auto exposure", group: "Exposure", kind: Kind::Toggle, when: ALWAYS,
         help: "Lets the camera adjust its brightness to the scene, like an eye: brighter in dark places, darker in bright ones. Off keeps it fixed." },
     Info { path: &["post", "exposure", "compensation"], title: "Compensation", group: "Exposure", kind: number(-8.0, 8.0, "EV"), when: ALWAYS,
@@ -323,12 +335,18 @@ const SETTINGS: &[Info] = &[
         help: "How much blur there is outside the focus: smaller f-numbers blur more, as on a real lens." },
     Info { path: &["post", "depth_of_field", "max_blur"], title: "Largest blur", group: "Lens", kind: number(0.0, 64.0, "px"), when: FOCUS,
         help: "The widest the blur gets, in pixels of a 1080p picture." },
+    Info { path: &["post", "depth_of_field", "far"], title: "Far blur", group: "Lens", kind: Kind::Toggle, when: FOCUS,
+        help: "Blurs what lies beyond the focus too. Off blurs only what is nearer, such as leaves right in front of the camera, and keeps the distance sharp." },
     Info { path: &["post", "motion_blur", "enabled"], title: "Motion blur", group: "Lens", kind: Kind::Toggle, when: ALWAYS,
         help: "Blurs things as they move fast, or as the camera turns, as a film camera does." },
     Info { path: &["post", "motion_blur", "intensity"], title: "Blur intensity", group: "Lens", kind: number(0.0, 1.0, ""), when: BLUR,
         help: "How much moving things blur." },
     Info { path: &["post", "anti_aliasing", "mode"], title: "Anti-aliasing", group: "Quality", kind: Kind::Choice(AA_MODES), when: ALWAYS,
         help: "How edges are smoothed. TAA is smooth and steady, and reflections and render scale need it; FXAA is cheap and a little soft." },
+    Info { path: &["post", "anti_aliasing", "upscaler"], title: "Upscaler", group: "Quality", kind: Kind::Choice(UPSCALERS), when: TAA,
+        help: "What builds the full picture from the scene drawn smaller: Voxear's own, or AMD FSR 3. One this computer cannot run is greyed out, and Voxear's own stands in for it." },
+    Info { path: &["post", "anti_aliasing", "quality"], title: "Upscale quality", group: "Quality", kind: Kind::Choice(UPSCALE_QUALITIES), when: TAA,
+        help: "How much smaller the scene is drawn: Quality two thirds of each side, Balanced three fifths, Performance half, Ultra Performance a third. Render scale leaves it to the Render scale row." },
     Info { path: &["post", "anti_aliasing", "render_scale"], title: "Render scale", group: "Quality", kind: number(0.25, 1.0, "×"), when: TAA,
         help: "The share of the screen's width and height the scene is drawn at, TAA filling in the rest. 0.67 draws under half the pixels, far cheaper and a little softer." },
     Info { path: &["post", "anti_aliasing", "sharpness"], title: "Sharpening", group: "Quality", kind: number(0.0, 1.0, ""), when: ALWAYS,
@@ -653,6 +671,11 @@ impl LightingPanel {
         self.fields.color_clicked(ui)
     }
 
+    /// Greys out the upscalers this computer cannot run, each with why.
+    pub fn set_upscalers(&self, ui: &mut Ui, upscalers: &[(voxear_render::Upscaler, Option<String>)]) {
+        self.fields.set_upscalers(ui, upscalers);
+    }
+
     /// The setting a page shows, by its title, for tests and the palette.
     pub fn row_of(&self, title: &str) -> Option<NodeId> {
         self.fields.row_of(title)
@@ -883,6 +906,22 @@ impl LightingFields {
         })
     }
 
+    /// Greys out the upscalers this computer cannot run, each with why.
+    pub fn set_upscalers(&self, ui: &mut Ui, upscalers: &[(voxear_render::Upscaler, Option<String>)]) {
+        let Some(row) = self.rows.iter().find(|row| row.info.path == ["post", "anti_aliasing", "upscaler"]) else { return };
+        let keys: Vec<String> =
+            upscalers.iter().map(|(upscaler, _)| serde_json::to_value(upscaler).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()).collect();
+        let unavailable: Vec<(usize, String)> = upscalers
+            .iter()
+            .zip(&keys)
+            .filter_map(|((_, why), key)| {
+                let at = UPSCALERS.iter().position(|(_, value)| value == key)?;
+                Some((at + usize::from(row.pack), why.clone()?))
+            })
+            .collect();
+        ui.set_unavailable_options(row.control.node(), &unavailable);
+    }
+
     /// The tab shown.
     pub fn group(&self) -> &'static str {
         self.group
@@ -942,6 +981,30 @@ impl LightingFields {
             ui.set_visible(row.row, row.info.group == self.group && does);
         }
     }
+}
+
+/// A setting by its path as a `.lighting` file writes it, `post.bloom.intensity`,
+/// as the page's rows name it.
+pub fn setting_path(dotted: &str) -> Option<&'static [&'static str]> {
+    SETTINGS.iter().map(|info| info.path).find(|path| path.join(".") == dotted)
+}
+
+/// Every setting's path as the page has it, for tools to list.
+pub fn setting_paths() -> Vec<String> {
+    SETTINGS.iter().map(|info| info.path.join(".")).collect()
+}
+
+/// The open scene's lighting as the page shows it: the settings it names,
+/// their file when it is the project's to change, and every setting in
+/// effect, laid out as a `.lighting` file writes them.
+pub fn scene_effective(game: &mut Game) -> Result<(Option<String>, Option<PathBuf>, toml::Table)> {
+    let current = game.levels.scene_lighting().map(str::to_string);
+    let file = current.as_deref().and_then(|reference| project_file(game, reference));
+    let lighting = match current.as_deref() {
+        Some(reference) => read(game, reference)?,
+        None => world_own(game)?,
+    };
+    Ok((current, file, effective(&lighting)?))
 }
 
 /// The project's pictures, by their project paths, as a picture setting's
@@ -1046,6 +1109,7 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     sun.insert("shadow_tint".into(), color(voxear_engine::srgb(lighting.sun.shadow_tint.to_array())));
     sun.insert("shadow_distance".into(), toml::Value::Float(f64::from(lighting.sun.shadow_distance)));
     sun.insert("shadow_split".into(), toml::Value::Float(f64::from(lighting.sun.shadow_split)));
+    sun.insert("canopy".into(), toml::Value::Float(f64::from(lighting.sun.canopy)));
     table.insert("sun".into(), toml::Value::Table(sun));
     let post = PostProcess::from_toml(&lighting.post)?;
     let mut post_table = toml::Table::try_from(post)?;
@@ -1554,7 +1618,13 @@ mod tests {
         for info in SETTINGS {
             // Unset, these are the sun's own colour, the horizon's and no table.
             let optional =
-                [&["sun", "temperature"][..], &["post", "fog", "color"], &["post", "grading", "lut"], &["sky", "picture"]]
+                [
+                &["sun", "temperature"][..],
+                &["post", "fog", "color"],
+                &["post", "grading", "lut"],
+                &["sky", "picture"],
+                &["post", "anti_aliasing", "quality"],
+            ]
                     .contains(&info.path);
             assert!(optional || find(&values, info.path).is_some(), "{:?} has a value", info.path);
         }

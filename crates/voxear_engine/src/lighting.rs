@@ -133,6 +133,11 @@ pub struct SunData {
     /// 1, the nearest small and sharp and the farthest wide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadow_split: Option<f32>,
+    /// Leaves over the level: the sun shines through the dappled canopy,
+    /// repeating every so many metres, where the light has no cookie of its
+    /// own; 0 for open sky.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canopy: Option<f32>,
 }
 
 impl SunData {
@@ -153,6 +158,7 @@ impl SunData {
         }
         sun.shadow_distance = self.shadow_distance.unwrap_or(sun.shadow_distance).clamp(5.0, 1000.0);
         sun.shadow_split = self.shadow_split.unwrap_or(sun.shadow_split).clamp(0.0, 1.0);
+        sun.canopy = self.canopy.unwrap_or(sun.canopy).clamp(0.0, 1000.0);
     }
 }
 
@@ -176,6 +182,7 @@ pub fn plain_sun() -> SunLook {
         shadow_tint: Vec3::ZERO,
         shadow_distance: voxear_render::SHADOW_DISTANCE,
         shadow_split: voxear_render::SHADOW_SPLIT,
+        canopy: 0.0,
     }
 }
 

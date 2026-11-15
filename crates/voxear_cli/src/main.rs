@@ -346,6 +346,13 @@ enum Commands {
         /// Draw the scene at this share of the image's size, from 0.25 to 1, for TAA to upscale.
         #[arg(long)]
         render_scale: Option<f32>,
+        /// Upscale with `voxear`'s own or `fsr` (AMD FSR 3), in place of the scene's choice, to compare.
+        #[arg(long, value_parser = ["voxear", "fsr", "dlss", "xess"])]
+        upscaler: Option<String>,
+        /// Draw the scene as an upscaler's mode does: `native`, `quality`, `balanced`, `performance` or
+        /// `ultra_performance`, in place of the scene's choice.
+        #[arg(long, value_parser = ["native", "quality", "balanced", "performance", "ultra_performance"])]
+        quality: Option<String>,
         /// Replace the scene's post-processing with a preset: `voxear`, `neutral` or `cinematic`.
         #[arg(long)]
         post: Option<String>,
@@ -533,6 +540,8 @@ fn main() -> Result<()> {
             no_shadow_cache,
             no_mesh_shaders,
             render_scale,
+            upscaler,
+            quality,
             every,
             rate,
             software_rays,
@@ -555,11 +564,26 @@ fn main() -> Result<()> {
             let post_override = post.as_deref().map(PostProcess::preset).transpose()?;
             let meshlet_culling = !no_meshlet_culling;
             let local_shadow_cache = !no_shadow_cache;
+            use voxear_render::{UpscaleQuality, Upscaler};
+            let upscaler = upscaler.as_deref().map(|name| match name {
+                "fsr" => Upscaler::Fsr,
+                "dlss" => Upscaler::Dlss,
+                "xess" => Upscaler::Xess,
+                _ => Upscaler::Voxear,
+            });
+            let quality = quality.as_deref().map(|name| match name {
+                "native" => UpscaleQuality::Native,
+                "quality" => UpscaleQuality::Quality,
+                "balanced" => UpscaleQuality::Balanced,
+                "ultra_performance" => UpscaleQuality::UltraPerformance,
+                _ => UpscaleQuality::Performance,
+            });
             let options = ViewOptions {
                 debug_view,
                 post_override,
                 meshlet_culling,
-                render_scale,
+                render_scale: render_scale.or(quality.map(UpscaleQuality::scale)),
+                upscaler,
                 local_shadow_cache,
                 ..ViewOptions::default()
             };

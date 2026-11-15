@@ -915,6 +915,38 @@ Done so far:
     tab. Tests: a picture's light; the file written and read; on the GPU, the sky drawn from its picture as it
     is turned, past white.
   - Still to come for them: reflections of the picture itself, and the light probes they will fill.
+- **Upscalers beside Voxear's own:** `[post.anti_aliasing] upscaler` (`Upscaler`: `voxear`, `fsr`, `dlss`, `xess`)
+  and `quality` (`UpscaleQuality`: native 1, quality 1/1.5, balanced 1/1.7, performance 1/2, ultra performance 1/3
+  of each side) in place of `render_scale`. One that cannot run here is Voxear's in its place
+  (`Renderer::upscalers` says which and why), greyed out on the Lighting page's Quality tab with why (dropdowns
+  can grey out options now, `set_unavailable_options`), in C# (`AntiAliasingSettings.Upscaler`, `.Quality`), and
+  for tools through `lighting.get` and `lighting.set` (also new: any setting of the open scene's lighting, as a
+  step to undo), and `vox render --upscaler --quality`.
+  - **AMD FSR 3.1**, from AMD's FidelityFX SDK 2.4 (upscaler 3.1.6), MIT: the shaders vendored in
+    `voxear_render/fsr3/amd` with AMD's licence, every file on its MIT list. AMD ships the host library and its
+    compiled shaders for Windows alone, so `build.rs` compiles the eight passes Voxear uses to SPIR-V with slangc
+    (HDR colour, motion at the drawn size, reverse-Z), each resource kind given bindings of its own, and turns
+    slangc's reflection into the table the host binds by name (`FSR3_PASSES`): Voxear's permutation table, one
+    entry a pass. Two loop variables renamed for slangc's older HLSL scoping; nothing else changed.
+  - The host is Voxear's (`fsr3`): the passes recorded in one frame-graph pass with descriptor sets of their own,
+    FSR's images the view's, kept in the general layout, constants as AMD's host code works them out. Motion
+    (`-1` scale: Voxear's is now less then), jitter in drawn pixels, exposure as a 1×1 picture, and a reactive
+    mask from AMD's auto-reactive pass over the scene before and after smoke, particles and the view under water.
+    The result is copied into TAA's history for reflections. Needs storage images read and written without a
+    format, which the device turns on where it can.
+  - **NVIDIA DLSS and Intel XeSS** are choices, greyed out: DLSS's licence lets its SDK ship only inside a finished
+    application, never an open engine repo, asks for NVIDIA's marks in the credits and notice to NVIDIA before a
+    commercial release, and lets NVIDIA update it over the air; the user chose not to take it up for now. XeSS has
+    no Linux build.
+  - On an RTX 3070 at 1440p in Sponza, Performance mode, the least of 70 frames: Voxear's upscale 0.31 ms, FSR 0.93
+    ms and its copy into the history 0.11 ms. Close up, FSR keeps brick courses, thin rods and ivy outlines much
+    crisper than Voxear's from the same half-size scene, near the full-size picture; sparks stay distinct where
+    Voxear's smear, though each is a coarser square.
+  - Tests: every pass compiled, its bindings in their ranges, SPD's setup and the Lanczos table as AMD's host has
+    them; on the GPU, FSR from half size 0.23 a channel from the full picture on average and holding still, sparks
+    shown neither lost nor smeared, and which upscalers say they run.
+  - Later: FSR's own sharpening (RCAS) and transparency-and-composition mask, DLSS from a library the user
+    supplies, XeSS on Windows.
 - **Area and tube lights:** rectangle and disc lights shaded by linearly transformed cosines (Heitz et al. 2016,
   tables fitted to GGX ahead of time), and tube lights by Karis's representative point. In scenes, the
   Hierarchy's + menu, the Inspector and the Scene view, which shows each one's shape and reach.
@@ -1013,7 +1045,15 @@ Done so far:
   - **Storybook:** a warm, strong sun pushed toward yellow-green against a teal sky, shadows tinted warm purple,
     teal fog in layers, tinted ambient occlusion, gold-tinted bloom, saturation 1.15, shadows lifted toward teal
     and highlights toward gold.
-  - Still to come for them: a dappled canopy cookie, probes, and depth of field on the near foreground.
+  - **Their leftovers:** a dappled **canopy** cookie, made once on the CPU as a tiling picture from whole-number
+    hashes (`canopy`): green light through the leaves, clusters of gaps the sun falls through as soft round
+    flecks. A look's or lighting file's `[sun] canopy`, the metres it repeats over, gives it to the sun where the
+    light has no cookie of its own (`SunLook::canopy`); Storybook and Dark Forest have one, and the Lighting
+    page's Sun tab a row. **Depth of field on the near foreground:** `[post.depth_of_field] far = false` blurs only
+    what is nearer than the focus (`dofFar`), which Storybook uses at 2 m. **Probes:** both looks light with the
+    ray-traced GI probes, on since they came. Tests: the canopy tiles and is the same each time; the looks' settings;
+    GPU pictures of a floor dappled under a canopy against an even one in the open, and of a far edge kept sharp
+    while a near block blurs.
 - **GI v2:** the meshes near the camera drawn into the voxels each frame, flat along each axis, as colour,
   normal and glow, and each voxel lit as its surface is (the sun through its shadow map, lamps, its glow, and last
   frame's bounce), so walls behind the camera bounce their own colour. Coarser grids are made from finer ones,
@@ -1366,7 +1406,7 @@ Done so far:
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps.
-- Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
+- Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
 - Baked lightmapper and light probes.
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.

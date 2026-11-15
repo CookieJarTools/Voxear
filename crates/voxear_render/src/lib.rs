@@ -15,6 +15,8 @@ mod atmosphere;
 pub use atmosphere::FarHaze;
 mod box_model;
 mod bvh;
+mod canopy;
+mod fsr3;
 mod capture;
 mod clouds;
 mod cooked;
@@ -128,7 +130,7 @@ pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Sk
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GlobalIllumination, Reflections,
-    Grading, MotionBlur, PostProcess, ScriptPost, Tonemap, Tonemapper, Vignette,
+    Grading, MotionBlur, PostProcess, ScriptPost, Tonemap, Tonemapper, UpscaleQuality, Upscaler, Vignette,
 };
 pub use previews::{
     MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
@@ -701,6 +703,26 @@ impl Renderer {
     /// The output the first 3D view draws into, the main one until set.
     pub fn set_view_output(&mut self, output: OutputId) {
         self.views[0].output = output;
+    }
+
+    /// Each upscaler, and why it cannot run here, or none where it can. One
+    /// a view's settings choose that cannot is Voxear's own in its place.
+    pub fn upscalers(&self) -> Vec<(Upscaler, Option<String>)> {
+        let nvidia = self.gpu.info.name.contains("NVIDIA") || self.gpu.info.name.contains("GeForce");
+        let fsr = self.pipelines.fsr3.is_none().then(|| {
+            "this GPU cannot read and write storage images without a format, which AMD FSR's passes need".to_string()
+        });
+        let dlss = match nvidia {
+            true => "NVIDIA DLSS is not built in: its SDK is NVIDIA's, for whoever makes the game to download under \
+                     NVIDIA's own licence"
+                .to_string(),
+            false => "NVIDIA DLSS needs an NVIDIA RTX GPU".to_string(),
+        };
+        let xess = match cfg!(windows) {
+            true => "Intel XeSS is not built in yet".to_string(),
+            false => "Intel XeSS has no build for this system: Intel makes it for Windows alone".to_string(),
+        };
+        vec![(Upscaler::Voxear, None), (Upscaler::Fsr, fsr), (Upscaler::Dlss, Some(dlss)), (Upscaler::Xess, Some(xess))]
     }
 
     /// Asks the main window for HDR output, or SDR, with how bright paper
@@ -1415,6 +1437,10 @@ impl Renderer {
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
         let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
+        // This slot's previous frame is done: its FSR descriptor sets may be made again.
+        if let Some(fsr3) = &pipelines.fsr3 {
+            fsr3.reset_sets(gpu, frame.slot);
+        }
         let mut fg = graph.begin(gpu, frame.slot);
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
@@ -1524,6 +1550,9 @@ impl Renderer {
             }
         }
         fg.set_prefix("");
+        for view in views.iter() {
+            view.retire_fsr3(frames);
+        }
         if probe_job_done {
             reflection_probes.take_job(world, time);
         }
@@ -1884,6 +1913,10 @@ struct View {
     portals: Vec<PortalChild>,
     /// What stands still in its local lights' reach, whose shadows they keep.
     shadow_cache: shadow_cache::ShadowCache,
+    /// AMD FSR 3.1's images, where FSR takes TAA's place, and those it no
+    /// longer needs, freed once no frame uses them (`retire_fsr3`).
+    fsr3: std::sync::Arc<std::sync::Mutex<Option<fsr3::Fsr3State>>>,
+    fsr3_retired: std::sync::Arc<std::sync::Mutex<Vec<fsr3::Fsr3State>>>,
 }
 
 /// A view through a Portal, kept by the view it is seen in for as long as
@@ -2062,11 +2095,26 @@ impl View {
             warned_meshlets: false,
             portals: Vec::new(),
             shadow_cache: shadow_cache::ShadowCache::default(),
+            fsr3: Default::default(),
+            fsr3_retired: Default::default(),
         })
+    }
+
+    /// Frees the FSR images it no longer needs, once no frame uses them.
+    fn retire_fsr3(&self, frames: &mut Frames) {
+        let retired = std::mem::take(&mut *self.fsr3_retired.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        for state in retired {
+            state.retire(frames);
+        }
     }
 
     /// Lets its buffers go once no frame in flight uses them.
     fn retire(self, frames: &mut Frames) {
+        self.retire_fsr3(frames);
+        let state = self.fsr3.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        if let Some(state) = state {
+            state.retire(frames);
+        }
         for child in self.portals {
             child.view.retire(frames);
         }
@@ -2643,6 +2691,9 @@ impl View {
 
         let mut frame_data = extracted.frame;
         (frame_data.post.display_peak, frame_data.post.display_image) = (setup.fitted.0, u32::from(setup.fitted.1));
+        if extracted.canopy_cookie {
+            frame_data.lighting.sun_cookie = assets.canopy.0;
+        }
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
         // Contact shadows are the sun's, so they go without one, and the wireframe goes without its depth.
@@ -3266,6 +3317,17 @@ impl View {
             particles,
             smoke,
             surface,
+            fsr3: pipelines.fsr3.map(|fsr3| post_passes::Fsr3Input {
+                pipelines: fsr3,
+                state: self.fsr3.clone(),
+                retired: self.fsr3_retired.clone(),
+                jitter: frame_data.jitter,
+                fov_y: extracted.fov_y,
+                near: frame_data.near,
+                delta_time: setup.delta_time,
+                reset: taa_reset,
+                slot,
+            }),
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
         let backdrop = match finished.filter(|_| post.keep_ldr) {

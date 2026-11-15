@@ -392,7 +392,7 @@ enum Commands {
         /// Make worlds of blocks spend as this preset does, in place of the project's `[world]` quality, to
         /// compare what each costs.
         #[arg(long, value_parser = ["low", "medium", "high", "ultra"])]
-        quality: Option<String>,
+        world_quality: Option<String>,
     },
 }
 
@@ -549,7 +549,7 @@ fn main() -> Result<()> {
             level,
             profile,
             fly,
-            quality,
+            world_quality,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -605,7 +605,7 @@ fn main() -> Result<()> {
                 level,
                 profile,
                 fly,
-                quality: quality.and_then(|quality| {
+                quality: world_quality.and_then(|quality| {
                     use voxear_terrain::WorldQuality;
                     WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
                 }),

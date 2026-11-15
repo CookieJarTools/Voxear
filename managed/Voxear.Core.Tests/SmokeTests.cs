@@ -20,9 +20,13 @@ internal static class SmokeTests
 		Check.True(!smoke.IsValid && smoke == Smoke.None, "no Smoke on None");
 		Check.True(!smoke.IsPlaying && !smoke.PlayOnStart && smoke.Color == Color.White, "nothing there");
 		smoke.Size = 6f;
+		smoke.Softness = 0.5f;
+		smoke.SelfShadow = 1f;
 		smoke.Play();
 		smoke.Disperse();
 		Check.Near(0f, smoke.Size);
+		Check.Near(0f, smoke.Softness);
+		Check.Near(0f, smoke.SelfShadow);
 		Check.True(Obj.None.AddSmoke() == Smoke.None, "nothing to add it to");
 	}
 

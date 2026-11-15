@@ -27,8 +27,8 @@ use crate::{
 pub const SMOKE_GRID: usize = 32;
 /// The most smokes a frame draws, the nearest the camera.
 pub const MAX_SMOKES: usize = 16;
-/// How many 32-bit words of cells a smoke takes, four cells to a word.
-pub const SMOKE_WORDS: usize = SMOKE_GRID * SMOKE_GRID * SMOKE_GRID / 4;
+/// How many 32-bit words of cells a smoke takes, two cells to a word.
+pub const SMOKE_WORDS: usize = SMOKE_GRID * SMOKE_GRID * SMOKE_GRID / 2;
 /// How many bricks of 4×4×4 cells a smoke's grid has along each side, and
 /// how many words their map takes, after the cells (see `SmokeFill::bricks`).
 const SMOKE_BRICKS: usize = SMOKE_GRID / 4;
@@ -51,6 +51,20 @@ pub struct Smoke {
     pub density: f32,
     /// Its colour, linear: how much of the light it scatters, by colour.
     pub color: [f32; 3],
+    /// How far in from its edge it thins out, from 0 to 1, as a share of how
+    /// deep it is: 0 stops sharply at its edge; higher fades out over more
+    /// of it, so its edge is see-through while its middle still hides. It
+    /// thins only towards open air, never against walls or the floor.
+    pub softness: f32,
+    /// How much its edge frays into wisps, from 0 to 1.
+    pub wisps: f32,
+    /// How much it rolls in round puffs, from 0 to 1: 0 lies as smooth fog,
+    /// 1 billows in puffs on puffs.
+    pub billows: f32,
+    /// How dark it shades itself away from the light, from 0 to 1: 0 is lit
+    /// right through, as bright fog in daylight; 1 is dark under its own
+    /// puffs and on its far side.
+    pub self_shadow: f32,
     /// How long it takes to spread out, in seconds: most of the way in the
     /// first third of it, as a grenade's cloud bursts out and then settles.
     pub spread: f32,
@@ -72,8 +86,12 @@ impl Default for Smoke {
         Self {
             size: 8.0,
             cell: 0.4,
-            density: 2.5,
-            color: [0.85, 0.85, 0.85],
+            density: 1.8,
+            color: [0.9, 0.9, 0.9],
+            softness: 0.75,
+            wisps: 0.7,
+            billows: 0.0,
+            self_shadow: 0.2,
             spread: 1.2,
             lasts: 0.0,
             fade: 3.0,
@@ -99,6 +117,27 @@ impl Smoke {
         1.0 - (1.0 - t).powi(3)
     }
 
+    /// How filled a cell is, from 0 to 1, that the fill reached `reached`
+    /// steps out (1 for the middle, 0 for not at all) and that lies `inside`
+    /// deep in the smoke (see `SmokeFill::inside`), when the smoke has spread
+    /// `grown` of the way out to the farthest of its `steps`: filling in from
+    /// the middle as it spreads, its front soft as it bursts out and sharper
+    /// as it settles, and thinning out towards open air over the outer
+    /// `softness` of its depth.
+    /// As `smokeCell` in `shaders/smoke.slang`.
+    pub fn filled(&self, grown: f32, steps: u8, reached: u8, inside: u8) -> f32 {
+        if reached == 0 {
+            return 0.0;
+        }
+        let soft = self.softness.clamp(0.0, 1.0);
+        let front = grown * (f32::from(steps) + 2.0);
+        let width = (soft * 0.5 * (f32::from(steps) + 2.0) * (1.0 - grown)).max(2.0);
+        let spread = ((front - f32::from(reached - 1)) / width).clamp(0.0, 1.0);
+        // Thinning slowly at first and fast near its edge, so the thin part is wide and see-through.
+        let deep = (f32::from(inside) / 255.0 / soft.max(1e-3)).clamp(0.0, 1.0);
+        spread * deep * deep * (3.0 - 2.0 * deep)
+    }
+
     /// How thick it is `age` seconds after it started, from 0 to 1, as it
     /// thins at the end of its life.
     pub fn thickness(&self, age: f32) -> f32 {
@@ -117,12 +156,18 @@ impl Smoke {
 
 /// A Smoke's cells as filled round where it was: for each cell, 0 where the
 /// smoke does not reach, or 1 more than how many steps out from the middle
-/// it is; and how many steps out the farthest is. Set by the engine, with
-/// the Smoke and the place it was filled for and when, in the renderer's
-/// time, so it is filled again when either changes.
+/// it is; how deep inside the smoke each lies; and how many steps out the
+/// farthest is. Set by the engine, with the Smoke and the place it was
+/// filled for and when, in the renderer's time, so it is filled again when
+/// either changes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SmokeFill {
     pub cells: Arc<[u8]>,
+    /// For each cell, how far it lies from open air, against the deepest:
+    /// from 1 at the smoke's edge to 255 at its deepest, 0 where it does not
+    /// reach. Walls and the floor are no edge, so it thins only towards open
+    /// air and stays thick against them.
+    pub inside: Arc<[u8]>,
     pub steps: u8,
     /// The grid's first corner, in the world.
     pub origin: Vec3,
@@ -170,11 +215,15 @@ impl SmokeFill {
         words
     }
 
-    /// The cells, four to a word, as the shaders read them.
+    /// The cells, two to a word, as the shaders read them: each how many
+    /// steps out it is in its low byte, and how deep inside in its high one.
     fn words(&self) -> impl Iterator<Item = u32> + '_ {
-        self.cells
-            .chunks(4)
-            .map(|four| four.iter().enumerate().fold(0u32, |word, (i, &c)| word | u32::from(c) << (i * 8)))
+        self.cells.chunks(2).zip(self.inside.chunks(2)).map(|(out, deep)| {
+            out.iter()
+                .zip(deep)
+                .enumerate()
+                .fold(0u32, |word, (i, (&o, &d))| word | (u32::from(o) | u32::from(d) << 8) << (i * 16))
+        })
     }
 }
 
@@ -488,6 +537,10 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
                 shots: shots.len() as u32,
                 blasts: blasts.len() as u32,
                 dispersed: fill.dispersed(smoke, time),
+                softness: smoke.softness.clamp(0.0, 1.0),
+                wisps: smoke.wisps.clamp(0.0, 1.0),
+                billows: smoke.billows.clamp(0.0, 1.0),
+                self_shadow: smoke.self_shadow.clamp(0.0, 1.0),
                 _pad: [0.0; 3],
             }
         })
@@ -577,8 +630,9 @@ pub(crate) fn record(
         (marched, ImageAccess::Sampled),
         (distance, ImageAccess::Sampled),
         (then, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
     ];
-    let textures = [distance_texture, then_texture, u32::from(kept), 0];
+    let textures = [distance_texture, then_texture, u32::from(kept), depth_texture];
     let resolve = Push { texture: marched_texture, textures, size: [quarter.width, quarter.height], ..push };
     fg.add_pass("Smoke over frames", &images, &[], move |ctx| {
         crate::post_passes::draw(ctx, pipelines.smoke_resolve, &resolve, now, false);
@@ -643,15 +697,16 @@ mod tests {
     }
 
     #[test]
-    fn cells_go_to_the_shaders_four_to_a_word() {
+    fn cells_go_to_the_shaders_two_to_a_word() {
         let fill = SmokeFill {
-            cells: Arc::from(vec![1, 2, 3, 4, 0, 0, 0, 9]),
+            cells: Arc::from(vec![1, 2, 0, 9]),
+            inside: Arc::from(vec![5, 6, 0, 7]),
             steps: 9,
             origin: Vec3::ZERO,
             filled_for: (Smoke::default(), Vec3::ZERO),
             started: 0.0,
             ends: None,
         };
-        assert_eq!(fill.words().collect::<Vec<_>>(), [0x04030201, 0x09000000]);
+        assert_eq!(fill.words().collect::<Vec<_>>(), [0x0602_0501, 0x0709_0000]);
     }
 }

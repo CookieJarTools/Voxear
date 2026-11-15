@@ -1190,6 +1190,13 @@ struct Smoke
     uint blasts;
     // How far it has dispersed at the end of its life, from 0 to 1.
     float dispersed;
+    // How it looks, each from 0 to 1: how far in from its edge it thins, how
+    // much its edge frays into wisps, how much it rolls in round puffs rather
+    // than lying as smooth fog, and how dark it shades itself.
+    float softness;
+    float wisps;
+    float billows;
+    float selfShadow;
     float3 pad;
 };
 

@@ -64,6 +64,41 @@ public readonly struct Smoke : IEquatable<Smoke>, IObjComponent
 	}
 
 	/// <summary>
+	/// How far in from its edge it thins out, from 0 to 1, as a share of how deep it is: 0 stops sharply at its edge,
+	/// higher fades out over more of it, so its edge is see-through while its middle still hides. It thins only towards
+	/// open air, never against walls or the floor.
+	/// </summary>
+	public float Softness
+	{
+		get { return Number(NativeSmoke.Softness); }
+		set { Set(NativeSmoke.Softness, value); }
+	}
+
+	/// <summary>How much its edge frays into wisps, from 0 to 1.</summary>
+	public float Wisps
+	{
+		get { return Number(NativeSmoke.Wisps); }
+		set { Set(NativeSmoke.Wisps, value); }
+	}
+
+	/// <summary>How much it rolls in round puffs, from 0 to 1: 0 lies as smooth fog, 1 billows in puffs on puffs.</summary>
+	public float Billows
+	{
+		get { return Number(NativeSmoke.Billows); }
+		set { Set(NativeSmoke.Billows, value); }
+	}
+
+	/// <summary>
+	/// How dark it shades itself away from the light, from 0 to 1: 0 is lit right through, as bright fog in daylight;
+	/// 1 is dark under its own puffs and on its far side.
+	/// </summary>
+	public float SelfShadow
+	{
+		get { return Number(NativeSmoke.SelfShadow); }
+		set { Set(NativeSmoke.SelfShadow, value); }
+	}
+
+	/// <summary>
 	/// How long it takes to spread out, in seconds: most of the way in the first third of it, as a grenade's cloud
 	/// bursts out.
 	/// </summary>

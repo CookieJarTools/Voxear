@@ -6110,15 +6110,17 @@ fn smoke_with_render(
         let smoke = set(Smoke { cell: 0.4, spread: 2.0, ..Smoke::default() });
         let middle = Vec3::new(0.0, 2.0, 0.0);
         let n = SMOKE_GRID as i32;
+        let out = |i: i32| Vec3::new((i % n) as f32, ((i / n) % n) as f32, (i / (n * n)) as f32) - (n / 2) as f32;
+        // How far out, in half cells, as the engine counts, and how deep inside, against the deepest.
         let cells: Vec<u8> = (0..n * n * n)
-            .map(|i| {
-                let c = Vec3::new((i % n) as f32, ((i / n) % n) as f32, (i / (n * n)) as f32) - (n / 2) as f32;
-                // How far out, in half cells, as the engine counts.
-                if c.length() <= 8.0 { (c.length() * 2.0).round() as u8 + 1 } else { 0 }
-            })
+            .map(|i| if out(i).length() <= 8.0 { (out(i).length() * 2.0).round() as u8 + 1 } else { 0 })
+            .collect();
+        let inside: Vec<u8> = (0..n * n * n)
+            .map(|i| if out(i).length() <= 8.0 { 1 + (254.0 * (1.0 - out(i).length() / 8.0)).round() as u8 } else { 0 })
             .collect();
         let fill = SmokeFill {
             cells: Arc::from(cells),
+            inside: Arc::from(inside),
             steps: 16,
             origin: smoke_origin(middle, 0.4),
             filled_for: (smoke, middle),
@@ -6140,7 +6142,7 @@ fn smoke_with_render(
 fn smoke_fills_its_cells_greys_the_scene_and_keeps_its_edge_on_what_stands_before_it() {
     let Some(clear) = smoke_render(None) else { return };
     let smoky = smoke_render(Some(4.0)).unwrap();
-    let early = smoke_render(Some(0.3)).unwrap();
+    let early = smoke_render(Some(0.2)).unwrap();
     keep_image("smoke.png", &smoky);
     keep_image("smoke early.png", &early);
     let middle = on_screen(Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY, Vec3::new(0.6, 2.0, 0.0));
@@ -6180,8 +6182,10 @@ fn smoke_disperses_into_wisps_and_is_gone_at_its_end() {
 
 #[test]
 fn a_lamp_in_smoke_lights_it_round_itself() {
-    let Some(plain) = smoke_shot_render(Some(4.0), false, false) else { return };
-    let lit = smoke_shot_render(Some(4.0), false, true).unwrap();
+    // Grey smoke, so the white of sunlit smoke does not wash the lamp's red out.
+    let grey = |smoke| voxear_render::Smoke { color: [0.3; 3], ..smoke };
+    let Some(plain) = smoke_with_render(Some(4.0), false, false, grey) else { return };
+    let lit = smoke_with_render(Some(4.0), false, true, grey).unwrap();
     keep_image("smoke lamp.png", &lit);
     let near = on_screen(Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY, Vec3::new(-1.0, 2.0, -1.0));
     let (before, after) = (patch_rgb(&plain, near, 3), patch_rgb(&lit, near, 3));

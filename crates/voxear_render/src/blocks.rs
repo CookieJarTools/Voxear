@@ -228,6 +228,12 @@ const FIRST_CAPACITY: u64 = 1 << 16;
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
 
+/// The level of a smooth chunk's surface its mesh for rays is made from:
+/// its first coarser, half a block from its own at most (see
+/// `smooth::COARSER`). Kept alike where chunks meet at any level, as each
+/// level is, it lets no light through between them.
+const RAYS_LEVEL: usize = 1;
+
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
 #[repr(C)]
@@ -1025,16 +1031,21 @@ fn axis_of(normal: Vec3) -> usize {
     }
 }
 
-/// A chunk's mesh for rays: its faces merged by surface alone, in metres
-/// from its corner, its pictures repeated as the world's are from `from`,
-/// where the chunk is from the world's corner. Its triangles share their
-/// corners, each facing the way the faces round it face on average: a
+/// A chunk's mesh for rays, in metres from its corner, its pictures
+/// repeated as the world's are from `from`, where the chunk is from the
+/// world's corner: a chunk of cubes' faces merged whatever their surfaces,
+/// a smooth chunk's surface at its [`RAYS_LEVEL`]. Its triangles share
+/// their corners, each facing the way the faces round it face on average: a
 /// block's face has its corners to itself, so faces its own way, and a
 /// smooth surface's run on smoothly.
-fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let points: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
+fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
+    let (positions, indices) = match smooth {
+        true => voxear_terrain::blocks::smooth::level_triangles(mesh, RAYS_LEVEL),
+        false => (mesh.positions.clone(), mesh.indices.clone()),
+    };
+    let points: Vec<Vec3> = positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
     let mut ways = vec![Vec3::ZERO; points.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in indices.chunks_exact(3) {
         let [a, b, c] = [0, 1, 2].map(|i| points[triangle[i] as usize]);
         // As large as the triangle, so larger faces count for more.
         let way = (b - a).cross(c - a);
@@ -1064,7 +1075,7 @@ fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshDa
             }
         })
         .collect();
-    MeshData { vertices, indices: mesh.indices.clone(), ..MeshData::default() }
+    MeshData { vertices, indices, ..MeshData::default() }
 }
 
 impl BlockWorlds {
@@ -1216,7 +1227,7 @@ impl BlockWorlds {
                     proxies_left -= 1;
                     let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
                     let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                    let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, uv_scale);
                     let lods = crate::lod::rays_only(&data);
                     drop(making);
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();

@@ -106,9 +106,29 @@ pub struct PlayerSettings {
     pub reverb: bool,
     #[serde(default, with = "crate::project::ReverbModeName", skip_serializing_if = "is_parametric")]
     pub reverb_mode: voxear_audio::ReverbMode,
+    /// Whether sound is traced by the GPU's rays, how well, and in how much
+    /// of the GPU's time a frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ray_traced: bool,
+    #[serde(default, skip_serializing_if = "is_medium")]
+    pub ray_quality: crate::sound_tracing::RayQualityName,
+    #[serde(default = "default_ray_budget", skip_serializing_if = "is_default_ray_budget")]
+    pub ray_budget: f32,
     /// The modules the project has.
     #[serde(default = "crate::modules::Modules::older_project")]
     pub modules: crate::modules::Modules,
+}
+
+fn is_medium(quality: &crate::sound_tracing::RayQualityName) -> bool {
+    *quality == crate::sound_tracing::RayQualityName::Medium
+}
+
+fn default_ray_budget() -> f32 {
+    crate::sound_tracing::DEFAULT_BUDGET
+}
+
+fn is_default_ray_budget(budget: &f32) -> bool {
+    *budget == crate::sound_tracing::DEFAULT_BUDGET
 }
 
 fn is_parametric(mode: &voxear_audio::ReverbMode) -> bool {
@@ -153,6 +173,13 @@ pub fn log_path(company: Option<&str>, product: &str) -> Option<PathBuf> {
 /// whose profile leaves both names unset uses too.
 pub fn save_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
     Some(game_data_folder(company, product)?.join(SAVES_FOLDER))
+}
+
+/// Where a game keeps what this machine sets for it, its graphics among
+/// them: `Graphics.toml`, beside its saves (see
+/// `voxear_terrain::MachineBudget`).
+pub fn machine_file(company: Option<&str>, product: &str) -> Option<PathBuf> {
+    Some(game_data_folder(company, product)?.join(voxear_terrain::budget::MACHINE_FILE))
 }
 
 fn game_data_folder(company: Option<&str>, product: &str) -> Option<PathBuf> {
@@ -248,6 +275,9 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 reverb: settings.reverb,
                 reverb_mode: settings.reverb_mode,
                 steam_audio: true,
+                ray_traced: settings.ray_traced,
+                ray_quality: settings.ray_quality,
+                ray_budget: settings.ray_budget,
             },
             network: settings.network.clone(),
             floating_origin: settings.floating_origin.clone(),
@@ -258,6 +288,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         },
     };
     let mut game = Game::with_content(project, engine, content);
+    game.use_machine_budget(settings.company_name.as_deref());
     // A development build marks a key no language has, as the editor does; a shipped game shows the key.
     if let Some(localization) = game.engine.world.resource_mut::<voxear_localization::Localization>() {
         localization.set_mark_missing(settings.development);

@@ -96,6 +96,8 @@ pub(super) enum Waiting {
     },
     /// The open level's reflection probes baking.
     ProbeBake,
+    /// The open level's reverb probes baking.
+    ReverbBake,
 }
 
 /// A call done, or one that answers later.
@@ -287,6 +289,11 @@ impl Editor {
                 self.refuse_while_playing("write a world's land into its generator")?;
                 self.block_world_write_land(args, renderer)
             }
+            "dungeon.starter" => {
+                self.refuse_while_playing("make the starter dungeon")?;
+                self.dungeon_starter(args, renderer)
+            }
+            "dungeon.layouts" => self.dungeon_layouts(args),
             "reflection_probe.capture" => {
                 let entity = self.obj_arg(args)?;
                 let probe = self.game.engine.world.get_mut::<voxear_render::ReflectionProbe>(entity);
@@ -307,6 +314,20 @@ impl Editor {
                     _ => Ok(Outcome::Later(Waiting::ProbeBake)),
                 }
             }
+            "reverb_probes.bake" => {
+                self.refuse_while_playing("bake the reverb probes")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                if !self.baking_reverb() {
+                    self.bake_reverb();
+                }
+                match self.reverb_bake_end() {
+                    Some(Err(error)) if !self.baking_reverb() => Err(refuse(ErrorKind::Failed, error.clone())),
+                    _ => Ok(Outcome::Later(Waiting::ReverbBake)),
+                }
+            }
+            "audio.rays" => self.audio_rays(args),
             "commands" => {
                 let sources = self.command_sources();
                 let commands: Vec<Json> = palette::command_list(&sources)
@@ -400,6 +421,9 @@ impl Editor {
                     .map_err(|error| refuse(ErrorKind::Failed, format!("reading voxear.toml: {error}")))?;
                 done(json!({ "project": link::toml_json(&text) }))
             }
+            "world_quality.get" => done(self.world_quality_json()),
+            "world_quality.set" => self.world_quality_set(args),
+            "project.set" => self.project_set(args),
             "docs.search" => done(self.docs_search(args)),
             "docs.read" => self.docs_read(need_text(args, "reference")?),
             "editor.wait" => {
@@ -443,6 +467,14 @@ impl Editor {
             Waiting::Capture { view, path, settle, asked } => {
                 self.go_on_capturing_for_tool(view, path, settle, asked, renderer)
             }
+            Waiting::ReverbBake => match (self.baking_reverb(), self.reverb_bake_end()) {
+                (false, Some(Ok(baked))) => done(json!({
+                    "probes": baked.probes, "inside": baked.inside, "file": baked.file, "bytes": baked.bytes
+                })),
+                (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
+                (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
+                (true, _) => Ok(Outcome::Later(Waiting::ReverbBake)),
+            },
             Waiting::ProbeBake => match (self.baking_probes(), self.probe_bake_end()) {
                 (false, Some(Ok(baked))) => {
                     done(json!({ "probes": baked.probes, "file": baked.file, "bytes": baked.bytes }))
@@ -472,6 +504,50 @@ impl Editor {
                 done(answer)
             }
         }
+    }
+
+    /// Ray-traced audio in the running game: what `audio.rays` sets, and
+    /// what it does now.
+    fn audio_rays(&mut self, args: &Json) -> Result<Outcome, LinkError> {
+        use voxear_engine::audio::ReverbTimes;
+        use voxear_engine::sound_tracing::RayQualityName;
+        let tracer = &mut self.game.audio.tracer;
+        let mut settings = tracer.settings();
+        let mut changed = false;
+        if let Some(on) = opt_bool(args, "on") {
+            settings.on = on;
+            changed = true;
+        }
+        if let Some(quality) = opt_text(args, "quality") {
+            let named: RayQualityName = serde_json::from_value(json!(quality))
+                .map_err(|_| bad(format!("`{quality}` is not a quality: low, medium or high")))?;
+            settings.quality = named.into();
+            changed = true;
+        }
+        if let Some(budget) = args.get("budget").filter(|b| !b.is_null()) {
+            let budget = budget.as_f64().ok_or_else(|| bad("`budget` is a number of milliseconds"))?;
+            settings.budget = (budget as f32).max(0.0);
+            changed = true;
+        }
+        if changed {
+            self.refuse_unless_playing("trace sound for")?;
+            self.game.audio.tracer.script = Some(settings);
+        }
+        let tracer = &self.game.audio.tracer;
+        let settings = tracer.settings();
+        let room = match self.game.audio.reverb_on() {
+            true => self.game.audio.room(),
+            false => ReverbTimes::NONE,
+        };
+        done(json!({
+            "on": settings.on,
+            "quality": voxear_engine::sound_tracing::RayQualityName::from(settings.quality),
+            "budget": settings.budget,
+            "tracing": tracer.tracing(),
+            "rays": tracer.rays(),
+            "cost_ms": tracer.cost(),
+            "room": room.0,
+        }))
     }
 
     pub(super) fn refuse_while_playing(&self, what: &str) -> Result<(), LinkError> {
@@ -1024,7 +1100,7 @@ impl Editor {
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
                 "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
-                | "reflection_probes.bake" => {
+                | "reflection_probes.bake" | "reverb_probes.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),
@@ -1344,6 +1420,39 @@ impl Editor {
         }
     }
 
+    fn dungeon_starter(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let entity = link::resolve_obj(&self.game, need(args, "obj")?)?;
+        let generated = self.game.engine.world.get::<voxear_engine::blocks::BlockWorldAsset>(entity);
+        if !generated.is_some_and(|asset| asset.file.generate.is_some()) {
+            return Err(refuse(ErrorKind::Failed, "dungeons are built by a generator: set the world's Ground to Generated"));
+        }
+        let before = crate::history::ObjState::of(&self.game.engine.world, entity)
+            .ok_or_else(|| refuse(ErrorKind::NoSuchObj, "the Obj is gone"))?;
+        let (changed, structure) = crate::starter_dungeon::add(&mut self.game, Some(renderer), entity)
+            .map_err(|error| refuse(ErrorKind::Failed, format!("the starter dungeon was not made: {error:#}")))?;
+        if changed {
+            self.record_change(entity, before);
+        }
+        done(json!({ "structure": link::asset_ref(&self.game, &structure), "changed": changed }))
+    }
+
+    fn dungeon_layouts(&mut self, args: &Json) -> Called {
+        let near = match opt_vector(args, "near")? {
+            Some(near) => near,
+            None => self.game.engine.world.get::<voxear_scene::Transform>(self.scene.camera).map_or([0.0; 3], |camera| camera.position.to_array()),
+        };
+        let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(500.0) as f32;
+        let obj = match args.get("obj").filter(|obj| !obj.is_null()) {
+            Some(obj) => link::resolve_obj(&self.game, obj)?.to_bits(),
+            None => 0,
+        };
+        let world = &self.game.engine.world;
+        let text = voxear_engine::dungeons::dungeons_json(world, &mut self.game.content, obj, [near[0], near[1], near[2], reach])
+            .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
+        let answer: Json = serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        done(answer)
+    }
+
     fn blocks_get(&self, args: &Json) -> Called {
         use voxear_terrain::blocks::{BlockWorld, chunk::AIR};
         let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
@@ -1412,6 +1521,80 @@ impl Editor {
         done(json!({ "changed": changed }))
     }
 
+    /// What making worlds of blocks spends now, whether this machine keeps
+    /// its own, and the project's.
+    fn world_quality_json(&self) -> Json {
+        let world = &self.game.engine.world;
+        let mut now = serde_json::to_value(voxear_terrain::WorldBudget::of(world)).unwrap_or_default();
+        now["machine"] = json!(voxear_terrain::MachineBudget::of(world).kept);
+        now["project"] = serde_json::to_value(self.game.project.file.world).unwrap_or_default();
+        now
+    }
+
+    fn world_quality_set(&mut self, args: &Json) -> Called {
+        use voxear_terrain::{WorldBudget, WorldQuality};
+        let quality = match opt_text(args, "quality") {
+            Some(name) => Some(
+                WorldQuality::ALL
+                    .into_iter()
+                    .find(|quality| quality.label().eq_ignore_ascii_case(name))
+                    .ok_or_else(|| bad(format!("no world quality is named `{name}`")))?,
+            ),
+            None => None,
+        };
+        let number = |name: &str| -> Result<Option<f32>, LinkError> {
+            match args.get(name) {
+                None | Some(Json::Null) => Ok(None),
+                Some(value) => match value.as_f64() {
+                    Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n as f32)),
+                    _ => Err(bad(format!("`{name}` is a number, nothing or more"))),
+                },
+            }
+        };
+        let numbers = [
+            "threads",
+            "columns",
+            "upload",
+            "view_distance",
+            "far_distance",
+            "near_detail",
+            "far_detail",
+            "plant_detail",
+        ]
+        .map(number);
+        let mut given = [None; 8];
+        for (at, read) in numbers.into_iter().enumerate() {
+            given[at] = read?;
+        }
+        // Whose it is first: this machine's own kept or forgotten, then the numbers go there.
+        if let Some(keep) = opt_bool(args, "machine") {
+            self.keep_world_budget(keep);
+        }
+        let mut budget = WorldBudget::of(&self.game.engine.world);
+        if let Some(preset) = quality {
+            budget = preset.budget().unwrap_or(WorldBudget { quality: WorldQuality::Custom, ..budget });
+        }
+        if given.iter().any(Option::is_some) {
+            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail] = given;
+            let whole = |n: Option<f32>, was: u32| n.map_or(was, |n| n.round() as u32);
+            budget = WorldBudget {
+                quality: WorldQuality::Custom,
+                threads: whole(threads, budget.threads),
+                columns: whole(columns, budget.columns),
+                upload: whole(upload, budget.upload),
+                view_distance: view.unwrap_or(budget.view_distance),
+                far_distance: far.unwrap_or(budget.far_distance),
+                near_detail: near_detail.unwrap_or(budget.near_detail),
+                far_detail: far_detail.unwrap_or(budget.far_detail),
+                plant_detail: plant_detail.unwrap_or(budget.plant_detail),
+            };
+        }
+        if quality.is_some() || given.iter().any(Option::is_some) {
+            self.set_world_budget(&budget.checked());
+        }
+        done(self.world_quality_json())
+    }
+
     fn settings_json(&self) -> Json {
         let settings = &self.memory.settings;
         let listed: Vec<Json> = settings::SETTINGS
@@ -1466,6 +1649,34 @@ impl Editor {
         }
         tracing::info!("[Tools] settings.set {key}");
         let now = self.memory.settings.describe(info);
+        done(json!({ "value": now }))
+    }
+
+    /// Changes one of the project's settings `link::PROJECT_KEYS` names, as
+    /// Project Settings does.
+    fn project_set(&mut self, args: &Json) -> Called {
+        let key = need_text(args, "key")?;
+        let value = need(args, "value")?;
+        let number = value.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n as f32);
+        let number =
+            number.ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{value} is not a value for {key}")))?;
+        let now = match key {
+            "portals.view_distance" => {
+                self.set_portal_view_distance(number);
+                json!(self.game.project.file.portals.view_distance)
+            }
+            "quality.particles" => {
+                let most = voxear_render::MAX_PARTICLE_BUDGET;
+                self.set_quality(&voxear_engine::QualitySettings { particles: (number.round() as u32).min(most) });
+                json!(self.game.project.file.quality.particles)
+            }
+            other => {
+                return Err(bad(format!(
+                    "no project setting has the key `{other}`; it is one of {:?}",
+                    link::PROJECT_KEYS
+                )));
+            }
+        };
         done(json!({ "value": now }))
     }
 
@@ -1619,7 +1830,14 @@ impl Editor {
                 self.project_settings.show(&mut self.ui, &modules);
                 self.project_settings.show_origin(&mut self.ui, &file.floating_origin);
                 self.project_settings.show_quality(&mut self.ui, &file.quality);
-                self.project_settings.show_budget(&mut self.ui, &file.world);
+                self.project_settings.show_portals(&mut self.ui, &file.portals);
+                file.portals.put(&mut self.game.engine.world);
+                // The project's world quality, unless this machine keeps its own.
+                let machine = voxear_terrain::MachineBudget::of(&self.game.engine.world);
+                if !machine.kept {
+                    voxear_terrain::MachineBudget::open(&mut self.game.engine.world, file.world, machine.file);
+                }
+                self.show_world_budget();
                 // Languages and their fonts may have changed too.
                 self.game.load_strings();
                 self.show_language_fonts();

@@ -162,15 +162,29 @@ impl Game {
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
         game.audio.reverb_mode = game.project.file.audio.reverb_mode;
+        game.audio.tracer.project = game.project.file.audio.sound_tracing();
         game.load_input_actions();
         game.load_fonts();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
         crate::modules::put(&mut game.engine.world, game.project.modules());
         game.project.file.quality.put(&mut game.engine.world);
-        game.project.file.world.put(&mut game.engine.world);
+        voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
         game
+    }
+
+    /// Makes worlds of blocks spend what this machine keeps for the game in
+    /// `Graphics.toml` beside its saves, in place of the project's, where it
+    /// keeps anything; and lets a game's options keep what they set there
+    /// (see `voxear_terrain::MachineBudget`). A built game, `vox run` and the
+    /// editor do this; tests and pictures keep to the project's.
+    pub fn use_machine_budget(&mut self, company: Option<&str>) {
+        let file = crate::player::machine_file(company, self.project.name());
+        let project = self.project.file.world;
+        if let Some(problem) = voxear_terrain::MachineBudget::open(&mut self.engine.world, project, file) {
+            tracing::warn!("{problem}; the project's world quality is used");
+        }
     }
 
     /// Reads the project's input actions: its `.inputactions` file, the
@@ -1008,6 +1022,7 @@ impl Game {
                 self.audio.hear_level(self.levels.current(), &mut self.content);
             }
             self.audio.update(&self.engine.world, &mut self.content, running, delta);
+            self.audio.trace_sound(renderer.as_deref_mut());
         }
         // A server tells its clients the level it plays and shares new networked Objs, then whatever this
         // frame left to send goes.
@@ -1213,6 +1228,10 @@ impl ScriptServices for GameServices<'_> {
 
     fn caves_json(&mut self, world: &World, obj: u64, what: i32, at: [f32; 4]) -> Result<String> {
         crate::caves::caves_json(world, self.content, obj, what, at)
+    }
+
+    fn dungeons_json(&mut self, world: &World, obj: u64, at: [f32; 4]) -> Result<String> {
+        crate::dungeons::dungeons_json(world, self.content, obj, at)
     }
 
     fn block_guid(&mut self, world: &World, entity: Entity, block: u16) -> Option<String> {

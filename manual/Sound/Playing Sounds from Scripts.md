@@ -158,6 +158,13 @@ echoes.Toggled += on => Audio.ReverbMode = on ? ReverbMode.Convolution : ReverbM
 
 It starts as the project's `[audio] reverb_mode` setting has it. Where the echoes can't play, as without Steam Audio, it reads `ReverbMode.Parametric`.
 
+`Audio.RayTraced` hears sound through everything the GPU traces, worlds of blocks and terrain too, with `Audio.RayQuality` and `Audio.RayBudget` for how many rays and how much of the GPU's time (see [[Ray-Traced Sound]]). `Audio.RayTracing` says whether it traces now: it steps aside on a GPU that cannot keep within the budget. An Audio Source's `ReverbSend`, from 0 to 1, says how much of it the room rings with:
+
+```csharp
+var rays = menu.Add(new Toggle("Ray-traced sound", Audio.RayTraced));
+rays.Toggled += on => Audio.RayTraced = on;
+```
+
 ## Snapshots
 
 A game sounds different in different states: muffled under a pause menu, dull and distant underwater, thin over a radio. An `AudioSnapshot` holds a mix to move to: the three volumes, and a **low-pass** and a **high-pass** filter for each bus. A low-pass holds back the high notes above its cutoff, and a high-pass the low notes below its own. `Audio.TransitionTo` slides from the mix there is to a snapshot's over the time you give it:

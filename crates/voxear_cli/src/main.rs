@@ -389,6 +389,10 @@ enum Commands {
         /// Move the camera this many metres a second along x, y and z as the frames go, as `--fly 0,0,20`.
         #[arg(long, value_name = "X,Y,Z", value_parser = parse_vector)]
         fly: Option<voxear_core::math::Vec3>,
+        /// Make worlds of blocks spend as this preset does, in place of the project's `[world]` quality, to
+        /// compare what each costs.
+        #[arg(long, value_parser = ["low", "medium", "high", "ultra"])]
+        world_quality: Option<String>,
     },
 }
 
@@ -545,6 +549,7 @@ fn main() -> Result<()> {
             level,
             profile,
             fly,
+            world_quality,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -600,6 +605,10 @@ fn main() -> Result<()> {
                 level,
                 profile,
                 fly,
+                quality: world_quality.and_then(|quality| {
+                    use voxear_terrain::WorldQuality;
+                    WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
+                }),
             };
             render(&project, shot, prepare, renderdoc)
         }
@@ -639,6 +648,8 @@ fn run(
         None => format!("{} — Voxear", project.name()),
     };
     let mut game = start_game(project, prepare)?;
+    // What this machine keeps for the game, as a built game has it.
+    game.use_machine_budget(None);
     let serving = matches!(net, Some((NetStart::Server(_), _)));
 
     if !headless && !serving {
@@ -729,6 +740,8 @@ struct Shot {
     profile: bool,
     /// How fast the camera moves, in metres a second.
     fly: Option<voxear_core::math::Vec3>,
+    /// The preset worlds of blocks spend as, in place of the project's.
+    quality: Option<voxear_terrain::WorldQuality>,
 }
 
 /// How many of a render's last frames its timings are averaged over.
@@ -878,10 +891,14 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         level,
         profile,
         fly,
+        quality,
     } = shot;
     let mut project = Project::open(path)?;
     if level.is_some() {
         project.file.project.start_level = level;
+    }
+    if let Some(budget) = quality.and_then(voxear_terrain::WorldQuality::budget) {
+        project.file.world = budget;
     }
     let settings = RendererSettings { software_rays, ..renderer_settings(&project, renderdoc) };
     let mut game = start_game(project, prepare)?;
@@ -1029,6 +1046,17 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             blocks.triangles, blocks.draws, blocks.water_triangles, blocks.shadow_triangles, blocks.shadow_draws
         );
     }
+    // What the GPU holds, that of worlds of blocks among it, and the heap, to compare what a quality costs.
+    let memory = renderer.gpu_memory();
+    let held =
+        |of: &dyn Fn(&str) -> bool| -> u64 { memory.allocations.iter().filter(|(n, _)| of(n)).map(|(_, b)| b).sum() };
+    let megabytes = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    println!(
+        "memory: {:.0} MB on the GPU, {:.0} MB of it blocks' · {:.0} MB of heap",
+        megabytes(held(&|_| true)),
+        megabytes(held(&|name| name.starts_with("block"))),
+        megabytes(voxear_core::memory::heap().0)
+    );
     if let Some(cpu) = &cpu {
         cpu.print();
     }

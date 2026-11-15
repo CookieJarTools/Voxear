@@ -1,0 +1,13 @@
+# Voxear box model: boxes under bones, measured in the pixels of its sheet.
+pixels_per_block = 8.0
+sheet = [16, 16]
+pixels = "BgEAAC8BAAEA62AAAAAAAAA="
+palette = ["5c9436", "74a83e", "4a802e"]
+
+[[bones]]
+name = "Plant"
+
+[[bones.boxes]]
+from = [-4.0, 0.0, -4.0]
+size = [8, 5, 8]
+voxels = "QAEAAFAAAAAAAQUAQQAAAAIGAA8CAAQTAxgABAgADy0ABxMBJQATASUAD18ABwRMAAQIAA9UAAAPPQAHDQIAEQMDAAEFAAFRABMDUQALVgABUgAfAwgABBECAwAPAgASYAAAAAAAAA=="

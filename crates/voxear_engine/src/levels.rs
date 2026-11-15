@@ -67,6 +67,9 @@ pub struct LevelFile {
     pub stands_on: Option<String>,
     #[serde(default, rename = "scene")]
     pub scenes: Vec<LevelScene>,
+    /// The level's own ray-traced audio, over the project's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<crate::sound_tracing::LevelAudio>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -924,6 +927,17 @@ pub(crate) fn parse_level(text: &str, path: &str) -> Result<LevelFile> {
     let file: LevelFile = toml::from_str(text).with_context(|| format!("reading {path}"))?;
     ensure!(file.format == LEVEL_FORMAT, "{path} uses level format {}, not {LEVEL_FORMAT}", file.format);
     Ok(file)
+}
+
+/// A level's own ray-traced audio settings, from its `[audio]`: none set
+/// where it has none, or will not read.
+pub(crate) fn level_audio(content: &mut Content, level: &str) -> crate::sound_tracing::LevelAudio {
+    let mut read = || -> Result<Option<crate::sound_tracing::LevelAudio>> {
+        let guid = content.parse(level)?.guid().with_context(|| format!("`{level}` is not a level asset"))?;
+        let (text, _) = content.asset_text(guid, AssetKind::Level)?;
+        Ok(parse_level(&text, level)?.audio)
+    };
+    read().ok().flatten().unwrap_or_default()
 }
 
 /// A level's path, every scene it wants (those of the levels it stands on

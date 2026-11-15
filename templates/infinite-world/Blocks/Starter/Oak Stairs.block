@@ -1,0 +1,5 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.62, 0.45, 0.26]
+material = "b1def1f88eae4eedaa71cea805e74405"
+shape = "stairs"
+hardness = 1.5

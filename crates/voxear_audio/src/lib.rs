@@ -30,6 +30,7 @@ mod output;
 mod report;
 mod reverb;
 mod sound;
+pub mod sound_field;
 mod spatial;
 pub mod steam_audio;
 mod stream;
@@ -273,6 +274,19 @@ impl Audio {
     /// out; [`ReverbTimes::NONE`] for none.
     pub fn set_reverb(&mut self, times: ReverbTimes) {
         self.send(Command::Reverb(times));
+    }
+
+    /// The listener's room's first echoes, as rays traced from it find them
+    /// (see [`sound_field`]), played from what is sent to the reverb; none
+    /// fades out the ones playing.
+    pub fn set_early_reflections(&mut self, echoes: Vec<sound_field::EarlyReflection>) {
+        self.send(Command::Early(echoes));
+    }
+
+    /// How much of a 3D voice on the effects bus goes to the reverb and
+    /// the room's early echoes, 0 to 1.
+    pub fn set_reverb_send(&mut self, voice: VoiceId, send: f32) {
+        self.change(voice, Command::ReverbSend(voice, send));
     }
 
     /// The listener's room's echoes, for the 3D voices on the effects bus

@@ -64,6 +64,17 @@ impl Source<'_> {
     }
 }
 
+/// The generator the ground `generate` asks of `world` is made by, and its
+/// structures built on: with the world's rivers, its biomes' land and its
+/// own overhangs and caves wired in where it has them. What a dungeon's
+/// layout must be planned on to be the one its chunks build.
+pub fn ground_generator(generate: &BlockGenerate, world: &WorldGen, block_size: f32) -> Arc<WorldGen> {
+    match source(generate, world, block_size) {
+        Source::Own(world) => Arc::new(world.clone()),
+        Source::Moved(world) | Source::Rivered(world) => world,
+    }
+}
+
 /// The generators made with worlds' own overhangs and caves wired in, by
 /// the generator's hash and the numbers' bits: the last few asked for, so
 /// each chunk made does not compile its own.

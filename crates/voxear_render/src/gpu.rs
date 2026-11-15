@@ -130,7 +130,10 @@ pub struct GpuMaterial {
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground; 0 for not at all.
     pub ground_blend: f32,
-    pub _pad: [u32; 2],
+    /// The acoustic preset sound rays hear it as, plus one; 0 to guess from
+    /// its look (see `sound_rays`).
+    pub acoustic: u32,
+    pub _pad: u32,
 }
 
 /// A material drawn with the standard shader, not a custom one.
@@ -170,7 +173,9 @@ pub struct GpuInstance {
     /// How far, in metres, its pose may reach past its mesh's bounds, which
     /// culling allows for.
     pub reach: f32,
-    pub _pad: u32,
+    /// For a chunk of blocks, the acoustic preset sound rays hear it as,
+    /// plus one; 0 for its material's.
+    pub acoustic: u32,
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -649,14 +654,12 @@ pub struct GpuDdgi {
 }
 
 /// This frame's reflection probes, as `ReflectionProbes` in
-/// `shaders/common.slang`: how many shading reads, and the texture of their
-/// cubes.
+/// `shaders/common.slang`: how many shading reads.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuReflectionProbes {
     pub count: u32,
-    pub cubes: u32,
-    pub pad: [u32; 2],
+    pub pad: [u32; 3],
 }
 
 /// One reflection probe, as `ReflectionProbe` in `shaders/common.slang`.
@@ -672,7 +675,11 @@ pub struct GpuReflectionProbe {
     pub axis_z: [f32; 3],
     pub flags: u32,
     pub half_size: [f32; 3],
-    pub pad: f32,
+    /// The texture of its resolution's array of cubes.
+    pub cubes: u32,
+    /// Where it took its picture from.
+    pub capture: [f32; 3],
+    pub pad: u32,
 }
 
 /// The ray-traced GI's cascades, each `DDGI_CASCADE_SCALE` times as far apart
@@ -776,6 +783,10 @@ pub struct GpuClouds {
     /// How much light lightning adds to the sky's this moment, against a
     /// sun of 1.
     pub flash: f32,
+    /// The clouds all round the camera, as reflections take them
+    /// (`clouds::PANORAMA`): a texture, or `NO_TEXTURE`.
+    pub panorama: u32,
+    pub pad: [u32; 3],
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's
@@ -1416,7 +1427,7 @@ mod tests {
         let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
         let meshlets = 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>() + 16;
-        assert_eq!(size_of::<GpuClouds>(), 80);
+        assert_eq!(size_of::<GpuClouds>(), 96);
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;
@@ -1438,12 +1449,13 @@ mod tests {
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 69 * 8);
-        assert_eq!(size_of::<GpuReflectionProbe>(), 80);
+        assert_eq!(size_of::<GpuReflectionProbe>(), 96);
         assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
-        // then its motions' and moving blocks' addresses and how many of each, how it is turned, and its far tints'
-        // corner.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16 + 16);
+        // then its motions' and moving blocks' addresses and how many of each, how it is turned, its far tints'
+        // corner, and where its rings fade into each other: their clock and coarsest level, its fades' address, and
+        // their place, reach and band.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16 + 16 + 32);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

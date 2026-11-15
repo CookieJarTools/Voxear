@@ -444,8 +444,23 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
             sets.insert(at, block);
         }
     };
-    let at = (file.block_size.max(0.01), generate.position, generate.bottom, super::generate::halved(generate));
-    super::structure::build_over(&mut set, built, &making.world, biomes, at, (first, end), under);
+    let at = (file.block_size.max(0.01), generate.position, generate.lowest_open(), super::generate::halved(generate));
+    // In a coarser ring, each stands on the ring's own ground, its highest block of the world's own blocks: else on a
+    // sharp ridge or in a saddle, where the generator has the ground well over or under the middle of the ring's
+    // block, a tree would hang in the air or sink into the ground.
+    // The ring's ground is the generator's height at the middle of each of its blocks, every tile alike, so a
+    // structure across two tiles stands at one height in both.
+    let size = at.0;
+    let coarse = size * (1u32 << level) as f32;
+    super::generate::with_ground(generate, &making.world, size, |world| {
+        let feet = |[x, z]: [i32; 2]| {
+            let middle = |v: i32, axis: usize| generate.position[axis] + ((v >> level) as f32 + 0.5) * coarse;
+            let height = world.height_at(middle(x, 0), middle(z, 1));
+            let top = (height / coarse - 0.5).ceil() as i32;
+            (level > 0).then_some((top << level) - 1)
+        };
+        super::structure::build_over_standing(&mut set, built, world, biomes, at, (first, end), under, &feet);
+    });
     sets
 }
 
@@ -460,6 +475,9 @@ fn structures_over(making: &BlockMaking, far: &FarTile) -> HashMap<[i32; 3], Blo
 pub struct FarStructures {
     /// A number for the structures it puts in: when they change, it does.
     pub stamp: u64,
+    /// The coarsest ring they are put into, by its level: no further than
+    /// [`FAR_STRUCTURES_TO`] (see `WorldBudget::structure_rings`).
+    pub to: u32,
 }
 
 /// How many of a far cell's blocks must be built for it to show, as a part
@@ -472,7 +490,7 @@ pub const FAR_STRUCTURES_TO: u32 = STRUCTURES_TO;
 
 impl FarBuilt for FarStructures {
     fn stamp(&self) -> u64 {
-        self.stamp
+        self.stamp ^ u64::from(self.to).rotate_left(40)
     }
 
     fn from_level(&self) -> u32 {
@@ -480,7 +498,7 @@ impl FarBuilt for FarStructures {
     }
 
     fn build(&self, making: &BlockMaking, tile: &mut FarTile) {
-        if tile.level == 0 || tile.level > STRUCTURES_TO {
+        if tile.level == 0 || tile.level > self.to.min(STRUCTURES_TO) {
             return;
         }
         let (level, side) = (tile.level, CHUNK as i32);
@@ -942,6 +960,111 @@ mod tests {
     }
 
     #[test]
+    fn far_off_a_plant_stands_in_no_lake_or_river_its_world_lays_in() {
+        use crate::{
+            blocks::{
+                generate::far::far_tile,
+                plant::PlantDef,
+                structure::{GroundFit, PlacedStructure, StructureBlocks, WorldStructures},
+            },
+            generate::structures::Placement,
+        };
+        // Rolling hills with its rivers taken out of its generator: a world of blocks with rivers on lays its own in.
+        use crate::generate::{
+            NodeKind,
+            nodes::{Output, Rivers},
+        };
+        let mut making = making_huts(LEAF);
+        let hills = crate::generate::starters().into_iter().find(|s| s.name == "Rolling Hills").unwrap();
+        let mut graph = hills.graph.clone();
+        let rivers = graph.nodes.iter().find(|node| matches!(node.kind, NodeKind::Rivers(_))).unwrap().id;
+        let ground = *graph.link_into(rivers, Rivers::GROUND).unwrap();
+        let output = graph.output().unwrap().id;
+        graph.remove(rivers);
+        assert!(graph.connect(ground.from, ground.output, output, Output::HEIGHT));
+        making.world = Arc::new(crate::generate::WorldGen::new(7, 1.0, hills.sea_level, graph));
+        making.generate.rivers = true;
+        assert!(making.world.water(&[0.0], &[0.0]).is_none(), "rivers wired into the generator");
+        let tree = PlacedStructure {
+            placement: Placement { spacing: 9.0, separation: 4.0, chance: 1.0, slope: 80.0, ..Placement::default() },
+            ground: GroundFit::Foundation,
+            sink: 0,
+            blocks: StructureBlocks::Plant {
+                plant: PlantDef::default(),
+                wood: WOOD,
+                leaves: LEAF,
+                vine: AIR,
+                logs: Vec::new(),
+            },
+            biomes: Vec::new(),
+        };
+        making.generate.built = Some(Arc::new(WorldStructures { list: vec![tree], ..WorldStructures::default() }));
+        let level = 2u32;
+        let side = CHUNK as i32;
+        // The cells of a tile whose own top and every one beside it is river or lake water over the sea.
+        let lake = |far: &FarTile| {
+            let (sea, sea_top) = far.sea;
+            let wet = |[x, z]: [i32; 2]| {
+                let top = far.column([x as u32, z as u32]).last().copied();
+                top.is_some_and(|top| top.block == sea && top.to as f32 > sea_top + 1.0)
+            };
+            let inside = (1..side - 1).flat_map(|z| (1..side - 1).map(move |x| [x, z]));
+            inside
+                .filter(|&[x, z]| (-1..=1).all(|dz| (-1..=1).all(|dx| wet([x + dx, z + dz]))))
+                .collect::<std::collections::HashSet<[i32; 2]>>()
+        };
+        // The tile with the most of them, within a kilometre or so.
+        let tiles = (-4..4).flat_map(|z| (-4..4).map(move |x| [x, z]));
+        let (at, far, cells) = tiles
+            .map(|at| {
+                let far = far_tile(&making.file, &making.generate, &making.world, level, at);
+                let cells = lake(&far);
+                (at, far, cells)
+            })
+            .max_by_key(|(_, _, cells)| cells.len())
+            .unwrap();
+        assert!(cells.len() >= 12, "{} cells of lake or river, the most at {at:?}", cells.len());
+        let built = structures_over(&making, &far);
+        assert!(built.len() > 500, "{} blocks of trees", built.len());
+        let cell = |[x, _, z]: [i32; 3]| [(x >> level) - at[0] * side, (z >> level) - at[1] * side];
+        let wet: Vec<[i32; 3]> = built.keys().copied().filter(|&block| cells.contains(&cell(block))).collect();
+        assert!(wet.is_empty(), "{} blocks of trees in the water, at {:?}", wet.len(), &wet[..wet.len().min(4)]);
+    }
+
+    #[test]
+    fn in_a_coarser_ring_what_is_built_stands_on_the_rings_own_ground_not_where_the_generator_has_it() {
+        use crate::blocks::generate::far::far_tile;
+        let making = making_huts(WOOD);
+        for level in [2u32, 3] {
+            let far = far_tile(&making.file, &making.generate, &making.world, level, [0, 0]);
+            let built = structures_over(&making, &far);
+            // Each column's lowest wall block, in the world's own blocks.
+            let mut lowest: HashMap<[i32; 2], i32> = HashMap::new();
+            for (&[x, y, z], _) in built.iter().filter(|(_, block)| **block == WOOD) {
+                let low = lowest.entry([x, z]).or_insert(y);
+                *low = (*low).min(y);
+            }
+            assert!(lowest.len() >= 25, "{} columns of huts at level {level}", lowest.len());
+            // On the top of the ring's ground under a cell beside it, its huts five blocks across: so on a slope
+            // or a ridge none hangs over the ground the ring draws, or is sunk into it.
+            let side = CHUNK as i32;
+            let tops = |[x, z]: [i32; 2]| {
+                let cell = [x >> level, z >> level];
+                (-1..=1).flat_map(move |dz| (-1..=1).map(move |dx| [cell[0] + dx, cell[1] + dz]))
+            };
+            // Those whose cells round them are in this tile: the rest stand on the next tile's ground, as there.
+            let clear = |v: i32| v >> level >= 2 && v >> level < side - 2;
+            for (at, y) in lowest.iter().filter(|(at, _)| clear(at[0]) && clear(at[1])) {
+                let on = tops(*at).filter(|cell| cell.iter().all(|v| (0..side).contains(v))).any(|cell| {
+                    let column = far.column(cell.map(|v| v as u32));
+                    ground_top(column, &making.faces).is_some_and(|top| top << level == *y)
+                });
+                assert!(on, "a hut's wall at {at:?} starts at {y}, on no top of the ring's ground at level {level}");
+            }
+        }
+    }
+
+    #[test]
     fn what_a_worlds_generator_builds_on_its_ground_stands_on_its_map() {
         let making = making_huts(WOOD);
         let bare = BlockMaking { generate: BlockGenerate { built: None, ..making.generate.clone() }, ..making.clone() };
@@ -1020,7 +1143,15 @@ mod tests {
             ..GrowRule::default()
         };
         // Trees six metres tall and five across, drawn as leaves.
-        let trees = Woods { rule: rule.clone(), block: LEAF, height: 6.0, width: 5.0, from: 1, biomes: Vec::new() };
+        let trees = Woods {
+            rule: rule.clone(),
+            block: LEAF,
+            height: 6.0,
+            width: 5.0,
+            from: 1,
+            biomes: Vec::new(),
+            shore: None,
+        };
         let grows = |edits: Arc<BlockEdits>| MapGround::made(making.clone(), edits).growing(vec![trees.clone()]);
         let plain = map_tile(&MapGround::made(making.clone(), Arc::default()), 0, [0, 0]);
         let tile = map_tile(&grows(Arc::default()), 0, [0, 0]);

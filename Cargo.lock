@@ -4037,6 +4037,7 @@ dependencies = [
  "voxear_rhi",
  "voxear_scene",
  "voxear_scripting",
+ "voxear_terrain",
 ]
 
 [[package]]

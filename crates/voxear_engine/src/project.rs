@@ -72,6 +72,7 @@ impl Default for QualitySettings {
 /// far_side_distance = 96.0  # how far round a far side a world without end makes its own blocks
 /// water = true            # whether the water of a far side's worlds of blocks is drawn
 /// draw_distance = 0.0     # how far ahead a far side is drawn; 0 for as far as the world is
+/// view_distance = 96.0    # how far off a Portal without its own still shows its far side
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -82,6 +83,7 @@ pub struct PortalSettings {
     pub far_side_distance: f32,
     pub water: bool,
     pub draw_distance: f32,
+    pub view_distance: f32,
 }
 
 impl Default for PortalSettings {
@@ -94,6 +96,7 @@ impl Default for PortalSettings {
             far_side_distance: quality.far_side_distance,
             water: quality.water,
             draw_distance: quality.draw_distance,
+            view_distance: quality.view_distance,
         }
     }
 }
@@ -108,6 +111,7 @@ impl PortalSettings {
             far_side_distance: self.far_side_distance.clamp(32.0, 4096.0),
             water: self.water,
             draw_distance: self.draw_distance.max(0.0),
+            view_distance: self.view_distance.max(0.0),
         });
     }
 }
@@ -131,7 +135,14 @@ impl QualitySettings {
 /// reverb = true
 /// reverb_mode = "convolution"
 /// steam_audio = false
+/// ray_traced = true
+/// ray_quality = "high"
+/// ray_budget = 0.3
 /// ```
+///
+/// With `ray_traced`, sound is heard through the scene the GPU traces for
+/// the GI, blocks and terrain too, within `ray_budget` milliseconds of GPU
+/// time a frame (see `crate::sound_tracing`); a level may set its own.
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioSettings {
@@ -140,11 +151,33 @@ pub struct AudioSettings {
     #[serde(with = "ReverbModeName")]
     pub reverb_mode: ReverbMode,
     pub steam_audio: bool,
+    pub ray_traced: bool,
+    pub ray_quality: crate::sound_tracing::RayQualityName,
+    pub ray_budget: f32,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { headphones: false, reverb: false, reverb_mode: ReverbMode::Parametric, steam_audio: true }
+        Self {
+            headphones: false,
+            reverb: false,
+            reverb_mode: ReverbMode::Parametric,
+            steam_audio: true,
+            ray_traced: false,
+            ray_quality: crate::sound_tracing::RayQualityName::Medium,
+            ray_budget: crate::sound_tracing::DEFAULT_BUDGET,
+        }
+    }
+}
+
+impl AudioSettings {
+    /// Its ray-traced audio, as the game takes it.
+    pub fn sound_tracing(&self) -> crate::sound_tracing::SoundTracing {
+        crate::sound_tracing::SoundTracing {
+            on: self.ray_traced,
+            quality: self.ray_quality.into(),
+            budget: self.ray_budget.max(0.0),
+        }
     }
 }
 
@@ -415,6 +448,24 @@ impl Project {
         Ok(())
     }
 
+    /// Writes the project's view distance for Portals without their own into
+    /// `voxear.toml`'s `[portals]`, left out where it is the default. The
+    /// rest of the file is kept as it is.
+    pub fn set_portal_view_distance(&mut self, distance: f32) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let distance =
+            if distance.is_finite() { distance.clamp(0.0, 100_000.0) } else { PortalSettings::default().view_distance };
+        let written =
+            (distance != PortalSettings::default().view_distance).then(|| toml_edit::value(f64::from(distance)));
+        set_key(&mut document, "portals", "view_distance", written);
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.portals.view_distance = distance;
+        Ok(())
+    }
+
     /// Writes what making worlds of blocks may spend into `voxear.toml`'s
     /// `[world]`: its quality where it is not High, and every number only
     /// where it is Custom, as a preset's are its own. The rest of the file is
@@ -437,6 +488,9 @@ impl Project {
         set_key(&mut document, "world", "upload", whole(budget.upload));
         set_key(&mut document, "world", "view_distance", metres(budget.view_distance));
         set_key(&mut document, "world", "far_distance", metres(budget.far_distance));
+        set_key(&mut document, "world", "near_detail", metres(budget.near_detail));
+        set_key(&mut document, "world", "far_detail", metres(budget.far_detail));
+        set_key(&mut document, "world", "plant_detail", metres(budget.plant_detail));
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.world = budget;
         Ok(())
@@ -621,10 +675,11 @@ mod tests {
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
         assert!(written.contains("[world]\nquality = \"low\"\n") && !written.contains("threads"), "{written}");
         assert_eq!(Project::open(folder.path()).unwrap().file.world, low);
-        let custom = WorldBudget { quality: WorldQuality::Custom, threads: 3, ..low };
+        let custom = WorldBudget { quality: WorldQuality::Custom, threads: 3, plant_detail: 1.5, ..low };
         project.set_world(&custom).unwrap();
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
         assert!(written.contains("quality = \"custom\"") && written.contains("threads = 3"), "{written}");
+        assert!(written.contains("plant_detail = 1.5") && written.contains("near_detail = 0.5"), "{written}");
         assert_eq!(Project::open(folder.path()).unwrap().file.world, custom);
         project.set_world(&WorldBudget::default()).unwrap();
         let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();

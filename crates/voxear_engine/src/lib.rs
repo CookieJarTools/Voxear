@@ -9,6 +9,7 @@ pub mod block_tints;
 pub mod build_profile;
 mod cameras;
 pub mod caves;
+pub mod dungeons;
 mod content;
 pub mod content_build;
 pub mod debug_texts;
@@ -65,6 +66,8 @@ mod project;
 pub mod local_link;
 pub mod reflection_bakes;
 mod reflection_probes;
+pub mod reverb_probes;
+pub mod sound_tracing;
 pub mod remote_console;
 pub mod saplings;
 pub mod scene_file;
@@ -101,8 +104,8 @@ pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
-    ContentSettings, ENGINE_FILE, PROJECT_FILE, Project, ProjectFile, QualitySettings, core_assembly, engine_root,
-    engine_version, is_install, manual_folder,
+    ContentSettings, ENGINE_FILE, PROJECT_FILE, PortalSettings, Project, ProjectFile, QualitySettings, core_assembly,
+    engine_root, engine_version, is_install, manual_folder,
 };
 pub use stats_overlay::StatsOverlay;
 pub use windowed::{Setup, WindowOptions, run_windowed};

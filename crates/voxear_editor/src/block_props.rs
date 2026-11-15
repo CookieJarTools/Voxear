@@ -507,6 +507,11 @@ pub enum BlockField {
     Generator,
     Offset,
     Lowest,
+    /// Whether its generated ground has a floor at its bottom that nothing
+    /// digs through or falls past, of which block, and how many deep.
+    Floor,
+    FloorBlock,
+    FloorDepth,
     Overhangs,
     Caves,
     /// Whether rivers run down its generated ground, where its generator
@@ -632,7 +637,10 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                         Some(_) => fields.extend([F::ViewDistance, F::FarDistance]),
                         None => fields.push(F::GroundSize),
                     }
-                    fields.push(F::Lowest);
+                    fields.extend([F::Lowest, F::Floor]);
+                    if generate.floor.on {
+                        fields.extend([F::FloorBlock, F::FloorDepth]);
+                    }
                     fields.extend(own_voxels);
                     fields.extend([F::Rivers, F::Slabs]);
                     fields.push(F::Biomes);
@@ -692,6 +700,9 @@ pub fn label(field: BlockField) -> &'static str {
         F::Generator => "Generator",
         F::Offset => "Offset",
         F::Lowest => "Lowest block",
+        F::Floor => "Floor",
+        F::FloorBlock => "Floor block",
+        F::FloorDepth => "Floor depth",
         F::Overhangs => "Overhangs",
         F::Caves => "Caves",
         F::Rivers => "Rivers",
@@ -785,7 +796,9 @@ fn takes(field: BlockField) -> Option<AssetKind> {
         F::Generator => Some(AssetKind::WorldGen),
         F::Model => Some(AssetKind::VoxModel),
         F::AddPlant => Some(AssetKind::Model),
-        F::Block | F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => Some(AssetKind::Block),
+        F::Block | F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock | F::FloorBlock => {
+            Some(AssetKind::Block)
+        }
         F::NewBiome => Some(AssetKind::Biome),
         _ => None,
     }
@@ -954,6 +967,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Generator => Value::Asset(path_of(game, file()?.generate.as_ref()?.world.as_deref())),
         F::Offset => Value::Vector(file()?.generate.as_ref()?.position.to_vec()),
         F::Lowest => Value::Number(file()?.generate.as_ref()?.bottom as f32),
+        F::Floor => Value::Toggle(file()?.generate.as_ref()?.floor.on),
+        F::FloorBlock => block_value(game, entity, file()?.generate.as_ref()?.floor.block),
+        F::FloorDepth => Value::Whole(file()?.generate.as_ref()?.floor.depth.into()),
         F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
         F::Rivers => Value::Toggle(file()?.generate.as_ref()?.rivers),
@@ -1113,6 +1129,15 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             let Some(generate) = &mut file.generate else { return false };
             generate.bottom = number(v).unwrap_or(generate.bottom as f32).round().clamp(-8192.0, 8192.0) as i32;
         }
+        (F::Floor, Value::Toggle(on)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.floor.on = *on;
+        }
+        (F::FloorDepth, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            let deepest = voxear_terrain::blocks::generate::BlockFloor::DEEPEST as f32;
+            generate.floor.depth = number(v).unwrap_or(generate.floor.depth as f32).round().clamp(1.0, deepest) as u32;
+        }
         (F::Overhangs, v) => {
             let Some(generate) = &mut file.generate else { return false };
             generate.overhangs = number(v).unwrap_or(generate.overhangs).clamp(0.0, 100.0);
@@ -1257,6 +1282,7 @@ fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity,
             let (_, faces) = drawn.faces();
             let mut empty = BlockWorld::made(BlockMap::default(), &faces, file.block_size, file.smooth);
             empty.cast_shadows = blocks.cast_shadows;
+            empty.floor = file.generate.as_ref().and_then(|generate| generate.floor_top());
             world.insert(entity, empty);
             let pending = Arc::new(changes);
             let kept = BlockWorldAsset { file, base: Arc::default(), pending, drawn: drawn.clone(), derived, ..asset };
@@ -1492,7 +1518,7 @@ pub fn pick(
                 }
             }
         }
-        F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => {
+        F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock | F::FloorBlock => {
             let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
             let block = match guid {
                 Some(guid) => match number_into(game, entity, &mut file, guid) {
@@ -1505,6 +1531,10 @@ pub fn pick(
                 F::TopBlock => file.ground.top = block,
                 F::UnderBlock => file.ground.under = block,
                 F::BaseBlock => file.ground.bottom = block,
+                F::FloorBlock => match &mut file.generate {
+                    Some(generate) => generate.floor.block = block,
+                    None => return false,
+                },
                 _ => match &mut file.generate {
                     Some(generate) => generate.sea = block,
                     None => return false,
@@ -1666,6 +1696,24 @@ pub fn list_structures(
         }
     }
     // Its structures as it lists them now, the blocks they name numbered.
+    let file = voxear_engine::blocks::with_structures(&mut game.content, &file);
+    change_file(game, renderer, entity, file)
+}
+
+/// Lists `structure` first under the world's generator, before everything
+/// it builds now, moving it there where it is listed already, and makes its
+/// ground again with it: what is listed later keeps clear of it, so a
+/// dungeon listed first is never left out for a tree. Nothing for a world
+/// whose ground is not generated.
+pub fn list_structure_first(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, structure: AssetGuid) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let is = |reference: &String| game.content.parse(reference).ok().and_then(|parsed| parsed.guid()) == Some(structure);
+    if generate.structures.first().is_some_and(is) {
+        return false;
+    }
+    generate.structures.retain(|reference| !is(reference));
+    generate.structures.insert(0, structure.to_string());
     let file = voxear_engine::blocks::with_structures(&mut game.content, &file);
     change_file(game, renderer, entity, file)
 }

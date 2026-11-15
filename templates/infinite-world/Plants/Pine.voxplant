@@ -1,0 +1,16 @@
+kind = "conifer"
+height = [12.0, 18.0]
+trunk = 1.2
+taper = 0.7
+branch = 0.25
+bend = 0.0
+crown_width = [6.0, 8.0]
+crown_height = [9.0, 13.0]
+branches = 0.6
+leaf_size = 2.4
+leaf_density = 0.85
+roots = 2
+wood = "e014c5738ce34707b430b9e765394b3a"
+leaves = "d7ccff88383a4bc4ae0c988a8048f97b"
+sapling = "Blocks/Pine Sapling.block"
+saplings = [1, 3]

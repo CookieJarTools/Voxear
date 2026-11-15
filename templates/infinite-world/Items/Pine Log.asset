@@ -1,0 +1,4 @@
+type = "Voxear.Item"
+
+[fields]
+places = "Blocks/Pine Log.block"

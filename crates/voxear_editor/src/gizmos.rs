@@ -127,6 +127,7 @@ pub fn shapes(
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
         reflection_probe(&mut shapes, world, camera, entity);
+        reverb_probe(&mut shapes, world, camera, entity);
         ui_panel(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
         force_field(&mut shapes, world, camera, entity);
@@ -417,7 +418,8 @@ fn post_volume(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, enti
 }
 
 /// A reflection probe's box, and round it, fainter, where it fades out,
-/// with a mark where it is captured from, its middle.
+/// with a mark where it is captured from: its middle, or its capture
+/// offset from it.
 fn reflection_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
     let Some(probe) = world.get::<voxear_render::ReflectionProbe>(entity) else { return };
     let matrix = voxear_scene::world_matrix(world, entity);
@@ -429,9 +431,31 @@ fn reflection_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera,
     if probe.blend_distance > 0.0 {
         wire_box(shapes, camera, position, rotation, scale * 0.5 + probe.blend_distance, faint);
     }
-    if let Some(at) = camera.project(position) {
+    let capture = position + rotation * probe.capture_offset;
+    if let Some(at) = camera.project(capture) {
         let at = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
         shapes.push(Shape::Icon { name: "globe", center: at, size: SPEAKER, color });
+    }
+}
+
+/// A reverb probe's box, square to the world, and a small box at each of
+/// its probes.
+fn reverb_probe(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(probe) = world.get::<voxear_engine::reverb_probes::ReverbProbe>(entity) else { return };
+    let middle = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+    let color = Color::hex(REACH);
+    let faint = Color { a: (u16::from(color.a) * 2 / 5) as u8, ..color };
+    let half = Vec3::from(probe.size) * 0.5;
+    wire_box(shapes, camera, middle, voxear_core::math::Quat::IDENTITY, half.max(Vec3::splat(1e-4)), color);
+    let grid = voxear_engine::reverb_probes::ProbeGrid::new(middle, probe.size, probe.spacing);
+    if grid.count() <= 512 {
+        for at in grid.spots() {
+            wire_box(shapes, camera, at, voxear_core::math::Quat::IDENTITY, Vec3::splat(0.08), faint);
+        }
+    }
+    if let Some(at) = camera.project(middle) {
+        let at = [at[0] - camera.rect[0], at[1] - camera.rect[1]];
+        shapes.push(Shape::Icon { name: "audio", center: at, size: SPEAKER, color });
     }
 }
 

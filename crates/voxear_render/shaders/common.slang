@@ -244,7 +244,9 @@ struct Material
     float detail;
     // How many metres up from where it meets a terrain a model drawn with it blends into the ground (shading.slang).
     float groundBlend;
-    uint2 pad;
+    // The acoustic preset sound rays hear it as, plus one; 0 to guess from its look (sound_rays.slang).
+    uint acoustic;
+    uint pad;
 };
 
 static const uint STANDARD_SHADER = 0;
@@ -272,7 +274,8 @@ struct Instance
     uint posedBefore;
     // How far its pose may reach past its mesh's bounds, in metres.
     float reach;
-    uint pad;
+    // For a chunk of blocks, the acoustic preset sound rays hear it as, plus one; 0 for its material's.
+    uint acoustic;
 };
 
 // Where an instance's vertices start in the vertex buffer: its posed ones
@@ -299,6 +302,8 @@ static const uint INSTANCE_NO_SHADOW = 4;
 static const uint INSTANCE_IMPOSTOR = 16;
 // Only rays see it: a terrain's coarse mesh for the GI (src/terrain.rs).
 static const uint INSTANCE_RAYS_ONLY = 32;
+// In a mesh for rays alone, a vertex's wind word with this bit is the material its triangles take (src/mesh.rs).
+static const uint PROXY_MATERIAL = 0x80000000u;
 // Stood still long enough for local lights to keep its shadow (src/shadow_cache.rs).
 static const uint INSTANCE_STILL = 64;
 
@@ -639,6 +644,9 @@ struct Clouds
     float softness;
     // How much light lightning adds to the sky's this moment.
     float flash;
+    // The clouds all round the camera, as reflections take them (clouds.slang's cloudsToward), or NO_TEXTURE.
+    uint panorama;
+    uint3 pad;
 };
 
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.
@@ -846,7 +854,11 @@ struct ReflectionProbe
     float3 axisZ;
     uint flags;
     float3 halfSize;
-    float pad;
+    // The texture of its resolution's array of cubes.
+    uint cubes;
+    // Where it took its picture from.
+    float3 capture;
+    uint pad;
 };
 
 // This frame's reflection probes: how many shading reads (in buffers()->reflectionProbes), and their cubes, as
@@ -854,8 +866,7 @@ struct ReflectionProbe
 struct ReflectionProbes
 {
     uint count;
-    uint cubes;
-    uint2 pad;
+    uint3 pad;
 };
 
 struct Frame
@@ -1354,8 +1365,24 @@ struct BlockWorld
     // Its far tints' first point, as many points a side as its near ones, BLOCK_TINT_FAR times further apart, after
     // them; int.min for none.
     int2 farTintCorner;
-    uint2 pad;
+    // Where a world without end's rings fade into each other (voxear_terrain::blocks::RingFades, blockRingHidden in
+    // blocks.slang): the clock they fade by, its coarsest ring's level, each chunk slot's times its finer columns
+    // came and it went, and where its rings are round, from its corner, how far its own blocks reach and over how
+    // wide a band they fade; a reach of 0 for none.
+    float ringClock;
+    uint ringCoarsest;
+    float2* fades;
+    float2 ringAt;
+    float ringReach;
+    float ringBand;
+    // How far from the camera its grass takes the colour of the plants on it, in metres: from where they begin to
+    // fade, over how far (blockCover in blocks.slang).
+    float2 cover;
 };
+
+// How long a coarse column takes to fade into the finer ones over it, in seconds (voxear_terrain::blocks::
+// RING_FADE_SECONDS).
+static const float RING_FADE_SECONDS = 0.6;
 
 // How many blocks apart a world's tint points are (voxear_terrain::blocks::generate::tints::TINT_STEP).
 static const float BLOCK_TINT_STEP = 4.0;
@@ -1364,6 +1391,10 @@ static const float BLOCK_TINT_STEP = 4.0;
 // at most, after which the far ones lie.
 static const float BLOCK_TINT_FAR = 16.0;
 static const uint BLOCK_TINT_MOST = 65536;
+
+// The most side the plants covering a tint point show for each square metre of ground (voxear_terrain::blocks::
+// generate::tints::MOST_COVER).
+static const float BLOCK_MOST_COVER = 0.5;
 
 // A key of a block's motion: when, how far its moving parts are turned about their hinge (in radians) and moved
 // along it (in sixteenths of a block), and how the way on to the next key goes (0 linear, 1 smooth, 2 step).
@@ -1469,6 +1500,8 @@ static const uint TERRAIN_SURFACE_MIXED = 64;
 // A world of blocks' surface's tint (src/terrain.rs, SurfaceLook::tint): two bits from the eighth, 1 its biome's grass
 // tint and 2 its foliage tint (blockTint in blocks.slang).
 static const uint TERRAIN_SURFACE_TINT_SHIFT = 7;
+// A world of blocks' surface the plants on it colour far off, where they are not drawn (blockCovered in blocks.slang).
+static const uint TERRAIN_SURFACE_COVERED = 512;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

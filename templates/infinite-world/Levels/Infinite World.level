@@ -1,0 +1,7 @@
+format = 1
+
+[[scene]]
+scene = "Scenes/Sky.scene"
+
+[[scene]]
+scene = "Scenes/Infinite World.scene"

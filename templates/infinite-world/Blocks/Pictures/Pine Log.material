@@ -1,0 +1,4 @@
+color = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 1.0
+color_map = "c9dc1123f5c34a46b8a654f31a69ecf3"

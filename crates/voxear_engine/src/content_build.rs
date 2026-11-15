@@ -678,6 +678,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             if kind == AssetKind::Level && db.file(&probes).is_file() {
                 needs.companions.push(probes);
             }
+            // And its baked reverb probes, for its rooms to ring without tracing rays.
+            let reverb = crate::reverb_probes::reverb_file(path);
+            if kind == AssetKind::Level && db.file(&reverb).is_file() {
+                needs.companions.push(reverb);
+            }
             // A world of blocks' changes from its ground go with it.
             let changes = voxear_terrain::blocks::edits::blocks_file(path);
             if kind == AssetKind::BlockWorld && db.file(&changes).is_file() {

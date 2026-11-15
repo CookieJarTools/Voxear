@@ -47,6 +47,8 @@ pub struct BlockPanel {
     move_out: Option<NodeId>,
     /// Write Land into Generator, where the world lays land into its generator.
     write_land: Option<NodeId>,
+    /// Add Temple Dungeon, where the world's ground is generated.
+    dungeon: Option<NodeId>,
     biomes: Option<Biomes>,
     signature: u64,
 }
@@ -100,8 +102,17 @@ impl BlockPanel {
             ui.set_tooltip(button, tip, None);
             write_land = Some(button);
         }
+        let mut dungeon = None;
+        let generated = world.get::<BlockWorldAsset>(entity).is_some_and(|asset| asset.file.generate.is_some());
+        if state.tool == BlockTool::Settings && generated {
+            let button = ui.button(rows, "Add Temple Dungeon");
+            ui.add_class(button, "block-move-to-generator");
+            let tip = "Makes a temple dungeon's blocks and structure, and has the generator build it under the land";
+            ui.set_tooltip(button, tip, None);
+            dungeon = Some(button);
+        }
         let signature = signature(game, entity);
-        Self { tools, move_out, write_land, biomes: None, signature }
+        Self { tools, move_out, write_land, dungeon, biomes: None, signature }
     }
 
     /// The list of the world's biomes, under the rows made so far.
@@ -181,6 +192,15 @@ impl BlockPanel {
                 Ok(_) => true,
                 Err(error) => {
                     tracing::error!("Could not write the land into the generator: {error}");
+                    false
+                }
+            };
+        }
+        if self.dungeon.is_some_and(|button| ui.clicked(button)) {
+            return match crate::starter_dungeon::add(game, renderer, entity) {
+                Ok((changed, _)) => changed,
+                Err(error) => {
+                    tracing::error!("Could not make the temple dungeon: {error:#}");
                     false
                 }
             };

@@ -128,6 +128,8 @@ const fn maybe(name: &'static str, kind: ArgKind, about: &'static str) -> ArgInf
 pub const VIEWS: &[&str] = &["scene", "game", "editor"];
 /// The levels `console.read` keeps to.
 pub const LEVELS: &[&str] = &["info", "warning", "error"];
+/// The project's settings `project.set` changes, as `voxear.toml` names them.
+pub const PROJECT_KEYS: &[&str] = &["portals.view_distance", "quality.particles"];
 
 /// Every call the editor answers, easy ones first.
 pub const CALLS: &[CallInfo] = &[
@@ -458,6 +460,24 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ generator, nodes, comments }",
     },
     CallInfo {
+        name: "dungeon.starter",
+        about: "Makes the starter temple dungeon for a Block World, as the Inspector's Add Temple Dungeon does: its blocks with their pictures in a Dungeon folder beside the world's Blocks, and Structures/Temple Dungeon.structure listed under the world's generator. Nothing a project made already is written over.",
+        args: &[arg("obj", ArgKind::Obj, "The Block World.")],
+        changes: true,
+        returns: "{ structure, changed }",
+    },
+    CallInfo {
+        name: "dungeon.layouts",
+        about: "The dungeons a Block World's generator lays out near a point: each one's entrance (its kind, where it stands and the way it faces), its floors, its spaces (kind, floor, middle, size, upper level, depth under its floor, whether on the main path, how far along its floor), its ways (kind, main, the spaces it joins by their place in the list, its middle line) and its lights, all in the level's metres.",
+        args: &[
+            maybe("obj", ArgKind::Obj, "The Block World; every one when left out."),
+            maybe("near", ArgKind::Vector, "Where to look round, in metres; the editor's camera when left out."),
+            maybe("reach", ArgKind::Number, "How far round to look, in metres: 500 when left out."),
+        ],
+        changes: false,
+        returns: "{ dungeons: [{ world, structure, floors, entrance, spaces, ways, lights }] }",
+    },
+    CallInfo {
         name: "reflection_probe.capture",
         about: "Captures a Reflection Probe again, as its Capture button does: what it shows then stays until it is captured again or baked.",
         args: &[arg("obj", ArgKind::Obj, "An Obj with a Reflection Probe.")],
@@ -470,6 +490,24 @@ pub const CALLS: &[CallInfo] = &[
         args: &[],
         changes: true,
         returns: "{ probes, file, bytes }",
+    },
+    CallInfo {
+        name: "reverb_probes.bake",
+        about: "Bakes the open level's reverb probes, as Bake Reverb Probes does: every probe of every Reverb Probe's box is traced on the GPU, then how long sound rings at each is written beside the level as its .reverb file, which the game rings by when it does not trace rays itself. Answers once it is written.",
+        args: &[],
+        changes: true,
+        returns: "{ probes, inside, file, bytes }",
+    },
+    CallInfo {
+        name: "audio.rays",
+        about: "Ray-traced audio in the running game: whether it is on, its quality and its budget of GPU time a frame, as a script's Audio.RayTraced, RayQuality and RayBudget set them until play stops (a project's own are its voxear.toml's [audio] ray_traced, ray_quality and ray_budget, a level's its [audio]); and what it does now: whether it traces, its rays a frame, the pass's least GPU time over the last 60 frames, and how long the listener's room rings in each band.",
+        args: &[
+            maybe("on", ArgKind::Toggle, "Trace sound by rays."),
+            maybe("quality", ArgKind::Choice(&["low", "medium", "high"]), "How many rays at most."),
+            maybe("budget", ArgKind::Number, "The most GPU time a frame, in milliseconds."),
+        ],
+        changes: false,
+        returns: "{ on, quality, budget, tracing, rays, cost_ms, room: [low, middle, high] }",
     },
     CallInfo {
         name: "commands",
@@ -677,6 +715,42 @@ pub const CALLS: &[CallInfo] = &[
         args: &[],
         changes: false,
         returns: "{ project }",
+    },
+    CallInfo {
+        name: "world_quality.get",
+        about: "What making worlds of blocks spends now: its preset, threads, columns at once, megabytes uploaded a frame, view and far limits in metres, and near, far and plant details (how many times as far as a world says); whether this machine keeps its own; and the project's.",
+        args: &[],
+        changes: false,
+        returns: "{ quality, threads, columns, upload, view_distance, far_distance, near_detail, far_detail, plant_detail, machine, project }",
+    },
+    CallInfo {
+        name: "world_quality.set",
+        about: "Changes what making worlds of blocks spends, at once: a preset sets every number, and a number given after it makes it Custom. Written into this machine's Graphics.toml where it keeps its own, else into voxear.toml.",
+        args: &[
+            maybe("quality", ArgKind::Choice(&["low", "medium", "high", "ultra", "custom"]), ""),
+            maybe("threads", ArgKind::Whole, ""),
+            maybe("columns", ArgKind::Whole, "Chunk columns made at once."),
+            maybe("upload", ArgKind::Whole, "Megabytes of chunks to the GPU a frame."),
+            maybe("view_distance", ArgKind::Number, "The furthest a world's own chunks reach, in metres."),
+            maybe("far_distance", ArgKind::Number, "The furthest its coarser rings reach, in metres."),
+            maybe("near_detail", ArgKind::Number, "How many times as far as the world says its own chunks reach."),
+            maybe("far_detail", ArgKind::Number, "How many times as far as the world says its rings reach."),
+            maybe("plant_detail", ArgKind::Number, "How many times as far as each Foliage says plants are drawn."),
+            maybe(
+                "machine",
+                ArgKind::Toggle,
+                "True keeps it for this machine, beside the game's saves, in place of the project's; false forgets this machine's own and goes back to the project's.",
+            ),
+        ],
+        changes: true,
+        returns: "as world_quality.get",
+    },
+    CallInfo {
+        name: "project.set",
+        about: "Changes one of the project's settings in voxear.toml, as Project Settings does, and puts it into effect at once: `portals.view_distance` is how far off a Portal without its own still shows its far side, in metres; `quality.particles` the most simulated particles.",
+        args: &[arg("key", ArgKind::Choice(PROJECT_KEYS), ""), arg("value", ArgKind::Number, "")],
+        changes: true,
+        returns: "{ value }",
     },
     CallInfo {
         name: "docs.search",
@@ -887,6 +961,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Wheel
             | Part::PostVolume
             | Part::ReflectionProbe
+            | Part::ReverbProbe
             | Part::WindZone
             | Part::ParticleSystem
             | Part::ForceField

@@ -629,6 +629,35 @@ impl BoxModel {
         self.bones.iter().position(|bone| bone.name == name)
     }
 
+    /// The colour it shows on average, linear: its sculpted cubes' colours
+    /// and its other boxes' faces' pixels, each as much as it has of them,
+    /// what is clear left out. None for a model that shows nothing.
+    pub fn average_color(&self) -> Option<[f32; 3]> {
+        let (mut sum, mut count) = ([0.0f64; 3], 0u64);
+        let mut add = |rgba: [u8; 4]| {
+            if rgba[3] >= 128 {
+                for (part, total) in sum.iter_mut().enumerate() {
+                    *total += f64::from(crate::texture_codec::srgb_to_linear(f32::from(rgba[part]) / 255.0));
+                }
+                count += 1;
+            }
+        };
+        for model_box in self.bones.iter().flat_map(|bone| &bone.boxes) {
+            if let Some(voxels) = &model_box.voxels {
+                voxels.cells.iter().filter(|cell| **cell != 0).for_each(|&cell| add(self.voxel_color(cell)));
+                continue;
+            }
+            for [left, top, right, bottom] in Face::ALL.into_iter().filter_map(|face| model_box.face_rect(face)) {
+                let (x0, x1) = (left.min(right).max(0.0) as u32, (left.max(right) as u32).min(self.sheet.width));
+                let (y0, y1) = (top.min(bottom).max(0.0) as u32, (top.max(bottom) as u32).min(self.sheet.height));
+                for (x, y) in (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))) {
+                    add(self.sheet.get(x, y));
+                }
+            }
+        }
+        (count > 0).then(|| sum.map(|part| (part / count as f64) as f32))
+    }
+
     /// How many metres one of its pixels is.
     pub fn pixel_size(&self) -> f32 {
         1.0 / self.pixels_per_block.max(f32::EPSILON)
@@ -968,6 +997,24 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-4
+    }
+
+    #[test]
+    fn a_models_colour_is_its_cubes_and_faces_as_much_as_it_shows_each() {
+        // A sheet of plain red, and a box sculpted from cubes, three green and one blue.
+        let mut model = figure();
+        model.sheet = Sheet::filled(64, 64, [255, 0, 0, 255]);
+        assert!(model.average_color().unwrap()[0] > 0.99, "faces' pixels alone");
+        let body = model.find_bone("Body").unwrap();
+        model.palette = vec![[0, 255, 0, 255], [0, 0, 255, 255]];
+        model.bones = vec![model.bones[body].clone()];
+        model.bones[0].boxes.truncate(1);
+        model.bones[0].boxes[0].size = [2, 2, 1];
+        model.bones[0].boxes[0].voxels = Some(Voxels { cells: vec![1, 1, 1, 2] });
+        let [r, g, b] = model.average_color().unwrap();
+        assert!(r.abs() < 1e-4 && (g - 0.75).abs() < 1e-3 && (b - 0.25).abs() < 1e-3, "{:?}", [r, g, b]);
+        // Nothing to show, no colour.
+        assert_eq!(BoxModel::default().average_color(), None);
     }
 
     #[test]

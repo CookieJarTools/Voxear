@@ -102,7 +102,7 @@ manual/            the Voxear Manual: Markdown pages VoxDocs shows in every proj
 | Physics | **Jolt** (C++, MIT) behind a Rust API | It is the fastest and most robust open option (Horizon Forbidden West, Godot 4). It is wrapped so that it is not a black box to users. |
 | 2D physics | Box2D v3 (C, MIT) | The modern solver is fast and deterministic, and it pairs naturally with Jolt. |
 | UI | **Our own retained UI** on taffy, parley, swash and cssparser, rendered by our Vulkan renderer | See [UI](#ui-voxear-ui). |
-| Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. A GPU ray-traced path can come later. |
+| Audio | Rust mixer on cpal, with spatial acoustics from **Steam Audio** (Apache-2.0) | Steam Audio provides HRTF, occlusion, transmission, reflections and pathing around corners. Ray-traced audio traces sound on the GPU against the GI's scene instead. |
 | Mesh import | glTF 2.0, and FBX through **ufbx** (C, MIT) | Both become the same prepared model, so LODs, cooking and previews are shared. meshoptimizer handles meshlets, LOD and vertex cache optimisation. |
 
 ## Conventions
@@ -1058,8 +1058,13 @@ With any `softness`, cubes are mist: `cloudCubeAt` gives each cube a share of cl
 the walk takes out light by that share and the length of the ray inside the cube and goes on, and each cube is lit
 through, by the cubes between its middle and the sun, blended with the face's shade by the softness.
 
-The sky pass lays that picture over the sky it draws. Clouds are therefore behind everything drawn, and are not in
-reflections. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
+The sky pass lays that picture over the sky it draws, and shading lays it over what is drawn, as much of it as lies
+in front (`cloudsBefore`): `cloudSpan` finds where the pixel's ray goes into and comes out of the layer, as the march
+does, and the share of that stretch before the surface takes the same share of the picture's light and cover. Far
+ground beyond the layer, a peak rising into it, and the ground round a camera inside it or above it are seen through
+the clouds, with no depth read before shading. A third pass, **Cloud panorama**, marches them all round the camera
+into a 128×64 picture, across once round the horizon, a quarter of it a frame with 12 steps; `reflectedSky` lays it over the
+sky it gives reflections, reflection probes' captures and screen-space reflections' misses. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
 so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
 passes.
 
@@ -1268,6 +1273,20 @@ its mist then clearing over 0.4 s. Rays for the GI are made only of chunks round
 
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
+
+**Reflection probes** *(implemented)*. A Reflection Probe (`voxear_render::reflection_probes`) is a box, the Obj's
+unit cube, whose surfaces reflect a cube map taken from its middle or from its capture offset. A capture traces a ray
+through each texel of the six faces against the scene the GI's rays see, by ray queries or the software tracer, and
+lights each hit as the GI's rays do, with the shine of metals added from the probes, the GI and the sky as last
+captured (`ddgiShadeHit`). On the frame a probe is captured, the plants of any Foliage within 64 m of it are added
+to the traced instances, and the ray is checked against the flat tops of the sea and Pools (`probeCaptureWater`).
+Terrain's meshes for rays carry the material of the surface with the largest share at each point
+(`mesh::PROXY_MATERIAL`, in the vertex's wind word). The faces are averaged into mips, then each of six mips is
+filtered with GGX for its roughness. Each resolution (64 to 512) is one array of cubes; shading reads each probe's
+own, in order of importance and size, box-projected from its capture point, and takes what they leave from the GI's
+probes and then the sky. One probe is captured or loaded a frame; a probe captured once can be baked into a `.probes`
+file beside its level, which builds ship. A gradient sky's picture is what reflections and captures see of the sky,
+from a mip as blurred as the surface is rough, and what the GI's rays that miss take (`ddgiSky`).
 
 **Global illumination** comes in two forms:
 
@@ -3045,20 +3064,51 @@ from the Project into a Scene view or the Hierarchy makes an Obj named for it wi
   Audio triple-buffers between the simulating thread and the one reading, so only the audio thread reads it; plays
   the send through it into first-order Ambisonics, two seconds long; and decodes that to stereo, or binaurally with
   headphones on, as the listener faces. The convolution takes Freeverb's place, which fades as it comes in, and
-  fades itself out when reverb goes off. Echoes that will not start fall back to reverb times. Baked probes come
-  later.)*
+  fades itself out when reverb goes off. Echoes that will not start fall back to reverb times. Baked reverb probes
+  are below, with ray-traced audio.)*
 - **Pathing:** sound bends around corners and through doorways.
 
-**Ray-traced audio (optional setting).** A per-project and per-quality-tier switch traces sound on the GPU instead
-of Steam Audio's CPU ray tracer, through Steam Audio's custom scene callbacks in batches:
-- Rays run against the same acceleration structures as ray-traced GI and the lightmapper, with hardware ray queries
-  where available and the compute BVH elsewhere. Nothing extra has to be built or kept in sync.
-- Thousands of rays per source give real-time reflections, echo and reverb from the actual geometry. Opening a door
-  or collapsing a wall changes how a room sounds immediately, with no baked probes.
-- Each surface's acoustic material (absorption, scattering, transmission per frequency band) comes from its render
-  material, with an override.
-- When the switch is off, or the GPU cannot spare the time, the same sources fall back to baked reverb probes and
-  ray-cast occlusion, so games never depend on it.
+**Ray-traced audio (optional setting).** `[audio] ray_traced`, a level's own `[audio]` over it, or
+`Audio.RayTraced` traces sound on the GPU, against the scene the GI traces, rather than Steam Audio's CPU tracer
+against the colliders. *(Built.)*
+- **Why not Steam Audio's custom scene:** its custom-scene callbacks are called a batch of rays at a time and block
+  until answered, a bounce at a time; answered by a GPU a frame or two away, a room's 16 bounces would take a quarter
+  of a second each time. Its impulse responses (`IPLReflectionEffectIR`) are its own triple-buffered FIR objects,
+  which nothing outside can fill. So the GPU traces the rays and adds up the energy field itself, in Steam Audio's
+  own layout and by its own formulas (10 ms bins, three bands, first order; its diffuse and specular terms,
+  `irradianceMinDistance` of 1 m, its listener radius and surface offset), and the CPU fits the reverb times the way
+  Steam Audio's reverb estimator does (the energy decay curve weighted by air absorption, a line through -5 to
+  -25 dB).
+- **Renderer side** (`voxear_render::sound_rays`, `shaders/sound_rays.slang`, included by `ddgi.slang` so both its
+  builds, ray queries and `SOFTWARE_RAYS`, get it): `Renderer::trace_sound(Some(SoundRays))` before a frame;
+  the first camera's own view records "Sound rays" after the scene's BVH, building the scene for it when neither GI
+  nor reflections did. The request (listener, up to 64 sources, up to 9 spots, rays, bounces, 16 acoustic presets) is
+  written into a host-visible buffer per frame slot; results go to a `GpuToCpu` buffer, cleared by
+  `vkCmdFillBuffer` and read in `render()` once the slot's fence has passed (`Renderer::sound_heard`), two frames on.
+  Their addresses travel in `Push::textures`, cast to pointers in the shader, so `Buffers` and `GpuFrame` are
+  untouched. `soundOcclusionMain` is a workgroup a source, a thread a ray across a disc facing the listener, walking
+  up to six surfaces and multiplying the transmission of every other one (a wall's two faces are one wall);
+  `soundReverbMain` is 64 rays a workgroup, a row of workgroups a spot, its field added up in group-shared memory in
+  whole numbers (2^24 a unit) and flushed with one atomic per non-zero bin.
+- **Acoustic materials:** `MaterialDesc::acoustic` (from a material's `acoustic = "concrete"`) fills a spare word of
+  `GpuMaterial`; a block world's chunk proxies fill `GpuInstance::acoustic` (its former padding) with the material of
+  the surface most of the chunk's quads use, else Rock. A hit reads the instance's, then the material's, then guesses
+  Metal for metallic, Glass for glass, Generic otherwise. Cut-out and foliage hits are passed through.
+- **Engine side** (`voxear_engine::sound_tracing::SoundTracer`, kept in `GameAudio`): `update` notes the listener and
+  each 3D source with occlusion on (those following baked paths stay with Steam Audio) and gives back what the last
+  answer said; `Game::tick` then calls `GameAudio::trace_sound(renderer)`, which takes the answer and asks again. The
+  listener's fields are blended over frames (keeping 60 to 90%, by quality; started again after a 2 m move), and
+  every fourth frame the mixer gets `ReverbTimes` and up to six `EarlyReflection`s, the loudest arrivals of the first
+  80 ms with their side, which `reverb::EarlyEchoes` plays as panned, low-passed taps of the reverb send.
+  `VoiceParams::reverb_send` (Audio Source **Reverb send**) scales a voice's send.
+- **Budget:** the pass's GPU time is read from the frame graph's timings each frame; while the least of the last 60
+  is over `ray_budget` (0.3 ms by default) the listener's rays shrink by a fifth, and while under half of it they
+  grow by a tenth, up to the quality's 256, 1,024 or 4,096.
+- **Fallback, baked reverb probes** (`voxear_engine::reverb_probes`): a Reverb Probe component is an axis-aligned box
+  of probes `spacing` apart. The editor's bake hands every probe to the tracer as spots, nine a frame, 8,192 rays of
+  16 bounces each, and writes `Level.reverb` (`VXRV` v1: each box's lowest probe, spacing and counts, then three
+  `u16` milliseconds a probe, 0 for one inside something). With rays off, `GameAudio` rings the room by the probes
+  round the listener, trilinear over those that heard, and by Steam Audio's room outside every box.
 
 **Tools.** An audio debugger shows active voices, occlusion rays and paths in the viewport. *(Built so far: Audio
 Sources as speakers in the Scene view, lit while they play, and the Audio panel, which lists every voice the mixer
@@ -3693,11 +3743,15 @@ chunk column's ground is made and before its structures, a block of open air wit
 hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
 has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
 (`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
-each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
-every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
-in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
-chunks. The frame's chunks go up within `WorldBudget::upload` megabytes, shared by every world (16 on High), each
-pool grown once for all that are coming: each
+each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
+chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
+`RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
+900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same, the ray meshes
+made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
+too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
+room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose
+faces did not change costs physics and the renderer no walk over its chunks. The frame's chunks go up within
+`WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
 world too large to make again within a frame is made on other threads and shown as it was until then
@@ -3722,7 +3776,14 @@ again. From the third ring out (`stream::FAR_FROM`) a ring's columns come from t
 columns of runs made from the generator's heights, climate and sea, with no block's depth asked of its Volume, kept
 compressed under `.voxear/FarView`, and filled into chunks for the same meshing and drawing as the nearer rings.
 Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
-ring's block. Models of small coloured
+ring's block. Rings fade into each other round where the world is looked at from (`blocks::RingFades`): each ring is
+drawn whole out to as far as its window always reaches and fades out over its last column, the next ring kept
+showing under that band; and a coarse column whose finer columns all come after it fades out over
+`RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
+columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
+blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
+and a world drawn smooth draw their rings as before. Leaves past the sun's cascades take the share of sun a crown's
+leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the
@@ -3838,6 +3899,25 @@ the face's surface's material and discards under its cutoff inside `terrainShadi
 shaded pass both call, so the two agree. The shadow pass has a fragment stage of its own for it
 (`blockShadowFragment`), which returns at once for a face that is not cut out and else samples the same picture.
 
+**Dungeons.** A structure with a `[dungeon]` section (`voxear_terrain::blocks::dungeon`) is planned once for each
+site and kept, by a key of its settings, the generator, the world's corner and lowest block and the site
+(`plan::cached_layout`, a cell per key so threads asking at once plan it once); every chunk column it reaches then
+builds only its own part. Planning (`plan`) reads the land a tile of 4-block readings at a time as it asks (`Land`),
+sites the entrance from it (a rise of 12 blocks within 8 for a cliff gate, a 20 to 40 degree slope for a temple
+door, level ground for a sinkhole), lays each floor's graph (a fixed grammar per size: threshold, two ways round
+to a hall, two on to the end, loot off the side rooms, a shortcut home) turned the way the land is highest, pushes
+spaces apart where their heights meet, then solves one number: the first floor's level, the highest that leaves
+`cover` blocks of land over and round every space, every floor's levels fixed below it. Spaces that may be left out
+and would need the floor far deeper are dropped. Passages are routed on a 2-block grid round the spaces their
+heights meet, under-covered cells dearer, and stair along their middle lines in half blocks. Building (`build`)
+fills a grid of the columns and a margin of two: carving first (each space's air by its kind, its wall wandering
+by whole-number noise, vaulted or domed roofs), the walls dressed from the carved rock alone, then each space's
+built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statues, monoliths, obelisks, thrones,
+reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
+any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
+among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
+`vox editor call dungeon.layouts`.
+
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
 (blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared
@@ -3871,6 +3951,14 @@ stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the r
 top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
 plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
 plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
+
+Plants too small for a wood colour the ground instead where they are too far off to be drawn (`grow::Cover`): the
+engine takes each growing Foliage's colour from its box model and how much side it shows per square metre from its
+mesh's box and rule (`grown_plants::covers`), and each tint point keeps, in the fourth bytes of its two tints, the
+plants' colour and that amount where its rule grows them, the share of the point in their patches far off
+(`tints::cover_of`). The renderer flags the tops of the blocks they grow on (`TERRAIN_SURFACE_COVERED`) and lays the
+colour over them as the plants fade out, as much as they would hide seen from the camera: little from above, most
+along the ground (`blockCovered`).
 
 A rule may keep its plants near something (`grow::Near`). Near another Foliage's plants: the engine finds the
 world's other growing Foliages by the model each draws (`GrowData::near_plants` names models) and puts their rules in

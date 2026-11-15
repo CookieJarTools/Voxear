@@ -79,6 +79,7 @@ pub mod sea;
 mod seasons;
 mod shadow_cache;
 mod shadows;
+mod sound_rays;
 mod texture_codec;
 mod ui_pass;
 mod ui_panels;
@@ -141,7 +142,11 @@ pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, Ma
 pub use looks::{LOOK_VALUES, Look, LookName, LookShader, SunLook, WaterLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
+pub use reflection_probes::{PROBE_SIZE, ProbePixels, ProbeResolution, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
+pub use sound_rays::{
+    MAX_SOUND_RAYS, MAX_SOUND_SOURCES, MAX_SOUND_SPOTS, MAX_SOURCE_RAYS, SOUND_FIELD, SOUND_FIXED, SOUND_MATERIALS,
+    SoundHeard, SoundMaterial, SoundRays, SoundSource,
+};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
@@ -502,6 +507,7 @@ pub struct Renderer {
     frame_debugger: frame_debugger::FrameDebugger,
     captures: capture::Captures,
     reflection_probes: reflection_probes::ReflectionProbes,
+    sound_rays: sound_rays::SoundRayWork,
 }
 
 impl Renderer {
@@ -612,6 +618,7 @@ impl Renderer {
             frame_debugger: Default::default(),
             captures: Default::default(),
             reflection_probes: Default::default(),
+            sound_rays: Default::default(),
         })
     }
 
@@ -623,8 +630,8 @@ impl Renderer {
     /// GPU for a bake to save: none until it has been captured. Waits for
     /// the GPU.
     pub fn reflection_probe_pixels(&self, entity: voxear_ecs::Entity) -> Result<Option<ProbePixels>> {
-        let Some(slot) = self.reflection_probes.slot_of(entity) else { return Ok(None) };
-        let Some(image) = self.graph.kept_image("reflection probes") else { return Ok(None) };
+        let Some((resolution, slot)) = self.reflection_probes.slot_of(entity) else { return Ok(None) };
+        let Some(image) = self.graph.kept_image(&reflection_probes::array_name(resolution)) else { return Ok(None) };
         reflection_probes::read_back(&self.gpu, image, slot).map(Some)
     }
 
@@ -633,6 +640,21 @@ impl Renderer {
     /// asks for a capture knows it has been taken once this has caught up.
     pub fn reflection_probe_captured(&self, entity: voxear_ecs::Entity) -> Option<u32> {
         self.reflection_probes.captured(entity)
+    }
+
+    /// Rays for the game's sound to trace in the next frame, against the
+    /// scene the GI traces, in place of any asked for before and not yet
+    /// drawn; `None` for none. What they find comes back from
+    /// [`sound_heard`](Self::sound_heard) once the GPU has finished that
+    /// frame. Only the first view traces them, and only a frame with a
+    /// view draws them.
+    pub fn trace_sound(&mut self, rays: Option<SoundRays>) {
+        self.sound_rays.ask(rays);
+    }
+
+    /// What the sound rays of a finished frame found, the latest, once.
+    pub fn sound_heard(&mut self) -> Option<SoundHeard> {
+        self.sound_rays.take_heard()
     }
 
     /// GPU milliseconds per pass from the latest completed frame.
@@ -904,6 +926,15 @@ impl Renderer {
     /// in the picture rather than reading the zeros fresh memory often holds.
     pub fn fill_new_images_with_nan(&mut self, fill: bool) {
         self.graph.fill_new_with_nan = fill;
+    }
+
+    /// How many pictures the renderer keeps from frame to frame, and how many
+    /// views through Portals: for tests, to see what a far side holds.
+    pub fn kept(&self) -> (usize, usize) {
+        fn count(children: &[PortalChild]) -> usize {
+            children.iter().map(|child| 1 + count(&child.view.portals)).sum()
+        }
+        (self.graph.kept_images(), self.views.iter().map(|view| count(&view.portals)).sum())
     }
 
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
@@ -1376,6 +1407,7 @@ impl Renderer {
         // Every posed model's skinned parts, for all the views.
         self.skinning.prepare(&self.gpu, assets, world, self.frame_index, frame.slot)?;
         self.captures.finish(&self.gpu, frame.slot);
+        self.sound_rays.finish(frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let first = &self.views[0];
         let counters = bytemuck::cast_slice(&first.buffers[frame.slot].stats_readback.read()[..stat::COUNT * 4]);
@@ -1398,10 +1430,18 @@ impl Renderer {
         self.last_time = Some(time);
         let frame_index = self.frame_index;
         self.frame_index += 1;
+        // The views through Portals no longer seen for a while let what they hold go.
+        for (index, view) in self.views.iter_mut().enumerate() {
+            let root = if index == 0 { String::new() } else { format!("view {index} ") };
+            let services = (&self.gpu, &mut self.graph, &mut self.bindless, &mut self.frames);
+            free_portal_views(&mut view.portals, services, (&root, &root), frame_index);
+        }
         // Every terrain's tiles that changed, staged to copy in before any view draws them.
         let assets = self.assets.as_mut().expect("assets live until drop");
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
-        self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
+        // Block worlds make their chunks' meshes for rays nearest the first view's camera first, as it was last frame.
+        let camera = self.views.first().and_then(|view| view.prev_camera).map(|(at, _)| at);
+        self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, (frame_index, camera))?;
         // Every simulated particle's step, for all the views.
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
@@ -1430,6 +1470,7 @@ impl Renderer {
             frame_debugger,
             captures,
             reflection_probes,
+            sound_rays,
             clear,
             mesh_shaders,
             software_rays,
@@ -1455,6 +1496,8 @@ impl Renderer {
         // The reflection probes every view shades with, and the one the first view captures or loads.
         let probes = reflection_probes.prepare(&mut fg, (gpu, bindless), world, (time, frame_index, frame.slot))?;
         let mut probe_job_done = false;
+        let sound = sound_rays.prepare(gpu, frame.slot)?;
+        let mut sound_done = false;
         let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
         let (panel_textures, (panel_quads, panel_values)) =
             ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, (&ui.quads, &ui.values), (0, 0))?;
@@ -1535,6 +1578,7 @@ impl Renderer {
                 terrains: terrain_draws.clone(),
                 blocks: block_draws.clone(),
                 probes: probes.map(|probes| reflection_probes::ProbeFrame { job: probes.job.filter(|_| !probe_job_done), ..probes }),
+                sound: sound.filter(|_| !sound_done),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
@@ -1542,6 +1586,7 @@ impl Renderer {
                 backdrops[at] = recorded.backdrop;
             }
             probe_job_done |= recorded.probe_job_done;
+            sound_done |= recorded.sound_done;
             for (entity, size) in recorded.panel_sizes {
                 ui_panels.saw(entity, size);
             }
@@ -1555,6 +1600,9 @@ impl Renderer {
         }
         if probe_job_done {
             reflection_probes.take_job(world, time);
+        }
+        if sound_done {
+            sound_rays.recorded(frame.slot);
         }
         // An output no view drew into is cleared for its UI.
         for (&image, cleared) in images.iter().zip(&cleared) {
@@ -1821,6 +1869,7 @@ impl Drop for Renderer {
             view.retire(&mut self.frames);
         }
         let baked = self.impostor_bakes.take_buffers().into_iter().chain(self.maps.take_buffers());
+        let baked = baked.chain(self.sound_rays.take_buffers());
         for buffer in self.previews.take_buffers().into_iter().chain(self.captures.take_buffers()).chain(baked) {
             self.frames.retire(Retired::Buffer(buffer));
         }
@@ -2022,6 +2071,8 @@ struct ViewSetup {
     /// This frame's reflection probes, and the capture or load the first
     /// camera's own view records, until one has.
     probes: Option<reflection_probes::ProbeFrame>,
+    /// This frame's sound rays, which the first camera's own view records.
+    sound: Option<sound_rays::SoundPass>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2034,6 +2085,8 @@ struct ViewRecorded {
     panel_sizes: Vec<(voxear_ecs::Entity, [f32; 2])>,
     /// It recorded this frame's reflection probe capture or load.
     probe_job_done: bool,
+    /// It recorded this frame's sound rays.
+    sound_done: bool,
     /// The Portals a view through a Portal sees in turn, for the view it
     /// is seen in to draw the far sides of.
     sees: Option<Sees>,
@@ -2203,7 +2256,7 @@ impl View {
     fn trace_scene(
         hierarchy: &mut Option<(Buffer, Buffer)>,
         (gpu, assets): (&Gpu, &Assets),
-        instances: &[gpu::GpuInstance],
+        (instances, ids): (&[gpu::GpuInstance], &[u32]),
         slot: usize,
     ) -> Result<(u64, u64)> {
         use voxear_core::math::{Mat4, Vec3};
@@ -2216,9 +2269,9 @@ impl View {
                 gpu.create_buffer(&format!("scene instances {slot}"), instances_size, usage, MemoryLocation::CpuToGpu)?,
             ));
         }
-        let traced: Vec<_> = instances
+        let traced: Vec<_> = ids
             .iter()
-            .enumerate()
+            .map(|&id| (id as usize, &instances[id as usize]))
             .filter(|(_, instance)| instance.flags & gpu::INSTANCE_IMPOSTOR == 0)
             .filter_map(|(id, instance)| {
                 let (low, high) = assets.mesh_bounds(MeshHandle(instance.mesh))?;
@@ -2252,13 +2305,13 @@ impl View {
 
     /// The scene's slot in the bindless set's `scenes` for frame slot `slot`,
     /// its top level built from this frame's instances by a pass recorded
-    /// into `fg`: each instance with a bottom level, its number its place in
-    /// the instance list. `None` without ray tracing.
+    /// into `fg`: each of `ids`' instances with a bottom level, its number
+    /// its place in the instance list. `None` without ray tracing.
     fn build_scene(
         (top_level, built, number): (&mut Option<TopLevel>, &mut (u64, Vec<voxear_rhi::Instance>), usize),
         fg: &mut FrameGraph<'_>,
         (gpu, bindless, assets): (&Gpu, &Bindless, &Assets),
-        instances: &[gpu::GpuInstance],
+        (instances, ids): (&[gpu::GpuInstance], &[u32]),
         slot: usize,
     ) -> Result<Option<u32>> {
         if gpu.acceleration_structure.is_none() {
@@ -2274,9 +2327,10 @@ impl View {
             *top_level = Some(level);
         }
         let level = top_level.as_mut().expect("made above");
-        let placed: Vec<voxear_rhi::Instance> = instances
+        let placed: Vec<voxear_rhi::Instance> = ids
             .iter()
-            .enumerate()
+            .map(|&id| (id as usize, &instances[id as usize]))
+            .filter(|(_, instance)| instance.flags & gpu::INSTANCE_IMPOSTOR == 0)
             .filter_map(|(id, instance)| {
                 let mesh = assets.bottom_level(MeshHandle(instance.mesh))?;
                 let m = instance.model;
@@ -2448,7 +2502,7 @@ impl View {
     /// is marked new there.
     fn track_motion(&mut self, extracted: &mut scene::ExtractedFrame) {
         for (index, (instance, owner)) in extracted.instances.iter_mut().zip(&extracted.entities).enumerate() {
-            if let Some(previous) = self.prev_models.get(owner).filter(|_| owner.plant.is_none()) {
+            if let Some(previous) = owner.plant.is_none().then(|| self.prev_models.get(owner)).flatten() {
                 instance.prev_model = *previous;
             }
             if self.prev_entities.get(index) != Some(owner) {
@@ -2542,7 +2596,11 @@ impl View {
             // The plants round the camera where the world has it, moved into the view's own space.
             let first = extracted.instances.len();
             let seen_from = camera + offset;
-            self.foliage.gather(world, seen_from, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+            // The view's frustum moved out of its own space into the world's, where the plants are.
+            let moved = |[x, y, z, d]: [f32; 4]| [x, y, z, d - voxear_core::math::Vec3::new(x, y, z).dot(offset)];
+            let planes = extracted.frame.planes.map(moved);
+            let sphere = |mesh| assets.mesh_sphere(mesh);
+            self.foliage.gather(world, seen_from, &planes, &mut extracted, &sphere, &assets.impostors);
             if portal.is_some() {
                 for plant in &mut extracted.instances[first..] {
                     scene::rebase(&mut plant.model, offset);
@@ -2559,8 +2617,9 @@ impl View {
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
-        for (instance, owner) in extracted.instances.iter_mut().zip(&extracted.entities) {
-            // Drawn again on a Portal's far side, it is posed as it is on the near one.
+        // Drawn again on a Portal's far side, it is posed as it is on the near one. A Foliage's plants never are.
+        let objs = extracted.instances.iter_mut().zip(&extracted.entities).filter(|(_, owner)| owner.plant.is_none());
+        for (instance, owner) in objs.filter(|_| !setup.posed.is_empty()) {
             if let Some(posed) = setup.posed.get(&scene::Owner { far_side: false, ..*owner }) {
                 posed.apply(instance);
             }
@@ -2636,7 +2695,7 @@ impl View {
             &setup.blocks,
             &extracted,
             &buffers.blocks,
-            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows),
+            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows, portal.is_none()),
             &lamps,
         );
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
@@ -2744,9 +2803,24 @@ impl View {
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
         // Plants of a Foliage come after the Objs; rays leave them out, as thousands of small moving meshes cost far
-        // more to trace than they change the bounced light or a reflection.
+        // more to trace than they change the bounced light or a reflection. A frame that captures a reflection
+        // probe takes those round it as well, so a probe in a garden shows its hedges; the frame's other rays see
+        // them too, for that one frame, which the GI's slow blend hides.
         let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
-        let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
+        let objs = objs.unwrap_or(opaque_count);
+        let capture_point = setup
+            .probes
+            .filter(|_| self.number == 0 && portal.is_none() && !wireframe)
+            .and_then(|probes| probes.job)
+            .and_then(|job| match job.kind {
+                reflection_probes::JobKind::Capture { point } => Some(voxear_core::math::Vec3::from(point)),
+                reflection_probes::JobKind::Load { .. } => None,
+            });
+        let mut traced_ids: Vec<u32> = (0..objs as u32).collect();
+        if let Some(point) = capture_point {
+            traced_ids.extend(reflection_probes::plants_near(&extracted.instances[objs..opaque_count], point, objs as u32));
+        }
+        let traced = (&extracted.instances[..], &traced_ids[..]);
         // Whether reflections trace the scene's triangles, by the GPU's ray queries, rather than the screen.
         let mut traced_reflections = false;
         // How the scene is traced this frame, if it is: in software (true) or by the GPU's rays.
@@ -2844,6 +2918,37 @@ impl View {
             None => None,
         };
         let probe_job_done = probe_job.is_some();
+        // The first camera's own view traces the frame's sound rays, through the scene its GI or reflections
+        // trace, or one built for them.
+        let sound_job = setup.sound.filter(|_| self.number == 0 && portal.is_none() && !wireframe);
+        let sound_job = match sound_job {
+            Some(pass) => {
+                if traced_by.is_none() {
+                    if setup.software_rays || pipelines.sound_occlusion.is_none() {
+                        let hierarchy = &mut self.scene_hierarchies[slot];
+                        scene_hierarchy = Self::trace_scene(hierarchy, (gpu, assets), traced, slot)?;
+                        traced_by = Some(true);
+                    } else {
+                        let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
+                        if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                            frame_data.ddgi.scene = scene;
+                            traced_by = Some(false);
+                        }
+                    }
+                }
+                let traced = match (traced_by, pipelines.sound_occlusion, pipelines.sound_reverb) {
+                    (Some(false), Some(occlusion), Some(reverb)) => Some(sound_rays::SoundPipelines { occlusion, reverb }),
+                    (Some(true), ..) => Some(sound_rays::SoundPipelines {
+                        occlusion: pipelines.sound_occlusion_software,
+                        reverb: pipelines.sound_reverb_software,
+                    }),
+                    _ => None,
+                };
+                traced.map(|traced| (pass, traced))
+            }
+            None => None,
+        };
+        let sound_done = sound_job.is_some();
         let panes = match wireframe || portal.is_some() {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
@@ -2934,8 +3039,11 @@ impl View {
                 // Through a Portal at half the size again: its far side shows in part of the picture.
                 let shrink = if portal.is_some() { 4 } else { 2 };
                 let mut images = clouds::CloudImages::new(fg, (gpu, bindless), (extent, shrink), history)?;
-                // Through a Portal, only the part of the sky its opening shows.
+                // Through a Portal, only the part of the sky its opening shows, and the clouds' panorama is left out.
                 images.within = portal.map(|pass| pass.rect);
+                if portal.is_some() {
+                    images.panorama = None;
+                }
                 Some(images)
             }
             false => None,
@@ -2956,6 +3064,7 @@ impl View {
             seen.drift = [0, 1].map(|axis| (self.cloud_drift[axis] - middle[axis] as f64) as f32);
             seen.view = fg.texture(images.current).0;
             seen.shadow_map = fg.texture(images.shadows).0;
+            seen.panorama = images.panorama.map_or(NO_TEXTURE, |[_, current]| fg.texture(current).0);
             seen.noise = assets.smoke_noise.0;
             seen.shadow_reach = clouds::SHADOW_REACH;
             seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]], seen.drift);
@@ -3268,6 +3377,7 @@ impl View {
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
             probe_job,
+            sound_job,
         };
         // A camera's own view draws the far sides of the Portals it sees once its own surfaces are in, and those
         // seen through them after each; a view through a Portal leaves its own to the view it is seen in.
@@ -3294,7 +3404,7 @@ impl View {
             return Err(error);
         }
         if portal.is_some() {
-            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done });
+            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees, probe_job_done, sound_done });
         }
         let post = post_passes::PostInput {
             pipelines: *pipelines,
@@ -3351,7 +3461,7 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done })
+        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None, probe_job_done, sound_done })
     }
 }
 
@@ -3403,7 +3513,10 @@ fn draw_portals(
                         at
                     }
                     None => {
-                        let number = PORTAL_VIEW_NUMBERS * level as usize + children.len();
+                        // The first number no view at this level has, as one let go leaves a gap.
+                        let base = PORTAL_VIEW_NUMBERS * level as usize;
+                        let taken = |number: usize| children.iter().any(|child| child.view.number == number);
+                        let number = (base..).find(|&number| !taken(number)).expect("numbers without end");
                         let view = Box::new(View::new(gpu, number)?);
                         children.push(PortalChild { portal: seen.entity, view, used: 0 });
                         children.len() - 1
@@ -3496,6 +3609,45 @@ fn draw_portals(
 /// How many frames a view through a Portal is kept for a Portal no longer
 /// seen, before another Portal takes it.
 const PORTAL_VIEW_KEPT: u64 = 120;
+
+/// How many frames a view through a Portal is kept for a Portal no longer
+/// seen at all, before it lets its buffers and pictures go: a few seconds,
+/// so a camera that looks away and back draws on at once, and one that has
+/// walked off holds nothing for it.
+const PORTAL_VIEW_FREED: u64 = 600;
+
+/// Lets go of each view through a Portal in `children` not drawn for
+/// [`PORTAL_VIEW_FREED`] frames, with its pictures, named after `outer`,
+/// and the views through Portals it saw in turn. Once a camera's own view,
+/// whose pictures are named after `root`, keeps none, the depths its views
+/// through Portals shared go too.
+fn free_portal_views(
+    children: &mut Vec<PortalChild>,
+    (gpu, graph, bindless, frames): (&Gpu, &mut RenderGraph, &mut Bindless, &mut Frames),
+    (root, outer): (&str, &str),
+    frame: u64,
+) {
+    if children.is_empty() {
+        return;
+    }
+    let mut kept = Vec::with_capacity(children.len());
+    for mut child in children.drain(..) {
+        let named = format!("{outer}portal view {} ", child.view.number);
+        if child.used + PORTAL_VIEW_FREED < frame {
+            // Not drawn for hundreds of frames, so no frame in flight uses its pictures.
+            graph.release_named(gpu, bindless, |name| name.starts_with(&named));
+            child.view.retire(frames);
+        } else {
+            free_portal_views(&mut child.view.portals, (gpu, graph, bindless, frames), (root, &named), frame);
+            kept.push(child);
+        }
+    }
+    if kept.is_empty() && root == outer {
+        let levels = format!("{root}portal level ");
+        graph.release_named(gpu, bindless, |name| name.starts_with(&levels));
+    }
+    *children = kept;
+}
 
 /// Where the numbers of each level's views through Portals start, as
 /// `View::number`: past any camera's own.

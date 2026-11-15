@@ -39,6 +39,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Generator | The `.worldgen` its ground comes from |
 | Offset | Where its corner is in the generator's world, in metres |
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
+| Floor | Whether its lowest blocks are a [[Block Worlds#The floor|floor]] nothing digs through or falls past, and of which **Floor block**, how many **Floor depth** deep. On, two deep of the base block, unless you change it |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there; and over 0, a [[Caves|Cave Network]] of great halls joined by wide tunnels further down, with ways up and mouths in the hillsides |
 | Rivers | Whether rivers, lakes and waterfalls run down the ground, where its generator makes no water of its own, as a generator written before generators had rivers does. On for ground newly generated; a [[Generator Nodes#Rivers|Rivers]] node over the generator's ground |
@@ -86,6 +87,14 @@ Water lies on whole blocks: there are no slabs under a river, a lake or the sea,
 Nothing limits how high a generator's ground stands or how far down **Lowest block** goes: mountains and tablelands hundreds of blocks high, with rock hundreds of blocks deep under them for caves in many layers. Set Lowest block as far under the world's corner as the deepest cave you want, and a little more.
 
 Depth costs little. Rock that nothing is hollowed out of is kept as whole chunks of one block, which are not made a block at a time, take almost no memory and are never drawn. A Cave Network, Arches and Raised Land say how high and how low they reach over each column, so only the cells between are asked about. A chunk column of plain ground takes about 3 ms at 256 blocks tall and 4 ms at 1024; one over three layers of caves about 28 ms and 39 ms. Tunnels, Chambers and Noise 3D can hollow rock at any depth, so with those every block down to Lowest block is asked about: keep such a world shallower.
+
+### The floor
+
+A generated world's lowest blocks are its floor: from **Lowest block** up, as many as **Floor depth** says, two by default, of the **Floor block**, or the base block where it names none. Nothing changes them: not the brush, not a script's `Blocks.Set`, `Blocks.Fill` or `Blocks.Break`, not mining or a blast. So nobody digs down into the void or falls past the bottom of the world.
+
+The floor is laid last, over whatever the ground put there. A cave, a basin, a canyon or a sea whose bed reaches down to it stops on it, and nothing the generator builds is built into it. Far off, the far view's coarser blocks have the floor too. Ground that would sink under the floor, as a deep basin or sea floor under a shallow Lowest block does, has the floor block for its bed there, so set Lowest block deeper than the deepest ground you want.
+
+Turn **Floor** off for a world that should open onto nothing underneath, such as islands floating in the sky. A world made before worlds had floors has one, on, at its own Lowest block.
 
 ### Deep ground
 
@@ -174,37 +183,69 @@ What you build is kept as it goes out of reach and made again as it comes back, 
 
 With the [[Floating Origin]] switched on, positions stay exact however far the camera goes: the world's middle moves along with it, and the chunks already made stay as they were.
 
-### On slow machines
+### Quality and detail
 
-How much making worlds without end may spend is the project's, in **Project Settings ▸ World ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**.
+How much making worlds without end may spend, and how far they are drawn, is set in **Project Settings ▸ World ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**. A slow machine draws less; a fast one can draw a world further than it says, for a better view.
 
 | Setting | What it does |
 | --- | --- |
 | Quality | Low, Medium, High or Ultra; Custom once a number is changed |
+| This machine | Keeps these settings for this machine only, beside the game's saves, and leaves the project's as they are |
 | Threads | How many threads make terrain at once, heightmap tiles too |
 | Columns at once | How many columns of chunks are made at once, the nearest first |
 | Upload a frame | How many megabytes of chunks go to the GPU a frame: a world with more to show comes over several frames, shown as it was until then |
-| View distance | How far a world's own blocks reach, in metres, at most |
-| Far distance | How far its coarser blocks reach, in metres, at most |
+| View distance | The furthest a world's own blocks reach, in metres, whatever its near detail |
+| Far distance | The furthest its coarser blocks reach, in metres, whatever its far detail |
+| Near detail | How many times as far as the world's own View distance its blocks reach |
+| Far detail | How many times as far as the world's own Far distance its coarser blocks reach |
+| Plant detail | How many times as far as each Foliage's Draw distance its plants are drawn, the woods they show as far off starting that much further out. Under 0.75 a world's trees and towns of blocks are built into one coarser ring fewer, under 0.5 two fewer |
 
 | | Low | Medium | High | Ultra |
 | --- | --- | --- | --- | --- |
 | Threads | 2 | 4 | 8 | 16 |
 | Columns at once | 2 | 8 | 24 | 48 |
 | Upload a frame | 4 MB | 8 MB | 16 MB | 32 MB |
-| View distance | 64 m | 128 m | 192 m | 256 m |
-| Far distance | 1 km | 4 km | 8 km | 16 km |
+| View distance | 64 m | 128 m | 192 m | 512 m |
+| Far distance | 1 km | 4 km | 8 km | 32 km |
+| Near detail | ×0.5 | ×0.75 | ×1 | ×1.5 |
+| Far detail | ×0.5 | ×0.75 | ×1 | ×2 |
+| Plant detail | ×0.5 | ×0.75 | ×1 | ×1.5 |
 
-A project starts on High. A world is drawn as far as its own View distance and Far distance say, and no further than these: on High, a world of 128 m and 1 km is drawn just as it says, and on Low only to 64 m and 1 km. A machine never uses more threads than one fewer than its cores, whatever the setting says.
+A project starts on High, which draws a world as far as it says, up to 192 m of its own blocks and 8 km of rings. A world of 256 m and 16 km is drawn to 192 m and 8 km on High, to 384 m and 32 km on Ultra, and to 64 m and 1 km on Low. However far it is drawn, every ring is as many columns across as the world's own blocks, each twice as large as the one inside it, so a world drawn further has wider rings, or a ring more round them, never a gap or a seam. A machine never uses more threads than one fewer than its cores, whatever the setting says.
 
-A change takes hold at once, even while a world is being made round the camera, and nothing already made is made again. From a script:
+What each preset costs on an RTX 3070 at 1280×720, looking over the GrownPlants sample's endless world (256 m and 16 km) from 220 m up, once every chunk round the camera is made: the GPU frame is the least of 60, and memory is the GPU's buffers for blocks and the engine's heap, most of it the world's blocks.
+
+| | Low | Medium | High | Ultra |
+| --- | --- | --- | --- | --- |
+| Drawn to | 64 m, 1 km | 128 m, 4 km | 192 m, 8 km | 384 m, 32 km |
+| GPU frame | 3.3 ms | 3.5 ms | 4.1 ms | 6.1 ms |
+| Blocks' triangles | 0.12 million | 0.38 million | 0.93 million | 3.2 million |
+| Blocks on the GPU | 25 MB | 41 MB | 73 MB | 137 MB |
+| Heap | 0.18 GB | 0.32 GB | 0.49 GB | 1.4 GB |
+
+Ultra makes about four times as many chunks as High, so a world takes about three times as long to fill in round the camera when it starts or the camera jumps.
+
+A change takes hold at once, even while a world is being made round the camera, and nothing already made is made again. From a script, a game's options menu sets it, and keeps the player's choice for their machine:
 
 ```csharp
-World.Quality = WorldQuality.Low;
-World.ViewDistance = 96f;
+World.Quality = WorldQuality.Ultra;
+World.SaveQuality();
 ```
 
-`World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance` and `World.FarDistance` read and set the numbers, and setting one makes `World.Quality` Custom. What a script sets is not written to the project: keep the player's choice with the game's own settings, and set it again as the game starts.
+`World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance`, `World.FarDistance`, `World.NearDetail`, `World.FarDetail` and `World.PlantDetail` read and set the numbers, and setting one makes `World.Quality` Custom:
+
+```csharp
+World.NearDetail = 1.25f;
+World.PlantDetail = 2f;
+World.SaveQuality();
+```
+
+What a script sets is not written to the project. `World.SaveQuality()` keeps it for this machine, in `Graphics.toml` beside the game's saves, and the game starts with it from then on, in the editor too; `World.ResetQuality()` forgets it and goes back to the project's at once, and `World.QualitySaved` says whether this machine keeps its own. A tool reaches the same settings with `vox editor call world_quality.get` and `world_quality.set`, as the MCP server does:
+
+```
+vox editor call world_quality.set quality=ultra plant_detail=2
+vox editor call world_quality.set machine=true quality=low
+```
 
 ## The blocks a world holds
 
@@ -414,7 +455,7 @@ Plants grow under leaves: a tree of blocks has grass and flowers on the ground b
 
 Their logs are [[Blocks#Logs|logs]]: each trunk is whole logs at its foot, thinning to posts towards its top, and its branches are thin logs reaching out to its leaves. Each tree also has a [[Blocks#Saplings|sapling]], and an item in the project's **Items** folder for its log and one for its sapling: a felled log drops its item, and a sapling item put down or dropped takes root.
 
-Trees of blocks stand on the world's own blocks, out to its **View distance**, and go on into the far view: out to the third ring past it each is the same tree in the ring's larger blocks, and beyond that each kind is a wood of its own leaves, keeping to its structure's biomes, so a grove of blossom is pink far off and a wood of pines dark. The starter Tree, Birch and Pine are models, drawn far and shown as woods of their far block beyond: use either, or both.
+Trees of blocks stand on the world's own blocks, out to its **View distance**, and go on into the far view: out to the third ring past it each is the same tree in the ring's larger blocks, standing on that ring's own ground, so none hangs over a ridge or a saddle the coarser blocks round off, and beyond that each kind is a wood of its own leaves, keeping to its structure's biomes, so a grove of blossom is pink far off and a wood of pines dark. Far off as near, they keep off the beach and away from rivers and lakes, unless their structure grows by the water, and stand on no lone spire's top; no plant grown far off stands in a river or a lake. The starter Tree, Birch and Pine are models, drawn far and shown as woods of their far block beyond: use either, or both.
 
 The starter trees stand on trunks long enough for a camera a few metres behind and over a player under them to see past their leaves: an oak's and a birch's lowest leaves are four blocks up or more, a pine's skirt two.
 
@@ -497,6 +538,7 @@ Blocks.Break(impact, 2f);
 | `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
 | `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is. A [[Blocks#Blocks of parts|block of parts]] is met where its parts are: a slab lying low on its top, half a block down |
 | `Blocks.Set(position, block)` | Sets one block |
+| `Blocks.FloorHeight(position)` | How high the top of a generated world's [[Block Worlds#The floor|floor]] stands, in metres: nothing changes a block there or under it. NaN where no world has one |
 | `Blocks.Fill(from, to, block)` | Sets every block in a box |
 | `Blocks.Ball(middle, radius, block)` | Sets every block in a ball |
 | `Blocks.Break(middle, radius)` | Takes away every block in a ball |

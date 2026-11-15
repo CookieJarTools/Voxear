@@ -618,3 +618,77 @@ fn a_tool_adds_changes_and_takes_out_a_graphs_comments_and_a_world_without_land_
     let error = refused.expect_err("nothing to write");
     assert!(error.to_string().contains("not written"), "{error}");
 }
+
+#[test]
+fn a_tool_reads_and_sets_the_world_quality_by_preset_number_and_for_this_machine() {
+    use voxear_terrain::{MachineBudget, WorldBudget, WorldQuality};
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let now = done(&mut editor, &mut renderer, "world_quality.get", json!({}));
+    assert_eq!((now["quality"].as_str(), now["machine"].as_bool()), (Some("high"), Some(false)), "{now}");
+    // A preset, then a detail after it: Custom, written into voxear.toml and taken up at once.
+    let set = done(&mut editor, &mut renderer, "world_quality.set", json!({ "quality": "ultra", "plant_detail": 2.0 }));
+    assert_eq!(
+        (set["quality"].as_str(), set["near_detail"].as_f64(), set["plant_detail"].as_f64()),
+        (Some("custom"), Some(1.5), Some(2.0))
+    );
+    let ultra = WorldQuality::Ultra.budget().unwrap();
+    let custom = WorldBudget { quality: WorldQuality::Custom, plant_detail: 2.0, ..ultra };
+    assert_eq!(WorldBudget::of(&editor.game.engine.world), custom);
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, custom, "voxear.toml has it");
+    // For this machine: its own beside the saves, the project's left as it is.
+    let saves = tempfile::tempdir().unwrap();
+    let file = saves.path().join(voxear_terrain::budget::MACHINE_FILE);
+    MachineBudget::open(&mut editor.game.engine.world, custom, Some(file.clone()));
+    let low = done(&mut editor, &mut renderer, "world_quality.set", json!({ "machine": true, "quality": "low" }));
+    assert_eq!(
+        (low["quality"].as_str(), low["machine"].as_bool(), low["project"]["quality"].as_str()),
+        (Some("low"), Some(true), Some("custom"))
+    );
+    assert!(std::fs::read_to_string(&file).unwrap().contains("quality = \"low\""));
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, custom, "the project's as it was");
+    // Forgotten: the project's back.
+    let back = done(&mut editor, &mut renderer, "world_quality.set", json!({ "machine": false }));
+    assert_eq!((back["quality"].as_str(), back["machine"].as_bool()), (Some("custom"), Some(false)));
+    assert!(!file.exists());
+    let kind = |answer: Answer| answer.unwrap_err().kind;
+    assert_eq!(
+        kind(ask(&mut editor, &mut renderer, "world_quality.set", json!({ "quality": "epic" }))),
+        ErrorKind::BadArguments
+    );
+}
+
+#[test]
+fn a_portals_view_distance_is_the_projects_or_its_own_and_a_tool_sets_both() {
+    use voxear_render::portals::PortalQuality;
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let gate =
+        done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Gate" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": gate, "component": "portal" }));
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": gate }));
+    assert_eq!(field(&shown, "portal", "view_distance")["value"], "Project", "{shown}");
+
+    // Its own starts at the project's, and is then its own.
+    let own = json!({ "obj": gate, "component": "portal", "field": "view_distance", "value": "Own" });
+    done(&mut editor, &mut renderer, "field.set", own);
+    let shown = done(&mut editor, &mut renderer, "obj.get", json!({ "obj": gate }));
+    assert_eq!(field(&shown, "portal", "view_distance#2")["value"], 96.0, "{shown}");
+    let set = json!({ "obj": gate, "component": "portal", "field": "view_distance#2", "value": 200.0 });
+    done(&mut editor, &mut renderer, "field.set", set);
+    let entity = link::resolve_obj(&editor.game, &gate).unwrap();
+    let portal = *editor.game.engine.world.get::<voxear_render::Portal>(entity).unwrap();
+    assert_eq!(portal.view_distance, Some(200.0));
+
+    // The project's, written to voxear.toml and in effect at once.
+    let changed =
+        done(&mut editor, &mut renderer, "project.set", json!({ "key": "portals.view_distance", "value": 64.0 }));
+    assert_eq!(changed["value"], 64.0);
+    let file = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(file.contains("[portals]") && file.contains("view_distance = 64"), "{file}");
+    let quality = editor.game.engine.world.resource::<PortalQuality>().copied().unwrap();
+    assert_eq!(quality.view_distance, 64.0);
+    assert_eq!(Project::open(dir.path()).unwrap().file.portals.view_distance, 64.0, "read back from the file");
+    let wrong = json!({ "key": "portals.view_distance", "value": -3.0 });
+    assert_eq!(ask(&mut editor, &mut renderer, "project.set", wrong).unwrap_err().kind, ErrorKind::WrongValue);
+}

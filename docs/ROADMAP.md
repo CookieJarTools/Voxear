@@ -784,7 +784,7 @@ Later:
     is heard round the walls along them, from the doorway's side, in the Inspector, scene files and C#
   - [x] Steam Audio convolution reflections: the room's own echoes, worked out from the listener and played through
     the HRTF with headphones on, with `Audio.ReverbMode` and `[audio] reverb_mode`; parametric stays the default and
-    the fallback. Ray-traced audio follows in M5, once the ray-tracing acceleration structures exist.
+    the fallback. Ray-traced audio is done, in M5.
   - [x] the audio debugger: each Audio Source a speaker in the Scene view, lit while it plays, and the selected one's
     min and max distances as rings
   - [x] a list of the voices playing, with their buses and volumes: the editor's Audio panel
@@ -914,7 +914,11 @@ Done so far:
     in a build), lighting the scene in the colours' place. Picture and Picture turn on the Lighting page's Sky
     tab. Tests: a picture's light; the file written and read; on the GPU, the sky drawn from its picture as it
     is turned, past white.
-  - Still to come for them: reflections of the picture itself, and the light probes they will fill.
+  - Reflections of the picture itself (`skyPictureSeen` in `reflection_probes.slang`): traced and screen-space
+    reflections' misses and reflection probes' captures read it from the mip whose texels are as wide as the
+    surface's spread, its rows kept from wrapping at the top and bottom. The GI's rays that miss take it too
+    (`ddgiSky`), a radian blurred, so a bright side of the sky lights the sides that face it. GPU test: a probe under
+    a picture red above the horizon and blue below captures red above and blue below.
 - **Upscalers beside Voxear's own:** `[post.anti_aliasing] upscaler` (`Upscaler`: `voxear`, `fsr`, `dlss`, `xess`)
   and `quality` (`UpscaleQuality`: native 1, quality 1/1.5, balanced 1/1.7, performance 1/2, ultra performance 1/3
   of each side) in place of `render_scale`. One that cannot run here is Voxear's in its place
@@ -1157,7 +1161,21 @@ Done so far:
     sky and under the moon, shadows put the ground in light and shade and move on as the clouds drift, cubes have
     flat faces and shade the ground, and the cost at 1080p. Editor and file tests: the Clouds tab's settings are
     written under `[sky.clouds]` one at a time over the look's.
-  - Later: clouds in front of far ground and round a camera inside them, clouds in reflections.
+  - **In front of what lies beyond them:** shading lays the Clouds picture over what is drawn, the share of the
+    pixel's stretch through the layer (`cloudSpan`, as the march finds it) that lies before the surface taking that
+    share of the picture's light and cover (`cloudsBefore`, in `shading.slang` and the water's passes). Far ground
+    past the layer's edge, a peak rising into them and the ground round a camera inside them or above them are seen
+    through them, with no depth read before shading.
+  - **In reflections:** a **Cloud panorama** pass marches them all round the camera into a 128×64 picture, a
+    quarter of it a frame in whole 8×4 blocks with 12 steps, and `reflectedSky` lays it over the sky that
+    reflections, captures and screen-space misses take. Left out through a Portal. Marched whole at 256×128 with
+    the screen's 40 steps it cost 1.4 ms in Hello; so few texels leave the GPU waiting on each step in turn, so the
+    steps are what it costs, not the texels.
+  - Cost at 1080p on an RTX 3070, least of 60 frames, three runs: the panorama 0.03 ms (GrownPlants as it is,
+    Hello with clouds) to 0.05 ms (GrownPlants with low clouds); shading +0.015 ms with clouds, the rest within the
+    runs' spread.
+  - GPU tests: a probe's capture of the sky goes from blue to grey under overcast; the ground below a camera
+    inside low clouds is seen through them.
 - **Weather:** a `Weather` resource (`voxear_render::weather`) laid over the level's lighting as each frame is
   drawn, so the lighting is never changed and clear weather is the lighting as it is. Six amounts from 0 to 1:
   cloud fills the sky's clouds towards overcast; darkness thickens them, darkens their shadows and takes the sun's
@@ -1400,16 +1418,71 @@ Done so far:
     projection lines the reflection up; a probe captured once keeps what it saw until captured again, and its bake
     loads as captured; thin far poles show in a mirror floor; a screen-space miss shows the probe's wall behind the
     camera. Editor test: bake a probe added with `obj.create`, and it loads with the level.
-  - Later: terrain, block worlds, water and plants in captures; metals' own shine in captures; a resolution
-    setting; letting a probe's capture point move off its box's middle.
+  - **Resolution and capture point:** each probe's own `resolution` (64, 128, 256 or 512 texels a face), one array
+    of cubes for each in use, each probe's texture in its row of the list; and a `capture_offset` from the box's
+    middle along its axes, from which it is captured and box-projected. In scene files, the Inspector (Resolution,
+    Capture Offset, the gizmo's mark at the capture point), C# (`Resolution`, `CaptureOffset`) and `field.set`.
+  - **What captures see:** metals their shine, from the probes as last captured, then the GI and the sky, with
+    Fresnel, in captures and traced reflections alike (it was black); the plants of a Foliage within 64 m of the
+    capture point, 8,192 at most, on the frame it is captured; the sea's and Pools' flat tops, with the water's own
+    colour, what lies under it through its depth, and what it reflects (`probeCaptureWater`); and terrain with each
+    point's largest surface's material and picture size (`mesh::PROXY_MATERIAL`, in the wind word of its mesh for
+    rays, which the GI's rays read too).
+  - Cost (as above): a capture 0.023 → 0.026 ms in Hello and 0.048 → 0.051 ms in GrownPlants; traced
+    reflections +0.005 ms; nothing where there is no probe.
+  - GPU tests: a probe captured at 256 then 64, and from a capture point past a red block, sees it on the other
+    side; a metal block mirrors a green wall from the second capture; a pond under a probe is darker and bluer than
+    the ground was, and a hedge of plants shows where the sky did. Unit tests: a painted terrain tile's mesh for rays
+    carries each half's material and picture size.
+  - Later: worlds of blocks in their surfaces' materials (their meshes for rays keep no surface a triangle); grass
+    and water seen from under it in captures.
+- **Ray-traced audio ✅:** sound traced on the GPU against the scene the GI traces, its models, worlds of blocks
+  and terrain, by ray queries or the compute tracer (`voxear_render::sound_rays`, `shaders/sound_rays.slang`, a
+  "Sound rays" pass the first view records; `voxear_engine::sound_tracing`).
+  - **Occlusion and transmission** per 3D Audio Source with occlusion on: rays from the listener across its
+    sphere (1, or 4/8/16 volumetric), each wall letting through what its acoustic material does, into the same
+    three-band muffle as Steam Audio's. A model with no collider is a wall now.
+  - **Reverb and early reflections:** rays from the listener bounced as Steam Audio's reflection simulation
+    bounces them, into an energy field in its layout (10 ms bins, three bands, first order), added up in shared
+    memory, blended over frames; a ray out of bounces goes on as a tail at its own mean free path and loss, so a
+    hard hall is not cut short. The CPU fits reverb times as Steam Audio's estimator does, and the six loudest
+    arrivals of the first 80 ms play as panned, dulled early echoes (`reverb::EarlyEchoes`). Steam Audio's custom
+    scene was not used: its callbacks block a bounce at a time, and its impulse responses cannot be filled from
+    outside. It needs no Steam Audio at all; headphones' HRTF and baked pathing still use it where it is.
+  - **Acoustic materials:** `acoustic = "concrete"` on a material (the Inspector's **Acoustic**, "By look" guessing
+    Metal, Glass or Generic); a block world's chunk as its most common surface's material, else Rock; cut-out and
+    foliage pass sound.
+  - **Settings:** `[audio] ray_traced`, `ray_quality` (low, medium, high: 256/1,024/4,096 rays, 6/10/16
+    bounces) and `ray_budget` (0.3 ms) in `voxear.toml` and player settings; a level's own `[audio]` over them;
+    per source **Reverb send**. The rays shrink while the least of 60 frames' pass times is over the budget, and
+    grow back under half of it; if even 64 rays are over, it steps aside to the baked probes.
+  - **Reverb Probes**, the fallback: a component (scene files, prefabs, Inspector, the + menu, gizmo, C#), baked
+    from the editor on the GPU (palette, a level's Inspector, `reverb_probes.bake`), nine probes a frame at 8,192
+    rays, into a `.reverb` file beside the level (six bytes a probe), loaded with it and shipped in builds. With
+    rays off, the listener's room rings by the probes round it.
+  - C# `Audio.RayTraced`, `RayQuality`, `RayBudget`, `RayTracing`, `RayCost`, `Rays`, `AudioSource.ReverbSend`,
+    `Obj.ReverbProbe`/`AddReverbProbe` (script API 91); `audio.rays` over `vox editor call` and `vox mcp`; the
+    Audio panel shows the rays and their cost.
+  - Cost on an RTX 3070 (closed 20 m room, 200 boxes, 16 sources, least of 60 frames): ray queries 0.07, 0.14
+    and 0.65 ms at low, medium and high; software 0.73, 1.63 and 3.08 ms. Heard through the mixer: a clap in a
+    20 m concrete hall rings 3.8 s (middle band; 4.6 low, 1.6 high), and on open ground not at all; a hum behind
+    20 cm of concrete plays at 1.6% of its level (its low band, as concrete lets through), muffled from its first
+    20 ms.
+  - Tests: GPU tests of a wall stopping a source and a closed room ringing where open ground does not, both
+    tracers; engine tests of a drawn wall muffling a source by concrete, a hall's reverb rising, and a level's baked
+    probes loading and ringing its room without rays; unit tests of the reverb fit, early reflections, the budget,
+    bakes and the `.reverb` file.
+  - Later: Steam Audio's convolution fed from the rays (it needs Steam Audio to take an impulse response from
+    outside); per-block acoustics within a chunk; moving geometry heard as it moves in Steam Audio's CPU path;
+    probes placed on floors rather than in a grid; a level settings panel in the editor (they are in the
+    `.level` file now).
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Virtual shadow maps.
 - Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
 - Baked lightmapper and light probes.
-- **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
-  Audio, with baked reverb probes as the fallback.
+- **Ray-traced audio ✅** (in Done, above).
 - **HDR colour, end to end ✅** (in Done, above).
 
 ## Vegetation ✅ (done)
@@ -1904,22 +1977,29 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   own camera in a space whose middle is the far Portal's, its depth first, a mask, the far plane as a clip
   distance, the parent's sky and post, clouds only in the opening, the sun's shadows to 48 m near the opening,
   and the far side's depth laid over the parent's for its fog. Portals seen through Portals, two deep; mist while
-  closed, too far, or not ready. Characters, Rigidbodies and what is under them go through with their speed and
+  closed, too far, or not ready. A view distance of each Portal's own or the project's (`[portals]
+  view_distance`, Project Settings ▸ Quality, `Portal.DefaultViewDistance`, `project.set`): past it only the mist
+  shows and nothing of the far side is drawn, its view and pictures let go after 600 frames unseen; coming back,
+  the mist clears over 0.4 s, and a margin past the edge keeps a camera wandering over it from making it flicker.
+  Characters, Rigidbodies and what is under them go through with their speed and
   spin turned, never shown between the places; a camera filming something on the other side of an opening looks
   through it (`Camera.Follows`), the renderer carrying its history, so a third-person camera never cuts; Objs
   part-way through drawn on both sides. In a world of blocks without end, chunks, collision and plants are made
   round each far side near the camera (`BlockStreamer::update_from`), each view drawing the chunks of the place
   nearest it, and a Portal opens once its far side stands. Remote Objs snap across. Scripts: `Portal.Create`,
   `CreatePair`, `Link`, `Between`, `Obj.Portal`/`AddPortal` (`To`, `Size`, `IsOpen`, `Mist`, `ViewDistance`,
-  `Passes`, `IsReady`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
+  `Passes`, `IsReady`, `Shown`), `Portal.Passed` (`PortalPassage`); project `[portals]`. Tests: the crossing maths; a far
   side matching a camera standing there from three angles and with the far Portal turned three ways, a Portal two
   deep, blocks and water 20 km off, mist, only the opening changing; a character walking through to ground made
   for it 9 km off in a world without end and standing on it; a thrown body keeping speed and spin; nothing shown
-  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through. Manual:
+  between the places; cameras carried; scene files; a script making a pair and hearing a ball go through; a far
+  side clearing over a moment as a camera comes near and steady as it wanders over the edge; one walked away from
+  drawing nothing and letting its view go. Manual:
   Portals. Cost at 1080p on an RTX 3070, the least of 60 frames: in the test scene +0.15 ms for one Portal over a
   third of the picture and +0.5 ms for two (the timing test holds +1.5 and +2.5); in an endless world of Ultra
   quality +2.2 ms and +3.0 ms, most of it the far side's blocks out to its horizon, which `[portals]
-  draw_distance` cuts. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
+  draw_distance` cuts. A Portal in GrownPlants seen from 26 m and 60 m at 720p costs 3.6 ms and 1.8 ms; with
+  its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
   part-way through, the server deciding and checking crossings, Portals to other levels.
@@ -2525,6 +2605,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new **Caves** reach (48 blocks by default), cuts a rough walkable tunnel through to that room's floor, so the
     caves and the dungeon are one. Its reach grows by as much, so every column the tunnel crosses builds it. Test:
     dungeons on the Caves preset break through to a cave room's floor, and with no reach none do.
+  - ~~**Dungeons with design:**~~ done: dungeons are planned as a graph on each floor (a threshold, two ways round
+    through a gorge or by a long stair to a pillared hall, a flooded hall and a chasm on to the end, loot off the
+    side rooms, a shortcut home), at a third-person co-op camera's sizes (rooms 22 m across, halls 56 m long and
+    28 m high, gorges 26 m deep, arenas 40 m), and carved into natural rock with soft edges, built stone laid crisp
+    into them: columns and pointed arches, galleries, statues in alcoves, monoliths in water, an obelisk over a lava
+    pit, a throne. Every space keeps `cover` blocks of land over and round it, escarpments, slopes and lake beds
+    included; only the entrance comes up, sited from the land: a cliff gate, a temple door in a hillside, a sinkhole
+    stair, a grand stair down from it. Ruin, wear, vines, braziers, crystal and daylight shafts are passes. The easy
+    way in is a theme, a size and floors (Add Temple Dungeon makes the blocks and the structure); the full one sets
+    entrances, cover, blocks by role, passes, sizes and your own pieces by role. C# `Dungeons`, `vox editor call
+    dungeon.layouts` and `dungeon.starter`. Tests: every space under the land in rolling hills and on escarpments;
+    floors down through set pieces to one boss, every space reached; a column built alone as among its neighbours;
+    GPU renders of the entrances and every kind of space.
   - ~~**Few big caves, and trees off the shore:**~~ done: a world's own caves are a few wide ones by default:
     Tunnels at 72 m (lines some 6 m across), Chambers at 100 m, the Cave Network's rooms 192 m apart joined by
     tunnels 14 to 22 m wide; the ground beside river and lake water is kept whole where caves pass, so none opens
@@ -2603,6 +2696,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     stand in nearly half the areas; canyons wind as long ravines; spires are fewer and smaller; a biome's own land
     keeps a quarter of its height past 45 m. Areas' and biomes' borders bend hard so they wind instead of looking
     many-sided. Rivers in a world of levels start only from 40 ha of ground, so fewer and larger.
+  - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
+    deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
+    `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the
+    ground, its caves and its water, near and in the far view; nothing a generator builds goes into it. Far off,
+    plants and houses stand on the ground the world lays in, out of its rivers and lakes. Tests: far plants in no
+    lake a world lays in; the floor near and far, kept by edits, gone when off.
+  - ~~**An Infinite World template:**~~ done: `vox new --template infinite-world`, and the launcher's template
+    picker, start a project in an endless world of blocks: land in levels with rivers, lakes and a sea, eleven
+    biomes, trees, villages and dungeons, weather, a map and minimap, and a player of blocks with a camera that
+    follows them. The template is a folder of the engine's (`templates/infinite-world`, shipped in every install, a
+    fifth of a megabyte: settings, biomes, blocks, plants and structures, never saved ground), copied with the
+    project's namespace put into its scripts and scenes and its assets' GUIDs kept. Manual: Starting an Infinite
+    World. Tests: a project made from it opens, builds its scripts, makes its world round the player, who stands
+    on the ground, and plays, with a close-up from its camera.
   - ~~**Haze to the horizon:**~~ done: the haze goes on building past its table's last slice, and where a level
     has a world without end it closes in at the far view's edge, so the last land fades into the sky in layers
     (`FarHaze`). Tests: a ridge fading into the sky where the view ends and 24 km off.

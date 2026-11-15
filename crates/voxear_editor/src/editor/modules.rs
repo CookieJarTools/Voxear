@@ -1,8 +1,9 @@
 //! Project Settings: switching the project's modules on and off, its
-//! quality settings, its floating origin, its block worlds' budget and its
-//! languages' fonts. Each choice is written into `voxear.toml` at once; a
-//! module, a quality setting, the budget and the fonts are put into effect
-//! at once, the floating origin the next time the game plays.
+//! quality settings, its Portals' view distance, its floating origin, its
+//! block worlds' budget and its languages' fonts. Each choice is written
+//! into `voxear.toml` at once; a module, a quality setting, the view
+//! distance, the budget and the fonts are put into effect at once, the
+//! floating origin the next time the game plays.
 
 use voxear_assets::AssetKind;
 use voxear_engine::modules::Module;
@@ -29,8 +30,16 @@ impl Editor {
         if let Some(quality) = quality {
             self.set_quality(&quality);
         }
-        if let Some(budget) = self.project_settings.budget_changed(&self.ui, &self.game.project.file.world) {
+        let view = self.project_settings.portal_view_changed(&self.ui, self.game.project.file.portals.view_distance);
+        if let Some(distance) = view {
+            self.set_portal_view_distance(distance);
+        }
+        let in_use = voxear_terrain::WorldBudget::of(&self.game.engine.world);
+        if let Some(budget) = self.project_settings.budget_changed(&self.ui, &in_use) {
             self.set_world_budget(&budget);
+        }
+        if let Some(keep) = self.project_settings.machine_changed(&self.ui) {
+            self.keep_world_budget(keep);
         }
         if let Some(module) = self.inspector.module_wanted(&self.ui) {
             self.set_module(module, true);
@@ -133,16 +142,56 @@ impl Editor {
         self.project_settings.show_quality(&mut self.ui, &quality);
     }
 
-    /// Sets what making worlds of blocks may spend (see
-    /// `voxear_terrain::WorldBudget`), from now on: worlds streaming take it
-    /// up as they go, with nothing made again.
-    pub fn set_world_budget(&mut self, budget: &voxear_terrain::WorldBudget) {
-        if let Err(error) = self.game.project.set_world(budget) {
+    /// Sets how far off a Portal without a view distance of its own still
+    /// shows its far side, saved in `voxear.toml` and from now on, in the
+    /// game playing too.
+    pub fn set_portal_view_distance(&mut self, distance: f32) {
+        if let Err(error) = self.game.project.set_portal_view_distance(distance) {
             tracing::error!("{error:#}");
         }
-        let budget = self.game.project.file.world;
-        budget.put(&mut self.game.engine.world);
+        let portals = self.game.project.file.portals;
+        portals.put(&mut self.game.engine.world);
+        self.project_settings.show_portals(&mut self.ui, &portals);
+    }
+
+    /// Sets what making worlds of blocks may spend (see
+    /// `voxear_terrain::WorldBudget`), from now on: worlds streaming take it
+    /// up as they go, with nothing made again. Into this machine's own where
+    /// it keeps one, and else into the project's `voxear.toml`.
+    pub fn set_world_budget(&mut self, budget: &voxear_terrain::WorldBudget) {
+        use voxear_terrain::MachineBudget;
+        let world = &mut self.game.engine.world;
+        if MachineBudget::of(world).kept {
+            budget.put(world);
+            if let Err(error) = MachineBudget::keep(world, true) {
+                tracing::error!("keeping this machine's world quality: {error}");
+            }
+        } else {
+            if let Err(error) = self.game.project.set_world(budget) {
+                tracing::error!("{error:#}");
+            }
+            let project = self.game.project.file.world;
+            MachineBudget::open(world, project, MachineBudget::of(world).file);
+        }
+        self.show_world_budget();
+    }
+
+    /// Keeps the budget in use for this machine, beside the game's saves,
+    /// in place of the project's; or forgets it and goes back to the
+    /// project's.
+    pub fn keep_world_budget(&mut self, keep: bool) {
+        if let Err(error) = voxear_terrain::MachineBudget::keep(&mut self.game.engine.world, keep) {
+            tracing::error!("keeping this machine's world quality: {error}");
+        }
+        self.show_world_budget();
+    }
+
+    /// Shows the budget in use, and whether it is this machine's own.
+    pub(super) fn show_world_budget(&mut self) {
+        let world = &self.game.engine.world;
+        let (budget, machine) = (voxear_terrain::WorldBudget::of(world), voxear_terrain::MachineBudget::of(world));
         self.project_settings.show_budget(&mut self.ui, &budget);
+        self.project_settings.show_machine(&mut self.ui, machine.kept);
     }
 
     /// Switches a module on or off for the project.

@@ -10,7 +10,8 @@
 //! Tiles are worked out on the worker threads, the nearest first and a few
 //! a frame, and kept while they stay in reach. One not worked out yet is
 //! white, as an untinted world is, until it is. A world whose biomes have
-//! no tints, or none at all, has no `BlockTints`.
+//! no tints, or none at all, has no `BlockTints`, unless plants grow on it
+//! that colour its grass far off (see `grown_plants::covers`).
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -35,10 +36,11 @@ const TILES_A_FRAME: usize = 24;
 const WHITE: u32 = 0x0080_8080;
 
 /// A world's tiles worked out, and what they were worked out from: its
-/// biomes and generator as read, where it lies in the generator's world
-/// and how large its blocks are. Its near tints' tiles and its far ones'.
+/// biomes and generator as read, where it lies in the generator's world,
+/// how large its blocks are, and what covers its grass. Its near tints'
+/// tiles and its far ones'.
 struct Kept {
-    from: (usize, usize, [u32; 2], u32),
+    from: (usize, usize, [u32; 2], u32, u64),
     windows: [Window; 2],
 }
 
@@ -64,12 +66,20 @@ pub fn update(world: &mut World, content: &mut Content) {
         let placed = asset.file.generate.as_ref().and_then(|generate| generate.placed.as_deref());
         placed.is_some_and(|placed| placed.biomes.list().iter().any(|biome| !biome.tints.is_none()))
     };
-    let worlds: Vec<(Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
+    let generated: Vec<(Entity, bool, voxear_core::math::Vec3)> = world
         .query_ref::<(Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(_, _, asset, ..)| tinted(asset))
-        .map(|(entity, _, asset, local, placed)| (entity, asset.clone(), voxear_terrain::corner(local, placed)))
+        .filter(|(_, _, asset, ..)| asset.file.generate.is_some())
+        .map(|(entity, _, asset, local, placed)| (entity, tinted(asset), voxear_terrain::corner(local, placed)))
+        .collect();
+    // Those tinted, or whose grass plants colour far off.
+    let worlds: Vec<(Entity, voxear_core::math::Vec3, crate::grown_plants::Covers)> = generated
+        .into_iter()
+        .filter_map(|(entity, tinted, corner)| {
+            let covers = crate::grown_plants::covers(world, content, entity);
+            (tinted || !covers.0.is_empty()).then_some((entity, corner, covers))
+        })
         .collect();
     // Those no longer tinted are drawn untinted.
     let stale: Vec<Entity> = world
@@ -89,20 +99,23 @@ pub fn update(world: &mut World, content: &mut Content) {
     let mut kept = world.remove_resource::<TintTiles>().unwrap_or_default();
     kept.0.retain(|entity, _| worlds.iter().any(|(tinted, ..)| tinted == entity));
     let mut left = TILES_A_FRAME;
-    for (entity, asset, corner) in worlds {
+    for (entity, corner, (covers, cover, covered)) in worlds {
+        let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
         let Some(generator) = crate::blocks::generator(content, &asset.file) else { continue };
         let Some(generate) = asset.file.generate.as_ref() else { continue };
         let size = asset.file.block_size.max(0.01);
         let placed = generate.placed.as_ref().map_or(0, |placed| Arc::as_ptr(placed) as usize);
-        let from = (placed, Arc::as_ptr(&generator) as usize, generate.position.map(f32::to_bits), size.to_bits());
+        let stamp = voxear_terrain::layers::stable_hash(format!("{covers:?} {cover:?} {covered:?}").as_bytes());
+        let from =
+            (placed, Arc::as_ptr(&generator) as usize, generate.position.map(f32::to_bits), size.to_bits(), stamp);
         let kept = kept.0.entry(entity).or_insert_with(|| Kept { from, windows: Default::default() });
         if kept.from != from {
             *kept = Kept { from, windows: Default::default() };
         }
         let local = viewer.map_or(voxear_core::math::Vec3::ZERO, |viewer| viewer - corner);
         let mut changed = world.get::<BlockTints>(entity).is_none();
-        let mut made = Vec::with_capacity(2);
-        for (window, scale) in kept.windows.iter_mut().zip([1, TINT_FAR]) {
+        let mut seen_from = [[0; 2]; 2];
+        for ((window, scale), seen_from) in kept.windows.iter_mut().zip([1, TINT_FAR]).zip(&mut seen_from) {
             // As the near tints' tiles are, of blocks as many times larger: points as many times further apart.
             let size = size * scale as f32;
             let tile_side = (TINT_TILE * TINT_STEP) as f32 * size;
@@ -116,18 +129,21 @@ pub fn update(world: &mut World, content: &mut Content) {
             missing.sort_by_key(|tile| (tile[0] - seen[0]).pow(2) + (tile[1] - seen[1]).pow(2));
             missing.truncate(left);
             left -= missing.len();
-            let worked = voxear_terrain::workers::each(&missing, |&tile| tint_tile(generate, &generator, size, tile));
+            let worked =
+                voxear_terrain::workers::each(&missing, |&tile| tint_tile(generate, &generator, size, tile, &covers));
             for (tile, tints) in missing.into_iter().zip(worked) {
                 window.tiles.insert(tile, Arc::new(tints.unwrap_or_default()));
             }
             changed |= window.shown != Some((seen, window.tiles.len()));
             window.shown = Some((seen, window.tiles.len()));
-            made.push(put_together(window, seen));
+            *seen_from = seen;
         }
+        // Put together only where a tile came or the tile it is seen from changed: half a megabyte each.
         if changed {
-            let [(corner, points), (far_corner, far_points)] = [made[0].clone(), made[1].clone()];
+            let [(corner, points), (far_corner, far_points)] =
+                [0, 1].map(|window| put_together(&kept.windows[window], seen_from[window]));
             let side = (2 * REACH * TINT_TILE) as u32;
-            world.insert(entity, BlockTints { corner, size: side, points, far_corner, far_points });
+            world.insert(entity, BlockTints { corner, size: side, points, far_corner, far_points, cover, covered });
         }
     }
     world.insert_resource(kept);

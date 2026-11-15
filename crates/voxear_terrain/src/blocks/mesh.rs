@@ -376,7 +376,8 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
-    let mut plain = vec![0u32; side * side];
+    // Which faces of the layer show, for its triangles.
+    let mut shown = vec![0u32; side * side];
     // What each face of the layer keeps where its size would be: which faces round it it joins, for the blocks
     // that join, and what creeps over it, for a face drawn with its look's twin.
     let mut joined = vec![0u32; side * side];
@@ -388,7 +389,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         let step = if out { 1 } else { -1 };
         for layer in 0..side {
             shaded.fill(0);
-            plain.fill(0);
+            shown.fill(0);
             if any_join || any_mix {
                 joined.fill(0);
             }
@@ -507,7 +508,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         }
                     }
                     shaded[j * side + i] = key + 1;
-                    plain[j * side + i] = u32::from(look) + 1;
+                    shown[j * side + i] = 1;
                 }
             }
             // Merged by surface and shading, to draw.
@@ -522,8 +523,9 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 mesh.quads.push([first | joined[j * side + i] | ((key >> 16) & 15) << 28, second]);
             }
             mesh.quads.append(&mut layered);
-            // Merged by surface alone, as triangles.
-            for (i, j, w, h, _) in merge(&mut plain, side) {
+            // Merged whatever their surfaces, as triangles: what collides with them or traces rays against them
+            // takes no surface from them.
+            for (i, j, w, h, _) in merge(&mut shown, side) {
                 let mut corner = [0.0f32; 3];
                 let face = layer as f32 + if out { 1.0 } else { 0.0 };
                 (corner[axis], corner[u], corner[v]) = (face, i as f32, j as f32);
@@ -1761,6 +1763,20 @@ mod tests {
         let quad = pack([31, 0, 17], [32, 5], 4, 200, [3, 0, 2, 1]);
         assert_eq!(unpack(quad), ([31, 0, 17], [32, 5], 4, 200, [3, 0, 2, 1]));
         assert_eq!(quad[1] >> 16, 0, "room for the chunk's number in the pool");
+    }
+
+    #[test]
+    fn a_floor_striped_in_two_kinds_is_drawn_a_quad_a_stripe_and_collides_as_one_slab() {
+        let mut map = BlockMap::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                map.set([x, 0, z], if x % 2 == 0 { 1 } else { 2 });
+            }
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3), BlockFaces::new(4, 5, 6)];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        assert_eq!(mesh.buckets[3] - mesh.buckets[2], 32, "its top drawn a quad a stripe");
+        assert_eq!((mesh.positions.len(), mesh.indices.len()), (6 * 4, 6 * 6), "two triangles a side of the slab");
     }
 
     #[test]

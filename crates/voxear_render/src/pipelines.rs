@@ -90,6 +90,7 @@ pub struct Pipelines {
     /// The sky's clouds and their shadows (see `clouds`).
     pub clouds: vk::Pipeline,
     pub cloud_shadows: vk::Pipeline,
+    pub cloud_panorama: vk::Pipeline,
     /// Volumetric fog's passes: the volume, its integration, and laying it
     /// over the scene.
     pub volume_scatter: vk::Pipeline,
@@ -192,6 +193,9 @@ pub struct Pipelines {
     pub block_forward_on_depth: vk::Pipeline,
     pub block_wireframe: vk::Pipeline,
     pub block_shadow: vk::Pipeline,
+    /// As `block_shadow`, for faces that are never cut out: depth alone,
+    /// with no fragment stage.
+    pub block_shadow_solid: vk::Pipeline,
     /// As `block_shadow`, into local lights' views, without clamping depth.
     pub block_local_shadow: vk::Pipeline,
     /// Grass (see `grass`): each draw's command made afresh, the blades
@@ -280,6 +284,12 @@ pub struct Pipelines {
     /// and in software (`probeCaptureMain` in `shaders/ddgi.slang`).
     pub probe_capture: Option<vk::Pipeline>,
     pub probe_capture_software: vk::Pipeline,
+    /// Sound rays (see `sound_rays`), by ray queries where the GPU has them,
+    /// and in software.
+    pub sound_occlusion: Option<vk::Pipeline>,
+    pub sound_reverb: Option<vk::Pipeline>,
+    pub sound_occlusion_software: vk::Pipeline,
+    pub sound_reverb_software: vk::Pipeline,
     /// A probe's capture's mips, and their filtering for its own
     /// (`shaders/probe_filter.slang`).
     pub probe_downsample: vk::Pipeline,
@@ -420,6 +430,16 @@ impl Pipelines {
                 Some(module) => Some(create_compute_pipeline(gpu, layout, "Reflection probe capture", module, c"probeCaptureMain")?),
                 None => None,
             },
+            sound_occlusion_software: create_compute_pipeline(gpu, layout, "Sound occlusion", ddgi_software, c"soundOcclusionMain")?,
+            sound_reverb_software: create_compute_pipeline(gpu, layout, "Sound reverb", ddgi_software, c"soundReverbMain")?,
+            sound_occlusion: match &ddgi {
+                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound occlusion", module, c"soundOcclusionMain")?),
+                None => None,
+            },
+            sound_reverb: match &ddgi {
+                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound reverb", module, c"soundReverbMain")?),
+                None => None,
+            },
             shadow: graphics(&GraphicsPipelineDesc {
                 // Single-sided geometry such as planes must still cast.
                 cull: vk::CullModeFlags::NONE,
@@ -490,6 +510,7 @@ impl Pipelines {
             aerial_perspective: table("Aerial perspective", c"aerialPerspectiveFragment")?,
             clouds: table("Clouds", c"cloudsFragment")?,
             cloud_shadows: table("Cloud shadows", c"cloudShadowsFragment")?,
+            cloud_panorama: table("Cloud panorama", c"cloudPanoramaFragment")?,
             gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,
             ao_denoise: occlusion_pass("AO denoise", c"aoDenoiseFragment", &[AO_FORMAT])?,
             ao_temporal: occlusion_pass("AO temporal", c"aoTemporalFragment", &[AO_HISTORY_FORMAT])?,
@@ -803,6 +824,12 @@ impl Pipelines {
                 fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
+            block_shadow_solid: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (solid blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
+            })?,
             block_local_shadow: graphics(&GraphicsPipelineDesc {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
@@ -1047,6 +1074,7 @@ impl Pipelines {
             self.aerial_perspective,
             self.clouds,
             self.cloud_shadows,
+            self.cloud_panorama,
             self.gtao,
             self.ao_denoise,
             self.ao_temporal,
@@ -1121,6 +1149,7 @@ impl Pipelines {
             self.block_forward_on_depth,
             self.block_wireframe,
             self.block_shadow,
+            self.block_shadow_solid,
             self.block_local_shadow,
             self.grass_reset,
             self.grass_scatter,
@@ -1162,7 +1191,8 @@ impl Pipelines {
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
         let probes = [self.nearest_pyramid, self.probe_capture_software, self.probe_downsample, self.probe_filter];
-        let traced = traced.chain(self.probe_capture).chain(probes);
+        let sounds = [self.sound_occlusion_software, self.sound_reverb_software];
+        let traced = traced.chain(self.probe_capture).chain(probes).chain(self.sound_occlusion).chain(self.sound_reverb).chain(sounds);
         if let Some(fsr3) = &self.fsr3 {
             fsr3.destroy(gpu);
         }

@@ -64,7 +64,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_terrain::generate::{CaveExit, CaveShape};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, ProbeUpdate, ReflectionProbe, Renderer,
+    Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, ProbeResolution, ProbeUpdate, ReflectionProbe, Renderer,
     DryArea, ForceField, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
@@ -287,6 +287,9 @@ pub struct ObjData {
     /// middle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_probe: Option<ReflectionProbeData>,
+    /// A box of reverb probes, baked for how long sound rings through it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverb_probe: Option<ReverbProbeData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer: Option<RendererData>,
     /// A whole model drawn by the Obj, each part where the model puts it.
@@ -476,6 +479,7 @@ impl ObjData {
             light: None,
             post_volume: None,
             reflection_probe: None,
+            reverb_probe: None,
             renderer: None,
             model: None,
             audio: None,
@@ -660,6 +664,8 @@ impl PostVolumeData {
 /// box_projection = true
 /// intensity = 1.0
 /// importance = 0           # where boxes overlap, the higher first
+/// resolution = 128         # texels across each face: 64, 128, 256 or 512
+/// capture_offset = [0.0, 0.0, 0.0]  # where it takes its picture, from its box's middle
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -676,6 +682,22 @@ pub struct ReflectionProbeData {
     pub intensity: f32,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub importance: i32,
+    #[serde(default = "probe_size", skip_serializing_if = "is_probe_size")]
+    pub resolution: u32,
+    #[serde(default, skip_serializing_if = "is_origin")]
+    pub capture_offset: [f32; 3],
+}
+
+fn probe_size() -> u32 {
+    ProbeResolution::default().texels()
+}
+
+fn is_probe_size(texels: &u32) -> bool {
+    *texels == probe_size()
+}
+
+fn is_origin(point: &[f32; 3]) -> bool {
+    *point == [0.0; 3]
 }
 
 /// When a reflection probe is captured, as a scene names it.
@@ -706,6 +728,12 @@ impl ReflectionProbeData {
             box_projection: self.box_projection,
             intensity: self.intensity.max(0.0),
             importance: self.importance,
+            // Between sizes, the next one up.
+            resolution: ProbeResolution::ALL
+                .into_iter()
+                .find(|resolution| resolution.texels() >= self.resolution)
+                .unwrap_or(ProbeResolution::Size512),
+            capture_offset: self.capture_offset.into(),
             captures: 0,
         }
     }
@@ -722,7 +750,52 @@ impl ReflectionProbeData {
             box_projection: probe.box_projection,
             intensity: probe.intensity,
             importance: probe.importance,
+            resolution: probe.resolution.texels(),
+            capture_offset: probe.capture_offset.into(),
         }
+    }
+}
+
+/// A box of reverb probes as a scene writes it, each value left out at its
+/// default:
+///
+/// ```toml
+/// [obj.reverb_probe]
+/// size = [20.0, 6.0, 20.0]   # metres along each axis of the world, round the Obj
+/// spacing = 3.0              # metres between its probes
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReverbProbeData {
+    #[serde(default = "default_reverb_size", skip_serializing_if = "is_default_reverb_size")]
+    pub size: [f32; 3],
+    #[serde(default = "default_reverb_spacing", skip_serializing_if = "is_default_reverb_spacing")]
+    pub spacing: f32,
+}
+
+fn default_reverb_size() -> [f32; 3] {
+    crate::reverb_probes::ReverbProbe::default().size
+}
+
+fn is_default_reverb_size(size: &[f32; 3]) -> bool {
+    *size == default_reverb_size()
+}
+
+fn default_reverb_spacing() -> f32 {
+    crate::reverb_probes::ReverbProbe::default().spacing
+}
+
+fn is_default_reverb_spacing(spacing: &f32) -> bool {
+    *spacing == default_reverb_spacing()
+}
+
+impl ReverbProbeData {
+    pub fn component(&self) -> crate::reverb_probes::ReverbProbe {
+        crate::reverb_probes::ReverbProbe { size: self.size.map(|side| side.max(0.0)), spacing: self.spacing.max(0.25) }
+    }
+
+    pub fn of(probe: &crate::reverb_probes::ReverbProbe) -> Self {
+        Self { size: probe.size, spacing: probe.spacing }
     }
 }
 
@@ -1859,6 +1932,9 @@ fn capture_instance(
     if root.reflection_probe.is_some() && root.reflection_probe != prefab_root.reflection_probe {
         instance.reflection_probe = root.reflection_probe;
     }
+    if root.reverb_probe.is_some() && root.reverb_probe != prefab_root.reverb_probe {
+        instance.reverb_probe = root.reverb_probe;
+    }
     if root.light.is_some() && root.light != prefab_root.light {
         instance.light = root.light;
     }
@@ -2095,6 +2171,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(probe) = actual.reflection_probe.filter(|p| Some(*p) != expected.reflection_probe) {
         put("reflection_probe", toml::Value::try_from(probe)?);
+    }
+    if let Some(probe) = actual.reverb_probe.filter(|p| Some(*p) != expected.reverb_probe) {
+        put("reverb_probe", toml::Value::try_from(probe)?);
     }
     if let Some(light) = actual.light.as_ref().filter(|l| Some(*l) != expected.light.as_ref()) {
         put("light", toml::Value::try_from(light)?);
@@ -2462,6 +2541,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.light = world.get::<Light>(entity).map(|light| light_data(content, light));
     obj.post_volume = world.get::<PostVolume>(entity).map(PostVolumeData::of);
     obj.reflection_probe = world.get::<ReflectionProbe>(entity).map(ReflectionProbeData::of);
+    obj.reverb_probe = world.get::<crate::reverb_probes::ReverbProbe>(entity).map(ReverbProbeData::of);
     obj.renderer = world.get::<MeshRenderer>(entity).and_then(|r| {
         let mesh = content.mesh_ref(r.mesh)?.to_string();
         let material = match content.material_source(r.material) {
@@ -2979,10 +3059,11 @@ mod tests {
 
     #[test]
     fn a_reflection_probe_reads_and_writes_back_its_defaults_left_out() {
-        let text = "id = 1\nname = \"Hall\"\n[reflection_probe]\nupdate = \"live\"\ninterval = 0.5\nbox_projection = false\nimportance = 2";
+        let text = "id = 1\nname = \"Hall\"\n[reflection_probe]\nupdate = \"live\"\ninterval = 0.5\nbox_projection = false\nimportance = 2\nresolution = 256\ncapture_offset = [0.0, -1.5, 0.0]";
         let obj: ObjData = toml::from_str(text).unwrap();
         let probe = obj.reflection_probe.expect("the probe is read").component();
         assert_eq!((probe.update, probe.interval, probe.box_projection, probe.importance), (ProbeUpdate::Live, 0.5, false, 2));
+        assert_eq!((probe.resolution, probe.capture_offset), (ProbeResolution::Size256, voxear_core::math::Vec3::new(0.0, -1.5, 0.0)));
         let fresh = ReflectionProbe::default();
         assert_eq!((probe.blend_distance, probe.intensity), (fresh.blend_distance, fresh.intensity), "the rest as a new one has");
         let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
@@ -2991,7 +3072,7 @@ mod tests {
         // One as it starts writes only its table, and reads back as it was.
         let plain = ObjData { reflection_probe: Some(ReflectionProbeData::of(&fresh)), ..ObjData::new(2, "Room") };
         let written = toml::to_string(&plain).unwrap();
-        assert!(written.contains("[reflection_probe]") && !written.contains("update"), "{written}");
+        assert!(written.contains("[reflection_probe]") && !written.contains("update") && !written.contains("resolution"), "{written}");
         let back: ObjData = toml::from_str(&written).unwrap();
         assert_eq!(back.reflection_probe.map(|data| data.component()), Some(fresh));
     }

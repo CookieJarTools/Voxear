@@ -188,6 +188,8 @@ pub struct Frame {
     /// A reflection probe to capture or load this frame, once the GI's rays
     /// are traced, and the pipelines it takes (see `reflection_probes`).
     pub probe_job: Option<(crate::reflection_probes::ProbeFrame, crate::reflection_probes::Job, crate::reflection_probes::ProbePipelines)>,
+    /// The frame's sound rays, which the first camera's own view traces.
+    pub sound_job: Option<(crate::sound_rays::SoundPass, crate::sound_rays::SoundPipelines)>,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
@@ -769,6 +771,9 @@ pub fn record(
         let gi = frame.probes.iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]);
         let sampled: Vec<ImageId> = shadow_maps.iter().copied().chain(gi).collect();
         crate::reflection_probes::record(fg, *probe_pipelines, push, probe_frame, *job, &sampled);
+    }
+    if let Some((pass, sound_pipelines)) = frame.sound_job {
+        crate::sound_rays::record(fg, sound_pipelines, push, pass);
     }
     if let Some(volume) = frame.volume {
         let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(shadow_maps.iter().copied()).collect();

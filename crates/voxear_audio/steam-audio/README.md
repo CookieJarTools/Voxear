@@ -10,5 +10,13 @@ git: `fetch.sh` downloads the release, checks it, and puts the Linux and Windows
 Voxear loads them while it is developed. Voxear loads the library when the game starts, from beside the game, or
 from `lib/` here, or from the path in `VOXEAR_STEAM_AUDIO`; without it, sound plays as it does without Steam Audio.
 
+Steam Audio is optional, and can be installed after the engine: without it Voxear builds, runs and ships, sound
+pans, and ray-traced audio (`voxear_audio::sound_field`, the renderer's sound rays) still muffles sounds behind walls
+and rings rooms, as it traces on the GPU and needs nothing of Steam Audio's; only headphones' HRTF, Steam Audio's
+CPU occlusion and room through colliders, convolution reverb and pathing go without. The Apache 2.0 licence lets
+Voxear give the library out with games, as player builds do, with `LICENSE.md` and `THIRDPARTY.md` beside it. An
+engine install would hold it as an optional module, fetched by the launcher as `fetch.sh` does (the release's
+SHA-256 checked); the launcher does not do that yet.
+
 To move to a newer release, replace `include/` with its headers, update the version and checksum here and in
 `fetch.sh`, run `fetch.sh`, and run the crate's tests.

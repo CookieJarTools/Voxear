@@ -173,6 +173,8 @@ fn world_over(world: &World, entity: Entity) -> Option<Entity> {
 
 fn growers(world: &World) -> Vec<Grower> {
     let switched = Switched::of(world);
+    // As far as the machine's plant detail says (see `WorldBudget::plants`), as the renderer draws them.
+    let budget = voxear_terrain::WorldBudget::of(world);
     world
         .query_ref::<(Entity, &FoliageSource, &Plants)>()
         .without::<Destroying>()
@@ -182,6 +184,7 @@ fn growers(world: &World) -> Vec<Grower> {
             let data = source.0.grow.clone()?;
             let foliage = world.get::<Foliage>(entity).cloned();
             let draw_distance = foliage.as_ref().map_or(source.0.draw_distance, |foliage| foliage.draw_distance);
+            let draw_distance = budget.plants(draw_distance);
             let look = Look {
                 foliage,
                 trunk: plants.trunk,
@@ -290,6 +293,7 @@ pub fn update(world: &mut World, content: &mut Content) {
         }
     }
     let viewer = crate::terrain::viewer(world);
+    let budget = voxear_terrain::WorldBudget::of(world);
     // And round the far side of each Portal near enough to show it, where its own blocks are made.
     let exits = crate::portals::exits(world);
     let mut all_tops: HashMap<Entity, HashMap<[i32; 2], ([i32; 3], Arc<Chunk>)>> = HashMap::new();
@@ -312,7 +316,8 @@ pub fn update(world: &mut World, content: &mut Content) {
             let generator = crate::blocks::generator(content, &asset.file);
             Some((asset, blocks, generator))
         });
-        let Some((asset, blocks, generator)) = read.clone() else { continue };
+        // Borrowed, not cloned for each Foliage: a world and its blocks are large.
+        let Some((asset, blocks, generator)) = read.as_ref() else { continue };
         let wanted: Vec<AssetGuid> =
             grower.data.near_plants.iter().filter_map(|model| model_of(content, model)).collect();
         let mut number = |block: &str| {
@@ -364,8 +369,11 @@ pub fn update(world: &mut World, content: &mut Content) {
         // that far.
         let made = blocks.columns.clone();
         let endless = asset.file.generate.as_ref().and_then(|generate| Some((generate, generate.endless?)));
+        let near_distance = endless.map(|(_, endless)| budget.near(endless.distance));
         let far = match (endless, generator.as_deref(), from, &made) {
-            (Some((generate, endless)), Some(generator), Some(from), Some(_)) if reach * size > endless.distance => {
+            (Some((generate, _)), Some(generator), Some(from), Some(_))
+                if near_distance.is_some_and(|near| reach * size > near) =>
+            {
                 Some((FarGround { file: &asset.drawn, generate, world: generator }, from))
             }
             _ => None,
@@ -592,8 +600,9 @@ fn woods_of(world: &World, content: &mut Content, grower: &Grower, asset: &Block
     });
     let size = (rule.scale[0] + rule.scale[1]) * 0.5;
     let wide = (most.x - least.x).max(most.z - least.z);
-    let from = Woods::first_past(grower.draw_distance, endless.distance);
-    Some(Woods { rule, block, height: most.y.max(0.0) * size, width: wide * size, from, biomes: Vec::new() })
+    let from = Woods::first_past(grower.draw_distance, voxear_terrain::WorldBudget::of(world).near(endless.distance));
+    let (height, width) = (most.y.max(0.0) * size, wide * size);
+    Some(Woods { rule, block, height, width, from, biomes: Vec::new(), shore: None })
 }
 
 /// What the Foliage growing under the Block World on `entity` show as in
@@ -609,9 +618,98 @@ pub fn far_built(world: &World, content: &mut Content, entity: Entity) -> Vec<Ar
     let structures = world.get::<BlockWorldAsset>(entity).and_then(|asset| asset.file.generate.as_ref()?.built.clone());
     if let Some(structures) = structures.filter(|structures| !structures.list.is_empty()) {
         let stamp = structures_stamp(&structures);
-        built.push(Arc::new(voxear_terrain::blocks::map::FarStructures { stamp }));
+        let to = voxear_terrain::WorldBudget::of(world).structure_rings(voxear_terrain::blocks::map::FAR_STRUCTURES_TO);
+        built.push(Arc::new(voxear_terrain::blocks::map::FarStructures { stamp, to }));
     }
     built
+}
+
+/// What grows under the Block World on `entity` thick enough to colour its
+/// grass where its plants are too far off to be drawn (see
+/// `voxear_terrain::blocks::grow::Cover`), and how far from the camera
+/// they stop being drawn: where the nearest begin to fade, and over how far
+/// the furthest are gone; and the surfaces they colour, a bit each: the
+/// tops of the blocks they grow on, and those surfaces' twins. A Foliage's
+/// plants show their model's colour, a box model's; those of any other
+/// model colour nothing, nor do those that keep near to others or grow
+/// under water.
+pub fn covers(world: &World, content: &mut Content, entity: Entity) -> Covers {
+    let (Some(asset), Some(blocks)) = (world.get::<BlockWorldAsset>(entity), world.get::<BlockWorld>(entity)) else {
+        return (Vec::new(), [0.0; 2], [0; 8]);
+    };
+    let mut surfaces = [0u32; 8];
+    let mut colours = |surface: u8| {
+        for at in [surface & 0x7F, surface | 0x80] {
+            surfaces[usize::from(at >> 5)] |= 1 << (at & 31);
+        }
+    };
+    let boxes = world.resource::<crate::mesh_boxes::MeshBoxes>();
+    let mut covers = Vec::new();
+    let (mut from, mut to) = (f32::MAX, 0.0f32);
+    for grower in growers(world).into_iter().filter(|grower| grower.world == entity) {
+        let Some(foliage) = grower.look.foliage.as_ref() else { continue };
+        let rule = grower.data.rule(|block| {
+            let (guid, _) = content.block(block)?;
+            asset.drawn.number_of(guid)
+        });
+        if rule.near.is_some() || rule.under_water {
+            continue;
+        }
+        let Some((least, most)) = boxes.and_then(|boxes| boxes.of(foliage.mesh)) else { continue };
+        let Some(color) = model_color(content, &grower.mesh) else { continue };
+        // Its side, as wide as it is and as high, at its middle size, by how many stand on each square metre.
+        let scale = (rule.scale[0] + rule.scale[1]) * 0.5;
+        let side = (most.x - least.x).max(most.z - least.z).max(0.0) * (most.y - least.y).max(0.0) * scale * scale;
+        let spacing = rule.spacing.max(0.1);
+        let amount = rule.chance.clamp(0.0, 1.0) * side / (spacing * spacing);
+        if amount <= 0.0 {
+            continue;
+        }
+        let draw = grower.draw_distance.max(0.0);
+        from = from.min((draw - foliage.fade_distance.max(0.0)).max(0.0));
+        to = to.max(draw);
+        // The tops of the blocks it grows on; of every block where it grows on any.
+        match rule.on.is_empty() {
+            true => blocks.faces.iter().for_each(|faces| colours(faces.top)),
+            false => {
+                rule.on.iter().filter_map(|&id| blocks.faces.get(usize::from(id))).for_each(|faces| colours(faces.top))
+            }
+        }
+        covers.push(voxear_terrain::blocks::grow::Cover { rule, color, amount });
+    }
+    match covers.is_empty() {
+        true => (covers, [0.0; 2], [0; 8]),
+        false => (covers, [from, (to - from).max(1.0)], surfaces),
+    }
+}
+
+/// What covers a world's grass far off (see [`covers`]): the plants, how
+/// far from the camera they stop being drawn, and the surfaces they colour.
+pub type Covers = (Vec<voxear_terrain::blocks::grow::Cover>, [f32; 2], [u32; 8]);
+
+/// The colour a model shows on average, linear, where `mesh` (a part of a
+/// model, as a scene names it) is of a box model; worked out once while its
+/// file stays the same, as it is asked for every frame.
+fn model_color(content: &mut Content, mesh: &str) -> Option<[f32; 3]> {
+    type Kept = std::collections::HashMap<AssetGuid, (Option<std::time::SystemTime>, Option<[f32; 3]>)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = std::cell::RefCell::new(Kept::new());
+    }
+    let guid = content.parse(mesh).ok()?.guid()?;
+    let path = content.db().get(guid)?.path.clone();
+    if !voxear_render::is_box_model(&path) {
+        return None;
+    }
+    let changed = std::fs::metadata(content.db().root().join(&path)).and_then(|file| file.modified()).ok();
+    if let Some(color) =
+        KEPT.with_borrow(|kept| kept.get(&guid).filter(|(at, _)| *at == changed).map(|(_, color)| *color))
+    {
+        return color;
+    }
+    let color =
+        content.read_text(&path).ok().and_then(|text| voxear_render::BoxModel::parse(&text).ok()?.average_color());
+    KEPT.with_borrow_mut(|kept| kept.insert(guid, (changed, color)));
+    color
 }
 
 /// A number for `structures`, worked out once while they stay the same:
@@ -651,6 +749,10 @@ pub fn structure_woods(world: &World, entity: Entity) -> Vec<Woods> {
     let (Some(endless), Some(built)) = (generate.endless, generate.built.as_deref()) else { return Vec::new() };
     let middle = |[from, to]: [f32; 2]| (from + to) * 0.5;
     let size = asset.file.block_size.max(0.01);
+    // Past the rings its structures are put into themselves, as many as the machine's plant detail says.
+    let budget = voxear_terrain::WorldBudget::of(world);
+    let near = budget.near(endless.distance);
+    let rings = budget.structure_rings(voxear_terrain::blocks::map::FAR_STRUCTURES_TO);
     // How much of the ground the structures before have taken: near, a later structure keeps clear of earlier
     // ones, so far off it has only what they leave.
     let mut taken = 0.0f32;
@@ -678,9 +780,10 @@ pub fn structure_woods(world: &World, entity: Entity) -> Vec<Woods> {
             };
             // As tall as its trunk at its middle size, and a little of its leaves over that.
             let height = (middle(plant.height) + plant.leaf_size * 0.25) * size;
-            // Past the rings its structures are put into themselves.
-            let from = Woods::first_past(endless.distance, endless.distance).max(voxear_terrain::blocks::map::FAR_STRUCTURES_TO + 1);
-            Some(Woods { rule, block: *leaves, height, width, from, biomes: structure.biomes.clone() })
+            let from = Woods::first_past(near, near).max(rings + 1);
+            // Off the shore and away from rivers and lakes, as its trees stand near.
+            let shore = voxear_terrain::blocks::structure::plant_shore(structure, generate.placed.as_deref());
+            Some(Woods { rule, block: *leaves, height, width, from, biomes: structure.biomes.clone(), shore })
         })
         .collect()
 }

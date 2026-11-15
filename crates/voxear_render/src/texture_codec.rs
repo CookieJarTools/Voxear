@@ -48,7 +48,7 @@ pub(crate) fn mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> Vec
     levels
 }
 
-fn srgb_to_linear(c: f32) -> f32 {
+pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 

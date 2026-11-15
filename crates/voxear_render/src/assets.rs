@@ -62,7 +62,10 @@ impl Glow {
     }
 }
 
-const MAX_VERTICES: u64 = 2 * 1024 * 1024;
+/// How many vertices all meshes may keep: room beside the rest for a world
+/// of cubes 900 blocks across, whose chunks' meshes for rays take nearly
+/// three million, each block's face keeping its corners to itself.
+const MAX_VERTICES: u64 = 4 * 1024 * 1024;
 /// How many skinned vertices' bones all meshes may keep (see `skeleton::SkinVertex`).
 const MAX_SKIN_VERTICES: u64 = 1024 * 1024;
 const MAX_INDICES: u64 = 8 * 1024 * 1024;
@@ -149,6 +152,10 @@ pub struct MaterialDesc {
     pub height_texture: Option<TextureId>,
     pub displacement: f32,
     pub detail: f32,
+    /// The acoustic preset sound rays hear it as, plus one, in the order of
+    /// `voxear_physics::scene::Acoustic`; 0 to guess from its look: metal
+    /// where it is metallic, glass for glass, and otherwise generic.
+    pub acoustic: u32,
 }
 
 impl Default for MaterialDesc {
@@ -182,6 +189,7 @@ impl Default for MaterialDesc {
             height_texture: None,
             displacement: 0.0,
             detail: 6.0,
+            acoustic: 0,
         }
     }
 }
@@ -289,6 +297,8 @@ pub struct Assets {
     glass: Vec<MaterialHandle>,
     /// The cut-out materials, whose instances rays test for holes.
     cut_out: Vec<MaterialHandle>,
+    /// Each material's acoustic preset, plus one, where it gives one.
+    acoustics: HashMap<MaterialHandle, u32>,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
     /// The most meshlets any LOD of each mesh has, by its slot: the most one
     /// draw of it can turn into.
@@ -403,6 +413,7 @@ impl Assets {
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             glass: Vec::new(),
             cut_out: Vec::new(),
+            acoustics: HashMap::new(),
             mesh_ranges: HashMap::new(),
             most_meshlets: vec![0; MAX_MESHES as usize],
             textures: HashMap::new(),
@@ -1030,11 +1041,17 @@ impl Assets {
             displacement: if displaced { desc.displacement } else { 0.0 },
             detail: desc.detail.clamp(1.0, 64.0),
             ground_blend: desc.ground_blend.clamp(0.0, 10.0),
-            _pad: [0; 2],
+            acoustic: desc.acoustic,
+            _pad: 0,
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {
             self.glass.push(handle);
+        }
+        if desc.acoustic == 0 {
+            self.acoustics.remove(&handle);
+        } else {
+            self.acoustics.insert(handle, desc.acoustic);
         }
         self.cut_out.retain(|&cut_out| cut_out != handle);
         if material.alpha_cutoff > 0.0 {
@@ -1056,6 +1073,11 @@ impl Assets {
     /// reaches its cutoff.
     pub fn is_cut_out(&self, material: MaterialHandle) -> bool {
         self.cut_out.contains(&material)
+    }
+
+    /// The acoustic preset a material gives, plus one; 0 where it gives none.
+    pub fn acoustic(&self, material: MaterialHandle) -> u32 {
+        self.acoustics.get(&material).copied().unwrap_or(0)
     }
 
     /// Keeps a mesh's skin, one for each of its vertices, in place of any it

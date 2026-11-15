@@ -10,7 +10,7 @@ Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small 
 
 | Setting | What it does |
 | --- | --- |
-| Draw distance | How far from the camera plants are drawn, in metres. Grass looks right at 40 to 80; bushes and ferns further |
+| Draw distance | How far from the camera plants are drawn, in metres. Grass looks right at 40 to 80; bushes and ferns further. A machine's **Plant detail** draws them that many times as far (see [[Block Worlds#Quality and detail]]) |
 | Fade distance | Over how many metres short of the draw distance they fade out, so they thin away rather than stop at a line |
 | Shadow distance | How far from the camera they cast shadows, in metres. Grass far away casts shadows too small to see; 0 for none at all |
 | Healthy colour, Dry colour | Two colours the plants are tinted between, as Unity's grass is: each plant takes some of each, in patches, so a field is greener in places and drier in others. White for both leaves the plants as made |

@@ -223,6 +223,9 @@ pub struct AudioSource {
     pub occlusion_radius: f32,
     pub transmission: bool,
     pub pathing: bool,
+    /// How much of a 3D source on the effects bus the room rings with, its
+    /// reverb and its first echoes: 1 all of it, 0 none.
+    pub reverb_send: f32,
 }
 impl Component for AudioSource {}
 
@@ -246,6 +249,7 @@ impl AudioSource {
             bus: self.bus.bus(),
             spatial: (self.space == SoundSpace::ThreeD).then(|| (at, self.distance())),
             doppler: self.doppler,
+            reverb_send: self.reverb_send,
             ..VoiceParams::default()
         }
     }
@@ -302,6 +306,8 @@ pub struct AudioSourceData {
     pub transmission: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub pathing: bool,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub reverb_send: f32,
 }
 
 impl Default for AudioSourceData {
@@ -334,6 +340,7 @@ impl AudioSourceData {
             put("occlusion_radius", f64::from(data.occlusion_radius).into());
             put("transmission", data.transmission.into());
             put("pathing", data.pathing.into());
+            put("reverb_send", f64::from(data.reverb_send).into());
             table
         };
         let mut changes = table(self);
@@ -362,6 +369,7 @@ impl From<AudioSourceData> for AudioSource {
             occlusion_radius: data.occlusion_radius.max(0.01),
             transmission: data.transmission,
             pathing: data.pathing,
+            reverb_send: data.reverb_send.clamp(0.0, 1.0),
         }
     }
 }
@@ -399,6 +407,7 @@ pub fn audio_source_data(content: &Content, source: &AudioSource) -> AudioSource
         occlusion_radius: source.occlusion_radius,
         transmission: source.transmission,
         pathing: source.pathing,
+        reverb_send: source.reverb_send,
     }
 }
 
@@ -536,6 +545,10 @@ pub struct GameAudio {
     ducking: Ducking,
     /// The weather's rain, wind, surf and thunder.
     storm: crate::storm_sounds::StormSounds,
+    /// Sound heard by rays traced on the GPU, with ray-traced audio on.
+    pub tracer: crate::sound_tracing::SoundTracer,
+    /// The level's baked reverb probes, when it has them.
+    reverb_probes: Option<crate::reverb_probes::BakedReverb>,
 }
 
 /// A voice playing, as the editor's Audio panel lists it: what the mixer
@@ -593,6 +606,8 @@ impl GameAudio {
             shots: HashMap::new(),
             ducking: Ducking::default(),
             storm: crate::storm_sounds::StormSounds::default(),
+            tracer: crate::sound_tracing::SoundTracer::default(),
+            reverb_probes: None,
         }
     }
 
@@ -610,6 +625,7 @@ impl GameAudio {
         if self.reverb_on && !on {
             self.audio.set_reverb(ReverbTimes::NONE);
             self.audio.set_echoes(None);
+            self.audio.set_early_reflections(Vec::new());
             self.walls.forget_room();
             self.room = ReverbTimes::NONE;
         }
@@ -693,6 +709,8 @@ impl GameAudio {
         }
         self.sources.retain(|entity, _| alive.contains(entity));
         let ear = hearing.map(|listener| listener.position);
+        self.tracer.begin(ear);
+        self.tracer.keep_only(&|entity| alive.contains(&entity));
         for (entity, source, at) in found.iter().copied() {
             let playback = *self.sources.entry(entity).or_insert_with(|| Playback::new(&source, source.play_on_start));
             let heard_at = playback.heard_at(at, ear);
@@ -716,6 +734,25 @@ impl GameAudio {
     /// worked it out, for the reverb mode asked for: its reverb times,
     /// which also come when its echoes would not start, or its echoes.
     fn hear_room(&mut self, world: &World, listener: &Listener) {
+        if self.tracer.tracing() {
+            if let Some((times, early)) = self.tracer.room() {
+                self.audio.set_echoes(None);
+                self.audio.set_reverb(times);
+                self.audio.set_early_reflections(early);
+                self.room = times;
+            }
+            return;
+        }
+        // Without rays, the level's baked probes where they reach, and Steam Audio's room elsewhere.
+        if let Some(times) = self.reverb_probes.as_ref().and_then(|probes| probes.times_at(listener.position)) {
+            if times != self.room {
+                self.audio.set_echoes(None);
+                self.audio.set_reverb(times);
+                self.audio.set_early_reflections(Vec::new());
+                self.room = times;
+            }
+            return;
+        }
         match self.walls.room(world, listener, self.mode_now, self.audio.sample_rate()) {
             Some(RoomHeard::Times(times)) => {
                 self.audio.set_reverb(times);
@@ -734,12 +771,44 @@ impl GameAudio {
     fn muffle_sources(&mut self, world: &World, listener: &Listener, found: &[(Entity, AudioSource, Vec3)]) {
         let mut heard: Vec<(Entity, Heard)> = Vec::new();
         let mut voices: Vec<(u64, Vec3, SourceAcoustics)> = Vec::new();
+        let tracing = self.tracer.tracing();
+        let paths = self.walls.has_paths_file();
         for (entity, source, at) in found {
             let Some(playback) = self.sources.get(entity).filter(|playback| playback.voice != 0) else { continue };
             match source.acoustics() {
+                // Heard round the walls along baked paths, by Steam Audio; otherwise through them, by rays.
+                Some(acoustics) if tracing && !(acoustics.pathing && paths) => {
+                    let traced = crate::sound_tracing::Traced {
+                        entity: *entity,
+                        at: *at,
+                        radius: acoustics.radius,
+                        volumetric: acoustics.occlusion == Occlusion::Volumetric,
+                        transmission: acoustics.transmission,
+                    };
+                    heard.push((*entity, Heard { muffle: self.tracer.hear(traced), from: None }));
+                }
                 Some(acoustics) => voices.push((entity.to_bits(), *at, acoustics)),
                 None if playback.muffled.0 == playback.voice => heard.push((*entity, Heard::OPEN)),
                 None => {}
+            }
+        }
+        // Sources not playing, within hearing, are traced too, after those playing, so one that starts behind a
+        // wall starts muffled rather than whole until its rays come back.
+        if tracing {
+            for (entity, source, at) in found {
+                let idle = self.sources.get(entity).is_none_or(|playback| playback.voice == 0);
+                let near = at.distance(listener.position) <= source.max_distance;
+                let Some(acoustics) = source.acoustics().filter(|_| idle && near) else { continue };
+                if acoustics.pathing && paths {
+                    continue;
+                }
+                self.tracer.hear(crate::sound_tracing::Traced {
+                    entity: *entity,
+                    at: *at,
+                    radius: acoustics.radius,
+                    volumetric: acoustics.occlusion == Occlusion::Volumetric,
+                    transmission: acoustics.transmission,
+                });
             }
         }
         if let Some(found) = (!voices.is_empty()).then(|| self.walls.hear(world, listener, &voices)).flatten() {
@@ -765,6 +834,30 @@ impl GameAudio {
         let file = level.and_then(|level| content.read(&crate::acoustics::paths_file(level)).ok());
         self.walls.set_paths(level, file);
         self.paths_read = true;
+        // Its baked reverb probes, and its own ray-traced audio over the project's.
+        let probes = level.and_then(|level| content.read(&crate::reverb_probes::reverb_file(level)).ok());
+        self.reverb_probes = probes.and_then(|bytes| match crate::reverb_probes::BakedReverb::read(&bytes) {
+            Ok(baked) => {
+                tracing::info!(target: "audio", "The level rings by {} baked reverb probes", baked.probes());
+                Some(baked)
+            }
+            Err(error) => {
+                tracing::warn!(target: "audio", "The level's reverb probes would not load: {error:#}");
+                None
+            }
+        });
+        self.tracer.level = level.map(|level| crate::levels::level_audio(content, level)).unwrap_or_default();
+    }
+
+    /// The level's baked reverb probes, as last read.
+    pub fn reverb_probes(&self) -> Option<&crate::reverb_probes::BakedReverb> {
+        self.reverb_probes.as_ref()
+    }
+
+    /// Once a frame, after [`update`](Self::update): takes what the
+    /// renderer's sound rays found, and asks for this frame's.
+    pub fn trace_sound(&mut self, renderer: Option<&mut voxear_render::Renderer>) {
+        self.tracer.exchange(renderer);
     }
 
     /// Reads the level's paths again next frame, as after they were baked.
@@ -905,6 +998,8 @@ impl GameAudio {
         self.set_reverb(false);
         self.walls = Walls::default();
         self.paths_read = false;
+        self.tracer.forget();
+        self.reverb_probes = None;
         self.ducking = Ducking::default();
         self.audio.set_transition(0.0);
         self.audio.set_ducking(None);
@@ -965,6 +1060,11 @@ impl GameAudio {
                 self.set_reverb_mode(if mode == 1.0 { ReverbMode::Convolution } else { ReverbMode::Parametric })
             }
             (BusValue::Reverb | BusValue::ReverbMode, None) => {}
+            (BusValue::RayTraced | BusValue::RayQuality | BusValue::RayBudget | BusValue::RayTracing, _) => {
+                return self.ray_value(bus, set);
+            }
+            (BusValue::RayCost, _) => return self.tracer.cost().unwrap_or(0.0),
+            (BusValue::Rays, _) => return self.tracer.rays() as f32,
             (
                 BusValue::Master | BusValue::Effects | BusValue::Music | BusValue::Headphones | BusValue::SteamAudio,
                 _,
@@ -974,6 +1074,31 @@ impl GameAudio {
         match bus {
             BusValue::ReverbMode => flag(self.reverb_mode() == ReverbMode::Convolution),
             _ => flag(self.reverb_on && SteamAudio::get().is_ok()),
+        }
+    }
+
+    /// Ray-traced audio's settings, as a script sets them over the level's
+    /// and the project's until the game stops.
+    fn ray_value(&mut self, what: BusValue, set: Option<f32>) -> f32 {
+        use voxear_audio::sound_field::RayQuality;
+        if let Some(value) = set {
+            let mut settings = self.tracer.settings();
+            match what {
+                BusValue::RayTraced => settings.on = value != 0.0,
+                BusValue::RayQuality => {
+                    settings.quality = RayQuality::ALL.get(value.max(0.0) as usize).copied().unwrap_or_default();
+                }
+                BusValue::RayBudget => settings.budget = value.max(0.0),
+                _ => {}
+            }
+            self.tracer.script = Some(settings);
+        }
+        let settings = self.tracer.settings();
+        match what {
+            BusValue::RayTraced => flag(settings.on),
+            BusValue::RayQuality => RayQuality::ALL.iter().position(|q| *q == settings.quality).unwrap_or(1) as f32,
+            BusValue::RayBudget => settings.budget,
+            _ => flag(self.tracer.tracing()),
         }
     }
 
@@ -1088,6 +1213,7 @@ impl GameAudio {
                 SourceValue::OcclusionRadius => source.occlusion_radius = value.max(0.01),
                 SourceValue::Transmission => source.transmission = value != 0.0,
                 SourceValue::Pathing => source.pathing = value != 0.0,
+                SourceValue::ReverbSend => source.reverb_send = value.clamp(0.0, 1.0),
                 _ => {}
             }
         }
@@ -1108,6 +1234,7 @@ impl GameAudio {
             SourceValue::OcclusionRadius => source.occlusion_radius,
             SourceValue::Transmission => flag(source.transmission),
             SourceValue::Pathing => flag(source.pathing),
+            SourceValue::ReverbSend => source.reverb_send,
             _ => 0.0,
         })
     }
@@ -1217,6 +1344,9 @@ fn apply(audio: &mut Audio, voice: VoiceId, was: &AudioSource, now: &AudioSource
     }
     if was.doppler != now.doppler {
         audio.set_doppler(voice, now.doppler);
+    }
+    if was.reverb_send != now.reverb_send {
+        audio.set_reverb_send(voice, now.reverb_send);
     }
 }
 

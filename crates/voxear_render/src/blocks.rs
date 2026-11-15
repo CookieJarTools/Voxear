@@ -25,7 +25,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
     fell::LooseBlocks,
-    BlockWorld, ChunkMeshes,
+    BlockWorld, ChunkMeshes, RingFades,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
     smooth,
@@ -167,7 +167,11 @@ impl Component for BlockLook {}
 /// is drawn untinted.
 /// And its far tints, as many points a side as packed alike, each
 /// `TINT_FAR` times further apart, for the far view past its near
-/// ones: their first point and their points.
+/// ones: their first point and their points. And how far from the camera
+/// the plants that colour its ground far off (see `tints::cover_of`) stop
+/// being drawn, in metres: where they begin to fade, and over how far, the
+/// ground taking their colour as they go; and the surfaces they colour, a
+/// bit each by number.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockTints {
     pub corner: [i32; 2],
@@ -175,7 +179,13 @@ pub struct BlockTints {
     pub points: Arc<[u32]>,
     pub far_corner: [i32; 2],
     pub far_points: Arc<[u32]>,
+    pub cover: [f32; 2],
+    pub covered: [u32; 8],
 }
+
+/// A world of blocks' surface the plants on it colour far off (see
+/// [`BlockTints::covered`]): `TERRAIN_SURFACE_COVERED` in `common.slang`.
+const SURFACE_COVERED: u32 = 512;
 
 impl Component for BlockTints {}
 
@@ -199,19 +209,48 @@ const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_STEP == 4);
 // And its BLOCK_TINT_FAR the far view's, and BLOCK_TINT_MOST how many points the near ones take.
 const _: () = assert!(voxear_terrain::blocks::generate::tints::TINT_FAR == 16);
 const _: () = assert!(MOST_TINT_POINTS == 65536);
+// And its BLOCK_MOST_COVER the most cover a point keeps.
+const _: () = assert!(voxear_terrain::blocks::generate::tints::MOST_COVER == 0.5);
 
 /// The most points a side a world's tints have.
 pub const MOST_TINT_POINTS_SIDE: usize = 256;
 const MOST_TINT_POINTS: usize = MOST_TINT_POINTS_SIDE * MOST_TINT_POINTS_SIDE;
 
-/// Where a pool's quads start: after its tints.
-const QUADS_AT: u64 = TINTS_AT + TINT_BYTES;
+/// Where a pool's fades start, after its tints: two times each slot's
+/// chunk fades by (see [`fade_times`]).
+const FADES_AT: u64 = TINTS_AT + TINT_BYTES;
+
+/// Where a pool's quads start: after its fades.
+const QUADS_AT: u64 = FADES_AT + SLOTS as u64 * 8;
+
+/// When chunk `key`'s face fade in and out as its world's rings fade into
+/// each other (`fades`), on `voxear_terrain::blocks::fade_clock`: in as the
+/// coarse column over it is covered, and never while it is not; and out as
+/// its own column is, never where it is not.
+fn fade_times(fades: &RingFades, key: [i32; 4]) -> [f32; 2] {
+    let [level, x, _, z] = key;
+    let came = fades.covered.get(&[level + 1, x >> 1, z >> 1]).copied().unwrap_or(0.0);
+    let went = fades.covered.get(&[level, x, z]).copied().unwrap_or(f32::MAX);
+    [came, went]
+}
 
 /// How many quads a pool starts with room for; it doubles when full.
 const FIRST_CAPACITY: u64 = 1 << 16;
 
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
+
+/// How much nearer the camera, in chunks, a chunk without a mesh for rays
+/// has to be than the farthest with one to take its room in a full mesh
+/// pool: chunks about as far off as each other do not swap back and forth
+/// as the camera moves.
+const PROXY_SWAP_MARGIN: f32 = 2.0;
+
+/// The level of a smooth chunk's surface its mesh for rays is made from:
+/// its first coarser, half a block from its own at most (see
+/// `smooth::COARSER`). Kept alike where chunks meet at any level, as each
+/// level is, it lets no light through between them.
+const RAYS_LEVEL: usize = 1;
 
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
@@ -251,8 +290,24 @@ pub struct GpuBlockWorld {
     /// drawn turned (`BLOCKS_TURNED`).
     pub turn: [f32; 4],
     pub far_tint_corner: [i32; 2],
-    pub pad: [u32; 2],
+    /// Where a world without end's rings fade into each other (see
+    /// `voxear_terrain::blocks::RingFades`): the clock they fade by, its
+    /// coarsest ring's level, each chunk slot's times (see [`fade_times`]),
+    /// and where its rings are round, from its corner, how far its own
+    /// blocks reach and over how wide a band they fade; a reach of 0 for
+    /// none.
+    pub ring_clock: f32,
+    pub ring_coarsest: u32,
+    pub fades: u64,
+    pub rings: [f32; 4],
+    /// How far from the camera its grass takes the colour of the plants on
+    /// it, in metres: from where they begin to fade, over how far (see
+    /// [`BlockTints::cover`]).
+    pub cover: [f32; 2],
 }
+
+// The shaders' RING_FADE_SECONDS (common.slang) is the streamer's.
+const _: () = assert!(voxear_terrain::blocks::RING_FADE_SECONDS == 0.6);
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
 /// corners, two pairs of words each, in place of quads.
@@ -274,12 +329,54 @@ const PARTS_EACH: usize = MAX_MOTIONS * size_of::<GpuBlockMotion>() + MAX_MOVING
 pub const FRAME_SIZE: u64 = (PARTS_AT + MAX_BLOCK_WORLDS * PARTS_EACH) as u64;
 
 /// One chunk in a pool: the faces it was made from, its slot, where its
-/// quads start, and the box it lies in, in metres from the world's corner.
+/// quads start, the box its faces lie in, and its whole cube, in metres
+/// from the world's corner.
 struct Held {
     mesh: Arc<ChunkMesh>,
     slot: u32,
     first: u64,
     bounds: [Vec3; 2],
+    cube: [Vec3; 2],
+    /// How many of each facing's quads are cut out, last in it.
+    cut: [u32; FACINGS],
+}
+
+/// A chunk's quads as its pool holds them, each with its slot: in each
+/// facing, those of a solid surface first and those of a surface `cut`
+/// out from its pictures last, as leaves are, which the sun's shadows draw
+/// apart (see [`record_shadows`]); and how many are cut out in each. Drawn
+/// smooth, its corners' words as they are, `cut` empty.
+fn arranged(mesh: &ChunkMesh, slot: u32, cut: &[bool]) -> (Vec<[u32; 2]>, [u32; FACINGS]) {
+    let mut quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+    let mut counts = [0; FACINGS];
+    if !cut.iter().any(|&cut| cut) {
+        return (quads, counts);
+    }
+    // As the shaders read a quad's surface: the last where it has more than the world.
+    let is_cut = |quad: &[u32; 2]| cut[usize::from(quad[1] as u8).min(cut.len() - 1)];
+    for (facing, count) in counts.iter_mut().enumerate() {
+        let run = &mut quads[mesh.buckets[facing] as usize..mesh.buckets[facing + 1] as usize];
+        run.sort_by_key(is_cut);
+        *count = run.iter().filter(|quad| is_cut(quad)).count() as u32;
+    }
+    (quads, counts)
+}
+
+/// The box chunk `mesh`'s faces lie in, in its blocks from its corner: its
+/// ground's faces, and the blocks its sheets of leaves and vines and its
+/// blocks of parts stand in. `None` where it has none of those, as a chunk
+/// of water alone, whose water lies anywhere in its cube.
+fn faces_box(mesh: &ChunkMesh) -> Option<[Vec3; 2]> {
+    let block = |word: u32| Vec3::new((word & 31) as f32, (word >> 5 & 31) as f32, (word >> 10 & 31) as f32);
+    let (first, count) = mesh.loose();
+    let loose = mesh.quads[first as usize..(first + count) as usize].iter().map(|&[word, _]| block(word));
+    let (first, words) = mesh.parts();
+    let parts = mesh.quads[first as usize..(first + words) as usize]
+        .chunks_exact(2)
+        .map(|pair| Vec3::from(voxear_terrain::blocks::mesh::unpack_part([pair[0], pair[1]]).at.map(|v| v as f32)));
+    let blocks = loose.chain(parts).map(|at| [at, at + Vec3::ONE]);
+    let ground = mesh.positions.iter().map(|&point| [Vec3::from(point); 2]);
+    ground.chain(blocks).reduce(|[low, high], [from, to]| [low.min(from), high.max(to)])
 }
 
 /// One chunk as a view picks what to draw of it: its level and place, its
@@ -288,8 +385,14 @@ struct Held {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ChunkDraw {
     pub key: [i32; 4],
+    /// The box its faces lie in, and its whole cube, which its water may
+    /// fill anywhere.
     pub bounds: [Vec3; 2],
+    pub cube: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
+    /// How many of each facing's quads are of a surface cut out from its
+    /// pictures, last among them (see [`arranged`]).
+    pub cut: [u32; FACINGS],
     /// Its loose quads, sheets of bushy leaves and of vines, drawn
     /// whichever way the view looks while it is near enough.
     pub loose: [u32; 2],
@@ -357,9 +460,24 @@ pub(crate) struct Detail {
     pub camera: Vec3,
     pub allowed: f32,
     pub block_size: f32,
+    /// Where a world without end's rings fade into each other: where they
+    /// are round, along x and z in its space, how far its own blocks reach,
+    /// and its coarsest ring's level. A chunk wholly past where its ring has
+    /// faded out is left out (see [`Detail::past_its_ring`]).
+    pub rings: Option<([f32; 2], f32, i32)>,
 }
 
 impl Detail {
+    /// Whether every face of `chunk` lies past where its ring has faded out
+    /// to nothing, the ring outside it drawn there in its place.
+    fn past_its_ring(&self, chunk: &ChunkDraw) -> bool {
+        let Some((at, reach, coarsest)) = self.rings else { return false };
+        let level = chunk.key[0];
+        let [low, high] = chunk.bounds;
+        let nearest = |axis: usize, at: f32| (low[axis] - at).max(at - high[axis]).max(0.0);
+        level < coarsest && nearest(0, at[0]).max(nearest(2, at[1])) > reach * (1u32 << level.clamp(0, 16)) as f32
+    }
+
     /// The coarsest of a smooth chunk's levels (see
     /// `voxear_terrain::blocks::smooth::LEVELS`) whose surface moves no more
     /// than allowed for how far away it is, of those it has.
@@ -422,7 +540,7 @@ fn pick_parts(
         if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
             continue;
         }
-        if !within(planes, chunk.bounds) {
+        if !within(planes, chunk.bounds) || detail.is_some_and(|detail| detail.past_its_ring(chunk)) {
             continue;
         }
         let [low, high] = chunk.bounds;
@@ -501,9 +619,57 @@ pub(crate) fn pick_water(
         let [level, x, y, z] = chunk.key;
         shown.is_none_or(|shown| shown.contains(&[level, x, z]))
             && (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z])))
-            && within(planes, chunk.bounds)
+            && within(planes, chunk.cube)
     });
     merged(picked.map(|chunk| chunk.water).collect())
+}
+
+/// The runs of `chunks`' quads cut out from their pictures, in the order
+/// their pool holds them: the last of each facing's (see [`arranged`]), and
+/// every sheet of leaves and block of parts.
+fn cut_runs(chunks: &[ChunkDraw]) -> Vec<[u32; 2]> {
+    let mut cut: Vec<[u32; 2]> = Vec::new();
+    for chunk in chunks.iter().filter(|chunk| chunk.cone.is_none()) {
+        for (&[first, count], &cut_count) in chunk.facings.iter().zip(&chunk.cut) {
+            if cut_count > 0 {
+                cut.push([first + count - cut_count, cut_count]);
+            }
+        }
+        for run in [chunk.loose, chunk.parts] {
+            if run[1] > 0 {
+                cut.push(run);
+            }
+        }
+    }
+    cut.sort_unstable();
+    cut
+}
+
+/// Runs of quads `picked` (see [`pick`]) as two lists of runs: those whose
+/// quads may all be drawn as depth alone, and those within `cut` (see
+/// [`cut_runs`]).
+fn cut_apart(cut: &[[u32; 2]], picked: Vec<[u32; 2]>) -> (Vec<[u32; 2]>, Vec<[u32; 2]>) {
+    let (mut solid, mut cut_out) = (Vec::new(), Vec::new());
+    for [mut first, count] in picked {
+        let end = first + count;
+        // The cut runs that start before this run ends, from the last that starts at or before its first.
+        let from = cut.partition_point(|&[start, _]| start <= first).saturating_sub(1);
+        for &[start, length] in cut[from..].iter().take_while(|&&[start, _]| start < end) {
+            let (start, stop) = (start.max(first), (start + length).min(end));
+            if start >= stop {
+                continue;
+            }
+            if start > first {
+                solid.push([first, start - first]);
+            }
+            cut_out.push([start, stop - start]);
+            first = stop;
+        }
+        if first < end {
+            solid.push([first, end - first]);
+        }
+    }
+    (solid, cut_out)
 }
 
 /// Runs of quads in order, those that follow on drawn as one.
@@ -519,6 +685,10 @@ fn merged(mut picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
     merged
 }
 
+/// A chunk's mesh for rays: the chunk it was made from, and how many
+/// vertices and indices it takes.
+type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2]);
+
 /// One world's chunks on the GPU: one buffer, each slot's chunk's place in
 /// blocks, then the quads (or, drawn smooth, its triangles' corners); and
 /// each chunk's mesh for rays.
@@ -533,7 +703,24 @@ struct Pool {
     /// Ranges and slots given up, freed once the frames that may draw them
     /// are done.
     freeing: Vec<(u64, u64, u64, u32)>,
-    proxies: HashMap<[i32; 3], (Arc<ChunkMesh>, MeshHandle)>,
+    proxies: HashMap<[i32; 3], Proxy>,
+    /// Its chunks to make meshes for rays for, the nearest the camera first,
+    /// each with how far off it is, in chunks; sorted again as the world's
+    /// chunks or places, or the chunk the camera is in, change from those
+    /// `ordered` holds.
+    order: Vec<([i32; 3], f32)>,
+    /// How many of the first in `order` have their meshes for rays made from
+    /// the world's chunks as they are: those farther off give theirs up
+    /// first, so a frame goes on from there.
+    made_to: usize,
+    ordered: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>, Option<[i32; 3]>)>,
+    /// The mesh pool had no room for its nearest chunk without a mesh for
+    /// rays, and none with one was far enough beyond it to give theirs up:
+    /// tried again once the camera is in another chunk, or its faces change.
+    full: bool,
+    /// The frame from which the room its farthest chunks' meshes for rays
+    /// gave up is free again, once the frames tracing them are done.
+    room_at: u64,
     block_size: f32,
     smooth: bool,
     draws: Option<Arc<[ChunkDraw]>>,
@@ -547,13 +734,20 @@ struct Pool {
     proxied: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)>,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner, made again as they change.
-    placed: Option<Arc<[(MeshHandle, Vec3)]>>,
+    placed: Option<Arc<[(MeshHandle, Vec3, u32)]>>,
     /// The world as it last drew it, drawn in place of the pool that follows
     /// it until that one has every chunk.
     shown: Option<DrawnBlocks>,
     /// Its tints as last brought up, where it has any: their points, from
     /// which point and how many a side.
     tinted: Option<(Arc<[u32]>, [i32; 2], u32, Option<[i32; 2]>)>,
+    /// Which of its surfaces are cut out from their pictures, as leaves
+    /// are, as its chunks' quads were last put in order by (see
+    /// [`arranged`]).
+    cut: Arc<[bool]>,
+    /// How its world's rings fade into each other, as its chunks' fades
+    /// were last brought up by.
+    faded: Arc<RingFades>,
 }
 
 impl Pool {
@@ -571,10 +765,17 @@ impl Pool {
             held: HashMap::new(),
             freeing: Vec::new(),
             proxies: HashMap::new(),
+            order: Vec::new(),
+            made_to: 0,
+            ordered: None,
+            full: false,
+            room_at: 0,
             block_size,
             smooth,
             draws: None,
             sights: None,
+            cut: Arc::from([]),
+            faded: Arc::default(),
             seen: 0,
             made_from: None,
             tinted: None,
@@ -651,17 +852,25 @@ impl Pool {
                     self.space.alloc(count).expect("room after growing")
                 }
             };
-            let quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+            let (quads, cut) = arranged(mesh, slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
+            stage(bytemuck::cast_slice(&fade_times(&world.fades, key)), FADES_AT + u64::from(slot) * 8);
             // A coarser level's chunk is as many times larger as its blocks are; drawn smooth, its surface
             // reaches up to two blocks before it and past it.
             let scale = (1u32 << key[0].clamp(0, 16)) as f32;
             let side = side * scale;
             let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
             let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
-            let bounds = [low - margin, low + Vec3::splat(side) + margin];
-            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds });
+            let cube = [low - margin, low + Vec3::splat(side) + margin];
+            // Where its faces are, a block more each way for leaves that sway and doors that swing: often a thin
+            // layer of a coarse chunk's cube, hundreds of metres high, which the sun's cascades would take whole.
+            let block = world.block_size * scale;
+            let bounds = faces_box(mesh).map_or(cube, |[from, to]| {
+                let grown = margin + Vec3::splat(block);
+                [(low + from * block - grown).max(cube[0]), (low + to * block + grown).min(cube[1])]
+            });
+            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds, cube, cut });
         }
         // Those the world no longer has go once every one coming has come, so none leaves a gap till then.
         if whole {
@@ -709,13 +918,43 @@ impl Pool {
         }
         for (key, held) in &mut self.held {
             held.first = self.space.alloc(held.mesh.quads.len() as u64).expect("room in a larger pool");
-            let quads: Vec<[u32; 2]> = held.mesh.quads.iter().map(|&[a, b]| [a, b | held.slot << 16]).collect();
+            let quads;
+            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
+            stage(bytemuck::cast_slice(&fade_times(&self.faded, *key)), FADES_AT + u64::from(held.slot) * 8);
         }
         self.draws = None;
         self.sights = None;
         Ok(())
+    }
+
+    /// Every chunk held put in order again where it is, by which of the
+    /// world's surfaces are cut out now, where that changed.
+    fn arrange(&mut self, cut: Arc<[bool]>, stage: &mut dyn FnMut(&[u8], u64)) {
+        if self.cut == cut {
+            return;
+        }
+        self.cut = cut;
+        for held in self.held.values_mut() {
+            let quads;
+            (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
+            stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
+        }
+        self.draws = None;
+    }
+
+    /// Every chunk held given its fades again, where its world's rings fade
+    /// otherwise now.
+    fn fade(&mut self, fades: &Arc<RingFades>, stage: &mut dyn FnMut(&[u8], u64)) {
+        if Arc::ptr_eq(&self.faded, fades) || self.faded == *fades {
+            self.faded = fades.clone();
+            return;
+        }
+        self.faded = fades.clone();
+        for (key, held) in &self.held {
+            stage(bytemuck::cast_slice(&fade_times(fades, *key)), FADES_AT + u64::from(held.slot) * 8);
+        }
     }
 
     /// Which of each of its own chunks' sides see each other, made again
@@ -741,7 +980,17 @@ impl Pool {
                 let (parts, count) = held.mesh.parts();
                 let parts = [held.first as u32 + parts, count];
                 let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
-                ChunkDraw { key: *key, bounds: held.bounds, facings, loose, parts, water, cone }
+                ChunkDraw {
+                    key: *key,
+                    bounds: held.bounds,
+                    cube: held.cube,
+                    facings,
+                    cut: held.cut,
+                    loose,
+                    parts,
+                    water,
+                    cone,
+                }
             });
             self.draws = Some(draws.collect());
         }
@@ -771,6 +1020,8 @@ pub(crate) struct DrawnBlocks {
     /// What it shows from each place it is seen from, where it is seen from
     /// more than one (see `voxear_terrain::blocks::BlockPlace`).
     pub places: Arc<Vec<voxear_terrain::blocks::BlockPlace>>,
+    /// How its rings fade into each other, for a world without end.
+    pub fades: Arc<RingFades>,
     pub look: BlockLook,
     /// Its blocks moving now, as the shaders read them.
     pub moving: Arc<[GpuMovingBlock]>,
@@ -779,10 +1030,17 @@ pub(crate) struct DrawnBlocks {
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
-    pub proxies: Arc<[(MeshHandle, Vec3)]>,
+    /// Each chunk's mesh for rays, where it is from the world's corner, and
+    /// the acoustic preset sound rays hear it as, plus one: its most common
+    /// surface's material's, or rock's, as most of a world of blocks is.
+    pub proxies: Arc<[(MeshHandle, Vec3, u32)]>,
     /// Its tints in its pool, where it has any: the point they start from
     /// and how many a side.
     pub tints: Option<([i32; 2], u32, Option<[i32; 2]>)>,
+    /// How far off its ground takes the colour of the plants on it, and
+    /// which surfaces (see [`BlockTints::cover`]).
+    pub cover: [f32; 2],
+    pub covered: [u32; 8],
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -824,16 +1082,21 @@ fn axis_of(normal: Vec3) -> usize {
     }
 }
 
-/// A chunk's mesh for rays: its faces merged by surface alone, in metres
-/// from its corner, its pictures repeated as the world's are from `from`,
-/// where the chunk is from the world's corner. Its triangles share their
-/// corners, each facing the way the faces round it face on average: a
+/// A chunk's mesh for rays, in metres from its corner, its pictures
+/// repeated as the world's are from `from`, where the chunk is from the
+/// world's corner: a chunk of cubes' faces merged whatever their surfaces,
+/// a smooth chunk's surface at its [`RAYS_LEVEL`]. Its triangles share
+/// their corners, each facing the way the faces round it face on average: a
 /// block's face has its corners to itself, so faces its own way, and a
 /// smooth surface's run on smoothly.
-fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let points: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
+fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
+    let (positions, indices) = match smooth {
+        true => voxear_terrain::blocks::smooth::level_triangles(mesh, RAYS_LEVEL),
+        false => (mesh.positions.clone(), mesh.indices.clone()),
+    };
+    let points: Vec<Vec3> = positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
     let mut ways = vec![Vec3::ZERO; points.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in indices.chunks_exact(3) {
         let [a, b, c] = [0, 1, 2].map(|i| points[triangle[i] as usize]);
         // As large as the triangle, so larger faces count for more.
         let way = (b - a).cross(c - a);
@@ -863,19 +1126,53 @@ fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshDa
             }
         })
         .collect();
-    MeshData { vertices, indices: mesh.indices.clone(), ..MeshData::default() }
+    MeshData { vertices, indices, ..MeshData::default() }
+}
+
+/// The chunks whose meshes for rays give up their room in a full mesh pool,
+/// the farthest from the camera first, as much as each of `wanting` needs
+/// (its vertices and indices, and how far off it is). They are of those in
+/// `order` (the nearest first, each with how far off it is, in chunks) that
+/// have meshes for rays, with the room `made` says they take, each farther
+/// off than the one it makes room for by more than [`PROXY_SWAP_MARGIN`].
+fn giving_up(
+    order: &[([i32; 3], f32)],
+    made: impl Fn(&[i32; 3]) -> Option<[usize; 2]>,
+    wanting: impl IntoIterator<Item = ([usize; 2], f32)>,
+) -> Vec<[i32; 3]> {
+    let (mut given, mut needed, mut freed) = (Vec::new(), [0; 2], [0; 2]);
+    // Those from here on have given theirs up, or have none.
+    let mut farthest = order.len();
+    for (wants, away) in wanting {
+        needed = [needed[0] + wants[0], needed[1] + wants[1]];
+        while freed[0] < needed[0] || freed[1] < needed[1] {
+            let found = order[..farthest]
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(at, (key, far))| made(key).map(|room| (at, *key, *far, room)));
+            let Some((at, key, _, room)) = found.filter(|(_, _, far, _)| *far > away + PROXY_SWAP_MARGIN) else {
+                return given;
+            };
+            farthest = at;
+            given.push(key);
+            freed = [freed[0] + room[0], freed[1] + room[1]];
+        }
+    }
+    given
 }
 
 impl BlockWorlds {
     /// Brings every world of blocks in `world` up to date on the GPU,
-    /// staging the chunks that changed, and lists what to draw.
+    /// staging the chunks that changed, and lists what to draw. Chunks'
+    /// meshes for rays are made the nearest `camera` first.
     pub fn prepare(
         &mut self,
         gpu: &Gpu,
         assets: &mut Assets,
         frames: &mut Frames,
         world: &World,
-        frame_index: u64,
+        (frame_index, camera): (u64, Option<Vec3>),
     ) -> Result<()> {
         voxear_core::profile_scope!("Block Uploads");
         self.drawn.clear();
@@ -955,6 +1252,13 @@ impl BlockWorlds {
                 staged.extend_from_slice(bytes);
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
+            // Its chunks' quads in order by which of its surfaces are cut out from their pictures (see `arranged`).
+            let cut: Arc<[bool]> = match blocks.smooth {
+                true => Arc::from([]),
+                false => look.surfaces.iter().map(|surface| assets.is_cut_out(surface.material)).collect(),
+            };
+            pool.arrange(cut, &mut stage);
+            pool.fade(&blocks.fades, &mut stage);
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Its tints, brought up where they changed; one larger than its room is left untinted.
             match world.get::<BlockTints>(entity) {
@@ -973,34 +1277,60 @@ impl BlockWorlds {
                 }
                 _ => pool.tinted = None,
             }
-            // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made; none for
-            // blocks that came loose, a moment from going.
+            // Each chunk's mesh for rays, a few a frame, the nearest the camera first, the old one shown until the
+            // new one is made; none for blocks that came loose, a moment from going.
+            let side = CHUNK as f32 * blocks.block_size;
+            // Where the camera is from the world's corner, in chunks.
+            let near = camera.map(|camera| (camera - corner) / side);
+            let camera_chunk = near.map(|near| near.floor().as_ivec3().to_array());
             let same = |(meshes, places): &(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)| {
                 Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places)
             };
-            if turn.is_none() && !pool.proxied.as_ref().is_some_and(same) {
+            // With the mesh pool full, a camera gone into another chunk may have a nearer chunk take a farther's room.
+            let moved = pool.full && !pool.ordered.as_ref().is_some_and(|(.., at)| *at == camera_chunk);
+            let settled = pool.proxied.as_ref().is_some_and(same) && !moved;
+            if turn.is_none() && !settled && frame_index >= pool.room_at {
                 // Seen from more places than one, as through Portals, only what is round the first is traced:
                 // the GI's rays reach no further than round the camera.
                 let own = blocks.places.first().map(|place| &place.columns);
                 let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
-                pool.proxies.retain(|key, (_, mesh)| {
+                pool.proxies.retain(|key, (_, mesh, _)| {
                     let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
                     }
                     kept
                 });
+                let sorted = pool.ordered.as_ref().is_some_and(|(meshes, places, at)| {
+                    Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places) && *at == camera_chunk
+                });
+                if !sorted {
+                    let middle = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) + 0.5;
+                    let away = |key: &[i32; 3]| near.map_or(0.0, |near| middle(key).distance(near));
+                    pool.order.clear();
+                    pool.order.extend(blocks.meshes.keys().filter(|key| traced(key)).map(|key| (*key, away(key))));
+                    pool.order.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+                    pool.ordered = Some((blocks.meshes.clone(), blocks.places.clone(), camera_chunk));
+                    pool.made_to = 0;
+                }
                 let mut changed = pool.proxies.len() != before;
                 let mut all = true;
-                let side = CHUNK as f32 * blocks.block_size;
+                pool.full = false;
                 let uv_scale = 1.0 / blocks.block_size.max(0.01);
+                let order = std::mem::take(&mut pool.order);
+                let unmade = |proxies: &HashMap<[i32; 3], Proxy>, key: &[i32; 3], mesh: &Arc<ChunkMesh>| {
+                    !proxies.get(key).is_some_and(|(made, ..)| Arc::ptr_eq(made, mesh))
+                };
                 // Uploaded and built together, waited for once.
                 let batch = gpu.batch();
-                for (key, mesh) in blocks.meshes.iter().filter(|(key, _)| traced(key)) {
-                    if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
+                let mut made_to = order.len();
+                for (index, &(key, away)) in order.iter().enumerate().skip(pool.made_to) {
+                    let Some(mesh) = blocks.meshes.get(&key) else { continue };
+                    if !unmade(&pool.proxies, &key, mesh) {
                         continue;
                     }
+                    made_to = index;
                     if proxies_left == 0 {
                         all = false;
                         break;
@@ -1008,44 +1338,77 @@ impl BlockWorlds {
                     proxies_left -= 1;
                     let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
                     let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                    let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, uv_scale);
                     let lods = crate::lod::rays_only(&data);
                     drop(making);
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    let room = [data.vertices.len(), data.indices.len()];
                     // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
                     let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
                         Ok(handle) => handle,
                         Err(error) => {
                             if !std::mem::replace(&mut self.warned_full, true) {
-                                tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
+                                tracing::warn!(
+                                    "a world of blocks' chunks are left out of the GI's rays, the farthest first: {error:#}"
+                                );
                             }
-                            // Tried again once its faces change, as room may be made by then.
+                            // Room for this one and the next few, from the farthest with meshes for rays; a chunk
+                            // of cubes needs as many as its own faces have, a smooth one less.
+                            let next = order[index + 1..]
+                                .iter()
+                                .filter_map(|(key, away)| blocks.meshes.get(key).map(|mesh| (key, mesh, *away)))
+                                .filter(|(key, mesh, _)| unmade(&pool.proxies, key, mesh))
+                                .take(PROXIES_A_FRAME - 1)
+                                .map(|(_, mesh, away)| ([mesh.positions.len(), mesh.indices.len()], away));
+                            let wanting = std::iter::once((room, away)).chain(next);
+                            let given = giving_up(&order, |key| pool.proxies.get(key).map(|(.., room)| *room), wanting);
+                            for key in &given {
+                                if let Some((_, mesh, _)) = pool.proxies.remove(key) {
+                                    assets.free_mesh(mesh, frame_index);
+                                }
+                            }
+                            match given.is_empty() {
+                                // Tried again once its faces change or the camera moves on, as room may be made by then.
+                                true => pool.full = true,
+                                // Tried again once the room given up is free.
+                                false => {
+                                    (changed, all) = (true, false);
+                                    pool.room_at = frame_index + FRAMES_IN_FLIGHT as u64;
+                                }
+                            }
                             proxies_left = 0;
                             break;
                         }
                     };
-                    if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
+                    if let Some((_, old, _)) = pool.proxies.insert(key, (mesh.clone(), handle, room)) {
                         assets.free_mesh(old, frame_index);
                     }
                     changed = true;
+                    made_to = order.len();
                 }
+                (pool.order, pool.made_to) = (order, made_to);
                 {
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
                     batch.finish()?;
                 }
-                if all {
-                    pool.proxied = Some((blocks.meshes.clone(), blocks.places.clone()));
-                }
+                pool.proxied = all.then(|| (blocks.meshes.clone(), blocks.places.clone()));
                 if changed {
                     pool.placed = None;
                 }
             }
-            let side = CHUNK as f32 * blocks.block_size;
             let placed = pool
                 .placed
                 .get_or_insert_with(|| {
                     let at = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                    pool.proxies.iter().map(|(key, (_, mesh))| (*mesh, at(key))).collect()
+                    let acoustic = |chunk: &ChunkMesh| {
+                        let surface = most_common_surface(chunk);
+                        let material = surface.and_then(|surface| look.surfaces.get(surface));
+                        match material.map_or(0, |look| assets.acoustic(look.material)) {
+                            0 => ACOUSTIC_ROCK + 1,
+                            given => given,
+                        }
+                    };
+                    pool.proxies.iter().map(|(key, (chunk, mesh, _))| (*mesh, at(key), acoustic(chunk))).collect()
                 })
                 .clone();
             let drawn = DrawnBlocks {
@@ -1059,6 +1422,7 @@ impl BlockWorlds {
                 chunks: pool.draws(),
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 places: blocks.places.clone(),
+                fades: blocks.fades.clone(),
                 look,
                 moving: blocks
                     .moving
@@ -1073,6 +1437,8 @@ impl BlockWorlds {
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
                 tints: pool.tinted.as_ref().map(|&(_, corner, size, far)| (corner, size, far)),
+                cover: world.get::<BlockTints>(entity).map_or([0.0; 2], |tints| tints.cover),
+                covered: world.get::<BlockTints>(entity).map_or([0; 8], |tints| tints.covered),
                 id: None,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
@@ -1161,17 +1527,30 @@ impl BlockWorlds {
 
 fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
     frames.retire(Retired::Buffer(pool.buffer));
-    for (_, (_, mesh)) in pool.proxies {
+    for (_, (_, mesh, _)) in pool.proxies {
         assets.free_mesh(mesh, frame_index);
     }
+}
+
+/// Rock's place among `voxear_physics::scene::Acoustic`'s presets.
+const ACOUSTIC_ROCK: u32 = 10;
+
+/// The surface most of a chunk's faces are drawn with, its water's aside.
+fn most_common_surface(chunk: &ChunkMesh) -> Option<usize> {
+    let mut counts = [0u32; 256];
+    for quad in &chunk.quads[..chunk.water().0 as usize] {
+        counts[(quad[1] & 0xff) as usize] += 1;
+    }
+    let (surface, &count) = counts.iter().enumerate().max_by_key(|(_, count)| **count)?;
+    (count > 0).then_some(surface)
 }
 
 /// Adds each world's chunks' meshes for rays to the frame's instances, so
 /// the GI's rays see its blocks.
 pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame) {
     for blocks in drawn {
-        for (part, (mesh, at)) in blocks.proxies.iter().enumerate() {
-            let model = Mat4::from_translation(blocks.corner + *at);
+        for (part, &(mesh, at, acoustic)) in blocks.proxies.iter().enumerate() {
+            let model = Mat4::from_translation(blocks.corner + at);
             let normal = Mat3::from_mat4(model).inverse().transpose();
             extracted.instances.push(GpuInstance {
                 model: crate::gpu::cols(model),
@@ -1180,6 +1559,7 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
                 mesh: mesh.0,
                 material: blocks.look.material.0,
                 flags: INSTANCE_RAYS_ONLY,
+                acoustic,
                 ..GpuInstance::default()
             });
             extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32), far_side: false });
@@ -1217,10 +1597,9 @@ impl ViewBlocks {
             };
             counts.draws += lists[LIST_EARLY as usize].len() as u32;
             counts.triangles += triangles(&lists[LIST_EARLY as usize]);
-            for cascade in 0..CASCADES {
-                let list = &lists[LIST_SHADOW as usize + cascade];
-                counts.shadow_draws += list.len() as u32;
-                counts.shadow_triangles += triangles(list);
+            for list in (0..CASCADES).flat_map(|c| [LIST_SHADOW as usize + c, SHADOW_CUT as usize + c]) {
+                counts.shadow_draws += lists[list].len() as u32;
+                counts.shadow_triangles += triangles(&lists[list]);
             }
         }
         for (_, smooth, runs) in &self.water {
@@ -1258,11 +1637,14 @@ pub struct BlockCounts {
 /// `shadow_cache`), all but the blocks of parts, which may move, only when
 /// it draws its kept views, and those each frame; for any other, all of
 /// them each frame.
+///
+/// Where `rings`, as in a view not through a Portal, a world without end's
+/// rings fade into each other (see `voxear_terrain::blocks::RingFades`).
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
-    (offset, sights, shadows): (Vec3, Option<Vec3>, bool),
+    (offset, sights, shadows, rings): (Vec3, Option<Vec3>, bool, bool),
     lamps: &crate::shadow_cache::Lamps,
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
@@ -1283,12 +1665,13 @@ pub(crate) fn gather(
     let mut water = Vec::new();
     for (number, blocks) in drawn.iter().take(MAX_BLOCK_WORLDS).enumerate() {
         let looks = &blocks.look.surfaces[..blocks.look.surfaces.len().min(MAX_BLOCK_SURFACES)];
-        for (place, look) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks) {
+        for (at, (place, look)) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks).enumerate() {
             *place = GpuTerrainSurface {
                 material: look.material.0,
                 uv_scale: 1.0 / look.size.max(0.01),
                 sharpness: 0.0,
-                flags: surface_flags(look),
+                flags: surface_flags(look)
+                    | if blocks.covered[at >> 5] >> (at & 31) & 1 != 0 { SURFACE_COVERED } else { 0 },
                 tracks: 0.0,
                 fills_in: 0.0,
             };
@@ -1307,6 +1690,9 @@ pub(crate) fn gather(
         }
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
+        // Its rings fading into each other, a world of cubes without end seen from where it is looked at from.
+        let fades = &blocks.fades;
+        let fading = rings && !blocks.smooth && blocks.turn.is_none() && fades.reach > 0.0;
         // Whole metres off the world's own corner, so its far chunks keep their place to the millimetre.
         let corner = blocks.corner - offset;
         records.push(GpuBlockWorld {
@@ -1332,12 +1718,19 @@ pub(crate) fn gather(
             turn: blocks.turn.unwrap_or(Quat::IDENTITY).to_array(),
             // A far corner of i32::MIN for none.
             far_tint_corner: blocks.tints.and_then(|(_, _, far)| far).unwrap_or([i32::MIN; 2]),
-            pad: [0; 2],
+            ring_clock: voxear_terrain::blocks::fade_clock(),
+            ring_coarsest: fades.coarsest,
+            fades: blocks.address + FADES_AT,
+            rings: match fading {
+                true => [fades.at[0], fades.at[1], fades.reach, fades.band],
+                false => [0.0; 4],
+            },
+            cover: blocks.cover,
         });
         // Its chunks are picked in its own space: turned back where it is turned.
         let back = blocks.turn.unwrap_or(Quat::IDENTITY).inverse();
         let local = back * (camera - corner);
-        let mut lists = vec![Vec::new(); LAMP_KEPT as usize + LOCAL_SHADOW_LIGHTS];
+        let mut lists = vec![Vec::new(); LISTS];
         let planes = turned_planes(&frame.planes, corner, back);
         // What the world shows from the place nearest the camera, where it is seen from more than one.
         let nearest = |place: &&voxear_terrain::blocks::BlockPlace| {
@@ -1359,18 +1752,38 @@ pub(crate) fn gather(
         });
         // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
         let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
-        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
+        let ring = fading.then_some((fades.at, fades.reach, fades.coarsest as i32));
+        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size, rings: ring });
         lists[LIST_EARLY as usize] =
             pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref(), shown);
-        let wet = pick_water(&blocks.chunks, &planes, seen.as_ref(), shown);
+        // A coarse column's water is left out where the finer columns over it are made, theirs drawn whole in its
+        // place, as water shows no ring's fade.
+        let wet = match fading {
+            true => {
+                let covered = |chunk: &&ChunkDraw| {
+                    let [level, x, _, z] = chunk.key;
+                    level > 0 && fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX)
+                };
+                let water: Vec<ChunkDraw> =
+                    blocks.chunks.iter().filter(|chunk| chunk.water[1] > 0 && !covered(chunk)).copied().collect();
+                pick_water(&water, &planes, seen.as_ref(), shown)
+            }
+            false => pick_water(&blocks.chunks, &planes, seen.as_ref(), shown),
+        };
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
             let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
+            let cut = cut_runs(&blocks.chunks);
             for cascade in 0..CASCADES {
                 let planes = turned_planes(&frame.cascade_planes[cascade], corner, back);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+                let picked = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+                // In the last cascade a picture's pixel is about one of the cascade's: leaves cast as solid there.
+                (lists[LIST_SHADOW as usize + cascade], lists[SHADOW_CUT as usize + cascade]) = match cascade {
+                    SOLID_CASCADE.. => (picked, Vec::new()),
+                    _ => cut_apart(&cut, picked),
+                };
             }
         }
         let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
@@ -1399,7 +1812,8 @@ pub(crate) fn gather(
     }
     buffer.write(0, &records);
     buffer.write(SURFACES_AT as u64, &surfaces);
-    let shadows = runs.iter().any(|(_, _, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
+    let cascades = (0..CASCADES).flat_map(|c| [LIST_SHADOW as usize + c, SHADOW_CUT as usize + c]).collect::<Vec<_>>();
+    let shadows = runs.iter().any(|(_, _, lists)| cascades.iter().any(|&list| !lists[list].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
     Some(ViewBlocks { runs, water, pools, shadows })
 }
@@ -1407,6 +1821,18 @@ pub(crate) fn gather(
 /// Where a world's lists of what a lamp keeps of it start, beyond the lists
 /// the GPU fills: one a lamp, by its slot.
 const LAMP_KEPT: u32 = LIST_COUNT;
+
+/// Where a world's lists of what each sun cascade draws cut out from its
+/// pictures start, after the lamps' (see [`record_shadows`]): one a
+/// cascade. Its list at `LIST_SHADOW` draws the rest.
+const SHADOW_CUT: u32 = LAMP_KEPT + LOCAL_SHADOW_LIGHTS as u32;
+
+/// How many lists each world has.
+const LISTS: usize = SHADOW_CUT as usize + CASCADES;
+
+/// The first sun cascade whose texels are as large as a block's pictures'
+/// pixels, into which faces cut out from their pictures cast as solid.
+const SOLID_CASCADE: usize = CASCADES - 1;
 
 /// The planes, inward, round a lamp's reach.
 fn reach_planes(at: Vec3, reach: f32) -> [[f32; 4]; 6] {
@@ -1459,8 +1885,14 @@ pub(crate) fn draw_lamp_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, 
 /// view and one in `level`, and the run's first quad in `output`, as the
 /// shaders' vertex numbers leave a draw's first out.
 fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
+    draw_runs_from(ctx, view, push, (list, list));
+}
+
+/// As [`draw_runs`], each world's runs of its list `from`, drawn as list
+/// `list` is.
+fn draw_runs_from(ctx: &PassContext, view: &ViewBlocks, push: &Push, (from, list): (u32, u32)) {
     for (number, smooth, lists) in &view.runs {
-        for &[first, count] in &lists[list as usize] {
+        for &[first, count] in &lists[from as usize] {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
             let vertices = if *smooth { count / 2 } else { count * 6 };
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
@@ -1491,7 +1923,10 @@ fn draws(view: &ViewBlocks, list: u32) -> bool {
 }
 
 /// **Shadows (blocks)**: the faces each cascade sees, into its corner of
-/// the sun's atlas, over what the other shadow passes drew.
+/// the sun's atlas, over what the other shadow passes drew: those of solid
+/// surfaces as depth alone, which the GPU tests before shading anything,
+/// then those cut out from their pictures, as leaves are, whose fragments
+/// may be thrown away where the picture is clear.
 pub(crate) fn record_shadows(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
@@ -1507,14 +1942,17 @@ pub(crate) fn record_shadows(
         let size = cascade_size * 2;
         let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
-        bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
-        for cascade in 0..CASCADES as u32 {
-            let offset = vk::Offset2D {
-                x: (cascade % 2 * cascade_size) as i32,
-                y: (cascade / 2 * cascade_size) as i32,
-            };
-            set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
-            draw_runs(ctx, &view, &push, LIST_SHADOW + cascade);
+        for (pipeline, lists) in [(pipelines.block_shadow_solid, LIST_SHADOW), (pipelines.block_shadow, SHADOW_CUT)] {
+            if !(0..CASCADES as u32).any(|cascade| draws(&view, lists + cascade)) {
+                continue;
+            }
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            for cascade in 0..CASCADES as u32 {
+                let offset =
+                    vk::Offset2D { x: (cascade % 2 * cascade_size) as i32, y: (cascade / 2 * cascade_size) as i32 };
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
+                draw_runs_from(ctx, &view, &push, (lists + cascade, LIST_SHADOW + cascade));
+            }
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
@@ -1643,11 +2081,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_nearer_chunk_takes_the_room_of_the_farthest_and_chunks_about_as_far_off_do_not_swap() {
+        // Chunks along x as far off as their place, each made but the one 1 chunk off, with room for 10 vertices
+        // and 20 indices.
+        let order: Vec<([i32; 3], f32)> = [0, 1, 2, 3, 10, 11].map(|x| ([x, 0, 0], x as f32)).to_vec();
+        let made = |key: &[i32; 3]| (key[0] != 1).then_some([10, 20]);
+        assert_eq!(giving_up(&order, made, [([10, 20], 1.0)]), vec![[11, 0, 0]], "the farthest gives its room up");
+        // Needing more than one has, the next farthest gives theirs up too, but none within the margin.
+        let given = giving_up(&order, made, [([15, 20], 1.0)]);
+        assert_eq!(given, vec![[11, 0, 0], [10, 0, 0]]);
+        assert_eq!(giving_up(&order, made, [([35, 20], 1.0)]), given, "3 chunks off is within 2 of 1");
+        // Each wanting room is given it by those far enough off from it.
+        let given = giving_up(&order, made, [([10, 20], 1.0), ([10, 20], 7.5)]);
+        assert_eq!(given, vec![[11, 0, 0], [10, 0, 0]]);
+        assert_eq!(giving_up(&order, made, [([10, 20], 1.0), ([10, 20], 8.5)]), vec![[11, 0, 0]]);
+        assert!(giving_up(&order, made, [([10, 20], 9.5)]).is_empty(), "11 chunks off is within 2 of 9.5");
+    }
+
+    #[test]
     fn a_view_draws_the_chunks_it_sees_and_only_their_faces_turned_towards_it() {
         // Two chunks along x, 32 m each, the second's quads following on from the first's.
         let chunk = |x: f32, first: u32| ChunkDraw {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cube: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cut: [0; FACINGS],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
             parts: [0, 0],
@@ -1684,7 +2142,7 @@ mod tests {
         let seen = HashSet::from([[1, 0, 0]]);
         assert_eq!(pick(&whole, &[], (from, None), Some(&seen), None), vec![[40, 40]]);
         // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
-        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0 };
+        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0, rings: None };
         let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None, None);
         assert_eq!([level(-500.0), level(-2000.0), level(-9000.0)], [vec![[0, 40]], vec![[40, 15]], vec![[55, 5]]]);
         // A smooth chunk, its triangles all facing within a tenth of up: drawn from above or beside it, not at all
@@ -1714,6 +2172,8 @@ mod tests {
         let chunk = |x: f32, first: u32, water: u32| ChunkDraw {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cube: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cut: [0; FACINGS],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             loose: [0, 0],
             parts: [0, 0],
@@ -1726,5 +2186,53 @@ mod tests {
         assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None, None), vec![[185, 7]]);
         let seen = HashSet::from([[0, 0, 0]]);
         assert_eq!(pick_water(&chunks, &[], Some(&seen), None), vec![[60, 5]]);
+    }
+
+    #[test]
+    fn cut_out_faces_go_last_in_each_facing_and_cast_apart_from_the_solid() {
+        use voxear_terrain::blocks::mesh::pack;
+        // Surface 1 is leaves, cut out; 0 and 2 are solid. Two facings, three quads and one.
+        let quad = |x: u32, surface: u8| pack([x, 0, 0], [1, 1], 0, surface, [3; 4]);
+        let mut mesh = ChunkMesh { quads: vec![quad(0, 1), quad(1, 0), quad(2, 2), quad(3, 1)], ..Default::default() };
+        mesh.buckets = [0, 3, 4, 4, 4, 4, 4, 4, 4];
+        let cut: Arc<[bool]> = Arc::from([false, true, false]);
+        let (quads, counts) = arranged(&mesh, 5, &cut);
+        let surfaces: Vec<u8> = quads.iter().map(|quad| quad[1] as u8).collect();
+        assert_eq!(surfaces, [0, 2, 1, 1], "the solid first in the first facing, in the order they came");
+        assert_eq!(counts, [1, 1, 0, 0, 0, 0]);
+        assert!(quads.iter().all(|quad| quad[1] >> 16 == 5), "each with its slot");
+        // A world with nothing cut out keeps its quads as they came.
+        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).1, [0; FACINGS]);
+        // Drawn from the pool's 100th quad: the cut runs are the last of each facing.
+        let draw = ChunkDraw {
+            key: [0; 4],
+            bounds: [Vec3::ZERO, Vec3::splat(32.0)],
+            cube: [Vec3::ZERO, Vec3::splat(32.0)],
+            facings: [[100, 3], [103, 1], [104, 0], [104, 0], [104, 0], [104, 0]],
+            cut: counts,
+            loose: [104, 2],
+            parts: [0, 0],
+            water: [106, 0],
+            cone: None,
+        };
+        let runs = cut_runs(&[draw]);
+        assert_eq!(runs, vec![[102, 1], [103, 1], [104, 2]], "the leaves of each facing and the sheets");
+        // One run over all of them comes apart into its solid quads and its cut ones.
+        assert_eq!(cut_apart(&runs, vec![[100, 6]]), (vec![[100, 2]], vec![[102, 1], [103, 1], [104, 2]]));
+        // Runs that only touch a cut run, or start inside one, are cut where they cross.
+        assert_eq!(cut_apart(&runs, vec![[100, 1], [103, 2]]), (vec![[100, 1]], vec![[103, 1], [104, 1]]));
+    }
+
+    #[test]
+    fn a_chunks_box_is_where_its_faces_are_not_its_whole_cube() {
+        // Ground faces between heights 3 and 5, and a sheet of leaves in the block at height 9.
+        let mut mesh = ChunkMesh {
+            positions: vec![[0.0, 3.0, 0.0], [32.0, 5.0, 32.0]],
+            quads: vec![voxear_terrain::blocks::mesh::pack_loose([4, 9, 4], 6, 0, 1, 0, 0)],
+            ..Default::default()
+        };
+        mesh.buckets = [0, 0, 0, 0, 0, 0, 0, 1, 1];
+        assert_eq!(faces_box(&mesh), Some([Vec3::new(0.0, 3.0, 0.0), Vec3::new(32.0, 10.0, 32.0)]));
+        assert_eq!(faces_box(&ChunkMesh::default()), None, "water alone may lie anywhere in its cube");
     }
 }

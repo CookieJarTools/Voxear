@@ -1,0 +1,117 @@
+# Voxear box model: boxes under bones, measured in the pixels of its sheet.
+pixels_per_block = 16.0
+sheet = [64, 32]
+pixels = "MggAAPMkAQsAAAAASC4e/8SMaP++PjL/OEJo/+KuiP/w8PD/KCxG/5YuKP9GMiL/Oigc/yw0VP8AAQATAQEAEwIBABcAAQATAwEAEwQBAB8AAQAAEwEBABMCAQAXAAEAEwMBABMEAQAfAAEAABMBAQATAgEAFwABABMDAQATBAEAHwABAAATAQEAEwIBABcAAQATAwEAEwQBAB8AAQAAEwEBABMCAQATAAEAEgMBADoFBQMBABsAAQATAQEAEwIBABMAAQAfAwEABBsAAQATAQEAEwIBABMAAQAfAwEABBsAAQATAQEAEwIBABMAAQAfAwEABBMAAQAfAQEADB8DAQAEEwABAB8BAQAMHwMBAAQTAAEAWwEBAQEFAQAXAQEAHwMBAAQTAAEAWwEBAQEFAQAXAQEAHwMBAAQTAAEAUAEBAQEFAQBwBgcFBQcGBQEAFwEBAB8IAQAEEwABAFsBAQEBBQEAFwEBAB8JAQAEEwABABYFAQA2AgIFAQATAQEAHwABAAwfBQEADB8AAQAQcwMDAwUFBQABAHMFBQUCAgIAAQATBAEAEwABAJcEBAQECgoKCgABAHMDAwMFBQUAAQBzBQUFAgICAAEAEwQBABMAAQCXBAQEBAoKCgoAAQBzAwMDBQUFAAEAcwUFBQICAgABABMEAQATAAEAlwQEBAQKCgoKAAEAcwMDAwUFBQABAHMFBQUCAgIAAQATBAEAEwABAJMEBAQECgoKCgABABkDAQAZBQEAHwQBAAxZAAAAAAMBABkFAQAbBAEAGwsBAFkAAAAAAwEAGQUBABsEAQAbCgEAWQAAAAADAQAZBQEAGwQBABsKAQBZAAAAAAgBABkFAQAbBAEAGwoBAB8AAQAMGwQBAB8AAQD/dcAAAAAAAAAAAAAAAAA="
+
+[[bones]]
+name = "Body"
+role = "body"
+pivot = [0.0, 11.0, 0.0]
+
+[[bones.boxes]]
+from = [-4.0, 0.0, -2.0]
+size = [8, 10, 4]
+uv = [32, 0]
+
+[[bones]]
+name = "Head"
+role = "head"
+parent = "Body"
+pivot = [0.0, 10.0, 0.0]
+
+[[bones.boxes]]
+from = [-4.0, 0.0, -4.0]
+size = [8, 8, 8]
+uv = [0, 0]
+
+[[bones]]
+name = "RightArm"
+role = "arm"
+parent = "Body"
+pivot = [5.5, 9.0, 0.0]
+
+[[bones.boxes]]
+from = [-1.5, -4.0, -2.0]
+size = [3, 5, 4]
+uv = [0, 16]
+
+[[bones]]
+name = "RightArmLower"
+role = "arm"
+parent = "RightArm"
+pivot = [0.0, -4.0, 0.0]
+
+[[bones.boxes]]
+from = [-1.5, -5.0, -2.0]
+size = [3, 5, 4]
+uv = [14, 16]
+
+[[bones]]
+name = "RightLeg"
+role = "leg"
+parent = "Body"
+pivot = [2.0, 0.0, 0.0]
+
+[[bones.boxes]]
+from = [-2.0, -6.0, -2.0]
+size = [4, 6, 4]
+uv = [28, 16]
+
+[[bones]]
+name = "RightLegLower"
+role = "leg"
+parent = "RightLeg"
+pivot = [0.0, -6.0, 0.0]
+
+[[bones.boxes]]
+from = [-2.0, -5.0, -2.0]
+size = [4, 5, 4]
+uv = [44, 16]
+
+[[bones]]
+name = "LeftArm"
+role = "arm"
+parent = "Body"
+pivot = [-5.5, 9.0, 0.0]
+
+[[bones.boxes]]
+from = [-1.5, -4.0, -2.0]
+size = [3, 5, 4]
+uv = [0, 16]
+mirror = true
+
+[[bones]]
+name = "LeftArmLower"
+role = "arm"
+parent = "LeftArm"
+pivot = [0.0, -4.0, 0.0]
+
+[[bones.boxes]]
+from = [-1.5, -5.0, -2.0]
+size = [3, 5, 4]
+uv = [14, 16]
+mirror = true
+
+[[bones]]
+name = "LeftLeg"
+role = "leg"
+parent = "Body"
+pivot = [-2.0, 0.0, 0.0]
+
+[[bones.boxes]]
+from = [-2.0, -6.0, -2.0]
+size = [4, 6, 4]
+uv = [28, 16]
+mirror = true
+
+[[bones]]
+name = "LeftLegLower"
+role = "leg"
+parent = "LeftLeg"
+pivot = [0.0, -6.0, 0.0]
+
+[[bones.boxes]]
+from = [-2.0, -5.0, -2.0]
+size = [4, 5, 4]
+uv = [44, 16]
+mirror = true

@@ -1,0 +1,14 @@
+ground = "flatten"
+sink = 0
+
+[placement]
+spacing = 320.0
+separation = 96.0
+chance = 0.6
+on = "land"
+slope = 15.0
+
+[model]
+size = [7, 4, 7]
+palette = ["770ba0e5b31d4230b5c95d8c9f8fbb13", "611e6d6a396b4a8f8d554869e0973f89", "f00837876a20438da5ffba680f3a91c7"]
+runs = "49:1 8:2 5:0 2:2 1:0 3:3 1:0 2:2 1:0 3:3 1:0 2:2 1:0 3:3 1:0 2:2 5:0 16:2 5:0 2:2 5:0 2:2 5:0 2:2 5:0 2:2 5:0 57:2"

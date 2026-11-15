@@ -10,6 +10,7 @@ order: 2
 4. Pick a template:
    - **3D**: a lit scene with a ground and a turning cube. Start here if you are new.
    - **Empty**: nothing but a camera.
+   - **Infinite World**: a world of blocks without end, with biomes, rivers, villages and weather, and a player to walk it (see [[Starting an Infinite World]]).
 5. Under **Default setup**, choose what the first scene starts with: **Lighting and sky**, a **Camera**, and the **Sample scene**.
 6. Under **Extras**, pick the **C# IDE** you write code in, if any, and whether to make a **Git repository** for the project.
 7. Click **Create project**, or press Ctrl+Enter.

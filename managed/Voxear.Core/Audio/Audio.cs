@@ -80,6 +80,58 @@ public static class Audio
 	}
 
 	/// <summary>
+	/// Whether sound is heard through the scene the GPU traces rays against for the global illumination, its models,
+	/// worlds of blocks and terrain, rather than through the colliders alone: walls muffle sources by their materials'
+	/// AcousticMaterial, and the room rings, with its first echoes, as the rays bounced round it find. It starts as
+	/// the level's or the project's <c>[audio] ray_traced</c> setting has it; set here, it holds until the game
+	/// stops. Off, or with no GPU, sound is heard as before, and the room rings by the level's baked Reverb Probes.
+	/// <code>
+	/// Audio.RayTraced = Save.Read("ray-traced-audio") == "on";
+	/// Audio.RayQuality = RayQuality.High;
+	/// </code>
+	/// </summary>
+	public static bool RayTraced
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusRayTraced) == 1f; }
+		set { NativeAudio.SetBus(NativeAudio.BusRayTraced, value ? 1f : 0f); }
+	}
+
+	/// <summary>How many rays ray-traced audio traces, at most: higher hears small rooms more steadily.</summary>
+	public static RayQuality RayQuality
+	{
+		get { return (RayQuality)(int)NativeAudio.Bus(NativeAudio.BusRayQuality); }
+		set { NativeAudio.SetBus(NativeAudio.BusRayQuality, (int)value); }
+	}
+
+	/// <summary>
+	/// The most GPU time ray-traced audio may take a frame, in milliseconds: it traces fewer rays while it would take
+	/// more. 0.3 unless the project says.
+	/// </summary>
+	public static float RayBudget
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusRayBudget); }
+		set { NativeAudio.SetBus(NativeAudio.BusRayBudget, value); }
+	}
+
+	/// <summary>Whether sound is traced by rays now: RayTraced on, with a GPU to trace on.</summary>
+	public static bool RayTracing
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusRayTracing) == 1f; }
+	}
+
+	/// <summary>The least GPU time the sound rays took over the last 60 frames, in milliseconds.</summary>
+	public static float RayCost
+	{
+		get { return NativeAudio.Bus(NativeAudio.BusRayCost); }
+	}
+
+	/// <summary>How many rays from the listener ray-traced audio traces a frame now, as the budget allows.</summary>
+	public static int Rays
+	{
+		get { return (int)NativeAudio.Bus(NativeAudio.BusRays); }
+	}
+
+	/// <summary>
 	/// Holds back what is above <paramref name="hz"/> on a bus, as for sound heard underwater or through a wall, or
 	/// music muffled under a pause menu. AudioSnapshot.Open, 22000 Hz, lets everything by.
 	/// </summary>

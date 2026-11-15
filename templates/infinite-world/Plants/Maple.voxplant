@@ -1,0 +1,13 @@
+kind = "broadleaf"
+height = [8.0, 12.0]
+trunk = 1.1
+taper = 0.45
+bend = 0.2
+crown_width = [7.0, 9.0]
+crown_height = [6.0, 8.0]
+branches = 0.6
+leaf_size = 3.4
+leaf_density = 0.9
+roots = 2
+wood = "0f69339cd2034b188dbbd8e48b11a588"
+leaves = "c9a7a040dfea486caca91278a6ffa493"

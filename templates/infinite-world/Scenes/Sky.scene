@@ -1,0 +1,18 @@
+# The sky and the sun, shared by every level
+format = 1
+
+[sky]
+zenith = [0.40, 0.58, 0.86]
+horizon = [0.80, 0.86, 0.93]
+ground = [0.45, 0.42, 0.38]
+ambient = 1.0
+
+# Thinner than the default mist, for a clearer sea far out.
+[post.fog]
+density = 0.0015
+
+[[obj]]
+id = 1
+name = "Sun"
+rotation = [38.0, -40.0, 0.0]
+light = { type = "directional", color = [1.0, 0.95, 0.88], intensity = 3.2 }

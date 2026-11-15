@@ -1,0 +1,159 @@
+block_size = 1.0
+
+[[blocks]]
+block = "6d833d3c5ec628264b3edb8a928b832e"
+
+[[blocks]]
+block = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
+
+[[blocks]]
+block = "bec0d74a7d21da2c665d1d21de73757c"
+
+[[blocks]]
+block = "97e1b2215c8f413a9da77981ca26334d"
+
+[blocks.cover]
+height = [-200.0, 3.0]
+depth = 3
+
+[[blocks]]
+block = "7df518670d1529b450603ec581b9eac8"
+
+[blocks.cover]
+height = [260.0, 10000.0]
+depth = 2
+
+[[blocks]]
+block = "3a5aea260eeb19b64f088c565675b3bd"
+
+[[blocks]]
+block = "814b8649790d4cfa9a03616140a159f1"
+
+[[blocks]]
+block = "b15aba9a8e7047689d6bffb862d6679c"
+
+[[blocks]]
+block = "105f0fababb3496b8e3cc14185a99046"
+
+[[blocks]]
+block = "96c0b1ecbb1f4d228a9cf8b603b18443"
+
+[[blocks]]
+block = "aa14b8f63dd14f749a4f9e521c7985f1"
+
+[[blocks]]
+block = "e9c7191508774dbfab82d807e3f55945"
+
+[[blocks]]
+block = "be1b76211fb846c18e4994847038dd91"
+
+[[blocks]]
+block = "e0fa168ed0eb4331af7e4980d1808c29"
+
+[[blocks]]
+block = "0f69339cd2034b188dbbd8e48b11a588"
+
+[[blocks]]
+block = "c9a7a040dfea486caca91278a6ffa493"
+
+[[blocks]]
+block = "5981aec6de74431a9f6403226b5bf2fd"
+
+[[blocks]]
+block = "0a01e84d82b0489bab92ea45dee51895"
+
+[[blocks]]
+block = "c9c3ae2e8a6a43f991988801fcd316c7"
+
+[[blocks]]
+block = "6d833d3c5ec628264b3edb8a928b832e"
+state = 5
+slab = true
+
+[[blocks]]
+block = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
+state = 5
+slab = true
+
+[[blocks]]
+block = "c9c3ae2e8a6a43f991988801fcd316c7"
+state = 5
+slab = true
+
+[[blocks]]
+block = "bec0d74a7d21da2c665d1d21de73757c"
+state = 5
+slab = true
+
+[[blocks]]
+block = "b15aba9a8e7047689d6bffb862d6679c"
+state = 5
+slab = true
+
+[[blocks]]
+block = "97e1b2215c8f413a9da77981ca26334d"
+state = 5
+slab = true
+
+[[blocks]]
+block = "aa14b8f63dd14f749a4f9e521c7985f1"
+state = 5
+slab = true
+
+[[blocks]]
+block = "e9c7191508774dbfab82d807e3f55945"
+state = 5
+slab = true
+
+[[blocks]]
+block = "be1b76211fb846c18e4994847038dd91"
+state = 5
+slab = true
+
+[[blocks]]
+block = "e0fa168ed0eb4331af7e4980d1808c29"
+state = 5
+slab = true
+
+[[blocks]]
+block = "7df518670d1529b450603ec581b9eac8"
+state = 5
+slab = true
+
+[[blocks]]
+block = "bcc5382a112c4878a418cafa497dbe18"
+
+[[blocks]]
+block = "754a854b210f4c7b823e5c063a1884c1"
+
+[ground]
+size = [64, 64]
+height = 8
+top = 1
+under = 2
+under_depth = 3
+bottom = 3
+
+[generate]
+world = "Worlds/Islands.worldgen"
+position = [0.0, 4585.0]
+bottom = -80
+overhangs = 2.0
+caves = 0.2
+rivers = true
+slabs = true
+sea = 6
+biomes = ["f788f8c381c947c6a8c270412a71c3f3", "f566bb70c59f4db1af95c293e14fcc37", "6a6ce9a0085946a7b27701d341e67431", "29c6aec5428441b7a6a8f133bd5b4e0c", "d63e1820e6fc47d592bbe0f1ee062a01", "56b189b2452440389cd6170d0736d85a", "d7d89681ece043ada386a092bca382d3", "65b08620c2a4420abe5aa56beca06120", "fab718a10aae453695ad87e2554ba42a", "8622b93bc55f4520a829fd6917f62537", "2f7fbfef597e416eb615523e32e7e0d8"]
+land_from = 600.0
+biome_size = 768.0
+structures = ["dca1bdd6684347a6b62ab3ba08952e2c", "6cc6d3c8baad42b8b46f6663d5926b15", "c2e12e2d2fcc4a83bfee80f370331fb6", "acc6f2fc0a7b411e943b1369f6b4ea98", "863333f3cba54796888ee4f521e5a97f", "e03890592ca94651bc89dc3d5d625452", "88b5089a9ff541189a4be13056cb6ed6", "fef9ffea71914841a6303ab47896f6b1", "1ba685f7df794b72b9755ae47daa93db"]
+
+[generate.levels]
+size = 3600.0
+levels = 5
+low = 8.0
+high = 850.0
+
+[generate.endless]
+distance = 256.0
+far = 16384.0

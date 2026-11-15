@@ -1,0 +1,7 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.22, 0.46, 0.16]
+material = "e748007bf4a04ded8ebfd3d4d3854693"
+sways = true
+shape = "sapling"
+hardness = 0.0
+grows = "2a11db58ba124e59a03381e9d04ab4ea"

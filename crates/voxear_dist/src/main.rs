@@ -295,6 +295,10 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
     for source in files_in(&root.join(MANUAL))? {
         add(&source, source.strip_prefix(root)?.to_path_buf(), false)?;
     }
+    // The templates `vox new` copies, as Infinite World.
+    for source in files_in(&root.join("templates"))? {
+        add(&source, source.strip_prefix(root)?.to_path_buf(), false)?;
+    }
     add(&root.join("README.md"), "docs/README.md".into(), false)?;
     for entry in fs::read_dir(root.join("docs"))? {
         let source = entry?.path();

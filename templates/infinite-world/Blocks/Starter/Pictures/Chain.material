@@ -1,0 +1,5 @@
+color = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 1.0
+color_map = "ebe71388ff9949c4ac26a767d4ed29e4"
+cutout = 0.5

@@ -1,0 +1,10 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.42, 0.42, 0.44]
+hardness = 2.0
+tool = "aa4f1151e436ddb4d277b221846e7891"
+tier = 1
+
+[[drops]]
+item = "481cf028a3dbad626c6c5788b3c89faa"
+count = [1, 1]
+chance = 1.0

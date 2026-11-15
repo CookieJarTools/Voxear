@@ -1,0 +1,28 @@
+# Voxear biome: where it lies by climate and height, and the blocks its ground is made of.
+color = [0.93, 0.95, 0.98]
+temperature = [-60.0, 14.0]
+humidity = [0.0, 1.0]
+height = [650.0, 10000.0]
+
+[ground]
+top = "7df518670d1529b450603ec581b9eac8"
+under = "4ec9a26790744c17b1ce9b5ce720c804"
+under_depth = 2
+deep = "bec0d74a7d21da2c665d1d21de73757c"
+steep = "bec0d74a7d21da2c665d1d21de73757c"
+steep_slope = 58.0
+shore = "b15aba9a8e7047689d6bffb862d6679c"
+shore_height = 2.0
+
+
+[ground.rock_layers]
+tilt = 1.5
+wander = 6.0
+
+[[ground.rock_layers.layers]]
+block = "33e20ea70d224db4b43eed1c08869e58"
+thickness = 14.0
+
+[[ground.rock_layers.layers]]
+block = "b15aba9a8e7047689d6bffb862d6679c"
+thickness = 3.0

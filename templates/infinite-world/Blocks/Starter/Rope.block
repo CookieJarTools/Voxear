@@ -1,0 +1,4 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.66, 0.55, 0.36]
+shape = "rope"
+hardness = 0.3

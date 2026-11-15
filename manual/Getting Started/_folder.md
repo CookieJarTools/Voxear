@@ -10,4 +10,4 @@ These pages take you from installing Voxear to a game you can hand to someone el
 4. [[Playing Your Game]]
 5. [[Making a Build]]
 
-Then [[Modules]] says how to choose the systems your game uses, such as networking or water.
+Then [[Modules]] says how to choose the systems your game uses, such as networking or water, and [[Starting an Infinite World]] starts a game in a world without end.

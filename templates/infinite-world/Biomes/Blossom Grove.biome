@@ -1,0 +1,51 @@
+# Voxear biome: where it lies by climate and height, and the blocks its ground is made of.
+color = [0.95, 0.66, 0.78]
+temperature = [3.6, 6.1]
+humidity = [0.0, 1.0]
+
+[land]
+form = "pillars"
+height = 35.0
+size = 400.0
+valleys = 0.3
+overhangs = 6.0
+pillars = 0.15
+pillar_height = 70.0
+bridges = 0.5
+
+[ground]
+top = "c9c3ae2e8a6a43f991988801fcd316c7"
+under = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
+under_depth = 3
+deep = "bec0d74a7d21da2c665d1d21de73757c"
+steep = "bec0d74a7d21da2c665d1d21de73757c"
+steep_slope = 60.0
+shore = "97e1b2215c8f413a9da77981ca26334d"
+shore_height = 2.0
+
+
+[ground.rock_layers]
+tilt = 1.5
+wander = 6.0
+
+[[ground.rock_layers.layers]]
+block = "6a0bf59205dd4d01ababc28529237882"
+thickness = 8.0
+
+[[ground.rock_layers.layers]]
+block = "33e20ea70d224db4b43eed1c08869e58"
+thickness = 4.0
+
+[[ground.rock_layers.layers]]
+block = "31f8403d72d04a1680a98b54150499be"
+thickness = 2.0
+
+[vines]
+block = "105f0fababb3496b8e3cc14185a99046"
+amount = 0.1
+length = [2, 7]
+depth = 40.0
+
+[tints]
+grass = [0.85, 1.15, 0.6]
+foliage = [1.2, 1.1, 1.1]

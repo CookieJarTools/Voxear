@@ -1,0 +1,4 @@
+# Voxear block: how it looks, which the worlds of blocks made of it list.
+color = [0.35, 0.24, 0.18]
+material = "5ad4dcc107a54d5ba0b36d735fbf3db9"
+hardness = 1.0

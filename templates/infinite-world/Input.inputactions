@@ -1,0 +1,63 @@
+format = 1
+
+[[map]]
+name = "Map"
+
+[[map.action]]
+name = "Open Map"
+id = "open-map"
+bindings = ["Keyboard/M"]
+
+[[map]]
+name = "Player"
+
+[[map.action]]
+name = "Move"
+id = "move"
+type = "vector2"
+bindings = [
+    { up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" },
+    "Gamepad/LeftStick",
+]
+
+# The mouse in pixels this frame, and the stick from -1 to 1 each way.
+[[map.action]]
+name = "Look"
+id = "look"
+type = "vector2"
+bindings = ["Mouse/Delta", "Gamepad/RightStick"]
+
+[[map.action]]
+name = "Jump"
+id = "jump"
+bindings = ["Keyboard/Space", "Gamepad/South"]
+
+[[map.action]]
+name = "Interact"
+id = "interact"
+bindings = ["Keyboard/E", "Gamepad/West"]
+
+[[map.action]]
+name = "Run"
+id = "run"
+bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
+
+# The wheel in notches this frame, and the pad's buttons while held.
+[[map.action]]
+name = "Zoom"
+id = "zoom"
+type = "vector2"
+bindings = [
+    "Mouse/Scroll",
+    { up = "Gamepad/DpadUp", down = "Gamepad/DpadDown" },
+]
+
+[[map.action]]
+name = "Free Pointer"
+id = "free-pointer"
+bindings = ["Keyboard/Escape"]
+
+[[map.action]]
+name = "Hold Pointer"
+id = "hold-pointer"
+bindings = ["Mouse/Left"]

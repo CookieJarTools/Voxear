@@ -1,7 +1,9 @@
 //! Portals in the game, headless (no GPU, no scripts): a character walks
 //! through one and stands on the ground of a place 20 km off, a thrown body
 //! keeps its speed, nothing is shown part-way between the two places, and a
-//! camera that follows goes on seeing its subject through the opening.
+//! camera that follows goes on seeing its subject through the opening, and
+//! a far side fades in and out as a camera comes within its view distance
+//! and goes.
 
 use std::sync::{Arc, Mutex};
 
@@ -415,7 +417,7 @@ fn a_scene_file_keeps_its_portals_and_what_its_cameras_follow() {
     assert_eq!(portal, Portal::to(Vec2::new(2.0, 3.0), far), "one as it is made, but for where it leads");
     let back = *engine.world.get::<Portal>(far).unwrap();
     assert_eq!((back.to, back.size, back.open, back.passes), (Some(gate), Vec2::new(3.0, 4.0), false, 0b101));
-    assert_eq!((back.mist, back.view_distance), (Vec3::new(1.0, 0.5, 0.25), 48.0));
+    assert_eq!((back.mist, back.view_distance), (Vec3::new(1.0, 0.5, 0.25), Some(48.0)));
     assert_eq!(engine.world.get::<CameraFollows>(eye), Some(&CameraFollows(walker)));
     // Saved, it is the file it was read from.
     let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
@@ -425,4 +427,87 @@ fn a_scene_file_keeps_its_portals_and_what_its_cameras_follow() {
         assert!(text.contains(line), "{line} in:\n{text}");
     }
     assert_eq!(text.matches("view_distance").count(), 1, "what is as made is left out:\n{text}");
+}
+
+/// How much of `gate`'s far side a camera at `eye` looking along +z sees.
+fn shown_from(game: &voxear_engine::Game, gate: Entity, eye: Vec3) -> f32 {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let projection = vulkan::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1);
+    let view = Mat4::from_rotation_translation(Quat::IDENTITY, eye).inverse();
+    let sight = voxear_render::portals::in_sight(&game.engine.world, (eye, Vec3::ZERO), projection * view, 4, None);
+    sight.seen.iter().find(|seen| seen.entity == gate).map_or(0.0, |seen| seen.shown)
+}
+
+#[test]
+fn a_far_side_fades_in_and_out_as_a_camera_comes_near_and_goes_and_never_flickers_at_its_edge() {
+    use voxear_engine::{Game, Project};
+    use voxear_render::PortalFar;
+    use voxear_scene::Name;
+    // Gates whose view distance is the project's, 40 m, the near one facing down -z from 5 m along it.
+    let dir = tempfile::tempdir().unwrap();
+    let project =
+        "[project]\nname = \"Gates\"\nstart_level = \"Levels/Main.level\"\n\n[portals]\nview_distance = 40.0\n";
+    let scene = GATES.replace("view_distance = 48.0\n", "").replace("open = false\n", "");
+    write(
+        dir.path(),
+        &[
+            ("voxear.toml", project.into()),
+            ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Gates.scene\"\n".into()),
+            ("Scenes/Gates.scene", scene),
+        ],
+    );
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let find = |game: &Game, name: &str| {
+        game.engine.world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).unwrap().0
+    };
+    let (gate, eye) = (find(&game, "Gate"), find(&game, "Eye"));
+    game.engine.world.remove::<CameraFollows>(eye);
+    let mut look_from = |game: &mut Game, away: f32| {
+        let at = Vec3::new(0.0, 1.5, 5.0 - away);
+        game.engine.world.get_mut::<Transform>(eye).unwrap().position = at;
+        game.tick(FRAME, None);
+        shown_from(game, gate, at)
+    };
+
+    // Far off it shows only its mist, and is not near.
+    for _ in 0..30 {
+        assert_eq!(look_from(&mut game, 200.0), 0.0, "nothing of it from 200 m");
+    }
+    assert!(!game.engine.world.get::<PortalFar>(gate).unwrap().near);
+
+    // A camera that comes within its view distance at once sees it clear over a moment, never all at once.
+    let first = look_from(&mut game, 20.0);
+    assert!(first > 0.0 && first < 0.2, "it begins to clear, and only begins: {first}");
+    let mut was = first;
+    for _ in 0..40 {
+        let now = look_from(&mut game, 20.0);
+        assert!(now >= was && now - was < 0.1, "clearing smoothly: {was} then {now}");
+        was = now;
+    }
+    assert_eq!(was, 1.0, "clear after a moment");
+
+    // Wandering back and forth over its edge, a metre each way, it goes on being drawn, and shows much the same.
+    for frame in 0..60 {
+        let away = if frame % 2 == 0 { 39.0 } else { 41.0 };
+        let now = look_from(&mut game, away);
+        assert!(now > 0.7, "still drawn {away} m off, frame {frame}: {now}");
+        assert!((now - was).abs() < 0.2, "no flicker {away} m off, frame {frame}: {was} then {now}");
+        was = now;
+    }
+
+    // Walked off past its edge and margin, it is no longer drawn at all, and its mist thickens back.
+    assert_eq!(look_from(&mut game, 60.0), 0.0, "not drawn 60 m off");
+    for _ in 0..40 {
+        look_from(&mut game, 60.0);
+    }
+    let far = *game.engine.world.get::<PortalFar>(gate).unwrap();
+    assert!(!far.near && far.shown == 0.0, "{far:?}");
+
+    // One with a view distance of its own shows from as far as that.
+    game.engine.world.get_mut::<Portal>(gate).unwrap().view_distance = Some(300.0);
+    for _ in 0..40 {
+        was = look_from(&mut game, 200.0);
+    }
+    assert_eq!(was, 1.0, "its own 300 m");
 }

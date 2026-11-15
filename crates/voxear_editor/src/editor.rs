@@ -621,7 +621,7 @@ impl Editor {
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
         let (modules, origin) = (game.project.modules(), &game.project.file.floating_origin);
-        let quality = &game.project.file.quality;
+        let quality = (&game.project.file.quality, &game.project.file.portals);
         let budget = &voxear_terrain::WorldBudget::of(&game.engine.world);
         let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
         project_settings.show_machine(&mut ui, voxear_terrain::MachineBudget::of(&game.engine.world).kept);

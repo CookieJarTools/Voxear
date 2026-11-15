@@ -501,6 +501,39 @@ fn a_far_side_under_clouds_shows_no_black_where_its_images_start_out_holding_nan
 /// leads to the other: the first plain grass with a stone pillar; the second
 /// with a pit of water, a tall pillar of dirt and steps of stone. The
 /// camera stands in the first, looking at its Portal.
+#[test]
+fn a_far_side_walked_away_from_draws_nothing_and_lets_its_view_and_pictures_go() {
+    let Some(mut renderer) = renderer() else { return };
+    let Places { mut world, near, camera, .. } = places(&mut renderer, 0.6);
+    // A far side drawn masks its opening first; one showing only its mist does not.
+    let portal_passes =
+        |renderer: &Renderer| renderer.timings().iter().filter(|(name, _)| name == "Portal mask").count();
+    // Near by, the far side is drawn, into a view of its own and pictures it keeps.
+    let close = frames(&mut renderer, &world, 12);
+    let (pictures, views) = renderer.kept();
+    assert!(views >= 1 && portal_passes(&renderer) > 0, "a view through the Portal: {views} views");
+
+    // Walked off past its view distance, it shows only its mist and nothing of its far side is drawn.
+    let reach = world.get::<Portal>(near).unwrap().reach(&PortalQuality::default());
+    world.get_mut::<Transform>(camera).unwrap().position = Vec3::new(0.0, 1.6, 6.0 - reach * 2.0);
+    frames(&mut renderer, &world, 8);
+    assert_eq!(portal_passes(&renderer), 0, "no far side drawn {} m off", reach * 2.0);
+    // A while on, what it held goes.
+    frames(&mut renderer, &world, 620);
+    let (left, gone) = renderer.kept();
+    assert_eq!(gone, 0, "no view through a Portal is kept");
+    assert!(left < pictures, "its pictures go: {pictures} kept near by, {left} now");
+
+    // Come back, it is drawn again as it was.
+    world.get_mut::<Transform>(camera).unwrap().position = Vec3::new(0.0, 1.6, 0.0);
+    let back = frames(&mut renderer, &world, 12);
+    keep_image("portal-back.png", &back);
+    let rect = opening(&world, camera, near, 4);
+    let changed = differing(&close, &back, rect, 12);
+    let area = ((rect[2] - rect[0]) * (rect[3] - rect[1])) as usize;
+    assert!(changed * 50 < area, "the far side shows as before: {changed} of {area} pixels differ");
+}
+
 fn fields(renderer: &mut Renderer) -> (World, [Entity; 3]) {
     use std::sync::Arc;
     use voxear_render::{BlockLook, Sky, SurfaceLook};

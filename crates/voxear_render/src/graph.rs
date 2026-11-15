@@ -201,6 +201,20 @@ impl RenderGraph {
         }
     }
 
+    /// Lets go of every kept image whose name `named` takes, as of a view
+    /// that has gone. The caller makes sure the GPU is done with them.
+    pub fn release_named(&mut self, gpu: &Gpu, bindless: &mut Bindless, named: impl Fn(&str) -> bool) {
+        let names: Vec<String> = self.transients.keys().filter(|name| named(name)).cloned().collect();
+        for name in names {
+            self.release(gpu, bindless, &name);
+        }
+    }
+
+    /// How many kept images there are, for tests.
+    pub fn kept_images(&self) -> usize {
+        self.transients.len()
+    }
+
     pub fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
         for (_, transient) in self.transients.drain() {
             release(gpu, bindless, transient);

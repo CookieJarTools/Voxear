@@ -1,8 +1,9 @@
 //! Project Settings: switching the project's modules on and off, its
-//! quality settings, its floating origin, its block worlds' budget and its
-//! languages' fonts. Each choice is written into `voxear.toml` at once; a
-//! module, a quality setting, the budget and the fonts are put into effect
-//! at once, the floating origin the next time the game plays.
+//! quality settings, its Portals' view distance, its floating origin, its
+//! block worlds' budget and its languages' fonts. Each choice is written
+//! into `voxear.toml` at once; a module, a quality setting, the view
+//! distance, the budget and the fonts are put into effect at once, the
+//! floating origin the next time the game plays.
 
 use voxear_assets::AssetKind;
 use voxear_engine::modules::Module;
@@ -28,6 +29,10 @@ impl Editor {
         let quality = self.project_settings.quality_changed(&self.ui, &self.game.project.file.quality);
         if let Some(quality) = quality {
             self.set_quality(&quality);
+        }
+        let view = self.project_settings.portal_view_changed(&self.ui, self.game.project.file.portals.view_distance);
+        if let Some(distance) = view {
+            self.set_portal_view_distance(distance);
         }
         let in_use = voxear_terrain::WorldBudget::of(&self.game.engine.world);
         if let Some(budget) = self.project_settings.budget_changed(&self.ui, &in_use) {
@@ -135,6 +140,18 @@ impl Editor {
         let quality = self.game.project.file.quality.clone();
         quality.put(&mut self.game.engine.world);
         self.project_settings.show_quality(&mut self.ui, &quality);
+    }
+
+    /// Sets how far off a Portal without a view distance of its own still
+    /// shows its far side, saved in `voxear.toml` and from now on, in the
+    /// game playing too.
+    pub fn set_portal_view_distance(&mut self, distance: f32) {
+        if let Err(error) = self.game.project.set_portal_view_distance(distance) {
+            tracing::error!("{error:#}");
+        }
+        let portals = self.game.project.file.portals;
+        portals.put(&mut self.game.engine.world);
+        self.project_settings.show_portals(&mut self.ui, &portals);
     }
 
     /// Sets what making worlds of blocks may spend (see

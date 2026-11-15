@@ -240,6 +240,18 @@ const FIRST_CAPACITY: u64 = 1 << 16;
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
 
+/// How much nearer the camera, in chunks, a chunk without a mesh for rays
+/// has to be than the farthest with one to take its room in a full mesh
+/// pool: chunks about as far off as each other do not swap back and forth
+/// as the camera moves.
+const PROXY_SWAP_MARGIN: f32 = 2.0;
+
+/// The level of a smooth chunk's surface its mesh for rays is made from:
+/// its first coarser, half a block from its own at most (see
+/// `smooth::COARSER`). Kept alike where chunks meet at any level, as each
+/// level is, it lets no light through between them.
+const RAYS_LEVEL: usize = 1;
+
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
 #[repr(C)]
@@ -673,6 +685,10 @@ fn merged(mut picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
     merged
 }
 
+/// A chunk's mesh for rays: the chunk it was made from, and how many
+/// vertices and indices it takes.
+type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2]);
+
 /// One world's chunks on the GPU: one buffer, each slot's chunk's place in
 /// blocks, then the quads (or, drawn smooth, its triangles' corners); and
 /// each chunk's mesh for rays.
@@ -687,7 +703,24 @@ struct Pool {
     /// Ranges and slots given up, freed once the frames that may draw them
     /// are done.
     freeing: Vec<(u64, u64, u64, u32)>,
-    proxies: HashMap<[i32; 3], (Arc<ChunkMesh>, MeshHandle)>,
+    proxies: HashMap<[i32; 3], Proxy>,
+    /// Its chunks to make meshes for rays for, the nearest the camera first,
+    /// each with how far off it is, in chunks; sorted again as the world's
+    /// chunks or places, or the chunk the camera is in, change from those
+    /// `ordered` holds.
+    order: Vec<([i32; 3], f32)>,
+    /// How many of the first in `order` have their meshes for rays made from
+    /// the world's chunks as they are: those farther off give theirs up
+    /// first, so a frame goes on from there.
+    made_to: usize,
+    ordered: Option<(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>, Option<[i32; 3]>)>,
+    /// The mesh pool had no room for its nearest chunk without a mesh for
+    /// rays, and none with one was far enough beyond it to give theirs up:
+    /// tried again once the camera is in another chunk, or its faces change.
+    full: bool,
+    /// The frame from which the room its farthest chunks' meshes for rays
+    /// gave up is free again, once the frames tracing them are done.
+    room_at: u64,
     block_size: f32,
     smooth: bool,
     draws: Option<Arc<[ChunkDraw]>>,
@@ -732,6 +765,11 @@ impl Pool {
             held: HashMap::new(),
             freeing: Vec::new(),
             proxies: HashMap::new(),
+            order: Vec::new(),
+            made_to: 0,
+            ordered: None,
+            full: false,
+            room_at: 0,
             block_size,
             smooth,
             draws: None,
@@ -1044,16 +1082,21 @@ fn axis_of(normal: Vec3) -> usize {
     }
 }
 
-/// A chunk's mesh for rays: its faces merged by surface alone, in metres
-/// from its corner, its pictures repeated as the world's are from `from`,
-/// where the chunk is from the world's corner. Its triangles share their
-/// corners, each facing the way the faces round it face on average: a
+/// A chunk's mesh for rays, in metres from its corner, its pictures
+/// repeated as the world's are from `from`, where the chunk is from the
+/// world's corner: a chunk of cubes' faces merged whatever their surfaces,
+/// a smooth chunk's surface at its [`RAYS_LEVEL`]. Its triangles share
+/// their corners, each facing the way the faces round it face on average: a
 /// block's face has its corners to itself, so faces its own way, and a
 /// smooth surface's run on smoothly.
-fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let points: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
+fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
+    let (positions, indices) = match smooth {
+        true => voxear_terrain::blocks::smooth::level_triangles(mesh, RAYS_LEVEL),
+        false => (mesh.positions.clone(), mesh.indices.clone()),
+    };
+    let points: Vec<Vec3> = positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
     let mut ways = vec![Vec3::ZERO; points.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in indices.chunks_exact(3) {
         let [a, b, c] = [0, 1, 2].map(|i| points[triangle[i] as usize]);
         // As large as the triangle, so larger faces count for more.
         let way = (b - a).cross(c - a);
@@ -1083,19 +1126,53 @@ fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshDa
             }
         })
         .collect();
-    MeshData { vertices, indices: mesh.indices.clone(), ..MeshData::default() }
+    MeshData { vertices, indices, ..MeshData::default() }
+}
+
+/// The chunks whose meshes for rays give up their room in a full mesh pool,
+/// the farthest from the camera first, as much as each of `wanting` needs
+/// (its vertices and indices, and how far off it is). They are of those in
+/// `order` (the nearest first, each with how far off it is, in chunks) that
+/// have meshes for rays, with the room `made` says they take, each farther
+/// off than the one it makes room for by more than [`PROXY_SWAP_MARGIN`].
+fn giving_up(
+    order: &[([i32; 3], f32)],
+    made: impl Fn(&[i32; 3]) -> Option<[usize; 2]>,
+    wanting: impl IntoIterator<Item = ([usize; 2], f32)>,
+) -> Vec<[i32; 3]> {
+    let (mut given, mut needed, mut freed) = (Vec::new(), [0; 2], [0; 2]);
+    // Those from here on have given theirs up, or have none.
+    let mut farthest = order.len();
+    for (wants, away) in wanting {
+        needed = [needed[0] + wants[0], needed[1] + wants[1]];
+        while freed[0] < needed[0] || freed[1] < needed[1] {
+            let found = order[..farthest]
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(at, (key, far))| made(key).map(|room| (at, *key, *far, room)));
+            let Some((at, key, _, room)) = found.filter(|(_, _, far, _)| *far > away + PROXY_SWAP_MARGIN) else {
+                return given;
+            };
+            farthest = at;
+            given.push(key);
+            freed = [freed[0] + room[0], freed[1] + room[1]];
+        }
+    }
+    given
 }
 
 impl BlockWorlds {
     /// Brings every world of blocks in `world` up to date on the GPU,
-    /// staging the chunks that changed, and lists what to draw.
+    /// staging the chunks that changed, and lists what to draw. Chunks'
+    /// meshes for rays are made the nearest `camera` first.
     pub fn prepare(
         &mut self,
         gpu: &Gpu,
         assets: &mut Assets,
         frames: &mut Frames,
         world: &World,
-        frame_index: u64,
+        (frame_index, camera): (u64, Option<Vec3>),
     ) -> Result<()> {
         voxear_core::profile_scope!("Block Uploads");
         self.drawn.clear();
@@ -1200,34 +1277,60 @@ impl BlockWorlds {
                 }
                 _ => pool.tinted = None,
             }
-            // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made; none for
-            // blocks that came loose, a moment from going.
+            // Each chunk's mesh for rays, a few a frame, the nearest the camera first, the old one shown until the
+            // new one is made; none for blocks that came loose, a moment from going.
+            let side = CHUNK as f32 * blocks.block_size;
+            // Where the camera is from the world's corner, in chunks.
+            let near = camera.map(|camera| (camera - corner) / side);
+            let camera_chunk = near.map(|near| near.floor().as_ivec3().to_array());
             let same = |(meshes, places): &(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)| {
                 Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places)
             };
-            if turn.is_none() && !pool.proxied.as_ref().is_some_and(same) {
+            // With the mesh pool full, a camera gone into another chunk may have a nearer chunk take a farther's room.
+            let moved = pool.full && !pool.ordered.as_ref().is_some_and(|(.., at)| *at == camera_chunk);
+            let settled = pool.proxied.as_ref().is_some_and(same) && !moved;
+            if turn.is_none() && !settled && frame_index >= pool.room_at {
                 // Seen from more places than one, as through Portals, only what is round the first is traced:
                 // the GI's rays reach no further than round the camera.
                 let own = blocks.places.first().map(|place| &place.columns);
                 let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
-                pool.proxies.retain(|key, (_, mesh)| {
+                pool.proxies.retain(|key, (_, mesh, _)| {
                     let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
                     }
                     kept
                 });
+                let sorted = pool.ordered.as_ref().is_some_and(|(meshes, places, at)| {
+                    Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places) && *at == camera_chunk
+                });
+                if !sorted {
+                    let middle = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) + 0.5;
+                    let away = |key: &[i32; 3]| near.map_or(0.0, |near| middle(key).distance(near));
+                    pool.order.clear();
+                    pool.order.extend(blocks.meshes.keys().filter(|key| traced(key)).map(|key| (*key, away(key))));
+                    pool.order.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+                    pool.ordered = Some((blocks.meshes.clone(), blocks.places.clone(), camera_chunk));
+                    pool.made_to = 0;
+                }
                 let mut changed = pool.proxies.len() != before;
                 let mut all = true;
-                let side = CHUNK as f32 * blocks.block_size;
+                pool.full = false;
                 let uv_scale = 1.0 / blocks.block_size.max(0.01);
+                let order = std::mem::take(&mut pool.order);
+                let unmade = |proxies: &HashMap<[i32; 3], Proxy>, key: &[i32; 3], mesh: &Arc<ChunkMesh>| {
+                    !proxies.get(key).is_some_and(|(made, ..)| Arc::ptr_eq(made, mesh))
+                };
                 // Uploaded and built together, waited for once.
                 let batch = gpu.batch();
-                for (key, mesh) in blocks.meshes.iter().filter(|(key, _)| traced(key)) {
-                    if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
+                let mut made_to = order.len();
+                for (index, &(key, away)) in order.iter().enumerate().skip(pool.made_to) {
+                    let Some(mesh) = blocks.meshes.get(&key) else { continue };
+                    if !unmade(&pool.proxies, &key, mesh) {
                         continue;
                     }
+                    made_to = index;
                     if proxies_left == 0 {
                         all = false;
                         break;
@@ -1235,39 +1338,64 @@ impl BlockWorlds {
                     proxies_left -= 1;
                     let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
                     let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                    let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, uv_scale);
                     let lods = crate::lod::rays_only(&data);
                     drop(making);
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    let room = [data.vertices.len(), data.indices.len()];
                     // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
                     let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
                         Ok(handle) => handle,
                         Err(error) => {
                             if !std::mem::replace(&mut self.warned_full, true) {
-                                tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
+                                tracing::warn!(
+                                    "a world of blocks' chunks are left out of the GI's rays, the farthest first: {error:#}"
+                                );
                             }
-                            // Tried again once its faces change, as room may be made by then.
+                            // Room for this one and the next few, from the farthest with meshes for rays; a chunk
+                            // of cubes needs as many as its own faces have, a smooth one less.
+                            let next = order[index + 1..]
+                                .iter()
+                                .filter_map(|(key, away)| blocks.meshes.get(key).map(|mesh| (key, mesh, *away)))
+                                .filter(|(key, mesh, _)| unmade(&pool.proxies, key, mesh))
+                                .take(PROXIES_A_FRAME - 1)
+                                .map(|(_, mesh, away)| ([mesh.positions.len(), mesh.indices.len()], away));
+                            let wanting = std::iter::once((room, away)).chain(next);
+                            let given = giving_up(&order, |key| pool.proxies.get(key).map(|(.., room)| *room), wanting);
+                            for key in &given {
+                                if let Some((_, mesh, _)) = pool.proxies.remove(key) {
+                                    assets.free_mesh(mesh, frame_index);
+                                }
+                            }
+                            match given.is_empty() {
+                                // Tried again once its faces change or the camera moves on, as room may be made by then.
+                                true => pool.full = true,
+                                // Tried again once the room given up is free.
+                                false => {
+                                    (changed, all) = (true, false);
+                                    pool.room_at = frame_index + FRAMES_IN_FLIGHT as u64;
+                                }
+                            }
                             proxies_left = 0;
                             break;
                         }
                     };
-                    if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
+                    if let Some((_, old, _)) = pool.proxies.insert(key, (mesh.clone(), handle, room)) {
                         assets.free_mesh(old, frame_index);
                     }
                     changed = true;
+                    made_to = order.len();
                 }
+                (pool.order, pool.made_to) = (order, made_to);
                 {
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
                     batch.finish()?;
                 }
-                if all {
-                    pool.proxied = Some((blocks.meshes.clone(), blocks.places.clone()));
-                }
+                pool.proxied = all.then(|| (blocks.meshes.clone(), blocks.places.clone()));
                 if changed {
                     pool.placed = None;
                 }
             }
-            let side = CHUNK as f32 * blocks.block_size;
             let placed = pool
                 .placed
                 .get_or_insert_with(|| {
@@ -1280,7 +1408,7 @@ impl BlockWorlds {
                             given => given,
                         }
                     };
-                    pool.proxies.iter().map(|(key, (chunk, mesh))| (*mesh, at(key), acoustic(chunk))).collect()
+                    pool.proxies.iter().map(|(key, (chunk, mesh, _))| (*mesh, at(key), acoustic(chunk))).collect()
                 })
                 .clone();
             let drawn = DrawnBlocks {
@@ -1399,7 +1527,7 @@ impl BlockWorlds {
 
 fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
     frames.retire(Retired::Buffer(pool.buffer));
-    for (_, (_, mesh)) in pool.proxies {
+    for (_, (_, mesh, _)) in pool.proxies {
         assets.free_mesh(mesh, frame_index);
     }
 }
@@ -1951,6 +2079,24 @@ pub(crate) fn fall_feet(world: &World, camera: Vec3) -> Vec<FallFoot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nearer_chunk_takes_the_room_of_the_farthest_and_chunks_about_as_far_off_do_not_swap() {
+        // Chunks along x as far off as their place, each made but the one 1 chunk off, with room for 10 vertices
+        // and 20 indices.
+        let order: Vec<([i32; 3], f32)> = [0, 1, 2, 3, 10, 11].map(|x| ([x, 0, 0], x as f32)).to_vec();
+        let made = |key: &[i32; 3]| (key[0] != 1).then_some([10, 20]);
+        assert_eq!(giving_up(&order, made, [([10, 20], 1.0)]), vec![[11, 0, 0]], "the farthest gives its room up");
+        // Needing more than one has, the next farthest gives theirs up too, but none within the margin.
+        let given = giving_up(&order, made, [([15, 20], 1.0)]);
+        assert_eq!(given, vec![[11, 0, 0], [10, 0, 0]]);
+        assert_eq!(giving_up(&order, made, [([35, 20], 1.0)]), given, "3 chunks off is within 2 of 1");
+        // Each wanting room is given it by those far enough off from it.
+        let given = giving_up(&order, made, [([10, 20], 1.0), ([10, 20], 7.5)]);
+        assert_eq!(given, vec![[11, 0, 0], [10, 0, 0]]);
+        assert_eq!(giving_up(&order, made, [([10, 20], 1.0), ([10, 20], 8.5)]), vec![[11, 0, 0]]);
+        assert!(giving_up(&order, made, [([10, 20], 9.5)]).is_empty(), "11 chunks off is within 2 of 9.5");
+    }
 
     #[test]
     fn a_view_draws_the_chunks_it_sees_and_only_their_faces_turned_towards_it() {

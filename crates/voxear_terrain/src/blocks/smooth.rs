@@ -28,7 +28,8 @@
 //! ground nearest the surface among the eight round the corner's point, so
 //! a corner is the same kind in every triangle and chunk that has it, and
 //! kinds blend across a triangle whose corners differ. The same triangles,
-//! their corners shared, are kept for collision and the GI's rays.
+//! their corners shared, are kept for collision; the GI's rays meet a
+//! coarser level's, as its corners are drawn ([`level_triangles`]).
 //!
 //! Water is not ground: the surface runs between the ground and the water
 //! as it does the air, each block of water taken as far out of the ground as
@@ -520,6 +521,39 @@ pub const COARSER: [f32; 2] = [0.5, 2.0];
 /// coarser, its corners one level after another (see `mesh::ChunkMesh`'s
 /// buckets).
 pub const LEVELS: usize = 1 + COARSER.len();
+
+/// Chunk `mesh`'s surface at one of its levels (0 its own, then each
+/// coarser), as its corners are drawn: points in blocks from its corner and
+/// three indices a triangle among them, facing out, a point shared by every
+/// triangle at it. Kept as the drawn corners are, a point two chunks share
+/// is alike in both. A chunk made again after a change has its own level
+/// alone, and gives that.
+pub fn level_triangles(mesh: &ChunkMesh, level: usize) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let words = |level: usize| &mesh.quads[mesh.buckets[level] as usize..mesh.buckets[level + 1] as usize];
+    let words = match words(level.min(LEVELS - 1)) {
+        [] => words(0),
+        words => words,
+    };
+    // Each corner by where it is, in order, so those at one place come together.
+    let mut corners: Vec<(u64, u32)> = words
+        .chunks_exact(2)
+        .enumerate()
+        .map(|(n, corner)| (u64::from(corner[0][0]) | u64::from(corner[0][1] & 0xFFFF) << 32, n as u32))
+        .collect();
+    corners.sort_unstable();
+    let mut points: Vec<[f32; 3]> = Vec::with_capacity(corners.len() / 4);
+    let mut indices = vec![0; corners.len()];
+    let mut last = None;
+    for (at, n) in corners {
+        if last != Some(at) {
+            let at = [at & 0xFFFF, (at >> 16) & 0xFFFF, at >> 32];
+            points.push(at.map(|q| q as f32 / POINT_STEPS + POINT_FROM));
+        }
+        last = Some(at);
+        indices[n as usize] = points.len() as u32 - 1;
+    }
+    (points, indices)
+}
 
 /// How much a turn of the way the ground faces counts against merging
 /// triangles, beside how far their surface moves, so its shading stays.
@@ -1242,6 +1276,50 @@ mod tests {
         assert!(counts.windows(2).all(|pair| pair[1] < pair[0]), "{counts:?}");
         for mix in [&|n: usize| n % 2 * 2, &|n: usize| n % 3, &|n: usize| (n / 2) % 2] as [&dyn Fn(usize) -> usize; 3] {
             assert_eq!(drawn(mix).0, 0, "levels mixed");
+        }
+    }
+
+    #[test]
+    fn a_hills_triangles_at_a_coarser_level_share_their_points_and_meet_the_next_chunks_at_any_level() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2)];
+        let mut map = BlockMap::default();
+        for (at, block, fill) in ball(&map, [32.0, 32.0, 32.0], 20.0, Ball::Add(1), &faces) {
+            map.set_cell(at, block, fill);
+        }
+        for (at, _, fill) in ball(&map, [32.0, 44.0, 32.0], 14.0, Ball::Paint(2), &faces) {
+            map.set_cell(at, 2, fill);
+        }
+        let keys: Vec<[i32; 3]> = (0..8).map(|i| [i & 1, (i >> 1) & 1, (i >> 2) & 1]).collect();
+        let meshes: Vec<ChunkMesh> = keys.iter().map(|key| mesh_chunk(&map, *key, &faces)).collect();
+        for mesh in &meshes {
+            let (points, indices) = level_triangles(mesh, 0);
+            assert_eq!((points.len(), indices.len()), (mesh.positions.len(), mesh.indices.len()), "its own level");
+            let (points, indices) = level_triangles(mesh, 1);
+            assert!(indices.len() < mesh.indices.len() && points.len() < mesh.positions.len());
+            assert!(indices.iter().all(|&i| (i as usize) < points.len()));
+        }
+        // Made again after a change, it has its own level alone.
+        let near = mesh_near(&map, keys[0], &faces, &|_| true);
+        assert_eq!(level_triangles(&near, 1).1.len(), near.indices.len());
+        // Whatever level each chunk is at, every edge has a triangle back the other way.
+        let open = |level_of: &dyn Fn(usize) -> usize| {
+            let mut edges = std::collections::HashMap::new();
+            for (n, (key, mesh)) in keys.iter().zip(&meshes).enumerate() {
+                let (points, indices) = level_triangles(mesh, level_of(n));
+                let at = |i: u32| {
+                    let p = points[i as usize];
+                    [0, 1, 2].map(|k| ((p[k] + (key[k] * CHUNK as i32) as f32) * 1024.0).round() as i64)
+                };
+                for t in indices.chunks(3) {
+                    for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                        *edges.entry((at(a), at(b))).or_insert(0) += 1;
+                    }
+                }
+            }
+            edges.iter().filter(|&(&(a, b), count)| edges.get(&(b, a)) != Some(count)).count()
+        };
+        for mix in [&|_| 1, &|n: usize| n % 2, &|n: usize| n % 3] as [&dyn Fn(usize) -> usize; 3] {
+            assert_eq!(open(mix), 0);
         }
     }
 

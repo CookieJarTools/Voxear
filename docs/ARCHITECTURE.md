@@ -3743,11 +3743,15 @@ chunk column's ground is made and before its structures, a block of open air wit
 hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
 has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
 (`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
-each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
-every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
-in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
-chunks. The frame's chunks go up within `WorldBudget::upload` megabytes, shared by every world (16 on High), each
-pool grown once for all that are coming: each
+each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
+chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
+`RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
+900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same, the ray meshes
+made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
+too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
+room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose
+faces did not change costs physics and the renderer no walk over its chunks. The frame's chunks go up within
+`WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
 world too large to make again within a frame is made on other threads and shown as it was until then

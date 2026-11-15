@@ -475,6 +475,80 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
     }
 }
 
+/// A hollow ball of smooth ground round the corner eight chunks share, its
+/// shell five blocks thick, under a bright sun and sky, seen from inside;
+/// with `gi`, its bounced light traced against the chunks' meshes for rays.
+/// None where the GPU cannot trace rays.
+fn hollow_ball_render(gi: bool) -> Option<Vec<u8>> {
+    use voxear_render::GlobalIllumination;
+    use voxear_terrain::blocks::{
+        BlockMap,
+        file::BlockKind,
+        smooth::{Ball, ball},
+    };
+    let mut renderer = renderer()?;
+    if !renderer.gpu().ray_tracing {
+        eprintln!("skipping: this GPU has no ray tracing");
+        return None;
+    }
+    let mut file = BlockFile { smooth: true, ..BlockFile::default() };
+    file.blocks = vec![BlockKind::default()];
+    let (looks, faces) = file.faces();
+    let mut blocks = BlockMap::default();
+    for (radius, does) in [(14.0, Ball::Add(1)), (9.0, Ball::Take)] {
+        for (at, block, fill) in ball(&blocks, [32.0; 3], radius, does, &faces) {
+            blocks.set_cell(at, block, fill);
+        }
+    }
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], ..MaterialDesc::default() });
+    let pale = pale.unwrap();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|_| SurfaceLook {
+            material: pale,
+            size: 1.0,
+            sharpness: 0.0,
+            triplanar: true,
+            tracks: 0.0,
+            fills_in: 0.0,
+            liquid: Default::default(),
+            glitter: false,
+            leafy: false,
+            mixed: false,
+            tint: 0,
+        })
+        .collect();
+    let mut world = World::new();
+    let look =
+        BlockLook { material: pale, surfaces: Arc::from(surfaces), voxels: Default::default(), motions: Arc::from([]) };
+    world.spawn((BlockWorld::made(blocks, &faces, 1.0, true), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 30.0, 32.0), Quat::IDENTITY, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 8.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = PostProcess::neutral();
+    post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination = GlobalIllumination { enabled: gi, probe_spacing: 0.5, ..GlobalIllumination::default() };
+    world.insert_resource(post);
+    Some(render(&mut renderer, &world, 30))
+}
+
+#[test]
+fn no_bounced_light_leaks_into_a_hollow_ball_of_smooth_ground_between_its_chunks() {
+    let (Some(open_sky), Some(traced)) = (hollow_ball_render(false), hollow_ball_render(true)) else { return };
+    keep_image("blocks hollow ball plain sky.png", &open_sky);
+    keep_image("blocks hollow ball gi.png", &traced);
+    let mean = |pixels: &[u8]| {
+        pixels.chunks(4).map(|p| f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2])).sum::<f32>()
+            / (pixels.len() / 4 * 3) as f32
+    };
+    let (lit, dark) = (mean(&open_sky), mean(&traced));
+    assert!(lit > 20.0, "without GI, the plain sky light reaches inside: {lit:.1}");
+    assert!(dark < 1.0, "with GI, nothing does: {dark:.2}");
+}
+
 #[test]
 fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted() {
     use voxear_terrain::blocks::{

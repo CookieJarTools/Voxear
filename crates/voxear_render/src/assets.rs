@@ -62,7 +62,10 @@ impl Glow {
     }
 }
 
-const MAX_VERTICES: u64 = 2 * 1024 * 1024;
+/// How many vertices all meshes may keep: room beside the rest for a world
+/// of cubes 900 blocks across, whose chunks' meshes for rays take nearly
+/// three million, each block's face keeping its corners to itself.
+const MAX_VERTICES: u64 = 4 * 1024 * 1024;
 /// How many skinned vertices' bones all meshes may keep (see `skeleton::SkinVertex`).
 const MAX_SKIN_VERTICES: u64 = 1024 * 1024;
 const MAX_INDICES: u64 = 8 * 1024 * 1024;

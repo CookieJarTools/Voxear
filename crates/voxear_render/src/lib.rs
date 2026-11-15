@@ -1439,7 +1439,9 @@ impl Renderer {
         // Every terrain's tiles that changed, staged to copy in before any view draws them.
         let assets = self.assets.as_mut().expect("assets live until drop");
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
-        self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
+        // Block worlds make their chunks' meshes for rays nearest the first view's camera first, as it was last frame.
+        let camera = self.views.first().and_then(|view| view.prev_camera).map(|(at, _)| at);
+        self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, (frame_index, camera))?;
         // Every simulated particle's step, for all the views.
         let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;

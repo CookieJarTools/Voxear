@@ -41,7 +41,7 @@ use voxear_engine::{
     srgb,
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Portal, PostVolume, ProbeUpdate, ReflectionProbe, Renderer,
+    Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, Portal, PostVolume, ProbeResolution, ProbeUpdate, ReflectionProbe, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
     BuiltinMesh, BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleMesh, ParticleTexture, ParticleTrails, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
 };
@@ -80,6 +80,8 @@ const VOLUME_SHAPE_ORDER: [VolumeShape; 3] = [VolumeShape::Global, VolumeShape::
 /// When a reflection probe is captured, in `PROBE_UPDATE_ORDER`'s order.
 const PROBE_UPDATES: [&str; 2] = ["Once", "Live"];
 const PROBE_UPDATE_ORDER: [ProbeUpdate; 2] = [ProbeUpdate::Once, ProbeUpdate::Live];
+/// A reflection probe's resolutions, as `ProbeResolution::ALL` orders them.
+const PROBE_RESOLUTIONS: [&str; 4] = ["64", "128", "256", "512"];
 const AUDIO_BUSES: [&str; 2] = ["Effects", "Music"];
 const LOD_MEASURES: [&str; 2] = ["Screen size", "Distance"];
 
@@ -550,6 +552,8 @@ pub enum Prop {
     ReverbSpacing,
     /// How much of an Audio Source the room rings with.
     ReverbSend,
+    ProbeResolution,
+    ProbeCaptureOffset,
     MistEmitting,
     MistWidth,
     MistDensity,
@@ -983,7 +987,9 @@ impl Prop {
             | Prop::ProbeBlend
             | Prop::ProbeBoxProjection
             | Prop::ProbeIntensity
-            | Prop::ProbeImportance => Part::ReflectionProbe,
+            | Prop::ProbeImportance
+            | Prop::ProbeResolution
+            | Prop::ProbeCaptureOffset => Part::ReflectionProbe,
             Prop::ReverbSize | Prop::ReverbSpacing => Part::ReverbProbe,
             Prop::WindStrength
             | Prop::WindGusts
@@ -1365,6 +1371,8 @@ impl Prop {
             Prop::ProbeImportance => "importance",
             Prop::ReverbSize => "size",
             Prop::ReverbSpacing => "spacing",
+            Prop::ProbeResolution => "resolution",
+            Prop::ProbeCaptureOffset => "capture_offset",
             Prop::WindStrength => "strength",
             Prop::WindGusts => "gusts",
             Prop::WindGustSize => "gust_size",
@@ -1998,7 +2006,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             if live {
                 props.push(Prop::ProbeInterval);
             }
-            props.extend([Prop::ProbeBlend, Prop::ProbeBoxProjection, Prop::ProbeIntensity, Prop::ProbeImportance]);
+            props.extend([
+                Prop::ProbeBlend,
+                Prop::ProbeBoxProjection,
+                Prop::ProbeIntensity,
+                Prop::ProbeImportance,
+                Prop::ProbeResolution,
+                Prop::ProbeCaptureOffset,
+            ]);
             props
         }
         Part::WindZone => {
@@ -2507,6 +2522,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::ProbeImportance => "Importance",
         Prop::ReverbSize => "Size",
         Prop::ReverbSpacing => "Spacing",
+        Prop::ProbeResolution => "Resolution",
+        Prop::ProbeCaptureOffset => "Capture Offset",
         Prop::WindStrength => "Strength",
         Prop::WindGusts => "Gusts",
         Prop::WindGustSize => "Gust size",
@@ -3481,7 +3498,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ProbeBlend
         | Prop::ProbeBoxProjection
         | Prop::ProbeIntensity
-        | Prop::ProbeImportance => probe_value(world.get::<ReflectionProbe>(entity)?, prop)?,
+        | Prop::ProbeImportance
+        | Prop::ProbeResolution
+        | Prop::ProbeCaptureOffset => probe_value(world.get::<ReflectionProbe>(entity)?, prop)?,
         Prop::ReverbSize => Value::Vector(world.get::<ReverbProbe>(entity)?.size.to_vec()),
         Prop::ReverbSpacing => Value::Number(world.get::<ReverbProbe>(entity)?.spacing),
         Prop::WindStrength => Value::Number(world.get::<WindZone>(entity)?.strength),
@@ -5519,6 +5538,11 @@ fn probe_value(probe: &ReflectionProbe, prop: &Prop) -> Option<Value> {
         Prop::ProbeBoxProjection => Value::Toggle(probe.box_projection),
         Prop::ProbeIntensity => Value::Number(probe.intensity),
         Prop::ProbeImportance => Value::Whole(i64::from(probe.importance)),
+        Prop::ProbeResolution => {
+            let index = ProbeResolution::ALL.iter().position(|&known| known == probe.resolution).unwrap_or(1);
+            Value::Choice(index, PROBE_RESOLUTIONS.iter().map(|r| r.to_string()).collect())
+        }
+        Prop::ProbeCaptureOffset => Value::Vector(probe.capture_offset.to_array().to_vec()),
         _ => return None,
     })
 }
@@ -5538,6 +5562,12 @@ fn set_probe(probe: &mut ReflectionProbe, prop: &Prop, value: Value) {
             probe.importance = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         }
         (Prop::ProbeImportance, Value::Number(n)) => probe.importance = n.round() as i32,
+        (Prop::ProbeResolution, Value::Choice(index, _)) => {
+            probe.resolution = ProbeResolution::ALL[index.min(ProbeResolution::ALL.len() - 1)];
+        }
+        (Prop::ProbeCaptureOffset, Value::Vector(v)) if v.len() >= 3 => {
+            probe.capture_offset = voxear_core::math::Vec3::new(v[0], v[1], v[2]);
+        }
         _ => {}
     }
 }

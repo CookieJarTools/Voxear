@@ -4,7 +4,8 @@
 //! [`crate::reflection_bakes`].
 
 use voxear_ecs::{Entity, World};
-use voxear_render::{ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
+use voxear_core::math::Vec3;
+use voxear_render::{ProbeResolution, ProbeUpdate, ReflectionProbe, ReflectionProbeBake};
 use voxear_scripting::ComponentKind;
 
 /// Sets what answers `ReflectionProbe` in scripts.
@@ -23,6 +24,8 @@ const BOX_PROJECTION: i32 = 6;
 const INTENSITY: i32 = 7;
 const IMPORTANCE: i32 = 8;
 const CAPTURE: i32 = 9;
+const RESOLUTION: i32 = 10;
+const CAPTURE_OFFSET: i32 = 11;
 
 /// Reads value `what` of `entity`'s Reflection Probe, or with `written`,
 /// writes it: `None` when it has none, or is gone.
@@ -54,6 +57,8 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             BOX_PROJECTION => number(f32::from(u8::from(probe.box_projection))),
             INTENSITY => number(probe.intensity),
             IMPORTANCE => number(probe.importance as f32),
+            RESOLUTION => number(probe.resolution.texels() as f32),
+            CAPTURE_OFFSET => probe.capture_offset.extend(0.0).to_array(),
             _ => return None,
         }),
         Some([x, y, z, w]) => {
@@ -65,6 +70,12 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 INTENSITY => probe.intensity = x.max(0.0),
                 IMPORTANCE => probe.importance = x.round() as i32,
                 CAPTURE => probe.capture(),
+                RESOLUTION => {
+                    let texels = x.max(0.0) as u32;
+                    let next_up = ProbeResolution::ALL.into_iter().find(|resolution| resolution.texels() >= texels);
+                    probe.resolution = next_up.unwrap_or(ProbeResolution::Size512);
+                }
+                CAPTURE_OFFSET => probe.capture_offset = Vec3::new(x, y, z),
                 _ => return None,
             }
             Some([x, y, z, w])

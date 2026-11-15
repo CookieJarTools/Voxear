@@ -302,6 +302,8 @@ static const uint INSTANCE_NO_SHADOW = 4;
 static const uint INSTANCE_IMPOSTOR = 16;
 // Only rays see it: a terrain's coarse mesh for the GI (src/terrain.rs).
 static const uint INSTANCE_RAYS_ONLY = 32;
+// In a mesh for rays alone, a vertex's wind word with this bit is the material its triangles take (src/mesh.rs).
+static const uint PROXY_MATERIAL = 0x80000000u;
 // Stood still long enough for local lights to keep its shadow (src/shadow_cache.rs).
 static const uint INSTANCE_STILL = 64;
 
@@ -849,7 +851,11 @@ struct ReflectionProbe
     float3 axisZ;
     uint flags;
     float3 halfSize;
-    float pad;
+    // The texture of its resolution's array of cubes.
+    uint cubes;
+    // Where it took its picture from.
+    float3 capture;
+    uint pad;
 };
 
 // This frame's reflection probes: how many shading reads (in buffers()->reflectionProbes), and their cubes, as
@@ -857,8 +863,7 @@ struct ReflectionProbe
 struct ReflectionProbes
 {
     uint count;
-    uint cubes;
-    uint2 pad;
+    uint3 pad;
 };
 
 struct Frame

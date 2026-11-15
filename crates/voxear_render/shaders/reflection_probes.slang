@@ -95,8 +95,8 @@ float probeWeight(ReflectionProbe probe, float3 local)
 }
 
 // The direction to look up a probe's cube in, for a ray from `local` (as
-// probeLocal) along `direction`: with box projection, from the probe's
-// middle to where the ray leaves its box.
+// probeLocal) along `direction`: with box projection, from where the probe
+// took its picture to where the ray leaves its box.
 float3 probeLookup(ReflectionProbe probe, float3 local, float3 direction)
 {
     if ((probe.flags & REFLECTION_PROBE_BOX_PROJECTION) == 0)
@@ -109,7 +109,7 @@ float3 probeLookup(ReflectionProbe probe, float3 local, float3 direction)
     float3 safe = select(abs(along) < 1e-6, float3(1e-6), along);
     float3 far = (sign(safe) * probe.halfSize - local) / safe;
     float leaves = max(min(far.x, min(far.y, far.z)), 0.0);
-    float3 hit = local + along * leaves;
+    float3 hit = local + along * leaves - probeLocal(probe, probe.capture);
     return probe.axisX * hit.x + probe.axisY * hit.y + probe.axisZ * hit.z;
 }
 
@@ -139,7 +139,7 @@ float3 probeReflection(Frame* frame, float3 position, float3 direction, float ro
         }
         float3 lookup = probeLookup(probe, local, direction);
         float4 at = float4(lookup, float(probe.slot));
-        float3 seen = cubeArrays[NonUniformResourceIndex(probes.cubes)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], at, mip).rgb;
+        float3 seen = cubeArrays[NonUniformResourceIndex(probe.cubes)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], at, mip).rgb;
         light += seen * probe.intensity * weight * left;
         left *= 1.0 - weight;
     }

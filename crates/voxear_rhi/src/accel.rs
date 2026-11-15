@@ -22,7 +22,6 @@ pub struct AccelerationStructure {
 pub(crate) struct BottomLevelBuild {
     pub structure: vk::AccelerationStructureKHR,
     pub triangles: Triangles,
-    pub scratch: Buffer,
     pub scratch_address: vk::DeviceAddress,
 }
 
@@ -137,18 +136,18 @@ impl Gpu {
             sizes.acceleration_structure_size,
         )?;
         let (scratch, scratch_address) = self.scratch("bottom level scratch", sizes.build_scratch_size)?;
-        let build = BottomLevelBuild { structure: structure.handle, triangles, scratch, scratch_address };
+        let build = BottomLevelBuild { structure: structure.handle, triangles, scratch_address };
         {
             let mut batch = self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if batch.open > 0 {
                 batch.builds.push(build);
+                batch.scratches.push(scratch);
                 return Ok(structure);
             }
         }
-        let builds = [build];
-        self.immediate(|cmd| self.record_bottom_levels(cmd, &builds))?;
-        let [build] = builds;
-        self.destroy_buffer(build.scratch);
+        let built = self.immediate(|cmd| self.record_bottom_levels(cmd, &[build]));
+        self.destroy_buffer(scratch);
+        built?;
         Ok(structure)
     }
 

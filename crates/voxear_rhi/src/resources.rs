@@ -35,6 +35,36 @@ impl GpuBatch<'_> {
         self.open = false;
         self.gpu.end_batch()
     }
+
+    /// Closes the batch as [`finish`](Self::finish) does, but where it is
+    /// the outermost keeps what it gathered, staged, for a frame's own
+    /// commands to do ([`Gpu::record_kept`]) rather than submitting it and
+    /// waiting, as that waits for every frame still being drawn too. What
+    /// it writes must not be read before those commands. None where it
+    /// gathered nothing, or is not the outermost.
+    pub fn keep(mut self) -> Result<Option<KeptBatch>> {
+        self.open = false;
+        self.gpu.keep_batch()
+    }
+}
+
+/// What a batch gathered, staged and kept for a frame's commands to do (see
+/// [`GpuBatch::keep`]): its copies, the bottom levels to build after them,
+/// and the buffers they use, to be let go once the GPU is done with them.
+#[must_use = "a kept batch is recorded into a frame or done at once"]
+pub struct KeptBatch {
+    source: vk::Buffer,
+    copies: Vec<(vk::Buffer, vk::BufferCopy)>,
+    builds: Vec<crate::accel::BottomLevelBuild>,
+    buffers: Vec<Buffer>,
+}
+
+impl KeptBatch {
+    /// The buffers its commands use, taken to be let go once the frame that
+    /// records them is done.
+    pub fn take_buffers(&mut self) -> Vec<Buffer> {
+        std::mem::take(&mut self.buffers)
+    }
 }
 
 impl Drop for GpuBatch<'_> {
@@ -55,6 +85,8 @@ pub(crate) struct Batch {
     pub bytes: Vec<u8>,
     pub copies: Vec<(vk::Buffer, vk::BufferCopy)>,
     pub builds: Vec<crate::accel::BottomLevelBuild>,
+    /// The builds' scratch space.
+    pub scratches: Vec<Buffer>,
 }
 
 impl Buffer {
@@ -292,7 +324,8 @@ impl Gpu {
     /// than each submitted and waited for, and then done in one submission,
     /// the uploads first. What they write must not be read before then.
     /// [`GpuBatch::finish`] closes it, or dropping it; batches nest, and the
-    /// outermost one's close does the work.
+    /// outermost one's close does the work. [`GpuBatch::keep`] closes it
+    /// and leaves the work to a frame's own commands.
     pub fn batch(&self) -> GpuBatch<'_> {
         self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).open += 1;
         GpuBatch { gpu: self, open: true }
@@ -301,50 +334,84 @@ impl Gpu {
     /// Closes a batch, and when it is the outermost, submits what it
     /// gathered and waits for it.
     fn end_batch(&self) -> Result<()> {
+        match self.keep_batch()? {
+            Some(kept) => self.do_kept(kept),
+            None => Ok(()),
+        }
+    }
+
+    /// Closes a batch, and when it is the outermost, stages what it
+    /// gathered, if anything, to be done.
+    fn keep_batch(&self) -> Result<Option<KeptBatch>> {
         let batch = {
             let mut batch = self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             batch.open = batch.open.saturating_sub(1);
             if batch.open > 0 {
-                return Ok(());
+                return Ok(None);
             }
             std::mem::take(&mut *batch)
         };
         if batch.copies.is_empty() && batch.builds.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        let staging = match batch.bytes.is_empty() {
-            true => None,
-            false => {
-                let usage = vk::BufferUsageFlags::TRANSFER_SRC;
-                let staging =
-                    self.create_buffer("staging", batch.bytes.len() as u64, usage, MemoryLocation::CpuToGpu)?;
-                staging.write(0, &batch.bytes);
-                Some(staging)
-            }
-        };
-        let done = self.immediate(|cmd| unsafe {
-            if let Some(staging) = &staging {
-                for (dst, region) in &batch.copies {
-                    self.device.cmd_copy_buffer(cmd, staging.handle, *dst, std::slice::from_ref(region));
+        let mut buffers = batch.scratches;
+        let mut source = vk::Buffer::null();
+        if !batch.bytes.is_empty() {
+            let usage = vk::BufferUsageFlags::TRANSFER_SRC;
+            match self.create_buffer("staging", batch.bytes.len() as u64, usage, MemoryLocation::CpuToGpu) {
+                Ok(staging) => {
+                    staging.write(0, &batch.bytes);
+                    source = staging.handle;
+                    buffers.push(staging);
+                }
+                Err(error) => {
+                    for buffer in buffers {
+                        self.destroy_buffer(buffer);
+                    }
+                    return Err(error);
                 }
             }
-            if !batch.builds.is_empty() {
+        }
+        Ok(Some(KeptBatch { source, copies: batch.copies, builds: batch.builds, buffers }))
+    }
+
+    /// Does a kept batch now, and waits for it: for one no frame records.
+    pub fn do_kept(&self, mut kept: KeptBatch) -> Result<()> {
+        let done = self.immediate(|cmd| self.record_kept(cmd, &kept));
+        for buffer in kept.take_buffers() {
+            self.destroy_buffer(buffer);
+        }
+        done
+    }
+
+    /// Records a kept batch's copies, then its bottom levels' builds, into
+    /// `cmd`, and after them a barrier for every command after to see what
+    /// they wrote. Its buffers must live until the GPU is done with `cmd`.
+    pub fn record_kept(&self, cmd: vk::CommandBuffer, kept: &KeptBatch) {
+        unsafe {
+            if kept.source != vk::Buffer::null() {
+                for (dst, region) in &kept.copies {
+                    self.device.cmd_copy_buffer(cmd, kept.source, *dst, std::slice::from_ref(region));
+                }
+            }
+            if !kept.builds.is_empty() {
                 let written = vk::MemoryBarrier2::default()
                     .src_stage_mask(vk::PipelineStageFlags2::COPY)
                     .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                     .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
                     .dst_access_mask(vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR);
                 self.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[written]));
-                self.record_bottom_levels(cmd, &batch.builds);
+                self.record_bottom_levels(cmd, &kept.builds);
             }
-        });
-        if let Some(staging) = staging {
-            self.destroy_buffer(staging);
+            let done = vk::MemoryBarrier2::default()
+                .src_stage_mask(
+                    vk::PipelineStageFlags2::COPY | vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+                )
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE);
+            self.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[done]));
         }
-        for build in batch.builds {
-            self.destroy_buffer(build.scratch);
-        }
-        done
     }
 
     /// Records commands, submits them and waits. For load-time uploads; the
@@ -655,6 +722,35 @@ mod tests {
         }
         assert_eq!(gpu.read_buffer(&buffer, 48, 16).unwrap(), [3; 16]);
         assert_eq!(gpu.batch.lock().unwrap().open, 0);
+        gpu.destroy_buffer(buffer);
+    }
+
+    #[test]
+    fn a_kept_batch_lands_only_once_commands_of_its_own_do_it() {
+        let Ok(gpu) = Gpu::new_headless() else { return };
+        let usage = vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC;
+        let buffer = gpu.create_buffer("kept", 32, usage, MemoryLocation::GpuOnly).unwrap();
+        gpu.upload_buffer(&buffer, 0, &[0; 32]).unwrap();
+        let outer = gpu.batch();
+        let inner = gpu.batch();
+        gpu.upload_buffer(&buffer, 0, &[4; 16]).unwrap();
+        assert!(inner.keep().unwrap().is_none(), "an inner batch leaves its work to the outer's");
+        gpu.upload_buffer(&buffer, 16, &[5; 16]).unwrap();
+        let mut kept = outer.keep().unwrap().expect("the outermost keeps what it gathered");
+        assert_eq!(gpu.batch.lock().unwrap().open, 0);
+        assert_eq!(gpu.read_buffer(&buffer, 0, 32).unwrap(), [0; 32], "nothing lands while it is kept");
+        gpu.immediate(|cmd| gpu.record_kept(cmd, &kept)).unwrap();
+        for staging in kept.take_buffers() {
+            gpu.destroy_buffer(staging);
+        }
+        let read = gpu.read_buffer(&buffer, 0, 32).unwrap();
+        assert_eq!((&read[..16], &read[16..]), (&[4; 16][..], &[5; 16][..]));
+        // One no frame records is done at once.
+        let batch = gpu.batch();
+        gpu.upload_buffer(&buffer, 8, &[6; 8]).unwrap();
+        gpu.do_kept(batch.keep().unwrap().unwrap()).unwrap();
+        assert_eq!(gpu.read_buffer(&buffer, 8, 8).unwrap(), [6; 8]);
+        assert!(gpu.batch().keep().unwrap().is_none(), "nothing gathered, nothing kept");
         gpu.destroy_buffer(buffer);
     }
 }

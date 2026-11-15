@@ -925,7 +925,7 @@ impl BlockStreamer {
             }
             let own = self.drawn.iter().filter(|at| windows[0].contains(**at));
             let mut columns: HashSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
-            for ((level, at), meshes) in &self.coarse {
+            for (level, at) in self.coarse.keys() {
                 let index = *level as usize;
                 let mine = index >= top || windows[index].contains(*at);
                 let finer = windows[(index - 1).min(top)];

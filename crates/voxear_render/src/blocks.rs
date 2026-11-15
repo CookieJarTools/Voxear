@@ -22,7 +22,7 @@ use std::{
 use anyhow::Result;
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
-use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
+use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, KeptBatch, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
     fell::LooseBlocks,
     BlockWorld, ChunkMeshes, RingFades,
@@ -1069,6 +1069,9 @@ pub(crate) struct BlockWorlds {
     leaving: HashMap<Entity, Pool>,
     copies: Vec<Copy>,
     staging: Option<Buffer>,
+    /// The meshes for rays made this frame: their uploads and bottom levels'
+    /// builds, kept for the frame's own commands to do (see `record`).
+    rays: Vec<KeptBatch>,
     drawn: Vec<DrawnBlocks>,
     /// Whether it has said that the GI's rays are left without some chunks,
     /// once.
@@ -1188,6 +1191,10 @@ impl BlockWorlds {
             for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
                 retire(pool, assets, frames, frame_index);
             }
+        }
+        // Meshes for rays no frame's commands made are made now, before anything draws them.
+        for kept in self.rays.drain(..) {
+            gpu.do_kept(kept)?;
         }
         let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
         // The frame's chunks to bring up, between every world.
@@ -1392,9 +1399,10 @@ impl BlockWorlds {
                     made_to = order.len();
                 }
                 (pool.order, pool.made_to) = (order, made_to);
-                {
-                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
-                    batch.finish()?;
+                // Done by the frame's own commands: submitted alone and waited for, it would wait for every frame
+                // the GPU is still drawing too.
+                if let Some(kept) = batch.keep()? {
+                    self.rays.push(kept);
                 }
                 pool.proxied = all.then(|| (blocks.meshes.clone(), blocks.places.clone()));
                 if changed {
@@ -1499,6 +1507,20 @@ impl BlockWorlds {
             let Some(pool) = pools.iter().find(|pool| pool.buffer.address == drawn.address) else { continue };
             drawn.id = Some(*ids.entry(drawn.address).or_insert_with(|| fg.import_buffer(&pool.buffer)));
         }
+        // The meshes for rays made this frame, before the top level of what rays meet is built with them.
+        if !self.rays.is_empty() {
+            let mut rays = std::mem::take(&mut self.rays);
+            for kept in &mut rays {
+                for buffer in kept.take_buffers() {
+                    frames.retire(Retired::Buffer(buffer));
+                }
+            }
+            fg.add_pass("Ray mesh uploads (blocks)", &[], &[], move |ctx| {
+                for kept in &rays {
+                    ctx.gpu.record_kept(ctx.cmd, kept);
+                }
+            });
+        }
         if let Some(staging) = self.staging.take() {
             let mut copies: Vec<(vk::Buffer, vk::BufferCopy)> = Vec::with_capacity(self.copies.len());
             for copy in &self.copies {
@@ -1523,6 +1545,11 @@ impl BlockWorlds {
     pub fn destroy(&mut self, gpu: &Gpu) {
         if let Some(staging) = self.staging.take() {
             gpu.destroy_buffer(staging);
+        }
+        for mut kept in self.rays.drain(..) {
+            for buffer in kept.take_buffers() {
+                gpu.destroy_buffer(buffer);
+            }
         }
         for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
             gpu.destroy_buffer(pool.buffer);
@@ -1631,11 +1658,14 @@ pub struct BlockCounts {
 /// worlds' records into `buffer`; `None` when there is nothing to draw.
 /// `entities` gives each instance's owner, from which each world finds its
 /// anchor among its meshes for rays. A view through a Portal has a space of
-/// its own, its middle `offset` from the world's (see `portals::Through`),
-/// and may go without the sun's shadows. Only the chunks seen into through
-/// their sides from `sights` are drawn: the camera, or for a view through a
-/// Portal, where the Portal it looks out of stands, as all it sees, it sees
-/// through there, and its camera may stand inside the ground behind it.
+/// its own, its middle `offset` from the world's (see `portals::Through`).
+/// The sun's cascades take their chunks only where `shadows` says: not
+/// with its virtual shadow maps, whose levels drawn this frame take theirs
+/// from `sun_pages`, nor through a Portal without the sun's shadows. Only
+/// the chunks seen into through their sides from `sights` are drawn: the
+/// camera, or for a view through a Portal, where the Portal it looks out of
+/// stands, as all it sees, it sees through there, and its camera may stand
+/// inside the ground behind it.
 ///
 /// Each lamp casting a shadow takes the chunks in its reach, their faces
 /// turned towards it: for one that keeps what stands still (see

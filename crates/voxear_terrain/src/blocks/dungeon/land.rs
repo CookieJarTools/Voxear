@@ -18,7 +18,7 @@ const SIDE: i32 = 2;
 pub(crate) struct Land<'a> {
     ground: &'a Ground<'a>,
     tiles: std::cell::RefCell<std::collections::HashMap<[i32; 2], Vec<i32>>>,
-    wet: std::cell::RefCell<std::collections::HashMap<[i32; 2], bool>>,
+    wet: std::cell::RefCell<std::collections::HashMap<[i32; 2], Option<f32>>>,
     pub(crate) sea: i32,
 }
 
@@ -85,21 +85,43 @@ impl<'a> Land<'a> {
         least
     }
 
-    /// Whether column `at` is under the sea, or a river's or a lake's water.
-    fn wet(&self, at: [i32; 2]) -> bool {
+    /// How high water stands over column `at`, in blocks: the sea's where
+    /// the ground is under it, a river's or a lake's; none where it is dry.
+    fn water(&self, at: [i32; 2]) -> Option<f32> {
         let cell = Self::reading(at);
-        if let Some(wet) = self.wet.borrow().get(&cell) {
-            return *wet;
+        if let Some(kept) = self.wet.borrow().get(&cell) {
+            return *kept;
         }
         let top = self.read(cell);
         let ground = self.ground;
         let column = [cell[0] * STEP, cell[1] * STEP];
         let x = ground.position[0] + (column[0] as f32 + 0.5) * ground.size;
         let z = ground.position[1] + (column[1] as f32 + 0.5) * ground.size;
-        let river = ground.world.water(&[x], &[z]).is_some_and(|(water, _)| water[0] / ground.size > top as f32 + 0.5);
-        let wet = top <= self.sea || river;
-        self.wet.borrow_mut().insert(cell, wet);
-        wet
+        let river = ground.world.water(&[x], &[z]).map(|(water, _)| water[0] / ground.size);
+        let level = match river {
+            Some(level) if level > top as f32 + 0.5 => Some(level),
+            _ if top <= self.sea => Some(self.sea as f32 + 1.0),
+            _ => None,
+        };
+        self.wet.borrow_mut().insert(cell, level);
+        level
+    }
+
+    fn wet(&self, at: [i32; 2]) -> bool {
+        self.water(at).is_some()
+    }
+
+    /// Whether water stands at or over `level` anywhere before an entrance
+    /// at `at` facing `out`: over its terrace and its approach, 20 blocks
+    /// out and 14 either side.
+    fn flooded_before(&self, at: [i32; 2], out: [i32; 2], level: i32) -> bool {
+        let side = [-out[1], out[0]];
+        (0..=20).step_by(4).any(|ahead| {
+            (-14..=14).step_by(7).any(|right| {
+                let p = [at[0] + out[0] * ahead + side[0] * right, at[1] + out[1] * ahead + side[1] * right];
+                self.water(p).is_some_and(|water| water >= level as f32)
+            })
+        })
     }
 
     /// Where round block `site` the entrance goes, of `kinds` (any where
@@ -162,6 +184,13 @@ impl<'a> Land<'a> {
                     self.lowest([at[0] + into[0] * along, at[1] + into[1] * along]) >= floor + 12
                 });
                 if !covered && kind != EntranceKind::Sinkhole {
+                    continue;
+                }
+                // Never where water stands over its threshold, before it or round a sinkhole.
+                let before = if kind == EntranceKind::Sinkhole { [0, 0] } else { out };
+                if self.flooded_before(at, before, height)
+                    || (kind == EntranceKind::Sinkhole && self.flooded_before(at, [-out[0], -out[1]], height))
+                {
                     continue;
                 }
                 score -= distance / search * 0.5 + noise::unit(at[0], 0, at[1], seed) * 0.1;

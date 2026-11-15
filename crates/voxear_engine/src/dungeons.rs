@@ -44,7 +44,9 @@ fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) 
     let file = asset.file.clone();
     let Some(generate) = file.generate.as_ref() else { return Ok(Vec::new()) };
     let Some(built) = generate.built.as_deref() else { return Ok(Vec::new()) };
-    let Some(generator) = crate::blocks::generator(content, &file) else { return Ok(Vec::new()) };
+    // The generator its chunks are built on, rivers and all, so the layouts are the ones built.
+    let Some(landed) = crate::blocks::generator(content, &file) else { return Ok(Vec::new()) };
+    let generator = voxear_terrain::blocks::generate::ground_generator(generate, &landed, file.block_size.max(0.01));
     let Some(transform) = world.get::<Transform>(entity) else { bail!("the world of blocks has no Transform") };
     let corner = voxear_terrain::corner(transform, world.get::<WorldTransform>(entity));
     let size = file.block_size;

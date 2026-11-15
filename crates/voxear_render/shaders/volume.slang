@@ -8,6 +8,7 @@
 #include "atmosphere.slang"
 #include "common.slang"
 #include "ddgi_sample.slang"
+#include "lightmaps.slang"
 
 static const float VOLUME_WIDTH = 128.0;
 static const float VOLUME_HEIGHT = 72.0;
@@ -80,17 +81,29 @@ float heightFogThrough(float density, float falloff, float3 ray)
 }
 
 // How lit the fog is between the camera and a point: with GI, dim where
-// walls keep out the sky, judged at both ends of the ray; otherwise 1.
+// walls keep out the sky, judged at both ends of the ray, by the probes round
+// the camera or, under a bake, its light probes' grid; otherwise 1.
 float fogOpenness(Frame* frame, float3 point)
 {
-    if (frame->ddgi.enabled == 0)
-    {
-        return 1.0;
-    }
     // The open sky's light as the probes count it, from the atmosphere or the gradient.
     float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
     float open = max(dot(sky, FOG_LUMA), 1e-5);
+    float3 bakedAtCamera;
+    float3 bakedAtPoint;
+    bool camera = probeVolumeLight(frame, frame->cameraPosition, float3(0.0), bakedAtCamera);
+    bool far = probeVolumeLight(frame, point, float3(0.0), bakedAtPoint);
+    if (camera || far)
+    {
+        // Past the grid's edge, the open sky's.
+        float atCamera = camera ? dot(bakedAtCamera, FOG_LUMA) / open : 1.0;
+        float atPoint = far ? dot(bakedAtPoint, FOG_LUMA) / open : 1.0;
+        return saturate((atCamera + atPoint) * 0.5);
+    }
+    if (frame->ddgi.enabled == 0)
+    {
+        return 1.0;
+    }
     float3 back = normalize(frame->cameraPosition - point);
     float atCamera = dot(ddgiLightAround(frame, frame->cameraPosition, back, sky), FOG_LUMA) / open;
     float atPoint = dot(ddgiLightAround(frame, point, back, sky), FOG_LUMA) / open;

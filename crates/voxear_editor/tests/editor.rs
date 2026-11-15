@@ -696,11 +696,25 @@ fn menu_item(ui: &Ui, label: &str) -> Option<NodeId> {
     items.into_iter().find(|&item| ui.children(item).iter().any(|&part| ui.text(part) == label))
 }
 
-/// The Inspector row labelled `label`.
+/// The Inspector row labelled `label`, of those shown: a page not in front, as the Lighting page, has rows too.
 fn prop_row(ui: &Ui, label: &str) -> Option<NodeId> {
     let mut rows = Vec::new();
     with_class(ui, ui.root(), "prop", &mut rows);
-    rows.into_iter().find(|&row| ui.children(row).first().is_some_and(|&first| ui.text(first) == label))
+    rows.into_iter()
+        .filter(|&row| shown(ui, row))
+        .find(|&row| ui.children(row).first().is_some_and(|&first| ui.text(first) == label))
+}
+
+/// Whether `node` and everything holding it are shown.
+fn shown(ui: &Ui, node: NodeId) -> bool {
+    let mut at = Some(node);
+    while let Some(node) = at {
+        if !ui.is_visible(node) {
+            return false;
+        }
+        at = ui.parent(node);
+    }
+    true
 }
 
 /// The Hierarchy row showing the Obj called `name`.
@@ -1517,9 +1531,10 @@ fn the_command_palette_finds_and_runs_things() {
     editor.ui.focus(field);
     editor.ui.text_input("tool");
     frame(&mut editor, &mut renderer);
-    // The four tools lead, with the manual's page on tool kinds among them.
+    // The four tools lead, with the manual's page on tool kinds and the setting that lets tools change the
+    // project among them.
     let results = palette_results(&editor.ui);
-    assert_eq!(results.iter().take(5).filter(|r| r.ends_with("tool")).count(), 4, "{results:?}");
+    assert_eq!(results.iter().take(6).filter(|r| r.ends_with("tool")).count(), 4, "{results:?}");
     let list = editor.ui.find(root, "palette-list").unwrap();
     let rotate = results.iter().position(|r| r == "Rotate tool").unwrap();
     let mut rows: Vec<NodeId> = editor
@@ -2115,7 +2130,7 @@ fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
     let mut tabs = Vec::new();
     with_class(&editor.ui, editor.ui.find(editor.ui.root(), "settings-tabs").unwrap(), "settings-tab", &mut tabs);
     let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
-    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance", "Project panel"]);
+    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance", "Project panel", "Tools"]);
     assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
     assert!(!shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "and only it");
 
@@ -2908,6 +2923,7 @@ fn add_component_is_a_search_with_folders() {
         "Rendering",
         "Effects",
         "UI",
+        "Heat",
         "Networking",
         "Animation",
         "Water",
@@ -2918,8 +2934,18 @@ fn add_component_is_a_search_with_folders() {
         "Physics 2D",
         "Scripts",
     ];
-    assert_eq!(labels(&editor.ui), folders, "folders first, as in Unity");
+    // The list draws the rows it shows: those at the top, then those scrolled to at its end.
+    let mut listed = labels(&editor.ui);
     shot(&mut renderer, "add-component.png");
+    let list = editor.ui.find(editor.ui.root(), "picker-list").unwrap();
+    editor.ui.scroll_to_index(list, folders.len() - 1);
+    frame(&mut editor, &mut renderer);
+    for label in labels(&editor.ui) {
+        if !listed.contains(&label) {
+            listed.push(label);
+        }
+    }
+    assert_eq!(listed, folders, "folders first, as in Unity");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.
     let scripts = picker_row(&editor.ui, "Scripts").unwrap();
@@ -2936,7 +2962,7 @@ fn add_component_is_a_search_with_folders() {
     assert_eq!(labels(&editor.ui)[0], "Rendering", "back at the top");
 
     // Typing searches every folder, each row saying where it is; an empty menu path is left out.
-    editor.ui.text_input("fire");
+    editor.ui.text_input("camp fire");
     frame(&mut editor, &mut renderer);
     assert_eq!(picker_rows(&editor.ui), [("Camp Fire".to_string(), "Effects".to_string())]);
     let search = editor.ui.find(editor.ui.root(), "picker-field").unwrap();
@@ -3370,7 +3396,9 @@ fn the_colour_picker_edits_colours_and_hdr_emission() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(editor.color_picker_open());
-    let find = |editor: &voxear_editor::Editor, class: &str| first_with(&editor.ui, editor.ui.root(), class).unwrap();
+    // The popup's own parts: the Model panel has a colour picker of its own.
+    let popup = editor.ui.find(editor.ui.root(), "color-popup").unwrap();
+    let find = |editor: &voxear_editor::Editor, class: &str| first_with(&editor.ui, popup, class).unwrap();
     let title = editor.ui.find(editor.ui.root(), "color-title").unwrap();
     assert_eq!(editor.ui.text(title), "Colour", "named for the value, with no HDR for a light's colour");
     assert!(!editor.ui.is_visible(editor.ui.parent(find(&editor, "color-intensity-slider")).unwrap()));
@@ -7160,12 +7188,14 @@ fn a_material_picks_a_built_in_shader_and_one_is_copied_into_the_project() {
     frame(&mut editor, &mut renderer);
     assert!(menu_item(&editor.ui, "New Unlit Shader").is_none(), "one item for shaders");
     let item = menu_item(&editor.ui, "New Shader…").expect("the menu makes shaders");
+    // The menu is longer than it is tall, and scrolls down to the item.
+    scroll_to(&mut editor, &mut renderer, item);
     click(&mut editor.ui, item);
     for _ in 0..3 {
         frame(&mut editor, &mut renderer);
     }
     let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
-    assert_eq!(offered[..4], ["Lit", "Unlit", "UI", "Toon"], "{offered:?}");
+    assert_eq!(offered[..8], ["Graph", "Sub-graph", "Particle Graph", "Lit", "Unlit", "UI", "Look", "Toon"], "{offered:?}");
     let water = picker_row(&editor.ui, "Water").unwrap();
     click_across_frames(&mut editor, &mut renderer, water);
     frame(&mut editor, &mut renderer);
@@ -7567,9 +7597,10 @@ fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let material = renderer.add_material(&voxear_render::MaterialDesc::default()).unwrap();
     let camera = editor.scene_camera().unwrap();
-    // A row of tall plants a few metres in front of the Scene view's camera, standing on the ground.
+    // A row of tall plants a few metres in front of the Scene view's camera, standing on the ground, to the left
+    // of Hello's middle: the ground past them is clear, where straight ahead the Chrome Ball stands in the way.
     let ahead = camera.position + camera.forward * 6.0;
-    let base = Vec3::new(ahead.x, 0.0, ahead.z);
+    let base = Vec3::new(ahead.x - 3.0, 0.0, ahead.z);
     let plants: Vec<Plant> =
         (-2..=2).map(|i| Plant::new([i as f32 * 0.6, 1.0, 0.0], 0.0, 0.4)).collect();
     let foliage = Foliage {

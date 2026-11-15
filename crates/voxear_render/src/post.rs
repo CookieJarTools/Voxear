@@ -108,11 +108,82 @@ pub struct GlobalIllumination {
     /// grid is 32 probes across, 16 high and 32 deep, and a coarse one four
     /// times as far apart carries on past it.
     pub probe_spacing: f32,
+    /// Where the bounced light comes from: the probes round the camera, the
+    /// level's bake, or both (see `GiSource`).
+    pub source: GiSource,
+    /// A bake's lightmap texels a metre of surface, before each Obj's own
+    /// scale.
+    pub texels_per_metre: f32,
+    /// How many times a bake's light bounces, off the first surface it meets
+    /// and on.
+    pub bounces: u32,
+    /// The paths a bake traces from each lightmap texel; light probes trace
+    /// twice as many. More is smoother and slower.
+    pub samples: u32,
+    /// Whether a bake keeps which way its light mostly comes from, so normal
+    /// maps still show under baked light. A second, smaller texture.
+    pub directional: bool,
+    /// Whether a bake's noise is smoothed away, across texels of like
+    /// surfaces only.
+    pub denoise: bool,
+    /// The most texels across a lightmap: a level whose lightmaps need more
+    /// is given several.
+    pub lightmap_size: u32,
 }
 
 impl Default for GlobalIllumination {
     fn default() -> Self {
-        Self { enabled: false, strength: 1.0, probe_spacing: 1.0 }
+        Self {
+            enabled: false,
+            strength: 1.0,
+            probe_spacing: 1.0,
+            source: GiSource::Realtime,
+            texels_per_metre: crate::lightmap_uvs::EXPECTED_TEXELS_PER_METRE,
+            bounces: 3,
+            samples: 256,
+            directional: true,
+            denoise: true,
+            lightmap_size: 1024,
+        }
+    }
+}
+
+/// Where a level's bounced light comes from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GiSource {
+    /// The probes round the camera, traced as the game goes: every light's
+    /// bounce, moving or not, and nothing to bake.
+    #[default]
+    Realtime,
+    /// The level's bake: lightmaps on the Objs with a Lightmap, light probes
+    /// for everything else. The probes round the camera are not traced.
+    Baked,
+    /// Both: the bake holds the sky's and every Mixed and Baked light's
+    /// bounce, and the probes round the camera only the Realtime lights',
+    /// so no light is counted twice.
+    Both,
+}
+
+impl GiSource {
+    pub const ALL: [Self; 3] = [Self::Realtime, Self::Baked, Self::Both];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Realtime => "Real-time",
+            Self::Baked => "Baked",
+            Self::Both => "Both",
+        }
+    }
+
+    /// Whether a bake lights the level.
+    pub fn uses_bake(self) -> bool {
+        self != Self::Realtime
+    }
+
+    /// Whether the probes round the camera are traced.
+    pub fn uses_probes(self) -> bool {
+        self != Self::Baked
     }
 }
 

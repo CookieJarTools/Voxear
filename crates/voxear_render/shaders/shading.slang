@@ -12,6 +12,7 @@
 #include "glow.slang"
 #include "impostor.slang"
 #include "lights.slang"
+#include "lightmaps.slang"
 #include "occlusion.slang"
 #include "reflection_probes.slang"
 #include "seasons.slang"
@@ -39,6 +40,8 @@ struct VertexOut
     float hidden : HIDDEN;
     // How far in front of the frame's cut it is (cutAt): a view through a Portal draws nothing behind the far one.
     float cut : SV_ClipDistance0;
+    // Its lightmap UVs, where its instance has baked light (lightmaps.slang).
+    float2 lightmapUv : TEXCOORD1;
 };
 
 struct FragmentOut
@@ -105,6 +108,8 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.previousClip = transform(push.frame->prevViewProj, previous);
     o.moved = moved;
     o.hidden = float(v.wind >> 24) / 255.0;
+    // A rigid mesh's own lightmap UVs, beside its vertices.
+    o.lightmapUv = instance.baked != 0 && instance.posed == 0 ? buffers()->lightmapUvs[mesh.vertexOffset + vertexIndex] : 0.0;
     return o;
 }
 
@@ -130,6 +135,7 @@ VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, u
     o.previousClip = transform(frame->prevViewProj, float4(c.world, 1.0));
     o.moved = 0.0;
     o.hidden = 0.0;
+    o.lightmapUv = 0.0;
     return o;
 }
 
@@ -519,9 +525,35 @@ float3 ambientLight(Frame* frame, float3 position, Surface s, float3 sunLight, b
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+    // Under a bake, its light probes' grid, where it reaches: what is not baked itself, as terrain, water and
+    // particles, takes the probes' light round it, not the open sky's.
+    float3 volume;
+    if (probeVolumeLight(frame, position, s.normal, volume))
+    {
+        bool both = frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0;
+        return volume + (both ? ddgiIrradiance(frame, position, s.normal, s.view, 0.0) : 0.0);
+    }
     if (frame->ddgi.enabled != 0)
     {
+        // Beside a bake, the probes hold only the Realtime lights' bounce, and the bake the sky's: where nothing is
+        // baked, the sky's light is the sky's, and the probes' adds to it.
+        if (frame->bake.source == GI_BOTH)
+        {
+            return ambient + ddgiIrradiance(frame, position, s.normal, s.view, 0.0);
+        }
         ambient = ddgiIrradiance(frame, position, s.normal, s.view, ambient);
+    }
+    return ambient;
+}
+
+// The light falling on a surface from all round where its instance has baked light: its lightmap's or the light
+// probes', and beside a bake the probes round the camera's too, which then hold only the Realtime lights' bounce.
+float3 bakedAmbient(Frame* frame, BakedInstance baked, float3 bakedLight, float3 position, Surface s)
+{
+    float3 ambient = bakedLight * frame->bake.strength;
+    if (frame->bake.source == GI_BOTH && frame->ddgi.enabled != 0)
+    {
+        ambient += ddgiIrradiance(frame, position, s.normal, s.view, 0.0);
     }
     return ambient;
 }
@@ -1105,6 +1137,11 @@ FragmentOut fragmentMain(VertexOut input)
         }
     }
     bool customLit = custom && customLighting(input.material);
+    // The level's bake, where it lights this instance: its lightmap holds the Baked lights' direct light, which it
+    // then leaves out here.
+    BakedInstance baked;
+    bool hasBaked = bakedInstance(input.instance, baked);
+    bool ownLightmap = hasBaked && frame->bake.source != GI_REALTIME && lightmapped(baked);
 
     Surface s;
     s.normal = normal;
@@ -1129,6 +1166,10 @@ FragmentOut fragmentMain(VertexOut input)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
+    if (ownLightmap && frame->bake.sunMode == LIGHT_MODE_BAKED)
+    {
+        sunThrough = 0.0;
+    }
     // Under water, the sun comes down through it in caustics, and the sky's light is dimmed.
     float3 skyUnder;
     WaterOver water = waterOverAt(frame, input.worldPosition);
@@ -1157,6 +1198,10 @@ FragmentOut fragmentMain(VertexOut input)
     for (uint i = 0; i < clusterLights; i++)
     {
         uint light = buffers()->clusters[clusterBase + 1 + i];
+        if (ownLightmap && light < frame->bake.bakedLights)
+        {
+            continue;
+        }
         // Dimmed by the water between, where either is under it.
         float3 wet = lampThroughWater(frame, buffers()->lights[light].position, input.worldPosition, water);
         if (customLit)
@@ -1173,7 +1218,10 @@ FragmentOut fragmentMain(VertexOut input)
     // The bounced light where the mesh has the surface, as the rays that gather it see it: moved by its vertex
     // function, as a wave's trough below the flat sheet the rays know, it read the probes under the sheet, in the dark.
     float3 lightAt = input.worldPosition - input.moved;
-    float3 ambient = ambientLight(frame, lightAt, s, sunLight, atmosphere) * skyUnder;
+    float3 bakedLight;
+    bool bakeLit = hasBaked && frame->bake.source != GI_REALTIME && bakedIrradiance(baked, input.lightmapUv, s.normal, bakedLight);
+    float3 ambient = bakeLit ? bakedAmbient(frame, baked, bakedLight, lightAt, s) : ambientLight(frame, lightAt, s, sunLight, atmosphere);
+    ambient *= skyUnder;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
@@ -1227,6 +1275,11 @@ FragmentOut fragmentMain(VertexOut input)
     else if (frame->debugView == DEBUG_VIEW_GLOBAL_ILLUMINATION)
     {
         color = ambient;
+    }
+    else if (frame->debugView == DEBUG_VIEW_LIGHTMAP_DENSITY)
+    {
+        color = lightmapDensityColor(frame, baked, input.lightmapUv, input.worldPosition, hasBaked)
+            * (0.55 + 0.45 * saturate(dot(s.normal, -frame->sunDirection)));
     }
     else if (frame->debugView == DEBUG_VIEW_WIREFRAME)
     {

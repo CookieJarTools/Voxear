@@ -401,6 +401,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Sound
         | AssetKind::Paths
         | AssetKind::ReflectionProbes
+        | AssetKind::Lightmaps
         | AssetKind::LightProfile
         | AssetKind::Lighting
         | AssetKind::LookPack
@@ -683,6 +684,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             if kind == AssetKind::Level && db.file(&reverb).is_file() {
                 needs.companions.push(reverb);
             }
+            // And its baked lighting, its lightmaps and light probes.
+            let lightmaps = crate::light_bakes::lightmaps_file(path);
+            if kind == AssetKind::Level && db.file(&lightmaps).is_file() {
+                needs.companions.push(lightmaps);
+            }
             // A world of blocks' changes from its ground go with it.
             let changes = voxear_terrain::blocks::edits::blocks_file(path);
             if kind == AssetKind::BlockWorld && db.file(&changes).is_file() {
@@ -716,6 +722,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Font
         | AssetKind::Paths
         | AssetKind::ReflectionProbes
+        | AssetKind::Lightmaps
         | AssetKind::LightProfile
         | AssetKind::Shader
         | AssetKind::VoxShade

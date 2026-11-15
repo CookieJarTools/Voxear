@@ -98,6 +98,8 @@ pub(super) enum Waiting {
     ProbeBake,
     /// The open level's reverb probes baking.
     ReverbBake,
+    /// The open level's lighting baking.
+    LightingBake,
 }
 
 /// A call done, or one that answers later.
@@ -301,6 +303,62 @@ impl Editor {
                 probe.capture();
                 done(json!({}))
             }
+            "lighting.bake" => {
+                self.refuse_while_playing("bake the lighting")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                if !self.baking_lighting() {
+                    self.bake_lighting(renderer);
+                }
+                match self.lighting_bake_end() {
+                    Some(Err(error)) if !self.baking_lighting() => Err(refuse(ErrorKind::Failed, error.clone())),
+                    _ => Ok(Outcome::Later(Waiting::LightingBake)),
+                }
+            }
+            "lighting.bake_cancel" => {
+                let baking = self.baking_lighting();
+                if baking {
+                    self.cancel_lighting_bake(renderer);
+                }
+                done(json!({ "cancelled": baking }))
+            }
+            "lighting.bake_status" => {
+                let last = match self.lighting_bake_end() {
+                    Some(Ok(baked)) => json!({
+                        "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
+                        "probes": baked.probes, "texels": baked.texels, "seconds": baked.seconds,
+                        "tracing_seconds": baked.tracing_seconds,
+                    }),
+                    Some(Err(error)) => json!({ "error": error }),
+                    None => Json::Null,
+                };
+                let world = &self.game.engine.world;
+                let loaded = world.resource::<voxear_render::BakedLighting>();
+                done(json!({
+                    "baking": self.baking_lighting(),
+                    "progress": self.lighting_bake_fraction(renderer),
+                    "last": last,
+                    "lightmaps": loaded.map_or(0, |baked| baked.atlases.len()),
+                    "probes": loaded.map_or(0, |baked| baked.probes.positions.len()),
+                }))
+            }
+            "lighting.probe_light" => {
+                let at = opt_vector(args, "position")?.ok_or_else(|| bad("`position` is three numbers"))?;
+                let at = voxear_core::math::Vec3::from(at);
+                let normal = opt_vector(args, "normal")?.map_or(voxear_core::math::Vec3::Y, voxear_core::math::Vec3::from);
+                let baked = self.game.engine.world.resource::<voxear_render::BakedLighting>();
+                let light = baked.and_then(|baked| baked.probes.light_at(at));
+                done(match light {
+                    Some(light) => json!({
+                        "found": true,
+                        "light": light.irradiance(normal).to_array(),
+                        "average": light.average().to_array(),
+                        "harmonics": light.0,
+                    }),
+                    None => json!({ "found": false }),
+                })
+            }
             "reflection_probes.bake" => {
                 self.refuse_while_playing("bake the reflection probes")?;
                 if self.game.levels.current().is_none() {
@@ -474,6 +532,16 @@ impl Editor {
                 (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
                 (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
                 (true, _) => Ok(Outcome::Later(Waiting::ReverbBake)),
+            },
+            Waiting::LightingBake => match (self.baking_lighting(), self.lighting_bake_end()) {
+                (false, Some(Ok(baked))) => done(json!({
+                    "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
+                    "probes": baked.probes, "texels": baked.texels, "seconds": baked.seconds,
+                        "tracing_seconds": baked.tracing_seconds,
+                })),
+                (false, Some(Err(error))) => Err(refuse(ErrorKind::Failed, error.clone())),
+                (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
+                (true, _) => Ok(Outcome::Later(Waiting::LightingBake)),
             },
             Waiting::ProbeBake => match (self.baking_probes(), self.probe_bake_end()) {
                 (false, Some(Ok(baked))) => {
@@ -1100,7 +1168,7 @@ impl Editor {
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
                 "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
-                | "reflection_probes.bake" | "reverb_probes.bake" => {
+                | "reflection_probes.bake" | "reverb_probes.bake" | "lighting.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),

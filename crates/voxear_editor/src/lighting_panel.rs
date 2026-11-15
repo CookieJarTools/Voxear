@@ -87,6 +87,7 @@ const BLOOM: When = &[(&["post", "bloom", "enabled"], "true")];
 const FOG: When = &[(&["post", "fog", "enabled"], "true")];
 const SHAFTS: When = &[(&["post", "fog", "enabled"], "true"), (&["post", "fog", "volumetric"], "true")];
 const BOUNCE: When = &[(&["post", "global_illumination", "enabled"], "true")];
+const GI_SOURCES: &[(&str, &str)] = &[("Real-time", "realtime"), ("Baked", "baked"), ("Both", "both")];
 const OCCLUSION: When = &[(&["post", "ambient_occlusion", "enabled"], "true")];
 const FOCUS: When = &[(&["post", "depth_of_field", "enabled"], "true")];
 const CONTACT: When = &[(&["post", "contact_shadows", "enabled"], "true")];
@@ -295,6 +296,20 @@ const SETTINGS: &[Info] = &[
         help: "How bright the bounced light is. 1 is as physics has it." },
     Info { path: &["post", "global_illumination", "probe_spacing"], title: "Probe spacing", group: "Shading", kind: number(0.1, 16.0, "m"), when: BOUNCE,
         help: "How far apart, in metres, the points that measure bounced light are. Smaller catches more detail and costs more." },
+    Info { path: &["post", "global_illumination", "source"], title: "Bounce from", group: "Baked", kind: Kind::Choice(GI_SOURCES), when: ALWAYS,
+        help: "Where bounced light comes from: Real-time, the probes round the camera, for light that moves; Baked, the level's bake, lightmaps on still Objs and light probes for the rest, cheaper and finer; or Both, the bake for the sky and the lights it keeps, the probes round the camera for Realtime lights." },
+    Info { path: &["post", "global_illumination", "texels_per_metre"], title: "Texels a metre", group: "Baked", kind: number(0.1, 200.0, ""), when: ALWAYS,
+        help: "How many lightmap texels a bake gives each metre of a still surface, before each Obj's own Lightmap scale. More shows finer shadows and corners, and takes longer to bake and more memory." },
+    Info { path: &["post", "global_illumination", "bounces"], title: "Bounces", group: "Baked", kind: Kind::Whole { max: 16 }, when: ALWAYS,
+        help: "How many times a bake's light bounces off surfaces. Three is most of it; more lights deep, pale rooms further." },
+    Info { path: &["post", "global_illumination", "samples"], title: "Samples", group: "Baked", kind: Kind::Whole { max: 65536 }, when: ALWAYS,
+        help: "How many paths a bake traces from each lightmap texel; light probes trace twice as many. More is smoother and slower." },
+    Info { path: &["post", "global_illumination", "directional"], title: "Directional", group: "Baked", kind: Kind::Toggle, when: ALWAYS,
+        help: "Keeps which way baked light mostly comes from, so normal maps still show under it. A second, smaller texture." },
+    Info { path: &["post", "global_illumination", "denoise"], title: "Denoise", group: "Baked", kind: Kind::Toggle, when: ALWAYS,
+        help: "Smooths a bake's noise away, across texels of like surfaces only, so corners and shadow edges stay." },
+    Info { path: &["post", "global_illumination", "lightmap_size"], title: "Lightmap size", group: "Baked", kind: Kind::Whole { max: 8192 }, when: ALWAYS,
+        help: "The most texels across one lightmap. A level that needs more is given several." },
     Info { path: &["post", "ambient_occlusion", "enabled"], title: "Ambient occlusion", group: "Shading", kind: Kind::Toggle, when: ALWAYS,
         help: "Darkens corners, cracks and where things meet, where less light reaches. It makes objects look grounded." },
     Info { path: &["post", "ambient_occlusion", "radius"], title: "Occlusion radius", group: "Shading", kind: number(0.0, 8.0, "m"), when: OCCLUSION,
@@ -439,6 +454,8 @@ pub enum LightingAction {
     /// The scene is shown under a texture pack, as a player who picked it
     /// would see it, or under none. Nothing of it is saved.
     WearTextures(Option<String>),
+    /// The level's lighting is baked, or the bake under way given up.
+    Bake,
 }
 
 /// Two changes are the same when they write the same text: the file's values
@@ -451,7 +468,7 @@ impl PartialEq for LightingAction {
                 let text = |value: &Option<toml_edit::Value>| value.as_ref().map(|v| v.to_string());
                 file == f && path == p && text(value) == text(v)
             }
-            (Self::Copy, Self::Copy) => true,
+            (Self::Copy, Self::Copy) | (Self::Bake, Self::Bake) => true,
             (Self::Wear(a), Self::Wear(b)) => a == b,
             (Self::WearTextures(a), Self::WearTextures(b)) => a == b,
             _ => false,
@@ -474,6 +491,10 @@ pub struct LightingPanel {
     /// menu's entries names.
     textures: NodeId,
     packs: Vec<Option<String>>,
+    /// Bake Lighting, which gives up a bake under way, and what it says of
+    /// the bake.
+    bake: NodeId,
+    bake_note: NodeId,
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
@@ -511,9 +532,17 @@ impl LightingPanel {
         ui.set_tooltip(label, tip, None);
         let textures = ui.dropdown(row, &["None"], 0);
         ui.add_class(textures, "value-choice");
+        let bake = ui.button(top, "Bake Lighting");
+        ui.add_class(bake, "lighting-copy");
+        let tip = "Bakes the level's lighting: lightmaps on its Objs with a Lightmap and light probes in its Light \
+                   Probe Groups, saved beside the level. The Baked tab has its settings";
+        ui.set_tooltip(bake, tip, None);
+        let bake_note = ui.add_label(top, "");
+        ui.add_class(bake_note, "lighting-note");
         let fields = LightingFields::new(ui, tab_bar, view);
         let packs = vec![None];
-        Self { scene, choices: vec![None], note, copy, look, looks: vec![None], textures, packs, fields, shown: None }
+        let looks = vec![None];
+        Self { scene, choices: vec![None], note, copy, look, looks, textures, packs, bake, bake_note, fields, shown: None }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -653,7 +682,21 @@ impl LightingPanel {
             let chosen = self.packs.get(ui.selected_option(self.textures)).cloned().flatten();
             return Some(LightingAction::WearTextures(chosen));
         }
+        if ui.clicked(self.bake) {
+            return Some(LightingAction::Bake);
+        }
         self.fields.update(ui)
+    }
+
+    /// Shows how a bake under way has gone, from 0 to 1, or how the last
+    /// ended; the button gives up a bake under way.
+    pub fn show_bake(&mut self, ui: &mut Ui, progress: Option<f32>, last: Option<String>) {
+        ui.set_text(self.bake, if progress.is_some() { "Cancel Bake" } else { "Bake Lighting" });
+        let note = match progress {
+            Some(fraction) => format!("Baking · {:.0}%", fraction.clamp(0.0, 1.0) * 100.0),
+            None => last.unwrap_or_default(),
+        };
+        ui.set_text(self.bake_note, &note);
     }
 
     /// The menu the texture pack the scene is shown under is picked from.
@@ -1029,6 +1072,7 @@ fn group_help(group: &str) -> &'static str {
         "Bloom" => "The soft glow round bright lights and highlights.",
         "Fog" => "Mist and dust in the air, and the light shafts that show in it.",
         "Shading" => "How light settles in the scene: bounced light, shade in corners, small shadows and reflections.",
+        "Baked" => "Baked lighting: lightmaps on the Objs with a Lightmap, light probes for the rest, traced once by Bake Lighting and saved beside the level.",
         "Lens" => "Camera effects: focus blur and motion blur.",
         "Quality" => "How edges are smoothed and sharpened, and the scale the scene is drawn at.",
         "Pack" => "What the pack says of itself. In the other tabs, an empty row is the level's own setting.",

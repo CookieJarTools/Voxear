@@ -563,6 +563,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Font) => "edit",
         Some(AssetKind::Paths) => "branch",
         Some(AssetKind::ReflectionProbes) => "globe",
+        Some(AssetKind::Lightmaps) => "light",
         Some(AssetKind::LightProfile) => "light",
         Some(AssetKind::Shader) => "shader",
         Some(AssetKind::VoxShade) => "nodes",

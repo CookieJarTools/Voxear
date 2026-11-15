@@ -227,7 +227,7 @@ internal static class ScriptCatalogTests
 		var item = definitions.Single(d => d.GetProperty("name").GetString() == "Voxear.Item");
 		Check.True(item.GetProperty("menu").GetString() == "Items/Item", "where an item is made");
 		var held = item.GetProperty("fields").EnumerateArray().Select(f => f.GetProperty("name").GetString()).ToList();
-		Check.True(held.SequenceEqual(["Icon", "StackSize", "Places", "Leaves", "Tool", "Tier", "Speed", "Durability"]), string.Join(", ", held));
+		Check.True(held.SequenceEqual(["Icon", "StackSize", "Places", "Leaves", "Dropped", "Tool", "Tier", "Speed", "Durability"]), string.Join(", ", held));
 		Check.True(new[] { "Voxear.Recipe", "Voxear.ToolKind", "Voxear.Station" }.All(names.Contains), string.Join(", ", names));
 		Check.True(!names.Contains("Voxear.BlockRules"), "what a game derives from is no data asset by itself");
 	}

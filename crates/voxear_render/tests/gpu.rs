@@ -4913,16 +4913,23 @@ fn surge_render(time: f32) -> Option<Vec<u8>> {
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, -5.0, -6.0))));
     world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
-    let cube = renderer.primitive(Primitive::Cube).unwrap();
     let glowing = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [8.0, 8.0, 8.0], wind_bend: 1.0, ..MaterialDesc::default() };
     let glowing = renderer.add_material(&glowing).unwrap();
-    // Its origin at its foot, so it bends from there.
-    let mut pole = voxear_render::MeshData::primitive(Primitive::Cube);
-    for vertex in &mut pole.vertices {
-        vertex.position[1] += 0.5;
+    // Six cubes stacked a metre each, its origin at its foot, so it bends from there along its length as a plant's
+    // mesh does, not leaning whole from its foot as one long cube would.
+    let cube = voxear_render::MeshData::primitive(Primitive::Cube);
+    let mut pole = voxear_render::MeshData::default();
+    for segment in 0..6 {
+        let first = pole.vertices.len() as u32;
+        pole.vertices.extend(cube.vertices.iter().map(|vertex| {
+            let mut vertex = *vertex;
+            vertex.position[1] += 0.5 + segment as f32;
+            vertex
+        }));
+        pole.indices.extend(cube.indices.iter().map(|index| first + index));
     }
     let pole = renderer.add_mesh(&pole).unwrap();
-    world.spawn((MeshRenderer::new(pole, glowing), Transform::new(Vec3::new(0.0, -8.0, 0.0), Quat::IDENTITY, Vec3::new(0.15, 6.0, 0.15))));
+    world.spawn((MeshRenderer::new(pole, glowing), Transform::new(Vec3::new(0.0, -8.0, 0.0), Quat::IDENTITY, Vec3::new(0.15, 1.0, 0.15))));
     // The waves running across the view, so the pole sways across it.
     world.spawn((Ocean::default(), Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
     let mut time = time;
@@ -4934,8 +4941,14 @@ fn surge_render(time: f32) -> Option<Vec<u8>> {
 fn under_the_sea_a_plant_sways_with_the_swell_without_a_wind() {
     let (Some(now), Some(later)) = (surge_render(30.0), surge_render(32.5)) else { return };
     keep_image("surge.png", &now);
-    // Across a row, the brightest column: the pole.
-    let column = |pixels: &[u8], y: u32| (0..640u32).max_by_key(|&x| rgb_at(pixels, (x, y)).iter().sum::<i32>()).unwrap() as i32;
+    // Across a row, the middle of the pole: of the columns at least half as bright as the brightest, which are many
+    // and as bright as each other where it glows whole.
+    let column = |pixels: &[u8], y: u32| {
+        let bright = |x: u32| rgb_at(pixels, (x, y)).iter().sum::<i32>();
+        let brightest = (0..640u32).map(bright).max().unwrap();
+        let lit: Vec<i32> = (0..640u32).filter(|&x| bright(x) * 2 >= brightest).map(|x| x as i32).collect();
+        lit.iter().sum::<i32>() / lit.len() as i32
+    };
     let (tip, root) = (on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -2.3, 0.0)), on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -7.7, 0.0)));
     let moved = (column(&now, tip.1) - column(&later, tip.1)).abs();
     assert!(moved > 4, "its tip sways: {moved} pixels in two and a half seconds");

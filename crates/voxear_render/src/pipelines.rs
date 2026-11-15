@@ -290,6 +290,10 @@ pub struct Pipelines {
     pub sound_reverb: Option<vk::Pipeline>,
     pub sound_occlusion_software: vk::Pipeline,
     pub sound_reverb_software: vk::Pipeline,
+    /// A lighting bake's texels and probes, by the GPU's rays where it has
+    /// them, and in software (`shaders/light_bake.slang`).
+    pub light_bake: Option<[vk::Pipeline; 3]>,
+    pub light_bake_software: [vk::Pipeline; 3],
     /// A probe's capture's mips, and their filtering for its own
     /// (`shaders/probe_filter.slang`).
     pub probe_downsample: vk::Pipeline,
@@ -438,6 +442,19 @@ impl Pipelines {
             },
             sound_reverb: match &ddgi {
                 Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound reverb", module, c"soundReverbMain")?),
+                None => None,
+            },
+            light_bake_software: [
+                create_compute_pipeline(gpu, layout, "Lightmap bake", ddgi_software, c"lightBakeTexelsMain")?,
+                create_compute_pipeline(gpu, layout, "Light probe bake", ddgi_software, c"lightBakeProbesMain")?,
+                create_compute_pipeline(gpu, layout, "Lightmap bake sky", ddgi_software, c"lightBakeSkyMain")?,
+            ],
+            light_bake: match &ddgi {
+                Some(module) => Some([
+                    create_compute_pipeline(gpu, layout, "Lightmap bake", module, c"lightBakeTexelsMain")?,
+                    create_compute_pipeline(gpu, layout, "Light probe bake", module, c"lightBakeProbesMain")?,
+                    create_compute_pipeline(gpu, layout, "Lightmap bake sky", module, c"lightBakeSkyMain")?,
+                ]),
                 None => None,
             },
             shadow: graphics(&GraphicsPipelineDesc {
@@ -1197,6 +1214,7 @@ impl Pipelines {
             fsr3.destroy(gpu);
         }
         let encode = encode.chain([self.fsr_exposure, self.fsr_copy]);
+        let traced = traced.chain(self.light_bake.into_iter().flatten()).chain(self.light_bake_software);
         for pipeline in all.into_iter().chain(mesh).chain(traced).chain(encode) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
         }

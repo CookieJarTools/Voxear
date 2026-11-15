@@ -88,7 +88,7 @@ pub const SETTINGS: [SettingInfo; 26] = [
         key: "scene_shading",
         title: "Shading",
         group: "Scene view",
-        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe", "Lit Wireframe", "Heat"]),
+        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe", "Lit Wireframe", "Heat", "Lightmap Density"]),
     },
     SettingInfo { key: "start_paused", title: "Start paused", group: "Play mode", kind: SettingKind::Toggle },
     SettingInfo { key: "save_before_play", title: "Save before play", group: "Play mode", kind: SettingKind::Toggle },
@@ -493,7 +493,7 @@ pub struct KeptSceneView {
     pub position: [f32; 3],
     /// As a quaternion's x, y, z and w.
     pub rotation: [f32; 4],
-    /// Lit, Unlit, Wireframe, Lit Wireframe or Heat, by index.
+    /// Lit, Unlit, Wireframe, Lit Wireframe, Heat or Lightmap Density, by index.
     pub shading: usize,
     pub show_gizmos: bool,
 }

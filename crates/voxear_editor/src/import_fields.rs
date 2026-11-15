@@ -9,8 +9,8 @@
 use std::path::Path;
 
 use voxear_assets::{
-    ClipImport, ClipLoop, ClipMotion, ClipSettings, ModelImport, Normals, SoundImport, SoundLoad, Tangents,
-    TextureImport, Units, WindMasks,
+    ClipImport, ClipLoop, ClipMotion, ClipSettings, LightmapUvs, ModelImport, Normals, SoundImport, SoundLoad,
+    Tangents, TextureImport, Units, WindMasks,
 };
 use voxear_ui::{NodeId, Style, Ui};
 
@@ -71,6 +71,7 @@ pub struct ModelFields {
     own_lods: NodeId,
     materials: NodeId,
     wind_masks: NodeId,
+    lightmap_uvs: NodeId,
     buttons: Buttons,
 }
 
@@ -90,6 +91,7 @@ impl ModelFields {
             lods: toggle(ui, rows, "Make LODs"),
             materials: toggle(ui, rows, "Import materials"),
             wind_masks: choice(ui, rows, "Wind masks", &WindMasks::ALL.map(WindMasks::name)),
+            lightmap_uvs: choice(ui, rows, "Lightmap UVs", &LightmapUvs::ALL.map(LightmapUvs::name)),
             buttons: Buttons::new(ui, rows),
         };
         fields.show(ui, &applied);
@@ -109,6 +111,8 @@ impl ModelFields {
         ui.set_checked(self.materials, settings.materials);
         let wind_masks = WindMasks::ALL.iter().position(|&masks| masks == settings.wind_masks).unwrap_or(0);
         ui.set_selected_option(self.wind_masks, wind_masks);
+        let lightmap_uvs = LightmapUvs::ALL.iter().position(|&uvs| uvs == settings.lightmap_uvs).unwrap_or(0);
+        ui.set_selected_option(self.lightmap_uvs, lightmap_uvs);
         self.enable(ui, settings);
     }
 
@@ -130,6 +134,7 @@ impl ModelFields {
             own_lods: ui.is_checked(self.own_lods),
             materials: ui.is_checked(self.materials),
             wind_masks: WindMasks::ALL.get(ui.selected_option(self.wind_masks)).copied().unwrap_or_default(),
+            lightmap_uvs: LightmapUvs::ALL.get(ui.selected_option(self.lightmap_uvs)).copied().unwrap_or_default(),
         }
     }
 

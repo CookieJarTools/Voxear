@@ -23,6 +23,7 @@ internal static unsafe class NativeLights
 	public const int Length = 12;
 	public const int Softness = 13;
 	public const int SoftShadows = 14;
+	public const int Mode = 15;
 
 	/// <summary>A value of an Obj's Light, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

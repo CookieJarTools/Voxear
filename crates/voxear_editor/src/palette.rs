@@ -37,7 +37,7 @@ const TALLEST: f32 = 336.0;
 /// How much more a recent result counts when typed for, against one match.
 const RECENT_BONUS: i32 = 30 * 64;
 /// The docked panels, by id, as the palette offers to show them.
-const PANELS: [(&str, &str); 17] = [
+const PANELS: [(&str, &str); 18] = [
     ("Hierarchy", "hierarchy"),
     ("Levels", "levels"),
     ("Scene", "scene"),
@@ -54,6 +54,7 @@ const PANELS: [(&str, &str); 17] = [
     ("Blocks", "blocks"),
     ("Model", "model"),
     ("Inspector", "inspector"),
+    ("Project Settings", "project-settings"),
     ("Settings", "settings"),
 ];
 
@@ -440,6 +441,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::AssetTable => ("Asset table", "globe"),
                 AssetKind::Paths => ("Sound paths", "branch"),
                 AssetKind::ReflectionProbes => ("Reflection probes", "globe"),
+                AssetKind::Lightmaps => ("Baked lighting", "light"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
                 AssetKind::Shader => ("Shader", "shader"),
                 AssetKind::VoxShade => ("VoxShade", "nodes"),
@@ -498,6 +500,8 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Bake Sound Paths", "", "branch", Command::BakePaths),
         ("Bake Reflection Probes", "", "globe", Command::BakeProbes),
         ("Bake Reverb Probes", "", "audio", Command::BakeReverb),
+        ("Bake Lighting", "", "light", Command::BakeLighting),
+        ("Cancel Lighting Bake", "", "stop", Command::CancelLightingBake),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

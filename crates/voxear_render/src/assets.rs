@@ -289,6 +289,12 @@ pub struct Assets {
     pub skins: Buffer,
     skin_space: RangeAllocator,
     skin_ranges: HashMap<MeshHandle, (u64, u64)>,
+    /// Each vertex's lightmap UVs, at the same place as the vertex is in
+    /// `vertices`, for meshes that have them (see `lightmap_uvs`).
+    pub lightmap_uvs: Buffer,
+    /// The meshes that have lightmap UVs, with how much of the 0-to-1
+    /// square their lightmap UVs cover and their surfaces' area.
+    lightmapped: HashMap<MeshHandle, (f32, f32)>,
     /// Vertex, index, meshlet, meshlet vertex and meshlet triangle space.
     space: [RangeAllocator; 5],
     mesh_slots: SlotAllocator,
@@ -381,6 +387,8 @@ impl Assets {
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
         let skins = gpu.create_buffer("skins", MAX_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
+        // Read back for a lightmap bake.
+        let lightmap_uvs = gpu.create_buffer("lightmap uvs", MAX_VERTICES * 8, storage | read, device_local)?;
         let meshlets =
             gpu.create_buffer("meshlets", MAX_MESHLETS * size_of::<GpuMeshlet>() as u64, storage, device_local)?;
         let meshlet_vertices =
@@ -404,6 +412,8 @@ impl Assets {
             skins,
             skin_space: RangeAllocator::new(MAX_SKIN_VERTICES),
             skin_ranges: HashMap::new(),
+            lightmap_uvs,
+            lightmapped: Default::default(),
             space: [MAX_VERTICES, MAX_INDICES, MAX_MESHLETS, MAX_MESHLET_VERTICES, MAX_MESHLET_TRIANGLES]
                 .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
@@ -537,6 +547,13 @@ impl Assets {
         )?;
 
         self.keep_skin(gpu, handle, &mesh.skin)?;
+        let has_lightmap_uvs = mesh.lightmap_uvs.len() == mesh.vertices.len() && !mesh.vertices.is_empty();
+        if has_lightmap_uvs {
+            gpu.upload_buffer(&self.lightmap_uvs, vertex_offset * 8, bytemuck::cast_slice(&mesh.lightmap_uvs))?;
+            self.lightmapped.insert(handle, crate::lightmap_uvs::areas(mesh));
+        } else {
+            self.lightmapped.remove(&handle);
+        }
         let (center, radius) = mesh.bounds();
         let lods_drawn =
             lods.iter().zip(&meshlets.counts).map(|(lod, &count)| (lod.error, lod.indices.len() as u32, count));
@@ -603,6 +620,39 @@ impl Assets {
     /// none without ray tracing.
     pub fn bottom_level(&self, mesh: MeshHandle) -> Option<vk::DeviceAddress> {
         self.bottom_levels.get(&mesh).map(|level| level.address)
+    }
+
+    /// Whether a mesh has lightmap UVs, so it can be baked into a lightmap.
+    pub fn has_lightmap_uvs(&self, mesh: MeshHandle) -> bool {
+        self.lightmapped.contains_key(&mesh)
+    }
+
+    /// How much of the 0-to-1 square a mesh's lightmap UVs cover, and its
+    /// surface's area in its own space; none for a mesh without.
+    pub fn lightmap_areas(&self, mesh: MeshHandle) -> Option<(f32, f32)> {
+        self.lightmapped.get(&mesh).copied()
+    }
+
+    /// A mesh's finest triangles with their normals and lightmap UVs, read
+    /// back from the GPU, for a lightmap bake: the points, normals and
+    /// lightmap UVs of its vertices, and three indices a triangle. None for
+    /// a mesh not loaded or without lightmap UVs.
+    pub fn lightmap_triangles(&self, gpu: &Gpu, mesh: MeshHandle) -> Result<Option<crate::lightmapper::BakeMesh>> {
+        let Some(ranges) = self.mesh_ranges.get(&mesh).filter(|_| self.lightmapped.contains_key(&mesh)) else {
+            return Ok(None);
+        };
+        let stride = size_of::<Vertex>() as u64;
+        let (start, count) = ranges.space.vertices;
+        let bytes = gpu.read_buffer(&self.vertices, start * stride, count * stride)?;
+        let vertices: Vec<Vertex> = bytemuck::pod_collect_to_vec(&bytes);
+        let uvs = gpu.read_buffer(&self.lightmap_uvs, start * 8, count * 8)?;
+        let indices = gpu.read_buffer(&self.indices, ranges.space.indices.0 * 4, u64::from(ranges.first_lod) * 4)?;
+        Ok(Some(crate::lightmapper::BakeMesh {
+            points: vertices.iter().map(|v| Vec3::from(v.position)).collect(),
+            normals: vertices.iter().map(|v| Vec3::from(v.normal)).collect(),
+            uvs: bytemuck::pod_collect_to_vec(&uvs),
+            indices: bytemuck::pod_collect_to_vec(&indices),
+        }))
     }
 
     /// A mesh's box in its own space, min and max corners.
@@ -817,6 +867,13 @@ impl Assets {
                         space.meshlet_triangles.0 * 4,
                         space.meshlet_triangles.1 * 4,
                     ),
+                    (
+                        from,
+                        self.lightmap_uvs.handle,
+                        mesh.lightmap_uvs.0,
+                        space.vertices.0 * 8,
+                        u64::from(mesh.lightmap_uvs.1) * 8,
+                    ),
                 ];
                 let table_entry = table + entry * size_of::<GpuMesh>() as u64;
                 let slot = u64::from(handle.0) * size_of::<GpuMesh>() as u64;
@@ -845,6 +902,13 @@ impl Assets {
             gpu.destroy_buffer(scratch);
         }
         recorded?;
+        for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
+            if mesh.lightmap_uvs.1 > 0 {
+                self.lightmapped.insert(*handle, mesh.lightmap_areas);
+            } else {
+                self.lightmapped.remove(handle);
+            }
+        }
         for (handle, _) in &meshes {
             self.build_bottom_level(gpu, *handle)?;
         }
@@ -888,6 +952,7 @@ impl Assets {
     /// Gives back what [`reserve_mesh`](Self::reserve_mesh) took, for a mesh
     /// no frame has drawn yet.
     fn release_mesh(&mut self, handle: MeshHandle) {
+        self.lightmapped.remove(&handle);
         self.mesh_bounds.remove(&handle);
         self.bounds_changes += 1;
         self.forget_triangles(handle);
@@ -902,7 +967,10 @@ impl Assets {
         if let Some(&handle) = self.primitives.get(&primitive) {
             return Ok(handle);
         }
-        let handle = self.add_mesh(gpu, &MeshData::primitive(primitive))?;
+        // With lightmap UVs, as an imported model has, so a level of primitives can be baked.
+        let mut data = MeshData::primitive(primitive);
+        crate::lightmap_uvs::generate(&mut data);
+        let handle = self.add_mesh(gpu, &data)?;
         self.primitives.insert(primitive, handle);
         Ok(handle)
     }
@@ -1184,6 +1252,7 @@ impl Assets {
                     self.bottom_level_changes += 1;
                     gpu.destroy_acceleration_structure(level);
                 }
+                self.lightmapped.remove(&mesh);
                 if let Some((offset, count)) = self.skin_ranges.remove(&mesh) {
                     self.skin_space.free(offset, count);
                 }
@@ -1235,7 +1304,7 @@ impl Assets {
         }
         let meshlets = [self.meshlets, self.meshlet_vertices, self.meshlet_triangles];
         let materials = [self.materials, self.material_properties];
-        let shared = [self.vertices, self.indices, self.meshes, self.skins];
+        let shared = [self.vertices, self.indices, self.meshes, self.skins, self.lightmap_uvs];
         for buffer in shared.into_iter().chain(materials).chain(meshlets) {
             gpu.destroy_buffer(buffer);
         }

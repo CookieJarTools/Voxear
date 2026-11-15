@@ -101,6 +101,8 @@ static const uint DEBUG_VIEW_LIT_WIREFRAME = 7;
 static const uint DEBUG_VIEW_MESHLETS = 8;
 static const uint DEBUG_VIEW_AMBIENT_OCCLUSION = 9;
 static const uint DEBUG_VIEW_GLOBAL_ILLUMINATION = 10;
+// Each lightmapped surface's lightmap texels, as a checker, tinted by its Obj's scale; grey where light probes light it.
+static const uint DEBUG_VIEW_LIGHTMAP_DENSITY = 11;
 
 // Frame.meshletFlags: back-facing meshlets are culled; surviving meshlets
 // side by side are drawn together; draws are culled meshlet by meshlet.
@@ -276,6 +278,9 @@ struct Instance
     float reach;
     // For a chunk of blocks, the acoustic preset sound rays hear it as, plus one; 0 for its material's.
     uint acoustic;
+    // Its baked light in Buffers' bakedInstances, plus one; 0 for none (lightmaps.slang).
+    uint baked;
+    uint3 pad;
 };
 
 // Where an instance's vertices start in the vertex buffer: its posed ones
@@ -306,6 +311,8 @@ static const uint INSTANCE_RAYS_ONLY = 32;
 static const uint PROXY_MATERIAL = 0x80000000u;
 // Stood still long enough for local lights to keep its shadow (src/shadow_cache.rs).
 static const uint INSTANCE_STILL = 64;
+// While a lightmap bake traces the scene, an instance that neither shades nor bounces light in it (src/lightmaps.rs).
+static const uint INSTANCE_NO_BAKE_CAST = 128;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
@@ -869,6 +876,94 @@ struct ReflectionProbes
     uint3 pad;
 };
 
+// How the level's bake lights it (src/lightmaps.rs, lightmaps.slang). Its lights come in order of their mode:
+// Baked, then Mixed, then Realtime, then what else lights (lava, particles).
+struct Bake
+{
+    // GI_REALTIME, GI_BAKED or GI_BOTH: GI_REALTIME leaves the bake unread, and the counts below 0.
+    uint source;
+    // The lights before this are Baked: their direct light is in the lightmaps.
+    uint bakedLights;
+    // The lights before this are in the bake: their bounce is in the lightmaps and light probes.
+    uint bakeLights;
+    // What of the sun is baked: LIGHT_MODE_BAKED, LIGHT_MODE_MIXED or LIGHT_MODE_REALTIME.
+    uint sunMode;
+    // How bright the baked light is, as the GI's strength.
+    float strength;
+    // The level's lightmap texels a metre, for the density view.
+    float texelsPerMetre;
+    uint2 pad;
+    // The light probes' light resampled on a grid (src/lightmaps.rs's ProbeVolume): each cell's L1 harmonics, a row
+    // for red, green and blue; its cells across, 0 for none; how wide a cell is; where the first cell's middle is.
+    float4* volume;
+    uint3 volumeSize;
+    float volumeCell;
+    float3 volumeOrigin;
+    float volumePad;
+};
+
+static const uint GI_REALTIME = 0;
+static const uint GI_BAKED = 1;
+static const uint GI_BOTH = 2;
+static const uint LIGHT_MODE_BAKED = 0;
+static const uint LIGHT_MODE_MIXED = 1;
+static const uint LIGHT_MODE_REALTIME = 2;
+
+// An instance's baked light: where its lightmap UVs fall in which lightmap, or the light probes' light round it as
+// nine spherical harmonics a colour, already the light a surface facing each way takes (src/lightmaps.rs).
+struct BakedInstance
+{
+    // Lightmap UVs to the lightmap's: xy scale, zw offset.
+    float4 scaleOffset;
+    // Its lightmap and which way its light comes from, or NO_TEXTURE.
+    uint lightmap;
+    uint directions;
+    // BAKED_LIGHTMAP, BAKED_PROBES.
+    uint flags;
+    // Lightmap texels across its lightmap UVs' square, as a bake would give it: for the density view.
+    float density;
+    // 27 floats: nine harmonics' red, green and blue in turn.
+    float4 sh[7];
+};
+
+static const uint BAKED_LIGHTMAP = 1;
+static const uint BAKED_PROBES = 2;
+// Its Obj has a Lightmap that receives, whether or not it has been baked yet.
+static const uint BAKED_RECEIVES = 4;
+
+// A lightmap texel a bake traces from: where it is, how wide a texel is there, and its surface's normals.
+struct BakeTexel
+{
+    float4 position;
+    // The normal shading has there, and the triangle's own.
+    float4 normal;
+    float4 face;
+};
+
+// A lightmap bake's work this dispatch (src/lightmapper.rs, light_bake.slang).
+struct BakeJob
+{
+    BakeTexel* texels;
+    // Each texel's light summed over its paths, and in alpha how many first met the back of something.
+    float4* light;
+    // Each texel's light's brightness times the way it came, summed, and in w the brightness summed.
+    float4* directions;
+    // The probes' places, and their nine harmonics' light summed, then backs in the first's alpha.
+    float4* probes;
+    float4* probeLight;
+    // The sun's light and the sky's from all round as the bake takes them, worked out once a frame.
+    float4* sky;
+    uint texelCount;
+    uint probeCount;
+    // This dispatch's texels, from firstTexel, and paths, from firstSample, for each.
+    uint firstTexel;
+    uint firstSample;
+    uint samples;
+    uint bounces;
+    uint pad0;
+    uint pad1;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -938,6 +1033,7 @@ struct Frame
     // A plane nothing behind is drawn: the far Portal's, for a view through a Portal (src/portals.rs); one that
     // cuts nothing otherwise.
     float4 cut;
+    Bake bake;
 };
 
 // How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.
@@ -1628,6 +1724,11 @@ struct Buffers
     uint* weatherMaps;
     // This frame's reflection probes, in the order shading takes them (reflection_probes.slang).
     ReflectionProbe* reflectionProbes;
+    // Each vertex's lightmap UVs, where its mesh has them, at the vertex's own place (src/assets.rs).
+    float2* lightmapUvs;
+    // This frame's instances' baked light (lightmaps.slang), and a lightmap bake's work (light_bake.slang).
+    BakedInstance* bakedInstances;
+    BakeJob* bakeJob;
 };
 
 struct Push

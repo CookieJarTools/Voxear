@@ -179,6 +179,12 @@ Its own blocks are made a column of chunks further out than they are drawn, and 
 
 A [[Block Worlds#Water|sea]] runs on across the rings unbroken: it stands as high in every ring, and its water shows no sides where they meet, nor at the edge of what is made, where the world goes on.
 
+The rings fade into each other rather than ending at a line. Round where the world is looked at from, each ring is drawn whole out to its last column, and over that column it thins away while the coarser ring under it fills in, pixel by pixel; with TAA on the two blend, and without it the ring changes halfway across. Where the finer blocks of a stretch of ground are made after the coarse ones show, the coarse ground stays until the finer is all there, then the two cross over in a little over half a second, so nothing pops in. A view through a [[Portals|Portal]] and a world drawn smooth change ring as they always did.
+
+Far off, a world looks as it does near:
+- **Trees** past where the sun's shadows reach take as much of the sun as a tree's leaves near take between them, most of them shaded by the others, so far crowns are not flat, sunlit boxes beside the shaded ones near.
+- **Ground** past where a Foliage's plants are drawn takes their colour, as much as they would hide of it seen from the camera: little from above, most of it at a low angle, so a meadow of red flowers stays reddish and grass stays as green as its tufts made it. Their colour is their box model's, and only the tops of the blocks they grow on take it. A plant of any other model colours nothing.
+
 What you build is kept as it goes out of reach and made again as it comes back, and saving keeps it all, near or away, in its `.blocks` file. In a game it is made round the camera; in the editor, round where the Scene view looks from.
 
 With the [[Floating Origin]] switched on, positions stay exact however far the camera goes: the world's middle moves along with it, and the chunks already made stay as they were.

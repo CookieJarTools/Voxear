@@ -2819,6 +2819,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     they found by place; kept sites are looked up by a grid, not one by one; biome valleys are cut along noise in
     place of reading all the ground again. Tests: the terrain crate's own; timings and pictures in release from a
     standing start, before and after.
+  - ~~**A far view that does not read as rings:**~~ done: each ring fades into the next over its last column round
+    where the world is looked at from, on a dither TAA blends (a clean cut halfway without TAA), and a coarse column
+    fades out over 0.6 s as the finer columns over it, all made at last, fade in, where one swapped for the other in
+    a frame (`RingFades`). Leaves past the sun's cascades take the sun a crown's leaves take between them, so far
+    crowns are not flat sunlit boxes, and the ground far off takes the colour of the plants that stop being drawn
+    on it, from their box models, as much as they would hide seen from the camera (`grow::Cover`). Tests: the
+    streamer's fades and band, the tints' cover and its patches, a model's colour; renders of the far view flying,
+    master swapping a shore at once and the fades taking half a second.
+  - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
+    solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
+    each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that
+    cast no shadow are left out on the CPU; glass is sorted alone; tints, streaming, grown plants and the far
+    chunks are worked out again only when something changed. In GrownPlants on High: block shadows 3.9 → 3.3 ms
+    on the GPU, scene extraction 8.3 → 1.2 ms and block picking 2.6 → 1.1 ms of CPU a frame. Not yet 144 fps:
+    the GPU frame is about 10.5 ms at 1080p, most of it block shadows and the far rings' triangles.
   - ~~**Biome tints:**~~ done: a block's new **Tint** (None, Grass, Grass Top, Foliage) has its colour take the
     biome it stands in, from each biome's new grass and foliage tints, fading from one biome's to the next: the
     generator's biomes on a lattice every 4 blocks, each point averaged with those 3 each way round it

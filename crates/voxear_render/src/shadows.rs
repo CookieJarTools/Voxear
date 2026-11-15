@@ -208,16 +208,27 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
         let basis = light_view.inverse();
         let (light_right, light_up_axis) = (basis.x_axis.truncate(), basis.y_axis.truncate());
         let plane = |n: Vec3, offset: f32| [n.x, n.y, n.z, offset];
+        // Casters are culled to the slice itself as the sun sees it, across it and beyond it: only what lies over
+        // that can shadow it. The square the map covers is the sphere's, larger, so its texels stay still.
+        let extent = |axis: Vec3| {
+            let along = corners.iter().map(|corner| axis.dot(*corner));
+            along.fold((f32::MAX, f32::MIN), |(low, high), v| (low.min(v), high.max(v)))
+        };
+        let ((right_low, right_high), (up_low, up_high)) = (extent(light_right), extent(light_up_axis));
+        let deepest = extent(direction).1;
+        // As wide again as the soft edge's widest look round a texel reaches (`PCSS_MAX_METRES` in shading.slang),
+        // and its push off the surface, so a caster just past the slice still darkens the edge it softens.
+        let edge = 1.5 + texel * 4.0;
         let cascade = Cascade {
             view_proj: projection * light_view,
             far,
             texel,
             planes: [
-                plane(light_right, -light_right.dot(center) + radius),
-                plane(-light_right, light_right.dot(center) + radius),
-                plane(light_up_axis, -light_up_axis.dot(center) + radius),
-                plane(-light_up_axis, light_up_axis.dot(center) + radius),
-                plane(-direction, direction.dot(center) + radius),
+                plane(light_right, edge - right_low),
+                plane(-light_right, right_high + edge),
+                plane(light_up_axis, edge - up_low),
+                plane(-light_up_axis, up_high + edge),
+                plane(-direction, deepest + edge),
                 [0.0, 0.0, 0.0, 1.0],
             ],
         };

@@ -1139,18 +1139,43 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
     let generator = generator(content, &asset.file)?;
     // Its file as its blocks are now, so a block saved since makes it anew; a block it comes to hold changes
     // its faces alone, and nothing made is made again.
-    let (_, faces) = asset.drawn.faces();
+    let (file, faces) = ground_of(&asset.drawn);
     // Its far view kept in the project's own folder of what is made, so ground seen once comes back at once.
     let far_folder = Some(content.db().root().join(".voxear").join("FarView").join(asset.guid.to_string()));
     Some(voxear_terrain::blocks::stream::BlockMaking {
-        file: asset.drawn.for_ground(),
+        file,
         generate,
         world: generator,
-        faces: faces.into(),
+        faces,
         far_folder,
         // Nothing built over its ground: who streams it adds what it grows.
         far_built: Vec::new(),
     })
+}
+
+/// A world's file as its ground is made from it, and its blocks' faces,
+/// worked out once for each file its blocks were given their looks in
+/// (see [`resolved`]): asked for every frame a world streams.
+fn ground_of(drawn: &Arc<Resolved>) -> (BlockFile, Arc<[voxear_terrain::blocks::BlockFaces]>) {
+    type Kept = Vec<(Arc<Resolved>, BlockFile, Arc<[voxear_terrain::blocks::BlockFaces]>)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let found = |kept: &Kept| {
+        kept.iter().find(|(file, ..)| Arc::ptr_eq(file, drawn)).map(|(_, f, faces)| (f.clone(), faces.clone()))
+    };
+    if let Some(made) = KEPT.with_borrow(found) {
+        return made;
+    }
+    let (_, faces) = drawn.faces();
+    let made = (drawn.for_ground(), Arc::<[voxear_terrain::blocks::BlockFaces]>::from(faces));
+    KEPT.with_borrow_mut(|kept| {
+        if kept.len() >= 8 {
+            kept.remove(0);
+        }
+        kept.push((drawn.clone(), made.0.clone(), made.1.clone()));
+    });
+    made
 }
 
 /// Each world of blocks without end's streamer, by its Obj.

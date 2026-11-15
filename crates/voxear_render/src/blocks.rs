@@ -25,7 +25,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
     fell::LooseBlocks,
-    BlockWorld, ChunkMeshes,
+    BlockWorld, ChunkMeshes, RingFades,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
     smooth,
@@ -204,8 +204,23 @@ const _: () = assert!(MOST_TINT_POINTS == 65536);
 pub const MOST_TINT_POINTS_SIDE: usize = 256;
 const MOST_TINT_POINTS: usize = MOST_TINT_POINTS_SIDE * MOST_TINT_POINTS_SIDE;
 
-/// Where a pool's quads start: after its tints.
-const QUADS_AT: u64 = TINTS_AT + TINT_BYTES;
+/// Where a pool's fades start, after its tints: two times each slot's
+/// chunk fades by (see [`fade_times`]).
+const FADES_AT: u64 = TINTS_AT + TINT_BYTES;
+
+/// Where a pool's quads start: after its fades.
+const QUADS_AT: u64 = FADES_AT + SLOTS as u64 * 8;
+
+/// When chunk `key`'s face fade in and out as its world's rings fade into
+/// each other (`fades`), on `voxear_terrain::blocks::fade_clock`: in as the
+/// coarse column over it is covered, and never while it is not; and out as
+/// its own column is, never where it is not.
+fn fade_times(fades: &RingFades, key: [i32; 4]) -> [f32; 2] {
+    let [level, x, _, z] = key;
+    let came = fades.covered.get(&[level + 1, x >> 1, z >> 1]).copied().unwrap_or(0.0);
+    let went = fades.covered.get(&[level, x, z]).copied().unwrap_or(f32::MAX);
+    [came, went]
+}
 
 /// How many quads a pool starts with room for; it doubles when full.
 const FIRST_CAPACITY: u64 = 1 << 16;
@@ -251,8 +266,21 @@ pub struct GpuBlockWorld {
     /// drawn turned (`BLOCKS_TURNED`).
     pub turn: [f32; 4],
     pub far_tint_corner: [i32; 2],
+    /// Where a world without end's rings fade into each other (see
+    /// `voxear_terrain::blocks::RingFades`): the clock they fade by, its
+    /// coarsest ring's level, each chunk slot's times (see [`fade_times`]),
+    /// and where its rings are round, from its corner, how far its own
+    /// blocks reach and over how wide a band they fade; a reach of 0 for
+    /// none.
+    pub ring_clock: f32,
+    pub ring_coarsest: u32,
+    pub fades: u64,
+    pub rings: [f32; 4],
     pub pad: [u32; 2],
 }
+
+// The shaders' RING_FADE_SECONDS (common.slang) is the streamer's.
+const _: () = assert!(voxear_terrain::blocks::RING_FADE_SECONDS == 0.6);
 
 /// A world of blocks' flag for being drawn smooth: its pool holds triangles'
 /// corners, two pairs of words each, in place of quads.
@@ -405,9 +433,24 @@ pub(crate) struct Detail {
     pub camera: Vec3,
     pub allowed: f32,
     pub block_size: f32,
+    /// Where a world without end's rings fade into each other: where they
+    /// are round, along x and z in its space, how far its own blocks reach,
+    /// and its coarsest ring's level. A chunk wholly past where its ring has
+    /// faded out is left out (see [`Detail::past_its_ring`]).
+    pub rings: Option<([f32; 2], f32, i32)>,
 }
 
 impl Detail {
+    /// Whether every face of `chunk` lies past where its ring has faded out
+    /// to nothing, the ring outside it drawn there in its place.
+    fn past_its_ring(&self, chunk: &ChunkDraw) -> bool {
+        let Some((at, reach, coarsest)) = self.rings else { return false };
+        let level = chunk.key[0];
+        let [low, high] = chunk.bounds;
+        let nearest = |axis: usize, at: f32| (low[axis] - at).max(at - high[axis]).max(0.0);
+        level < coarsest && nearest(0, at[0]).max(nearest(2, at[1])) > reach * (1u32 << level.clamp(0, 16)) as f32
+    }
+
     /// The coarsest of a smooth chunk's levels (see
     /// `voxear_terrain::blocks::smooth::LEVELS`) whose surface moves no more
     /// than allowed for how far away it is, of those it has.
@@ -470,7 +513,7 @@ fn pick_parts(
         if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
             continue;
         }
-        if !within(planes, chunk.bounds) {
+        if !within(planes, chunk.bounds) || detail.is_some_and(|detail| detail.past_its_ring(chunk)) {
             continue;
         }
         let [low, high] = chunk.bounds;
@@ -654,6 +697,9 @@ struct Pool {
     /// are, as its chunks' quads were last put in order by (see
     /// [`arranged`]).
     cut: Arc<[bool]>,
+    /// How its world's rings fade into each other, as its chunks' fades
+    /// were last brought up by.
+    faded: Arc<RingFades>,
 }
 
 impl Pool {
@@ -676,6 +722,7 @@ impl Pool {
             draws: None,
             sights: None,
             cut: Arc::from([]),
+            faded: Arc::default(),
             seen: 0,
             made_from: None,
             tinted: None,
@@ -755,6 +802,7 @@ impl Pool {
             let (quads, cut) = arranged(mesh, slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
+            stage(bytemuck::cast_slice(&fade_times(&world.fades, key)), FADES_AT + u64::from(slot) * 8);
             // A coarser level's chunk is as many times larger as its blocks are; drawn smooth, its surface
             // reaches up to two blocks before it and past it.
             let scale = (1u32 << key[0].clamp(0, 16)) as f32;
@@ -821,6 +869,7 @@ impl Pool {
             (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
+            stage(bytemuck::cast_slice(&fade_times(&self.faded, *key)), FADES_AT + u64::from(held.slot) * 8);
         }
         self.draws = None;
         self.sights = None;
@@ -840,6 +889,19 @@ impl Pool {
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
         }
         self.draws = None;
+    }
+
+    /// Every chunk held given its fades again, where its world's rings fade
+    /// otherwise now.
+    fn fade(&mut self, fades: &Arc<RingFades>, stage: &mut dyn FnMut(&[u8], u64)) {
+        if Arc::ptr_eq(&self.faded, fades) || self.faded == *fades {
+            self.faded = fades.clone();
+            return;
+        }
+        self.faded = fades.clone();
+        for (key, held) in &self.held {
+            stage(bytemuck::cast_slice(&fade_times(fades, *key)), FADES_AT + u64::from(held.slot) * 8);
+        }
     }
 
     /// Which of each of its own chunks' sides see each other, made again
@@ -905,6 +967,8 @@ pub(crate) struct DrawnBlocks {
     /// What it shows from each place it is seen from, where it is seen from
     /// more than one (see `voxear_terrain::blocks::BlockPlace`).
     pub places: Arc<Vec<voxear_terrain::blocks::BlockPlace>>,
+    /// How its rings fade into each other, for a world without end.
+    pub fades: Arc<RingFades>,
     pub look: BlockLook,
     /// Its blocks moving now, as the shaders read them.
     pub moving: Arc<[GpuMovingBlock]>,
@@ -1095,6 +1159,7 @@ impl BlockWorlds {
                 false => look.surfaces.iter().map(|surface| assets.is_cut_out(surface.material)).collect(),
             };
             pool.arrange(cut, &mut stage);
+            pool.fade(&blocks.fades, &mut stage);
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
             // Its tints, brought up where they changed; one larger than its room is left untinted.
             match world.get::<BlockTints>(entity) {
@@ -1199,6 +1264,7 @@ impl BlockWorlds {
                 chunks: pool.draws(),
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 places: blocks.places.clone(),
+                fades: blocks.fades.clone(),
                 look,
                 moving: blocks
                     .moving
@@ -1397,11 +1463,14 @@ pub struct BlockCounts {
 /// `shadow_cache`), all but the blocks of parts, which may move, only when
 /// it draws its kept views, and those each frame; for any other, all of
 /// them each frame.
+///
+/// Where `rings`, as in a view not through a Portal, a world without end's
+/// rings fade into each other (see `voxear_terrain::blocks::RingFades`).
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
-    (offset, sights, shadows): (Vec3, Option<Vec3>, bool),
+    (offset, sights, shadows, rings): (Vec3, Option<Vec3>, bool, bool),
     lamps: &crate::shadow_cache::Lamps,
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
@@ -1446,6 +1515,9 @@ pub(crate) fn gather(
         }
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
+        // Its rings fading into each other, a world of cubes without end seen from where it is looked at from.
+        let fades = &blocks.fades;
+        let fading = rings && !blocks.smooth && blocks.turn.is_none() && fades.reach > 0.0;
         // Whole metres off the world's own corner, so its far chunks keep their place to the millimetre.
         let corner = blocks.corner - offset;
         records.push(GpuBlockWorld {
@@ -1471,6 +1543,13 @@ pub(crate) fn gather(
             turn: blocks.turn.unwrap_or(Quat::IDENTITY).to_array(),
             // A far corner of i32::MIN for none.
             far_tint_corner: blocks.tints.and_then(|(_, _, far)| far).unwrap_or([i32::MIN; 2]),
+            ring_clock: voxear_terrain::blocks::fade_clock(),
+            ring_coarsest: fades.coarsest,
+            fades: blocks.address + FADES_AT,
+            rings: match fading {
+                true => [fades.at[0], fades.at[1], fades.reach, fades.band],
+                false => [0.0; 4],
+            },
             pad: [0; 2],
         });
         // Its chunks are picked in its own space: turned back where it is turned.
@@ -1498,10 +1577,24 @@ pub(crate) fn gather(
         });
         // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
         let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
-        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
+        let ring = fading.then_some((fades.at, fades.reach, fades.coarsest as i32));
+        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size, rings: ring });
         lists[LIST_EARLY as usize] =
             pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref(), shown);
-        let wet = pick_water(&blocks.chunks, &planes, seen.as_ref(), shown);
+        // A coarse column's water is left out where the finer columns over it are made, theirs drawn whole in its
+        // place, as water shows no ring's fade.
+        let wet = match fading {
+            true => {
+                let covered = |chunk: &&ChunkDraw| {
+                    let [level, x, _, z] = chunk.key;
+                    level > 0 && fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX)
+                };
+                let water: Vec<ChunkDraw> =
+                    blocks.chunks.iter().filter(|chunk| chunk.water[1] > 0 && !covered(chunk)).copied().collect();
+                pick_water(&water, &planes, seen.as_ref(), shown)
+            }
+            false => pick_water(&blocks.chunks, &planes, seen.as_ref(), shown),
+        };
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
@@ -1856,7 +1949,7 @@ mod tests {
         let seen = HashSet::from([[1, 0, 0]]);
         assert_eq!(pick(&whole, &[], (from, None), Some(&seen), None), vec![[40, 40]]);
         // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
-        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0 };
+        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0, rings: None };
         let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None, None);
         assert_eq!([level(-500.0), level(-2000.0), level(-9000.0)], [vec![[0, 40]], vec![[40, 15]], vec![[55, 5]]]);
         // A smooth chunk, its triangles all facing within a tenth of up: drawn from above or beside it, not at all

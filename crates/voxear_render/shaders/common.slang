@@ -1353,8 +1353,22 @@ struct BlockWorld
     // Its far tints' first point, as many points a side as its near ones, BLOCK_TINT_FAR times further apart, after
     // them; int.min for none.
     int2 farTintCorner;
+    // Where a world without end's rings fade into each other (voxear_terrain::blocks::RingFades, blockRingHidden in
+    // blocks.slang): the clock they fade by, its coarsest ring's level, each chunk slot's times its finer columns
+    // came and it went, and where its rings are round, from its corner, how far its own blocks reach and over how
+    // wide a band they fade; a reach of 0 for none.
+    float ringClock;
+    uint ringCoarsest;
+    float2* fades;
+    float2 ringAt;
+    float ringReach;
+    float ringBand;
     uint2 pad;
 };
+
+// How long a coarse column takes to fade into the finer ones over it, in seconds (voxear_terrain::blocks::
+// RING_FADE_SECONDS).
+static const float RING_FADE_SECONDS = 0.6;
 
 // How many blocks apart a world's tint points are (voxear_terrain::blocks::generate::tints::TINT_STEP).
 static const float BLOCK_TINT_STEP = 4.0;

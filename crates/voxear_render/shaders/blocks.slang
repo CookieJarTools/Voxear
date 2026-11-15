@@ -124,8 +124,9 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     o.lod = blockLooseWord(b);
     o.instance = world.anchor;
     o.fade = 0;
-    // Which world, for terrainShading (and a colour of its own in the meshlets view).
-    o.cluster = push.level - 1;
+    // Which world, for terrainShading (and a colour of its own in the meshlets view), and for a world of cubes which
+    // chunk over it, for where its rings fade (blockRingHidden).
+    o.cluster = (push.level - 1) | (b.slot << 8);
     if ((world.flags & BLOCKS_SMOOTH) != 0)
     {
         // Every vertex of a triangle carries all three corners' surfaces: the first's top, sides and bottom and the
@@ -136,7 +137,7 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
         uint second = smoothSurfaces(world, first + 1);
         uint third = smoothSurfaces(world, first + 2);
         o.lod = (a & 0xFFFFFF) | ((second & 0xFF) << 24);
-        o.cluster |= (((second >> 8) & 0xFF) << 8) | ((third & 0xFFFF) << 16);
+        o.cluster = (push.level - 1) | (((second >> 8) & 0xFF) << 8) | ((third & 0xFFFF) << 16);
         o.uv = float2(vertexId % 3 == 0 ? 1.0 : 0.0, vertexId % 3 == 1 ? 1.0 : 0.0);
     }
     o.currentClip = transform(frame->unjitteredViewProj, at);
@@ -658,6 +659,45 @@ bool blockCubes(
     return true;
 }
 
+// How much of the sun a crown's leaves take between them, most shaded by the others: what a face of leaves takes
+// past where the sun's shadows reach (terrainSunShare in shading.slang).
+static const float BLOCK_CROWN_SUN = 0.5;
+
+// Whether a face of chunk `slot` of a world without end is left out at `pixel` where its rings fade into each other
+// (voxear_terrain::blocks::RingFades), `place` its spot in metres from the world's corner. A ring fades out over the
+// last band of its reach and the ring outside it in under it, each over the other half of the same dither, so
+// where one leaves a pixel the other takes it; and a coarse column fades out as the finer columns over it, all made
+// at last, fade in. The dither turns every frame, as LOD crossfades' do, and TAA blends the two.
+bool blockRingHidden(BlockWorld world, uint slot, float3 place, float2 pixel)
+{
+    if (world.ringReach <= 0.0)
+    {
+        return false;
+    }
+    float2 times = world.fades[slot];
+    uint level = uint(world.origins[slot].w);
+    float scale = float(1u << level);
+    float away = max(abs(place.x - world.ringAt.x), abs(place.z - world.ringAt.y));
+    // Out to its reach, then less and less of it over its band; and less where the finer ring inside it shows.
+    float reach = world.ringReach * scale;
+    float band = world.ringBand * scale;
+    float outward = level >= world.ringCoarsest ? 1.0 : saturate((reach - away) / band);
+    float inward = level == 0 ? 0.0 : saturate((reach * 0.5 - away) / (band * 0.5));
+    float came = saturate((world.ringClock - times.x) / RING_FADE_SECONDS);
+    float going = saturate((world.ringClock - times.y) / RING_FADE_SECONDS);
+    float shown = came * outward * (1.0 - going * inward);
+    if (shown >= 1.0)
+    {
+        return false;
+    }
+    // Without TAA to blend the dither, a cut halfway through the fade: where the two rings' ground differs in its
+    // outline, a dither would leave pixels neither covers, the sky showing through.
+    Frame* frame = push.frame;
+    bool blended = any(frame->jitter != 0.0);
+    float threshold = blended ? bayer4(uint2(pixel), reversebits(frame->frameIndex & 15u) >> 28u) : 0.5;
+    return ((level & 1) == 0 ? threshold : 1.0 - threshold) >= shown;
+}
+
 // A face's own surface in place of the world's material: its pictures from the side it faces, each block's own,
 // darker where blocks close its corners in. Drawn smooth, each of its triangle's corners' kinds of ground as much as
 // the fragment is that corner's, a little sharpened, so sand meets grass over a soft edge rather than along the
@@ -666,8 +706,13 @@ bool terrainShading(
     VertexOut input, inout float4 base, inout float metallic, inout float roughness, out float3 normal, inout float3 emission)
 {
     normal = normalize(input.normal);
+    terrainSunShare = 1.0;
     BlockWorld world = buffers()->blockWorlds[input.cluster & 0xFF];
     bool smooth = (world.flags & BLOCKS_SMOOTH) != 0;
+    if (!smooth && blockRingHidden(world, input.cluster >> 8, input.worldPosition - world.corner, input.position.xy))
+    {
+        discard;
+    }
     float shade = smooth ? 1.0 : lerp(0.35, 1.0, saturate(input.uv.x));
     if (world.surfaceCount == 0)
     {
@@ -727,8 +772,9 @@ bool terrainShading(
         }
         TerrainSurface sheet = world.surfaces[min(input.lod & 0xFF, world.surfaceCount - 1)];
         Material material = buffers()->materials[sheet.material];
-        // Leaves take their biome's tint, as their block's faces do.
+        // Leaves take their biome's tint, as their block's faces do, and past the sun's shadows a crown's share of it.
         base = float4(look.rgb * blockTint(world, sheet.flags, spot.place), 1.0);
+        terrainSunShare = BLOCK_CROWN_SUN;
         metallic = material.metallic;
         roughness = material.roughness;
         return true;
@@ -786,9 +832,11 @@ bool terrainShading(
             discard;
         }
         // A face of leaves is lit as its sheets are, leaning up, so a crown is one soft mass; with no picture it is
-        // small leaves in shades of its colour.
+        // small leaves in shades of its colour. Past the sun's shadows it takes the sun a crown's leaves take within
+        // them, so a far crown is not a flat sunlit box beside the shaded ones near.
         if ((surface.flags & TERRAIN_SURFACE_LEAFY) != 0)
         {
+            terrainSunShare = BLOCK_CROWN_SUN;
             layer.normal = normalize(normal + float3(0.0, 0.6, 0.0));
             uint width, tall;
             textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, tall);

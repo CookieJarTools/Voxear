@@ -258,6 +258,12 @@ uint cascadeAt(Frame* frame, float3 position)
     return cascade;
 }
 
+#ifdef TERRAIN_SHADING
+// How much of the sun a terrain's surface takes where the sun's shadows do not reach, as terrainShading says: a face
+// of leaves there as much as a crown's leaves take where they do, most of them shaded by the others.
+static float terrainSunShare = 1.0;
+#endif
+
 // Foliage, lit as leaves are: light wrapped round past the side facing
 // away from the sun, so a canopy does not go black on its far side; light
 // through a leaf seen against the sun, in the leaf's own colour; and a rim
@@ -1110,6 +1116,12 @@ FragmentOut fragmentMain(VertexOut input)
     float3 facing = customLit ? normalize(input.normal) : s.normal;
     bool facingSun = dot(facing, -frame->sunDirection) > 0.0;
     float shadow = facingSun ? min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
+#ifdef TERRAIN_SHADING
+    if (frame->shadowTexture == NO_TEXTURE || cascadeAt(frame, input.worldPosition) >= CASCADES)
+    {
+        shadow *= terrainSunShare;
+    }
+#endif
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;

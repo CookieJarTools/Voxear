@@ -2593,7 +2593,7 @@ impl View {
             &setup.blocks,
             &extracted,
             &buffers.blocks,
-            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows),
+            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows, portal.is_none()),
             &lamps,
         );
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();

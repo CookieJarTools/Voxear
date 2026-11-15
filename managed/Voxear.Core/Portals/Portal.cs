@@ -25,12 +25,14 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 	private const int MistValue = 7;
 	private const int ViewDistanceValue = 8;
 	private const int ReadyValue = 9;
+	private const int ShownValue = 10;
 	private const int PassedCountValue = 20;
 	private const int BetweenFromValue = 30;
 	private const int BetweenToValue = 31;
 	private const int BetweenValue = 32;
 	private const int CreateValue = 33;
 	private const int CreatedValue = 34;
+	private const int DefaultViewDistanceValue = 35;
 	private const int PassedValue = 100;
 	private const int PassedKept = 64;
 
@@ -97,11 +99,41 @@ public readonly struct Portal : IEquatable<Portal>, IObjComponent
 		set { Write(MistValue, new Vector4(value.R, value.G, value.B, 1f)); }
 	}
 
-	/// <summary>How far from its opening a camera still sees its far side, in metres.</summary>
-	public float ViewDistance
+	/// <summary>
+	/// How far from its opening a camera still sees its far side, in metres, or null for DefaultViewDistance, the
+	/// project's. Further off it shows its mist, and nothing of its far side is drawn.
+	/// <code>
+	/// // The town gate shows the camp from across the square.
+	/// townGate.Portal.ViewDistance = 200f;
+	/// </code>
+	/// </summary>
+	public float? ViewDistance
 	{
-		get { return Number(ViewDistanceValue); }
-		set { Write(ViewDistanceValue, new Vector4(value, 0f, 0f, 0f)); }
+		get
+		{
+			var distance = Number(ViewDistanceValue);
+			return float.IsNaN(distance) ? null : distance;
+		}
+		set { Write(ViewDistanceValue, new Vector4(value ?? float.NaN, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>
+	/// How much of its far side shows through its mist, from 0 to 1. The mist clears over a moment once a camera
+	/// comes within its view distance, and thickens again once none is.
+	/// </summary>
+	public float Shown => Number(ShownValue);
+
+	/// <summary>
+	/// How far from its opening a camera still sees the far side of each Portal without a ViewDistance of its own,
+	/// in metres: the project's, from voxear.toml, until set. A game's options can lower it on a slow machine.
+	/// <code>
+	/// Portal.DefaultViewDistance = lowQuality ? 48f : 96f;
+	/// </code>
+	/// </summary>
+	public static float DefaultViewDistance
+	{
+		get { return NativeComponent.Get(NativeComponent.Portal, Obj.None, DefaultViewDistanceValue, out var value) ? value.X : 0f; }
+		set { NativeComponent.Set(NativeComponent.Portal, Obj.None, DefaultViewDistanceValue, new Vector4(value, 0f, 0f, 0f)); }
 	}
 
 	/// <summary>

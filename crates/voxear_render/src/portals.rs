@@ -31,8 +31,9 @@ pub struct Portal {
     /// its far side is not made yet.
     pub mist: Vec3,
     /// How far from its opening a camera still sees its far side, in
-    /// metres. Further off it shows its mist.
-    pub view_distance: f32,
+    /// metres; `None` for the project's ([`PortalQuality::view_distance`]).
+    /// Further off it shows its mist, and nothing of its far side is drawn.
+    pub view_distance: Option<f32>,
 }
 
 impl Component for Portal {}
@@ -45,7 +46,7 @@ impl Default for Portal {
             open: true,
             passes: u32::MAX,
             mist: Vec3::new(0.35, 0.55, 1.0),
-            view_distance: 96.0,
+            view_distance: None,
         }
     }
 }
@@ -55,16 +56,35 @@ impl Portal {
     pub fn to(size: Vec2, to: Entity) -> Self {
         Self { size, to: Some(to), ..Self::default() }
     }
+
+    /// How far from its opening a camera still sees its far side, in
+    /// metres: its own view distance, or the project's.
+    pub fn reach(&self, quality: &PortalQuality) -> f32 {
+        self.view_distance.unwrap_or(quality.view_distance).max(0.0)
+    }
+}
+
+/// How far past its view distance a Portal goes on showing its far side
+/// once it has begun to, in metres: a camera that wanders back and forth
+/// over the edge neither starts nor stops it.
+pub fn reach_margin(reach: f32) -> f32 {
+    (reach * 0.1).clamp(2.0, 16.0)
 }
 
 /// How much of a Portal's far side is there to show and to stand on, as the
-/// engine finds each tick: without one, as where nothing streams, all of it.
+/// engine finds each frame: without one, all of it while a camera is within
+/// its view distance.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PortalFar {
-    /// The ground round its exit is made, with what stands on it.
+    /// The ground round its exit is made, with what stands on it: always,
+    /// where nothing streams.
     pub ready: bool,
+    /// A camera is within its view distance: from when one comes within
+    /// it until none is within it and [`reach_margin`] past.
+    pub near: bool,
     /// How much of its far side shows through its mist, 0 to 1: it clears
-    /// over a moment once the far side is ready.
+    /// over a moment once the far side is ready, open and near, and
+    /// thickens again as fast once it is not.
     pub shown: f32,
 }
 
@@ -257,7 +277,7 @@ pub struct PortalSeen {
 }
 
 /// How far `point` is from the opening of the Portal at `pose`.
-fn away(pose: &PortalPose, size: Vec2, point: Vec3) -> f32 {
+pub fn away(pose: &PortalPose, size: Vec2, point: Vec3) -> f32 {
     let local = pose.local(point);
     let nearest = Vec3::new(local.x.clamp(-size.x * 0.5, size.x * 0.5), local.y.clamp(0.0, size.y), 0.0);
     local.distance(nearest)
@@ -356,16 +376,21 @@ pub fn in_sight(
 
 /// The Portal `portal` leads to, where it stands, and how much of it shows
 /// from `distance` away: `None` unless it leads to a Portal that is there.
-/// What shows is nothing while it is closed, its far side is not made or the
-/// camera is past its view distance, and fades in over the last tenth of
-/// that distance.
+/// What shows is what the engine has cleared of its mist (its
+/// [`PortalFar`]), which it thickens again once no camera is within the
+/// view distance and its margin; and from this view, as from a second
+/// camera further off, nothing once it is a margin further again, thinning
+/// over that. Without a `PortalFar`, as where no engine runs, all of it to
+/// the view distance and its margin.
 fn far_side(world: &World, entity: Entity, portal: &Portal, distance: f32) -> Option<(Entity, PortalPose, f32)> {
     let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to))?;
     let far = PortalPose::of_obj(world, to)?;
-    let made = world.get::<PortalFar>(entity).map_or(1.0, |far| if far.ready { far.shown } else { 0.0 });
-    let reach = portal.view_distance.max(0.0);
-    let fade = ((reach - distance) / (reach * 0.1).max(1e-3)).clamp(0.0, 1.0);
-    let shown = if portal.open { made.clamp(0.0, 1.0) * fade } else { 0.0 };
+    let quality = world.resource::<PortalQuality>().copied().unwrap_or_default();
+    let reach = portal.reach(&quality);
+    let margin = reach_margin(reach);
+    let cleared = world.get::<PortalFar>(entity).map_or(1.0, |far| far.shown);
+    let within = ((reach + margin * 2.0 - distance) / margin).clamp(0.0, 1.0);
+    let shown = if portal.open { cleared.clamp(0.0, 1.0) * within } else { 0.0 };
     Some((to, far, shown))
 }
 
@@ -491,11 +516,22 @@ pub struct PortalQuality {
     /// How far ahead a far side is drawn, in metres; 0 for as far as the
     /// world is. Past it shows the sky.
     pub draw_distance: f32,
+    /// How far from its opening a camera sees a Portal's far side, in
+    /// metres, for each Portal without a view distance of its own.
+    pub view_distance: f32,
 }
 
 impl Default for PortalQuality {
     fn default() -> Self {
-        Self { views: 4, depth: 1, shadow_distance: 30.0, far_side_distance: 96.0, water: true, draw_distance: 0.0 }
+        Self {
+            views: 4,
+            depth: 1,
+            shadow_distance: 30.0,
+            far_side_distance: 96.0,
+            water: true,
+            draw_distance: 0.0,
+            view_distance: 96.0,
+        }
     }
 }
 

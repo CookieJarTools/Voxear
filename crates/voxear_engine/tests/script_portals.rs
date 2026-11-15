@@ -42,6 +42,9 @@ public sealed class PortalScript : Behaviour
 		(town, camp) = Portal.CreatePair(new Vector3(0f, 0f, 30f), Quaternion.Identity, new Vector3(500f, 10f, -200f), Quaternion.CreateFromYawPitchRoll(1.2f, 0f, 0f), size);
 		camp.Mist = new Color(1f, 0.5f, 0.25f);
 		camp.ViewDistance = 48f;
+		// The town's is the project's, until the game's options lower it for every Portal without its own.
+		Log.Info($"view {town.ViewDistance is null} {camp.ViewDistance} {Portal.DefaultViewDistance}");
+		Portal.DefaultViewDistance = 64f;
 		camp.Passes = LayerMask.GetMask("Default");
 		var shut = Portal.Create(new Vector3(-40f, 0f, 0f), Quaternion.Identity, new Vector2(2f, 2f));
 		shut.Close();
@@ -124,6 +127,9 @@ fn a_script_makes_two_portals_that_lead_to_each_other_and_hears_what_goes_throug
     let made = "made True True True True <3, 4> False False Portal";
     assert!(lines().iter().any(|line| line == made), "{:?}", lines());
     assert!(lines().iter().any(|line| line == "follows True"), "{:?}", lines());
+    assert!(lines().iter().any(|line| line == "view True 48 96"), "{:?}", lines());
+    let quality = game.engine.world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap();
+    assert_eq!(quality.view_distance, 64.0, "the script set the view distance of Portals without their own");
     assert!(lines().iter().any(|line| line == "between True False"), "{:?}", lines());
 
     // In the world: two open Portals that lead to each other where the script put them, and a shut one leading nowhere.
@@ -141,7 +147,8 @@ fn a_script_makes_two_portals_that_lead_to_each_other_and_hears_what_goes_throug
     assert_eq!((town.1.size, town.1.open), (Vec2::new(3.0, 4.0), true));
     assert_eq!(camp.2.position, Vec3::new(500.0, 10.0, -200.0));
     assert!(camp.2.rotation.abs_diff_eq(Quat::from_rotation_y(1.2), 1e-4), "{:?}", camp.2.rotation);
-    assert_eq!((camp.1.mist, camp.1.view_distance, camp.1.passes), (Vec3::new(1.0, 0.5, 0.25), 48.0, 1));
+    assert_eq!((camp.1.mist, camp.1.view_distance, camp.1.passes), (Vec3::new(1.0, 0.5, 0.25), Some(48.0), 1));
+    assert_eq!(town.1.view_distance, None, "the project's");
     assert_eq!((shut.1.open, shut.1.to), (false, None));
     let (keeper, eye) = (find(&game, "Gatekeeper"), find(&game, "Eye"));
     assert_eq!(game.engine.world.get::<CameraFollows>(eye), Some(&CameraFollows(keeper)));

@@ -223,7 +223,7 @@ pub(crate) fn find_exits(world: &mut World) {
             let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to))?;
             let pose = PortalPose::of(transform, placed);
             let kept = was.exits.iter().any(|exit| exit.portal == entity);
-            let reach = portal.view_distance.max(0.0) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
+            let reach = portal.reach(&quality) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
             let within = |from: &Vec3| {
                 let local = pose.local(*from);
                 let (half, high) = (portal.size.x * 0.5, portal.size.y);
@@ -241,16 +241,43 @@ pub(crate) fn find_exits(world: &mut World) {
     world.insert_resource(PortalExits { exits, made_for: was.made_for });
 }
 
-/// Says of each Portal whether its far side is made (its [`PortalFar`]),
-/// and clears its mist once it is. After the world's ground is brought
-/// round where it is seen from. Where no world is without end, every far
-/// side is there as it stands, and no Portal is given one.
+/// Where Portals are seen from: where the world is, each camera switched on
+/// (from the far side of a Portal that carries its view), and what each
+/// films.
+fn seen_from(world: &World) -> Vec<Vec3> {
+    let mut from: Vec<Vec3> = crate::terrain::viewer(world).into_iter().collect();
+    let cameras: Vec<Entity> = world
+        .query_ref::<(Entity, &Camera)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, _)| entity)
+        .filter(|entity| voxear_scene::is_on(world, *entity, voxear_scene::Switch::Camera))
+        .collect();
+    for camera in cameras {
+        let (_, rotation, position) = voxear_scene::world_matrix(world, camera).to_scale_rotation_translation();
+        from.push(ViewCarry::of(world, camera, position, rotation).0);
+        from.extend(subject(world, camera).map(|subject| place(world, subject)));
+    }
+    from
+}
+
+/// Says of each Portal how much of its far side shows (its [`PortalFar`]):
+/// whether the far side is made, whether a camera is near enough to see
+/// it, and how far its mist has cleared. After the world's ground is
+/// brought round where it is seen from. Where no world is without end,
+/// every far side is made as it stands.
+///
+/// A Portal comes near once a camera is within its view distance, and stays
+/// near until none is within it and its margin past: a camera wandering
+/// over the edge neither starts nor stops its far side. Its mist clears
+/// over a moment once it is near, open and made, and thickens as fast once
+/// it is not, so its far side never shows or goes all at once.
 pub(crate) fn update_far(world: &mut World, delta: f32) {
-    let portals: Vec<(Entity, Option<PortalFar>)> = world
+    let portals: Vec<(Entity, Portal, Option<PortalFar>)> = world
         .query_ref::<(Entity, &Portal, Option<&PortalFar>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(entity, _, far)| (entity, far.copied()))
+        .map(|(entity, portal, far)| (entity, *portal, far.copied()))
         .collect();
     if portals.is_empty() {
         world.remove_resource::<PortalExits>();
@@ -260,32 +287,41 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
     let mut made_for = HashMap::new();
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let round = READY_ROUND.min(quality.far_side_distance * 0.4);
-    for (entity, was) in portals {
+    let from = seen_from(world);
+    let switched = Switched::of(world);
+    let step = delta.max(0.0) / CLEARS_IN;
+    for (entity, portal, was) in portals {
+        let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to));
+        let far = to.and_then(|to| PortalPose::of_obj(world, to));
         // Whether the ground is made where it leads, whoever it was made for: round the camera, or as another
-        // Portal's far side. Nothing streams at all: as it stands.
-        let to = world.get::<Portal>(entity).and_then(|portal| portal.to).and_then(|to| PortalPose::of_obj(world, to));
-        let made = match to {
-            Some(to) => crate::blocks::made_round(world, to.position, round),
-            None => crate::blocks::made_round(world, Vec3::ZERO, 0.0).map(|_| false),
+        // Portal's far side. Where nothing streams, it is there as it stands.
+        let made = far.map(|far| crate::blocks::made_round(world, far.position, round));
+        let ready = match made {
+            Some(Some(made)) => {
+                let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
+                made_for.insert(entity, ticks);
+                ticks >= READY_TICKS
+            }
+            Some(None) => true,
+            None => false,
         };
-        let now = made.map(|made| {
-            let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
-            made_for.insert(entity, ticks);
-            let ready = ticks >= READY_TICKS;
-            let shown = match (ready, was) {
-                (true, Some(was)) => (was.shown + delta.max(0.0) / CLEARS_IN).min(1.0),
-                _ => 0.0,
-            };
-            PortalFar { ready, shown }
+        let pose = PortalPose::of_obj(world, entity);
+        let nearest = pose.map_or(f32::MAX, |pose| {
+            from.iter().map(|point| voxear_render::portals::away(&pose, portal.size, *point)).fold(f32::MAX, f32::min)
         });
-        match now {
-            Some(far) if was != Some(far) => {
-                world.insert(entity, far);
-            }
-            None if was.is_some() => {
-                world.remove::<PortalFar>(entity);
-            }
-            _ => {}
+        let reach = portal.reach(&quality);
+        let was_near = was.is_some_and(|was| was.near);
+        let near = nearest <= reach + if was_near { voxear_render::portals::reach_margin(reach) } else { 0.0 };
+        let showing = ready && near && portal.open && switched.is_active(entity);
+        let shown = match (ready, was) {
+            (false, _) => 0.0,
+            (true, Some(was)) if showing => (was.shown + step).min(1.0),
+            (true, Some(was)) => (was.shown - step).max(0.0),
+            (true, None) => 0.0,
+        };
+        let now = PortalFar { ready, near, shown };
+        if was != Some(now) {
+            world.insert(entity, now);
         }
     }
     exits.made_for = made_for;
@@ -573,6 +609,10 @@ const BETWEEN: i32 = 32;
 // A new Obj with a Portal at a place: written with the place, then read.
 const CREATE: i32 = 33;
 const CREATED: i32 = 34;
+// The project's view distance, for each Portal without its own, whichever Obj asks.
+const DEFAULT_VIEW_DISTANCE: i32 = 35;
+// How much of a Portal's far side shows through its mist, 0 to 1.
+const SHOWN: i32 = 10;
 
 /// What a script last asked of the Portals between two places.
 #[derive(Default)]
@@ -638,6 +678,16 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             return Some([0.0; 4]);
         }
         (CREATED, None) => return Some(obj_value(world.resource::<PortalAsked>().and_then(|asked| asked.made))),
+        (DEFAULT_VIEW_DISTANCE, None) => {
+            let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+            return number(quality.view_distance);
+        }
+        (DEFAULT_VIEW_DISTANCE, Some([distance, ..])) => {
+            let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
+            let view_distance = if distance.is_finite() { distance.max(0.0) } else { quality.view_distance };
+            world.insert_resource(voxear_render::portals::PortalQuality { view_distance, ..quality });
+            return Some([0.0; 4]);
+        }
         _ => {}
     }
     if !world.is_alive(entity) {
@@ -661,6 +711,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             let made = world.get::<PortalFar>(entity).is_none_or(|far| far.ready);
             return number(f32::from(u8::from(leads && made)));
         }
+        (SHOWN, None) => {
+            world.get::<Portal>(entity)?;
+            return number(world.get::<PortalFar>(entity).map_or(0.0, |far| far.shown));
+        }
         _ => {}
     }
     let portal = world.get_mut::<Portal>(entity)?;
@@ -670,7 +724,8 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (OPEN, None) => number(f32::from(u8::from(portal.open))),
         (PASSES, None) => bits(portal.passes),
         (MIST, None) => Some([portal.mist.x, portal.mist.y, portal.mist.z, 1.0]),
-        (VIEW_DISTANCE, None) => number(portal.view_distance),
+        // None, the project's, as NaN.
+        (VIEW_DISTANCE, None) => number(portal.view_distance.unwrap_or(f32::NAN)),
         (TO, Some(value)) => {
             portal.to = value_obj(value).filter(|to| *to != entity);
             Some([0.0; 4])
@@ -692,7 +747,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             Some([0.0; 4])
         }
         (VIEW_DISTANCE, Some([distance, ..])) => {
-            portal.view_distance = distance.max(0.0);
+            portal.view_distance = distance.is_finite().then(|| distance.max(0.0));
             Some([0.0; 4])
         }
         _ => None,
@@ -709,7 +764,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
 /// open = false              # closed, it shows its mist and lets nothing through
 /// passes = [0, 4]           # the layers whose Objs go through; left out, all
 /// mist = [0.35, 0.55, 1.0]  # linear
-/// view_distance = 96.0      # how far off its far side still shows
+/// view_distance = 96.0      # how far off its far side still shows; left out, the project's
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -724,8 +779,8 @@ pub struct PortalData {
     pub passes: Option<Vec<u8>>,
     #[serde(default = "default_mist", skip_serializing_if = "is_default_mist")]
     pub mist: [f32; 3],
-    #[serde(default = "default_view", skip_serializing_if = "is_default_view")]
-    pub view_distance: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_distance: Option<f32>,
 }
 
 impl PortalData {
@@ -780,7 +835,9 @@ impl PortalData {
         table.insert("size".into(), toml::Value::try_from(self.size)?);
         table.insert("open".into(), toml::Value::Boolean(self.open));
         table.insert("mist".into(), toml::Value::try_from(self.mist)?);
-        table.insert("view_distance".into(), toml::Value::try_from(self.view_distance)?);
+        if let Some(distance) = self.view_distance {
+            table.insert("view_distance".into(), toml::Value::try_from(distance)?);
+        }
         Ok(toml::Value::Table(table))
     }
 }
@@ -809,14 +866,6 @@ fn is_default_mist(mist: &[f32; 3]) -> bool {
     *mist == default_mist()
 }
 
-fn default_view() -> f32 {
-    Portal::default().view_distance
-}
-
-fn is_default_view(distance: &f32) -> bool {
-    *distance == default_view()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -826,7 +875,7 @@ mod tests {
     fn a_portal_names_the_one_it_leads_to_by_its_place_in_the_file() {
         let text = "to = 3\nsize = [4.0, 5.0]\npasses = [0, 4]\n";
         let data: PortalData = toml::from_str(text).unwrap();
-        assert!(data.open && data.view_distance == 96.0);
+        assert!(data.open && data.view_distance.is_none());
         assert_eq!(data.refs().unwrap(), [ObjPath::new(3)]);
         let (gate, other) = (Entity::from_bits(1 << 32 | 7), Entity::from_bits(1 << 32 | 8));
         let portal = data.bind(&|path| (*path == ObjPath::new(3)).then_some(gate));

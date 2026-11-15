@@ -407,6 +407,7 @@ impl Editor {
             }
             "world_quality.get" => done(self.world_quality_json()),
             "world_quality.set" => self.world_quality_set(args),
+            "project.set" => self.project_set(args),
             "docs.search" => done(self.docs_search(args)),
             "docs.read" => self.docs_read(need_text(args, "reference")?),
             "editor.wait" => {
@@ -1583,6 +1584,34 @@ impl Editor {
         done(json!({ "value": now }))
     }
 
+    /// Changes one of the project's settings `link::PROJECT_KEYS` names, as
+    /// Project Settings does.
+    fn project_set(&mut self, args: &Json) -> Called {
+        let key = need_text(args, "key")?;
+        let value = need(args, "value")?;
+        let number = value.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n as f32);
+        let number =
+            number.ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{value} is not a value for {key}")))?;
+        let now = match key {
+            "portals.view_distance" => {
+                self.set_portal_view_distance(number);
+                json!(self.game.project.file.portals.view_distance)
+            }
+            "quality.particles" => {
+                let most = voxear_render::MAX_PARTICLE_BUDGET;
+                self.set_quality(&voxear_engine::QualitySettings { particles: (number.round() as u32).min(most) });
+                json!(self.game.project.file.quality.particles)
+            }
+            other => {
+                return Err(bad(format!(
+                    "no project setting has the key `{other}`; it is one of {:?}",
+                    link::PROJECT_KEYS
+                )));
+            }
+        };
+        done(json!({ "value": now }))
+    }
+
     fn docs_search(&self, args: &Json) -> Json {
         let words: Vec<String> =
             opt_text(args, "query").unwrap_or_default().split_whitespace().map(str::to_lowercase).collect();
@@ -1733,6 +1762,8 @@ impl Editor {
                 self.project_settings.show(&mut self.ui, &modules);
                 self.project_settings.show_origin(&mut self.ui, &file.floating_origin);
                 self.project_settings.show_quality(&mut self.ui, &file.quality);
+                self.project_settings.show_portals(&mut self.ui, &file.portals);
+                file.portals.put(&mut self.game.engine.world);
                 // The project's world quality, unless this machine keeps its own.
                 let machine = voxear_terrain::MachineBudget::of(&self.game.engine.world);
                 if !machine.kept {

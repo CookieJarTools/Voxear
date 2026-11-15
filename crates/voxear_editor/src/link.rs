@@ -128,6 +128,8 @@ const fn maybe(name: &'static str, kind: ArgKind, about: &'static str) -> ArgInf
 pub const VIEWS: &[&str] = &["scene", "game", "editor"];
 /// The levels `console.read` keeps to.
 pub const LEVELS: &[&str] = &["info", "warning", "error"];
+/// The project's settings `project.set` changes, as `voxear.toml` names them.
+pub const PROJECT_KEYS: &[&str] = &["portals.view_distance", "quality.particles"];
 
 /// Every call the editor answers, easy ones first.
 pub const CALLS: &[CallInfo] = &[
@@ -724,6 +726,13 @@ pub const CALLS: &[CallInfo] = &[
         ],
         changes: true,
         returns: "as world_quality.get",
+    },
+    CallInfo {
+        name: "project.set",
+        about: "Changes one of the project's settings in voxear.toml, as Project Settings does, and puts it into effect at once: `portals.view_distance` is how far off a Portal without its own still shows its far side, in metres; `quality.particles` the most simulated particles.",
+        args: &[arg("key", ArgKind::Choice(PROJECT_KEYS), ""), arg("value", ArgKind::Number, "")],
+        changes: true,
+        returns: "{ value }",
     },
     CallInfo {
         name: "docs.search",

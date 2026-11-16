@@ -40,7 +40,7 @@ use crate::{
         Push,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
-    mesh::{MeshData, NO_WIND_MASKS, Vertex},
+    mesh::{MeshData, NO_WIND_MASKS, PROXY_MATERIAL, Vertex},
     passes::{attachment, begin_rendering, bind, set_viewport},
     pipelines::Pipelines,
     scene::{ExtractedFrame, Owner},
@@ -688,9 +688,10 @@ fn merged(mut picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
     merged
 }
 
-/// A chunk's mesh for rays: the chunk it was made from, and how many
-/// vertices and indices it takes.
-type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2]);
+/// A chunk's mesh for rays: the chunk it was made from, how many vertices
+/// and indices it takes, and which of its world's surfaces' changes it was
+/// painted after (see `Pool::painted`).
+type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2], u32);
 
 /// One world's chunks on the GPU: one buffer, each slot's chunk's place in
 /// blocks, then the quads (or, drawn smooth, its triangles' corners); and
@@ -748,6 +749,10 @@ struct Pool {
     /// are, as its chunks' quads were last put in order by (see
     /// [`arranged`]).
     cut: Arc<[bool]>,
+    /// The surfaces its chunks' meshes for rays are painted with, and how
+    /// many times they have changed: a mesh for rays painted before the
+    /// last change is made again.
+    painted: (Arc<[SurfaceLook]>, u32),
     /// How its world's rings fade into each other, as its chunks' fades
     /// were last brought up by.
     faded: Arc<RingFades>,
@@ -778,6 +783,7 @@ impl Pool {
             draws: None,
             sights: None,
             cut: Arc::from([]),
+            painted: (Arc::from([]), 0),
             faded: Arc::default(),
             seen: 0,
             made_from: None,
@@ -1087,17 +1093,33 @@ fn axis_of(normal: Vec3) -> usize {
     }
 }
 
+/// How far up a smooth surface's point of a mesh for rays faces at least to
+/// take its top's material, or down to take its bottom's: halfway through
+/// the turn over which `smoothLayer` in `shaders/blocks.slang` blends them.
+const SMOOTH_TOP: f32 = 0.775;
+
 /// A chunk's mesh for rays, in metres from its corner, its pictures
 /// repeated as the world's are from `from`, where the chunk is from the
-/// world's corner: a chunk of cubes' faces merged whatever their surfaces,
-/// a smooth chunk's surface at its [`RAYS_LEVEL`]. Its triangles share
-/// their corners, each facing the way the faces round it face on average: a
+/// world's corner: a chunk of cubes' faces merged by surface, a smooth
+/// chunk's surface at its [`RAYS_LEVEL`]. Its triangles share their
+/// corners, each facing the way the faces round it face on average: a
 /// block's face has its corners to itself, so faces its own way, and a
-/// smooth surface's run on smoothly.
-fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let (positions, indices) = match smooth {
+/// smooth surface's run on smoothly. Each corner carries the material of
+/// the surface of `looks` it is drawn with, and takes that surface's
+/// picture size, which the GI's rays take in place of the instance's
+/// (`PROXY_MATERIAL`): a smooth surface's point its top's where it faces
+/// up, its bottom's where it faces down and its sides' between. With no
+/// looks, every corner takes the instance's material and `uv_scale`.
+fn proxy(
+    mesh: &ChunkMesh,
+    smooth: bool,
+    block_size: f32,
+    from: Vec3,
+    (looks, uv_scale): (&[SurfaceLook], f32),
+) -> MeshData {
+    let (positions, kinds, indices) = match smooth {
         true => voxear_terrain::blocks::smooth::level_triangles(mesh, RAYS_LEVEL),
-        false => (mesh.positions.clone(), mesh.indices.clone()),
+        false => (mesh.positions.clone(), Vec::new(), mesh.indices.clone()),
     };
     let points: Vec<Vec3> = positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
     let mut ways = vec![Vec3::ZERO; points.len()];
@@ -1112,7 +1134,8 @@ fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: 
     let vertices = points
         .iter()
         .zip(ways)
-        .map(|(&point, way)| {
+        .enumerate()
+        .map(|(at, (&point, way))| {
             let normal = way.normalize_or(Vec3::Y);
             let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
             let world = point + from;
@@ -1122,12 +1145,26 @@ fn proxy(mesh: &ChunkMesh, smooth: bool, block_size: f32, from: Vec3, uv_scale: 
                 1 => [world.x, -world.z],
                 _ => [world.x, -world.y],
             };
+            let surface = match smooth {
+                true => kinds.get(at).map(|&[top, sides, bottom]| match normal.y {
+                    up if up >= SMOOTH_TOP => top,
+                    up if up <= -SMOOTH_TOP => bottom,
+                    _ => sides,
+                }),
+                false => mesh.surfaces.get(at).copied(),
+            };
+            // As the shaders read a surface: the last where it has more than the world.
+            let look = surface.filter(|_| !looks.is_empty()).map(|s| &looks[usize::from(s).min(looks.len() - 1)]);
+            let (wind, uv_scale) = match look {
+                Some(look) => ((PROXY_MATERIAL | look.material.0).to_le_bytes(), 1.0 / look.size.max(0.01)),
+                None => (NO_WIND_MASKS, uv_scale),
+            };
             Vertex {
                 position: point.to_array(),
                 normal: normal.to_array(),
                 uv: uv.map(|v| v * uv_scale),
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
-                wind: NO_WIND_MASKS,
+                wind,
             }
         })
         .collect();
@@ -1291,6 +1328,14 @@ impl BlockWorlds {
             let same = |(meshes, places): &(Arc<ChunkMeshes>, Arc<Vec<voxear_terrain::blocks::BlockPlace>>)| {
                 Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places)
             };
+            // Painted with its surfaces' materials: when those change, every chunk's is made again.
+            if !Arc::ptr_eq(&pool.painted.0, &look.surfaces) {
+                if pool.painted.0 != look.surfaces {
+                    pool.painted.1 += 1;
+                    (pool.proxied, pool.made_to) = (None, 0);
+                }
+                pool.painted.0 = look.surfaces.clone();
+            }
             // With the mesh pool full, a camera gone into another chunk may have a nearer chunk take a farther's room.
             let moved = pool.full && !pool.ordered.as_ref().is_some_and(|(.., at)| *at == camera_chunk);
             let settled = pool.proxied.as_ref().is_some_and(same) && !moved;
@@ -1300,7 +1345,7 @@ impl BlockWorlds {
                 let own = blocks.places.first().map(|place| &place.columns);
                 let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
-                pool.proxies.retain(|key, (_, mesh, _)| {
+                pool.proxies.retain(|key, (_, mesh, ..)| {
                     let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
@@ -1324,8 +1369,9 @@ impl BlockWorlds {
                 pool.full = false;
                 let uv_scale = 1.0 / blocks.block_size.max(0.01);
                 let order = std::mem::take(&mut pool.order);
+                let paint = pool.painted.1;
                 let unmade = |proxies: &HashMap<[i32; 3], Proxy>, key: &[i32; 3], mesh: &Arc<ChunkMesh>| {
-                    !proxies.get(key).is_some_and(|(made, ..)| Arc::ptr_eq(made, mesh))
+                    !proxies.get(key).is_some_and(|(made, .., painted)| Arc::ptr_eq(made, mesh) && *painted == paint)
                 };
                 // Uploaded and built together, waited for once.
                 let batch = gpu.batch();
@@ -1343,7 +1389,7 @@ impl BlockWorlds {
                     proxies_left -= 1;
                     let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
                     let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, uv_scale);
+                    let data = proxy(mesh, blocks.smooth, blocks.block_size, from, (&look.surfaces, uv_scale));
                     let lods = crate::lod::rays_only(&data);
                     drop(making);
                     let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
@@ -1366,9 +1412,10 @@ impl BlockWorlds {
                                 .take(PROXIES_A_FRAME - 1)
                                 .map(|(_, mesh, away)| ([mesh.positions.len(), mesh.indices.len()], away));
                             let wanting = std::iter::once((room, away)).chain(next);
-                            let given = giving_up(&order, |key| pool.proxies.get(key).map(|(.., room)| *room), wanting);
+                            let given =
+                                giving_up(&order, |key| pool.proxies.get(key).map(|(_, _, room, _)| *room), wanting);
                             for key in &given {
-                                if let Some((_, mesh, _)) = pool.proxies.remove(key) {
+                                if let Some((_, mesh, ..)) = pool.proxies.remove(key) {
                                     assets.free_mesh(mesh, frame_index);
                                 }
                             }
@@ -1385,7 +1432,7 @@ impl BlockWorlds {
                             break;
                         }
                     };
-                    if let Some((_, old, _)) = pool.proxies.insert(key, (mesh.clone(), handle, room)) {
+                    if let Some((_, old, ..)) = pool.proxies.insert(key, (mesh.clone(), handle, room, paint)) {
                         assets.free_mesh(old, frame_index);
                     }
                     changed = true;
@@ -1413,7 +1460,7 @@ impl BlockWorlds {
                             given => given,
                         }
                     };
-                    pool.proxies.iter().map(|(key, (chunk, mesh, _))| (*mesh, at(key), acoustic(chunk))).collect()
+                    pool.proxies.iter().map(|(key, (chunk, mesh, ..))| (*mesh, at(key), acoustic(chunk))).collect()
                 })
                 .clone();
             let drawn = DrawnBlocks {
@@ -1532,7 +1579,7 @@ impl BlockWorlds {
 
 fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
     frames.retire(Retired::Buffer(pool.buffer));
-    for (_, (_, mesh, _)) in pool.proxies {
+    for (_, (_, mesh, ..)) in pool.proxies {
         assets.free_mesh(mesh, frame_index);
     }
 }
@@ -2132,6 +2179,67 @@ mod tests {
         assert_eq!(given, vec![[11, 0, 0], [10, 0, 0]]);
         assert_eq!(giving_up(&order, made, [([10, 20], 1.0), ([10, 20], 8.5)]), vec![[11, 0, 0]]);
         assert!(giving_up(&order, made, [([10, 20], 9.5)]).is_empty(), "11 chunks off is within 2 of 9.5");
+    }
+
+    #[test]
+    fn a_chunks_mesh_for_rays_takes_each_faces_surfaces_material_and_picture_size() {
+        use voxear_terrain::blocks::{
+            BlockFaces, BlockMap,
+            smooth::{self, Ball},
+        };
+        let look = |material: u32, size: f32| SurfaceLook {
+            material: MaterialHandle(material),
+            size,
+            sharpness: 0.0,
+            triplanar: true,
+            tracks: 0.0,
+            fills_in: 0.0,
+            liquid: Default::default(),
+            glitter: false,
+            leafy: false,
+            mixed: false,
+            tint: 0,
+        };
+        // Its top drawn with surface 0, its sides with 1 and its bottom with 2.
+        let looks = [look(7, 2.0), look(8, 1.0), look(9, 4.0)];
+        let faces = [BlockFaces::default(), BlockFaces::new(0, 1, 2)];
+        let painted = |vertex: &Vertex| {
+            let material = u32::from_le_bytes(vertex.wind);
+            match vertex.normal[1] {
+                up if up >= SMOOTH_TOP => material == PROXY_MATERIAL | 7,
+                up if up <= -SMOOTH_TOP => material == PROXY_MATERIAL | 9,
+                _ => material == PROXY_MATERIAL | 8,
+            }
+        };
+        // A floor of cubes: each face its own surface's material, its pictures that surface's size.
+        let mut map = BlockMap::default();
+        for z in 0..4 {
+            for x in 0..4 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        let cubes = voxear_terrain::blocks::mesh::mesh_chunk(&map, [0, 0, 0], &faces);
+        let rays = proxy(&cubes, false, 1.0, Vec3::ZERO, (&looks, 1.0));
+        assert!(rays.vertices.iter().all(painted));
+        let top = rays.vertices.iter().find(|vertex| vertex.normal[1] > 0.5 && vertex.position[0] > 0.0).unwrap();
+        assert_eq!(top.uv[0], top.position[0] / 2.0, "the top's picture two blocks across");
+        let bottom = rays.vertices.iter().find(|vertex| vertex.normal[1] < -0.5 && vertex.position[0] > 0.0).unwrap();
+        assert_eq!(bottom.uv[0], bottom.position[0] / 4.0);
+        // With no looks, the instance's material, the world's picture size.
+        let plain = proxy(&cubes, false, 1.0, Vec3::ZERO, (&[], 0.5));
+        assert!(plain.vertices.iter().all(|vertex| vertex.wind == NO_WIND_MASKS));
+        assert_eq!(plain.vertices[0].uv, rays.vertices[0].uv.map(|v| v / 2.0));
+        // A smooth ball: its top's material where it faces up, its bottom's where it faces down, its sides' between.
+        let mut map = BlockMap::default();
+        for (at, block, fill) in smooth::ball(&map, [16.0; 3], 8.0, Ball::Add(1), &faces) {
+            map.set_cell(at, block, fill);
+        }
+        let ball = smooth::mesh_chunk(&map, [0, 0, 0], &faces);
+        let rays = proxy(&ball, true, 1.0, Vec3::ZERO, (&looks, 1.0));
+        assert!(rays.vertices.iter().all(painted));
+        for material in [7, 8, 9] {
+            assert!(rays.vertices.iter().any(|vertex| u32::from_le_bytes(vertex.wind) == PROXY_MATERIAL | material));
+        }
     }
 
     #[test]

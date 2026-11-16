@@ -170,7 +170,8 @@ pub const VINE_TIP: u32 = 8;
 /// blocks of parts' from `buckets[FACINGS + 1]` (two quads' words each, see
 /// [`pack_part`]), and after `buckets[FACINGS + 2]` its water's; its
 /// ground's faces as triangles, in blocks from the chunk's corner, three
-/// indices a triangle, facing out; which of the chunk's sides see each
+/// indices a triangle, facing out, and for a chunk of cubes the surface
+/// each of their points is drawn with; which of the chunk's sides see each
 /// other through its air and water (see `sight`); and, drawn smooth, the
 /// ways its triangles face.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -179,6 +180,11 @@ pub struct ChunkMesh {
     pub buckets: [u32; FACINGS + 3],
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// For a chunk of cubes, the surface each of `positions` is drawn with:
+    /// a face's four corners have their own, so the GI's rays take each
+    /// face's colour. None for a chunk drawn smooth, whose corners' words
+    /// say theirs (see `smooth::level_triangles`).
+    pub surfaces: Vec<u8>,
     /// Boxes it collides as besides its triangles, in blocks from its
     /// corner, lowest corner first: its fences and walls a block and a half
     /// high. Physics alone takes them; nothing draws them.
@@ -376,8 +382,8 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
-    // Which faces of the layer show, for its triangles.
-    let mut shown = vec![0u32; side * side];
+    // Which surface each face of the layer shows, for its triangles.
+    let mut plain = vec![0u32; side * side];
     // What each face of the layer keeps where its size would be: which faces round it it joins, for the blocks
     // that join, and what creeps over it, for a face drawn with its look's twin.
     let mut joined = vec![0u32; side * side];
@@ -389,7 +395,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         let step = if out { 1 } else { -1 };
         for layer in 0..side {
             shaded.fill(0);
-            shown.fill(0);
+            plain.fill(0);
             if any_join || any_mix {
                 joined.fill(0);
             }
@@ -508,7 +514,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         }
                     }
                     shaded[j * side + i] = key + 1;
-                    shown[j * side + i] = 1;
+                    plain[j * side + i] = u32::from(look) + 1;
                 }
             }
             // Merged by surface and shading, to draw.
@@ -523,9 +529,8 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 mesh.quads.push([first | joined[j * side + i] | ((key >> 16) & 15) << 28, second]);
             }
             mesh.quads.append(&mut layered);
-            // Merged whatever their surfaces, as triangles: what collides with them or traces rays against them
-            // takes no surface from them.
-            for (i, j, w, h, _) in merge(&mut shown, side) {
+            // Merged by surface alone, as triangles: the GI's rays take each one's colour from its surface.
+            for (i, j, w, h, look) in merge(&mut plain, side) {
                 let mut corner = [0.0f32; 3];
                 let face = layer as f32 + if out { 1.0 } else { 0.0 };
                 (corner[axis], corner[u], corner[v]) = (face, i as f32, j as f32);
@@ -535,6 +540,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                     (point[u], point[v]) = (point[u] + du as f32, point[v] + dv as f32);
                     mesh.positions.push(point);
                 }
+                mesh.surfaces.extend([look as u8; 4]);
                 mesh.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
             }
         }
@@ -865,9 +871,10 @@ fn mesh_parts(
                 let origin = p.map(|v| v as f32);
                 if kind.part & PART_SOLID != 0 {
                     let (turn, shift) = (f32::from(kind.rest[0]) / 10.0, f32::from(kind.rest[1]) / 4.0);
+                    let looks = std::array::from_fn(|facing| surface(faces, id, log_facing(kind.shape, state, facing)));
                     for part in &boxes {
                         let [low, high] = posed_box(part, turn, shift);
-                        box_triangles(mesh, origin, [low, high].map(|c| c.map(|v| v / 16.0)));
+                        box_triangles(mesh, origin, [low, high].map(|c| c.map(|v| v / 16.0)), looks);
                     }
                 }
                 if kind.part & PART_TALL != 0 {
@@ -885,12 +892,13 @@ fn mesh_parts(
 }
 
 /// A box's six faces as triangles, facing out, from `origin` in blocks and
-/// its corners `[low, high]` in blocks from there.
-fn box_triangles(mesh: &mut ChunkMesh, origin: [f32; 3], [low, high]: [[f32; 3]; 2]) {
+/// its corners `[low, high]` in blocks from there, each drawn with the
+/// surface `looks` gives its facing.
+fn box_triangles(mesh: &mut ChunkMesh, origin: [f32; 3], [low, high]: [[f32; 3]; 2], looks: [u8; FACINGS]) {
     if (0..3).any(|i| high[i] - low[i] <= 1e-4) {
         return;
     }
-    for &(axis, out, u, v) in &AXES {
+    for (&(axis, out, u, v), look) in AXES.iter().zip(looks) {
         let mut corner = [0.0f32; 3];
         corner[axis] = origin[axis] + if out { high[axis] } else { low[axis] };
         corner[u] = origin[u] + low[u];
@@ -903,6 +911,7 @@ fn box_triangles(mesh: &mut ChunkMesh, origin: [f32; 3], [low, high]: [[f32; 3];
             point[v] += dv;
             mesh.positions.push(point);
         }
+        mesh.surfaces.extend([look; 4]);
         mesh.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
     }
 }
@@ -1766,7 +1775,8 @@ mod tests {
     }
 
     #[test]
-    fn a_floor_striped_in_two_kinds_is_drawn_a_quad_a_stripe_and_collides_as_one_slab() {
+    fn a_floor_striped_in_two_kinds_is_drawn_and_collides_a_quad_a_stripe_each_with_its_surface() {
+        use voxear_core::math::Vec3;
         let mut map = BlockMap::default();
         for z in 0..32 {
             for x in 0..32 {
@@ -1776,7 +1786,28 @@ mod tests {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3), BlockFaces::new(4, 5, 6)];
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
         assert_eq!(mesh.buckets[3] - mesh.buckets[2], 32, "its top drawn a quad a stripe");
-        assert_eq!((mesh.positions.len(), mesh.indices.len()), (6 * 4, 6 * 6), "two triangles a side of the slab");
+        // A stripe each on its top and bottom and a block each along the ends they run to, one face along each side.
+        let quads = 32 + 32 + 32 + 32 + 1 + 1;
+        assert_eq!((mesh.positions.len(), mesh.indices.len()), (quads * 4, quads * 6));
+        assert_eq!(mesh.surfaces.len(), mesh.positions.len(), "a surface for each point");
+        // Each triangle the surface of the block it lies against, for the way it faces, all over the slab's faces.
+        let mut area = [0.0f32; 7];
+        for t in mesh.indices.chunks(3) {
+            let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.positions[t[i] as usize]));
+            let surface = mesh.surfaces[t[0] as usize];
+            assert!(t.iter().all(|&i| mesh.surfaces[i as usize] == surface), "one surface a triangle");
+            let way = (b - a).cross(c - a);
+            let x = ((a.x + b.x + c.x) / 3.0).min(31.5) as usize;
+            let BlockFaces { top, sides, bottom, .. } = faces[1 + x % 2];
+            let drawn = match way.y {
+                up if up > 0.0 => top,
+                up if up < 0.0 => bottom,
+                _ => sides,
+            };
+            assert_eq!(surface, drawn, "{a:?} {b:?} {c:?}");
+            area[usize::from(surface)] += way.length() / 2.0;
+        }
+        assert_eq!(area, [0.0, 512.0, 64.0, 512.0, 512.0, 64.0, 512.0], "the slab's faces whole");
     }
 
     #[test]

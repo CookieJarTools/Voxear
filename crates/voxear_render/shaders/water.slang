@@ -3745,7 +3745,9 @@ bool seaCrossing(
         bool crossed = false;
         for (int i = 1; i <= SEA_INSIDE_STEPS; i++)
         {
-            t = start + (reach - start) * float(i) / float(SEA_INSIDE_STEPS);
+            // The last step on the view's end itself, so a view from the water up to the faces meets them however
+            // the steps round.
+            t = i == SEA_INSIDE_STEPS ? reach : start + (reach - start) * float(i) / float(SEA_INSIDE_STEPS);
             float3 p = from + ray * t;
             if ((below - ray.y * t > seaSunk(frame, p.xz, crest, rough)) != under || (under && t >= toFaces))
             {
@@ -3815,7 +3817,10 @@ bool seaCrossing(
         }
         if (leaves >= reach)
         {
-            return false;
+            // As far as the view goes. A view from the water that ends at the faces meets them: rounding can leave
+            // it a hair under them, and tested as above, those views missed them and showed the sky through the
+            // water, in rings round the point overhead.
+            break;
         }
         entered = leaves;
         if (next.x < next.y)
@@ -3831,7 +3836,7 @@ bool seaCrossing(
             side = float3(0.0, 0.0, -float(way.y));
         }
     }
-    // Too far to walk: from the water, its faces as they stand.
+    // Up to the faces, or too far to walk: from the water, its faces as they stand.
     if (under && toFaces < 1e8 && toFaces <= reach)
     {
         at = from + ray * toFaces;

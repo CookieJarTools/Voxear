@@ -3192,6 +3192,9 @@ fn starter_biomes_are_made_beside_a_generated_world_with_their_blocks_and_listed
     // One grass for the Grassland, the Forest, the Savanna and the Rainforest, each tinting it its own way: Wild
     // Grass, made beside the project's own.
     assert_eq!(block("Blocks/Wild Grass.block").tint, voxear_terrain::blocks::block::BlockTint::Grass);
+    // Under a block it shows as the world's own dirt, named by its GUID.
+    let dirt = db.guid_of("Blocks/Dirt.block").expect("the world's own dirt").to_string();
+    assert_eq!(block("Blocks/Wild Grass.block").covered, Some(dirt));
     for name in ["Grassland", "Forest", "Savanna", "Rainforest"] {
         assert_eq!(path_of(&biome(name).ground.top), "Blocks/Wild Grass.block", "{name}");
         assert!(biome(name).tints.grass.is_some(), "{name}");

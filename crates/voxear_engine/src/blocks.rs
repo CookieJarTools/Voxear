@@ -850,14 +850,14 @@ pub fn block_number(
     if !grow {
         return None;
     }
-    let Some((mut file, _)) = with_block(content, &asset.file, guid) else {
+    let Some((mut file, drawn)) = with_block(content, &asset.file, guid) else {
         say_full(content, asset.guid, guid);
         return None;
     };
     // And the block it shows as while covered, after it.
     let number = file.blocks.len() as BlockId;
     with_covered(content, &mut file);
-    let drawn = resolved(content, &file);
+    let drawn = if file.blocks.len() == usize::from(number) { drawn } else { resolved(content, &file) };
     // Its faces take the new block's on at their end, so nothing made is made again; its look is taken up by
     // `refresh`, which has the renderer.
     let (_, faces) = drawn.faces();
@@ -886,13 +886,13 @@ pub fn block_number_state(
     if !grow {
         return None;
     }
-    let Some((mut file, _)) = with_block_state(content, &asset.file, guid, state) else {
+    let Some((mut file, drawn)) = with_block_state(content, &asset.file, guid, state) else {
         say_full(content, asset.guid, guid);
         return None;
     };
     let number = file.blocks.len() as BlockId;
     with_covered(content, &mut file);
-    let drawn = resolved(content, &file);
+    let drawn = if file.blocks.len() == usize::from(number) { drawn } else { resolved(content, &file) };
     let (_, faces) = drawn.faces();
     let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
     world.get_mut::<BlockWorld>(entity)?.faces = faces.into();

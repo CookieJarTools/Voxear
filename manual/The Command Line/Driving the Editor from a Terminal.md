@@ -252,7 +252,7 @@ A connection can stay open for as many calls as you like. Calls are answered in 
 vox editor call blocks.fill obj=713a4d989c654c6ca23b1d63201e0090:12 from=[0,40,0] to=[4,40,4] block=Blocks/Stone.block
 ```
 
-Without `obj`, every Block World there is changed, as a script's `Blocks.Set` does. A block the world does not hold yet is added to its blocks. Each call is one step to undo, and the blocks are kept when the scene is saved. `blocks.get` says which block is at a point.
+Without `obj`, every Block World there is changed, as a script's `Blocks.Set` does. A block the world does not hold yet is added to its blocks. Each call is one step to undo, and the blocks are kept when the scene is saved. `blocks.get` says which block is at a point, and in `shows` the block it is drawn as where that is another, as grass under a block shows as its Covered block.
 
 A `[Command]` your scripts add, run with `command.run`, can change blocks too: on the level being edited it has the same `Blocks` and `Block.Load` as a game playing.
 

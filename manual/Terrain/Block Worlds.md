@@ -545,7 +545,7 @@ Blocks.Break(impact, 2f);
 | Call | What it does |
 | --- | --- |
 | `Blocks.All` | Every block of the project |
-| `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
+| `Blocks.DefinitionAt(position)` | The block at a point, as it is drawn: grass under a block is its Covered block (see [[Blocks#Grass under a block]]); `Block.None` for air |
 | `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is. A [[Blocks#Blocks of parts|block of parts]] is met where its parts are: a slab lying low on its top, half a block down |
 | `Blocks.Set(position, block)` | Sets one block |
 | `Blocks.FloorHeight(position)` | How high the top of a generated world's [[Block Worlds#The floor|floor]] stands, in metres: nothing changes a block there or under it. NaN where no world has one |

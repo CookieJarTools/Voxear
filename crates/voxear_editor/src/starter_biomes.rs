@@ -95,6 +95,11 @@ const BLOCKS: [(&str, [f32; 3]); 12] = [
     ("Gravel", [0.56, 0.54, 0.51]),
 ];
 
+/// The starters' blocks that are earth under a block, each with the block
+/// it shows as while covered (see `BlockDef::covered`): grass and the
+/// forest floor, which lie only on top.
+const COVERED: [(&str, &str); 2] = [("Wild Grass", "Dirt"), ("Needles Floor", "Dirt")];
+
 /// The starters' vine: its name and its colour. A block whose shape is a
 /// vine, that sways.
 const VINE: (&str, [f32; 3]) = ("Vine", [0.2, 0.46, 0.14]);
@@ -496,15 +501,33 @@ fn add_made(
     let root = game.project.root.clone();
     // Each block by its name: the project's own where it has one of that name, or made in the Blocks folder.
     let mut made_blocks = std::collections::HashMap::new();
+    let mut new_blocks = Vec::new();
     for (name, block) in blocks.into_iter().chain([(VINE.0, vine_block())]) {
         let path = match block_named(game, &blocks_folder, name) {
             Some(path) => path,
-            None => project_files::create_block(&root, &blocks_folder, name, &block)?,
+            None => {
+                let path = project_files::create_block(&root, &blocks_folder, name, &block)?;
+                new_blocks.push((name, block));
+                path
+            }
         };
         made_blocks.insert(name, path);
     }
     game.content.rescan()?;
     let reference = |game: &Game, path: &str| game.content.db().guid_of(path).map(|guid| guid.to_string());
+    // A grass made here shows as the earth made beside it while covered, named by its GUID.
+    for (name, mut block) in new_blocks {
+        let under = COVERED.iter().find(|(grass, _)| *grass == name).and_then(|(_, under)| made_blocks.get(under));
+        if let Some(under) = under.and_then(|under| reference(game, under)) {
+            block.covered = Some(under);
+            let path = &made_blocks[name];
+            std::fs::write(root.join(path), project_files::block_text(&block))
+                .with_context(|| format!("saving {path}"))?;
+            if let Some(guid) = game.content.db().guid_of(path) {
+                game.content.forget_block(guid);
+            }
+        }
+    }
     // Each biome naming its blocks by their GUIDs: one of its name there already is listed as it is.
     let mut paths = Vec::new();
     let made = made(&mut |name| {

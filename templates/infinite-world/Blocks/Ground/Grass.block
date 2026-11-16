@@ -3,6 +3,7 @@ color = [0.33, 0.52, 0.2]
 overlap = 3
 hardness = 0.6
 tool = "284cbc44b2e6327961bfc5c175be784e"
+covered = "d0a80bdd0dffbaa75ce66751c6b9b5a5"
 
 [[drops]]
 item = "bdc14b91a4f4554c32198f895c88e15d"

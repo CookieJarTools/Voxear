@@ -26,6 +26,11 @@
 //! ```
 //!
 //! ```toml
+//! color = [0.33, 0.52, 0.2]
+//! covered = "Blocks/Dirt.block"  # what it shows as while a block lies on it: grass is earth under a block
+//! ```
+//!
+//! ```toml
 //! color = [0.04, 0.46, 0.33]  # the water's own colour
 //! liquid = "water"            # see-through, and things float in it
 //! ```
@@ -90,6 +95,13 @@ pub struct BlockDef {
     /// over that block's edge (see `mesh`). 0 keeps to itself.
     #[serde(skip_serializing_if = "is_no_overlap")]
     pub overlap: u8,
+    /// The block it shows as while a block covers its top, a reference to
+    /// a `.block` of the same shape: dirt, for grass, which is grass only
+    /// where nothing lies on it. Worked out from the block over it as its
+    /// world is drawn, never kept (see `blocks::covers_below`); none
+    /// shows as itself always.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub covered: Option<String>,
     /// Which liquid it is, where it is one.
     #[serde(skip_serializing_if = "Liquid::is_none")]
     pub liquid: Liquid,
@@ -483,6 +495,7 @@ impl Default for BlockDef {
             top: None,
             bottom: None,
             overlap: 0,
+            covered: None,
             liquid: Liquid::None,
             sways: false,
             shape: BlockShape::Cube,
@@ -560,7 +573,7 @@ impl BlockDef {
     /// Whether it is drawn as `other` is, whatever their rules.
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
-        let shape = |block: &Self| (block.liquid, block.overlap, block.shape);
+        let shape = |block: &Self| (block.liquid, block.overlap, block.shape, block.covered.clone());
         look(self) == look(other) && shape(self) == shape(other) && self.part_look() == other.part_look()
     }
 
@@ -641,6 +654,11 @@ mod tests {
         BlockDef { overlap: 2, ..water.clone() }.fill(&mut kind);
         assert_eq!(kind.overlap, 0);
         assert_eq!(BlockDef::from_kind(&kind), water);
+        // A block that shows as another while covered names it; one that does not says nothing of it.
+        let covered = BlockDef { covered: Some("Blocks/Dirt.block".into()), ..grass.clone() };
+        assert!(covered.to_text().contains("covered = \"Blocks/Dirt.block\"") && !grass.to_text().contains("covered"));
+        assert_eq!(BlockDef::parse(&covered.to_text()).unwrap(), covered);
+        assert!(!covered.looks_like(&grass), "it is drawn otherwise");
     }
 
     #[test]

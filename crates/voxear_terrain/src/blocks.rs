@@ -89,6 +89,10 @@ pub struct BlockFaces {
     /// How far up the order of blocks that meet it lies: its picture creeps
     /// over the edge of a block beside it with a lower one.
     pub overlap: u8,
+    /// The block it is drawn as while a block covers its top (see
+    /// [`covers_below`]), by its number: grass shows as earth under a
+    /// block. `AIR` for itself always.
+    pub covered: BlockId,
     pub shape: block::BlockShape,
     pub color: [u8; 3],
     /// Its placed state, as a byte (see `shape::BlockState`): each state of
@@ -135,7 +139,7 @@ impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
         let (water, see_through, sways, shape) = (false, false, false, block::BlockShape::Cube);
-        let (connects, mixes, overlap) = (0, 0, 0);
+        let (connects, mixes, overlap, covered) = (0, 0, 0, AIR);
         let (state, family, motion, covers, part, custom, rest) = (0, 0, 0, 0, 0, None, [0; 2]);
         let (travel, press) = (0, 0);
         Self {
@@ -148,6 +152,7 @@ impl BlockFaces {
             connects,
             mixes,
             overlap,
+            covered,
             shape,
             color: [0; 3],
             state,
@@ -270,6 +275,35 @@ pub fn connects(faces: &[BlockFaces], block: BlockId) -> u8 {
 /// through. A face against such a block is never seen, and is not made.
 pub fn hides(faces: &[BlockFaces], block: BlockId) -> bool {
     is_ground(faces, block) && !is_see_through(faces, block) && !is_part(faces, block)
+}
+
+/// The bit of a block's sides (see [`covers`]) that is its underside.
+const UNDERSIDE: u8 = 1 << 3;
+
+/// Whether block `block` covers the top of the block under it, so a block
+/// that shows as another while covered (see [`BlockFaces::covered`]) does:
+/// a whole block that hides, a block of parts whose underside is covered
+/// whole (a slab lying low, a stair the right way up, a log), and water.
+/// Air does not, nor what light and rain come through: leaves, glass,
+/// vines, plants, a slab lying high, a fence.
+pub fn covers_below(faces: &[BlockFaces], block: BlockId) -> bool {
+    is_water(faces, block) || !is_bushy(faces, block) && covers(faces, block) & UNDERSIDE != 0
+}
+
+/// What block `block` is drawn as with `above` over it: the block it shows
+/// as while covered where `above` covers it (see [`covers_below`]), else
+/// itself.
+pub fn shown_as(faces: &[BlockFaces], block: BlockId, above: BlockId) -> BlockId {
+    match faces.get(usize::from(block)).map_or(AIR, |kind| kind.covered) {
+        AIR => block,
+        covered if covers_below(faces, above) => covered,
+        _ => block,
+    }
+}
+
+/// Whether any of `faces` shows as another block while covered.
+pub fn any_covered(faces: &[BlockFaces]) -> bool {
+    faces.iter().any(|kind| kind.covered != AIR)
 }
 
 /// Every block of a world, by chunk: chunks with no block in them are not
@@ -665,6 +699,17 @@ impl BlockWorld {
         (block, self.blocks.get(block))
     }
 
+    /// The block at `at`, in blocks from the world's corner, as it is
+    /// drawn: the block it shows as while covered where a block covers it
+    /// (see [`BlockFaces::covered`]), as grass under a block shows as earth.
+    pub fn shown(&self, at: [i32; 3]) -> BlockId {
+        let block = self.blocks.get(at);
+        match self.faces.get(usize::from(block)).is_some_and(|kind| kind.covered != AIR) {
+            true => shown_as(&self.faces, block, self.blocks.get([at[0], at[1] + 1, at[2]])),
+            false => block,
+        }
+    }
+
     /// How deep under its water `at` is, a point in metres from its corner:
     /// where `at` is in its water, or over it within `reach` metres of air,
     /// how far the top of the water in its column is above it, in metres,
@@ -770,6 +815,9 @@ impl BlockWorld {
         // How far into a chunk from either side a block is in the next chunk's padded blocks.
         let (first, last) = if self.smooth { (smooth::REACH_AFTER, smooth::REACH_BELOW) } else { (0, CHUNK - 1) };
         let floor = self.floor.unwrap_or(i32::MIN);
+        // A block that shows as another while covered is drawn by what is over it: a change reaches the block
+        // under it too.
+        let covering = !self.smooth && any_covered(&self.faces);
         for (at, block, fill) in changes {
             if at[1] <= floor || blocks.get(at) == block && blocks.fill(at) == fill {
                 continue;
@@ -779,19 +827,22 @@ impl BlockWorld {
             if wet {
                 flowing.extend(flow::reached(at));
             }
-            // A block on a chunk's side is in the next chunk's padded blocks too.
-            let (key, local) = BlockMap::chunk_of(at);
-            let near = |axis: usize| -> Vec<i32> {
-                match local[axis] {
-                    l if l <= first => vec![key[axis] - 1, key[axis]],
-                    l if l >= last => vec![key[axis], key[axis] + 1],
-                    _ => vec![key[axis]],
-                }
-            };
-            for x in near(0) {
-                for y in near(1) {
-                    for z in near(2) {
-                        reached.push([x, y, z]);
+            let under = [at[0], at[1] - 1, at[2]];
+            for at in std::iter::once(at).chain(covering.then_some(under)) {
+                // A block on a chunk's side is in the next chunk's padded blocks too.
+                let (key, local) = BlockMap::chunk_of(at);
+                let near = |axis: usize| -> Vec<i32> {
+                    match local[axis] {
+                        l if l <= first => vec![key[axis] - 1, key[axis]],
+                        l if l >= last => vec![key[axis], key[axis] + 1],
+                        _ => vec![key[axis]],
+                    }
+                };
+                for x in near(0) {
+                    for y in near(1) {
+                        for z in near(2) {
+                            reached.push([x, y, z]);
+                        }
                     }
                 }
             }
@@ -850,7 +901,7 @@ impl BlockWorld {
     pub fn restyled(&self, faces: &[BlockFaces], smooth: bool) -> Self {
         // What a mesh keeps of a block's faces: its surfaces, and what it shows, moves and joins.
         let drawn = |faces: &BlockFaces| {
-            let joins = (faces.connects, faces.mixes, faces.overlap);
+            let joins = (faces.connects, faces.mixes, faces.overlap, faces.covered);
             let shape = (faces.water, faces.see_through, faces.sways, faces.shape, joins);
             let parts = (faces.state, faces.family, faces.motion, faces.covers, faces.part, faces.custom, faces.rest);
             let parts = (parts, faces.travel, faces.press);

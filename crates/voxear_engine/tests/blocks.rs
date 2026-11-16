@@ -124,6 +124,48 @@ fn a_block_worlds_blocks_are_drawn_as_their_files_say_and_a_block_saved_is_taken
 }
 
 #[test]
+fn grass_shows_as_the_block_it_names_while_covered_and_a_world_holding_grass_numbers_that_block() {
+    use voxear_engine::blocks::{BlockWorldAsset, block_json, block_number};
+    use voxear_terrain::blocks::{block::BlockDef, file::BlockKind};
+    let dir = project();
+    let write = |path: &str, block: BlockDef| std::fs::write(dir.path().join(path), block.to_text()).unwrap();
+    write("Blocks/Dirt.block", BlockDef::colored([0.45, 0.32, 0.2]));
+    write("Blocks/Mud.block", BlockDef::colored([0.33, 0.25, 0.17]));
+    let covered = |under: &str, color| BlockDef { covered: Some(under.into()), ..BlockDef::colored(color) };
+    write("Blocks/Grass.block", covered("Blocks/Dirt.block", [0.2, 0.6, 0.1]));
+    write("Blocks/Moss.block", covered("Blocks/Mud.block", [0.24, 0.4, 0.17]));
+    // A field of grass three deep over stone, in a world that holds no dirt.
+    let mut file = BlockFile::default();
+    file.blocks[0] = BlockKind::of("Blocks/Grass.block");
+    (file.ground.size, file.ground.height, file.ground.under, file.ground.under_depth) = ([32, 32], 6, 1, 2);
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+    };
+    // The dirt is numbered after the world's three blocks as it loads, and the grass shows as it while covered.
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let dirt = game.content.db().guid_of("Blocks/Dirt.block").unwrap();
+    assert_eq!((asset.file.blocks.len(), asset.drawn.guid(4)), (4, Some(dirt)));
+    let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+    assert_eq!((blocks.faces[1].covered, blocks.faces[4].covered), (4, 0));
+    assert_eq!([5, 4, 3, 2].map(|y| blocks.blocks.get([0, y, 0])), [1, 1, 1, 3], "kept as grass");
+    assert_eq!([5, 4, 3, 2].map(|y| blocks.shown([0, y, 0])), [1, 4, 4, 3], "drawn as grass over dirt");
+    // Scripts read which block it shows as covered.
+    let said: serde_json::Value =
+        serde_json::from_str(&block_json(&mut game.content, "Blocks/Grass.block").unwrap()).unwrap();
+    assert_eq!(said["covered"], "Blocks/Dirt.block");
+    // A block the world comes to hold numbers the block it shows as covered after it.
+    let moss = block_number(&mut game.engine.world, &mut game.content, field, "Blocks/Moss.block", true).unwrap();
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+    let mud = game.content.db().guid_of("Blocks/Mud.block").unwrap();
+    assert_eq!((moss, asset.drawn.guid(moss + 1)), (5, Some(mud)));
+    assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().faces[usize::from(moss)].covered, moss + 1);
+}
+
+#[test]
 fn a_world_holds_any_block_of_the_project_numbers_each_once_and_says_once_that_it_is_full() {
     use voxear_engine::blocks::{BlockWorldAsset, block_number, blocks_numbered_since, every_block};
     let dir = project();

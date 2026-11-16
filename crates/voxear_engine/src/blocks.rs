@@ -1212,6 +1212,15 @@ pub fn stream(world: &mut World, content: &mut Content) {
     world.insert_resource(voxear_render::FarHaze(furthest));
     // The far sides of the Portals near enough to show them are made too, less far.
     let exits = crate::portals::exits(world);
+    // How high the game's camera sees, which how large far blocks show depends on.
+    let fov = world
+        .query_ref::<(voxear_ecs::Entity, &voxear_render::Camera)>()
+        .without::<voxear_scene::EditorOnly>()
+        .without::<Destroying>()
+        .into_iter()
+        .min_by_key(|(entity, _)| entity.index())
+        .map_or(60.0f32, |(_, camera)| camera.fov_y_degrees)
+        .to_radians();
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
@@ -1228,11 +1237,18 @@ pub fn stream(world: &mut World, content: &mut Content) {
         streamer.at_once = budget.columns as usize;
         let near = budget.near(far.distance);
         let distances = (near, budget.far(far.far, near));
-        let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1 }];
+        // Its rings pushed out until their blocks show no larger than the budget says, its own drawn on past them;
+        // a world drawn smooth keeps its rings where they are.
+        let pushed = match asset.file.smooth {
+            true => 1.0,
+            false => budget.far_pushed_for(near, asset.file.block_size, fov),
+        };
+        let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1, pushed }];
         from.extend(exits.iter().map(|exit| StreamFrom {
             at: [exit.at.x - corner.x, exit.at.z - corner.z],
             distance: exit.distance.min(distances.0),
             far: distances.1,
+            pushed: 1.0,
         }));
         if streamer.update_from(&mut blocks, &mut asset.base, &mut asset.pending, making, &from) {
             world.insert(entity, blocks);

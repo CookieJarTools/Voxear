@@ -227,7 +227,8 @@ const QUADS_AT: u64 = FADES_AT + SLOTS as u64 * 8;
 /// its own column is, never where it is not.
 fn fade_times(fades: &RingFades, key: [i32; 4]) -> [f32; 2] {
     let [level, x, _, z] = key;
-    let came = fades.covered.get(&[level + 1, x >> 1, z >> 1]).copied().unwrap_or(0.0);
+    // The world's own blocks drawn past where they are made, at level -1, under the first coarser ring as its own.
+    let came = fades.covered.get(&[level.max(0) + 1, x >> 1, z >> 1]).copied().unwrap_or(0.0);
     let went = fades.covered.get(&[level, x, z]).copied().unwrap_or(f32::MAX);
     [came, went]
 }
@@ -887,7 +888,8 @@ impl Pool {
             };
             let (quads, cut) = arranged(mesh, slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
-            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
+            // The world's own blocks drawn past where they are made, at level -1, drawn as its own are.
+            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0].max(0)]), u64::from(slot) * 16);
             stage(bytemuck::cast_slice(&fade_times(&world.fades, key)), FADES_AT + u64::from(slot) * 8);
             // A coarser level's chunk is as many times larger as its blocks are; drawn smooth, its surface
             // reaches up to two blocks before it and past it.
@@ -954,7 +956,7 @@ impl Pool {
             let quads;
             (quads, held.cut) = arranged(&held.mesh, held.slot, &self.cut);
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
-            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
+            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0].max(0)]), u64::from(held.slot) * 16);
             stage(bytemuck::cast_slice(&fade_times(&self.faded, *key)), FADES_AT + u64::from(held.slot) * 8);
         }
         self.draws = None;

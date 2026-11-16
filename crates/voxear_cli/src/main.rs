@@ -382,6 +382,10 @@ enum Commands {
         /// between ticks.
         #[arg(long, value_name = "HZ", default_value_t = 60.0)]
         rate: f32,
+        /// Take each frame no quicker than `--rate` says, as on a display that fast, so what is made in the
+        /// background, as worlds round a flying camera, keeps the pace it would in play.
+        #[arg(long)]
+        real_time: bool,
         /// Look through the camera on the Obj with this name, rather than the first camera found.
         #[arg(long, value_name = "OBJ")]
         camera: Option<String>,
@@ -554,6 +558,7 @@ fn main() -> Result<()> {
             quality,
             every,
             rate,
+            real_time,
             software_rays,
             camera,
             level,
@@ -618,6 +623,7 @@ fn main() -> Result<()> {
                 level,
                 profile,
                 fly,
+                real_time,
                 quality: world_quality.and_then(|quality| {
                     use voxear_terrain::WorldQuality;
                     WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
@@ -753,6 +759,8 @@ struct Shot {
     profile: bool,
     /// How fast the camera moves, in metres a second.
     fly: Option<voxear_core::math::Vec3>,
+    /// Each frame taken no quicker than `delta`.
+    real_time: bool,
     /// The preset worlds of blocks spend as, in place of the project's.
     quality: Option<voxear_terrain::WorldQuality>,
 }
@@ -904,6 +912,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         level,
         profile,
         fly,
+        real_time,
         quality,
     } = shot;
     let mut project = Project::open(path)?;
@@ -949,6 +958,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         looking_through.or_else(first).map(|camera| (camera, velocity))
     });
     for frame in 1..=frames {
+        let started = std::time::Instant::now();
         if let Some((camera, velocity)) = flying
             && let Some(transform) = game.engine.world.get_mut::<Transform>(camera)
         {
@@ -988,6 +998,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         if every.is_some_and(|every| every > 0 && frame % every == 0) {
             let (width, height, pixels) = renderer.read_pixels()?;
             write_png(&sequence_path(&out, frame), width, height, &pixels)?;
+        }
+        if real_time {
+            std::thread::sleep(std::time::Duration::from_secs_f32(delta).saturating_sub(started.elapsed()));
         }
     }
 

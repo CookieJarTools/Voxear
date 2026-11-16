@@ -1628,9 +1628,10 @@ impl Editor {
             "near_detail",
             "far_detail",
             "plant_detail",
+            "far_block_pixels",
         ]
         .map(number);
-        let mut given = [None; 8];
+        let mut given = [None; 9];
         for (at, read) in numbers.into_iter().enumerate() {
             given[at] = read?;
         }
@@ -1643,7 +1644,7 @@ impl Editor {
             budget = preset.budget().unwrap_or(WorldBudget { quality: WorldQuality::Custom, ..budget });
         }
         if given.iter().any(Option::is_some) {
-            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail] = given;
+            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail, far_block_pixels] = given;
             let whole = |n: Option<f32>, was: u32| n.map_or(was, |n| n.round() as u32);
             budget = WorldBudget {
                 quality: WorldQuality::Custom,
@@ -1655,6 +1656,7 @@ impl Editor {
                 near_detail: near_detail.unwrap_or(budget.near_detail),
                 far_detail: far_detail.unwrap_or(budget.far_detail),
                 plant_detail: plant_detail.unwrap_or(budget.plant_detail),
+                far_block_pixels: far_block_pixels.unwrap_or(budget.far_block_pixels),
             };
         }
         if quality.is_some() || given.iter().any(Option::is_some) {

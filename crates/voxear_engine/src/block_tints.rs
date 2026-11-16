@@ -7,13 +7,17 @@
 //! world is seen from, so it reaches a little over 500 blocks each way;
 //! and a second square as many tiles of points `TINT_FAR` times further
 //! apart, for the far view, reaching some 8 km each way.
-//! Tiles are worked out on the worker threads, the nearest first and a few
-//! a frame, and kept while they stay in reach. One not worked out yet is
+//! Tiles are worked out on the terrain's background threads, the nearest
+//! first and a few at once, taken in as they are done and kept while they
+//! stay in reach; the frame never waits for them. One not worked out yet is
 //! white, as an untinted world is, until it is. A world whose biomes have
 //! no tints, or none at all, has no `BlockTints`, unless plants grow on it
 //! that colour its grass far off (see `grown_plants::covers`).
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use voxear_ecs::{Entity, World};
 use voxear_render::BlockTints;
@@ -29,8 +33,8 @@ use crate::{blocks::BlockWorldAsset, content::Content};
 /// reach.
 const REACH: i32 = 8;
 
-/// How many tiles are worked out in a frame at most.
-const TILES_A_FRAME: usize = 24;
+/// How many tiles are worked out at once at most, each world's.
+const TILES_AT_ONCE: usize = 24;
 
 /// A white tint, as the lattice packs one: each part 1, out of 2.
 const WHITE: u32 = 0x0080_8080;
@@ -42,6 +46,9 @@ const WHITE: u32 = 0x0080_8080;
 struct Kept {
     from: (usize, usize, [u32; 2], u32, u64),
     windows: [Window; 2],
+    /// The tiles worked out in the background and not yet taken in: by
+    /// window, tile and its tints.
+    done: Arc<Mutex<Vec<(usize, [i32; 2], Vec<u32>)>>>,
 }
 
 /// A square of tint tiles round where a world is seen from: the tiles
@@ -50,6 +57,8 @@ struct Kept {
 #[derive(Default)]
 struct Window {
     tiles: HashMap<[i32; 2], Arc<Vec<u32>>>,
+    /// The tiles being worked out.
+    asked: HashSet<[i32; 2]>,
     shown: Option<([i32; 2], usize)>,
 }
 
@@ -98,7 +107,6 @@ pub fn update(world: &mut World, content: &mut Content) {
     let viewer = crate::terrain::viewer(world);
     let mut kept = world.remove_resource::<TintTiles>().unwrap_or_default();
     kept.0.retain(|entity, _| worlds.iter().any(|(tinted, ..)| tinted == entity));
-    let mut left = TILES_A_FRAME;
     for (entity, corner, (covers, cover, covered)) in worlds {
         let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
         let Some(generator) = crate::blocks::generator(content, &asset.file) else { continue };
@@ -108,14 +116,29 @@ pub fn update(world: &mut World, content: &mut Content) {
         let stamp = voxear_terrain::layers::stable_hash(format!("{covers:?} {cover:?} {covered:?}").as_bytes());
         let from =
             (placed, Arc::as_ptr(&generator) as usize, generate.position.map(f32::to_bits), size.to_bits(), stamp);
-        let kept = kept.0.entry(entity).or_insert_with(|| Kept { from, windows: Default::default() });
+        let made = || Kept { from, windows: Default::default(), done: Default::default() };
+        let kept = kept.0.entry(entity).or_insert_with(made);
         if kept.from != from {
-            *kept = Kept { from, windows: Default::default() };
+            // What is still being worked out for the old is let go when it is done.
+            *kept = made();
         }
+        let done = std::mem::take(&mut *kept.done.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        let mut came = false;
+        for (window, tile, tints) in done {
+            let window = &mut kept.windows[window];
+            window.asked.remove(&tile);
+            window.tiles.insert(tile, Arc::new(tints));
+            came = true;
+        }
+        // Handed to the background threads as they are asked for tiles, the world's way of generating copied once.
+        let (mut shared, covers) = (None, Arc::new(covers));
+        let mut left = TILES_AT_ONCE.saturating_sub(kept.windows.iter().map(|window| window.asked.len()).sum());
         let local = viewer.map_or(voxear_core::math::Vec3::ZERO, |viewer| viewer - corner);
-        let mut changed = world.get::<BlockTints>(entity).is_none();
+        let mut changed = came || world.get::<BlockTints>(entity).is_none();
         let mut seen_from = [[0; 2]; 2];
-        for ((window, scale), seen_from) in kept.windows.iter_mut().zip([1, TINT_FAR]).zip(&mut seen_from) {
+        for (number, ((window, scale), seen_from)) in
+            kept.windows.iter_mut().zip([1, TINT_FAR]).zip(&mut seen_from).enumerate()
+        {
             // As the near tints' tiles are, of blocks as many times larger: points as many times further apart.
             let size = size * scale as f32;
             let tile_side = (TINT_TILE * TINT_STEP) as f32 * size;
@@ -124,15 +147,19 @@ pub fn update(world: &mut World, content: &mut Content) {
             window.tiles.retain(|tile, _| within(tile));
             let mut missing: Vec<[i32; 2]> = (-REACH..REACH)
                 .flat_map(|dz| (-REACH..REACH).map(move |dx| [seen[0] + dx, seen[1] + dz]))
-                .filter(|tile| !window.tiles.contains_key(tile))
+                .filter(|tile| !window.tiles.contains_key(tile) && !window.asked.contains(tile))
                 .collect();
             missing.sort_by_key(|tile| (tile[0] - seen[0]).pow(2) + (tile[1] - seen[1]).pow(2));
             missing.truncate(left);
             left -= missing.len();
-            let worked =
-                voxear_terrain::workers::each(&missing, |&tile| tint_tile(generate, &generator, size, tile, &covers));
-            for (tile, tints) in missing.into_iter().zip(worked) {
-                window.tiles.insert(tile, Arc::new(tints.unwrap_or_default()));
+            for tile in missing {
+                window.asked.insert(tile);
+                let generate = shared.get_or_insert_with(|| Arc::new(generate.clone())).clone();
+                let (generator, covers, done) = (generator.clone(), covers.clone(), kept.done.clone());
+                voxear_terrain::workers::spawn(move || {
+                    let tints = tint_tile(&generate, &generator, size, tile, &covers).unwrap_or_default();
+                    done.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((number, tile, tints));
+                });
             }
             changed |= window.shown != Some((seen, window.tiles.len()));
             window.shown = Some((seen, window.tiles.len()));

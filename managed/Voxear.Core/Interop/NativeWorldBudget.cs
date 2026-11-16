@@ -16,6 +16,7 @@ internal static unsafe class NativeWorldBudget
 	public const int FarDetail = 7;
 	public const int PlantDetail = 8;
 	public const int KeptForMachine = 9;
+	public const int FarBlockPixels = 10;
 
 	public static float Get(int which)
 	{

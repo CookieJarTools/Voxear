@@ -63,6 +63,21 @@ const MOST_MAKING: usize = 24;
 /// large, 16 km off with metre blocks at four columns a ring.
 pub const MOST_LEVELS: u32 = 8;
 
+/// How far past the rest a coarse column whose ground finer columns are
+/// kept over is counted, in metres, when what to make first is chosen: it
+/// shows only where those are not made yet, and is made last.
+const COVERED: f32 = 1.0e6;
+
+/// How far ahead, in seconds, where the world is seen from is taken to be
+/// when what to make first is chosen; and how far that may be at most, in
+/// near columns.
+const LEAD_SECONDS: f32 = 1.0;
+const LEAD_COLUMNS: f32 = 4.0;
+
+/// One in how many of the columns made at once is kept for the rings
+/// whatever is nearer, so the horizon keeps up with a camera flying on.
+const RINGS_ALWAYS: usize = 12;
+
 /// The first level made as the far view (see `generate::far`): from the
 /// generator's heights alone, kept on disk where the world has a folder.
 pub const FAR_FROM: u32 = 3;
@@ -227,11 +242,39 @@ impl Window {
 /// how far, near and coarse. Only the first place's `far` counts: every
 /// place has as many rings as it, so that all their rings lie on the same
 /// columns and none overlaps another's by part of a column.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// And, for the first place, how many times as far as `distance` its first
+/// coarser ring begins, `pushed`, 1 or more: so far that the coarser rings'
+/// blocks show no larger than they should from there (see
+/// `WorldBudget::far_block_pixels`), each ring after it twice as far as the
+/// one before. The world's own blocks are drawn on past where they are
+/// made, out to where the first coarser ring begins, made as the coarse
+/// rings are, for drawing alone: none stood on, built on or grown on.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StreamFrom {
     pub at: [f32; 2],
     pub distance: f32,
     pub far: f32,
+    pub pushed: f32,
+}
+
+/// The level a column of the world's own blocks drawn past where they are
+/// made is asked for and made at: blocks as large as the world's own, its
+/// faces made alone, as a coarse column's are (see [`StreamFrom::pushed`]).
+/// In the world's faces past its own (`BlockWorld::far`) its chunks are
+/// kept at level -1.
+const FINE: u32 = u32::MAX;
+
+/// The most times as far as its own blocks reach a world's first coarser
+/// ring is pushed out.
+pub const MOST_PUSHED: f32 = 8.0;
+
+/// How many columns out the first coarser ring begins, for a world whose own
+/// blocks reach `reach` columns and whose rings are pushed out `pushed`
+/// times as far (see [`StreamFrom::pushed`]).
+fn pushed_reach(reach: i32, pushed: f32) -> i32 {
+    let pushed = if pushed.is_finite() { pushed.clamp(1.0, MOST_PUSHED) } else { 1.0 };
+    ((reach as f32 * pushed).ceil() as i32).max(reach)
 }
 
 /// The chunk columns of one level kept: the window round each place the
@@ -265,13 +308,16 @@ impl Area {
 /// for every place as the first has. Each window's sides lie on its next
 /// level's columns, so a coarse column is wholly in or out of each finer
 /// window.
-fn areas(file: &BlockFile, from: &[StreamFrom]) -> (Vec<Area>, Vec<Vec<Window>>) {
-    let levels = from.first().map_or(1, |first| windows(file, first.distance, first.far, first.at).len());
+fn areas(file: &BlockFile, from: &[StreamFrom]) -> (Vec<Area>, Vec<Vec<Window>>, Option<Window>) {
+    let first = from.first().map(|first| windows_out(file, (first.distance, first.far), first.at, first.pushed));
+    let levels = first.as_ref().map_or(1, |(windows, _)| windows.len());
+    let fine = first.and_then(|(_, fine)| fine);
     let mut areas: Vec<Area> = vec![Area::default(); levels];
     let mut places = Vec::with_capacity(from.len());
-    for place in from {
-        // Far enough for any number of levels, then as many as the first place has.
-        let mut own = windows(file, place.distance, f32::MAX, place.at);
+    for (number, place) in from.iter().enumerate() {
+        // Far enough for any number of levels, then as many as the first place has; its own pushed out as it says.
+        let pushed = if number == 0 { place.pushed } else { 1.0 };
+        let mut own = windows_out(file, (place.distance, f32::MAX), place.at, pushed).0;
         own.truncate(levels);
         for (level, window) in own.iter().enumerate() {
             if !areas[level].0.contains(window) {
@@ -280,7 +326,7 @@ fn areas(file: &BlockFile, from: &[StreamFrom]) -> (Vec<Area>, Vec<Vec<Window>>)
         }
         places.push(own);
     }
-    (areas, places)
+    (areas, places, fine)
 }
 
 /// The nine chunk columns round `at`, its own among them.
@@ -293,23 +339,41 @@ fn round([x, z]: [i32; 2]) -> impl Iterator<Item = [i32; 2]> {
 /// coarser level twice as far, out to `far`, every window's sides on its
 /// next level's columns, so a coarse column is wholly in or out of the
 /// window inside it.
+#[cfg(test)]
 fn windows(file: &BlockFile, distance: f32, far: f32, camera: [f32; 2]) -> Vec<Window> {
+    windows_out(file, (distance, far), camera, 1.0).0
+}
+
+/// As [`windows`], the coarser levels' windows `pushed` times as many of
+/// their columns across (see [`StreamFrom::pushed`]); and the window of the
+/// world's own blocks drawn past where they are made, as far as the first
+/// coarser level's begins, where that is further than they are made.
+fn windows_out(
+    file: &BlockFile,
+    (distance, far): (f32, f32),
+    camera: [f32; 2],
+    pushed: f32,
+) -> (Vec<Window>, Option<Window>) {
     let column = CHUNK as f32 * file.block_size.max(0.01);
     let reach = (distance / column).ceil().max(1.0) as i32;
-    let mut windows = Vec::new();
-    let mut level = 0u32;
-    loop {
+    let outer = pushed_reach(reach, pushed);
+    let window = |level: u32, reach: i32| {
         let size = column * (1u32 << level) as f32;
         let at = camera.map(|v| (v / size).floor() as i32);
         // From an even column to an even one, so the next level's columns hold it whole.
         let low = at.map(|v| (v - reach).div_euclid(2) * 2);
         let high = at.map(|v| (v + reach + 2).div_euclid(2) * 2);
-        windows.push(Window { low, high });
-        if size * reach as f32 >= far || level + 1 >= MOST_LEVELS {
-            return windows;
-        }
+        Window { low, high }
+    };
+    let mut windows = vec![window(0, reach)];
+    let fine = (outer > reach).then(|| window(0, outer));
+    // A level more while the last falls short of `far`, the world's own blocks reaching as far as they are drawn.
+    let mut level = 0u32;
+    while column * (1u32 << level) as f32 * (outer as f32) < far && level + 1 < MOST_LEVELS {
         level += 1;
+        windows.push(window(level, outer));
     }
+    (windows, fine)
 }
 
 /// Keeps a world of blocks without end's chunks round the camera.
@@ -319,6 +383,11 @@ pub struct BlockStreamer {
     latest: Arc<AtomicU64>,
     /// The coarse columns made, by level and place: their chunks' faces.
     coarse: CoordMap<(u32, [i32; 2]), Vec<([i32; 3], Arc<ChunkMesh>)>>,
+    /// The columns of the world's own blocks made for drawing past where
+    /// they are made, by place, and the window they are kept in (see
+    /// [`StreamFrom::pushed`]).
+    fine: CoordMap<[i32; 2], Vec<([i32; 3], Arc<ChunkMesh>)>>,
+    fine_window: Option<Window>,
     /// The blocks of a smooth world's coarse columns, by level and place.
     coarse_blocks: CoordMap<(u32, [i32; 2]), ColumnChunks>,
     /// The smooth coarse columns whose faces are being made.
@@ -359,6 +428,14 @@ pub struct BlockStreamer {
     far_from: (u64, Option<Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>>),
     waiting: usize,
     making_now: Arc<AtomicUsize>,
+    /// How many of those being made are the far view's tiles, and how many
+    /// are the rings' columns, the far view's among them.
+    far_now: Arc<AtomicUsize>,
+    rings_now: Arc<AtomicUsize>,
+    /// Where the first place the world is seen from was last, and when; and
+    /// how fast it moves, in metres a second along x and z.
+    moving: Option<([f32; 2], std::time::Instant)>,
+    velocity: [f32; 2],
     /// The folder the far view's tiles of what it makes are kept in.
     far_tiles: Option<std::path::PathBuf>,
     /// How many columns it makes at once, at most: their blocks or their
@@ -376,6 +453,8 @@ impl Default for BlockStreamer {
             number: 0,
             latest: Arc::new(AtomicU64::new(0)),
             coarse: CoordMap::default(),
+            fine: CoordMap::default(),
+            fine_window: None,
             coarse_blocks: CoordMap::default(),
             joining: CoordSet::default(),
             near: CoordSet::default(),
@@ -394,6 +473,10 @@ impl Default for BlockStreamer {
             far_from: (0, None),
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
+            far_now: Arc::new(AtomicUsize::new(0)),
+            rings_now: Arc::new(AtomicUsize::new(0)),
+            moving: None,
+            velocity: [0.0; 2],
             far_tiles: None,
             at_once: MOST_MAKING,
             send,
@@ -439,7 +522,7 @@ impl BlockStreamer {
         (distance, far): (f32, f32),
         camera: [f32; 2],
     ) -> bool {
-        self.update_from(world, base, pending, making, &[StreamFrom { at: camera, distance, far }])
+        self.update_from(world, base, pending, making, &[StreamFrom { at: camera, distance, far, pushed: 1.0 }])
     }
 
     /// As [`update`](Self::update), with chunks kept round every place in
@@ -486,6 +569,7 @@ impl BlockStreamer {
             (self.near, self.drawn, self.meshing) = Default::default();
             (self.coarse, self.asked, self.stale) = Default::default();
             self.covered_since.clear();
+            self.fine.clear();
             (self.coarse_blocks, self.joining) = Default::default();
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.far_tiles = making.far_tiles();
@@ -502,14 +586,15 @@ impl BlockStreamer {
             self.making = Some(Arc::new(making));
         }
         let making = self.making.clone().expect("kept above");
-        let (windows, by_place) = areas(&making.file, from);
+        let (windows, by_place, fine) = areas(&making.file, from);
         // Near columns are drawn within the first level's windows, their blocks made a column further.
         let (shown, made) = (windows[0].clone(), windows[0].grown());
         changed |= self.take_finished(world, (base, pending), (&shown, &made));
         changed |= self.let_go(world, (base, pending), (&shown, &made));
         self.coarse.retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.contains(*at)));
-        let coarse = &self.coarse;
-        self.coarse_made.retain(|key, _| coarse.contains_key(key));
+        self.fine.retain(|at, _| fine.is_some_and(|fine| fine.contains(*at)));
+        let (coarse, fines) = (&self.coarse, &self.fine);
+        self.coarse_made.retain(|key, _| coarse.contains_key(key) || key.0 == FINE && fines.contains_key(&key.1));
         self.coarse_blocks
             .retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.grown().contains(*at)));
         // Faces made since for columns not drawn, as where water flowed or a change reached, are not drawn: the
@@ -527,16 +612,18 @@ impl BlockStreamer {
         }
         // Asked again only where something came or went, or the camera moved, or there is still more to make and
         // room to make it: every thread busy, the far view would be looked over every frame for nothing.
-        let moved = self.windows.as_deref() != Some(&windows[..]);
+        let moved = self.windows.as_deref() != Some(&windows[..]) || self.fine_window != fine;
         let room = self.making_now.load(Ordering::Acquire) < self.at_once.max(1);
         if changed || moved || self.waiting > 0 && room || std::mem::take(&mut self.again) {
-            self.ask(world, &making, &windows, (from, pending));
+            let lead = self.lead(from.first(), &making);
+            self.ask(world, &making, (&windows, fine), (from, pending, lead));
         }
         // Again where columns came or went or the camera moved, and as the first fade under way is over.
         if changed || moved || self.fading && super::fade_clock() >= self.fade_over {
-            changed |= self.show_coarse(world, &by_place, from);
+            changed |= self.show_coarse(world, (&by_place, fine), from);
         }
         self.windows = Some(windows);
+        self.fine_window = fine;
         self.seen = Some(world.meshes.clone());
         changed
     }
@@ -565,6 +652,15 @@ impl BlockStreamer {
             match done {
                 Finished::Made { number, .. } | Finished::Meshed { number, .. } | Finished::Joined { number, .. }
                     if number != self.number => {}
+                Finished::Made { level: FINE, at, meshes, .. } => {
+                    // The world's own blocks drawn past where they are made, kept while their window holds them.
+                    self.asked.remove(&(FINE, at));
+                    let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
+                    self.made_count += 1;
+                    self.coarse_made.insert((FINE, at), self.made_count);
+                    self.fine.insert(at, meshes);
+                    changed = true;
+                }
                 Finished::Made { level: 0, at, chunks, .. } => {
                     self.asked.remove(&(0, at));
                     if !made.contains(at) || self.near.contains(&at) {
@@ -708,16 +804,46 @@ impl BlockStreamer {
         true
     }
 
+    /// Where the first place the world is seen from will be a little while
+    /// on, by how fast it has moved: what it flies towards is made first.
+    /// None while it keeps still.
+    fn lead(&mut self, first: Option<&StreamFrom>, making: &BlockMaking) -> Option<[f32; 2]> {
+        let first = first?;
+        let now = std::time::Instant::now();
+        if let Some((was, when)) = self.moving {
+            let seconds = now.duration_since(when).as_secs_f32();
+            if seconds > 0.0 {
+                // Eased towards how fast it moved since, over about a quarter of a second.
+                let share = (seconds * 4.0).min(1.0);
+                for axis in 0..2 {
+                    let speed = (first.at[axis] - was[axis]) / seconds;
+                    self.velocity[axis] += (speed - self.velocity[axis]) * share;
+                }
+            }
+        }
+        self.moving = Some((first.at, now));
+        let ahead = self.velocity.map(|v| v * LEAD_SECONDS);
+        let length = (ahead[0] * ahead[0] + ahead[1] * ahead[1]).sqrt();
+        let most = LEAD_COLUMNS * CHUNK as f32 * making.file.block_size.max(0.01);
+        (length > 1.0).then(|| {
+            let scale = (most / length).min(1.0);
+            [first.at[0] + ahead[0] * scale, first.at[1] + ahead[1] * scale]
+        })
+    }
+
     /// Asks the background threads for what is still to make, nearest
     /// first, as many as there is room for: the faces of near columns whose
     /// blocks and their neighbours' are made, the blocks of near columns,
-    /// and coarse columns.
+    /// and coarse columns. Nearest counts in metres, from where the world
+    /// is seen from or where the first place is heading, `lead`; each
+    /// coarser ring a little further off than it is, and a coarse column
+    /// whose ground finer columns are kept over after everything else.
     fn ask(
         &mut self,
         world: &BlockWorld,
         making: &Arc<BlockMaking>,
-        windows: &[Area],
-        (from, pending): (&[StreamFrom], &BlockEdits),
+        (windows, fine): (&[Area], Option<Window>),
+        (from, pending, lead): (&[StreamFrom], &BlockEdits, Option<[f32; 2]>),
     ) {
         voxear_core::profile_scope!("Ask");
         let (shown, made) = (windows[0].clone(), windows[0].grown());
@@ -727,21 +853,37 @@ impl BlockStreamer {
         let mut wanted: Vec<(Option<u32>, [i32; 2], i64)> = Vec::new();
         // And the smooth coarse columns whose faces to make, their blocks and those round them made.
         let mut joins: Vec<(u32, [i32; 2], i64)> = Vec::new();
+        let column = CHUNK as f32 * making.file.block_size.max(0.01);
+        let places: Vec<[f32; 2]> = from.iter().map(|place| place.at).chain(lead).collect();
         for (level, window) in windows.iter().enumerate() {
             let level = level as u32;
-            let size = CHUNK as f32 * making.file.block_size * (1u32 << level) as f32;
-            // How far a column is from the nearest place the world is seen from, in columns, squared.
-            let middles: Vec<[f32; 2]> = from.iter().map(|place| place.at.map(|v| v / size - 0.5)).collect();
+            let size = column * (1u32 << level) as f32;
+            // How far a column is from the nearest place, in metres, a ring further off for each level; and past all
+            // the rest where the finer level's windows hold the four columns over it.
+            let finer = level.checked_sub(1).and_then(|finer| windows.get(finer as usize));
+            // The first coarser ring's ground the world's own blocks drawn past where they are made lie over, too.
+            let fine_over = |child: [i32; 2]| level == 1 && fine.is_some_and(|fine| fine.contains(child));
             let away = |at: [i32; 2]| {
-                let from = |middle: &[f32; 2]| (at[0] as f32 - middle[0]).powi(2) + (at[1] as f32 - middle[1]).powi(2);
-                middles.iter().map(from).fold(f32::MAX, f32::min)
+                let from = |place: &[f32; 2]| {
+                    let off =
+                        |axis: usize| ((place[axis] - (at[axis] as f32 + 0.5) * size).abs() - size * 0.5).max(0.0);
+                    (off(0) * off(0) + off(1) * off(1)).sqrt()
+                };
+                let near = places.iter().map(from).fold(f32::MAX, f32::min);
+                let under = finer.is_some_and(|finer| {
+                    (0..4).all(|child| {
+                        let child = [at[0] * 2 + (child & 1), at[1] * 2 + (child >> 1)];
+                        finer.contains(child) || fine_over(child)
+                    })
+                });
+                (near + level as f32 * column * 2.0 + if under { COVERED } else { 0.0 }) as i64
             };
             if level == 0 {
                 for at in shown.columns() {
                     let ready = round(at).all(|column| self.near.contains(&column));
                     if ready && !self.drawn.contains(&at) && !self.meshing.contains(&at) {
                         // Before blocks as far away, as it is what shows.
-                        wanted.push((None, at, (away(at) * 16.0) as i64 - 2));
+                        wanted.push((None, at, away(at) - column as i64));
                     }
                 }
             }
@@ -750,7 +892,7 @@ impl BlockStreamer {
                     let key = (level, at);
                     let ready = round(at).all(|column| self.coarse_blocks.contains_key(&(level, column)));
                     if ready && !self.coarse.contains_key(&key) && !self.joining.contains(&key) {
-                        joins.push((level, at, (away(at) * 16.0) as i64 + i64::from(level) * 4 - 2));
+                        joins.push((level, at, away(at) - column as i64));
                     }
                 }
             }
@@ -774,7 +916,25 @@ impl BlockStreamer {
                 if done && !stale || self.asked.contains(&(level, at)) {
                     continue;
                 }
-                wanted.push((Some(level), at, (away(at) * 16.0) as i64 + i64::from(level) * 4));
+                wanted.push((Some(level), at, away(at)));
+            }
+        }
+        // The world's own blocks drawn past where they are made, round the first place, out to its first coarser
+        // ring: by how far off they are as near columns are, and so before coarse ones as far.
+        if let Some(fine) = fine {
+            let away = |at: [i32; 2]| {
+                let from = |place: &[f32; 2]| {
+                    let off =
+                        |axis: usize| ((place[axis] - (at[axis] as f32 + 0.5) * column).abs() - column * 0.5).max(0.0);
+                    (off(0) * off(0) + off(1) * off(1)).sqrt()
+                };
+                places.iter().map(from).fold(f32::MAX, f32::min) as i64
+            };
+            for at in fine.columns().filter(|at| !windows[0].contains(*at)) {
+                if self.fine.contains_key(&at) || self.asked.contains(&(FINE, at)) {
+                    continue;
+                }
+                wanted.push((Some(FINE), at, away(at)));
             }
         }
         wanted.sort_by_key(|(_, _, away)| *away);
@@ -782,7 +942,7 @@ impl BlockStreamer {
         let mut room = self.at_once.max(1).saturating_sub(self.making_now.load(Ordering::Acquire));
         // Faces first: they are what shows, and are quick beside blocks.
         let joined = joins.len().min(room);
-        self.waiting = wanted.len().saturating_sub(room - joined) + (joins.len() - joined);
+        self.waiting = wanted.len() + (joins.len() - joined);
         for (level, at, _) in joins.into_iter().take(joined) {
             self.making_now.fetch_add(1, Ordering::AcqRel);
             self.joining.insert((level, at));
@@ -811,7 +971,35 @@ impl BlockStreamer {
             });
         }
         room -= joined;
-        for (level, at, _) in wanted.into_iter().take(room) {
+        // Some of the rings are always being made, however much nearer there is to make, so the horizon keeps up
+        // with a camera flying on: the nearest of them first, as many as make a twelfth of those at once, none
+        // where so few are made at once that a twelfth is none.
+        let ring = |level: &Option<u32>| level.is_some_and(|level| level > 0 && level != FINE);
+        let short = (self.at_once / RINGS_ALWAYS).saturating_sub(self.rings_now.load(Ordering::Acquire));
+        let rings: Vec<usize> = (0..wanted.len()).filter(|&at| ring(&wanted[at].0)).take(short).collect();
+        let first: Vec<(Option<u32>, [i32; 2], i64)> = rings.iter().rev().map(|&at| wanted.remove(at)).collect();
+        wanted.splice(0..0, first.into_iter().rev());
+        // The far view's tiles take a while each: no more of them at once than leaves most threads to what is near.
+        let far_room = (self.at_once / 4).max(1);
+        for (level, at, _) in wanted {
+            let far = level.is_some_and(|level| level >= FAR_FROM && level != FINE);
+            if room == 0 {
+                break;
+            }
+            if far && self.far_now.load(Ordering::Acquire) >= far_room {
+                continue;
+            }
+            room -= 1;
+            self.waiting -= 1;
+            // Counted among the far view's tiles and the rings being made while it is.
+            let counts: Vec<Arc<AtomicUsize>> = [(far, &self.far_now), (ring(&level), &self.rings_now)]
+                .into_iter()
+                .filter(|(counted, _)| *counted)
+                .map(|(_, count)| count.clone())
+                .collect();
+            for count in &counts {
+                count.fetch_add(1, Ordering::AcqRel);
+            }
             self.making_now.fetch_add(1, Ordering::AcqRel);
             let (making, latest, making_now, send) =
                 (making.clone(), self.latest.clone(), self.making_now.clone(), self.send.clone());
@@ -839,7 +1027,9 @@ impl BlockStreamer {
             let far_tiles = self.far_tiles.clone();
             // What was built on the ground a coarse column covers, kept for chunks not near.
             let mut built = BlockEdits::default();
-            if level > 0 {
+            // Drawn alone, the world's own blocks past where they are made are made as a coarse column's are.
+            let (fine, level) = if level == FINE { (true, 0) } else { (false, level) };
+            if level > 0 || fine {
                 let under = |key: &[i32; 3]| [key[0] >> level, key[2] >> level] == at;
                 built.chunks.extend(pending.chunks.iter().filter(|(key, _)| under(key)).map(|(k, c)| (*k, c.clone())));
             }
@@ -865,7 +1055,7 @@ impl BlockStreamer {
                     raise(&mut chunks, &built, level, making.file.smooth);
                     // A coarse column's blocks of parts as cubes, or as air where they are too thin to see.
                     let any_part = making.faces.iter().any(|faces| faces.part & super::PART_DRAWN != 0);
-                    if level > 0 && any_part {
+                    if (level > 0 || fine) && any_part {
                         for (_, chunk) in &mut chunks {
                             if chunk.may_hold(|block| super::is_part(&making.faces, block)) {
                                 *chunk = chunk.remapped(|block| super::far_block(&making.faces, block));
@@ -873,7 +1063,7 @@ impl BlockStreamer {
                         }
                     }
                     // A coarse column's faces made here, alone: the columns beside it not made.
-                    let meshes = if level == 0 || making.file.smooth {
+                    let meshes = if level == 0 && !fine || making.file.smooth {
                         Vec::new()
                     } else {
                         let mut alone = BlockMap::default();
@@ -889,7 +1079,11 @@ impl BlockStreamer {
                             })
                             .collect()
                     };
+                    let level = if fine { FINE } else { level };
                     let _ = send.send(Finished::Made { number, level, at, chunks, meshes, built: stamp });
+                }
+                for count in counts {
+                    count.fetch_sub(1, Ordering::AcqRel);
                 }
                 making_now.fetch_sub(1, Ordering::AcqRel);
             });
@@ -901,10 +1095,17 @@ impl BlockStreamer {
     /// each place by its own windows, as the detail kept round another
     /// place lies under this one's coarser rings. The coarsest columns show
     /// from every place, wherever they are. True if what is drawn changed.
-    fn show_coarse(&mut self, world: &mut BlockWorld, by_place: &[Vec<Window>], from: &[StreamFrom]) -> bool {
+    fn show_coarse(
+        &mut self,
+        world: &mut BlockWorld,
+        (by_place, fine): (&[Vec<Window>], Option<Window>),
+        from: &[StreamFrom],
+    ) -> bool {
         voxear_core::profile_scope!("Coarse");
-        let drawn_fine = |level: u32, at: [i32; 2]| {
-            if level == 0 { self.drawn.contains(&at) } else { self.coarse.contains_key(&(level, at)) }
+        // Under the first place, the world's own blocks drawn past where they are made count as its own.
+        let drawn_fine = |level: u32, at: [i32; 2], first: bool| match level {
+            0 => self.drawn.contains(&at) || first && self.fine.contains_key(&at),
+            _ => self.coarse.contains_key(&(level, at)),
         };
         let now = super::fade_clock();
         let mut covered_since = std::mem::take(&mut self.covered_since);
@@ -920,20 +1121,33 @@ impl BlockStreamer {
             let rings =
                 self.making.as_ref().filter(|making| number == 0 && top > 0 && !making.file.smooth).map(|making| {
                     let column = CHUNK as f32 * making.file.block_size.max(0.01);
-                    ((place.distance / column).ceil().max(1.0) * column, column)
+                    let reach = (place.distance / column).ceil().max(1.0) as i32;
+                    (pushed_reach(reach, place.pushed) as f32 * column, column)
                 });
             if let Some((reach, band)) = rings {
                 fades = RingFades { at: place.at, reach, band, coarsest: top as u32, ..RingFades::default() };
             }
             let own = self.drawn.iter().filter(|at| windows[0].contains(**at));
             let mut columns: CoordSet<[i32; 3]> = own.map(|at| [0, at[0], at[1]]).collect();
+            // Past them, round the first place, its own blocks made for drawing alone, where the near are not drawn.
+            let first = number == 0 && fine.is_some();
+            if let Some(fine) = fine.filter(|_| first) {
+                let near = |at: &[i32; 2]| windows[0].contains(*at) && self.drawn.contains(at);
+                for at in self.fine.keys().filter(|at| fine.contains(**at) && !near(at)) {
+                    columns.insert([-1, at[0], at[1]]);
+                    shown_columns.insert((FINE, *at));
+                }
+            }
             for (level, at) in self.coarse.keys() {
                 let index = *level as usize;
                 let mine = index >= top || windows[index].contains(*at);
-                let finer = windows[(index - 1).min(top)];
+                let finer = match (index, fine) {
+                    (1, Some(fine)) if first => fine,
+                    _ => windows[(index - 1).min(top)],
+                };
                 let covered = (0..4).all(|i| {
                     let child = [at[0] * 2 + (i & 1), at[1] * 2 + (i >> 1)];
-                    finer.contains(child) && drawn_fine(level - 1, child)
+                    finer.contains(child) && drawn_fine(level - 1, child, first)
                 });
                 let shown = match rings {
                     Some((reach, band)) if mine => {
@@ -996,9 +1210,14 @@ impl BlockStreamer {
         if !same_far {
             let mut far: HashMap<[i32; 4], Arc<ChunkMesh>> = HashMap::new();
             for (level, at) in &shown_columns {
-                let meshes = self.coarse.get(&(*level, *at)).map_or(&[][..], |meshes| &meshes[..]);
-                for (key, mesh) in meshes.iter().filter(|(_, mesh)| !mesh.is_empty()) {
-                    far.insert([*level as i32, key[0], key[1], key[2]], mesh.clone());
+                let (meshes, level) = match *level {
+                    FINE => (self.fine.get(at), -1),
+                    level => (self.coarse.get(&(level, *at)), level as i32),
+                };
+                for (key, mesh) in
+                    meshes.map_or(&[][..], |meshes| &meshes[..]).iter().filter(|(_, mesh)| !mesh.is_empty())
+                {
+                    far.insert([level, key[0], key[1], key[2]], mesh.clone());
                 }
             }
             world.far = Arc::new(far);
@@ -1431,6 +1650,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn near_columns_come_first_then_the_rings_outwards_and_ground_under_finer_columns_last() {
+        let making = making();
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        // One at a time, so they come in the order they were asked for.
+        let mut streamer = BlockStreamer { at_once: 1, ..BlockStreamer::default() };
+        let mut came: Vec<(u32, [i32; 2])> = Vec::new();
+        let start = std::time::Instant::now();
+        loop {
+            streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 600.0), [10.0, 10.0]);
+            let near = streamer.near.iter().map(|at| (0, *at));
+            let made: Vec<(u32, [i32; 2])> = near.chain(streamer.coarse.keys().copied()).collect();
+            let new: Vec<(u32, [i32; 2])> = made.into_iter().filter(|column| !came.contains(column)).collect();
+            came.extend(new);
+            if streamer.settled() {
+                break;
+            }
+            assert!(start.elapsed().as_secs() < 120, "never settled");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // Every near column drawn before any ring; those made a column further, for the faces of the ones inside
+        // them alone, as far off as they are.
+        let windows = windows(&making.file, 100.0, 600.0, [10.0, 10.0]);
+        let first_coarse = came.iter().position(|(level, _)| *level > 0).expect("rings made");
+        let late = came[first_coarse..].iter().filter(|(level, at)| *level == 0 && windows[0].contains(*at));
+        assert_eq!(late.count(), 0, "every near column drawn before any ring: {came:?}");
+        // A ring's columns under the finer ones show only until those are made: they come after every ring's
+        // columns round them.
+        let under = |(level, at): &(u32, [i32; 2])| {
+            let finer = level.checked_sub(1).map(|finer| &windows[finer as usize]);
+            finer.is_some_and(|finer| {
+                (0..4).all(|child| finer.contains([at[0] * 2 + (child & 1), at[1] * 2 + (child >> 1)]))
+            })
+        };
+        let first_under = came.iter().position(under).expect("ground under the near columns made");
+        assert!(came[first_under..].iter().all(under), "ground under finer columns last: {:?}", &came[first_under..]);
+        // The rings out from the camera, the first before the coarser ones round it.
+        let ring = |level: u32| came.iter().position(|column| column.0 == level && !under(column));
+        assert!(ring(1) < ring(2) && ring(2) < ring(3), "{:?}", [ring(1), ring(2), ring(3)]);
+    }
+
     /// A sea over the whole world settled round the camera, made of cubes or smooth, and its kind of block: its
     /// floor flat 60 m under it, deeper than the coarsest level's top blocks, 3 m up, so the finest level's 2 m blocks
     /// put its top at 2 m, and coarser ones' would put it elsewhere, whole.
@@ -1630,8 +1891,8 @@ mod tests {
         let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
         let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
         // The camera at the middle, and a second place 9 km off, seen less far.
-        let camera = StreamFrom { at: [0.0, 0.0], distance: 100.0, far: 600.0 };
-        let second = StreamFrom { at: [9000.0, -3000.0], distance: 64.0, far: 300.0 };
+        let camera = StreamFrom { at: [0.0, 0.0], distance: 100.0, far: 600.0, pushed: 1.0 };
+        let second = StreamFrom { at: [9000.0, -3000.0], distance: 64.0, far: 300.0, pushed: 1.0 };
         let start = std::time::Instant::now();
         let mut settle = |streamer: &mut BlockStreamer, world: &mut BlockWorld, from: &[StreamFrom]| {
             while start.elapsed().as_secs() < 120 {
@@ -1711,6 +1972,65 @@ mod tests {
                 outer.low[0] <= inner.low[0] / 2 && outer.high[0] >= inner.high[0] / 2,
                 "the coarser holds the finer"
             );
+        }
+    }
+
+    #[test]
+    fn rings_pushed_out_reach_twice_as_far_with_the_worlds_own_blocks_drawn_out_to_the_first() {
+        let file = making().file;
+        let (near, fine) = windows_out(&file, (128.0, 4000.0), [10.0, -300.0], 1.0);
+        assert!(fine.is_none(), "nothing drawn past the world's own blocks at none");
+        let (pushed, fine) = windows_out(&file, (128.0, 4000.0), [10.0, -300.0], 2.0);
+        let fine = fine.expect("its own blocks drawn on past where they are made");
+        let across = |window: &Window| window.high[0] - window.low[0];
+        assert_eq!(pushed[0], near[0], "its own blocks made as far as they were");
+        assert!(across(&fine) >= 2 * across(&near[0]) - 4, "drawn on twice as far: {fine:?} {:?}", near[0]);
+        // Every coarser ring twice as many of its own columns across, holding the one inside it, and one ring fewer.
+        assert!(across(&pushed[1]) >= 2 * across(&near[1]) - 4);
+        assert!(
+            pushed[1].low[0] <= fine.low[0] / 2 && pushed[1].high[0] >= fine.high[0] / 2,
+            "the first ring holds them"
+        );
+        assert_eq!(pushed.len() + 1, near.len());
+        // Pushed out by a part of that, part as far.
+        let (_, partly) = windows_out(&file, (128.0, 4000.0), [10.0, -300.0], 1.5);
+        let partly = partly.expect("drawn on a little past where they are made");
+        assert!(across(&partly) > across(&near[0]) && across(&partly) < across(&fine), "{partly:?}");
+    }
+
+    #[test]
+    fn the_worlds_own_blocks_drawn_past_where_they_are_made_show_where_the_near_ones_do_not() {
+        let making = making();
+        let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        // 64 m columns: its own blocks made out to two columns, drawn out to four.
+        let from = [StreamFrom { at: [10.0, 10.0], distance: 100.0, far: 1500.0, pushed: 2.0 }];
+        let start = std::time::Instant::now();
+        while !streamer.settled() || streamer.fine.is_empty() {
+            streamer.update_from(&mut world, &mut base, &mut pending, making.clone(), &from);
+            assert!(start.elapsed().as_secs() < 90, "never settled");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        std::thread::sleep(std::time::Duration::from_secs_f32(RING_FADE_SECONDS + 0.1));
+        streamer.update_from(&mut world, &mut base, &mut pending, making.clone(), &from);
+        let fine: HashSet<[i32; 2]> = world.far.keys().filter(|key| key[0] == -1).map(|key| [key[1], key[3]]).collect();
+        assert!(!fine.is_empty(), "its own blocks drawn past where they are made");
+        assert!(fine.iter().all(|at| !streamer.drawn.contains(at)), "never where its own made blocks are drawn");
+        // As large as its own: no blocks stood on there, nor kept.
+        assert!(
+            fine.iter()
+                .all(|at| world.blocks.chunks().all(|(key, _)| [key[0], key[2]] != *at || streamer.near.contains(at)))
+        );
+        // The first coarser ring shows past them, or fading into them under its band, which begins at four columns.
+        assert_eq!(world.fades.reach, 256.0);
+        for key in world.far.keys().filter(|key| key[0] == 1) {
+            let under = (0..4).all(|i| {
+                let child = [key[1] * 2 + (i & 1), key[3] * 2 + (i >> 1)];
+                fine.contains(&child) || streamer.drawn.contains(&child)
+            });
+            let since = world.fades.covered.get(&[1, key[1], key[3]]).copied();
+            assert!(!under || since.is_some_and(|since| since != f32::MAX), "ring 1 at {key:?} over finer ground");
         }
     }
 

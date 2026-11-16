@@ -452,7 +452,7 @@ pub struct BlockPlace {
     pub at: [f32; 2],
     /// The chunk columns shown from it: each by its level, 0 for the
     /// world's own blocks, and its place in that level's columns.
-    pub columns: HashSet<[i32; 3]>,
+    pub columns: crate::coord_hash::CoordSet<[i32; 3]>,
 }
 
 /// How the rings of a world without end fade into each other round the place
@@ -478,7 +478,7 @@ pub struct RingFades {
     /// For each coarse column shown by its level and place: when its finer
     /// columns were all made, on [`fade_clock`]; `f32::MAX` while they are
     /// not yet, the finer columns made there waiting unseen till then.
-    pub covered: std::collections::HashMap<[i32; 3], f32>,
+    pub covered: crate::coord_hash::CoordMap<[i32; 3], f32>,
 }
 
 /// How long a coarse column takes to fade into the finer ones over it, in

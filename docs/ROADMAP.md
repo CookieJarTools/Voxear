@@ -265,6 +265,9 @@ Done so far:
   toggles with counts, Collapse, Clear, Error Pause and muting; the selected line's stack coloured part by part, the
   engine's frames folded under My code only, each frame opening its file at its line in the code editor the
   settings name, and a line about an Obj selecting it. Scripts' lines carry their .NET stack and Obj.
+- **Scripts open in Whisk:** the Code editor setting, a typed choice with Whisk first, opens a script with its whole
+  project at the line asked for; with Whisk not installed, the script opens as the desktop opens text files and the
+  editor says how to get Whisk. Open Project in Code Editor, in the palette, opens the project folder.
 - **Engine installs for the launcher:** an install finds its own files (`VOXEAR_HOME`, or `engine.toml` above
   `bin/`), game scripts build against the engine running them (`managed/Voxear.Scripts.props`), projects accept the
   launcher's version pin, `voxear-editor --project` opens one, `vox new` makes one (Empty or 3D) for the launcher's

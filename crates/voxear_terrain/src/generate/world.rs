@@ -197,10 +197,11 @@ impl Volume<'_> {
             return found;
         }
         let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
+        // Only the spans of ground that stands are made: what hollows the ground, as caves do, is not asked about.
         let rows = made(&self.voxels.spanned, count, given).rows;
-        for (span, (_, stands)) in self.voxels.spans.iter().enumerate() {
+        for span in 0..rows.len() / 2 {
             let (feet, tops) = (&rows[span * 2], &rows[span * 2 + 1]);
-            for at in (0..count).filter(|&at| *stands && tops[at] > feet[at]) {
+            for at in (0..count).filter(|&at| tops[at] > feet[at]) {
                 found[at].push([feet[at], tops[at]]);
             }
         }

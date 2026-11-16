@@ -2847,6 +2847,34 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     on it, from their box models, as much as they would hide seen from the camera (`grow::Cover`). Tests: the
     streamer's fades and band, the tints' cover and its patches, a model's colour; renders of the far view flying,
     master swapping a shore at once and the fades taking half a second.
+  - ~~**Far blocks no larger than a few pixels:**~~ done: **Far block size** in the world's quality, in pixels of a
+    screen 1080 tall (3 on Ultra, 4 on High, 6 on Medium, off on Low), pushes the first coarser ring out as far as it
+    must, each after it twice as far, until a ring's blocks show no larger where it begins, and draws the world's
+    own blocks on past where they are made out to the first ring: columns made from the generator as the rings'
+    are, meshed alone, drawn and never stood on, kept in the far chunks at level -1 (`StreamFrom::pushed`,
+    `WorldBudget::far_pushed_for`). On High with metre blocks and a 70° view, the world's own blocks are drawn out
+    to 384 m where they stopped at 192 m. In Project Settings, C# (`World.FarBlockPixels`) and
+    `vox editor call world_quality.set far_block_pixels=`. Tests: the windows pushed out, by a part as well; those
+    columns showing where the near do not, and the first ring and its fades starting past them; each preset's push.
+  - ~~**Worlds made as fast as a camera flies:**~~ done: an endless world makes what is nearest first in metres,
+    from where it is seen and where it is heading a second on, each coarser ring a little further off and coarse
+    ground under finer columns last; a twelfth of the columns at once is kept for the rings and no more than a
+    quarter are far tiles, so the ground round a flying camera and the horizon both keep up. The far view asks the
+    generator only for ground that stands, never for caves; a Levels node lays each place once for its six
+    outputs and a biome's region mask looks round each place once for every biome; the woods in a far tile share
+    its water and climate; tints are worked out in the background, the frame never waiting. On a copy of a block
+    game's world at High: the 196 columns round the camera made in about 6 s where 22 were made in 25 s, a far
+    tile's spans 166 → 36 ms, and flying at 30 m/s the camera stays over its own blocks, where it flew through
+    coarse ones. `vox render --real-time` keeps a render to its frame rate, to measure it. Tests: what is asked
+    for first; the terrain crate's own.
+  - ~~**Frames as quick moving as standing:**~~ done: a world without end's new chunks have their shapes to stand
+    on made in the background and their bodies added when done, but for those within a chunk of a character or a
+    body, and chunks changed, which are made at once; the chunks' meshes for rays keep their most common surface,
+    so how they sound is not worked out again for all of them as each comes. `vox render --profile` says how the
+    frames spread (the half, 95 and 99 in 100, how many slower than 60 and 144 fps) and what the frames slower than
+    60 fps spent their time on. Flying at 30 m/s over a copy of a block game's world, frames slower than 60 fps
+    went from 285 and 337 in 1,800 to 47 and 156, the 95th in 100 from 28–42 ms to 13–20 ms, with other work on the
+    machine. Tests: physics' own, the engine's endless world, mobs and blocks, the renderer's blocks.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that

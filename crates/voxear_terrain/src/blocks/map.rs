@@ -124,6 +124,8 @@ impl MapColumn {
     /// The column `runs` make, lowest first, none over another, with
     /// `faces` telling water from ground.
     pub fn of_runs(runs: &[Run], faces: &[BlockFaces]) -> MapColumn {
+        let shown = shown_runs(runs, faces);
+        let runs = shown.as_deref().unwrap_or(runs);
         let ground: Vec<Run> = runs.iter().copied().filter(|run| !is_water(faces, run.block)).collect();
         let Some(first) = ground.first() else {
             return Self::of_water(runs);
@@ -191,6 +193,35 @@ impl MapColumn {
         self.blocks = [band(0).0, band(1).0, band(2).0];
         self.depths = [band(0).1.clamp(0, 255) as u8, band(1).1.clamp(0, 255) as u8];
     }
+}
+
+/// `runs`, a column's, lowest first, as they are drawn: a run of a block
+/// that shows as another while covered (see `BlockFaces::covered`) is that
+/// block under its top, and all through where the run over it covers it,
+/// as grass three deep is earth under grass. None where none of them does.
+fn shown_runs(runs: &[Run], faces: &[BlockFaces]) -> Option<Vec<Run>> {
+    let covered = |block: BlockId| faces.get(usize::from(block)).map_or(AIR, |kind| kind.covered);
+    if !runs.iter().any(|run| covered(run.block) != AIR) {
+        return None;
+    }
+    let mut shown: Vec<Run> = Vec::with_capacity(runs.len() + 2);
+    let mut push = |run: Run| match shown.last_mut() {
+        Some(last) if last.to == run.from && last.block == run.block => last.to = run.to,
+        _ if run.from < run.to => shown.push(run),
+        _ => {}
+    };
+    for (at, run) in runs.iter().enumerate() {
+        let under = covered(run.block);
+        if under == AIR {
+            push(*run);
+            continue;
+        }
+        let over = runs.get(at + 1).filter(|over| over.from == run.to).map_or(AIR, |over| over.block);
+        let top = if super::covers_below(faces, over) { run.to } else { run.to - 1 };
+        push(Run { to: top, block: under, ..*run });
+        push(Run { from: top, ..*run });
+    }
+    Some(shown)
 }
 
 /// The piece `runs` make, each meeting the next, lowest first.
@@ -864,6 +895,26 @@ mod tests {
         assert!(!MapColumn::NONE.is_some());
         let sea_alone = MapColumn::of_runs(&[run(-8, 3, SEA)], &faces());
         assert_eq!((sea_alone.top, sea_alone.water, sea_alone.blocks[0]), (-8, 3, SEA), "a sea with no floor made");
+    }
+
+    #[test]
+    fn grass_three_deep_is_drawn_as_grass_over_the_earth_it_shows_as_covered() {
+        let mut faces = faces();
+        faces[usize::from(GRASS)].covered = DIRT;
+        let runs = [run(-40, 6, STONE), run(6, 7, DIRT), run(7, 10, GRASS)];
+        let column = MapColumn::of_runs(&runs, &faces);
+        assert_eq!((column.top, column.blocks, column.depths), (10, [GRASS, DIRT, STONE], [1, 3]));
+        // Under a block that covers it, earth all through; under the sea too.
+        let covered = [run(-40, 6, STONE), run(6, 9, GRASS), run(9, 10, STONE)];
+        assert_eq!(MapColumn::of_runs(&covered, &faces).blocks, [STONE, DIRT, STONE]);
+        let drowned = [run(-40, 6, STONE), run(6, 9, GRASS), run(9, 12, SEA)];
+        let column = MapColumn::of_runs(&drowned, &faces);
+        assert_eq!((column.blocks, column.water), ([DIRT, STONE, STONE], 12));
+        // Leaves over it, with air between or not, leave it grass.
+        let mut leafy = faces.clone();
+        leafy[usize::from(LEAF)] = BlockFaces { see_through: true, ..BlockFaces::default() };
+        let shaded = [run(-40, 6, STONE), run(6, 9, GRASS), run(9, 10, LEAF)];
+        assert_eq!(MapColumn::of_runs(&shaded, &leafy).blocks[1], GRASS);
     }
 
     #[test]

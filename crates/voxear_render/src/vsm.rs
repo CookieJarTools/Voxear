@@ -15,14 +15,16 @@
 //! `shaders/virtual_shadows.slang`). The CPU reads what a frame asked for
 //! once its frame in flight comes round again, gives each page asked for a
 //! slot of the pool, the coarsest first, and draws those newly given and
-//! those gone stale, up to `PAGES_A_FRAME` a frame; the rest wait, and
+//! those gone stale, up to `PAGES_A_FRAME` a frame and no more than
+//! `STALE_A_FRAME` of them stale; the rest wait, and
 //! shading reads the next coarser page that is drawn meanwhile.
 //!
 //! A page in the pool holds what stands still (`INSTANCE_MOVING` left out):
 //! it goes stale only when something in it comes, goes, stops or starts
 //! moving, a chunk of blocks or a terrain changes, or a material is
-//! written. Each frame, each page something moving stands in is copied into
-//! a slot of a smaller moving pool, and what moves drawn over the copy;
+//! written again. Each frame, each page something moving stands in is
+//! copied into a slot of a smaller moving pool, and what moves drawn over
+//! the copy;
 //! shading reads that copy where the page table says so. A few
 //! coarse pages round the camera are always kept, for what the view cannot
 //! ask for: the fog's light shafts and the bounced light's rays.
@@ -62,6 +64,8 @@ pub const DEPTH_RANGE: f32 = 8000.0;
 const DEPTH_STEP: f32 = 1000.0;
 /// The most pages drawn in a frame.
 pub const PAGES_A_FRAME: usize = 96;
+/// The most of those that are pages drawn before and gone stale.
+pub const STALE_A_FRAME: usize = 12;
 /// Slots a side of the moving pool, which holds this frame's copies of the
 /// pages what moves stands in, with it drawn over them, and how many.
 pub const MOVING_POOL_SLOTS: u32 = 16;
@@ -392,6 +396,13 @@ impl VirtualShadows {
         drawing.sort_by_key(|&(key, drawn)| {
             let order = if drawn { key.level as usize } else { LEVELS - key.level as usize };
             (drawn, order, key.x, key.y)
+        });
+        // Those gone stale a few a frame: each draws whatever stands along the sun's light through it, often far
+        // more than a page newly asked for, and shows what it last drew till then.
+        let mut stale = 0;
+        drawing.retain(|&(_, drawn)| {
+            stale += usize::from(drawn);
+            !drawn || stale <= STALE_A_FRAME
         });
         drawing.truncate(PAGES_A_FRAME);
         let mut drawn: Vec<(PageKey, u16)> = drawing

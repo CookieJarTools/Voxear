@@ -49,6 +49,7 @@ struct BudgetRows {
     near_detail: NodeId,
     far_detail: NodeId,
     plant_detail: NodeId,
+    far_block: NodeId,
 }
 
 /// What the Localization tab asks of the editor: a font picked for a
@@ -152,6 +153,7 @@ impl ProjectSettingsPanel {
             near_detail: number(ui, body, "Near detail", budget.near_detail, "×"),
             far_detail: number(ui, body, "Far detail", budget.far_detail, "×"),
             plant_detail: number(ui, body, "Plant detail", budget.plant_detail, "×"),
+            far_block: number(ui, body, "Far block size", budget.far_block_pixels, "px"),
         };
         let world_body = body;
 
@@ -275,6 +277,8 @@ impl ProjectSettingsPanel {
             WorldBudget { far_detail: typed(rows.far_detail)?, ..custom }
         } else if ui.changed(rows.plant_detail) {
             WorldBudget { plant_detail: typed(rows.plant_detail)?, ..custom }
+        } else if ui.changed(rows.far_block) {
+            WorldBudget { far_block_pixels: typed(rows.far_block)?, ..custom }
         } else {
             return None;
         };
@@ -312,6 +316,7 @@ impl ProjectSettingsPanel {
             (rows.near_detail, budget.near_detail),
             (rows.far_detail, budget.far_detail),
             (rows.plant_detail, budget.plant_detail),
+            (rows.far_block, budget.far_block_pixels),
         ];
         for (field, value) in numbers {
             let text = format_metres(value);

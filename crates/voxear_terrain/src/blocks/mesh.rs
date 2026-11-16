@@ -78,11 +78,11 @@ use super::flow::Water;
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
-    PART_DRAWN, PART_HANGS, PART_SOLID, PART_TALL, connects, covers,
+    PART_DRAWN, PART_HANGS, PART_SOLID, PART_TALL, any_covered, connects, covers,
     file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP, MIXED_LOOK},
     hides, is_bushy, is_ground, is_part, is_see_through, is_vine, is_water, part_of,
     shape::{Around, BlockFacing, BlockState, Hinge, PartBox, StairCorner, part_boxes, posed_box, tall_boxes},
-    sways,
+    shown_as, sways,
 };
 
 /// The faces round a face it may join, in the order of their bits: where
@@ -362,6 +362,11 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 };
             }
         }
+    }
+    if any_covered(faces) {
+        shown_covered(&mut padded, faces, &|x, z| {
+            map.get([base[0] + x as i32, base[1] + PADDED as i32, base[2] + z as i32])
+        });
     }
     let block =
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
@@ -646,6 +651,29 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     }
     mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
+}
+
+/// Each block of `padded`, a chunk's blocks and those just past it (y,
+/// then z, then x), made the block it is drawn as: one that shows as
+/// another while covered is that block where the block over it covers it
+/// (see `blocks::shown_as`). `over` gives the block over its top layer, by
+/// place along x and z. Each is decided by the block over it as it is, so
+/// grass under grass under grass is earth under earth under grass.
+fn shown_covered(padded: &mut [BlockId], faces: &[BlockFaces], over: &dyn Fn(usize, usize) -> BlockId) {
+    let at = |x: usize, y: usize, z: usize| (y * PADDED + z) * PADDED + x;
+    // From the bottom up, so the block over each is still as it was.
+    for y in 0..PADDED {
+        for z in 0..PADDED {
+            for x in 0..PADDED {
+                let id = padded[at(x, y, z)];
+                if faces.get(usize::from(id)).is_none_or(|kind| kind.covered == AIR) {
+                    continue;
+                }
+                let above = if y + 1 < PADDED { padded[at(x, y + 1, z)] } else { over(x, z) };
+                padded[at(x, y, z)] = shown_as(faces, id, above);
+            }
+        }
+    }
 }
 
 /// A part quad's kind among loose quads' (`VINE`), with this bit for the
@@ -1615,6 +1643,77 @@ mod tests {
         let mut map = BlockMap::default();
         [([0, 0, 0], 1), ([1, 0, 0], 3)].into_iter().for_each(|(at, block)| map.set(at, block));
         assert!(mesh_chunk(&map, [0, 0, 0], &hard).quads.iter().all(|quad| quad[1] as u8 & MIXED_LOOK == 0));
+    }
+
+    #[test]
+    fn grass_under_a_block_is_drawn_as_the_earth_it_shows_as_covered_and_as_grass_again_once_it_is_not() {
+        use crate::blocks::{BlockWorld, PART_SOLID, block::BlockShape};
+        // Grass (1) shows as dirt (2) while covered; stone (3); leaves (4), seen through; water (5); a slab lying
+        // low (6), its underside covered whole, and one lying high (7), its top.
+        let slab = |covers: u8| BlockFaces {
+            shape: BlockShape::Slab,
+            part: PART_DRAWN | PART_SOLID,
+            covers,
+            ..BlockFaces::new(60, 60, 60)
+        };
+        let faces = [
+            BlockFaces::default(),
+            BlockFaces { covered: 2, ..BlockFaces::new(10, 11, 12) },
+            BlockFaces::new(20, 20, 20),
+            BlockFaces::new(30, 30, 30),
+            BlockFaces { see_through: true, ..BlockFaces::new(40, 40, 40) },
+            BlockFaces::water(50),
+            slab(1 << 3),
+            slab(1 << 2),
+        ];
+        // The looks of the +x sides of the column at x = 4, z = 4, from its foot up.
+        let sides = |mesh: &ChunkMesh, from: i32| -> Vec<u8> {
+            let mut found: Vec<(u32, u8)> = Vec::new();
+            for &quad in &mesh.quads[mesh.buckets[0] as usize..mesh.buckets[1] as usize] {
+                let (at, size, _, look, _) = unpack(quad);
+                if at[0] == 4 && (at[2]..at[2] + size[1]).contains(&4) {
+                    found.extend((at[1]..at[1] + size[0]).map(|y| (y, look)));
+                }
+            }
+            found.sort();
+            found.into_iter().filter(|&(y, _)| y as i32 >= from).map(|(_, look)| look).collect()
+        };
+        let column = |over: Option<BlockId>| {
+            let mut map = BlockMap::default();
+            (0..3).for_each(|y| map.set([4, y, 4], 1));
+            if let Some(over) = over {
+                map.set([4, 3, 4], over);
+            }
+            mesh_chunk(&map, [0, 0, 0], &faces)
+        };
+        // Three deep: earth under earth under grass, the grass's top its own.
+        let open = column(None);
+        assert_eq!(sides(&open, 0), [20, 20, 11]);
+        let up = |mesh: &ChunkMesh| mesh.quads[mesh.buckets[2] as usize..mesh.buckets[3] as usize].to_vec();
+        assert!(up(&open).iter().any(|&quad| unpack(quad).0[1] == 2 && unpack(quad).3 == 10));
+        // What covers it, and what does not.
+        for (over, covers) in [(3, true), (4, false), (5, true), (6, true), (7, false)] {
+            let shown = if covers { 20 } else { 11 };
+            assert_eq!(sides(&column(Some(over)), 0)[..3], [20, 20, shown], "under block {over}");
+        }
+
+        // In a world, a block put on it and taken away again: drawn as earth, then grass, at once. Across a chunk's
+        // top too.
+        let top = CHUNK as i32 - 1;
+        let mut map = BlockMap::default();
+        (top - 2..=top).for_each(|y| map.set([4, y, 4], 1));
+        let mut world = BlockWorld::made(map, &faces, 1.0, false);
+        let mesh = |world: &BlockWorld| world.meshes[&[0, 0, 0]].clone();
+        assert_eq!(sides(&mesh(&world), top - 2), [20, 20, 11]);
+        assert_eq!((world.shown([4, top, 4]), world.shown([4, top - 1, 4])), (1, 2));
+        world.set_blocks([([4, top + 1, 4], 3)]);
+        assert_eq!(sides(&mesh(&world), top - 2), [20, 20, 20]);
+        assert_eq!((world.shown([4, top, 4]), world.blocks.get([4, top, 4])), (2, 1), "drawn as earth, kept as grass");
+        world.set_blocks([([4, top + 1, 4], AIR)]);
+        assert_eq!(sides(&mesh(&world), top - 2), [20, 20, 11]);
+        // Grass taken from under grass: the one under it is grass again.
+        world.set_blocks([([4, top, 4], AIR)]);
+        assert_eq!(sides(&mesh(&world), top - 2), [20, 11]);
     }
 
     #[test]

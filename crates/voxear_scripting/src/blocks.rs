@@ -56,7 +56,8 @@ fn worlds(world: &World) -> Vec<(Entity, Vec3)> {
 }
 
 /// The block at `at` in the first world of blocks with one there, and its
-/// Obj; 0 for air everywhere.
+/// Obj; 0 for air everywhere. A block is the one it is drawn as: grass under
+/// a block is the earth it shows as (see `BlockWorld::shown`).
 pub(crate) unsafe extern "C" fn block_at(at: *const [f32; 3], obj: *mut u64) -> i32 {
     if at.is_null() {
         return 0;
@@ -65,8 +66,8 @@ pub(crate) unsafe extern "C" fn block_at(at: *const [f32; 3], obj: *mut u64) -> 
     let found = with_world(|world| {
         worlds(world).into_iter().find_map(|(entity, corner)| {
             let blocks = world.get::<BlockWorld>(entity)?;
-            let (_, block) = blocks.block_at((at - corner).to_array());
-            (block != AIR).then_some((entity, block))
+            let (cell, block) = blocks.block_at((at - corner).to_array());
+            (block != AIR).then(|| (entity, blocks.shown(cell)))
         })
     });
     let Some((entity, block)) = found else { return 0 };
@@ -448,7 +449,9 @@ const MEET_LIQUIDS: i32 = 1;
 
 /// The first block a ray from `origin` along `direction` meets in any world
 /// of blocks within `distance` metres; 0 where it meets none. It passes
-/// through liquids unless `flags` say to meet them.
+/// through liquids unless `flags` say to meet them. The block it meets is
+/// the one drawn there, as [`block_at`] gives it: mined, grass under a
+/// block breaks as the earth it shows as.
 pub(crate) unsafe extern "C" fn block_raycast(
     origin: *const [f32; 3],
     direction: *const [f32; 3],
@@ -475,7 +478,7 @@ pub(crate) unsafe extern "C" fn block_raycast(
                 let reach = distance / size;
                 let (map, faces) = (&blocks.blocks, &blocks.faces);
                 let met = voxear_terrain::blocks::raycast_shaped(map, faces, from, direction.to_array(), reach, &meets)?;
-                let block = blocks.blocks.get(met.block);
+                let block = blocks.shown(met.block);
                 Some((entity, corner, size, met, block))
             })
             .min_by(|a, b| (a.3.distance * a.2).total_cmp(&(b.3.distance * b.2)))
@@ -547,6 +550,7 @@ pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
             7 => budget.far_detail,
             8 => budget.plant_detail,
             9 => f32::from(u8::from(MachineBudget::of(world).kept)),
+            10 => budget.far_block_pixels,
             _ => return None,
         })
     };
@@ -582,6 +586,7 @@ pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
             6 => WorldBudget { near_detail: value, ..custom },
             7 => WorldBudget { far_detail: value, ..custom },
             8 => WorldBudget { plant_detail: value, ..custom },
+            10 => WorldBudget { far_block_pixels: value, ..custom },
             _ => return None,
         };
         budget.put(world);

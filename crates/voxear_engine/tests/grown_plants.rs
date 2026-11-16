@@ -39,7 +39,13 @@ fn project(wet: f32) -> tempfile::TempDir {
          [[obj]]\nid = 4\nname = \"Eye\"\nposition = [40.0, 60.0, 40.0]\n[obj.camera]\nfov = 60.0\n"
     );
     let files = [
-        ("voxear.toml", "[project]\nname = \"Grown\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        // High's numbers with the rings where the distances put them, as these plants are measured against them.
+        (
+            "voxear.toml",
+            "[project]\nname = \"Grown\"\nstart_level = \"Levels/Main.level\"\n\n[world]\nquality = \"custom\"\n\
+             threads = 8\ncolumns = 24\nupload = 16\nview_distance = 192.0\nfar_distance = 8192.0\nfar_block_pixels = 0.0\n"
+                .to_string(),
+        ),
         ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".to_string()),
         ("Scenes/Field.scene", scene),
         ("Blocks/Field.blockworld", file.to_text()),

@@ -124,6 +124,48 @@ fn a_block_worlds_blocks_are_drawn_as_their_files_say_and_a_block_saved_is_taken
 }
 
 #[test]
+fn grass_shows_as_the_block_it_names_while_covered_and_a_world_holding_grass_numbers_that_block() {
+    use voxear_engine::blocks::{BlockWorldAsset, block_json, block_number};
+    use voxear_terrain::blocks::{block::BlockDef, file::BlockKind};
+    let dir = project();
+    let write = |path: &str, block: BlockDef| std::fs::write(dir.path().join(path), block.to_text()).unwrap();
+    write("Blocks/Dirt.block", BlockDef::colored([0.45, 0.32, 0.2]));
+    write("Blocks/Mud.block", BlockDef::colored([0.33, 0.25, 0.17]));
+    let covered = |under: &str, color| BlockDef { covered: Some(under.into()), ..BlockDef::colored(color) };
+    write("Blocks/Grass.block", covered("Blocks/Dirt.block", [0.2, 0.6, 0.1]));
+    write("Blocks/Moss.block", covered("Blocks/Mud.block", [0.24, 0.4, 0.17]));
+    // A field of grass three deep over stone, in a world that holds no dirt.
+    let mut file = BlockFile::default();
+    file.blocks[0] = BlockKind::of("Blocks/Grass.block");
+    (file.ground.size, file.ground.height, file.ground.under, file.ground.under_depth) = ([32, 32], 6, 1, 2);
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+    };
+    // The dirt is numbered after the world's three blocks as it loads, and the grass shows as it while covered.
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let dirt = game.content.db().guid_of("Blocks/Dirt.block").unwrap();
+    assert_eq!((asset.file.blocks.len(), asset.drawn.guid(4)), (4, Some(dirt)));
+    let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+    assert_eq!((blocks.faces[1].covered, blocks.faces[4].covered), (4, 0));
+    assert_eq!([5, 4, 3, 2].map(|y| blocks.blocks.get([0, y, 0])), [1, 1, 1, 3], "kept as grass");
+    assert_eq!([5, 4, 3, 2].map(|y| blocks.shown([0, y, 0])), [1, 4, 4, 3], "drawn as grass over dirt");
+    // Scripts read which block it shows as covered.
+    let said: serde_json::Value =
+        serde_json::from_str(&block_json(&mut game.content, "Blocks/Grass.block").unwrap()).unwrap();
+    assert_eq!(said["covered"], "Blocks/Dirt.block");
+    // A block the world comes to hold numbers the block it shows as covered after it.
+    let moss = block_number(&mut game.engine.world, &mut game.content, field, "Blocks/Moss.block", true).unwrap();
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap();
+    let mud = game.content.db().guid_of("Blocks/Mud.block").unwrap();
+    assert_eq!((moss, asset.drawn.guid(moss + 1)), (5, Some(mud)));
+    assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().faces[usize::from(moss)].covered, moss + 1);
+}
+
+#[test]
 fn a_world_holds_any_block_of_the_project_numbers_each_once_and_says_once_that_it_is_full() {
     use voxear_engine::blocks::{BlockWorldAsset, block_number, blocks_numbered_since, every_block};
     let dir = project();
@@ -387,17 +429,19 @@ fn a_generated_block_world_whose_biomes_have_tints_keeps_them_round_where_it_is_
     let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
     game.start(None).unwrap();
     let tints = |game: &Game| game.engine.world.query_ref::<&voxear_render::BlockTints>().into_iter().next().cloned();
-    // Worked out a few tiles a frame, the nearest first, till every tile in reach has its tints: a tile not
+    // Worked out in the background, the nearest first, till every tile in reach has its tints: a tile not
     // worked out yet is white, as its grass is not.
     let full = |tints: &voxear_render::BlockTints| {
         let all = |points: &[u32]| !points.is_empty() && points.iter().step_by(2).all(|&grass| grass != 0x0080_8080);
         all(&tints.points) && all(&tints.far_points)
     };
-    for _ in 0..90 {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_secs() < 60 {
         game.tick(1.0 / 60.0, None);
         if tints(&game).is_some_and(|tints| full(&tints)) {
             break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let kept = tints(&game).expect("its tints");
     // Its far tints as many points, 16 times further apart, round the same place.
@@ -693,6 +737,49 @@ fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
     let saved = BlockEdits::from_bytes(&std::fs::read(dir.path().join("Blocks/Field.blocks")).unwrap()).unwrap();
     assert!(saved.chunks.contains_key(&[31, 3, 0]), "the far change kept");
     assert!(saved.chunks.keys().any(|key| key[0] == 0 && key[2] == 0), "the near one with it");
+}
+
+#[test]
+fn a_block_world_without_end_is_made_round_the_camera_before_the_first_frame_with_no_time_passing() {
+    use voxear_terrain::{
+        blocks::generate::{BlockEndless, BlockGenerate},
+        generate::Preset,
+    };
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    let mut file = BlockFile { block_size: 2.0, ..BlockFile::default() };
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -4,
+        caves: 0.0,
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        ..BlockGenerate::default()
+    });
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let scene =
+        format!("{FIELD}\n[[obj]]\nid = 3\nname = \"Eye\"\nposition = [40.0, 60.0, 40.0]\n[obj.camera]\nfov = 60.0\n");
+    std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let blocks = |game: &Game| game.engine.world.query_ref::<&BlockWorld>().into_iter().next().unwrap().clone();
+    assert!(blocks(&game).meshes.is_empty(), "nothing made as it loads: it is made round the camera");
+    let ball = |game: &Game| {
+        let world = &game.engine.world;
+        let named =
+            world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == "Ball");
+        world.get::<voxear_scene::Transform>(named.unwrap().0).unwrap().position
+    };
+    let (time, dropped) = (game.engine.time().clone(), ball(&game));
+    assert!(game.make_world(std::time::Duration::from_secs(120)), "all of it made within two minutes");
+    assert!(voxear_engine::blocks::streamed(&game.engine.world));
+    let made = blocks(&game);
+    // The ground under the camera (corner at (-16, 0, -16)) with its faces, coarser ground drawn beyond.
+    assert!((-4..100).any(|y| made.blocks.get([28, y, 28]) != 0), "the ground under the camera");
+    assert!(!made.meshes.is_empty() && !made.far.is_empty(), "its faces, and coarser ground beyond");
+    // No time went by: no frame counted, and the ball dropped from 20 m has not moved.
+    assert_eq!((game.engine.time().frame, game.engine.time().elapsed), (time.frame, time.elapsed));
+    assert_eq!(ball(&game), dropped);
 }
 
 #[test]

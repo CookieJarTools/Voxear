@@ -1269,6 +1269,17 @@ and swaying bits as the look that creeps over it and from where. Twins are a fix
 a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
 in the same place, later in the pool and discarded but for its fringe.
 
+**Grass under a block** is a look worked out from the block over it, never an edit. A `.block`'s `covered` names
+the block it shows as while covered; `resolved` turns that into the number of that block in the world, in the same
+state (a slab's slab), and `with_covered` numbers it after the world's blocks where it has none, as biomes' blocks are.
+`BlockFaces::covered` carries the number. `mesh_made` swaps each such block in its padded copy of the chunk for that
+block where `covers_below` says the block over it covers it (a whole block, water, a part whose underside is covered
+whole), bottom up so each reads the block over it as it is, and everything after (faces, looks, overlap, tints,
+collision) follows. The far rings and far tiles go through the same mesher; the map does the same along its runs. A
+change re-meshes the chunks round the block under it too. `BlockWorld::shown` gives the block as drawn, which a
+script's ray and `Blocks.DefinitionAt` report, so a covered grass block is mined as its earth. Saves and the network
+carry the grass as it is, so they are no larger.
+
 **Portals** *(implemented; light, shadows and sound through them, other levels and the server's checks planned)*.
 A `voxear_render::Portal` on an Obj is an opening `size` wide about the Obj and high from it, facing its +Z, that
 leads to another Portal. `Carry::between` is what going through does: turned about the near Portal, half a turn about
@@ -3827,13 +3838,15 @@ each chunk's faces merged by surface are its collision mesh and its mesh for the
 surface (`ChunkMesh::surfaces`), so the rays' hits take the colour of the face they meet (`mesh::PROXY_MATERIAL`; a
 smooth chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles,
 `RAYS_LEVEL`, each point its top's, sides' or bottom's surface by the way it faces). A mesh for rays is solid ground:
-a crown of leaf blocks is no cut-out sheet to them, though it bounces its leaves' colour. The ray meshes are kept
-in the meshes' shared pool of four million vertices, room for a world of cubes 900 blocks across; the shapes made
-on every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame, the nearest the
-camera first, and uploaded and built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change.
-A world too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk
-takes the room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world
-whose faces did not change costs physics and the renderer no walk over its chunks. The frame's chunks go up within
+a crown of leaf blocks is no cut-out sheet to them, though it bounces its leaves' colour. The ray meshes are kept in
+the meshes' shared pool of four million vertices, room for a world of cubes 900 blocks across; the shapes made on
+every core and kept while a chunk's triangles stay the same (a world without end's new chunks' on the terrain's
+threads, their bodies added at a later step, but for those within a chunk of a character or a body and chunks
+changed, `BlockBodies::making`), the ray meshes made a few a frame, the nearest the camera first, and uploaded and
+built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change. A world too large for the pool
+goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the room of the farthest
+made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose faces did not change costs
+physics and the renderer no walk over its chunks. The frame's chunks go up within
 `WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
@@ -3865,9 +3878,20 @@ showing under that band; and a coarse column whose finer columns all come after 
 `RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
 columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
 blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
-and a world drawn smooth draw their rings as before. Leaves past the sun's shadows, where no virtual shadow page or
-cascade holds them, take the share of sun a crown's leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are
-not flat sunlit boxes; within them their shadow says it. Models of small coloured
+and a world drawn smooth draw their rings as before. With a Far block size (`WorldBudget::far_pushed_for`), the first coarser ring is pushed
+out `pushed` times as far round where the world is looked at from (`StreamFrom::pushed`), each ring after it twice as
+far as the one before, and the world's own
+blocks are drawn on past its made columns out to the first ring: columns of them asked for and made at `FINE`, from
+`column_chunks` as a coarse column's are and meshed alone, kept in `BlockWorld::far` at level -1 so their keys never
+meet the near chunks', and given level 0 in the renderer's slots. The streamer asks for what is nearest first in
+metres (`BlockStreamer::ask`), from each place and from where the first is heading a second on (`lead`), each coarser
+ring two near columns further off and a coarse column whose four finer columns lie in the finer windows after all
+else (`COVERED`); a twelfth of the columns at once is kept for the rings whatever is nearer (`RINGS_ALWAYS`) and no
+more than a quarter are far tiles, which take long each. A far tile asks the generator's Volume only for the spans of
+ground that stands (`Voxels::spanned`), never for hollows such as caves, whose network a coarse column would reach
+over far and wide. Block tints' tiles are worked out on the terrain's threads and taken in as they are done. Leaves past the sun's shadows, where no
+virtual shadow page or cascade holds them, take the share of sun a crown's leaves take within them
+(`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes; within them their shadow says it. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the
@@ -4457,7 +4481,10 @@ Every operation the editor can do should be scriptable.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
-  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`).
+  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`). Before its frames it waits
+  for the ground round the camera, as a game's loading does (`Game::make_world`): terrains and worlds of blocks
+  without end are made on background threads, and a short render is otherwise over before any of it comes.
+  `--wait <seconds>` sets how long it waits at most (120 by default); `--wait 0` starts the frames at once.
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
 - `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
   then start `vox run --no-build`, whose .NET starts at once.

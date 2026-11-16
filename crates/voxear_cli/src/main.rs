@@ -398,6 +398,10 @@ enum Commands {
         /// between ticks.
         #[arg(long, value_name = "HZ", default_value_t = 60.0)]
         rate: f32,
+        /// Take each frame no quicker than `--rate` says, as on a display that fast, so what is made in the
+        /// background, as worlds round a flying camera, keeps the pace it would in play.
+        #[arg(long)]
+        real_time: bool,
         /// Look through the camera on the Obj with this name, rather than the first camera found.
         #[arg(long, value_name = "OBJ")]
         camera: Option<String>,
@@ -421,6 +425,11 @@ enum Commands {
         /// compare what each costs.
         #[arg(long, value_parser = ["low", "medium", "high", "ultra"])]
         world_quality: Option<String>,
+        /// Seconds to wait at most before the frames for the ground round the camera to be made, as a game's
+        /// loading waits for it: terrains and worlds of blocks without end, and the plants grown on them. 0 starts
+        /// the frames at once, the ground coming in as they go.
+        #[arg(long, value_name = "SECONDS", default_value_t = 120.0)]
+        wait: f32,
     },
 }
 
@@ -575,6 +584,7 @@ fn main() -> Result<()> {
             quality,
             every,
             rate,
+            real_time,
             software_rays,
             camera,
             level,
@@ -582,6 +592,7 @@ fn main() -> Result<()> {
             profile_out,
             fly,
             world_quality,
+            wait,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -641,10 +652,12 @@ fn main() -> Result<()> {
                 profile: profile || profile_out.is_some(),
                 profile_out,
                 fly,
+                real_time,
                 quality: world_quality.and_then(|quality| {
                     use voxear_terrain::WorldQuality;
                     WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
                 }),
+                wait: std::time::Duration::from_secs_f32(wait.max(0.0)),
             };
             render(&project, shot, prepare, renderdoc)
         }
@@ -778,8 +791,12 @@ struct Shot {
     profile_out: Option<PathBuf>,
     /// How fast the camera moves, in metres a second.
     fly: Option<voxear_core::math::Vec3>,
+    /// Each frame taken no quicker than `delta`.
+    real_time: bool,
     /// The preset worlds of blocks spend as, in place of the project's.
     quality: Option<voxear_terrain::WorldQuality>,
+    /// How long to wait at most for the ground round the camera before the frames.
+    wait: std::time::Duration,
 }
 
 /// How many of a render's last frames its timings are averaged over.
@@ -800,9 +817,29 @@ struct CpuTimes {
     /// The first frame by which every world of blocks without end had made its chunks round the camera, once
     /// any was making them: 0 while one still is.
     streamed_by: Option<u32>,
-    /// Each sample by its path: milliseconds over every frame, the slowest frame's, and over the timed ones.
-    samples: Vec<(String, f32, f32, f32)>,
+    /// Each sample by its path: milliseconds over every frame, the slowest frame's, over the timed ones, and over
+    /// the frames slower than [`SLOW_FRAME_MS`].
+    samples: Vec<(String, f32, f32, f32, f32)>,
+    /// Each frame's tick and render together, and whether the last was slower than [`SLOW_FRAME_MS`].
+    frame_ms: Vec<f32>,
+    slow: bool,
+    /// Each frame's time on the GPU as last known, and the slowest's passes.
+    gpu_ms: Vec<f32>,
+    slowest_gpu: Vec<(String, f32)>,
+    /// Each frame's time this thread spent on a core, where the system says: what the frame's own work took,
+    /// without the time other programs had the core or the frame waited for the GPU.
+    on_core_ms: Vec<f32>,
 }
+
+/// How long this thread has spent on a core so far, in nanoseconds, where the system says.
+fn on_core_ns() -> Option<u64> {
+    let read = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    read.split_whitespace().next()?.parse().ok()
+}
+
+/// A frame slower than this, in milliseconds, shows on a 60 Hz display as one missed: what is in such frames is
+/// listed apart.
+const SLOW_FRAME_MS: f32 = 1000.0 / 60.0;
 
 impl CpuTimes {
     fn add_frame(&mut self, tick_ms: f32, render_ms: f32, timed: bool, streamed: bool) {
@@ -815,11 +852,20 @@ impl CpuTimes {
             }
         }
         self.timed_frames += u32::from(timed);
+        self.frame_ms.push(tick_ms + render_ms);
+        self.slow = tick_ms + render_ms > SLOW_FRAME_MS;
         match (streamed, self.streamed_by) {
             (false, _) => self.streamed_by = Some(0),
             (true, Some(0)) => self.streamed_by = Some(self.frames),
             _ => {}
         }
+    }
+
+    fn add_gpu(&mut self, frame_ms: f32, passes: &[(String, f32)]) {
+        if frame_ms > self.gpu_ms.iter().copied().fold(0.0, f32::max) {
+            self.slowest_gpu = passes.to_vec();
+        }
+        self.gpu_ms.push(frame_ms);
     }
 
     fn add_samples(&mut self, samples: &voxear_core::profiling::Samples, timed: bool) {
@@ -837,7 +883,7 @@ impl CpuTimes {
             let at = match self.samples.iter().position(|(kept, ..)| *kept == path) {
                 Some(at) => at,
                 None => {
-                    self.samples.push((path, 0.0, 0.0, 0.0));
+                    self.samples.push((path, 0.0, 0.0, 0.0, 0.0));
                     self.samples.len() - 1
                 }
             };
@@ -846,6 +892,9 @@ impl CpuTimes {
             kept.2 = kept.2.max(ms);
             if timed {
                 kept.3 += ms;
+            }
+            if self.slow {
+                kept.4 += ms;
             }
         }
     }
@@ -865,6 +914,51 @@ impl CpuTimes {
                 self.timed[i] / timed
             );
         }
+        // How the frames spread: a frame's tick and render, the half, the 95 and 99 in a hundred quicker than it, and
+        // how many are slower than a 60 Hz and a 144 Hz display's frame.
+        let mut sorted = self.frame_ms.clone();
+        sorted.sort_by(f32::total_cmp);
+        let at = |share: f32| sorted.get(((sorted.len() as f32 * share) as usize).min(sorted.len().saturating_sub(1)));
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| sorted.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  frames         {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} slower \
+                 than 60 fps, {} than 144",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+        }
+        // The frames' work on the core alone, as other programs and the GPU kept it waiting.
+        let mut core = self.on_core_ms.clone();
+        core.sort_by(f32::total_cmp);
+        let at =
+            |share: f32| core.get(((core.len() as f32 * share) as usize).min(core.len().saturating_sub(1))).copied();
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| core.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  on the core    {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} over \
+                 60 fps' frame, {} over 144's",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+        }
+        // And the GPU's frames the same way, with what the slowest of them spent its time on.
+        let mut gpu = self.gpu_ms.clone();
+        gpu.sort_by(f32::total_cmp);
+        let at = |share: f32| gpu.get(((gpu.len() as f32 * share) as usize).min(gpu.len().saturating_sub(1))).copied();
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| gpu.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  GPU frames     {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} slower \
+                 than 60 fps, {} than 144",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+            let mut passes = self.slowest_gpu.clone();
+            passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let top: Vec<String> = passes.iter().take(8).map(|(pass, ms)| format!("{pass} {ms:.2}")).collect();
+            println!("  the slowest GPU frame's passes: {}", top.join(" · "));
+        }
         match self.streamed_by {
             Some(0) => println!("  worlds of blocks without end still making chunks round the camera"),
             Some(by) => println!("  worlds of blocks without end made round the camera by frame {by}"),
@@ -874,8 +968,17 @@ impl CpuTimes {
         samples.retain(|(_, all, ..)| *all >= 0.5);
         samples.sort_by(|a, b| b.1.total_cmp(&a.1));
         println!("  samples, in all · slowest frame · a timed frame:");
-        for (path, all, slowest, last) in samples.iter().take(40) {
+        for (path, all, slowest, last, _) in samples.iter().take(40) {
             println!("    {path:<60} {all:>9.1} ms · {slowest:>8.2} · {:>7.3}", last / timed);
+        }
+        // What the frames slower than 60 fps spent their time on, a frame of them on average.
+        let slow = self.frame_ms.iter().filter(|&&frame| frame > SLOW_FRAME_MS).count();
+        if slow > 0 {
+            samples.sort_by(|a, b| b.4.total_cmp(&a.4));
+            println!("  in the {slow} frames slower than 60 fps, a frame of them:");
+            for (path, .., in_slow) in samples.iter().take(20).filter(|sample| sample.4 > 0.0) {
+                println!("    {path:<60} {:>8.2} ms", in_slow / slow as f32);
+            }
         }
     }
 }
@@ -930,7 +1033,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         profile,
         profile_out,
         fly,
+        real_time,
         quality,
+        wait,
     } = shot;
     let mut project = Project::open(path)?;
     let project_name = project.name().to_string();
@@ -953,6 +1058,17 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let mut saved: Vec<serde_json::Value> = Vec::new();
     let loading = std::time::Instant::now();
     game.start(Some(&mut renderer))?;
+    // The ground round the camera made first, as a game's loading waits for it: the frames alone can be over before
+    // the terrain's threads have made any of it.
+    if !wait.is_zero() {
+        let making = std::time::Instant::now();
+        let seconds = || making.elapsed().as_secs_f32();
+        if !game.make_world(wait) {
+            tracing::warn!("the ground round the camera was not all made in {:.0} s; the frames go on", seconds());
+        } else if seconds() >= 0.1 {
+            tracing::info!("made the ground round the camera in {:.1} s", seconds());
+        }
+    }
     if let Some(cpu) = &mut cpu {
         cpu.load_ms = loading.elapsed().as_secs_f32() * 1000.0;
         let samples = voxear_core::profiling::end_frame();
@@ -984,6 +1100,8 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         looking_through.or_else(first).map(|camera| (camera, velocity))
     });
     for frame in 1..=frames {
+        let started = std::time::Instant::now();
+        let on_core = on_core_ns();
         if let Some((camera, velocity)) = flying
             && let Some(transform) = game.engine.world.get_mut::<Transform>(camera)
         {
@@ -1014,6 +1132,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             frame_gpu.push(renderer.gpu_frame_ms());
         }
         if let Some(cpu) = &mut cpu {
+            if let (Some(from), Some(to)) = (on_core, on_core_ns()) {
+                cpu.on_core_ms.push(to.saturating_sub(from) as f32 / 1.0e6);
+            }
+            cpu.add_gpu(renderer.gpu_frame_ms(), renderer.timings());
             cpu.add_frame(tick_ms, render_ms, timing, voxear_engine::blocks::streamed(&game.engine.world));
             let samples = voxear_core::profiling::end_frame();
             cpu.add_samples(&samples, timing);
@@ -1031,6 +1153,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         if every.is_some_and(|every| every > 0 && frame % every == 0) {
             let (width, height, pixels) = renderer.read_pixels()?;
             write_png(&sequence_path(&out, frame), width, height, &pixels)?;
+        }
+        if real_time {
+            std::thread::sleep(std::time::Duration::from_secs_f32(delta).saturating_sub(started.elapsed()));
         }
     }
 

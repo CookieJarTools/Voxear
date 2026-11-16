@@ -97,6 +97,17 @@ public static partial class World
 		set { NativeWorldBudget.Set(NativeWorldBudget.PlantDetail, value); }
 	}
 
+	/// <summary>
+	/// The largest a coarser ring's blocks show where the ring begins, in pixels of a screen 1080 tall: the rings are
+	/// pushed out, the world's own blocks drawn on past them, until they are no larger. 3 at Ultra, 4 at High and 6 at
+	/// Medium; 0 draws the rings where the distances put them.
+	/// </summary>
+	public static float FarBlockPixels
+	{
+		get { return NativeWorldBudget.Get(NativeWorldBudget.FarBlockPixels); }
+		set { NativeWorldBudget.Set(NativeWorldBudget.FarBlockPixels, value); }
+	}
+
 	/// <summary>Whether this machine keeps its own quality for the game, in place of the project's.</summary>
 	public static bool QualitySaved => NativeWorldBudget.Get(NativeWorldBudget.KeptForMachine) == 1f;
 

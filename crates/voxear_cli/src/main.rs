@@ -150,7 +150,7 @@ enum Commands {
         /// Setup items, comma-separated, or `none` (default: the template's own).
         #[arg(long, value_delimiter = ',')]
         setup: Option<Vec<String>>,
-        /// Set up a C# IDE: rider, visual-studio or vscode.
+        /// Set up a C# IDE: whisk, rider, visual-studio or vscode.
         #[arg(long)]
         ide: Option<String>,
         /// Start a git repository, with a .gitignore and .gitattributes.

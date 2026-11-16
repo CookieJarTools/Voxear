@@ -52,6 +52,7 @@ mod asset_inspector;
 mod attributes;
 pub mod audio_panel;
 mod build_window;
+pub mod code_editor;
 mod collection;
 mod columns;
 mod curve_fields;

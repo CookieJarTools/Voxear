@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use voxear_ui::{Color, Theme};
 
+pub use crate::code_editor::CodeEditor;
+
 /// The most items the palette remembers having run.
 const RECENT: usize = 8;
 /// How many blocks the brush built with are remembered.
@@ -20,9 +22,18 @@ const RECENT_BLOCKS: usize = 24;
 /// The snap distances the tool strip and Settings offer, in metres.
 pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
 
-/// The editors a stack frame can open in, as the Code editor setting lists
-/// them; the last opens the file as the desktop does, without its line.
-pub const CODE_EDITORS: [&str; 4] = ["VS Code", "Rider", "Zed", "System default"];
+/// The editors scripts open in, as the Code editor setting lists them: the
+/// names of [`CodeEditor::ALL`]. The last opens the file as the desktop
+/// does, without its line.
+pub const CODE_EDITORS: [&str; 5] = {
+    let mut names = [""; 5];
+    let mut at = 0;
+    while at < names.len() {
+        names[at] = CodeEditor::ALL[at].name();
+        at += 1;
+    }
+    names
+};
 
 /// The themes the Theme setting offers before Custom, which is whatever the
 /// base, accent and contrast were last set to.
@@ -265,8 +276,8 @@ pub struct Settings {
     pub console_mine_only: bool,
     pub console_namespaces: bool,
     pub console_parameters: bool,
-    /// Which of [`CODE_EDITORS`] opens a frame's file.
-    pub code_editor: usize,
+    /// The code editor scripts and the project open in.
+    pub code_editor: CodeEditor,
     /// Frames from these assemblies (a frame's root namespace, such as
     /// `Voxear`, or an engine crate) fold away in the Console's traces.
     pub console_hidden_assemblies: Vec<String>,
@@ -345,7 +356,7 @@ impl Default for Settings {
             console_mine_only: true,
             console_namespaces: true,
             console_parameters: true,
-            code_editor: 0,
+            code_editor: CodeEditor::Whisk,
             console_hidden_assemblies: Vec::new(),
             console_filters: Vec::new(),
             console_row_height: 20.0,
@@ -387,7 +398,7 @@ impl Settings {
             "console_mine_only" => SettingValue::Toggle(self.console_mine_only),
             "console_namespaces" => SettingValue::Toggle(self.console_namespaces),
             "console_parameters" => SettingValue::Toggle(self.console_parameters),
-            "code_editor" => SettingValue::Choice(self.code_editor),
+            "code_editor" => SettingValue::Choice(self.code_editor.index()),
             "theme" => SettingValue::Choice(self.theme),
             "theme_base" => SettingValue::Color(self.theme_base),
             "theme_accent" => SettingValue::Color(self.theme_accent),
@@ -423,7 +434,7 @@ impl Settings {
             ("console_mine_only", SettingValue::Toggle(on)) => self.console_mine_only = on,
             ("console_namespaces", SettingValue::Toggle(on)) => self.console_namespaces = on,
             ("console_parameters", SettingValue::Toggle(on)) => self.console_parameters = on,
-            ("code_editor", SettingValue::Choice(i)) => self.code_editor = i.min(CODE_EDITORS.len() - 1),
+            ("code_editor", SettingValue::Choice(i)) => self.code_editor = CodeEditor::at(i),
             ("theme", SettingValue::Choice(i)) => self.set_theme(i),
             // Changing one of the three makes the theme Custom.
             ("theme_base", SettingValue::Color(c)) if c != self.theme_base => (self.theme_base, self.theme) = (c, 2),

@@ -502,6 +502,7 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
         ("Bake Reverb Probes", "", "audio", Command::BakeReverb),
         ("Bake Lighting", "", "light", Command::BakeLighting),
         ("Cancel Lighting Bake", "", "stop", Command::CancelLightingBake),
+        ("Open Project in Code Editor", "", "code", Command::OpenInCodeEditor),
     ];
     for (title, keys, icon, run) in editing {
         commands.push(command(title, keys, icon, PaletteAction::Command(run), format!("command:{title}")));

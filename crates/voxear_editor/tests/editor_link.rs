@@ -285,6 +285,31 @@ fn a_folder_setting_is_set_by_its_path_and_listed_with_it() {
 }
 
 #[test]
+fn the_code_editor_is_whisk_unless_a_tool_picks_another() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let opens = opened.clone();
+    editor.set_source_opener(Box::new(move |file, line| opens.borrow_mut().push((file.to_path_buf(), line))));
+    let code_editor = |editor: &mut Editor, renderer: &mut Renderer| {
+        let listed = done(editor, renderer, "settings.get", json!({}));
+        listed["settings"].as_array().unwrap().iter().find(|s| s["key"] == "code_editor").unwrap().clone()
+    };
+    let shown = code_editor(&mut editor, &mut renderer);
+    assert_eq!((shown["type"].as_str(), shown["value"].as_str()), (Some("choice"), Some("Whisk")));
+    assert_eq!(shown["options"][0], "Whisk");
+    let rider = done(&mut editor, &mut renderer, "settings.set", json!({ "key": "code_editor", "value": "rider" }));
+    assert_eq!(rider["value"], "Rider");
+    assert_eq!(code_editor(&mut editor, &mut renderer)["value"], "Rider");
+    let wrong = json!({ "key": "code_editor", "value": "Notepad" });
+    assert_eq!(ask(&mut editor, &mut renderer, "settings.set", wrong).unwrap_err().kind, ErrorKind::WrongValue);
+
+    // The project opens in it too, as a command a tool can run.
+    done(&mut editor, &mut renderer, "command.run", json!({ "id": "command:Open Project in Code Editor" }));
+    assert_eq!(opened.borrow().as_slice(), [(editor.game.project.root.clone(), 0)]);
+}
+
+#[test]
 fn a_scene_a_tool_writes_is_read_again_unless_edits_wait() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

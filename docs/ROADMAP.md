@@ -823,9 +823,9 @@ Later:
     Gizmos menu's Vehicle Debug, `ShowDebug` and `Physics.DebugVehicles`; each Wheel's contact point and normal,
     compression, slip, slip angle and spin read by scripts
 
-## M5 — Lighting (in progress)
+## M5 — Lighting ✅ (done)
 
-Done so far:
+Done:
 - **Per-meshlet culling**, with mesh shaders where the GPU has them and a compute path everywhere else. Both draw
   the same image as whole LODs, to the pixel.
   - Each LOD is cut into meshlets of 64 vertices and 124 triangles, with a bounding sphere and a normal cone. They
@@ -839,8 +839,8 @@ Done so far:
   - `--no-mesh-shaders` and `--no-meshlet-culling` are there to compare.
   - On an RTX 3070, mesh shaders take Stress at 1440p from 1.57 to 1.46 ms. With every sphere at full detail, 30% of
     the view's meshlets face away and are culled.
-- Still to come for it: double-sided materials, so cone culling can skip them and shadows can cull back faces
-  where the material allows.
+- Two-sided materials skip cone culling and draw from lists of their own (Two-sided materials, in M7). Shadows
+  culling back faces is under Later, at the end of M5.
 - **Ambient occlusion (GTAO)**, as Jimenez et al. and Intel's XeGTAO work it out, from depth drawn before shading.
   - The two-phase culling's passes draw depth first, then shade each pixel once.
   - Ambient occlusion takes only the sky's light away, with specular occlusion for reflections; the sun and lamps
@@ -1040,8 +1040,6 @@ Done so far:
   takes 2 pixels from its pages near the camera against 14 from the atlas, in all three culling paths; pages kept
   while nothing moves, the box drawn over them the frame it moves, and both pictures as the atlas drawn whole. Unit
   tests for the page table, the coarsest pages, pages asked for, a change under a page and a lamp moving.
-- Still to come for shadows: plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages'
-  copies at their size, rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's
@@ -1569,11 +1567,14 @@ Done so far:
   - Later: a probe placement tool in the Scene view, per-pixel probe lighting for large moving Objs, baked shadow
     masks for Mixed lights, terrain and worlds of blocks taking lightmaps.
 
-Next:
-- Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
-- Third-party upscalers: done for AMD FSR 3 (below); NVIDIA DLSS and Intel XeSS are choices that wait on their SDKs.
-- **Ray-traced audio ✅** (in Done, above).
-- **HDR colour, end to end ✅** (in Done, above).
+Later, after M5:
+- Shadows culling back faces and meshlet cones from the light, with two-sided casters drawn without culling (being
+  redone for virtual shadow maps).
+- Plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages' copies at their size,
+  rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
+- NVIDIA DLSS and Intel XeSS, which wait on their SDKs.
+- The look: bounced light, exposure and contrast kept matched to the reference scenes as the worlds grow.
+- The smaller "Later" notes under each part above.
 
 ## Vegetation ✅ (done)
 
@@ -2346,6 +2347,17 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   78). C# `Curve` and `Gradient` types, and `ParticleSystem.SizeCurve`, `OpacityCurve`, `SpeedCurve`,
   `ColorGradient` and `HitEvents`. Tests: on a GPU, strikes on a floor from the system that tells and none from
   one that does not; curves in words and hits told only of systems still there; the C# types.
+- **Two-sided materials ✅.** A material's **Two sided** draws it from both sides, from draw lists of their own
+  that skip back-face and cone culling, the back lit as a front; glTF materials marked double-sided import
+  two-sided and stay so once cooked and when extracted. Materials can also clip by alpha. Manual: Materials.
+- **Megascans from Fab ✅.** A download's zip or folder dropped on the editor, picked with Import New Asset or
+  found in a watched Downloads folder becomes a folder of its textures, a `.material` and its models, with a LOD
+  Group prefab for one with a model for each LOD; plants and scans open behind import two-sided. **Open Fab**
+  shows the store. Manual: Megascans from Fab.
+- **UI shaders ✅.** A `shader` style property draws an element's background with a built-in effect (`shimmer`,
+  `stripes`, `scanlines`, `static`) or a project's own `.shader` that writes a `ui` function, its parameters the
+  element's custom properties; the same in games, UI Panels in the world and the editor's own UI. Manual: UI
+  Shaders.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it

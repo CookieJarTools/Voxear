@@ -38,6 +38,7 @@ Pick a block, and the Inspector shows:
 | Tint | Whether its colour takes the biome it is in: **None**; **Grass**, the biome's grass tint all over, as a tuft; **Grass Top**, on its top alone, as a block of grass with earth for sides; **Foliage**, the biome's foliage tint, as leaves (see [[Biomes#Tints|Tints]]) |
 | Shape | **Cube**, as most blocks are; **Bushy**, a cube with tufts of leaves reaching out of it (see [Bushy leaves](#bushy-leaves)); **Vine**, thin sheets on the blocks beside it (see [Vines](#vines)); or a block of parts: a slab, stairs, a fence, a door and more (see [Blocks of parts](#blocks-of-parts)) |
 | Overlap | Where it lies in the order of blocks that meet: its picture creeps over the edge of a block beside it with a lower Overlap. 0 keeps to itself (see [Blocks that meet](#blocks-that-meet)) |
+| Covered | The block it shows as while a block lies on it: Dirt, for grass, so grass is grass only on top (see [Grass under a block](#grass-under-a-block)). None shows as itself always |
 | Liquid | **None**, or **Water**: see-through, flowing, and nothing stands on it (see [[Block Worlds#Water|Water]]) |
 
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour, matt: it shines back nothing of the sky. For a block that shines, such as ice or polished stone, give it a material with a low **Roughness**. A liquid is drawn in its colour alone, so its materials go.
@@ -91,6 +92,20 @@ Where two different blocks lie side by side, the edge between them is a straight
 - A liquid, a see-through block, one that sways, a bushy block, a vine and a face that joins take no fringe and give none.
 - Far off, past the world's own blocks, edges are straight. So are those of a world drawn smooth, which blends its ground its own way.
 - A world can mix its blocks while it draws 128 looks or fewer.
+
+### Grass under a block
+
+Grass grows only where nothing lies on it. Give a grass block a **Covered** block, its earth, and wherever a block lies on the grass it is drawn as that block. Ground three blocks of grass deep shows grass on top and earth down its cliff, not a band of grass at every step; build a wall on a lawn and the grass under it is earth, and grass again once the wall is gone.
+
+- It is worked out from the block over it as the world is drawn, and changes the moment that block does. Nothing is written: the grass is still grass in the world, in its saves and in what goes over the network.
+- What covers it: a whole block, water, a slab lying low, stairs the right way up and a log: anything that fills the block's top whole. Air does not, nor what light and rain come through: leaves, glass, vines, plants and flowers, a fence, a slab lying high, stairs upside down.
+- Mined, it breaks as what it shows: grass under a block gives the earth's drops and sounds. A script's ray meets the earth too, as does `Blocks.DefinitionAt`; `Block.Covered` says which block a block shows as.
+- Its Covered block has the same shape: a slab of grass shows as a slab of the earth where the world holds one. A liquid has none.
+- A world that holds the grass numbers its earth too, if it does not hold it yet.
+- Near and far alike: the coarser rings and the map draw covered grass as earth.
+- In the Infinite World template, Grass, Wild Grass, Spring Grass, Moss, Needles Floor and Fallen Leaves show as Dirt, and the starter biomes' Wild Grass and Needles Floor do too. Snow is snow all through, and shows as itself.
+- A world drawn smooth draws its own surface, and takes none of this.
+- `vox editor call blocks.get` says what a block shows as (`shows`) where it is another block.
 
 ### Bushy leaves
 

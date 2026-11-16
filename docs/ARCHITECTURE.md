@@ -1267,6 +1267,17 @@ and swaying bits as the look that creeps over it and from where. Twins are a fix
 a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
 in the same place, later in the pool and discarded but for its fringe.
 
+**Grass under a block** is a look worked out from the block over it, never an edit. A `.block`'s `covered` names
+the block it shows as while covered; `resolved` turns that into the number of that block in the world, in the same
+state (a slab's slab), and `with_covered` numbers it after the world's blocks where it has none, as biomes' blocks are.
+`BlockFaces::covered` carries the number. `mesh_made` swaps each such block in its padded copy of the chunk for that
+block where `covers_below` says the block over it covers it (a whole block, water, a part whose underside is covered
+whole), bottom up so each reads the block over it as it is, and everything after (faces, looks, overlap, tints,
+collision) follows. The far rings and far tiles go through the same mesher; the map does the same along its runs. A
+change re-meshes the chunks round the block under it too. `BlockWorld::shown` gives the block as drawn, which a
+script's ray and `Blocks.DefinitionAt` report, so a covered grass block is mined as its earth. Saves and the network
+carry the grass as it is, so they are no larger.
+
 **Portals** *(implemented; light, shadows and sound through them, other levels and the server's checks planned)*.
 A `voxear_render::Portal` on an Obj is an opening `size` wide about the Obj and high from it, facing its +Z, that
 leads to another Portal. `Carry::between` is what going through does: turned about the near Portal, half a turn about

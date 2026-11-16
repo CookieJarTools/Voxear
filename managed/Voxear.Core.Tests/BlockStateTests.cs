@@ -23,4 +23,20 @@ internal static class BlockStateTests
 		Check.True(branch.Across == 6 && new BlockState(BlockFacing.Up).Across == 16, "whole is sixteen across");
 		Check.True(BlockState.FromByte(16).Open && BlockState.FromByte(16).Size == 0, "a door's byte is no log's");
 	}
+
+	[Test]
+	private static void ABlockSaysWhichBlockItShowsAsWhileCovered()
+	{
+		// As the engine says a block to scripts: grass, which shows as dirt under a block.
+		const string said = """
+			{ "name": "Grass", "color": [0.2, 0.6, 0.1], "liquid": "none", "hardness": 0.6, "unbreakable": false,
+			  "tool": null, "tier": 0, "data": null, "drops": [], "sounds": { "break": null, "place": null, "step": null },
+			  "covered": "test:covered-dirt" }
+			""";
+		using var json = System.Text.Json.JsonDocument.Parse(said);
+		var grass = BlockInfos.Make("test:covered-grass", new BlockInfo(json.RootElement));
+		var dirt = BlockInfos.Make("test:covered-dirt", new BlockInfo("Dirt"));
+		Check.True(grass.Covered == dirt, $"grass shows as dirt, not {grass.Covered}");
+		Check.True(dirt.Covered == Block.None, "dirt shows as itself always");
+	}
 }

@@ -63,6 +63,13 @@ public readonly struct Block : IEquatable<Block>, IAsset<Block>
 	/// <summary>Whether it is a sapling: it grows into a tree where it has room and light.</summary>
 	public bool IsSapling => Info?.IsSapling ?? false;
 
+	/// <summary>
+	/// The block it shows as while a block covers its top, as grass shows as dirt under a block; None where it shows as
+	/// itself always. A ray that meets it covered meets that block (see <see cref="Blocks.Raycast"/>), so it is mined
+	/// as that block.
+	/// </summary>
+	public Block Covered => Info?.Covered ?? None;
+
 	/// <summary>How many seconds it takes to break by hand.</summary>
 	public float Hardness => Info?.Hardness ?? 0f;
 

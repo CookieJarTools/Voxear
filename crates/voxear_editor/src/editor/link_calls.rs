@@ -1539,12 +1539,19 @@ impl Editor {
             if block == AIR && !given {
                 continue;
             }
-            let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
-            let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
-            let block = path.map(|entry| link::asset_ref(&self.game, &entry.path));
-            return done(json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": block }));
+            let named = |block| {
+                let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
+                let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
+                path.map(|entry| link::asset_ref(&self.game, &entry.path))
+            };
+            // And what it is drawn as, where that is another block: grass under a block shows as dirt.
+            let shown = blocks.shown(cell);
+            let shows = if shown == block { Json::Null } else { json!(named(shown)) };
+            let answer =
+                json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": named(block), "shows": shows });
+            return done(answer);
         }
-        done(json!({ "obj": null, "cell": null, "block": null }))
+        done(json!({ "obj": null, "cell": null, "block": null, "shows": null }))
     }
 
     fn blocks_set(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {

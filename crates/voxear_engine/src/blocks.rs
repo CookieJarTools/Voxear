@@ -1189,6 +1189,7 @@ pub fn stream(world: &mut World, content: &mut Content) {
     use voxear_scene::{Transform, WorldTransform};
     use voxear_terrain::blocks::stream::StreamFrom;
     voxear_core::profile_scope!("Block Streaming");
+    let finding = voxear_core::profile_marker!("Worlds").scope();
     let endless: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
         .query_ref::<(voxear_ecs::Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
@@ -1221,13 +1222,18 @@ pub fn stream(world: &mut World, content: &mut Content) {
         .min_by_key(|(entity, _)| entity.index())
         .map_or(60.0f32, |(_, camera)| camera.fov_y_degrees)
         .to_radians();
+    drop(finding);
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
+        let made = voxear_core::profile_marker!("Making").scope();
         let Some(mut making) = making(content, &asset) else { continue };
+        drop(made);
+        let wooded = voxear_core::profile_marker!("Far Built").scope();
         // Woods of the plants it grows, where they are thick enough to show so far off.
         making.far_built = crate::grown_plants::far_built(world, content, entity);
+        drop(wooded);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();

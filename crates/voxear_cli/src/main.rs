@@ -783,9 +783,17 @@ struct CpuTimes {
     /// The first frame by which every world of blocks without end had made its chunks round the camera, once
     /// any was making them: 0 while one still is.
     streamed_by: Option<u32>,
-    /// Each sample by its path: milliseconds over every frame, the slowest frame's, and over the timed ones.
-    samples: Vec<(String, f32, f32, f32)>,
+    /// Each sample by its path: milliseconds over every frame, the slowest frame's, over the timed ones, and over
+    /// the frames slower than [`SLOW_FRAME_MS`].
+    samples: Vec<(String, f32, f32, f32, f32)>,
+    /// Each frame's tick and render together, and whether the last was slower than [`SLOW_FRAME_MS`].
+    frame_ms: Vec<f32>,
+    slow: bool,
 }
+
+/// A frame slower than this, in milliseconds, shows on a 60 Hz display as one missed: what is in such frames is
+/// listed apart.
+const SLOW_FRAME_MS: f32 = 1000.0 / 60.0;
 
 impl CpuTimes {
     fn add_frame(&mut self, tick_ms: f32, render_ms: f32, timed: bool, streamed: bool) {
@@ -798,6 +806,8 @@ impl CpuTimes {
             }
         }
         self.timed_frames += u32::from(timed);
+        self.frame_ms.push(tick_ms + render_ms);
+        self.slow = tick_ms + render_ms > SLOW_FRAME_MS;
         match (streamed, self.streamed_by) {
             (false, _) => self.streamed_by = Some(0),
             (true, Some(0)) => self.streamed_by = Some(self.frames),
@@ -820,7 +830,7 @@ impl CpuTimes {
             let at = match self.samples.iter().position(|(kept, ..)| *kept == path) {
                 Some(at) => at,
                 None => {
-                    self.samples.push((path, 0.0, 0.0, 0.0));
+                    self.samples.push((path, 0.0, 0.0, 0.0, 0.0));
                     self.samples.len() - 1
                 }
             };
@@ -829,6 +839,9 @@ impl CpuTimes {
             kept.2 = kept.2.max(ms);
             if timed {
                 kept.3 += ms;
+            }
+            if self.slow {
+                kept.4 += ms;
             }
         }
     }
@@ -848,6 +861,20 @@ impl CpuTimes {
                 self.timed[i] / timed
             );
         }
+        // How the frames spread: a frame's tick and render, the half, the 95 and 99 in a hundred quicker than it, and
+        // how many are slower than a 60 Hz and a 144 Hz display's frame.
+        let mut sorted = self.frame_ms.clone();
+        sorted.sort_by(f32::total_cmp);
+        let at = |share: f32| sorted.get(((sorted.len() as f32 * share) as usize).min(sorted.len().saturating_sub(1)));
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| sorted.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  frames         {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} slower \
+                 than 60 fps, {} than 144",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+        }
         match self.streamed_by {
             Some(0) => println!("  worlds of blocks without end still making chunks round the camera"),
             Some(by) => println!("  worlds of blocks without end made round the camera by frame {by}"),
@@ -857,8 +884,17 @@ impl CpuTimes {
         samples.retain(|(_, all, ..)| *all >= 0.5);
         samples.sort_by(|a, b| b.1.total_cmp(&a.1));
         println!("  samples, in all · slowest frame · a timed frame:");
-        for (path, all, slowest, last) in samples.iter().take(40) {
+        for (path, all, slowest, last, _) in samples.iter().take(40) {
             println!("    {path:<60} {all:>9.1} ms · {slowest:>8.2} · {:>7.3}", last / timed);
+        }
+        // What the frames slower than 60 fps spent their time on, a frame of them on average.
+        let slow = self.frame_ms.iter().filter(|&&frame| frame > SLOW_FRAME_MS).count();
+        if slow > 0 {
+            samples.sort_by(|a, b| b.4.total_cmp(&a.4));
+            println!("  in the {slow} frames slower than 60 fps, a frame of them:");
+            for (path, .., in_slow) in samples.iter().take(20).filter(|sample| sample.4 > 0.0) {
+                println!("    {path:<60} {:>8.2} ms", in_slow / slow as f32);
+            }
         }
     }
 }

@@ -2864,6 +2864,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     tile's spans 166 → 36 ms, and flying at 30 m/s the camera stays over its own blocks, where it flew through
     coarse ones. `vox render --real-time` keeps a render to its frame rate, to measure it. Tests: what is asked
     for first; the terrain crate's own.
+  - ~~**Frames as quick moving as standing:**~~ done: a world without end's new chunks have their shapes to stand
+    on made in the background and their bodies added when done, but for those within a chunk of a character or a
+    body, and chunks changed, which are made at once; the chunks' meshes for rays keep their most common surface,
+    so how they sound is not worked out again for all of them as each comes. `vox render --profile` says how the
+    frames spread (the half, 95 and 99 in 100, how many slower than 60 and 144 fps) and what the frames slower than
+    60 fps spent their time on. Flying at 30 m/s over a copy of a block game's world, frames slower than 60 fps
+    went from 285 and 337 in 1,800 to 47 and 156, the 95th in 100 from 28–42 ms to 13–20 ms, with other work on the
+    machine. Tests: physics' own, the engine's endless world, mobs and blocks, the renderer's blocks.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that

@@ -3822,7 +3822,9 @@ has the vines it has among its neighbours. A `.voxplant` with `vines` grows them
 each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
 chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
 `RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
-900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same, the ray meshes
+900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same (a world without
+end's new chunks' on the terrain's threads, their bodies added at a later step, but for those within a chunk of a
+character or a body and chunks changed, `BlockBodies::making`), the ray meshes
 made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
 too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
 room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose

@@ -721,7 +721,7 @@ fn merged(mut picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
 
 /// A chunk's mesh for rays: the chunk it was made from, and how many
 /// vertices and indices it takes.
-type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2]);
+type Proxy = (Arc<ChunkMesh>, MeshHandle, [usize; 2], Option<usize>);
 
 /// One world's chunks on the GPU: one buffer, each slot's chunk's place in
 /// blocks, then the quads (or, drawn smooth, its triangles' corners); and
@@ -1225,9 +1225,11 @@ impl BlockWorlds {
             }
         }
         // Meshes for rays no frame's commands made are made now, before anything draws them.
+        let left_over = voxear_core::profile_marker!("Ray Meshes Left Over").scope();
         for kept in self.rays.drain(..) {
             gpu.do_kept(kept)?;
         }
+        drop(left_over);
         let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
         // The frame's chunks to bring up, between every world.
         let mut left = voxear_terrain::WorldBudget::of(world).upload_bytes();
@@ -1302,8 +1304,12 @@ impl BlockWorlds {
                 false => look.surfaces.iter().map(|surface| assets.is_cut_out(surface.material)).collect(),
             };
             pool.arrange(cut, &mut stage);
+            let fading = voxear_core::profile_marker!("Fades").scope();
             pool.fade(&blocks.fades, &mut stage);
+            drop(fading);
+            let chunks = voxear_core::profile_marker!("Chunks").scope();
             let whole = pool.update(gpu, frames, blocks, (frame_index, &mut left), &mut stage)?;
+            drop(chunks);
             // Its tints, brought up where they changed; one larger than its room is left untinted.
             match world.get::<BlockTints>(entity) {
                 Some(tints)
@@ -1339,7 +1345,7 @@ impl BlockWorlds {
                 let own = blocks.places.first().map(|place| &place.columns);
                 let traced = |key: &[i32; 3]| own.is_none_or(|own| own.contains(&[0, key[0], key[2]]));
                 let before = pool.proxies.len();
-                pool.proxies.retain(|key, (_, mesh, _)| {
+                pool.proxies.retain(|key, (_, mesh, ..)| {
                     let kept = blocks.meshes.contains_key(key) && traced(key);
                     if !kept {
                         assets.free_mesh(*mesh, frame_index);
@@ -1350,6 +1356,7 @@ impl BlockWorlds {
                     Arc::ptr_eq(meshes, &blocks.meshes) && Arc::ptr_eq(places, &blocks.places) && *at == camera_chunk
                 });
                 if !sorted {
+                    let _ordering = voxear_core::profile_marker!("Ray Order").scope();
                     let middle = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) + 0.5;
                     let away = |key: &[i32; 3]| near.map_or(0.0, |near| middle(key).distance(near));
                     pool.order.clear();
@@ -1405,9 +1412,10 @@ impl BlockWorlds {
                                 .take(PROXIES_A_FRAME - 1)
                                 .map(|(_, mesh, away)| ([mesh.positions.len(), mesh.indices.len()], away));
                             let wanting = std::iter::once((room, away)).chain(next);
-                            let given = giving_up(&order, |key| pool.proxies.get(key).map(|(.., room)| *room), wanting);
+                            let given =
+                                giving_up(&order, |key| pool.proxies.get(key).map(|(_, _, room, _)| *room), wanting);
                             for key in &given {
-                                if let Some((_, mesh, _)) = pool.proxies.remove(key) {
+                                if let Some((_, mesh, ..)) = pool.proxies.remove(key) {
                                     assets.free_mesh(mesh, frame_index);
                                 }
                             }
@@ -1424,7 +1432,9 @@ impl BlockWorlds {
                             break;
                         }
                     };
-                    if let Some((_, old, _)) = pool.proxies.insert(key, (mesh.clone(), handle, room)) {
+                    // Its most common surface worked out once, for how it sounds (see `ACOUSTIC_ROCK`).
+                    let surface = most_common_surface(mesh);
+                    if let Some((_, old, ..)) = pool.proxies.insert(key, (mesh.clone(), handle, room, surface)) {
                         assets.free_mesh(old, frame_index);
                     }
                     changed = true;
@@ -1441,21 +1451,23 @@ impl BlockWorlds {
                     pool.placed = None;
                 }
             }
+            let placing = voxear_core::profile_marker!("Ray Places").scope();
             let placed = pool
                 .placed
                 .get_or_insert_with(|| {
                     let at = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                    let acoustic = |chunk: &ChunkMesh| {
-                        let surface = most_common_surface(chunk);
+                    let acoustic = |surface: Option<usize>| {
                         let material = surface.and_then(|surface| look.surfaces.get(surface));
                         match material.map_or(0, |look| assets.acoustic(look.material)) {
                             0 => ACOUSTIC_ROCK + 1,
                             given => given,
                         }
                     };
-                    pool.proxies.iter().map(|(key, (chunk, mesh, _))| (*mesh, at(key), acoustic(chunk))).collect()
+                    let proxies = pool.proxies.iter();
+                    proxies.map(|(key, (_, mesh, _, surface))| (*mesh, at(key), acoustic(*surface))).collect()
                 })
                 .clone();
+            drop(placing);
             let drawn = DrawnBlocks {
                 entity,
                 corner,
@@ -1520,6 +1532,7 @@ impl BlockWorlds {
                 retire(old, assets, frames, frame_index);
             }
         }
+        let _staging = voxear_core::profile_marker!("Staging").scope();
         if !staged.is_empty() {
             let usage = vk::BufferUsageFlags::TRANSFER_SRC;
             let staging = gpu.create_buffer("block uploads", staged.len() as u64, usage, MemoryLocation::CpuToGpu)?;
@@ -1591,7 +1604,7 @@ impl BlockWorlds {
 
 fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
     frames.retire(Retired::Buffer(pool.buffer));
-    for (_, (_, mesh, _)) in pool.proxies {
+    for (_, (_, mesh, ..)) in pool.proxies {
         assets.free_mesh(mesh, frame_index);
     }
 }

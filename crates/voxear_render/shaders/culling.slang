@@ -73,7 +73,7 @@ void countWave(uint stat, bool counted)
 // How many meshlets the cull queued in a list.
 uint queuedMeshlets(Frame* frame, uint list)
 {
-    return min(buffers()->drawCount[queuedCountIndex(list)], meshletListCapacity(list, frame->meshletCapacity));
+    return min(buffers()->drawCount[queuedCountIndex(list)], frameMeshletCapacity(frame, list));
 }
 
 static const uint MESHLET_VISIBLE = 0;
@@ -123,15 +123,18 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
     // Nor can a cone tell which way a custom shader's moved vertices face.
     culler.grow = buffers()->materials[instance.material].maxOffset + instance.reach;
     bool moved = culler.grow > 0.0;
-    culler.cones = list < LIST_SHADOW && (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns && !moved;
+    // Two-sided casters' shadow lists keep what is turned away, as their backs cast; the main view draws two-sided
+    // instances whole, from lists without meshlets.
+    bool twoSided = list >= LIST_TWO_SIDED_SHADOW;
+    culler.cones = (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns && !moved && !twoSided;
     culler.whole = instance.posed != 0;
     culler.list = list;
     return culler;
 }
 
 // Whether a meshlet is drawn, or why not. Every list tests the frustum (a
-// shadow cascade's own); the main view's lists also test the normal cone,
-// and the late list the depth pyramid. The early list draws what was seen
+// shadow's its own) and the normal cone, seen from the camera or the light;
+// the late list also the depth pyramid. The early list draws what was seen
 // last frame without asking the pyramid, which is not built yet.
 uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
 {
@@ -141,31 +144,42 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
     }
     float3 center = transform(culler.model, float4(meshlet.center, 1.0)).xyz;
     float radius = meshlet.radius * culler.scale + culler.grow;
-    if (culler.list >= LIST_LOCAL_SHADOW)
+    bool inside;
+    // From the camera, a lamp, or along the sun's light from far off. A two-sided list is tested as the list beside it.
+    float3 toCenter = center - frame->cameraPosition;
+    uint list = shadowListOf(culler.list);
+    if (list >= LIST_LOCAL_SHADOW)
     {
         // A lamp page's draw tests its own page.
-        if (push.level >= LAMP_PAGE_VIEW)
-        {
-            Mat4 page = lampPageViewProj(frame, push.level - LAMP_PAGE_VIEW);
-            return insideProjection(page, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
-        }
-        return insideLocalShadow(frame, culler.list - LIST_LOCAL_SHADOW, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+        uint light = list - LIST_LOCAL_SHADOW;
+        inside = push.level >= LAMP_PAGE_VIEW
+            ? insideProjection(lampPageViewProj(frame, push.level - LAMP_PAGE_VIEW), center, radius)
+            : insideLocalShadow(frame, light, center, radius);
+        toCenter = center - frame->localShadows.casters[light].xyz;
     }
-    if (culler.list >= LIST_SHADOW)
+    else if (list >= LIST_SHADOW)
     {
         // A virtual shadow page's draw tests its own page; a pass for pages, their level's.
+        uint level = vsmCullLevel(frame, list, push.level, push.output);
         if (push.level >= VSM_PAGE_VIEW)
         {
-            return insideVsmPage(frame, push.level - VSM_PAGE_VIEW, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+            inside = insideVsmPage(frame, push.level - VSM_PAGE_VIEW, center, radius);
         }
-        uint level = vsmCullLevel(frame, culler.list, push.level, push.output);
-        if (level < VSM_LEVELS)
+        else if (level < VSM_LEVELS)
         {
-            return insideVsmLevel(frame, level, push.level == VSM_CULL_MOVING, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+            inside = insideVsmLevel(frame, level, push.level == VSM_CULL_MOVING, center, radius);
         }
-        return insidePlanes(frame->cascadePlanes[culler.list - LIST_SHADOW], center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+        else
+        {
+            inside = insidePlanes(frame->cascadePlanes[list - LIST_SHADOW], center, radius);
+        }
+        toCenter = (level < VSM_LEVELS ? frame->vsm.direction : frame->sunDirection) * 1.0e5;
     }
-    if (!insidePlanes(frame->planes, center, radius))
+    else
+    {
+        inside = insidePlanes(frame->planes, center, radius);
+    }
+    if (!inside)
     {
         return MESHLET_OUTSIDE;
     }
@@ -174,11 +188,14 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
         // The test without the cone's apex, from meshoptimizer: every
         // triangle faces away when the view lies inside the cone reversed.
         float3 axis = normalize(transform(culler.model, float4(meshlet.coneAxis, 0.0)).xyz) * culler.facing;
-        float3 toCenter = center - frame->cameraPosition;
         if (dot(toCenter, axis) >= meshlet.coneCutoff * length(toCenter) + radius)
         {
             return MESHLET_BACK_FACING;
         }
+    }
+    if (culler.list >= LIST_SHADOW)
+    {
+        return MESHLET_VISIBLE;
     }
     if (culler.list == LIST_LATE && occluded(frame, center, radius))
     {
@@ -193,7 +210,7 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
 uint cullQueued(Frame* frame, uint list, uint work, out bool tested, out uint2 entry, out MeshLod lod)
 {
     tested = work < queuedMeshlets(frame, list);
-    entry = tested ? buffers()->meshletWork[meshletListBase(list, frame->meshletCapacity) + work] : uint2(~0u, 0);
+    entry = tested ? buffers()->meshletWork[frameMeshletBase(frame, list) + work] : uint2(~0u, 0);
     lod = (MeshLod)0;
     if (!tested)
     {

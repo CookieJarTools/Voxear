@@ -830,8 +830,9 @@ Done:
   the same image as whole LODs, to the pixel.
   - Each LOD is cut into meshlets of 64 vertices and 124 triangles, with a bounding sphere and a normal cone. They
     are stored in the cooked format.
-  - Meshlets are tested against the frustum in every list (each shadow cascade against its own). The main view
-    also tests their normal cones, and the late list the depth pyramid.
+  - Meshlets are tested against the frustum in every list (each shadow cascade, virtual shadow level and lamp
+    against its own) and against their normal cones, seen from the camera or the light. The late list also tests
+    the depth pyramid.
   - Neighbouring surviving meshlets draw as one range. The work list is flattened, so no GPU threads sit idle on
     small LODs, and stats are counted in GPU memory.
   - Counters for meshlets tested, culled and drawn appear in `vox render` and the stats overlay. A Meshlets debug
@@ -839,8 +840,11 @@ Done:
   - `--no-mesh-shaders` and `--no-meshlet-culling` are there to compare.
   - On an RTX 3070, mesh shaders take Stress at 1440p from 1.57 to 1.46 ms. With every sphere at full detail, 30% of
     the view's meshlets face away and are culled.
-- Two-sided materials skip cone culling and draw from lists of their own (Two-sided materials, in M7). Shadows
-  culling back faces is under Later, at the end of M5.
+- Two-sided materials skip cone culling and draw from lists of their own (Two-sided materials, in M7).
+- Shadows cull back faces, meshlets by cone and triangles by facing, for the sun's cascades and virtual shadow pages
+  and the lamps' atlas and pages. Two-sided casters go in lists of their own beside each, their meshlets culled but
+  for their cones and drawn without culling backs, so they cast from either side. Sponza at 1440p, shadows drawn
+  each frame: the sun's cascades 0.26 → 0.15 ms, the lamps' atlas 0.27 → 0.23 ms; lamp pages unchanged.
 - **Ambient occlusion (GTAO)**, as Jimenez et al. and Intel's XeGTAO work it out, from depth drawn before shading.
   - The two-phase culling's passes draw depth first, then shade each pixel once.
   - Ambient occlusion takes only the sky's light away, with specular occlusion for reflections; the sun and lamps
@@ -1568,8 +1572,6 @@ Done:
     masks for Mixed lights, terrain and worlds of blocks taking lightmaps.
 
 Later, after M5:
-- Shadows culling back faces and meshlet cones from the light, with two-sided casters drawn without culling (being
-  redone for virtual shadow maps).
 - Plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages' copies at their size,
   rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
 - NVIDIA DLSS and Intel XeSS, which wait on their SDKs.

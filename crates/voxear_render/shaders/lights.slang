@@ -428,7 +428,7 @@ bool localShadowKept(Frame* frame, uint slot)
     {
         return false;
     }
-    return buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] == 0;
+    return !lampListDrawn(slot);
 }
 
 // Few taps, turned each frame and pixel, as TAA averages them: an area
@@ -570,7 +570,7 @@ bool lampPaged(Frame* frame, uint slot)
 bool lampMoving(Frame* frame, uint slot)
 {
     return ((frame->localShadows.cached >> (KEPT_MOVING_SHIFT + slot)) & 1) != 0
-        || buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] != 0;
+        || lampListDrawn(slot);
 }
 
 // How wide a texel of level `mip` of a lamp's view is `distance` from it, in metres.

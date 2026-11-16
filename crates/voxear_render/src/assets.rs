@@ -362,6 +362,8 @@ pub struct Assets {
     /// Materials whose vertices move as they are drawn, in the wind or by a
     /// custom shader, so what they are on never stands still.
     moving_materials: std::collections::HashSet<MaterialHandle>,
+    /// Two-sided materials, whose casters shadows draw from lists of their own.
+    two_sided_materials: std::collections::HashSet<MaterialHandle>,
     /// How many times a material has been written, so what keeps shadows
     /// drawn with them knows when to draw them again.
     material_writes: u64,
@@ -443,6 +445,7 @@ impl Assets {
             impostors: Default::default(),
             foliage_materials: Default::default(),
             moving_materials: Default::default(),
+            two_sided_materials: Default::default(),
             material_writes: 0,
             ltc: [TextureId(0); 2],
             smoke_noise: TextureId(0),
@@ -1049,6 +1052,11 @@ impl Assets {
         self.moving_materials.contains(&material)
     }
 
+    /// Whether a material is two-sided, drawn from both sides.
+    pub fn is_two_sided(&self, material: MaterialHandle) -> bool {
+        self.two_sided_materials.contains(&material)
+    }
+
     /// How many times any material has been written so far.
     pub fn material_writes(&self) -> u64 {
         self.material_writes
@@ -1074,6 +1082,11 @@ impl Assets {
             self.moving_materials.insert(handle);
         } else {
             self.moving_materials.remove(&handle);
+        }
+        if desc.two_sided {
+            self.two_sided_materials.insert(handle);
+        } else {
+            self.two_sided_materials.remove(&handle);
         }
         self.material_writes += 1;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
@@ -1269,6 +1282,7 @@ impl Assets {
             Retiring::Space(space) => self.free_space(space),
             Retiring::Material(material) => {
                 self.glass.retain(|&glass| glass != material);
+                self.two_sided_materials.remove(&material);
                 self.material_slots.free(material.0);
             }
             Retiring::Texture(texture) => {

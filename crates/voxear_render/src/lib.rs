@@ -196,9 +196,9 @@ use crate::{
     assets::Assets,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAW_COUNT_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT,
-        MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, Push,
-        meshlet_lists_len, stat,
-    SKY_ATMOSPHERE, },
+        MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, MeshletCapacity, Push,
+        SKY_ATMOSPHERE, meshlet_lists_len, stat,
+    },
     hot_reload::{CustomCompile, ShaderSet, ShaderWatcher},
     pipelines::{DEPTH_FORMAT, HDR_FORMAT, PYRAMID_FORMAT, Pipelines, VELOCITY_FORMAT},
     shadows::ATLAS_RESOLUTION,
@@ -446,7 +446,7 @@ struct FrameBuffers {
     meshlet_draw_instances: Buffer,
     /// The meshlets the cull queues for the meshlet pass, laid out as the lists.
     meshlet_work: Buffer,
-    meshlet_capacity: u32,
+    meshlet_capacity: MeshletCapacity,
     /// The sun's virtual shadow pages' table and what the frame asks for,
     /// made when first needed (see `vsm`).
     vsm: Option<VsmBuffers>,
@@ -514,11 +514,17 @@ impl FrameBuffers {
     /// again half as large again when they do not, so a growing scene does
     /// not make them every frame. The caller has waited for this slot's last
     /// frame, so the old ones can go at once.
-    fn fit_meshlets(&mut self, gpu: &Gpu, slot: usize, needed: u32) -> Result<()> {
-        if needed <= self.meshlet_capacity {
+    fn fit_meshlets(&mut self, gpu: &Gpu, slot: usize, needed: MeshletCapacity) -> Result<()> {
+        let have = self.meshlet_capacity;
+        if needed.all <= have.all && needed.two_sided <= have.two_sided {
             return Ok(());
         }
-        let capacity = needed.max(self.meshlet_capacity + self.meshlet_capacity / 2).min(MAX_MESHLET_CAPACITY);
+        let grow = |needed: u32, have: u32| match needed <= have {
+            true => have,
+            false => needed.max(have + have / 2).min(MAX_MESHLET_CAPACITY),
+        };
+        let capacity =
+            MeshletCapacity { all: grow(needed.all, have.all), two_sided: grow(needed.two_sided, have.two_sided) };
         let [draws, instances, work] = create_meshlet_lists(gpu, &self.prefix, slot, capacity)?;
         gpu.destroy_buffer(std::mem::replace(&mut self.meshlet_draws, draws));
         gpu.destroy_buffer(std::mem::replace(&mut self.meshlet_draw_instances, instances));
@@ -3008,11 +3014,21 @@ impl View {
         drop(extracting);
 
         // As many meshlets as every instance's draw could turn into, so the meshlet lists never drop any.
-        let needed: u64 =
-            extracted.instances[..opaque_count].iter().map(|i| u64::from(assets.most_meshlets(i.mesh))).sum();
+        // The two-sided casters' shadows go in lists of their own, as many as they could turn into.
+        let (mut needed, mut two_sided_needed, mut two_sided_casters) = (0u64, 0u64, false);
+        for instance in &extracted.instances[..opaque_count] {
+            let most = u64::from(assets.most_meshlets(instance.mesh));
+            needed += most;
+            let casts = instance.flags & gpu::INSTANCE_NO_SHADOW == 0;
+            if casts && assets.is_two_sided(MaterialHandle(instance.material)) {
+                two_sided_needed += most;
+                two_sided_casters = true;
+            }
+        }
         let meshlet_capacity = match self.options.meshlet_culling {
             true if needed <= u64::from(MAX_MESHLET_CAPACITY) => {
-                self.buffers[slot].fit_meshlets(gpu, slot, needed as u32)?;
+                let needed = MeshletCapacity { all: needed as u32, two_sided: two_sided_needed as u32 };
+                self.buffers[slot].fit_meshlets(gpu, slot, needed)?;
                 Some(self.buffers[slot].meshlet_capacity)
             }
             true => {
@@ -3459,7 +3475,8 @@ impl View {
         frame_data.delta_time = setup.delta_time;
         frame_data.frame_index = setup.frame_index as u32;
         frame_data.taa_reset = u32::from(taa_reset);
-        frame_data.meshlet_capacity = meshlet_capacity.unwrap_or(0);
+        frame_data.meshlet_capacity = meshlet_capacity.map_or(0, |capacity| capacity.all);
+        frame_data.meshlet_two_sided_capacity = meshlet_capacity.map_or(0, |capacity| capacity.two_sided);
         // The wireframe view draws back faces too, and the meshlets view colours each meshlet by its own draw.
         let cones = if self.options.debug_view == gpu::DEBUG_VIEW_WIREFRAME { 0 } else { MESHLET_CONES };
         let runs = if self.options.debug_view == gpu::DEBUG_VIEW_MESHLETS { 0 } else { MESHLET_RUNS };
@@ -3798,6 +3815,7 @@ impl View {
             traced_reflections,
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
+            two_sided_casters,
             probe_job,
             sound_job,
             bake: bake.map(|(bake, pipelines)| (bake.clone(), pipelines)),
@@ -4167,7 +4185,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
     let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
     let lists = u64::from(LIST_COUNT);
     let [meshlet_draws, meshlet_draw_instances, meshlet_work] =
-        create_meshlet_lists(gpu, prefix, slot, FIRST_MESHLET_CAPACITY)?;
+        create_meshlet_lists(gpu, prefix, slot, MeshletCapacity { all: FIRST_MESHLET_CAPACITY, two_sided: 0 })?;
     Ok(FrameBuffers {
         frame: gpu.create_buffer(&format!("{prefix}frame {slot}"), size_of::<GpuFrame>() as u64, storage, host)?,
         instances: gpu.create_buffer(
@@ -4339,7 +4357,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         meshlet_draws,
         meshlet_draw_instances,
         meshlet_work,
-        meshlet_capacity: FIRST_MESHLET_CAPACITY,
+        meshlet_capacity: MeshletCapacity { all: FIRST_MESHLET_CAPACITY, two_sided: 0 },
         vsm: None,
         lamp_vsm: None,
         prefix: prefix.to_string(),
@@ -4349,7 +4367,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
 /// A view's meshlet lists for one frame in flight, for `capacity` (see
 /// `gpu::meshlet_list`): their draws, each draw's instance, and the
 /// meshlets queued for the meshlet pass.
-fn create_meshlet_lists(gpu: &Gpu, prefix: &str, slot: usize, capacity: u32) -> Result<[Buffer; 3]> {
+fn create_meshlet_lists(gpu: &Gpu, prefix: &str, slot: usize, capacity: MeshletCapacity) -> Result<[Buffer; 3]> {
     let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
     let entries = meshlet_lists_len(capacity).max(1);
     let draws = gpu.create_buffer(

@@ -42,7 +42,7 @@ float4 keptCopyVertex(uint vertexId : SV_VertexID) : SV_Position
     uint slot = push.level / LOCAL_SHADOW_SLOT_VIEWS;
     uint cached = push.frame->localShadows.cached;
     bool moving = ((cached >> (KEPT_MOVING_SHIFT + slot)) & 1) != 0
-        || buffers()->drawCount[drawCountIndex(LIST_LOCAL_SHADOW + slot)] != 0;
+        || lampListDrawn(slot);
     if (!moving)
     {
         return float4(0.0, 0.0, 2.0, 1.0);

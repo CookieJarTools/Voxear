@@ -152,6 +152,12 @@ pub struct BlockKind {
     /// texture pack worn.
     #[serde(skip)]
     pub overlap: u8,
+    /// The number of the block it shows as while a block covers its top,
+    /// as its block says (see `block::BlockDef::covered`): `AIR` for
+    /// itself always. Never written: it is found among the world's blocks
+    /// where the world is made (see `voxear_engine::blocks::resolved`).
+    #[serde(skip)]
+    pub covered: BlockId,
     /// Its shape, as its block says: a cube, a cube with tufts of leaves,
     /// a vine, or a block of parts. Never written: a kind of the world's
     /// own is a cube.
@@ -288,6 +294,7 @@ impl Default for BlockKind {
             sways: false,
             connected: 0,
             overlap: 0,
+            covered: AIR,
             shape: super::block::BlockShape::Cube,
             state: 0,
             slab: false,
@@ -628,6 +635,15 @@ impl BlockFile {
             let joined = BlockFaces { connects, mixes, overlap, ..shown };
             faces.push(self.part_faces(kind, shape, &mut motions, joined));
         }
+        // What a block shows as while it is covered: another of its world's blocks, drawn in the same shape, and
+        // neither of them water.
+        for (at, kind) in self.blocks.iter().enumerate().filter(|(_, kind)| kind.is_live() && kind.covered != AIR) {
+            let number = (at + 1) as BlockId;
+            let alike = |other: &BlockKind| other.drawn_shape() == kind.drawn_shape() && !other.water && !kind.water;
+            if kind.covered != number && self.kind(kind.covered).is_some_and(alike) {
+                faces[at + 1].covered = kind.covered;
+            }
+        }
         // Each entry of the same block, in whatever state, is of the family of its first; a slab of a kind of the
         // world's own, of the kind it is made from.
         let mut firsts: Vec<(&str, BlockId)> = Vec::new();
@@ -789,6 +805,30 @@ mod tests {
         let read = BlockFile::parse(&file.to_text()).unwrap();
         assert!(read.blocks[3].water && !read.blocks[0].water);
         assert!(read.faces().1[4].water);
+    }
+
+    #[test]
+    fn a_block_shows_as_another_of_its_shape_while_covered_and_the_file_keeps_none_of_it() {
+        use crate::blocks::block::BlockShape;
+        let mut file = BlockFile::default();
+        // Grass shows as dirt; a slab of grass as a slab, which is no cube; water as nothing.
+        file.blocks[0].covered = 2;
+        file.blocks.push(BlockKind {
+            covered: 2,
+            shape: BlockShape::Slab,
+            ..BlockKind::colored("Grass Slab", [0.3; 3])
+        });
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.0, 0.4, 0.3]) });
+        file.blocks[2].covered = 5;
+        let (_, faces) = file.faces();
+        assert_eq!([1, 2, 3, 4, 5].map(|at| faces[at].covered), [2, AIR, AIR, AIR, AIR]);
+        assert!(!file.to_text().contains("covered"), "worked out where it is drawn, never written");
+        // One naming itself, or a place left empty, shows as itself.
+        file.blocks[0].covered = 1;
+        assert_eq!(file.faces().1[1].covered, AIR);
+        file.blocks[0].covered = 2;
+        file.blocks[1] = BlockKind::gap();
+        assert_eq!(file.faces().1[1].covered, AIR);
     }
 
     #[test]

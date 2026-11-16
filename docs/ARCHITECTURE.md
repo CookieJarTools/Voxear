@@ -1267,6 +1267,17 @@ and swaying bits as the look that creeps over it and from where. Twins are a fix
 a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
 in the same place, later in the pool and discarded but for its fringe.
 
+**Grass under a block** is a look worked out from the block over it, never an edit. A `.block`'s `covered` names
+the block it shows as while covered; `resolved` turns that into the number of that block in the world, in the same
+state (a slab's slab), and `with_covered` numbers it after the world's blocks where it has none, as biomes' blocks are.
+`BlockFaces::covered` carries the number. `mesh_made` swaps each such block in its padded copy of the chunk for that
+block where `covers_below` says the block over it covers it (a whole block, water, a part whose underside is covered
+whole), bottom up so each reads the block over it as it is, and everything after (faces, looks, overlap, tints,
+collision) follows. The far rings and far tiles go through the same mesher; the map does the same along its runs. A
+change re-meshes the chunks round the block under it too. `BlockWorld::shown` gives the block as drawn, which a
+script's ray and `Blocks.DefinitionAt` report, so a covered grass block is mined as its earth. Saves and the network
+carry the grass as it is, so they are no larger.
+
 **Portals** *(implemented; light, shadows and sound through them, other levels and the server's checks planned)*.
 A `voxear_render::Portal` on an Obj is an opening `size` wide about the Obj and high from it, facing its +Z, that
 leads to another Portal. `Carry::between` is what going through does: turned about the near Portal, half a turn about
@@ -1329,8 +1340,8 @@ through each texel of the six faces against the scene the GI's rays see, by ray 
 lights each hit as the GI's rays do, with the shine of metals added from the probes, the GI and the sky as last
 captured (`ddgiShadeHit`). On the frame a probe is captured, the plants of any Foliage within 64 m of it are added
 to the traced instances, and the ray is checked against the flat tops of the sea and Pools (`probeCaptureWater`).
-Terrain's meshes for rays carry the material of the surface with the largest share at each point
-(`mesh::PROXY_MATERIAL`, in the vertex's wind word). The faces are averaged into mips, then each of six mips is
+Terrain's and a world of blocks' meshes for rays carry each point's surface's material (the surface with the largest
+share there, or the face's; `mesh::PROXY_MATERIAL`). The faces are averaged into mips, then each of six mips is
 filtered with GGX for its roughness. Each resolution (64 to 512) is one array of cubes; shading reads each probe's
 own, in order of importance and size, box-projected from its capture point, and takes what they leave from the GI's
 probes and then the sky. One probe is captured or loaded a frame; a probe captured once can be baked into a `.probes`
@@ -3819,16 +3830,19 @@ chunk column's ground is made and before its structures, a block of open air wit
 hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
 has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
 (`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
-each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
-chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
-`RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
-900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same (a world without
-end's new chunks' on the terrain's threads, their bodies added at a later step, but for those within a chunk of a
-character or a body and chunks changed, `BlockBodies::making`), the ray meshes
-made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
-too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
-room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose
-faces did not change costs physics and the renderer no walk over its chunks. The frame's chunks go up within
+each chunk's faces merged by surface are its collision mesh and its mesh for the GI's rays, each point keeping its
+surface (`ChunkMesh::surfaces`), so the rays' hits take the colour of the face they meet (`mesh::PROXY_MATERIAL`; a
+smooth chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles,
+`RAYS_LEVEL`, each point its top's, sides' or bottom's surface by the way it faces). A mesh for rays is solid ground:
+a crown of leaf blocks is no cut-out sheet to them, though it bounces its leaves' colour. The ray meshes are kept in
+the meshes' shared pool of four million vertices, room for a world of cubes 900 blocks across; the shapes made on
+every core and kept while a chunk's triangles stay the same (a world without end's new chunks' on the terrain's
+threads, their bodies added at a later step, but for those within a chunk of a character or a body and chunks
+changed, `BlockBodies::making`), the ray meshes made a few a frame, the nearest the camera first, and uploaded and
+built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change. A world too large for the pool
+goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the room of the farthest
+made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose faces did not change costs
+physics and the renderer no walk over its chunks. The frame's chunks go up within
 `WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
@@ -4461,8 +4475,14 @@ Every operation the editor can do should be scriptable.
   need.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
-  timings, culling stats and the adapted exposure.
+  timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
+  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`). Before its frames it waits
+  for the ground round the camera, as a game's loading does (`Game::make_world`): terrains and worlds of blocks
+  without end are made on background threads, and a short render is otherwise over before any of it comes.
+  `--wait <seconds>` sets how long it waits at most (120 by default); `--wait 0` starts the frames at once.
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
+- `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
+  then start `vox run --no-build`, whose .NET starts at once.
 - `vox content build <project>` packs the content into bundles and prints each bundle, its usage set and its assets,
   then what was left out.
 - `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless
@@ -4471,7 +4491,7 @@ Every operation the editor can do should be scriptable.
 
 **Planned.**
 - Project: `vox open`.
-- Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
+- Building: `vox build [--profile <name>] [--progress json]`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.
@@ -4507,6 +4527,9 @@ can change an open project and see the result, each change a step on the editor'
   - Objs are named by scene GUID and `ObjPath`, which survive undo, Play and saving.
   - A change records an `Edit` as the panels do; `batch` folds its steps into one (`History::group_since`).
   - Calls that take frames (`play`, `capture`, `scripts.build`, `editor.wait`) answer when done.
+  - `profiler.frames` gives the Profiler's latest frames, each one's samples in the order of their tree with how
+    deep each ran, and the GPU's passes (`voxear_engine::profile_frames`). A read keeps frames sampled for three
+    seconds, even with the Profiler hidden, so a tool watching reads again within that.
   - The editor setting `tools_may_change` refuses every changing call, and a tool cannot turn it back on.
   - Each change logs a `[Tools]` line to the Console.
 - **Files changed on disk.** The open scenes, the open level and `voxear.toml` are looked at twice a second. A
@@ -4590,6 +4613,14 @@ them in a running game.
     has its samples kept while the Profiler records. Each frame takes those that ended in it and those still running,
     cut to the frame, so a load lasting seconds shows in every frame it runs through. The Timeline draws each worker in
     a lane of its own under the main thread's, titled with its name, and pointing at a bar says which thread it ran on.
+  - **Tools watching a game** *(implemented)*. A game from `vox run`, or a development build, answers tools over
+    the editor link's transport, writing `Game` beside `Console` in its `.voxear` (or Data) folder
+    (`voxear_engine::game_link`). Its calls: `profiler.frames` (as the editor's, sampled only while a tool reads),
+    `console.read` (the log, as the editor's Console call gives it), `game.console` (a line in its console) and
+    `gpu.capture` (the next frame in RenderDoc, answered with the file's whole path once written, for the tool to
+    open, when the game was started with RenderDoc). `link.hello` names its process, for a debugger to attach to. A code editor uses these to show a game
+    it started live, with nothing to set up; `vox render --profile-out` saves frames in the same shape, so one
+    reader shows both.
   - **Tracy** *(implemented: zones, threads and frames)*, for deep sessions: built with `cargo build --features tracy`,
     every sample is also a zone in [Tracy](https://github.com/wolfpld/tracy), on every thread and whether or not the
     Profiler records: the engine's systems, scripts' callbacks and their own `Profiler.Sample`s, and the workers',

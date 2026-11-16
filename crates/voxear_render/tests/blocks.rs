@@ -549,6 +549,96 @@ fn no_bounced_light_leaks_into_a_hollow_ball_of_smooth_ground_between_its_chunks
     assert!(dark < 1.0, "with GI, nothing does: {dark:.2}");
 }
 
+/// A floor of blocks 48 a side, its faces `floor`'s colour, with a white
+/// wall of blocks 16 long and 6 high standing on it across its middle, seen
+/// from 7 m in front of the wall, with GI. The sun, from +x, lights the
+/// floor and the wall's ends alone: the wall's side towards the camera is
+/// lit by the sky and by what the floor bounces onto it. None where the GPU
+/// cannot trace rays.
+fn bounce_off_floor_render(floor: [f32; 3]) -> Option<Vec<u8>> {
+    use voxear_render::GlobalIllumination;
+    use voxear_terrain::blocks::{BlockFaces, BlockMap};
+    let mut renderer = renderer()?;
+    if !renderer.gpu().ray_tracing {
+        eprintln!("skipping: this GPU has no ray tracing");
+        return None;
+    }
+    let mut blocks = BlockMap::default();
+    for z in 0..48 {
+        for x in 0..48 {
+            blocks.set([x, 0, z], 1);
+        }
+    }
+    for y in 1..7 {
+        for x in 16..32 {
+            blocks.set([x, y, 24], 2);
+        }
+    }
+    // The floor's faces drawn with surface 0, the wall's with surface 1.
+    let faces = [BlockFaces::default(), BlockFaces::new(0, 0, 0), BlockFaces::new(1, 1, 1)];
+    let mut surface = |[r, g, b]: [f32; 3]| SurfaceLook {
+        material: renderer
+            .add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() })
+            .unwrap(),
+        size: 1.0,
+        sharpness: 0.0,
+        triplanar: true,
+        tracks: 0.0,
+        fills_in: 0.0,
+        liquid: Default::default(),
+        glitter: false,
+        leafy: false,
+        mixed: false,
+        tint: 0,
+    };
+    let surfaces = [surface(floor), surface([0.9; 3])];
+    // Where a face has no surface of its own: grey, as every face bounced before its surface's colour did.
+    let plain = renderer.add_material(&MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], ..MaterialDesc::default() });
+    let look = BlockLook {
+        material: plain.unwrap(),
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+    };
+    let mut world = World::new();
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::new(Vec3::new(24.0, 3.0, 17.0), Quat::IDENTITY, Vec3::ONE)));
+    let towards_sun = Vec3::new(1.0, 1.2, 0.0).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = PostProcess::neutral();
+    post.anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.global_illumination =
+        GlobalIllumination { enabled: true, probe_spacing: 0.5, ..GlobalIllumination::default() };
+    world.insert_resource(post);
+    Some(render(&mut renderer, &world, 34))
+}
+
+#[test]
+fn bounced_light_off_a_floor_of_blocks_tints_a_white_wall_its_colour() {
+    let (Some(green), Some(grey)) = (bounce_off_floor_render([0.1, 0.6, 0.1]), bounce_off_floor_render([0.4; 3]))
+    else {
+        return;
+    };
+    keep_image("blocks bounce off a green floor.png", &green);
+    keep_image("blocks bounce off a grey floor.png", &grey);
+    // How much greener than red and blue the wall's side is low down, nearest the floor, and how bright.
+    let wall = |pixels: &[u8]| {
+        let patch: Vec<[i32; 3]> = (195..235).flat_map(|y| (220..420).map(move |x| rgb_at(pixels, x, y))).collect();
+        let greener = patch.iter().map(|[r, g, b]| g - (r + b) / 2).sum::<i32>() / patch.len() as i32;
+        let bright = patch.iter().map(|rgb| rgb.iter().sum::<i32>()).sum::<i32>() / patch.len() as i32;
+        (greener, bright)
+    };
+    let ((green_tint, green_bright), (grey_tint, grey_bright)) = (wall(&green), wall(&grey));
+    eprintln!("wall over green: {green_tint} greener, {green_bright} bright; over grey: {grey_tint}, {grey_bright}");
+    assert!(grey_bright > 30, "the wall's side is lit, by the sky and the floor: {grey_bright}");
+    assert!(green_tint > grey_tint + 8, "a green floor bounces green: {green_tint} against {grey_tint}");
+    assert!(grey_tint.abs() <= 4, "a grey floor bounces no colour: {grey_tint}");
+}
+
 #[test]
 fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted() {
     use voxear_terrain::blocks::{

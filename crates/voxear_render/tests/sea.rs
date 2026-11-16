@@ -400,6 +400,57 @@ fn under_a_seas_faces_the_camera_is_under_water_only_under_its_swell() {
     assert!(near(over, calm, 14), "the sky from the trough {over:?}, from over a calm sea {calm:?}");
 }
 
+#[test]
+fn from_deep_in_a_stirred_sea_its_underside_is_whole_where_it_lies_calm() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    // A whirlpool far off stirs the sea, so the view from in it is walked through its swell; round the camera the
+    // sea lies calm, its water up to the faces.
+    let pool = Whirlpool { middle: Vec2::new(middle + 2.0, middle - 44.0), radius: 16.0, depth: 7.0 };
+    let stirred = RoughSea { look: SeaLook::SmallCubes, time: 20.0, whirlpools: vec![pool], ..RoughSea::default() };
+    let eye = Vec3::new(middle - 40.0, top - 4.0, middle + 40.0);
+    let sunk = stirred.sampler(&[], [0.0; 2]).at(eye.x, eye.z).sunk;
+    assert!(sunk.abs() < 0.01, "the sea over the camera is sunk {sunk} m");
+    // Four metres down, looking up at the faces: the same as under a calm sea's, the underside whole. The views
+    // missing the faces by a rounding showed the sky through the water, in rings round the point overhead.
+    let up = (eye, eye + Vec3::new(0.0, 10.0, 5.8));
+    world.insert_resource(RoughSea { time: 20.0, ..RoughSea::default() });
+    let calm = seen(&mut renderer, &mut world, up, 20.0);
+    world.insert_resource(stirred);
+    let under = seen(&mut renderer, &mut world, up, 20.0);
+    keep_image("sea calm from deep.png", &calm);
+    keep_image("sea stirred from deep.png", &under);
+    // How much each pixel differs from the next across, on average: the views missing the faces made it grainy.
+    let grain = |pixels: &[u8]| {
+        let rows = pixels.chunks_exact(WIDTH as usize * 4);
+        let apart = rows.flat_map(|row| {
+            row.chunks_exact(4)
+                .zip(row.chunks_exact(4).skip(1))
+                .map(|(a, b)| (0..3).map(|c| u32::from(a[c].abs_diff(b[c]))).max().unwrap())
+        });
+        apart.sum::<u32>() as f32 / ((WIDTH - 1) * HEIGHT) as f32
+    };
+    let (smooth, seen) = (grain(&calm), grain(&under));
+    assert!(seen < smooth + 3.0, "the stirred sea's underside is grainier, {seen} against the calm sea's {smooth}");
+    // Compared a patch of 16 pixels a side at a time, as the shafts' grain differs from frame to frame.
+    const PATCH: u32 = 16;
+    for (x, y) in (0..HEIGHT / PATCH).flat_map(|y| (0..WIDTH / PATCH).map(move |x| (x * PATCH, y * PATCH))) {
+        let [a, b] = [&calm, &under].map(|pixels| {
+            let mut sum = [0u32; 3];
+            for (dx, dy) in (0..PATCH).flat_map(|dy| (0..PATCH).map(move |dx| (dx, dy))) {
+                let i = (((y + dy) * WIDTH + x + dx) * 4) as usize;
+                for (c, total) in sum.iter_mut().enumerate() {
+                    *total += u32::from(pixels[i + c]);
+                }
+            }
+            sum.map(|total| total as f32 / (PATCH * PATCH) as f32)
+        });
+        let apart = (0..3).map(|c| (a[c] - b[c]).abs()).fold(0.0, f32::max);
+        assert!(apart < 3.0, "at ({x}, {y}) the stirred sea's underside {b:?}, the calm sea's {a:?}");
+    }
+}
+
 /// How high the island's ground stands at `x`, `z`, as [`sea`] makes it, in blocks: over the water within nine
 /// blocks of its middle, shelving away to the floor.
 fn island_ground(x: f32, z: f32) -> f32 {

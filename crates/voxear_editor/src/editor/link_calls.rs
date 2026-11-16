@@ -463,6 +463,12 @@ impl Editor {
             }
             "game.console" => self.game_console(need_text(args, "line")?),
             "console.read" => self.console_read(args),
+            "profiler.frames" => {
+                let after = args.get("after").and_then(Json::as_u64);
+                let limit = args.get("limit").and_then(Json::as_u64);
+                let limit = limit.map_or(voxear_engine::profile_frames::READ, |n| n as usize);
+                done(self.profiler.read_frames(after, limit))
+            }
             "capture" => self.capture(args),
             "scripts.build" => {
                 self.rebuild_scripts = true;
@@ -688,6 +694,7 @@ impl Editor {
             "playing": self.is_playing(),
             "paused": self.is_paused(),
             "building_scripts": self.describing.is_some() || self.play.is_building(),
+            "dotnet_started": voxear_scripting::dotnet_started(),
             "unsaved": self.unsaved,
             "selection": selection,
             "undo": self.history.depth(),
@@ -1532,12 +1539,19 @@ impl Editor {
             if block == AIR && !given {
                 continue;
             }
-            let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
-            let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
-            let block = path.map(|entry| link::asset_ref(&self.game, &entry.path));
-            return done(json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": block }));
+            let named = |block| {
+                let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
+                let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
+                path.map(|entry| link::asset_ref(&self.game, &entry.path))
+            };
+            // And what it is drawn as, where that is another block: grass under a block shows as dirt.
+            let shown = blocks.shown(cell);
+            let shows = if shown == block { Json::Null } else { json!(named(shown)) };
+            let answer =
+                json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": named(block), "shows": shows });
+            return done(answer);
         }
-        done(json!({ "obj": null, "cell": null, "block": null }))
+        done(json!({ "obj": null, "cell": null, "block": null, "shows": null }))
     }
 
     fn blocks_set(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {

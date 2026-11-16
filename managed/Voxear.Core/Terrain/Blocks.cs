@@ -66,7 +66,11 @@ public static unsafe partial class Blocks
 	/// </summary>
 	public static IReadOnlyList<Block> All => BlockInfos.All();
 
-	/// <summary>The block at <paramref name="position"/> in the first Block World with one there; None for air, and for a kind a world keeps itself.</summary>
+	/// <summary>
+	/// The block at <paramref name="position"/> in the first Block World with one there, as it is drawn: a block under
+	/// another is the one it shows as while covered (<see cref="Block.Covered"/>). None for air, and for a kind a world
+	/// keeps itself.
+	/// </summary>
 	public static Block DefinitionAt(Vector3 position)
 	{
 		if (!Native.IsConnected)
@@ -78,7 +82,10 @@ public static unsafe partial class Blocks
 		return BlockInfos.Numbered(new Obj(obj), number);
 	}
 
-	/// <summary>The block at <paramref name="position"/> in the first Block World with one there; air everywhere else.</summary>
+	/// <summary>
+	/// The block at <paramref name="position"/> in the first Block World with one there, as it is drawn (see
+	/// <see cref="DefinitionAt"/>); air everywhere else.
+	/// </summary>
 	public static ushort At(Vector3 position)
 	{
 		return Native.IsConnected ? (ushort)Native.Api->BlockAt(&position, null) : Air;
@@ -249,7 +256,8 @@ public static unsafe partial class Blocks
 	/// <summary>
 	/// The first block a ray from <paramref name="origin"/> along <paramref name="direction"/> meets within
 	/// <paramref name="maxDistance"/> metres, in any Block World. It passes through liquids, as a hand reaching into
-	/// water does, unless <paramref name="liquids"/> says to meet them, as a bucket does.
+	/// water does, unless <paramref name="liquids"/> says to meet them, as a bucket does. The block met is the one drawn
+	/// there: grass under a block is the dirt it shows as (<see cref="Block.Covered"/>), and is mined as dirt.
 	/// </summary>
 	public static bool Raycast(Vector3 origin, Vector3 direction, out BlockHit hit, float maxDistance = 1000f, bool liquids = false)
 	{

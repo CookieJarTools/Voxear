@@ -4006,7 +4006,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voxear_assets"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "io-uring",
@@ -4023,7 +4023,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_audio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "cpal",
@@ -4035,7 +4035,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -4062,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "glam",
@@ -4075,7 +4075,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_dist"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4086,7 +4086,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_docs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "png",
@@ -4103,11 +4103,11 @@ dependencies = [
 
 [[package]]
 name = "voxear_ecs"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "voxear_editor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "image",
@@ -4144,7 +4144,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4185,7 +4185,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_input"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gilrs",
@@ -4198,7 +4198,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_localization"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "icu_calendar",
@@ -4216,7 +4216,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.3.4",
@@ -4227,7 +4227,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_packages"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "semver",
@@ -4241,7 +4241,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_physics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "cc",
@@ -4256,7 +4256,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_physics2d"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "boxdd-sys",
  "glam",
@@ -4268,7 +4268,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ash",
@@ -4297,7 +4297,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_rhi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ash",
@@ -4311,7 +4311,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_scene"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "serde",
@@ -4322,7 +4322,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_scripting"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -4342,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_terrain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4359,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "cssparser",
@@ -4373,7 +4373,7 @@ dependencies = [
 
 [[package]]
 name = "voxear_voxshade"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "serde",

@@ -14,7 +14,9 @@
 //! with the one under the pointer named above. Scripts' samples have the
 //! managed memory they allocated (GC Alloc), as Unity's do.
 //!
-//! Samples are taken only while the panel shows and Record is on. A click on
+//! Samples are taken only while the panel shows and Record is on, or while a
+//! tool reads frames through the editor's link (`profiler.frames`), which
+//! keeps them sampled a few seconds after each read. A click on
 //! the chart picks a frame to break down, and dragging along it goes through
 //! the frames; Live goes back to the newest. The Timeline scrolls when its
 //! lanes are more than fit.
@@ -57,7 +59,9 @@ const RENDER: u32 = 0x2f9a68;
 const WAIT: u32 = 0x3b3e46;
 /// Samples that are the renderer's, and those that are waiting on the GPU or display.
 const RENDERING: [&str; 5] = ["Render", "Extract", "Record Passes", "Submit", "UI"];
-const WAITING: [&str; 2] = ["Wait for GPU", "Wait for Display"];
+const WAITING: [&str; 2] = voxear_engine::profile_frames::WAITS;
+/// How long frames go on being sampled after a tool last read them.
+const WATCHED: std::time::Duration = std::time::Duration::from_secs(3);
 /// Samples opened by themselves the first time they show, as Unity opens the
 /// player loop, so scripts' callbacks show at once.
 const OPENED: [&str; 7] = ["Game", "Editor", "Render", "FixedUpdate", "Update", "LateUpdate", "Lifecycle"];
@@ -133,6 +137,8 @@ pub struct Profiler {
     recording: bool,
     /// Whether samples were being taken this frame, so it is kept.
     sampling: bool,
+    /// Until when a tool reading frames keeps them sampled.
+    watched_until: Option<Instant>,
     frames: u64,
     /// The frame broken down, when not the newest.
     picked: Option<u64>,
@@ -247,6 +253,7 @@ impl Profiler {
             samples: VecDeque::with_capacity(FRAMES),
             recording: true,
             sampling: false,
+            watched_until: None,
             frames: 0,
             picked: None,
             shown: None,
@@ -273,6 +280,16 @@ impl Profiler {
         &self.samples
     }
 
+    /// The frames from `after` on, the latest `limit` of them, for a tool,
+    /// as `profiler.frames` answers; frames go on being sampled a while,
+    /// even with the panel hidden.
+    pub fn read_frames(&mut self, after: Option<u64>, limit: usize) -> serde_json::Value {
+        use voxear_engine::profile_frames::{frame_json, read_frames};
+        self.watched_until = Some(Instant::now() + WATCHED);
+        let frames = self.samples.iter().map(|s| frame_json(s.frame, s.frame_ms, &s.cpu, &s.gpu));
+        read_frames(frames, after, limit, self.frames + 1)
+    }
+
     /// How much of the frame the Timeline shows across, from 1 for all of it
     /// down as it is zoomed in.
     pub fn timeline_zoom(&self) -> f32 {
@@ -294,7 +311,8 @@ impl Profiler {
             self.recording = !self.recording;
             ui.set_checked(self.record, self.recording);
         }
-        self.sampling = shown && self.recording;
+        let watched = self.watched_until.is_some_and(|until| Instant::now() < until);
+        self.sampling = (shown && self.recording) || watched;
         profiling::set_enabled(self.sampling);
         let picked = self.picked;
         if ui.clicked(self.clear) {

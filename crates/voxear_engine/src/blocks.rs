@@ -182,6 +182,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
     let mut file = file.clone();
     let mut guids = Vec::with_capacity(file.blocks.len());
     let mut heats = vec![None; file.blocks.len()];
+    let mut covered = vec![None; file.blocks.len()];
     for (at, kind) in file.blocks.iter_mut().enumerate() {
         let Some(reference) = kind.block.clone().filter(|_| kind.is_live()) else {
             guids.push(None);
@@ -194,6 +195,7 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
                 kind.name = content.block_name(guid).unwrap_or_default();
                 guids.push(Some(guid));
                 heats[at] = block.heat;
+                covered[at] = block.covered.as_deref().and_then(|reference| Some(content.block(reference)?.0));
             }
             None => {
                 (kind.material, kind.top, kind.bottom, kind.water) = (None, None, None, false);
@@ -244,7 +246,71 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
             file = own;
         }
     }
-    Resolved { file, guids, heats }
+    // What each block shows as while covered, by its number: the block it names, in the same state, or that
+    // block's slab for a slab (see `BlockDef::covered`). One the world does not hold shows as itself.
+    let mut drawn = Resolved { file, guids, heats };
+    for (at, guid) in covered.into_iter().enumerate() {
+        let Some(guid) = guid else { continue };
+        let kind = &drawn.file.blocks[at];
+        let number = match kind.slab {
+            true => drawn.slab_number_of(guid, kind.state),
+            false => drawn.number_of_state(guid, kind.state),
+        };
+        drawn.file.blocks[at].covered = number.unwrap_or(voxear_terrain::blocks::chunk::AIR);
+    }
+    drawn
+}
+
+/// Numbers in `file` the block each block it holds shows as while covered
+/// (see `BlockDef::covered`), where it holds none yet: in the state the
+/// block is placed in, or that block's slab for a slab, after those it has
+/// in the order of its entries, so the same file gives the same numbers on
+/// every machine. Only a block of the same shape is numbered, as only one
+/// is shown so (a slab's of a plain cube), and none where the world has no
+/// room for more.
+pub fn with_covered(content: &mut Content, file: &mut BlockFile) {
+    let mut wanted: Vec<(AssetGuid, u8, bool)> = Vec::new();
+    for kind in file.blocks.iter().filter(|kind| kind.is_live()) {
+        let Some((_, block)) = kind.block.as_deref().and_then(|reference| content.block(reference)) else { continue };
+        let Some((guid, under)) = block.covered.as_deref().and_then(|reference| content.block(reference)) else {
+            continue;
+        };
+        let liquids = block.liquid != Liquid::None || under.liquid != Liquid::None;
+        let alike = match kind.slab {
+            true => under.shape == BlockShape::Cube,
+            false => under.shape == block.shape,
+        };
+        if liquids || !alike {
+            continue;
+        }
+        let shape = if kind.slab { BlockShape::Slab } else { under.shape };
+        let state = BlockState::from_byte(kind.state).normalized(shape).to_byte();
+        if !wanted.contains(&(guid, state, kind.slab)) {
+            wanted.push((guid, state, kind.slab));
+        }
+    }
+    if wanted.is_empty() {
+        return;
+    }
+    let mut drawn = resolved(content, file);
+    for (guid, state, slab) in wanted {
+        let known = if slab { drawn.slab_number_of(guid, state) } else { drawn.number_of_state(guid, state) };
+        if known.is_some() || file.blocks.len() >= MAX_BLOCKS {
+            continue;
+        }
+        let reference = guid.to_string();
+        let entry = match slab {
+            true => BlockKind::slab_placed(&BlockKind::of(&reference), state),
+            false => BlockKind::of_state(&reference, state),
+        };
+        let mut grown = file.clone();
+        grown.blocks.push(entry);
+        let grown_drawn = resolved(content, &grown);
+        if grown_drawn.looks() > MAX_LOOKS {
+            continue;
+        }
+        (*file, drawn) = (grown, grown_drawn);
+    }
 }
 
 /// `file` with the block at `guid` numbered after those it has, and that
@@ -326,7 +392,9 @@ pub fn painted(content: &mut Content, file: &mut BlockFile, guid: AssetGuid, ove
         return None;
     }
     *file = grown;
-    Some(file.blocks.len() as BlockId)
+    let number = file.blocks.len() as BlockId;
+    with_covered(content, file);
+    Some(number)
 }
 
 /// `file` with its generated ground's biomes read (see
@@ -337,10 +405,12 @@ pub fn painted(content: &mut Content, file: &mut BlockFile, guid: AssetGuid, ove
 /// or a block that cannot be found is left out, with a warning; a file
 /// that lists no biomes comes back with none read. Where its ground's top
 /// is laid in half blocks, the slabs of the blocks that top can be are
-/// numbered too (see [`with_halves`]).
+/// numbered too (see [`with_halves`]), and then the blocks the world's
+/// blocks show as while covered (see [`with_covered`]).
 pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
     let mut file = biomes_read(content, file);
     with_halves(content, &mut file);
+    with_covered(content, &mut file);
     file
 }
 
@@ -550,7 +620,8 @@ fn number_placed(content: &mut Content, file: &mut BlockFile, owner: &str, named
 /// lists, its blocks or its plant's wood and leaves numbered by the world as
 /// [`with_biomes`] numbers a biome's, and the biomes it stands in found
 /// among the world's own. A structure, plant or block that cannot be found
-/// is left out, with a warning.
+/// is left out, with a warning. The blocks those show as while covered are
+/// numbered after (see [`with_covered`]).
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::blocks::structure::{
         Dungeon, DungeonBlocks, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
@@ -744,6 +815,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     if let Some(generate) = file.generate.as_mut() {
         generate.built = Some(Arc::new(WorldStructures { list, turns }));
     }
+    // And what those blocks show as while covered.
+    with_covered(content, &mut file);
     file
 }
 
@@ -777,14 +850,17 @@ pub fn block_number(
     if !grow {
         return None;
     }
-    let Some((file, drawn)) = with_block(content, &asset.file, guid) else {
+    let Some((mut file, drawn)) = with_block(content, &asset.file, guid) else {
         say_full(content, asset.guid, guid);
         return None;
     };
+    // And the block it shows as while covered, after it.
+    let number = file.blocks.len() as BlockId;
+    with_covered(content, &mut file);
+    let drawn = if file.blocks.len() == usize::from(number) { drawn } else { resolved(content, &file) };
     // Its faces take the new block's on at their end, so nothing made is made again; its look is taken up by
     // `refresh`, which has the renderer.
     let (_, faces) = drawn.faces();
-    let number = file.blocks.len() as BlockId;
     let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
     world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
     world.insert(entity, asset);
@@ -810,12 +886,14 @@ pub fn block_number_state(
     if !grow {
         return None;
     }
-    let Some((file, drawn)) = with_block_state(content, &asset.file, guid, state) else {
+    let Some((mut file, drawn)) = with_block_state(content, &asset.file, guid, state) else {
         say_full(content, asset.guid, guid);
         return None;
     };
-    let (_, faces) = drawn.faces();
     let number = file.blocks.len() as BlockId;
+    with_covered(content, &mut file);
+    let drawn = if file.blocks.len() == usize::from(number) { drawn } else { resolved(content, &file) };
+    let (_, faces) = drawn.faces();
     let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
     world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
     world.insert(entity, asset);
@@ -909,6 +987,7 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "chops": block.slice().map_or(0, |_| block.chops),
         "fells": block.fells,
         "grows": block.grows,
+        "covered": block.covered,
         "usable": block.part_look().usable || matches!(
             block.shape,
             BlockShape::Door | BlockShape::TrapDoor | BlockShape::FenceGate | BlockShape::Lever | BlockShape::Button

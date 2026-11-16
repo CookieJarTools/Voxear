@@ -1121,6 +1121,12 @@ impl Renderer {
         }
     }
 
+    /// Captures the next presented frame in RenderDoc without opening it, for
+    /// a tool that opens the file itself; false when RenderDoc is not loaded.
+    pub fn capture_next_frame_unopened(&mut self) -> bool {
+        self.renderdoc.as_ref().inspect(|renderdoc| renderdoc.trigger_capture()).is_some()
+    }
+
     /// Starts capturing everything submitted until [`end_capture`](Self::end_capture).
     pub fn start_capture(&self) {
         if let Some(renderdoc) = &self.renderdoc {
@@ -1132,6 +1138,12 @@ impl Renderer {
     pub fn end_capture(&self) -> Option<PathBuf> {
         let renderdoc = self.renderdoc.as_ref()?;
         renderdoc.end_capture(&self.gpu.instance).then(|| renderdoc.latest_capture()).flatten()
+    }
+
+    /// The file of the latest capture RenderDoc wrote, as one asked for with
+    /// [`capture_next_frame`](Self::capture_next_frame) lands a frame later.
+    pub fn latest_capture(&self) -> Option<PathBuf> {
+        self.renderdoc.as_ref()?.latest_capture()
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

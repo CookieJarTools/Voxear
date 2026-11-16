@@ -135,10 +135,10 @@ pub const PROJECT_KEYS: &[&str] = &["portals.view_distance", "quality.particles"
 pub const CALLS: &[CallInfo] = &[
     CallInfo {
         name: "editor.state",
-        about: "What the editor has open: the project, its level and scenes, whether it plays, unsaved edits, the selection and how many steps there are to undo.",
+        about: "What the editor has open: the project, its level and scenes, whether it plays, unsaved edits, the selection and how many steps there are to undo. `dotnet_started` says whether .NET runs its scripts yet, which it does from the first Play on, for a debugger to attach.",
         args: &[],
         changes: false,
-        returns: "{ project, level, scenes, active_scene, playing, paused, unsaved, selection, undo, redo, tools_may_change, headless }",
+        returns: "{ project, level, scenes, active_scene, playing, paused, building_scripts, dotnet_started, unsaved, selection, undo, redo, tools_may_change, headless }",
     },
     CallInfo {
         name: "objs.list",
@@ -379,10 +379,10 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "blocks.get",
-        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there.",
+        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there. `shows` is the block it is drawn as where that is another, as grass under a block shows as its Covered block.",
         args: &[arg("at", ArgKind::Vector, "Metres, in the world."), maybe("obj", ArgKind::Obj, "The Block World.")],
         changes: false,
-        returns: "{ obj, cell, block }",
+        returns: "{ obj, cell, block, shows }",
     },
     CallInfo {
         name: "blocks.set",
@@ -708,6 +708,16 @@ pub const CALLS: &[CallInfo] = &[
         ],
         changes: false,
         returns: "{ lines: [{ number, level, message, category, seconds, frame, file?, line?, stack?, obj?, asset? }], next }",
+    },
+    CallInfo {
+        name: "profiler.frames",
+        about: "The latest frames the Profiler took: each one's CPU samples in the order of their tree, with how deep each ran, and the GPU's passes. Reading keeps frames sampled for a few seconds, even with the Profiler hidden, so read again within that to watch.",
+        args: &[
+            maybe("after", ArgKind::Whole, "From an earlier read's `next`; the frames kept when left out."),
+            maybe("limit", ArgKind::Whole, "The most frames, the latest; 120 when left out."),
+        ],
+        changes: false,
+        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
     },
     CallInfo {
         name: "capture",

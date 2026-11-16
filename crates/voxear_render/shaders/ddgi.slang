@@ -232,10 +232,12 @@ HitSurface hitSurface(Frame* frame, uint id, uint primitive, float2 barycentrics
     float3 normal = normalize(instance.normal0.xyz * local.x + instance.normal1.xyz * local.y + instance.normal2.xyz * local.z);
     // Its normals, not its winding, say which side is its front. A sheet, a cut-out card of leaves or a plant,
     // has no inside: its back is no sign of a probe within a wall, and probes in a tree's crown were set aside.
-    // A terrain's mesh for rays says its surfaces' materials point by point (src/mesh.rs's PROXY_MATERIAL).
+    // A terrain's or a world of blocks' mesh for rays says its surfaces' materials point by point (src/mesh.rs's
+    // PROXY_MATERIAL). It is solid ground all the same, a crown of leaf blocks too: its colour is its surface's,
+    // but it is no sheet, whatever its surface's picture cuts out.
     bool painted = (instance.flags & INSTANCE_RAYS_ONLY) != 0 && (a.wind & PROXY_MATERIAL) != 0;
     Material material = buffers()->materials[painted ? a.wind & ~PROXY_MATERIAL : instance.material];
-    bool sheet = material.alphaCutoff > 0.0 || (material.flags & MATERIAL_FOLIAGE) != 0;
+    bool sheet = !painted && (material.alphaCutoff > 0.0 || (material.flags & MATERIAL_FOLIAGE) != 0);
     HitSurface hit;
     hit.back = dot(normal, direction) > 0.0 && !sheet;
     // Both faces of a surface take light, as its front does.

@@ -165,6 +165,20 @@ impl Regions {
         t * t * (3.0 - 2.0 * t)
     }
 
+    /// What [`Regions::weight`] reads at the place `(x, z)`, for every
+    /// biome at once: its region's biome, and for each region round it its
+    /// biome and how far the place is from the border between them.
+    pub fn lookout(&self, x: f32, z: f32) -> Lookout {
+        let at = self.warped(x, z);
+        let (own, sites) = self.nearest(at);
+        let own_at = self.site(own);
+        let mut others = [(None, f32::MAX); 8];
+        for (slot, &other) in others.iter_mut().zip(sites.iter().filter(|&&other| other != own)) {
+            *slot = (self.site_biome(other), border_distance(at, own_at, self.site(other)));
+        }
+        Lookout { own: self.site_biome(own), others, border: self.border }
+    }
+
     /// The place at `(x, z)` moved by the warps: the areas' own, where the
     /// land lies in levels, so a region is its area.
     fn warped(&self, x: f32, z: f32) -> [f32; 2] {
@@ -214,6 +228,33 @@ impl std::fmt::Debug for Regions {
 impl PartialEq for Regions {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.border == other.border
+    }
+}
+
+/// What a place reads of the regions round it, once for every biome (see
+/// [`Regions::lookout`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Lookout {
+    own: Option<usize>,
+    others: [(Option<usize>, f32); 8],
+    border: f32,
+}
+
+impl Lookout {
+    /// How much the place is of `biome`'s region, as [`Regions::weight`]
+    /// gives it.
+    pub fn weight(&self, biome: usize) -> f32 {
+        let mine = self.own == Some(biome);
+        let nearest = (self.others.iter())
+            .filter(|(other, _)| (*other == Some(biome)) != mine)
+            .fold(f32::MAX, |nearest, &(_, distance)| nearest.min(distance));
+        if nearest == f32::MAX {
+            return if mine { 1.0 } else { 0.0 };
+        }
+        let half = (self.border * 0.5).max(1e-3);
+        let signed = if mine { nearest } else { -nearest };
+        let t = ((signed / half) * 0.5 + 0.5).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
     }
 }
 

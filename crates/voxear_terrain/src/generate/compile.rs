@@ -634,8 +634,9 @@ pub(crate) struct Voxels {
     /// their place among the carried rows. The second of each says whether
     /// it is ground that stands there, and not a hollow.
     pub spans: Vec<([usize; 2], bool)>,
-    /// The columns' program for those rows alone, a foot then a top for
-    /// each.
+    /// The columns' program for the rows of the spans of ground that
+    /// stands alone, a foot then a top for each in their order: hollows,
+    /// as caves are, left out, which a far view never asks about.
     pub spanned: Program,
     pub hash: u64,
     /// The network of cave rooms it hollows, where it has one.
@@ -679,7 +680,8 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
         rows.iter().zip(&between).filter(|(_, between)| **between == spread).map(|(row, _)| *row).collect()
     };
     let (exact, spread) = (columns.only(&pick(false)), columns.only(&pick(true)));
-    let spanned: Vec<V> = spans.iter().flat_map(|(span, _)| span.map(|place| rows[place])).collect();
+    let stood = spans.iter().filter(|(_, stands)| *stands);
+    let spanned: Vec<V> = stood.flat_map(|(span, _)| span.map(|place| rows[place])).collect();
     let spanned = columns.only(&spanned);
     let mut bytes = columns.hash.to_le_bytes().to_vec();
     bytes.extend(cells.hash.to_le_bytes());

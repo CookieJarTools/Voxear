@@ -42,7 +42,10 @@ const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 #[derive(Clone, Copy)]
 pub struct MeshPipelines {
     pub shadow: vk::Pipeline,
+    pub sun_pages: vk::Pipeline,
     pub local_shadow: vk::Pipeline,
+    pub shadow_two_sided: vk::Pipeline,
+    pub local_shadow_two_sided: vk::Pipeline,
     pub forward: vk::Pipeline,
     pub depth: vk::Pipeline,
     pub forward_on_depth: vk::Pipeline,
@@ -66,6 +69,14 @@ pub struct Pipelines {
     /// it, is clipped away rather than flattened onto it, where it would
     /// shade everything.
     pub local_shadow: vk::Pipeline,
+    /// As `shadow` and `local_shadow`, culling no backs, for two-sided
+    /// casters' lists (`LIST_TWO_SIDED_SHADOW`).
+    pub shadow_two_sided: vk::Pipeline,
+    pub local_shadow_two_sided: vk::Pipeline,
+    /// As `shadow`, into the sun's virtual shadow pages, whose projection
+    /// keeps up the way up rather than turning it down the screen, which
+    /// turns their triangles' winding round.
+    pub sun_pages: vk::Pipeline,
     /// A view of the kept atlas of what stands still copied into the local
     /// shadow atlas, for what moves to be drawn over (see `shadow_cache`).
     pub kept_copy: vk::Pipeline,
@@ -469,17 +480,33 @@ impl Pipelines {
                 ]),
                 None => None,
             },
+            // Faces turned from the light cast nothing, as a one-sided card seen from behind lets the light through;
+            // two-sided casters draw from lists of their own with the two-sided pipelines.
             shadow: graphics(&GraphicsPipelineDesc {
-                // Single-sided geometry such as planes must still cast.
-                cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 depth_clamp: true,
                 ..GraphicsPipelineDesc::depth_only("Shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
             })?,
             local_shadow: graphics(&GraphicsPipelineDesc {
-                cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 ..GraphicsPipelineDesc::depth_only("Local shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
+            })?,
+            sun_pages: graphics(&GraphicsPipelineDesc {
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Sun shadow pages", shadow, c"shadowVertex", DEPTH_FORMAT)
+            })?,
+            shadow_two_sided: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (two-sided)", shadow, c"shadowVertex", DEPTH_FORMAT)
+            })?,
+            local_shadow_two_sided: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                ..GraphicsPipelineDesc::depth_only("Local shadows (two-sided)", shadow, c"shadowVertex", DEPTH_FORMAT)
             })?,
             vsm_mark: create_compute_pipeline(gpu, layout, "Virtual shadow requests", shadow, c"markMain")?,
             lamp_mark: create_compute_pipeline(gpu, layout, "Lamp shadow requests", shadow, c"markLampsMain")?,
@@ -1126,6 +1153,9 @@ impl Pipelines {
             self.pyramid,
             self.shadow,
             self.local_shadow,
+            self.shadow_two_sided,
+            self.local_shadow_two_sided,
+            self.sun_pages,
             self.kept_copy,
             self.vsm_mark,
             self.lamp_mark,
@@ -1257,8 +1287,11 @@ impl Pipelines {
             self.portal_depth_nearer,
             self.impostor_bake,
         ];
-        let mesh =
-            self.mesh.iter().flat_map(|m| [m.shadow, m.local_shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
+        let mesh = self.mesh.iter().flat_map(|m| {
+            [m.shadow, m.sun_pages, m.local_shadow, m.shadow_two_sided, m.local_shadow_two_sided, m.forward]
+                .into_iter()
+                .chain([m.depth, m.forward_on_depth, m.wireframe, m.edges])
+        });
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         let encode = self.encode.iter().map(|(_, pipeline)| *pipeline);
         let probes = [self.nearest_pyramid, self.probe_capture_software, self.probe_downsample, self.probe_filter];
@@ -1296,7 +1329,6 @@ fn mesh_pipelines(
     let forward = (forward, c"forwardMesh");
     Ok(MeshPipelines {
         shadow: graphics(&GraphicsPipelineDesc {
-            cull: vk::CullModeFlags::NONE,
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
             depth_compare: vk::CompareOp::LESS_OR_EQUAL,
@@ -1304,13 +1336,38 @@ fn mesh_pipelines(
             depth_clamp: true,
             ..GraphicsPipelineDesc::mesh("Shadows", task, (shadow, c"shadowMesh"), None)
         })?,
+        sun_pages: graphics(&GraphicsPipelineDesc {
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bias: Some(SHADOW_BIAS),
+            depth_clamp: true,
+            ..GraphicsPipelineDesc::mesh("Sun shadow pages", task, (shadow, c"shadowMesh"), None)
+        })?,
         local_shadow: graphics(&GraphicsPipelineDesc {
-            cull: vk::CullModeFlags::NONE,
             depth_format: Some(DEPTH_FORMAT),
             depth_write: true,
             depth_compare: vk::CompareOp::LESS_OR_EQUAL,
             depth_bias: Some(SHADOW_BIAS),
             ..GraphicsPipelineDesc::mesh("Local shadows", task, (shadow, c"shadowMesh"), None)
+        })?,
+        shadow_two_sided: graphics(&GraphicsPipelineDesc {
+            cull: vk::CullModeFlags::NONE,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bias: Some(SHADOW_BIAS),
+            depth_clamp: true,
+            ..GraphicsPipelineDesc::mesh("Shadows (two-sided)", task, (shadow, c"shadowMesh"), None)
+        })?,
+        local_shadow_two_sided: graphics(&GraphicsPipelineDesc {
+            cull: vk::CullModeFlags::NONE,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bias: Some(SHADOW_BIAS),
+            ..GraphicsPipelineDesc::mesh("Local shadows (two-sided)", task, (shadow, c"shadowMesh"), None)
         })?,
         forward: graphics(&GraphicsPipelineDesc {
             color_formats: scene_formats,

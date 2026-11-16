@@ -32,7 +32,7 @@ use crate::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
         LAMP_PAGE_VIEW, LIST_LOCAL_SHADOW, LIST_SHADOW, LIST_TWO_SIDED, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS,
         LOCAL_SHADOW_TILE, Push, VSM_CULL, VSM_CULL_MOVING, VSM_PAGE_VIEW, cleared_draw_counts, draw_count_offset,
-        meshlet_count_offset, meshlet_list, stat,
+        meshlet_count_offset, meshlet_list, stat, two_sided_shadow,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
@@ -164,7 +164,7 @@ pub struct Draws {
     pub meshlet_draws_handle: vk::Buffer,
     /// How many meshlets the instance lists' draws can turn into, which
     /// lays out the meshlet lists; `None` draws the instance lists whole.
-    pub meshlet_capacity: Option<u32>,
+    pub meshlet_capacity: Option<crate::gpu::MeshletCapacity>,
     /// With meshlet culling, draw with task and mesh shaders rather than a
     /// meshlet pass. Only where the pipelines have them.
     pub mesh_shaders: bool,
@@ -243,6 +243,9 @@ pub struct Frame {
     /// The view is one through a Portal: it draws over what the view it is
     /// seen in has drawn, and reads that view's sky tables.
     pub through: bool,
+    /// Something casting a shadow has a two-sided material, so the shadows'
+    /// two-sided lists are drawn.
+    pub two_sided_casters: bool,
     /// A reflection probe to capture or load this frame, once the GI's rays
     /// are traced, and the pipelines it takes (see `reflection_probes`).
     pub probe_job: Option<(crate::reflection_probes::ProbeFrame, crate::reflection_probes::Job, crate::reflection_probes::ProbePipelines)>,
@@ -356,13 +359,15 @@ pub fn record(
         index_buffer: draws.index_buffer,
         meshlets: draws.meshlet_capacity.map(|capacity| (draws.meshlet_draws_handle, capacity)),
         tasks: mesh.is_some(),
+        two_sided_shadows: frame.two_sided_casters,
     };
     // Draw passes read the meshlet lists when there are any.
     let draw_push = Push { source: if meshlets { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
     let meshlet_pass = |fg: &mut FrameGraph<'_>, name: &str, images: &[(ImageId, ImageAccess)], lists: [u32; 2]| {
         if meshlets && mesh.is_none() {
+            let two_sided = indirect.two_sided_shadows && lists[0] >= LIST_SHADOW;
             fg.add_pass(name, images, &meshlet_culling, move |ctx| {
-                cull_meshlets(ctx, pipelines.meshlet_cull, &push, count_handle, lists[0]..lists[1]);
+                cull_shadow_meshlets(ctx, pipelines.meshlet_cull, &push, count_handle, lists[0]..lists[1], two_sided);
             });
         }
     };
@@ -378,15 +383,24 @@ pub fn record(
             let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
             begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
             let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
+            let cascade_viewport = |cascade: u32| {
+                let offset =
+                    vk::Offset2D { x: (cascade % 2 * cascade_size) as i32, y: (cascade / 2 * cascade_size) as i32 };
+                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
+            };
             bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
             for cascade in 0..CASCADES as u32 {
-                let offset = vk::Offset2D {
-                    x: (cascade % 2 * cascade_size) as i32,
-                    y: (cascade / 2 * cascade_size) as i32,
-                };
-                set_viewport(ctx, offset, vk::Extent2D { width: cascade_size, height: cascade_size });
+                cascade_viewport(cascade);
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
                 indirect.draw(ctx, LIST_SHADOW + cascade);
+            }
+            if indirect.two_sided_shadows {
+                let two_sided = mesh.map_or(pipelines.shadow_two_sided, |mesh| mesh.shadow_two_sided);
+                bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                for cascade in 0..CASCADES as u32 {
+                    cascade_viewport(cascade);
+                    indirect.draw_two_sided_shadow(ctx, LIST_SHADOW + cascade, &draw_push);
+                }
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
@@ -456,6 +470,15 @@ pub fn record(
                     ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
                     indirect.draw(ctx, list);
                 }
+                if indirect.two_sided_shadows {
+                    let two_sided = mesh.map_or(pipelines.local_shadow_two_sided, |mesh| mesh.local_shadow_two_sided);
+                    bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                    for &(slot, view) in &drawn {
+                        set_viewport(ctx, tile_at(view), tile);
+                        let view_push = Push { level: view, ..draw_push };
+                        indirect.draw_two_sided_shadow(ctx, LIST_LOCAL_SHADOW + slot, &view_push);
+                    }
+                }
                 if let Some(blocks) = &blocks {
                     bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
                     for &(slot, view) in drawn.iter().filter(|(slot, _)| blocks.draws_for_lamp(*slot, true)) {
@@ -477,20 +500,7 @@ pub fn record(
             });
             // The lights' lists empty again, for what moves.
             fg.add_pass("Local shadow lists reset", &[], &[(draws.count, BufferAccess::TransferWrite)], move |ctx| {
-                let counts = cleared_draw_counts();
-                let (first, words) = (LIST_LOCAL_SHADOW as usize * 4, count as usize * 4);
-                let lists = bytemuck::cast_slice(&counts[first..first + words]);
-                let device = &ctx.gpu.device;
-                unsafe {
-                    device.cmd_update_buffer(ctx.cmd, count_handle, draw_count_offset(LIST_LOCAL_SHADOW), lists);
-                    device.cmd_fill_buffer(
-                        ctx.cmd,
-                        count_handle,
-                        meshlet_count_offset(LIST_LOCAL_SHADOW),
-                        u64::from(count) * 4,
-                        0,
-                    );
-                }
+                reset_lists(ctx, count_handle, LIST_LOCAL_SHADOW, count);
             });
         }
         fg.add_pass("Local shadow cull", &[], &culling, move |ctx| {
@@ -529,6 +539,15 @@ pub fn record(
                 let list = LIST_LOCAL_SHADOW + slot;
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
                 indirect.draw(ctx, list);
+            }
+            if indirect.two_sided_shadows {
+                let two_sided = mesh.map_or(pipelines.local_shadow_two_sided, |mesh| mesh.local_shadow_two_sided);
+                bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                for (slot, view) in all() {
+                    set_viewport(ctx, tile_at(view), tile);
+                    let view_push = Push { level: view, ..draw_push };
+                    indirect.draw_two_sided_shadow(ctx, LIST_LOCAL_SHADOW + slot, &view_push);
+                }
             }
             if let Some(blocks) = &blocks {
                 bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
@@ -1050,10 +1069,12 @@ struct Indirect {
     index_buffer: vk::Buffer,
     /// The meshlet lists, and the capacity they are laid out by, when the
     /// passes draw those instead of the instance lists.
-    meshlets: Option<(vk::Buffer, u32)>,
+    meshlets: Option<(vk::Buffer, crate::gpu::MeshletCapacity)>,
     /// Draw the list's queued meshlets with task and mesh shaders, a task
     /// workgroup for each round of them, the count the cull grew.
     tasks: bool,
+    /// Draw the shadows' two-sided lists, which are empty without it.
+    two_sided_shadows: bool,
 }
 
 /// A pass's pipeline, and the one that draws its list's two-sided draws.
@@ -1070,6 +1091,14 @@ impl Indirect {
         let list = LIST_TWO_SIDED + list - LIST_EARLY;
         bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &Push { list, source: DRAWS_INSTANCES, ..*push });
         Self { meshlets: None, tasks: false, ..self }.draw(ctx, list);
+    }
+
+    /// The two-sided draws beside sun or lamp shadow list `list`, into the
+    /// view `push` says, with a pipeline bound that culls no backs.
+    fn draw_two_sided_shadow(self, ctx: &PassContext, list: u32, push: &Push) {
+        let list = two_sided_shadow(list);
+        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..*push });
+        self.draw(ctx, list);
     }
 
     fn draw(self, ctx: &PassContext, list: u32) {
@@ -1120,6 +1149,7 @@ fn record_virtual_shadows(
     indirect: Indirect,
 ) {
     let (push, pipelines, instances) = (frame.push, frame.pipelines, frame.instance_count);
+    let two_sided = indirect.two_sided_shadows;
     let draw_push = Push { source: if indirect.meshlets.is_some() { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
     copy_table(fg, "Virtual shadow table", vsm.table);
     let (requests, requests_handle) = vsm.requests;
@@ -1134,7 +1164,7 @@ fn record_virtual_shadows(
     page_drawing.extend(pools.chain(grounds).map(|&id| (id, BufferAccess::ShaderRead)));
     let count_handle = draws.count_handle;
     let mesh = if indirect.tasks { pipelines.mesh } else { None };
-    let shadow = mesh.map_or(pipelines.shadow, |mesh| mesh.shadow);
+    let shadow = mesh.map_or(pipelines.sun_pages, |mesh| mesh.sun_pages);
     let pool = vsm.pool;
     for (round, batch) in vsm.levels.chunks(CASCADES).enumerate() {
         let batch = batch.to_vec();
@@ -1151,7 +1181,8 @@ fn record_virtual_shadows(
         });
         if indirect.meshlets.is_some() && !indirect.tasks {
             fg.add_pass("Virtual shadow meshlets", &[], meshlet_culling, move |ctx| {
-                cull_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, LIST_SHADOW..LIST_SHADOW + count);
+                let lists = LIST_SHADOW..LIST_SHADOW + count;
+                cull_shadow_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, lists, two_sided);
             });
         }
         let (blocks, terrains) = (blocks.clone(), terrains.clone());
@@ -1187,6 +1218,15 @@ fn record_virtual_shadows(
                 let list = LIST_SHADOW + at;
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: VSM_PAGE_VIEW + page, ..draw_push });
                 indirect.draw(ctx, list);
+            }
+            if indirect.two_sided_shadows {
+                let two_sided = mesh.map_or(pipelines.shadow_two_sided, |mesh| mesh.shadow_two_sided);
+                bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                for &(at, _, page, slot) in &pages {
+                    set_viewport(ctx, slot_at(slot), extent);
+                    let page_push = Push { level: VSM_PAGE_VIEW + page, ..draw_push };
+                    indirect.draw_two_sided_shadow(ctx, LIST_SHADOW + at, &page_push);
+                }
             }
             if let Some(terrains) = &terrains {
                 bind(ctx, pipelines.terrain_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
@@ -1246,7 +1286,8 @@ fn record_virtual_shadows(
         });
         if indirect.meshlets.is_some() && !indirect.tasks {
             fg.add_pass("Virtual shadow moving meshlets", &[], meshlet_culling, move |ctx| {
-                cull_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, LIST_SHADOW..LIST_SHADOW + count);
+                let lists = LIST_SHADOW..LIST_SHADOW + count;
+                cull_shadow_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, lists, two_sided);
             });
         }
         fg.add_pass(
@@ -1258,14 +1299,26 @@ fn record_virtual_shadows(
                 let depth = attachment(ctx.view(moving_pool), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
                 begin_rendering(ctx, vk::Extent2D { width: side, height: side }, &[], Some(&depth));
                 let extent = vk::Extent2D { width: crate::vsm::SLOT, height: crate::vsm::SLOT };
+                let pages = || {
+                    batch.iter().enumerate().flat_map(|(at, (_, pages))| {
+                        pages.iter().map(move |&(page, _, moving_slot)| {
+                            let corner = slot_corner(moving_slot, crate::vsm::MOVING_POOL_SLOTS);
+                            (LIST_SHADOW + at as u32, page, vk::Offset2D { x: corner.x, y: corner.y })
+                        })
+                    })
+                };
                 bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
-                for (at, (_, pages)) in batch.iter().enumerate() {
-                    for &(page, _, moving_slot) in pages {
-                        let corner = slot_corner(moving_slot, crate::vsm::MOVING_POOL_SLOTS);
-                        set_viewport(ctx, vk::Offset2D { x: corner.x, y: corner.y }, extent);
-                        let list = LIST_SHADOW + at as u32;
-                        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: VSM_PAGE_VIEW + page, ..draw_push });
-                        indirect.draw(ctx, list);
+                for (list, page, corner) in pages() {
+                    set_viewport(ctx, corner, extent);
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: VSM_PAGE_VIEW + page, ..draw_push });
+                    indirect.draw(ctx, list);
+                }
+                if indirect.two_sided_shadows {
+                    let two_sided = mesh.map_or(pipelines.shadow_two_sided, |mesh| mesh.shadow_two_sided);
+                    bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+                    for (list, page, corner) in pages() {
+                        set_viewport(ctx, corner, extent);
+                        indirect.draw_two_sided_shadow(ctx, list, &Push { level: VSM_PAGE_VIEW + page, ..draw_push });
                     }
                 }
                 unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -1294,6 +1347,7 @@ fn record_lamp_pages(
     indirect: Indirect,
 ) {
     let (push, pipelines, instances) = (frame.push, frame.pipelines, frame.instance_count);
+    let two_sided = indirect.two_sided_shadows;
     let draw_push = Push { source: if indirect.meshlets.is_some() { DRAWS_MESHLETS } else { DRAWS_INSTANCES }, ..push };
     copy_table(fg, "Lamp shadow table", pages.table);
     let (requests, requests_handle) = pages.requests;
@@ -1313,13 +1367,8 @@ fn record_lamp_pages(
     });
     if indirect.meshlets.is_some() && !indirect.tasks {
         fg.add_pass("Lamp shadow meshlets", &[], meshlet_culling, move |ctx| {
-            cull_meshlets(
-                ctx,
-                pipelines.meshlet_cull,
-                &cull_push,
-                count_handle,
-                LIST_LOCAL_SHADOW..LIST_LOCAL_SHADOW + count,
-            );
+            let lists = LIST_LOCAL_SHADOW..LIST_LOCAL_SHADOW + count;
+            cull_shadow_meshlets(ctx, pipelines.meshlet_cull, &cull_push, count_handle, lists, two_sided);
         });
     }
     let (blocks, terrains) = (frame.blocks.clone(), frame.terrain.clone());
@@ -1352,6 +1401,15 @@ fn record_lamp_pages(
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: LAMP_PAGE_VIEW + page as u32, ..draw_push });
             indirect.draw(ctx, list);
         }
+        if indirect.two_sided_shadows {
+            let two_sided = mesh.map_or(pipelines.local_shadow_two_sided, |mesh| mesh.local_shadow_two_sided);
+            bind(ctx, two_sided, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+            for (page, &(lamp, slot)) in drawn.iter().enumerate() {
+                set_viewport(ctx, slot_at(slot), extent);
+                let page_push = Push { level: LAMP_PAGE_VIEW + page as u32, ..draw_push };
+                indirect.draw_two_sided_shadow(ctx, LIST_LOCAL_SHADOW + lamp, &page_push);
+            }
+        }
         if let Some(blocks) = &blocks {
             bind(ctx, pipelines.block_local_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
             for (page, &(lamp, slot)) in
@@ -1378,14 +1436,17 @@ fn record_lamp_pages(
     });
 }
 
-/// Empties `count` lists from `first` on, as the frame starts them.
+/// Empties `count` shadow lists from `first` on, and the two-sided lists
+/// beside them, as the frame starts them.
 fn reset_lists(ctx: &PassContext, count_buffer: vk::Buffer, first: u32, count: u32) {
     let counts = cleared_draw_counts();
-    let (start, words) = (first as usize * 4, count as usize * 4);
-    let lists = bytemuck::cast_slice(&counts[start..start + words]);
-    unsafe {
-        ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_buffer, draw_count_offset(first), lists);
-        ctx.gpu.device.cmd_fill_buffer(ctx.cmd, count_buffer, meshlet_count_offset(first), u64::from(count) * 4, 0);
+    for first in [first, two_sided_shadow(first)] {
+        let (start, words) = (first as usize * 4, count as usize * 4);
+        let lists = bytemuck::cast_slice(&counts[start..start + words]);
+        unsafe {
+            ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_buffer, draw_count_offset(first), lists);
+            ctx.gpu.device.cmd_fill_buffer(ctx.cmd, count_buffer, meshlet_count_offset(first), u64::from(count) * 4, 0);
+        }
     }
 }
 
@@ -1396,6 +1457,25 @@ fn cull(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, list: u32, insta
 
 /// A workgroup for each round of meshlets the cull queued in each of
 /// `lists`, sized by the count the cull grew, so the CPU never reads it.
+/// As `cull_meshlets`, for sun or lamp shadow lists, and with `two_sided`
+/// for the two-sided lists beside them too.
+fn cull_shadow_meshlets(
+    ctx: &PassContext,
+    pipeline: vk::Pipeline,
+    push: &Push,
+    count: vk::Buffer,
+    lists: std::ops::Range<u32>,
+    two_sided: bool,
+) {
+    if two_sided {
+        let beside = two_sided_shadow(lists.start)..two_sided_shadow(lists.end);
+        cull_meshlets(ctx, pipeline, push, count, lists.start..lists.end);
+        cull_meshlets(ctx, pipeline, push, count, beside);
+        return;
+    }
+    cull_meshlets(ctx, pipeline, push, count, lists);
+}
+
 fn cull_meshlets(
     ctx: &PassContext,
     pipeline: vk::Pipeline,

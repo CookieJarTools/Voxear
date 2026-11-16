@@ -961,8 +961,12 @@ cinematics, and per-camera culling overrides.
    visible. This catches disocclusion with no popping and no CPU readback.
 
 The same tests then run per meshlet: frustum, backface cone and Hi-Z. Mesh shaders do this where available, and a
-compute pass with indirect draws does it elsewhere. Shadow passes reuse the culling per cascade, so hidden casters
-cost nothing. The CPU never touches visibility.
+compute pass with indirect draws does it elsewhere. Shadow passes reuse the culling for each of the sun's cascades or
+virtual shadow levels and each lamp, normal cones included, seen from the light: a shadow draws only the faces turned
+to its light. Casters whose material is two-sided go in a list of their own beside each sun and lamp list
+(`LIST_TWO_SIDED_SHADOW`), whose meshlets are culled as its own are but for their cones, and drawn with pipelines that
+cull no backs, so they cast from either side. The sun's virtual pages are drawn with up kept up, unlike the cascades
+and lamps, so their pipelines take the other winding as the front. The CPU never touches visibility.
 
 **LOD.**
 - **Generated on import** with meshoptimizer. Simplification keeps UV seams, normals and silhouettes.

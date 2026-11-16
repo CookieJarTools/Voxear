@@ -12,7 +12,9 @@
 //   still, for the lights push.output names, to draw into the kept atlas.
 // - Two-sided (LIST_TWO_SIDED, then + 1 for late): what early and late
 //   draw of instances whose material is two-sided, drawn whole by passes
-//   that cull no backs. Shadows cull no backs, so they list them as usual.
+//   that cull no backs. Shadows cull backs too: each sun and lamp list has a
+//   two-sided one beside it (LIST_TWO_SIDED_SHADOW on), whose meshlets are
+//   culled as its own are but for their cones, drawn without culling backs.
 //
 // Each draw also picks the coarsest LOD whose error stays under a pixel. When
 // an instance's LOD changes, both LODs are drawn for a moment with
@@ -20,8 +22,9 @@
 //
 // With meshlet culling, a draw is not written but its meshlets are queued,
 // and the meshlet pass (meshletMain) after each list draws those that
-// survive the same tests, for the passes to draw instead. A two-sided draw
-// is always written whole: a meshlet's normal cone says nothing of its back.
+// survive the same tests, for the passes to draw instead. The main view's
+// two-sided draws are always written whole: a meshlet's normal cone says
+// nothing of its back.
 
 #include "culling.slang"
 
@@ -82,14 +85,14 @@ void queueMeshlets(Frame* frame, uint list, uint packed, MeshLod lod)
 {
     uint first;
     InterlockedAdd(buffers()->drawCount[queuedCountIndex(list)], lod.meshletCount, first);
-    uint end = min(first + lod.meshletCount, meshletListCapacity(list, frame->meshletCapacity));
+    uint end = min(first + lod.meshletCount, frameMeshletCapacity(frame, list));
     if (end <= first)
     {
         return;
     }
     uint ignored;
     InterlockedMax(buffers()->drawCount[drawCountIndex(list)], (end + MESHLET_ROUND - 1) / MESHLET_ROUND, ignored);
-    uint base = meshletListBase(list, frame->meshletCapacity);
+    uint base = frameMeshletBase(frame, list);
     for (uint i = first; i < end; i++)
     {
         buffers()->meshletWork[base + i] = uint2(packed, i - first);
@@ -174,6 +177,12 @@ void emitFading(Frame* frame, uint list, uint instance, Mesh mesh, uint selected
     count(STAT_FADE_DRAWS);
 }
 
+// The list a caster goes in for shadow list `list`: the one beside it for a two-sided material, whose back casts too.
+uint shadowListFor(Instance drawn, uint list)
+{
+    return (buffers()->materials[drawn.material].flags & MATERIAL_TWO_SIDED) != 0 ? twoSidedShadow(list) : list;
+}
+
 // How many times the error a plant's shadow may show, against its own drawing.
 static const float PLANT_SHADOW_COARSER = 4.0;
 
@@ -196,7 +205,7 @@ void cullVirtualShadow(Frame* frame, uint list, uint level, uint instance, Mesh 
     bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
     float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
     uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / texel, threshold);
-    emit(list, instance, mesh, lod, 0);
+    emit(shadowListFor(drawn, list), instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }
 
@@ -237,7 +246,7 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
     bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
     float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
     uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, 1.0 / frame->cascadeTexel[cascade], threshold);
-    emit(LIST_SHADOW + cascade, instance, mesh, lod, 0);
+    emit(shadowListFor(drawn, LIST_SHADOW + cascade), instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }
 
@@ -271,7 +280,7 @@ void cullLocalShadow(Frame* frame, uint light, uint instance, Mesh mesh, float3 
     // A cube face's view is 90 degrees across, so its texels per metre at a distance are half its size over it.
     float away = max(distance(center, frame->localShadows.casters[light].xyz) - radius, 0.1);
     uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, float(LOCAL_SHADOW_TILE) * 0.5 / away, threshold);
-    emit(LIST_LOCAL_SHADOW + light, instance, mesh, lod, 0);
+    emit(shadowListFor(drawn, LIST_LOCAL_SHADOW + light), instance, mesh, lod, 0);
     count(STAT_SHADOW_DRAWS);
 }
 
@@ -420,7 +429,7 @@ void emitRuns(Frame* frame, uint list, uint thread, bool visible, uint2 entry, M
     }
     first = WaveReadLaneFirst(first);
     uint slot = first + WavePrefixCountBits(starts);
-    if (!starts || slot >= meshletListCapacity(list, frame->meshletCapacity))
+    if (!starts || slot >= frameMeshletCapacity(frame, list))
     {
         return;
     }
@@ -433,7 +442,7 @@ void emitRuns(Frame* frame, uint list, uint thread, bool visible, uint2 entry, M
     draw.firstIndex = lod.indexOffset + begin;
     draw.vertexOffset = 0;
     draw.firstInstance = 0;
-    uint at = meshletListBase(list, frame->meshletCapacity) + slot;
+    uint at = frameMeshletBase(frame, list) + slot;
     buffers()->meshletDraws[at] = draw;
     buffers()->meshletDrawInstances[at] = entry.x;
 }

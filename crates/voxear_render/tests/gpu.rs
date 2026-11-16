@@ -340,6 +340,100 @@ fn colour_difference(a: [u8; 4], b: [u8; 4]) -> u8 {
     a.iter().zip(&b).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0)
 }
 
+/// What lights a sheet's shadow test: the sun, high and from the left, with
+/// its shadows drawn one way, or a point lamp up and to the left, with its own.
+#[derive(Clone, Copy, Debug)]
+enum SheetLight {
+    Sun(voxear_render::SunShadows),
+    Lamp(voxear_render::LampShadows),
+}
+
+/// The floor seen from above under `light`, with a sheet a metre square a
+/// metre over its middle, facing up or turned to face down, in a material
+/// two-sided or not.
+fn sheet_shadow_render(light: SheetLight, face_down: bool, two_sided: bool, meshlets: Meshlets) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky};
+    let options = match light {
+        SheetLight::Sun(sun_shadows) => ViewOptions { sun_shadows: Some(sun_shadows), ..ViewOptions::default() },
+        SheetLight::Lamp(lamp_shadows) => ViewOptions { lamp_shadows: Some(lamp_shadows), ..ViewOptions::default() },
+    };
+    let mut renderer = renderer_culling(meshlets, options)?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let floor = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let sheet = renderer.add_material(&MaterialDesc { two_sided, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, floor), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let turn = if face_down { Quat::from_rotation_x(std::f32::consts::PI) } else { Quat::IDENTITY };
+    world.spawn((MeshRenderer::new(plane, sheet), Transform::new(Vec3::new(0.0, 1.0, 0.0), turn, Vec3::ONE)));
+    let frames = match light {
+        SheetLight::Sun(_) => {
+            let towards_sun = Vec3::new(-20f32.to_radians().sin(), 20f32.to_radians().cos(), 0.0);
+            let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+            world.spawn((Light::directional(Vec3::ONE, 2.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+            world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+            12
+        }
+        SheetLight::Lamp(_) => {
+            world.spawn((Light::point(Vec3::ONE, 40.0, 20.0), Transform::from_position(SHEET_LAMP)));
+            world.insert_resource(Sky { ambient: 0.0, ..Sky::default() });
+            // Long enough for the floor and the sheet to stand still and go into the pages.
+            30
+        }
+    };
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, frames);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The lamp over the sheet, two metres to its left and three up from it.
+const SHEET_LAMP: Vec3 = Vec3::new(-2.0, 4.0, 0.0);
+
+#[test]
+fn shadows_cull_a_single_sided_sheets_back_but_a_two_sided_one_casts_from_both() {
+    use voxear_render::{LampShadows, SunShadows};
+    let lights = [
+        SheetLight::Sun(SunShadows::Virtual),
+        SheetLight::Sun(SunShadows::Cascades),
+        SheetLight::Lamp(LampShadows::Virtual),
+        SheetLight::Lamp(LampShadows::Atlas),
+    ];
+    for light in lights {
+        // Under the sheet's shadow, off to the right of where the sheet itself shows from above, and in the open:
+        // for the lamp, as far from it and as steeply lit, on its other side.
+        let (shade, open) = match light {
+            SheetLight::Sun(_) => (Vec3::new(0.7, 0.0, 0.0), Vec3::new(-3.0, 0.0, 0.0)),
+            SheetLight::Lamp(_) => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.0 * SHEET_LAMP.x - 1.0, 0.0, 0.0)),
+        };
+        for meshlets in [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders] {
+            let (Some(up), Some(down), Some(both)) = (
+                sheet_shadow_render(light, false, false, meshlets),
+                sheet_shadow_render(light, true, false, meshlets),
+                sheet_shadow_render(light, true, true, meshlets),
+            ) else {
+                continue;
+            };
+            keep_image(&format!("sheet facing the light {light:?} {meshlets:?}.png"), &up);
+            keep_image(&format!("sheet turned away {light:?} {meshlets:?}.png"), &down);
+            keep_image(&format!("two-sided sheet turned away {light:?} {meshlets:?}.png"), &both);
+            let lit = floor_brightness(&up, open);
+            let shaded = floor_brightness(&up, shade);
+            assert!(shaded * 2 < lit, "{light:?} {meshlets:?}: facing the light, it casts: {shaded} against {lit}");
+            let through = floor_brightness(&down, shade);
+            // Within a twentieth of the open floor, which may lie farther off and fall off a little; a shadow is
+            // under half.
+            let passes = through * 20 >= lit * 19;
+            assert!(passes, "{light:?} {meshlets:?}: one-sided and turned away, it passes: {through} against {lit}");
+            let behind = floor_brightness(&both, shade);
+            assert!(behind * 2 < lit, "{light:?} {meshlets:?}: two-sided, it casts from behind: {behind}, {lit}");
+        }
+    }
+}
+
 #[test]
 fn a_two_sided_material_draws_a_cards_back_lit_as_its_front() {
     let mirror = Vec3::new(-1.0, 1.0, 1.0);

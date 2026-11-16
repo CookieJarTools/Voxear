@@ -33,12 +33,26 @@ static const uint LIST_SHADOW = 2;
 // One list for each local light casting a shadow, drawn into each of its views.
 static const uint LIST_LOCAL_SHADOW = LIST_SHADOW + CASCADES;
 static const uint LOCAL_SHADOW_LIGHTS = 8;
-// The lists with meshlets: all but the two-sided lists.
-static const uint MESHLET_LIST_COUNT = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
+// The shadows' two-sided casters, one list beside each sun and lamp list, as those lie: drawn without culling their
+// backs, as the shadow lists cull theirs, and their meshlets without testing their cones.
+static const uint LIST_TWO_SIDED_SHADOW = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
+// The lists with meshlets: all but the main view's two-sided lists.
+static const uint MESHLET_LIST_COUNT = LIST_TWO_SIDED_SHADOW + CASCADES + LOCAL_SHADOW_LIGHTS;
 // The main view's two-sided draws, early then late: whole LODs, drawn
 // without culling their backs.
 static const uint LIST_TWO_SIDED = MESHLET_LIST_COUNT;
 static const uint LIST_COUNT = LIST_TWO_SIDED + 2;
+
+// The two-sided list beside a shadow list, and the shadow list a two-sided one lies beside.
+uint twoSidedShadow(uint list)
+{
+    return LIST_TWO_SIDED_SHADOW + list - LIST_SHADOW;
+}
+
+uint shadowListOf(uint list)
+{
+    return list >= LIST_TWO_SIDED_SHADOW && list < MESHLET_LIST_COUNT ? LIST_SHADOW + list - LIST_TWO_SIDED_SHADOW : list;
+}
 
 // Each instance list's draw count heads a dispatch's arguments (count, 1, 1).
 // With meshlet culling the list's draws are not written: its meshlets are
@@ -64,16 +78,22 @@ uint meshletCountIndex(uint list)
 
 // Meshlet lists, one after another: the main view's two hold two draws'
 // meshlets for each instance, since a fading instance draws two LODs; each
-// shadow cascade's and local light's holds one. `capacity` is the most meshlets every
-// instance's draw could turn into together, worked out on the CPU.
-uint meshletListBase(uint list, uint capacity)
+// shadow cascade's and local light's holds one; then each two-sided shadow
+// list holds the two-sided casters' once. `capacity` is the most meshlets every
+// instance's draw could turn into together, worked out on the CPU, and
+// `twoSided` the most the two-sided casters' could.
+uint meshletListBase(uint list, uint capacity, uint twoSided)
 {
+    if (list >= LIST_TWO_SIDED_SHADOW)
+    {
+        return (4 + LIST_TWO_SIDED_SHADOW - LIST_SHADOW) * capacity + (list - LIST_TWO_SIDED_SHADOW) * twoSided;
+    }
     return list < LIST_SHADOW ? list * 2 * capacity : (4 + list - LIST_SHADOW) * capacity;
 }
 
-uint meshletListCapacity(uint list, uint capacity)
+uint meshletListCapacity(uint list, uint capacity, uint twoSided)
 {
-    return list < LIST_SHADOW ? 2 * capacity : capacity;
+    return list >= LIST_TWO_SIDED_SHADOW ? twoSided : list < LIST_SHADOW ? 2 * capacity : capacity;
 }
 
 static const uint STAT_TESTED = 0;
@@ -1111,6 +1131,11 @@ struct Frame
     // The glass shadow atlas's light and smoothness (glassLight), each its
     // texture's index plus one: 0, as frames from before it wrote, for none.
     uint2 glassShadow;
+    // As meshletCapacity, for the two-sided shadow lists.
+    uint meshletTwoSidedCapacity;
+    uint meshletPad0;
+    uint meshletPad1;
+    uint meshletPad2;
     Lighting lighting;
     Ddgi ddgi;
     ReflectionProbes reflectionProbes;
@@ -1178,6 +1203,17 @@ float levelHeight(Frame* frame, float3 world)
     return world.y + frame->origin.w;
 }
 
+// Where a meshlet list starts this frame, and how many it holds.
+uint frameMeshletBase(Frame* frame, uint list)
+{
+    return meshletListBase(list, frame->meshletCapacity, frame->meshletTwoSidedCapacity);
+}
+
+uint frameMeshletCapacity(Frame* frame, uint list)
+{
+    return meshletListCapacity(list, frame->meshletCapacity, frame->meshletTwoSidedCapacity);
+}
+
 // The projection that draws virtual shadow page `page` of this frame's into its slot of the pool, with its texel of
 // border: across and up the sun's view onto the slot, along its light into depth (src/vsm.rs).
 Mat4 vsmPageViewProj(Frame* frame, uint page)
@@ -1239,6 +1275,7 @@ bool insideProjection(Mat4 m, float3 center, float radius)
 // page's for a view from VSM_PAGE_VIEW on, a lamp's from LAMP_PAGE_VIEW.
 Mat4 shadowViewProj(Frame* frame, uint list, uint view)
 {
+    list = shadowListOf(list);
     if (view >= LAMP_PAGE_VIEW)
     {
         return lampPageViewProj(frame, view - LAMP_PAGE_VIEW);
@@ -1956,6 +1993,13 @@ Buffers* buffers()
     return push.buffers;
 }
 
+// Whether a lamp's shadow list, or the two-sided one beside it, holds anything this frame.
+bool lampListDrawn(uint slot)
+{
+    uint list = LIST_LOCAL_SHADOW + slot;
+    return buffers()->drawCount[drawCountIndex(list)] != 0 || buffers()->drawCount[drawCountIndex(twoSidedShadow(list))] != 0;
+}
+
 // ---------------------------------------------------------------- The weather's grids (src/weather_maps.rs)
 
 // How much colder the air is a metre higher, in °C.
@@ -2099,7 +2143,7 @@ float exposureScale(Frame* frame)
 uint drawInstance(uint drawId, out uint lod, out uint fade)
 {
     uint packed = push.source == DRAWS_MESHLETS
-        ? buffers()->meshletDrawInstances[meshletListBase(push.list, push.frame->meshletCapacity) + drawId]
+        ? buffers()->meshletDrawInstances[frameMeshletBase(push.frame, push.list) + drawId]
         : buffers()->drawInstances[push.list * push.maxDraws + drawId];
     lod = (packed >> DRAW_LOD_SHIFT) & 0xF;
     fade = packed & (DRAW_FADING_IN | DRAW_FADING_OUT);
@@ -2111,7 +2155,7 @@ uint drawInstance(uint drawId, out uint lod, out uint fade)
 uint drawFirstIndex(uint drawId)
 {
     return push.source == DRAWS_MESHLETS
-        ? buffers()->meshletDraws[meshletListBase(push.list, push.frame->meshletCapacity) + drawId].firstIndex
+        ? buffers()->meshletDraws[frameMeshletBase(push.frame, push.list) + drawId].firstIndex
         : buffers()->draws[push.list * push.maxDraws + drawId].firstIndex;
 }
 

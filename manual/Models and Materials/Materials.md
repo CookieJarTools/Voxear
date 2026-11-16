@@ -70,7 +70,7 @@ Each face of a mesh is drawn from the side its normal points to only, so the bac
 - leaves and grass on flat cards, seen from both sides as they sway;
 - scans of only the front of something, such as a stretch of wall, whose back was never scanned.
 
-The back is lit as if it faced the other way, so a leaf with the sun behind the camera is as bright from behind as from the front. A two-sided surface casts the same shadow either way. It costs more to draw than a one-sided one, as nothing of it is skipped for facing away, so keep it for what needs it. A two-sided material is not raised by its height map: see [[Displacement]]. In a material file, `two_sided = true`.
+The back is lit as if it faced the other way, so a leaf with the sun behind the camera is as bright from behind as from the front. A two-sided surface casts the same shadow either way. A one-sided one casts only from the side its faces point to: a flat card with the light behind it lets the light through. It costs more to draw than a one-sided one, as nothing of it is skipped for facing away, so keep it for what needs it. A two-sided material is not raised by its height map: see [[Displacement]]. In a material file, `two_sided = true`.
 
 A model's own material is two-sided when its glTF file marks it double-sided, and stays so when you extract it with **Extract Materials**.
 

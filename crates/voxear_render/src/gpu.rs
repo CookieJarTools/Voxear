@@ -427,6 +427,9 @@ pub struct GpuFrame {
     /// each its texture's index plus one: 0, as frames from before it wrote,
     /// for none.
     pub glass_shadow: [u32; 2],
+    /// As `meshlet_capacity`, for the two-sided shadow lists.
+    pub meshlet_two_sided_capacity: u32,
+    pub _meshlet_pad: [u32; 3],
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
     pub reflection_probes: GpuReflectionProbes,
@@ -1513,13 +1516,22 @@ pub const LIST_LATE: u32 = 1;
 pub const LIST_SHADOW: u32 = 2;
 /// One list for each local light casting a shadow, drawn into each of its views.
 pub const LIST_LOCAL_SHADOW: u32 = LIST_SHADOW + CASCADES as u32;
+/// The shadows' two-sided casters, one list beside each sun and lamp list,
+/// as those lie: drawn without culling their backs, as the shadow lists cull
+/// theirs, and their meshlets without testing their cones.
+pub const LIST_TWO_SIDED_SHADOW: u32 = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS as u32;
 /// The lists with meshlets, which meshlet culling queues for: all but the
-/// two-sided lists.
-pub const MESHLET_LIST_COUNT: u32 = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS as u32;
+/// main view's two-sided lists.
+pub const MESHLET_LIST_COUNT: u32 = LIST_TWO_SIDED_SHADOW + CASCADES as u32 + LOCAL_SHADOW_LIGHTS as u32;
 /// The main view's two-sided draws, early then late: whole LODs, without
 /// meshlet culling, drawn without culling their backs.
 pub const LIST_TWO_SIDED: u32 = MESHLET_LIST_COUNT;
 pub const LIST_COUNT: u32 = LIST_TWO_SIDED + 2;
+
+/// The two-sided list beside a sun or lamp shadow list.
+pub fn two_sided_shadow(list: u32) -> u32 {
+    LIST_TWO_SIDED_SHADOW + list - LIST_SHADOW
+}
 
 /// The draw count buffer holds each instance list's count at the head of a
 /// dispatch's arguments, (count, 1, 1), and a fourth word. With meshlet
@@ -1550,24 +1562,36 @@ pub fn cleared_draw_counts() -> Vec<u32> {
     words
 }
 
-/// A meshlet list's first entry and how many it holds, when every instance
-/// list's draws can turn into `capacity` meshlets: the main view's lists
-/// hold twice that, as a fading instance draws two LODs, and each shadow
-/// cascade's and local light's holds it once. Mirrors `meshletListBase` in
-/// the shaders.
-pub fn meshlet_list(list: u32, capacity: u32) -> (u64, u32) {
-    let capacity = u64::from(capacity);
-    let (base, held) = if list < LIST_SHADOW {
-        (u64::from(list) * 2 * capacity, 2 * capacity)
+/// How many meshlets every instance list's draws can turn into, at most,
+/// and how many the two-sided casters' can, which lay out the meshlet lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeshletCapacity {
+    pub all: u32,
+    pub two_sided: u32,
+}
+
+/// A meshlet list's first entry and how many it holds: the main view's lists
+/// hold twice `all`, as a fading instance draws two LODs, each shadow
+/// cascade's and local light's holds it once, and each two-sided shadow list
+/// `two_sided`. Mirrors `meshletListBase` in the shaders.
+pub fn meshlet_list(list: u32, capacity: MeshletCapacity) -> (u64, u32) {
+    let (all, two_sided) = (u64::from(capacity.all), u64::from(capacity.two_sided));
+    let shadow_lists_end = (4 + u64::from(LIST_TWO_SIDED_SHADOW - LIST_SHADOW)) * all;
+    let (base, held) = if list >= LIST_TWO_SIDED_SHADOW {
+        (shadow_lists_end + u64::from(list - LIST_TWO_SIDED_SHADOW) * two_sided, two_sided)
+    } else if list < LIST_SHADOW {
+        (u64::from(list) * 2 * all, 2 * all)
     } else {
-        ((4 + u64::from(list - LIST_SHADOW)) * capacity, capacity)
+        ((4 + u64::from(list - LIST_SHADOW)) * all, all)
     };
     (base, held as u32)
 }
 
 /// Entries in all the meshlet lists together.
-pub fn meshlet_lists_len(capacity: u32) -> u64 {
-    (4 + u64::from(MESHLET_LIST_COUNT - LIST_SHADOW)) * u64::from(capacity)
+pub fn meshlet_lists_len(capacity: MeshletCapacity) -> u64 {
+    let (all, two_sided) = (u64::from(capacity.all), u64::from(capacity.two_sided));
+    (4 + u64::from(LIST_TWO_SIDED_SHADOW - LIST_SHADOW)) * all
+        + u64::from(MESHLET_LIST_COUNT - LIST_TWO_SIDED_SHADOW) * two_sided
 }
 
 /// Counters the culling pass writes, read back a few frames later.
@@ -1636,7 +1660,8 @@ mod tests {
         let cascades = CASCADES * (64 + 96 + 8);
         let motion = 64 * 2 + 16;
         let post = 16 * 21 + 16 * crate::looks::LOOK_VALUES;
-        let meshlets = 16;
+        // The meshlet capacities and flags, the glass shadow's two words, and the two-sided capacity padded out.
+        let meshlets = 16 + 16;
         let lighting = 16 * 4 + 16 * 6 + 16 + size_of::<GpuClouds>() + 16;
         assert_eq!(size_of::<GpuClouds>(), 96);
         let ddgi = size_of::<GpuDdgi>();
@@ -1690,12 +1715,17 @@ mod tests {
 
     #[test]
     fn meshlet_lists_lie_end_to_end() {
-        let capacity = 100;
+        let capacity = MeshletCapacity { all: 100, two_sided: 7 };
         let mut next = 0;
         for list in 0..MESHLET_LIST_COUNT {
             let (base, held) = meshlet_list(list, capacity);
             assert_eq!(base, next, "list {list} starts where the one before ends");
-            assert_eq!(held, if list < LIST_SHADOW { 200 } else { 100 });
+            let expected = match list {
+                _ if list < LIST_SHADOW => 200,
+                _ if list < LIST_TWO_SIDED_SHADOW => 100,
+                _ => 7,
+            };
+            assert_eq!(held, expected);
             next += u64::from(held);
         }
         assert_eq!(next, meshlet_lists_len(capacity));

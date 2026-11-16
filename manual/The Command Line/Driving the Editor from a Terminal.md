@@ -195,6 +195,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |
 | `play`, `pause`, `step`, `stop`, `game.console` | Run the game, and type into its console |
 | `console.read` | Read the Console's lines, from where the last read stopped |
+| `profiler.frames` | Read the Profiler's latest frames, each sample's time and each drawing pass's, from where the last read stopped |
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
 | `settings.get`, `settings.set`, `project.get` | The editor's settings, and the project's |

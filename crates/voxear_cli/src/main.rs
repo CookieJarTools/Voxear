@@ -394,6 +394,10 @@ enum Commands {
         /// Also time the CPU: loading, each frame's tick and render, and the profiler's samples in them.
         #[arg(long)]
         profile: bool,
+        /// Save the profile as JSON too: every frame's samples and GPU passes, for a tool to show (with or without
+        /// --profile).
+        #[arg(long, value_name = "JSON")]
+        profile_out: Option<PathBuf>,
         /// Move the camera this many metres a second along x, y and z as the frames go, as `--fly 0,0,20`.
         #[arg(long, value_name = "X,Y,Z", value_parser = parse_vector)]
         fly: Option<voxear_core::math::Vec3>,
@@ -558,6 +562,7 @@ fn main() -> Result<()> {
             camera,
             level,
             profile,
+            profile_out,
             fly,
             world_quality,
         } => {
@@ -616,7 +621,8 @@ fn main() -> Result<()> {
                 software_rays,
                 camera,
                 level,
-                profile,
+                profile: profile || profile_out.is_some(),
+                profile_out,
                 fly,
                 quality: world_quality.and_then(|quality| {
                     use voxear_terrain::WorldQuality;
@@ -751,6 +757,8 @@ struct Shot {
     level: Option<String>,
     /// Time the CPU too.
     profile: bool,
+    /// Where to save the profile as JSON.
+    profile_out: Option<PathBuf>,
     /// How fast the camera moves, in metres a second.
     fly: Option<voxear_core::math::Vec3>,
     /// The preset worlds of blocks spend as, in place of the project's.
@@ -903,10 +911,12 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         camera,
         level,
         profile,
+        profile_out,
         fly,
         quality,
     } = shot;
     let mut project = Project::open(path)?;
+    let project_name = project.name().to_string();
     if level.is_some() {
         project.file.project.start_level = level;
     }
@@ -922,11 +932,19 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     if profile {
         voxear_core::profiling::set_enabled(true);
     }
+    // Every frame as tools read them, for --profile-out; loading is frame 0.
+    let mut saved: Vec<serde_json::Value> = Vec::new();
     let loading = std::time::Instant::now();
     game.start(Some(&mut renderer))?;
     if let Some(cpu) = &mut cpu {
         cpu.load_ms = loading.elapsed().as_secs_f32() * 1000.0;
-        cpu.add_samples(&voxear_core::profiling::end_frame(), false);
+        let samples = voxear_core::profiling::end_frame();
+        cpu.add_samples(&samples, false);
+        if profile_out.is_some() {
+            let mut frame = voxear_engine::profile_frames::frame_json(0, cpu.load_ms, &samples, &[]);
+            frame["loading"] = true.into();
+            saved.push(frame);
+        }
     }
     let mut looking_through = None;
     if let Some(name) = &camera {
@@ -980,7 +998,15 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         }
         if let Some(cpu) = &mut cpu {
             cpu.add_frame(tick_ms, render_ms, timing, voxear_engine::blocks::streamed(&game.engine.world));
-            cpu.add_samples(&voxear_core::profiling::end_frame(), timing);
+            let samples = voxear_core::profiling::end_frame();
+            cpu.add_samples(&samples, timing);
+            if profile_out.is_some() {
+                let frame_ms = tick_ms + render_ms;
+                let timings = renderer.timings();
+                let mut frame = voxear_engine::profile_frames::frame_json(frame, frame_ms, &samples, timings);
+                frame["timed"] = timing.into();
+                saved.push(frame);
+            }
         }
         if capture && let Some(path) = renderer.end_capture() {
             println!("RenderDoc capture: {}", path.display());
@@ -1072,6 +1098,20 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     );
     if let Some(cpu) = &cpu {
         cpu.print();
+    }
+    if let Some(file) = &profile_out {
+        let profile = serde_json::json!({
+            "voxear_profile": voxear_engine::profile_frames::FORMAT,
+            "source": "render",
+            "project": project_name,
+            "gpu_name": renderer.gpu().name,
+            "size": [width, height],
+            "timed_frames": timed.frames,
+            "frames": saved,
+        });
+        make_folder_for(file)?;
+        std::fs::write(file, serde_json::to_vec(&profile)?).with_context(|| format!("writing {}", file.display()))?;
+        println!("profile: {}", file.display());
     }
     let lods: Vec<String> =
         stats.lods.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| format!("LOD{i} {n}")).collect();
@@ -1362,7 +1402,9 @@ fn start_engine(project: &Project, no_build: bool) -> Result<Engine> {
     Ok(engine)
 }
 
+/// Writes an image, making the folder it goes in when there is none yet.
 fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+    make_folder_for(path)?;
     let file = std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgba);
@@ -1370,6 +1412,14 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     encoder.write_header()?.write_image_data(rgba)?;
     Ok(())
+}
+
+/// Makes the folder `file` goes in, when it names one that is not there yet.
+fn make_folder_for(file: &Path) -> Result<()> {
+    match file.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+        Some(folder) => std::fs::create_dir_all(folder).with_context(|| format!("creating {}", folder.display())),
+        None => Ok(()),
+    }
 }
 
 fn print_objs(engine: &Engine) {

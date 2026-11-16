@@ -20,8 +20,8 @@ use winit::{
 use voxear_ui::Key as UiKey;
 
 use crate::{
-    Engine, dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, remote_console::RemoteConsole,
-    stats_overlay::StatsOverlay,
+    Engine, dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, game_link::GameLink,
+    remote_console::RemoteConsole, stats_overlay::StatsOverlay,
 };
 
 /// Called once the renderer exists, typically to load the start level.
@@ -42,9 +42,11 @@ pub struct WindowOptions {
     /// captures: for working on a game, not for playing it.
     pub tools: bool,
     /// Where `vox console` finds the game, with its tools: the folder the
-    /// console's address is kept in (see [`remote_console`]).
+    /// console's address is kept in (see [`remote_console`]), and the link
+    /// tools watch the game through (see [`game_link`]).
     ///
     /// [`remote_console`]: crate::remote_console
+    /// [`game_link`]: crate::game_link
     pub console: Option<PathBuf>,
 }
 
@@ -72,9 +74,15 @@ pub fn run_windowed(game: Game, options: WindowOptions, settings: RendererSettin
             .inspect_err(|error| tracing::warn!("vox console cannot reach this game: {error:#}"))
             .ok()
     });
+    let link = options.console.as_deref().filter(|_| options.tools).and_then(|folder| {
+        GameLink::listen(folder)
+            .inspect_err(|error| tracing::warn!("tools cannot watch this game: {error:#}"))
+            .ok()
+    });
     let free = options.tools && frees_camera(&game.engine);
     let mut app = App {
         remote,
+        link,
         game,
         settings,
         debug_view: DEBUG_VIEW_NONE,
@@ -119,6 +127,8 @@ fn event_loop(renderdoc: bool) -> Result<EventLoop<()>, winit::error::EventLoopE
 struct App {
     /// Lines `vox console` sends, while the game has its tools.
     remote: Option<RemoteConsole>,
+    /// Calls from tools watching the game, while it has its tools.
+    link: Option<GameLink>,
     game: Game,
     settings: RendererSettings,
     debug_view: u32,
@@ -262,6 +272,9 @@ impl App {
         let now = Instant::now();
         let delta = self.last.map_or(0.0, |last| (now - last).as_secs_f32());
         self.last = Some(now);
+        if let Some(link) = &mut self.link {
+            link.begin_frame();
+        }
         self.fly.update(&mut self.game.engine.world, delta);
         self.measure_window();
         self.game.tick(delta, self.renderer.as_mut());
@@ -296,6 +309,18 @@ impl App {
             self.overlay.show_debug_texts(&self.game.engine.world, (size.width, size.height), scale);
             self.overlay.draw(renderer, (size.width, size.height), scale)?;
             renderer.render(&self.game.engine.world, self.game.engine.time().elapsed as f32)?;
+        }
+        if let Some(link) = &mut self.link {
+            let (overlay, engine) = (&mut self.overlay, &mut self.game.engine);
+            let mut quit = false;
+            link.end_frame(engine.time().frame, delta * 1000.0, self.renderer.as_mut(), |line| {
+                let (said, action) = overlay.run_remote(line, engine);
+                quit |= action == Some(ConsoleAction::Quit);
+                said
+            });
+            if quit {
+                event_loop.exit();
+            }
         }
         if self.options.frames.is_some_and(|limit| self.game.engine.time().frame >= limit) {
             event_loop.exit();

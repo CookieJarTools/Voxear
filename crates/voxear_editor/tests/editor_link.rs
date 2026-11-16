@@ -269,6 +269,32 @@ fn calls_are_refused_with_a_reason_a_tool_can_read() {
 }
 
 #[test]
+fn a_tool_reads_the_profilers_frames_with_its_panel_hidden() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // The first read starts frames being sampled; later reads take those from where the last stopped.
+    let first = done(&mut editor, &mut renderer, "profiler.frames", json!({}));
+    let mut next = first["next"].as_u64().unwrap();
+    let mut taken: Vec<Value> = Vec::new();
+    while taken.len() < 3 {
+        frames(&mut editor, &mut renderer, 2);
+        let read = done(&mut editor, &mut renderer, "profiler.frames", json!({ "after": next }));
+        assert!(read["next"].as_u64().unwrap() > next);
+        next = read["next"].as_u64().unwrap();
+        taken.extend(read["frames"].as_array().unwrap().iter().cloned());
+    }
+    let numbers: Vec<u64> = taken.iter().map(|f| f["frame"].as_u64().unwrap()).collect();
+    assert!(numbers.windows(2).all(|pair| pair[0] < pair[1]), "each frame once, in order: {numbers:?}");
+    let frame = taken.last().unwrap();
+    let names: Vec<&str> = frame["samples"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Render"), "the editor's own stages are sampled: {names:?}");
+    assert!(frame["samples"][0]["depth"] == 0 && frame["cpu_ms"].as_f64().unwrap() > 0.0);
+    assert!(!frame["gpu"].as_array().unwrap().is_empty(), "the GPU's passes come with each frame");
+    let limited = done(&mut editor, &mut renderer, "profiler.frames", json!({ "limit": 1 }));
+    assert_eq!(limited["frames"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn a_folder_setting_is_set_by_its_path_and_listed_with_it() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

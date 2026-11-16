@@ -710,6 +710,16 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ lines: [{ number, level, message, category, seconds, frame, file?, line?, stack?, obj?, asset? }], next }",
     },
     CallInfo {
+        name: "profiler.frames",
+        about: "The latest frames the Profiler took: each one's CPU samples in the order of their tree, with how deep each ran, and the GPU's passes. Reading keeps frames sampled for a few seconds, even with the Profiler hidden, so read again within that to watch.",
+        args: &[
+            maybe("after", ArgKind::Whole, "From an earlier read's `next`; the frames kept when left out."),
+            maybe("limit", ArgKind::Whole, "The most frames, the latest; 120 when left out."),
+        ],
+        changes: false,
+        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
+    },
+    CallInfo {
         name: "capture",
         about: "Saves a picture of the Scene view, the Game view or the whole editor as a PNG, a frame or two from now. The view shows first if it was behind another tab.",
         args: &[

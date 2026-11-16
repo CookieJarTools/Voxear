@@ -538,6 +538,9 @@ Next in M3:
   - [x] debug draw: lines, arrows, boxes, spheres and text, from C# and Rust, hidden behind the scene or on top
   - [x] the dev console: commands with arguments and console variables, in the game window's development tools
   - [x] the dev console through `vox`, into a running game: `vox console "line"`
+  - [x] tools watching a game from `vox run` through its link (`.voxear/Game`): its profiled frames, log, console
+    and RenderDoc captures; the editor's frames for tools (`profiler.frames`); `vox render --profile-out` saving a
+    render's frames as JSON, in the same shape
   - [x] debug draw's texts in the player, as in the editor, from one shared piece
   - [x] a C# `Color` field in the Inspector: a swatch for the colour picker, set from hex or numbers in scenes
 - **Saving**, built into the engine (see "Saves" in the architecture):

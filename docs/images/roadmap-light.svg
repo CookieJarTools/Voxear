@@ -13,7 +13,7 @@
 <circle cx="56" cy="112" r="8" fill="#1a7f37"/><path d="M52.5 112 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="117" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M0</text>
 <text x="120" y="117" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Foundation</text>
-<text x="380" y="117" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Archetype ECS, Unity&#x27;s lifecycle, C# on CoreCLR, the Vulkan device</text>
+<text x="380" y="117" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Archetype ECS, Awake to Destroy, C# on .NET, the Vulkan device</text>
 <circle cx="56" cy="152" r="8" fill="#1a7f37"/><path d="M52.5 152 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="157" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M1</text>
 <text x="120" y="157" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Rendering core</text>
@@ -25,15 +25,15 @@
 <circle cx="56" cy="232" r="8" fill="#5b6cf0"/><circle cx="56" cy="232" r="3" fill="#ffffff"/>
 <text x="80" y="237" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M3</text>
 <text x="120" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Editor and Voxear UI</text>
-<text x="380" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">The Unity-style editor and its UI toolkit, growing all along</text>
+<text x="380" y="237" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">The editor and its UI toolkit, growing all along</text>
 <circle cx="56" cy="272" r="8" fill="#1a7f37"/><path d="M52.5 272 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="277" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e"></text>
 <text x="120" y="277" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Packages</text>
-<text x="380" y="277" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Share code, tools and content from GitHub, as Unity&#x27;s packages</text>
+<text x="380" y="277" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Share code, tools and content from GitHub</text>
 <circle cx="56" cy="312" r="8" fill="#1a7f37"/><path d="M52.5 312 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="317" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M4</text>
 <text x="120" y="317" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Input, localization, audio, physics</text>
-<text x="380" y="317" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Input actions, string tables, the mixer, Jolt and Box2D</text>
+<text x="380" y="317" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Input actions, string tables, the mixer, 3D and 2D physics</text>
 <circle cx="56" cy="352" r="8" fill="#1a7f37"/><path d="M52.5 352 l2.5 2.5 l4.5-5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="80" y="357" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M5</text>
 <text x="120" y="357" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Lighting</text>
@@ -86,5 +86,5 @@
 <circle cx="56" cy="792" r="7" fill="#ffffff" stroke="#8c959f" stroke-width="2"/>
 <text x="80" y="797" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#59636e">M13</text>
 <text x="120" y="797" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1f2328">Virtualised geometry</text>
-<text x="380" y="797" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Nanite-style clusters, streamed and rasterised on the GPU</text>
+<text x="380" y="797" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#59636e">Clusters of triangles, streamed and rasterised on the GPU</text>
 </svg>

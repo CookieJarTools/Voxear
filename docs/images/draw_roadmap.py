@@ -12,12 +12,12 @@ from html import escape
 OUT = sys.argv[1]
 
 MILESTONES = [
-    ("M0", "Foundation", "Archetype ECS, Unity's lifecycle, C# on CoreCLR, the Vulkan device", "done"),
+    ("M0", "Foundation", "Archetype ECS, Awake to Destroy, C# on .NET, the Vulkan device", "done"),
     ("M1", "Rendering core", "Render graph, bindless, GPU culling and LODs, shadows, clustered lights", "done"),
     ("M2", "Content, scenes and levels", "Assets, prefabs, levels, post-processing, content builds, async loading", "done"),
-    ("M3", "Editor and Voxear UI", "The Unity-style editor and its UI toolkit, growing all along", "ongoing"),
-    ("", "Packages", "Share code, tools and content from GitHub, as Unity's packages", "done"),
-    ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, Jolt and Box2D", "done"),
+    ("M3", "Editor and Voxear UI", "The editor and its UI toolkit, growing all along", "ongoing"),
+    ("", "Packages", "Share code, tools and content from GitHub", "done"),
+    ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, 3D and 2D physics", "done"),
     ("M5", "Lighting", "GI, lightmaps, probes, ray-traced sound, soft shadows, clouds, weather, HDR", "done"),
     ("", "Vegetation", "Foliage swaying in the wind, pushed aside, turning with the seasons", "done"),
     ("", "Water", "The sea, pools, rivers and lava: shores, foam, going under, buoyancy", "done"),
@@ -29,7 +29,7 @@ MILESTONES = [
     ("M10", "2D and networking", "Replication, RPCs and prediction, sprites and tilemaps", "now"),
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),
     ("M12", "Ship it", "Builds end to end, crash reports, store uploads", "planned"),
-    ("M13", "Virtualised geometry", "Nanite-style clusters, streamed and rasterised on the GPU", "planned"),
+    ("M13", "Virtualised geometry", "Clusters of triangles, streamed and rasterised on the GPU", "planned"),
 ]
 
 THEMES = {

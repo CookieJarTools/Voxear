@@ -3,6 +3,32 @@
 A game engine for people who like how Unity works, and want an engine that is fast, open and theirs to change. It
 has a Rust core, a Vulkan renderer, C# scripting on .NET, and an editor laid out the way Unity users expect.
 
+## Screenshots
+
+![The Voxear editor on a block-world island: blossom trees, grass, flowers and a character in the Scene view, the Hierarchy, the Sun's light in the Inspector, and the Blocks panel](docs/images/screenshots/editor-scene.webp)
+
+The editor on a block-world island: blossom trees, grass, flowers and a character in the Scene view, the Sun's light
+in the Inspector, and the Blocks panel below.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshots/profiler.webp" alt="Playing in the editor: the Game view above, the Profiler's frame chart, CPU timings and GPU passes below"></td>
+    <td width="50%"><img src="docs/images/screenshots/world-generator.webp" alt="The world generator's node graph, each node with a preview, beside a 3D preview of the island it makes"></td>
+  </tr>
+  <tr>
+    <td>Playing in the editor, with the Profiler's frame chart, CPU timings and GPU passes.</td>
+    <td>The world generator's graph, with a preview on each node and of the island it makes.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/screenshots/model-window.webp" alt="The Model window: a character's bones and boxes on the left, the model in the middle, the picked box in the Inspector"></td>
+    <td><img src="docs/images/screenshots/evening-light.webp" alt="The same island in a low evening sun, with light through the trees and clouds built of cubes"></td>
+  </tr>
+  <tr>
+    <td>The Model window, building a character from boxes on bones.</td>
+    <td>The same island in evening light, with clouds built of cubes.</td>
+  </tr>
+</table>
+
 ## What Voxear is for
 
 - **Making games the way you already know.** Objs with components, scenes, prefabs, an Inspector, a Scene view with

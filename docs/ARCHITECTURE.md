@@ -4966,15 +4966,17 @@ through a small contract.
 - **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
   the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
   assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
-- **The release workflow** (`.github/workflows/release.yml`, run by hand from the Actions tab) packages both
-  platforms with one version, on Ubuntu 22.04 for an older glibc and on Windows, and keeps the archives as the run's
-  artifacts. With Publish ticked it also does what is otherwise done by hand: `voxear-release engine add` signs both
-  and lists them (pruning old nightlies), the archives and their signatures go up as the `engine-v<version>`
-  release of VoxearReleases, and the manifest is pushed to its `gh-pages` branch, archives first. Publishing needs
-  three secrets on the repository: the engine key's file, its password, and a token that can read the launcher
-  repository and write to VoxearReleases. Nothing runs on a schedule, since each run builds the engine twice on
-  paid runners.
-- **Not yet tried:** the workflow itself, and so the Windows build, which wait for a first run on GitHub.
+- **The release workflow** (`.github/workflows/release.yml`, run by hand from the Actions tab, and by itself every
+  night) packages both platforms with one version, on Ubuntu 22.04 for an older glibc and on Windows, and keeps the
+  archives as the run's artifacts. With Publish ticked it also does what is otherwise done by hand: `voxear-release
+  engine add` signs both and lists them (pruning old nightlies), the archives and their signatures go up as the
+  `engine-v<version>` release of VoxearReleases, and the manifest is pushed to its `gh-pages` branch, archives first.
+  Publishing needs three secrets on the repository: the engine key's file, its password, and a token that can read
+  the launcher repository and write to VoxearReleases.
+- **Nightlies** are built and published at 03:00 UTC each night, but only when master has a commit the last scheduled
+  nightly was not built from: a scheduled run looks up the commit of the last scheduled run that succeeded and stops
+  after working out the version when it is the same. Master reaches GitHub once a day, before that, from a task on
+  the main machine that first brings the roadmap, its pictures and the README up to date.
 
 ## Platforms and GPU support
 

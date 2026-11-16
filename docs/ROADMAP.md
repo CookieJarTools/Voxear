@@ -540,7 +540,7 @@ Next in M3:
   - [x] the dev console through `vox`, into a running game: `vox console "line"`
   - [x] tools watching a game from `vox run` through its link (`.voxear/Game`): its profiled frames, log, console
     and RenderDoc captures; the editor's frames for tools (`profiler.frames`); `vox render --profile-out` saving a
-    render's frames as JSON, in the same shape
+    render's frames as JSON, in the same shape; `vox scripts build`, so a debugger can start `vox run --no-build`
   - [x] debug draw's texts in the player, as in the editor, from one shared piece
   - [x] a C# `Color` field in the Inspector: a swatch for the colour picker, set from hex or numbers in scenes
 - **Saving**, built into the engine (see "Saves" in the architecture):

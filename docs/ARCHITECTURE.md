@@ -4447,6 +4447,8 @@ Every operation the editor can do should be scriptable.
   timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
   every frame's samples and passes as tools read them (`voxear_engine::profile_frames`).
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
+- `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
+  then start `vox run --no-build`, whose .NET starts at once.
 - `vox content build <project>` packs the content into bundles and prints each bundle, its usage set and its assets,
   then what was left out.
 - `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless
@@ -4455,7 +4457,7 @@ Every operation the editor can do should be scriptable.
 
 **Planned.**
 - Project: `vox open`.
-- Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
+- Building: `vox build [--profile <name>] [--progress json]`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.

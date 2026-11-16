@@ -61,6 +61,17 @@ enum ContentCommand {
 }
 
 #[derive(Subcommand)]
+enum ScriptsCommand {
+    /// Build the project's C# scripts as `vox run` does before it starts, printing the compiler's errors; then
+    /// `vox run --no-build` starts at once, as a debugger starting the game wants.
+    Build {
+        /// Project folder or its voxear.toml.
+        #[arg(default_value = ".")]
+        project: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum EditorCommand {
     /// Make a call to the editor open on the project and print its answer as JSON: `vox editor call obj.get
     /// obj=<scene>:3`. `--describe` lists every call.
@@ -206,6 +217,11 @@ enum Commands {
         /// List the project's build profiles.
         #[arg(long)]
         list: bool,
+    },
+    /// Build a project's C# scripts.
+    Scripts {
+        #[command(subcommand)]
+        command: ScriptsCommand,
     },
     /// Build or inspect a project's content bundles.
     Content {
@@ -505,6 +521,7 @@ fn main() -> Result<()> {
         Commands::Upgrade { project, from, json } => upgrade(&project, from.as_deref(), json),
         Commands::Build { project, profile, progress, list } => build(&project, profile, progress == "json", list),
         Commands::Content { command: ContentCommand::Build { project } } => build_content(&project),
+        Commands::Scripts { command: ScriptsCommand::Build { project } } => build_scripts(&project),
         Commands::Loc { command: LocCommand::Export { table, out } } => export_strings(&table, out.as_deref()),
         Commands::Loc { command: LocCommand::Import { sheet, table, apply } } => import_strings(&sheet, &table, apply),
         Commands::Package { command } => package::run(command),
@@ -1130,6 +1147,18 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
         hot_reload: false,
         software_rays: false,
     }
+}
+
+/// `vox scripts build`: the scripts alone, as `vox run` builds them.
+fn build_scripts(path: &Path) -> Result<()> {
+    let project = Project::open(path)?;
+    if project.scripts_project().is_none() {
+        println!("{} has no scripts to build", project.name());
+        return Ok(());
+    }
+    scripts::build(&project)?;
+    println!("built {}'s scripts", project.name());
+    Ok(())
 }
 
 /// Creates the game and, when the project has scripts, builds and loads them.

@@ -272,6 +272,8 @@ impl App {
         let now = Instant::now();
         let delta = self.last.map_or(0.0, |last| (now - last).as_secs_f32());
         self.last = Some(now);
+        // Lines logged in this frame say so, numbered as the frames tools read.
+        voxear_core::logging::set_frame(self.game.engine.time().frame);
         if let Some(link) = &mut self.link {
             link.begin_frame();
         }

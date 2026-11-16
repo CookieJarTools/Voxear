@@ -8120,6 +8120,76 @@ fn cloud_shadows_glide_over_the_ground_and_do_not_jump() {
 }
 
 #[test]
+fn clouds_glide_past_a_camera_going_by_and_do_not_step() {
+    use voxear_render::{Clouds, PostProcess, Sky, SkyMode};
+    // Fair-weather clouds looked up at from a camera going sideways, against the wind, with TAA on as in a game:
+    // they slide across the picture as anything a few kilometres off does, and evenly. Kept from frame to frame as
+    // though only the camera's turning moved them, they were held back and let go every few frames, which showed as
+    // the clouds shaking while the player walked.
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let turned = looking_along(bearing(35.0, 0.0));
+    let eye = world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.7, 0.0), turned, Vec3::ONE)));
+    let sun = looking_along(-bearing(50.0, 30.0));
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { mode: SkyMode::Atmosphere, clouds: Clouds::covering(0.4), ..Sky::default() });
+    world.insert_resource(PostProcess::neutral());
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 60);
+    // The picture's sky, grey, a little blurred so the march's grain does not count as movement.
+    let sky = |renderer: &mut Renderer| -> Vec<f32> {
+        let (_, _, pixels) = renderer.read_pixels().unwrap();
+        let grey: Vec<f32> =
+            pixels.chunks_exact(4).map(|p| f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2])).collect();
+        (0..640 * 360)
+            .map(|i| {
+                let (x, y) = ((i % 640) as i32, (i / 640) as i32);
+                let at = |dx: i32, dy: i32| grey[((y + dy).clamp(0, 359) * 640 + (x + dx).clamp(0, 639)) as usize];
+                (at(0, 0) * 4.0 + at(-1, 0) + at(1, 0) + at(0, -1) + at(0, 1)) / 8.0
+            })
+            .collect()
+    };
+    // How far the sky moved along x from one picture to the next, in pixels: by its brightness's change against
+    // its slope, which holds for moves well under a pixel.
+    let moved = |before: &[f32], after: &[f32]| {
+        let (mut along, mut slope) = (0.0f64, 0.0f64);
+        for y in 20..340 {
+            for x in 20..620 {
+                let i = y * 640 + x;
+                let gx = f64::from((before[i + 1] + after[i + 1] - before[i - 1] - after[i - 1]) * 0.25);
+                along += gx * f64::from(after[i] - before[i]);
+                slope += gx * gx;
+            }
+        }
+        -(along / slope.max(1e-9)) as f32
+    };
+    let mut pictures = vec![sky(&mut renderer)];
+    for _ in 0..48 {
+        // 0.6 m a frame, a fast car's pace, along -x against the wind, which blows along +x.
+        world.get_mut::<Transform>(eye).unwrap().position.x -= 0.6;
+        time += FRAME;
+        renderer.render(&world, time).expect("frame renders");
+        pictures.push(sky(&mut renderer));
+    }
+    keep_image("clouds going by.png", &renderer.read_pixels().unwrap().2);
+    // From the sixteenth frame on, once what is kept from frame to frame has caught up with the camera's pace.
+    let steps: Vec<f32> = pictures[16..].windows(2).map(|pair| moved(&pair[0], &pair[1])).collect();
+    // Where they were, frame by frame, against where moving evenly would have put them.
+    let mean = steps.iter().sum::<f32>() / steps.len() as f32;
+    let mut at = 0.0;
+    let mut off = 0.0f32;
+    for (k, step) in steps.iter().enumerate() {
+        at += step;
+        off = off.max((at - mean * (k + 1) as f32).abs());
+    }
+    let largest = steps.iter().fold(0.0f32, |most, step| most.max(*step));
+    eprintln!("clouds going by: {mean:.3} px a frame, at most {off:.3} px off moving evenly; steps {steps:.2?}");
+    assert!(mean > 0.03, "the clouds slide across the picture: {mean} px a frame");
+    // Held back and let go, they were 0.1 px off and went 0.2 px in one frame of every eight, 0.02 in the rest.
+    assert!(off < 0.05 && largest < mean * 2.0, "and evenly: {off} px off, {largest} px in one frame");
+}
+
+#[test]
 fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
     use voxear_render::Clouds;
     let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };

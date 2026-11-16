@@ -1092,9 +1092,15 @@ its outline, so all stand on one flat underside. With any cover, two passes run 
    without knowing of them: opaque shading, blocks, plants, water, particles, smoke and the fog's froxels.
 2. **Clouds** marches the layer for each pixel at half the picture's size: the ray's stretch between the two
    heights round a curved Earth (worked out from the heights' difference, which stays exact in metres), 40 steps
-   from a start jittered by pixel and frame, 4 doubling steps towards the sun from each. It is blended nine parts
-   in ten with last frame's picture, one of two history images, found by the pixel's direction through last
-   frame's view. The result is colour to add and, in alpha, how much of the sky shows through.
+   from a start jittered by pixel and moved on by the golden ratio each frame, 4 doubling steps towards the sun
+   from each. It is blended nine parts in ten with last frame's picture, one of two history images, found where
+   those clouds were then (`cloudsWere`): the march's distance along the ray, or the middle of the layer's stretch
+   where it met none, a frame's drift back (`Clouds::step`), through last frame's view. The picture is drawn
+   without TAA's jitter (`cloudsUv` reads it), and a second, `distances`, holds how far off each texel's clouds
+   are; the sky pass moves its pixels by them for TAA. Clouds are a few kilometres off, not at the sky's distance:
+   taken for still, walking past them and the wind both left the history behind and it let go every few frames, so
+   the clouds shook while the player walked. The result is colour to add and, in alpha, how much of the sky shows
+   through.
 
 Clouds of the **Blocks** kind (`CloudKind::Blocks`, `[sky.clouds] kind = "blocks"`) are the same field built of
 cubes `block` metres wide: `cloudDensityIn` snaps a place to its cube's middle, so a cube is cloud or not as a

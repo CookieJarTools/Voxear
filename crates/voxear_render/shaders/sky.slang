@@ -212,11 +212,14 @@ SkyFragmentOut skyFragment(SkyOut input)
         color += stars / STAR_BRIGHTNESS * seen * STARS_ON_SCREEN / exposureScale(frame) * frame->stars;
     }
     Clouds clouds = frame->lighting.clouds;
+    float covered = 0.0;
     if (clouds.cover > 0.0 && clouds.view != NO_TEXTURE)
     {
         // The clouds in front of all of it: what they add, and how much of the sky behind shows through.
-        float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.ndc * 0.5 + 0.5, 0.0);
+        float2 uv = cloudsUv(frame, input.ndc * 0.5 + 0.5);
+        float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0);
         color = color * seen.a + seen.rgb;
+        covered = saturate(1.0 - seen.a);
     }
     // What falls from weather far off hangs under its cloud, in front of the sky behind it.
     float sand, dark;
@@ -229,6 +232,24 @@ SkyFragmentOut skyFragment(SkyOut input)
     }
     o.color = float4(color, 1.0);
     o.velocity = skyMotion(frame, direction);
+    // Where clouds cover it, the sky moves as they do, for TAA to find last frame's of them where they were: the
+    // camera going along and the wind move them too (clouds.slang's cloudsWere). Even a thin edge moves with its
+    // cloud in full, as the sky behind has nothing in it to see move; by how much of it they cover, the edges were
+    // held back and the clouds went in steps.
+    float along = 0.0;
+    if (covered > 0.0)
+    {
+        float2 uv = cloudsUv(frame, input.ndc * 0.5 + 0.5);
+        float marched = clouds.distances == NO_TEXTURE ? 0.0
+            : textures[NonUniformResourceIndex(clouds.distances)].SampleLevel(samplers[SAMPLER_NEAREST_CLAMP], uv, 0.0).r;
+        along = marched > 0.0 && marched < 1e6 ? marched : cloudsAlong(frame, direction);
+    }
+    float2 were;
+    if (along > 0.0 && cloudsWere(frame, direction, along, were))
+    {
+        float4 now = transform(frame->unjitteredViewProj, float4(direction, 0.0));
+        o.velocity = lerp(o.velocity, now.xy / now.w * 0.5 + 0.5 - were, saturate(covered * 20.0));
+    }
     return o;
 }
 
@@ -466,7 +487,12 @@ float4 cloudsMarched(Frame* frame, float2 pixel, float3 direction, float camera,
     // Brightest looking towards the sun through a thin edge, the silver lining.
     float lining = min(miePhase(0.75, toward) * 4.0 * PI, 6.0);
 
-    float jitter = frac(52.9829189 * frac(dot(pixel + 5.588238 * float(frame->frameIndex % 64), float2(0.06711056, 0.00583715))));
+    // Where along each step this pixel's samples fall: spread over the picture, and moved on by the golden ratio each
+    // frame, which spreads a pixel's frames evenly. Worked out in whole numbers, the frames never come round again;
+    // a pattern moved on by the frame's number modulo 64 came back to nearly its last frame's at each wrap, and the
+    // clouds stood still for that frame.
+    float spread = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    float jitter = frac(spread + float((frame->frameIndex * 2654435769u) >> 8) / 16777216.0);
     // Another for the steps towards the sun, so the light's edge inside a cloud is not a line.
     float sunJitter = frac(jitter * 7.31 + 0.37);
     float step = (to - from) / float(steps);
@@ -654,15 +680,34 @@ float4 cloudBlocksSeen(Frame* frame, float3 direction, float camera, float3 sun,
     return float4(color, through);
 }
 
-// The clouds as the camera sees them, at half the picture's size: what they add in colour, and in alpha how much of
-// the sky behind them shows through. The result is blended with last frame's where the same part of the sky was then
-// (push.textures.x), which evens out the soft clouds' jittered march and smooths the cubes' edges.
+// The Clouds pass's two pictures: what the clouds add, with how much of the sky behind shows through, and how far off
+// they are, for the sky pass to move them by for TAA.
+struct CloudsOut
+{
+    float4 color : SV_Target0;
+    float distance : SV_Target1;
+};
+
 [shader("fragment")]
-float4 cloudsFragment(LutOut input) : SV_Target0
+CloudsOut cloudsFragment(LutOut input)
+{
+    CloudsOut o;
+    o.color = cloudsKept(input, o.distance);
+    return o;
+}
+
+// The clouds as the camera sees them, at half the picture's size: what they add in colour, and in alpha how much of
+// the sky behind them shows through; in `marched` how far off this frame's march found them, or 0 where it found
+// none. The result is blended with last frame's where the same clouds were then (push.textures.x), which evens out
+// the soft clouds' jittered march and smooths the cubes' edges. The picture is drawn without TAA's jitter, as last
+// frame's is looked up: drawn through the jittered view, each frame's jitter stayed in what the next one kept, and
+// the clouds swung back and forth with it (cloudsUv reads the picture).
+float4 cloudsKept(LutOut input, out float marched)
 {
     Frame* frame = push.frame;
     Clouds clouds = frame->lighting.clouds;
-    float4 near = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
+    float2 unjittered = frame->jitter * 2.0 / float2(frame->viewport);
+    float4 near = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0 + unjittered, 1.0, 1.0));
     float3 direction = normalize(near.xyz / near.w - frame->cameraPosition);
     float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
     float3 sun, sky;
@@ -678,7 +723,7 @@ float4 cloudsFragment(LutOut input) : SV_Target0
         float index = float(frame->frameIndex % 16) + 1.0;
         float2 within = frac(index * float2(0.7548776662, 0.5698402910)) - 0.5;
         float2 uv = input.uv + within * float2(ddx(input.uv.x), ddy(input.uv.y));
-        float4 through = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, 1.0, 1.0));
+        float4 through = transform(frame->invViewProj, float4(uv * 2.0 - 1.0 + unjittered, 1.0, 1.0));
         seen = cloudBlocksSeen(frame, normalize(through.xyz / through.w - frame->cameraPosition), camera, sun, sky, distance);
     }
     else
@@ -686,6 +731,7 @@ float4 cloudsFragment(LutOut input) : SV_Target0
         seen = cloudsMarched(frame, input.position.xy, direction, camera, sun, sky, distance);
     }
     float covered = 1.0 - seen.a;
+    marched = covered > 0.0 ? distance : 0.0;
     if (covered > 0.0)
     {
         float3 color = seen.rgb;
@@ -707,14 +753,15 @@ float4 cloudsFragment(LutOut input) : SV_Target0
     {
         return seen;
     }
-    // Last frame's, where this part of the sky was on screen then: the clouds are far off, so only the camera's
-    // turning moves them.
-    float4 before = transform(frame->prevViewProj, float4(direction, 0.0));
-    if (before.w <= 0.0)
+    // Last frame's, where these clouds were on screen then. They are not so far off that only the camera's turning
+    // moves them: walking past them moves them against the sky, and the wind carries them, and history that misses
+    // either lags them and lets go in jumps. Where this ray meets no cloud, its middle of their layer is followed,
+    // as a cloud moving into it was there.
+    float2 was;
+    if (!cloudsWere(frame, direction, distance > 0.0 ? distance : cloudsAlong(frame, direction), was))
     {
         return seen;
     }
-    float2 was = before.xy / before.w * 0.5 + 0.5;
     if (any(was < 0.0) || any(was > 1.0))
     {
         return seen;

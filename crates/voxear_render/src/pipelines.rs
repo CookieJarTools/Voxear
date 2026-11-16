@@ -589,7 +589,11 @@ impl Pipelines {
             multi_scattering: table("Multiple scattering", c"multiScatteringFragment")?,
             sky_view: table("Sky view", c"skyViewFragment")?,
             aerial_perspective: table("Aerial perspective", c"aerialPerspectiveFragment")?,
-            clouds: table("Clouds", c"cloudsFragment")?,
+            clouds: graphics(&GraphicsPipelineDesc {
+                color_formats: &[TABLE_FORMAT, crate::clouds::DISTANCE_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Clouds", sky, c"lutVertex", c"cloudsFragment")
+            })?,
             cloud_shadows: table("Cloud shadows", c"cloudShadowsFragment")?,
             cloud_panorama: table("Cloud panorama", c"cloudPanoramaFragment")?,
             gtao: occlusion_pass("GTAO", c"gtaoFragment", &[AO_FORMAT])?,

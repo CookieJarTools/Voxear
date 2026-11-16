@@ -682,7 +682,10 @@ struct Clouds
     float flash;
     // The clouds all round the camera, as reflections take them (clouds.slang's cloudsToward), or NO_TEXTURE.
     uint panorama;
-    uint3 pad;
+    // How far off the clouds each texel of `view` shows are, in metres, or 0 where it shows none; or NO_TEXTURE.
+    uint distances;
+    // How far they drifted since last frame, in metres along x and z.
+    float2 step;
 };
 
 // Area lights' tables, the sun's cookie and the sky; mirrors GpuLighting.

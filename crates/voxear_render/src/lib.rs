@@ -3453,6 +3453,7 @@ impl View {
             let wind = frame_data.wind.direction;
             let blows = if wind[0].hypot(wind[1]) > 1e-3 { wind } else { [1.0, 0.0] };
             let moved = frame_data.lighting.clouds.speed * setup.delta_time;
+            let before = self.cloud_drift;
             self.cloud_drift = match portal {
                 // The same clouds as in the view it is seen in, as far along.
                 Some(pass) => pass.cloud_drift,
@@ -3463,7 +3464,9 @@ impl View {
             let middle = [extracted.origin.x, extracted.origin.z];
             let seen = &mut frame_data.lighting.clouds;
             seen.drift = [0, 1].map(|axis| (self.cloud_drift[axis] - middle[axis] as f64) as f32);
+            seen.step = [0, 1].map(|axis| (self.cloud_drift[axis] - before[axis]) as f32);
             seen.view = fg.texture(images.current).0;
+            seen.distances = fg.texture(images.distances).0;
             seen.shadow_map = fg.texture(images.shadows).0;
             seen.panorama = images.panorama.map_or(NO_TEXTURE, |[_, current]| fg.texture(current).0);
             seen.noise = assets.smoke_noise.0;

@@ -13,8 +13,14 @@
 //!    between the clouds.
 //! 2. **Clouds** marches the layer along each pixel's ray at half the
 //!    picture's width and height, from a start jittered each frame, and
-//!    blends the result with last frame's where the sky was then. It is one
-//!    of two history images, as the fog's volume is.
+//!    blends the result with last frame's where those clouds were then. It is
+//!    one of two history images, as the fog's volume is, and drawn without
+//!    TAA's jitter, as last frame's is looked up. Beside it, how far off the
+//!    clouds each texel shows are: the sky pass moves them by it for TAA.
+//!    Clouds are not so far off that only the camera's turning moves them:
+//!    walking past them moves them against the sky, and the wind carries
+//!    them, and history that took them for still lagged them and let go in
+//!    jumps, which showed as clouds shaking while the player walked.
 //!
 //! Clouds of the **Blocks** kind are the same clouds built of cubes: every
 //! place in a cube is cloud or not as the cube's middle is, so the shadows
@@ -52,6 +58,10 @@ use crate::{
 const SHADOW_SIDE: u32 = 256;
 pub const SHADOW_REACH: f32 = 6000.0;
 
+/// How far off the clouds each texel of the Clouds picture shows are, in
+/// metres: to within a few metres out to the march's 36 km.
+pub const DISTANCE_FORMAT: vk::Format = vk::Format::R16_SFLOAT;
+
 const HISTORY_NAMES: [&str; 2] = ["clouds 0", "clouds 1"];
 const PANORAMA_NAMES: [&str; 2] = ["cloud panorama 0", "cloud panorama 1"];
 
@@ -85,6 +95,7 @@ pub fn gpu(clouds: &Clouds) -> GpuClouds {
         shadow_map: NO_TEXTURE,
         noise: NO_TEXTURE,
         panorama: NO_TEXTURE,
+        distances: NO_TEXTURE,
         ..GpuClouds::default()
     }
 }
@@ -95,6 +106,9 @@ pub struct CloudImages {
     previous: ImageId,
     /// What the sky pass lays over the sky.
     pub current: ImageId,
+    /// How far off the clouds each texel of `current` shows are, in metres,
+    /// or 0 where it shows none.
+    pub distances: ImageId,
     /// The sun let through, over the ground round the camera.
     pub shadows: ImageId,
     /// The clouds all round, last frame's and this frame's, for the camera's
@@ -123,11 +137,13 @@ impl CloudImages {
             TABLE_FORMAT,
             usage,
         );
+        let distances = ImageDesc { format: DISTANCE_FORMAT, ..half };
         let shadows = ImageDesc::new(SHADOW_SIDE, SHADOW_SIDE, TABLE_FORMAT, usage);
         let panorama = ImageDesc::new(PANORAMA[0], PANORAMA[1], TABLE_FORMAT, usage);
         Ok(Self {
             previous: fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], half)?,
             current: fg.history_image(gpu, bindless, HISTORY_NAMES[history], half)?,
+            distances: fg.create_image(gpu, bindless, "cloud distances", distances)?,
             shadows: fg.create_image(gpu, bindless, "cloud shadows", shadows)?,
             panorama: Some([
                 fg.history_image(gpu, bindless, PANORAMA_NAMES[1 - history], panorama)?,
@@ -139,7 +155,7 @@ impl CloudImages {
 
     /// The pictures later passes sample.
     pub fn sampled(&self) -> Vec<ImageId> {
-        let mut sampled = vec![self.current, self.shadows];
+        let mut sampled = vec![self.current, self.distances, self.shadows];
         sampled.extend(self.panorama.map(|[_, current]| current));
         sampled
     }
@@ -159,12 +175,13 @@ pub fn shadow_middle(camera: [f32; 2], drift: [f32; 2]) -> [f32; 2] {
 /// Records the two passes. `tables` are the atmosphere's, where the sky is
 /// the atmosphere, which light the clouds and haze them.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clouds: CloudImages, tables: &[ImageId]) {
-    let CloudImages { previous, current, shadows, panorama, within } = clouds;
+    let CloudImages { previous, current, distances, shadows, panorama, within } = clouds;
     // Drawn only in part, each picture is cleared first when it is made: what lies outside that part is read as
     // last frame's where the sky has turned into it, and a new image holds whatever its memory held, NaN among it,
-    // which the blend would keep from frame to frame.
+    // which the blend would keep from frame to frame. The distances are made afresh each frame.
     if within.is_some() {
-        let new: Vec<ImageId> = [previous, current].into_iter().filter(|&image| fg.is_new(image)).collect();
+        let new: Vec<ImageId> =
+            [previous, current].into_iter().filter(|&image| fg.is_new(image)).chain([distances]).collect();
         for image in new {
             fg.add_pass("Clouds cleared", &[(image, ImageAccess::ColorAttachment)], &[], move |ctx| {
                 let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } };
@@ -181,33 +198,40 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), clo
         }
     }
     fg.add_pass("Cloud shadows", &[(shadows, ImageAccess::ColorAttachment)], &[], move |ctx| {
-        draw(ctx, pipelines.cloud_shadows, &push, shadows);
+        draw(ctx, pipelines.cloud_shadows, &push, &[shadows]);
     });
     let march = Push { textures: [fg.texture(previous).0, 0, 0, 0], ..push };
-    let mut images = vec![(previous, ImageAccess::Sampled), (current, ImageAccess::ColorAttachment)];
+    let mut images = vec![
+        (previous, ImageAccess::Sampled),
+        (current, ImageAccess::ColorAttachment),
+        (distances, ImageAccess::ColorAttachment),
+    ];
     images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
     fg.add_pass("Clouds", &images, &[], move |ctx| match within {
-        None => draw(ctx, pipelines.clouds, &march, current),
-        Some(rect) => draw_within(ctx, pipelines.clouds, &march, current, rect),
+        None => draw(ctx, pipelines.clouds, &march, &[current, distances]),
+        Some(rect) => draw_within(ctx, pipelines.clouds, &march, &[current, distances], rect),
     });
     if let Some([before, now]) = panorama {
         let march = Push { textures: [fg.texture(before).0, 0, 0, 0], ..push };
         let mut images = vec![(before, ImageAccess::Sampled), (now, ImageAccess::ColorAttachment)];
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
-        fg.add_pass("Cloud panorama", &images, &[], move |ctx| draw(ctx, pipelines.cloud_panorama, &march, now));
+        fg.add_pass("Cloud panorama", &images, &[], move |ctx| draw(ctx, pipelines.cloud_panorama, &march, &[now]));
     }
 }
 
-/// A pass that writes the texels of `target` within `rect` of it (lowest
-/// and highest x and y, from -1 to 1) and a margin round it, for what moves
-/// into view next frame to have a history; the rest keep what they held.
-fn draw_within(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId, [x0, y0, x1, y1]: [f32; 4]) {
-    let extent = ctx.extent(target);
-    let color = [vk::RenderingAttachmentInfo::default()
-        .image_view(ctx.view(target))
-        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .load_op(vk::AttachmentLoadOp::LOAD)
-        .store_op(vk::AttachmentStoreOp::STORE)];
+/// A pass that writes the texels of `targets`, all the same size, within
+/// `rect` of them (lowest and highest x and y, from -1 to 1) and a margin
+/// round it, for what moves into view next frame to have a history; the rest
+/// keep what they held.
+fn draw_within(
+    ctx: &PassContext,
+    pipeline: vk::Pipeline,
+    push: &Push,
+    targets: &[ImageId],
+    [x0, y0, x1, y1]: [f32; 4],
+) {
+    let extent = ctx.extent(targets[0]);
+    let color: Vec<_> = targets.iter().map(|&target| attachment(ctx, target, vk::AttachmentLoadOp::LOAD)).collect();
     begin_rendering(ctx, extent, &color, None);
     let (wide, high) = (extent.width as f32, extent.height as f32);
     let margin = 0.08;
@@ -225,15 +249,20 @@ fn draw_within(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: I
     fullscreen(ctx, pipeline, push);
 }
 
-/// A fullscreen pass that writes every texel of `target`.
-fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId) {
-    let color = [vk::RenderingAttachmentInfo::default()
+/// A fullscreen pass that writes every texel of `targets`, all the same size.
+fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, targets: &[ImageId]) {
+    let color: Vec<_> =
+        targets.iter().map(|&target| attachment(ctx, target, vk::AttachmentLoadOp::DONT_CARE)).collect();
+    begin_rendering(ctx, ctx.extent(targets[0]), &color, None);
+    fullscreen(ctx, pipeline, push);
+}
+
+fn attachment<'a>(ctx: &PassContext, target: ImageId, load: vk::AttachmentLoadOp) -> vk::RenderingAttachmentInfo<'a> {
+    vk::RenderingAttachmentInfo::default()
         .image_view(ctx.view(target))
         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .store_op(vk::AttachmentStoreOp::STORE)];
-    begin_rendering(ctx, ctx.extent(target), &color, None);
-    fullscreen(ctx, pipeline, push);
+        .load_op(load)
+        .store_op(vk::AttachmentStoreOp::STORE)
 }
 
 #[cfg(test)]

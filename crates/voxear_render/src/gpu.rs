@@ -981,7 +981,12 @@ pub struct GpuClouds {
     /// The clouds all round the camera, as reflections take them
     /// (`clouds::PANORAMA`): a texture, or `NO_TEXTURE`.
     pub panorama: u32,
-    pub pad: [u32; 3],
+    /// How far off the clouds each texel of `view` shows are, in metres,
+    /// or 0 where it shows none: a texture, or `NO_TEXTURE`.
+    pub distances: u32,
+    /// How far they drifted since last frame, in metres along x and z, for
+    /// what builds on last frame's picture of them to find them there.
+    pub step: [f32; 2],
 }
 
 /// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's

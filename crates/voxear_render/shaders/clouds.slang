@@ -349,6 +349,36 @@ bool cloudSpan(Frame* frame, float camera, float climb, out float from, out floa
     return to > from;
 }
 
+// How far out along `direction` from the camera the clouds it meets are, near enough for where they move on screen:
+// the middle of the stretch of their layer the Clouds pass marches, or 0 where the ray misses the layer.
+float cloudsAlong(Frame* frame, float3 direction)
+{
+    float camera = max(levelHeight(frame, frame->cameraPosition), 1.0);
+    float from, to;
+    return cloudSpan(frame, camera, direction.y, from, to) ? (from + to) * 0.5 : 0.0;
+}
+
+// Where the cloud `along` metres out along `direction` from the camera was on screen last frame, in `uv` from 0 to
+// 1 as the view without TAA's jitter had it; false where it was behind the camera. The camera has turned and moved
+// since, which moves the clouds against the sky as far off as they are, and the wind has carried them `step`
+// metres. With `along` 0, the sky's own place, which only the turning moves.
+bool cloudsWere(Frame* frame, float3 direction, float along, out float2 uv)
+{
+    float2 step = frame->lighting.clouds.step;
+    float4 there = along > 0.0 ? float4(frame->cameraPosition + direction * along - float3(step.x, 0.0, step.y), 1.0)
+        : float4(direction, 0.0);
+    float4 before = transform(frame->prevViewProj, there);
+    uv = before.xy / max(abs(before.w), 1e-9) * 0.5 + 0.5;
+    return before.w > 0.0;
+}
+
+// Where a pixel at `screenUv` of the frame, which TAA's jitter moves, is in the Clouds pass's picture: that is drawn
+// without the jitter, so it lines up with last frame's (sky.slang's cloudsFragment).
+float2 cloudsUv(Frame* frame, float2 screenUv)
+{
+    return screenUv - frame->jitter / float2(frame->viewport);
+}
+
 // `color`, of what lies at `world`, seen through the clouds in front of it: a far mountain beyond the clouds' layer,
 // a peak that rises into them, or the ground round a camera inside them or looking down on them. The Clouds pass
 // marches each pixel's ray through the whole layer, so the share of it before `world` is taken as the share of its
@@ -374,7 +404,7 @@ float3 cloudsBefore(Frame* frame, float2 screenUv, float3 world, float3 color)
     {
         return color;
     }
-    float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], screenUv, 0.0);
+    float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], cloudsUv(frame, screenUv), 0.0);
     float share = saturate((distance - from) / max(to - from, 1.0));
     float covered = 1.0 - seen.a;
     if (covered <= 1e-4)

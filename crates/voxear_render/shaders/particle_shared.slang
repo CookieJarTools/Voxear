@@ -90,7 +90,7 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 toCamera = normalizeOr(frame->cameraPosition - world, float3(0.0, 1.0, 0.0));
     float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+        : gradientAmbient(frame, 0.5);
     if (frame->ddgi.enabled != 0)
     {
         ambient = ddgiLightAround(frame, world, toCamera, ambient);
@@ -115,7 +115,7 @@ void particleLightSix(Frame* frame, float3 world, float4 clip, float3 right, flo
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+        : gradientAmbient(frame, 0.5);
     if (frame->ddgi.enabled != 0)
     {
         ambient = ddgiLightAround(frame, world, front, ambient);

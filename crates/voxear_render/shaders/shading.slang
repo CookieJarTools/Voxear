@@ -638,7 +638,7 @@ float3 ambientLight(Frame* frame, float3 position, Surface s, float3 sunLight, b
 {
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = atmosphere ? atmosphereAmbient(frame, up, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+        : gradientAmbient(frame, up);
     // Under a bake, its light probes' grid, where it reaches: what is not baked itself, as terrain, water and
     // particles, takes the probes' light round it, not the open sky's.
     float3 volume;

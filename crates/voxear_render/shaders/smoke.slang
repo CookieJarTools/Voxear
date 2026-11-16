@@ -483,7 +483,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         phases[o] = lerp(smokePhase(cosine, -0.2 * spread), smokePhase(cosine, 0.55 * spread), 0.6);
     }
     float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+        : gradientAmbient(frame, 0.5);
     if (frame->ddgi.enabled != 0)
     {
         ambient = ddgiLightAround(frame, eye + way * enter, -way, ambient);

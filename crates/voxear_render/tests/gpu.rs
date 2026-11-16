@@ -4447,7 +4447,8 @@ fn one_obj_draws_a_whole_model_each_part_where_the_model_puts_it() {
     let pixels = renderer.read_pixels().unwrap().2;
     keep_image("model renderer.png", &pixels);
     let (left, right) = (rgb_at(&pixels, (210, 180)), rgb_at(&pixels, (430, 180)));
-    assert!(left[0] > left[1] * 2, "the red part on the left: {left:?}");
+    // Its shaded side takes a little of the light the sunlit ground throws back up, a little paler.
+    assert!(left[0] > left[1] + 60, "the red part on the left: {left:?}");
     assert!(right[1] > right[0] + 60, "the green part on the right: {right:?}");
     let [r, g, _] = rgb_at(&pixels, (320, 180));
     assert!((r - g).abs() < 40, "the sky in the gap between them, neither part: {:?}", rgb_at(&pixels, (320, 180)));
@@ -4601,8 +4602,9 @@ fn plants_are_tinted_between_their_healthy_and_dry_colours_in_patches() {
     let Some((pixels, _)) = foliage_tinted(25.0, [0.9; 3], ([1.0, 0.1, 0.1], [0.1, 0.1, 1.0])) else { return };
     keep_image("foliage tinted.png", &pixels);
     let near: Vec<[i32; 3]> = (300..360).flat_map(|y| (0..640).step_by(4).map(move |x| (x, y))).map(|at| rgb_at(&pixels, at)).collect();
-    let reddish = near.iter().filter(|[r, _, b]| *r > *b + 40).count();
-    let bluish = near.iter().filter(|[r, _, b]| *b > *r + 40).count();
+    // Their sides take the light the sunlit ground throws back up too, which pales the colours a little.
+    let reddish = near.iter().filter(|[r, _, b]| *r > *b + 30).count();
+    let bluish = near.iter().filter(|[r, _, b]| *b > *r + 30).count();
     assert!(reddish > 50 && bluish > 50, "patches of both: {reddish} reddish, {bluish} bluish");
 }
 

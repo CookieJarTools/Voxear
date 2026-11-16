@@ -319,7 +319,7 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // Last frame's light round it, so light bounces again.
     float up = normal.y * 0.5 + 0.5;
     float3 sky = atmosphere ? atmosphereAmbient(frame, up, sunLight)
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
+        : gradientSkyLight(frame, up);
     // Looked up a little back along the ray for a probe's own, as shading looks towards the camera; but a
     // reflection's ray comes from the thing reflecting, and back towards a chrome ball the probes round it are
     // inside it or have it in their way, so straight out from the surface instead.
@@ -375,10 +375,9 @@ float3 ddgiSky(Frame* frame, float3 direction)
     }
     if (frame->lighting.skyPicture != 0)
     {
-        return skyPictureSeen(frame, direction, 0.7) * 0.35 * frame->ambient;
+        return skyPictureSeen(frame, direction, 0.7) * GRADIENT_AMBIENT * frame->ambient;
     }
-    float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
-    return lerp(frame->groundColor, above, up) * 0.35 * frame->ambient;
+    return gradientSkyLight(frame, up);
 }
 
 // One workgroup a probe, a thread a ray. push.output: the rays.

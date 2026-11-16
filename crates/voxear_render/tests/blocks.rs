@@ -2223,7 +2223,10 @@ fn grass_takes_each_biomes_tint_and_fades_from_one_to_the_other_where_they_meet(
     );
     // Yellow somewhere and blue-green somewhere, and between them every shade of the way: along each row, from
     // one pixel to the next, the balance of red and blue, as a share of how bright the pixel is, changes only a
-    // little, never at once from one to the other. The dark lines along the hills' steps are left out.
+    // little, never at once from one to the other. The dark lines along the hills' steps are left out, and where
+    // one face meets another, as a step's side, lit from below by the sunlit ground, meets the grass, the light
+    // jumps by more than a sixth: the two grasses differ by a twentieth, so a seam between them would still count.
+    let bright = |x: u32, y: u32| rgb_at(&pixels, x, y).iter().sum::<i32>();
     let balance = |x: u32, y: u32| {
         let [r, g, b] = rgb_at(&pixels, x, y);
         (r + g + b > 150).then(|| (r - b) * 255 / (r + g + b))
@@ -2235,6 +2238,10 @@ fn grass_takes_each_biomes_tint_and_fades_from_one_to_the_other_where_they_meet(
     let mut steps = Vec::new();
     for y in (0..HEIGHT).step_by(8) {
         for x in 1..WIDTH {
+            let (lit, was) = (bright(x, y), bright(x - 1, y));
+            if (lit - was).abs() * 6 > lit.max(was) {
+                continue;
+            }
             if let (Some(here), Some(before)) = (balance(x, y), balance(x - 1, y)) {
                 steps.push((here - before).abs());
             }

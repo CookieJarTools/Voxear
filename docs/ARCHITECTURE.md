@@ -1023,7 +1023,9 @@ foundations Nanite is built on, so this is a later step rather than a rewrite:
 - point and spot
 - rectangle and disc area lights, using LTC
 - tube lights
-- sky light and emissive surfaces
+- sky light and emissive surfaces: a gradient sky's from its colours, its ground colour lit by the sky and by the
+  sun, the light a sunlit ground throws back up (`gradientAmbient` in `common.slang`), as the atmosphere's has
+  (`atmosphereAmbient`); the GI's rays take the sky's own (`gradientSkyLight`), as they find the ground's themselves
 - IES profiles and light cookies
 
 **Shadows.** The sun's shadows are virtual shadow maps (`src/vsm.rs`, `shaders/virtual_shadows.slang`), with four

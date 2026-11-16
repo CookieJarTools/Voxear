@@ -505,7 +505,7 @@ pub(crate) fn pick(
     seen: Option<&CoordSet<[i32; 3]>>,
     shown: Option<&CoordSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
-    pick_parts(chunks, planes, (facing, detail), (seen, shown), Parts::With)
+    pick_parts(chunks, planes, (facing, detail), (seen, shown), Parts::With, None)
 }
 
 /// Which of a chunk's quads a list draws: all, all but its blocks of
@@ -518,47 +518,51 @@ pub(crate) enum Parts {
     Only,
 }
 
-/// As [`pick`], with only the quads `parts` says.
+/// As [`pick`], with only the quads `parts` says; where `near_first`, the
+/// camera, the chunks nearest it first, so the depth pass draws what is in
+/// front before what it hides, and the GPU throws away hidden pixels before
+/// working out their surface. A chunk's own runs stay in the pool's order,
+/// so a quad laid over another of its chunk is still drawn after it.
 fn pick_parts(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
     (facing, detail): (Facing, Option<Detail>),
     (seen, shown): (Option<&CoordSet<[i32; 3]>>, Option<&CoordSet<[i32; 3]>>),
     parts: Parts,
+    near_first: Option<Vec3>,
 ) -> Vec<[u32; 2]> {
     // Turned towards the light, the faces whose way out goes against it.
     let lit = match facing {
         Facing::Light(way) => [way.x <= 0.0, way.x >= 0.0, way.y <= 0.0, way.y >= 0.0, way.z <= 0.0, way.z >= 0.0],
         _ => [true; FACINGS],
     };
-    let mut picked: Vec<[u32; 2]> = Vec::new();
-    for chunk in chunks {
+    let take = |chunk: &ChunkDraw, out: &mut Vec<[u32; 2]>| {
         let [level, x, y, z] = chunk.key;
         // Only the columns shown from the place the view looks from, where the world says which.
         if shown.is_some_and(|shown| !shown.contains(&[level, x, z])) {
-            continue;
+            return;
         }
         if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
-            continue;
+            return;
         }
         if !within(planes, chunk.bounds) || detail.is_some_and(|detail| detail.past_its_ring(chunk)) {
-            continue;
+            return;
         }
         let [low, high] = chunk.bounds;
         // Its blocks of parts, their boxes' faces turned every way, and some moving.
         if level == 0 && chunk.cone.is_none() && chunk.parts[1] > 0 && parts != Parts::Without {
-            picked.push(chunk.parts);
+            out.push(chunk.parts);
         }
         if parts == Parts::Only {
-            continue;
+            return;
         }
         // A smooth chunk is drawn whole at one of its levels, unless every triangle in it is turned away.
         if let Some(cone) = chunk.cone {
             let [first, count] = chunk.facings[detail.map_or(0, |detail| detail.level(chunk))];
             if count > 0 && !turned_away(cone, chunk.bounds, facing) {
-                picked.push([first, count]);
+                out.push([first, count]);
             }
-            continue;
+            return;
         }
         // A face is turned towards the camera when the camera is past its plane, along the way it faces.
         let toward = match facing {
@@ -574,7 +578,7 @@ fn pick_parts(
         };
         for (facing, &[first, count]) in chunk.facings.iter().enumerate() {
             if count > 0 && toward[facing] {
-                picked.push([first, count]);
+                out.push([first, count]);
             }
         }
         // Its sheets of leaves and vines, seen from every side, while the camera is near.
@@ -583,10 +587,26 @@ fn pick_parts(
             (detail.camera.clamp(low, high) - detail.camera).length_squared() <= reach * reach
         };
         if level == 0 && chunk.loose[1] > 0 && detail.is_none_or(near) {
-            picked.push(chunk.loose);
+            out.push(chunk.loose);
         }
+    };
+    let mut picked: Vec<[u32; 2]> = Vec::new();
+    let Some(camera) = near_first else {
+        for chunk in chunks {
+            take(chunk, &mut picked);
+        }
+        return merged(picked);
+    };
+    let away = |chunk: &ChunkDraw| ((chunk.bounds[0] + chunk.bounds[1]) * 0.5).distance_squared(camera);
+    let mut order: Vec<(f32, &ChunkDraw)> = chunks.iter().map(|chunk| (away(chunk), chunk)).collect();
+    order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    let mut own = Vec::new();
+    for (_, chunk) in order {
+        take(chunk, &mut own);
+        own.sort_unstable();
+        picked.append(&mut own);
     }
-    merged(picked)
+    joined(picked)
 }
 
 /// Whether every triangle facing within `cone` (its axis and the sine of
@@ -671,6 +691,18 @@ fn cut_apart(cut: &[[u32; 2]], picked: Vec<[u32; 2]>) -> (Vec<[u32; 2]>, Vec<[u3
         }
     }
     (solid, cut_out)
+}
+
+/// Runs of quads in the order given, those that follow on drawn as one.
+fn joined(picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
+    let mut joined: Vec<[u32; 2]> = Vec::with_capacity(picked.len());
+    for [first, count] in picked {
+        match joined.last_mut() {
+            Some(last) if last[0] + last[1] == first => last[1] += count,
+            _ => joined.push([first, count]),
+        }
+    }
+    joined
 }
 
 /// Runs of quads in order, those that follow on drawn as one.
@@ -1788,8 +1820,14 @@ pub(crate) fn gather(
         let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
         let ring = fading.then_some((fades.at, fades.reach, fades.coarsest as i32));
         let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size, rings: ring });
-        lists[LIST_EARLY as usize] =
-            pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref(), shown);
+        lists[LIST_EARLY as usize] = pick_parts(
+            &blocks.chunks,
+            &planes,
+            (Facing::Camera(local), detail),
+            (seen.as_ref(), shown),
+            Parts::With,
+            Some(local),
+        );
         // A coarse column's water is left out where the finer columns over it are made, theirs drawn whole in its
         // place, as water shows no ring's fade.
         let wet = match fading {
@@ -1851,7 +1889,7 @@ pub(crate) fn gather(
             let shown =
                 blocks.places.iter().min_by(|a, b| nearest(a).total_cmp(&nearest(b))).map(|place| &place.columns);
             let picked =
-                |parts| pick_parts(&blocks.chunks, &planes, (Facing::Camera(from), None), (None, shown), parts);
+                |parts| pick_parts(&blocks.chunks, &planes, (Facing::Camera(from), None), (None, shown), parts, None);
             let list = LIST_LOCAL_SHADOW as usize + slot;
             // A lamp drawing its virtual shadow pages takes what stands still into them, kept or not yet.
             if blocks.turn.is_none() && (lamps.is_cached(slot) || lamps.redraws(slot)) {
@@ -2229,6 +2267,37 @@ mod tests {
         let has = |first: u32| lit.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!([0, 20, 50, 60, 80, 110].map(has).iter().all(|&h| h), "+x, +y and -z faces: {lit:?}");
         assert!(![10, 30, 40, 70, 90, 100].map(has).iter().any(|&h| h), "none turned away: {lit:?}");
+    }
+
+    #[test]
+    fn the_depth_pass_draws_the_chunks_nearest_the_camera_first_each_chunks_quads_in_order() {
+        // Three chunks along x, 32 m each, held in the pool far one first: the camera at the near end.
+        let chunk = |x: f32, first: u32| ChunkDraw {
+            key: [0, (x / 32.0) as i32, 0, 0],
+            bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cube: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            cut: [0; FACINGS],
+            facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            loose: [0, 0],
+            parts: [0, 0],
+            water: [first + 60, 0],
+            cone: None,
+            mesh: 0,
+        };
+        let chunks = [chunk(64.0, 0), chunk(32.0, 60), chunk(0.0, 120)];
+        let camera = Vec3::new(-8.0, 40.0, 16.0);
+        let facing = (Facing::Camera(camera), None);
+        let near_first = pick_parts(&chunks, &[], facing, (None, None), Parts::With, Some(camera));
+        // Seen from -x, above and within z: each chunk's -x, +y, +z and -z faces, the nearest chunk's first, each
+        // chunk's in pool order and those that follow on as one.
+        assert_eq!(near_first, vec![[130, 20], [160, 20], [70, 20], [100, 20], [10, 20], [40, 20]]);
+        // The same quads as drawn in the pool's order, those that follow on as one.
+        let mut quads: Vec<u32> = near_first.iter().flat_map(|&[first, count]| first..first + count).collect();
+        quads.sort_unstable();
+        let pooled: Vec<u32> = pick(&chunks, &[], facing, None, None).iter().flat_map(|&[f, c]| f..f + c).collect();
+        assert_eq!(quads, pooled);
+        // Runs that follow on in the order given are joined, and none out of it.
+        assert_eq!(joined(vec![[0, 4], [4, 2], [10, 1], [6, 1]]), vec![[0, 6], [10, 1], [6, 1]]);
     }
 
     #[test]

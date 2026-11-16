@@ -4448,8 +4448,11 @@ Every operation the editor can do should be scriptable.
   need.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
-  timings, culling stats and the adapted exposure.
+  timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
+  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`).
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
+- `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
+  then start `vox run --no-build`, whose .NET starts at once.
 - `vox content build <project>` packs the content into bundles and prints each bundle, its usage set and its assets,
   then what was left out.
 - `--bundles` on `run` and `render` reads assets from those bundles, as a player will, and builds them first unless
@@ -4458,7 +4461,7 @@ Every operation the editor can do should be scriptable.
 
 **Planned.**
 - Project: `vox open`.
-- Building: `vox build [--profile <name>] [--progress json]`, `vox scripts build`.
+- Building: `vox build [--profile <name>] [--progress json]`.
 - Testing: `vox test`.
 - Scenes: `vox scene list/inspect`.
 - `vox import`, `vox profile`.
@@ -4494,6 +4497,9 @@ can change an open project and see the result, each change a step on the editor'
   - Objs are named by scene GUID and `ObjPath`, which survive undo, Play and saving.
   - A change records an `Edit` as the panels do; `batch` folds its steps into one (`History::group_since`).
   - Calls that take frames (`play`, `capture`, `scripts.build`, `editor.wait`) answer when done.
+  - `profiler.frames` gives the Profiler's latest frames, each one's samples in the order of their tree with how
+    deep each ran, and the GPU's passes (`voxear_engine::profile_frames`). A read keeps frames sampled for three
+    seconds, even with the Profiler hidden, so a tool watching reads again within that.
   - The editor setting `tools_may_change` refuses every changing call, and a tool cannot turn it back on.
   - Each change logs a `[Tools]` line to the Console.
 - **Files changed on disk.** The open scenes, the open level and `voxear.toml` are looked at twice a second. A
@@ -4577,6 +4583,14 @@ them in a running game.
     has its samples kept while the Profiler records. Each frame takes those that ended in it and those still running,
     cut to the frame, so a load lasting seconds shows in every frame it runs through. The Timeline draws each worker in
     a lane of its own under the main thread's, titled with its name, and pointing at a bar says which thread it ran on.
+  - **Tools watching a game** *(implemented)*. A game from `vox run`, or a development build, answers tools over
+    the editor link's transport, writing `Game` beside `Console` in its `.voxear` (or Data) folder
+    (`voxear_engine::game_link`). Its calls: `profiler.frames` (as the editor's, sampled only while a tool reads),
+    `console.read` (the log, as the editor's Console call gives it), `game.console` (a line in its console) and
+    `gpu.capture` (the next frame in RenderDoc, answered with the file's whole path once written, for the tool to
+    open, when the game was started with RenderDoc). `link.hello` names its process, for a debugger to attach to. A code editor uses these to show a game
+    it started live, with nothing to set up; `vox render --profile-out` saves frames in the same shape, so one
+    reader shows both.
   - **Tracy** *(implemented: zones, threads and frames)*, for deep sessions: built with `cargo build --features tracy`,
     every sample is also a zone in [Tracy](https://github.com/wolfpld/tracy), on every thread and whether or not the
     Profiler records: the engine's systems, scripts' callbacks and their own `Profiler.Sample`s, and the workers',

@@ -96,6 +96,21 @@ vox console --player "MyGame/Builds/Linux Development/Data" "God true"
 
 This suits scripts and automated tests. The game only listens to programs on the same computer.
 
+## Watching a game from your code editor
+
+A game from `vox run`, or a development build, also lets tools on the same computer watch it while it runs: its frames as the Profiler times them, its log, its console, and RenderDoc captures. It writes how to reach it to a `Game` file in your project's `.voxear` folder (or the build's `Data` folder), which only you can read, and removes it when it closes. A code editor that knows Voxear finds it there, so its profiler and log work as soon as the game starts, with nothing to set up.
+
+The game only times its frames while something is watching, so it runs just as fast when nothing is.
+
+Debuggers attach to the game's process to step through your scripts, since the game runs them on .NET. A debugger can also start the game itself, so breakpoints in `Awake` and `Start` stop too. Build the scripts first, then have the debugger start the game without building them again, so .NET starts at once rather than after the build:
+
+```bash
+vox scripts build MyGame
+vox run MyGame --no-build
+```
+
+The calls a tool can make, for those writing one, are in the [[Driving the Editor from a Terminal]] page's list: `profiler.frames`, `console.read`, `game.console` and `gpu.capture` work the same on a game, which answers those four.
+
 ## RenderDoc captures
 
 [RenderDoc](https://renderdoc.org) is a free tool for looking inside a frame, every draw and every image, in more depth than the Frame Debugger. Install it, then run your game with it loaded:

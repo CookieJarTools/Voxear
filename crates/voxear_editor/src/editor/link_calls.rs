@@ -463,6 +463,12 @@ impl Editor {
             }
             "game.console" => self.game_console(need_text(args, "line")?),
             "console.read" => self.console_read(args),
+            "profiler.frames" => {
+                let after = args.get("after").and_then(Json::as_u64);
+                let limit = args.get("limit").and_then(Json::as_u64);
+                let limit = limit.map_or(voxear_engine::profile_frames::READ, |n| n as usize);
+                done(self.profiler.read_frames(after, limit))
+            }
             "capture" => self.capture(args),
             "scripts.build" => {
                 self.rebuild_scripts = true;
@@ -688,6 +694,7 @@ impl Editor {
             "playing": self.is_playing(),
             "paused": self.is_paused(),
             "building_scripts": self.describing.is_some() || self.play.is_building(),
+            "dotnet_started": voxear_scripting::dotnet_started(),
             "unsaved": self.unsaved,
             "selection": selection,
             "undo": self.history.depth(),

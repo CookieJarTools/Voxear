@@ -29,6 +29,27 @@ fn hello_copy() -> tempfile::TempDir {
 }
 
 #[test]
+fn the_scripts_build_on_their_own_and_a_broken_one_says_why() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    let vox = env!("CARGO_BIN_EXE_vox");
+    let built = Command::new(vox).args(["scripts", "build"]).arg(dir.path()).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    assert!(dir.path().join(".voxear/Scripts/Debug/Hello.Scripts.dll").is_file(), "built where vox run loads it");
+
+    std::fs::write(dir.path().join("Scripts/Broken.cs"), "namespace Hello;
+
+public class Broken { int x = ; }
+").unwrap();
+    let broken = Command::new(vox).args(["scripts", "build"]).arg(dir.path()).output().unwrap();
+    assert!(!broken.status.success());
+    let said = format!("{}{}", String::from_utf8_lossy(&broken.stdout), String::from_utf8_lossy(&broken.stderr));
+    assert!(said.contains("Broken.cs"), "the error names the file: {said}");
+}
+
+#[test]
 fn a_profile_builds_a_player_that_runs_the_game() {
     if voxear_scripting::find_dotnet().is_none() {
         return eprintln!("skipping: needs .NET");

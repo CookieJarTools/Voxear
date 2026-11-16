@@ -79,4 +79,14 @@ private void Plan()
 `Profiler.BeginSample("Find Path")` and `Profiler.EndSample()` work too, as in Unity. Samples cost almost nothing while the Profiler is not recording.
 
 > [!NOTE]
-> The Profiler records the editor, and the game while it plays in the editor. It cannot connect to a build or to `vox run` yet.
+> The Profiler records the editor, and the game while it plays in the editor. It cannot connect to a build or to `vox run` yet, but a code editor can watch a game from `vox run`: see [[Debugging a Running Game]].
+
+## Profiles for other tools
+
+`vox render` times a render with `--profile`, and saves what it timed with `--profile-out`, every frame's samples and drawing passes, for a tool to show:
+
+```bash
+vox render MyGame --frames 300 --profile-out .voxear/Profiles/Render.json
+```
+
+Each pass's time varies a little from frame to frame, and anything else using the graphics card only adds to it, so compare the least time of the last sixty frames rather than any one frame.

@@ -57,7 +57,7 @@ pub use hostfxr::{DotnetInstall, find_dotnet};
 pub use inspector::{InspectorAnswer, InspectorAsk};
 pub use runtime::{
     ConsoleName, CreatedBehaviour, ManagedMemory, PACKAGE_ASSEMBLIES, Reloaded, ScriptHost, ScriptRuntime,
-    package_assemblies,
+    dotnet_started, package_assemblies,
 };
 pub use saves::{
     SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language, saves_folder,

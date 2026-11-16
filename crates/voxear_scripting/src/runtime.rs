@@ -21,6 +21,13 @@ const BOOTSTRAP_TYPE: &str = "Voxear.Interop.Bootstrap, Voxear.Core";
 
 static STARTED: AtomicBool = AtomicBool::new(false);
 
+/// Whether .NET has started in this process, which it does once, with the
+/// first scripts loaded: in the editor, the first time Play is pressed. A
+/// debugger for scripts can attach from then on.
+pub fn dotnet_started() -> bool {
+    STARTED.load(Ordering::SeqCst)
+}
+
 type Initialize = unsafe extern "C" fn(*const NativeApi, *mut ManagedApi) -> i32;
 
 /// A command or variable a development build's console takes.

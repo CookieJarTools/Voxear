@@ -258,6 +258,15 @@ pub struct StreamFrom {
     pub pushed: f32,
 }
 
+impl StreamFrom {
+    /// How many times as far as its own blocks reach its first coarser ring
+    /// begins: as [`StreamFrom::pushed`] says, no further than it draws the
+    /// world at all.
+    fn pushed(&self) -> f32 {
+        self.pushed.min((self.far / self.distance.max(1.0)).max(1.0))
+    }
+}
+
 /// The level a column of the world's own blocks drawn past where they are
 /// made is asked for and made at: blocks as large as the world's own, its
 /// faces made alone, as a coarse column's are (see [`StreamFrom::pushed`]).
@@ -309,14 +318,14 @@ impl Area {
 /// level's columns, so a coarse column is wholly in or out of each finer
 /// window.
 fn areas(file: &BlockFile, from: &[StreamFrom]) -> (Vec<Area>, Vec<Vec<Window>>, Option<Window>) {
-    let first = from.first().map(|first| windows_out(file, (first.distance, first.far), first.at, first.pushed));
+    let first = from.first().map(|first| windows_out(file, (first.distance, first.far), first.at, first.pushed()));
     let levels = first.as_ref().map_or(1, |(windows, _)| windows.len());
     let fine = first.and_then(|(_, fine)| fine);
     let mut areas: Vec<Area> = vec![Area::default(); levels];
     let mut places = Vec::with_capacity(from.len());
     for (number, place) in from.iter().enumerate() {
         // Far enough for any number of levels, then as many as the first place has; its own pushed out as it says.
-        let pushed = if number == 0 { place.pushed } else { 1.0 };
+        let pushed = if number == 0 { place.pushed() } else { 1.0 };
         let mut own = windows_out(file, (place.distance, f32::MAX), place.at, pushed).0;
         own.truncate(levels);
         for (level, window) in own.iter().enumerate() {
@@ -1122,7 +1131,7 @@ impl BlockStreamer {
                 self.making.as_ref().filter(|making| number == 0 && top > 0 && !making.file.smooth).map(|making| {
                     let column = CHUNK as f32 * making.file.block_size.max(0.01);
                     let reach = (place.distance / column).ceil().max(1.0) as i32;
-                    (pushed_reach(reach, place.pushed) as f32 * column, column)
+                    (pushed_reach(reach, place.pushed()) as f32 * column, column)
                 });
             if let Some((reach, band)) = rings {
                 fades = RingFades { at: place.at, reach, band, coarsest: top as u32, ..RingFades::default() };
@@ -1992,6 +2001,8 @@ mod tests {
             "the first ring holds them"
         );
         assert_eq!(pushed.len() + 1, near.len());
+        // Never past where the world is drawn at all.
+        assert_eq!(StreamFrom { at: [0.0; 2], distance: 128.0, far: 192.0, pushed: 4.0 }.pushed(), 1.5);
         // Pushed out by a part of that, part as far.
         let (_, partly) = windows_out(&file, (128.0, 4000.0), [10.0, -300.0], 1.5);
         let partly = partly.expect("drawn on a little past where they are made");

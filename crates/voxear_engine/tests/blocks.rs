@@ -387,17 +387,19 @@ fn a_generated_block_world_whose_biomes_have_tints_keeps_them_round_where_it_is_
     let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
     game.start(None).unwrap();
     let tints = |game: &Game| game.engine.world.query_ref::<&voxear_render::BlockTints>().into_iter().next().cloned();
-    // Worked out a few tiles a frame, the nearest first, till every tile in reach has its tints: a tile not
+    // Worked out in the background, the nearest first, till every tile in reach has its tints: a tile not
     // worked out yet is white, as its grass is not.
     let full = |tints: &voxear_render::BlockTints| {
         let all = |points: &[u32]| !points.is_empty() && points.iter().step_by(2).all(|&grass| grass != 0x0080_8080);
         all(&tints.points) && all(&tints.far_points)
     };
-    for _ in 0..90 {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_secs() < 60 {
         game.tick(1.0 / 60.0, None);
         if tints(&game).is_some_and(|tints| full(&tints)) {
             break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let kept = tints(&game).expect("its tints");
     // Its far tints as many points, 16 times further apart, round the same place.

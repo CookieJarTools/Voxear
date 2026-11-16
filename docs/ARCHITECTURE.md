@@ -4476,7 +4476,10 @@ Every operation the editor can do should be scriptable.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
-  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`).
+  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`). Before its frames it waits
+  for the ground round the camera, as a game's loading does (`Game::make_world`): terrains and worlds of blocks
+  without end are made on background threads, and a short render is otherwise over before any of it comes.
+  `--wait <seconds>` sets how long it waits at most (120 by default); `--wait 0` starts the frames at once.
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
 - `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
   then start `vox run --no-build`, whose .NET starts at once.

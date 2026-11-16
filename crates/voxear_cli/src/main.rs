@@ -425,6 +425,11 @@ enum Commands {
         /// compare what each costs.
         #[arg(long, value_parser = ["low", "medium", "high", "ultra"])]
         world_quality: Option<String>,
+        /// Seconds to wait at most before the frames for the ground round the camera to be made, as a game's
+        /// loading waits for it: terrains and worlds of blocks without end, and the plants grown on them. 0 starts
+        /// the frames at once, the ground coming in as they go.
+        #[arg(long, value_name = "SECONDS", default_value_t = 120.0)]
+        wait: f32,
     },
 }
 
@@ -587,6 +592,7 @@ fn main() -> Result<()> {
             profile_out,
             fly,
             world_quality,
+            wait,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -651,6 +657,7 @@ fn main() -> Result<()> {
                     use voxear_terrain::WorldQuality;
                     WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
                 }),
+                wait: std::time::Duration::from_secs_f32(wait.max(0.0)),
             };
             render(&project, shot, prepare, renderdoc)
         }
@@ -788,6 +795,8 @@ struct Shot {
     real_time: bool,
     /// The preset worlds of blocks spend as, in place of the project's.
     quality: Option<voxear_terrain::WorldQuality>,
+    /// How long to wait at most for the ground round the camera before the frames.
+    wait: std::time::Duration,
 }
 
 /// How many of a render's last frames its timings are averaged over.
@@ -976,6 +985,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         fly,
         real_time,
         quality,
+        wait,
     } = shot;
     let mut project = Project::open(path)?;
     let project_name = project.name().to_string();
@@ -998,6 +1008,17 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let mut saved: Vec<serde_json::Value> = Vec::new();
     let loading = std::time::Instant::now();
     game.start(Some(&mut renderer))?;
+    // The ground round the camera made first, as a game's loading waits for it: the frames alone can be over before
+    // the terrain's threads have made any of it.
+    if !wait.is_zero() {
+        let making = std::time::Instant::now();
+        let seconds = || making.elapsed().as_secs_f32();
+        if !game.make_world(wait) {
+            tracing::warn!("the ground round the camera was not all made in {:.0} s; the frames go on", seconds());
+        } else if seconds() >= 0.1 {
+            tracing::info!("made the ground round the camera in {:.1} s", seconds());
+        }
+    }
     if let Some(cpu) = &mut cpu {
         cpu.load_ms = loading.elapsed().as_secs_f32() * 1000.0;
         let samples = voxear_core::profiling::end_frame();

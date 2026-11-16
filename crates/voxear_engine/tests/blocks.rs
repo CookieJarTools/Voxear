@@ -740,6 +740,49 @@ fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
 }
 
 #[test]
+fn a_block_world_without_end_is_made_round_the_camera_before_the_first_frame_with_no_time_passing() {
+    use voxear_terrain::{
+        blocks::generate::{BlockEndless, BlockGenerate},
+        generate::Preset,
+    };
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    let mut file = BlockFile { block_size: 2.0, ..BlockFile::default() };
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -4,
+        caves: 0.0,
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        ..BlockGenerate::default()
+    });
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let scene =
+        format!("{FIELD}\n[[obj]]\nid = 3\nname = \"Eye\"\nposition = [40.0, 60.0, 40.0]\n[obj.camera]\nfov = 60.0\n");
+    std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let blocks = |game: &Game| game.engine.world.query_ref::<&BlockWorld>().into_iter().next().unwrap().clone();
+    assert!(blocks(&game).meshes.is_empty(), "nothing made as it loads: it is made round the camera");
+    let ball = |game: &Game| {
+        let world = &game.engine.world;
+        let named =
+            world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == "Ball");
+        world.get::<voxear_scene::Transform>(named.unwrap().0).unwrap().position
+    };
+    let (time, dropped) = (game.engine.time().clone(), ball(&game));
+    assert!(game.make_world(std::time::Duration::from_secs(120)), "all of it made within two minutes");
+    assert!(voxear_engine::blocks::streamed(&game.engine.world));
+    let made = blocks(&game);
+    // The ground under the camera (corner at (-16, 0, -16)) with its faces, coarser ground drawn beyond.
+    assert!((-4..100).any(|y| made.blocks.get([28, y, 28]) != 0), "the ground under the camera");
+    assert!(!made.meshes.is_empty() && !made.far.is_empty(), "its faces, and coarser ground beyond");
+    // No time went by: no frame counted, and the ball dropped from 20 m has not moved.
+    assert_eq!((game.engine.time().frame, game.engine.time().elapsed), (time.frame, time.elapsed));
+    assert_eq!(ball(&game), dropped);
+}
+
+#[test]
 fn a_generated_world_drawn_smooth_lies_on_its_generators_heights_and_keeps_a_smooth_hollow() {
     use voxear_terrain::{
         blocks::{BlockMap, chunk::depth_of, edits::BlockEdits, generate::BlockGenerate},

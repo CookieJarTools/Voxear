@@ -110,7 +110,7 @@ jobs:
 
       - name: Install the Linux build packages
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev libudev-dev libasound2-dev
 
       # slangc compiles the shaders while the renderer builds.
       - name: Install Slang
@@ -118,7 +118,8 @@ jobs:
           asset="slang-$SLANG_VERSION-${{ matrix.slang }}.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$asset" "https://github.com/shader-slang/slang/releases/download/v$SLANG_VERSION/$asset"
           mkdir -p "$RUNNER_TEMP/slang"
-          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/slang"
+          # From the folder itself, since tar reads a Windows drive letter as another computer.
+          cd "$RUNNER_TEMP" && tar -xzf "$asset" -C slang
           echo "$RUNNER_TEMP/slang/bin" >> "$GITHUB_PATH"
           if [ "$RUNNER_OS" = Linux ]; then
             echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"

@@ -1,11 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<!--
 		The engine's settings and Voxear.Core come from the engine building the scripts, which the editor and vox name
-		as VoxearHome, or else from the source checkout this sample sits in.
+		as VoxearHome, or else from the source checkout this sample sits in. A copy outside the checkout, opened in an
+		IDE, has neither, so .voxear/Engine.props, which each build writes, names the engine for it.
 	-->
 	<PropertyGroup>
 		<VoxearHome Condition="'$(VoxearHome)' == ''">$(VoxearRoot)</VoxearHome>
 	</PropertyGroup>
+	<Import Project="../.voxear/Engine.props" Condition="'$(VoxearHome)' == '' and Exists('../.voxear/Engine.props')" />
 	<Import Project="$(VoxearHome)managed/Voxear.Scripts.props" />
 	<PropertyGroup>
 		<RootNamespace>Effects</RootNamespace>

@@ -1876,7 +1876,9 @@ impl Renderer {
         }
         let push = push.unwrap_or(ui_push);
         frame_debugger.record(&mut fg, (gpu, bindless), (pipelines.frame_debug, push), debugger_view, &timings)?;
+        let executing = profile_marker!("Execute").scope();
         fg.execute(gpu, frame.cmd, bindless);
+        drop(executing);
         drop(recording);
 
         profile_scope!("Submit");
@@ -2838,7 +2840,9 @@ impl View {
             let moved = |[x, y, z, d]: [f32; 4]| [x, y, z, d - voxear_core::math::Vec3::new(x, y, z).dot(offset)];
             let planes = extracted.frame.planes.map(moved);
             let sphere = |mesh| assets.mesh_sphere(mesh);
+            let gathering = profile_marker!("Foliage").scope();
             self.foliage.gather(world, seen_from, &planes, &mut extracted, &sphere, &assets.impostors);
+            drop(gathering);
             if portal.is_some() {
                 for plant in &mut extracted.instances[first..] {
                     scene::rebase(&mut plant.model, offset);
@@ -2850,6 +2854,7 @@ impl View {
             let count = extracted.instances.len();
             tracing::warn!("{count} instances are more than the {MAX_INSTANCES} a view draws; the rest are left out");
         }
+        let instancing = profile_marker!("Instances").scope();
         // Glass after the rest, past what culling, shadows and the GI's rays see.
         let opaque = glass::sort_last(&mut extracted.instances, &mut extracted.entities, camera, assets);
         // Each instance's baked light, from the level's bake, and while a bake traces, what is to be in it.
@@ -2882,6 +2887,8 @@ impl View {
                 posed.apply(instance);
             }
         }
+        drop(instancing);
+        let shadowing = profile_marker!("Shadow Setup").scope();
         // The local lights' slots of their atlases, and what of the shadows of what stands still they keep.
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let shadowing = !extracted.shadow_lights.is_empty();
@@ -3051,6 +3058,8 @@ impl View {
             }
             false => None,
         };
+        drop(shadowing);
+        let gathers = profile_marker!("Gathers").scope();
         let buffers = &self.buffers[slot];
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
         let tracks_id = fg.import_buffer(&self.tracks);
@@ -3141,6 +3150,8 @@ impl View {
         }
         frame_data.post.ao_texture = ambient_occlusion.map_or(NO_TEXTURE, |ao| fg.texture(ao.current).0);
         frame_data.post.ao_reset = u32::from(ao_reset);
+        drop(gathers);
+        let _passes = profile_marker!("Passes").scope();
         // Contact shadows are the sun's, so they go without one, and the wireframe goes without its depth.
         let contact = extracted.post.contact_shadows.enabled && extracted.has_sun && !wireframe;
         let contact_shadows = match contact {

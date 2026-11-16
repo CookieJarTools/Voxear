@@ -364,8 +364,8 @@ pub struct Assets {
     moving_materials: std::collections::HashSet<MaterialHandle>,
     /// Two-sided materials, whose casters shadows draw from lists of their own.
     two_sided_materials: std::collections::HashSet<MaterialHandle>,
-    /// How many times a material has been written, so what keeps shadows
-    /// drawn with them knows when to draw them again.
+    /// How many times a material has been written again, so what keeps
+    /// shadows drawn with them knows when to draw them again.
     material_writes: u64,
 }
 
@@ -1057,7 +1057,8 @@ impl Assets {
         self.two_sided_materials.contains(&material)
     }
 
-    /// How many times any material has been written so far.
+    /// How many times a material has been written again so far: one added
+    /// is drawn with nothing yet, so it changes nothing drawn.
     pub fn material_writes(&self) -> u64 {
         self.material_writes
     }
@@ -1065,13 +1066,18 @@ impl Assets {
     pub fn add_material(&mut self, gpu: &Gpu, desc: &MaterialDesc) -> Result<MaterialHandle> {
         let slot = self.material_slots.alloc().context("too many materials")?;
         let handle = MaterialHandle(slot);
-        self.set_material(gpu, handle, desc)?;
+        self.write_material(gpu, handle, desc)?;
         Ok(handle)
     }
 
     /// Writes a material's values over what its slot held, so what it is
     /// drawn on changes from the next frame.
     pub fn set_material(&mut self, gpu: &Gpu, handle: MaterialHandle, desc: &MaterialDesc) -> Result<()> {
+        self.material_writes += 1;
+        self.write_material(gpu, handle, desc)
+    }
+
+    fn write_material(&mut self, gpu: &Gpu, handle: MaterialHandle, desc: &MaterialDesc) -> Result<()> {
         let slot = handle.0;
         if desc.foliage {
             self.foliage_materials.insert(handle);
@@ -1088,7 +1094,6 @@ impl Assets {
         } else {
             self.two_sided_materials.remove(&handle);
         }
-        self.material_writes += 1;
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         // Diced only as the standard shader, opaque, one-sided and not glass, foliage or an impostor, draws it.
         let displaced = desc.height_texture.is_some()

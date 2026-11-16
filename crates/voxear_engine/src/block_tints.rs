@@ -83,6 +83,7 @@ pub fn update(world: &mut World, content: &mut Content) {
         .map(|(entity, _, asset, local, placed)| (entity, tinted(asset), voxear_terrain::corner(local, placed)))
         .collect();
     // Those tinted, or whose grass plants colour far off.
+    let covering = voxear_core::profile_marker!("Covers").scope();
     let worlds: Vec<(Entity, voxear_core::math::Vec3, crate::grown_plants::Covers)> = generated
         .into_iter()
         .filter_map(|(entity, tinted, corner)| {
@@ -90,6 +91,7 @@ pub fn update(world: &mut World, content: &mut Content) {
             (tinted || !covers.0.is_empty()).then_some((entity, corner, covers))
         })
         .collect();
+    drop(covering);
     // Those no longer tinted are drawn untinted.
     let stale: Vec<Entity> = world
         .query_ref::<(Entity, &BlockTints)>()
@@ -166,6 +168,7 @@ pub fn update(world: &mut World, content: &mut Content) {
             *seen_from = seen;
         }
         // Put together only where a tile came or the tile it is seen from changed: half a megabyte each.
+        let _putting = voxear_core::profile_marker!("Put Together").scope();
         if changed {
             let [(corner, points), (far_corner, far_points)] =
                 [0, 1].map(|window| put_together(&kept.windows[window], seen_from[window]));

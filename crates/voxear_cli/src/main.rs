@@ -823,6 +823,18 @@ struct CpuTimes {
     /// Each frame's tick and render together, and whether the last was slower than [`SLOW_FRAME_MS`].
     frame_ms: Vec<f32>,
     slow: bool,
+    /// Each frame's time on the GPU as last known, and the slowest's passes.
+    gpu_ms: Vec<f32>,
+    slowest_gpu: Vec<(String, f32)>,
+    /// Each frame's time this thread spent on a core, where the system says: what the frame's own work took,
+    /// without the time other programs had the core or the frame waited for the GPU.
+    on_core_ms: Vec<f32>,
+}
+
+/// How long this thread has spent on a core so far, in nanoseconds, where the system says.
+fn on_core_ns() -> Option<u64> {
+    let read = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    read.split_whitespace().next()?.parse().ok()
 }
 
 /// A frame slower than this, in milliseconds, shows on a 60 Hz display as one missed: what is in such frames is
@@ -847,6 +859,13 @@ impl CpuTimes {
             (true, Some(0)) => self.streamed_by = Some(self.frames),
             _ => {}
         }
+    }
+
+    fn add_gpu(&mut self, frame_ms: f32, passes: &[(String, f32)]) {
+        if frame_ms > self.gpu_ms.iter().copied().fold(0.0, f32::max) {
+            self.slowest_gpu = passes.to_vec();
+        }
+        self.gpu_ms.push(frame_ms);
     }
 
     fn add_samples(&mut self, samples: &voxear_core::profiling::Samples, timed: bool) {
@@ -908,6 +927,37 @@ impl CpuTimes {
                 over(SLOW_FRAME_MS),
                 over(1000.0 / 144.0)
             );
+        }
+        // The frames' work on the core alone, as other programs and the GPU kept it waiting.
+        let mut core = self.on_core_ms.clone();
+        core.sort_by(f32::total_cmp);
+        let at =
+            |share: f32| core.get(((core.len() as f32 * share) as usize).min(core.len().saturating_sub(1))).copied();
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| core.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  on the core    {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} over \
+                 60 fps' frame, {} over 144's",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+        }
+        // And the GPU's frames the same way, with what the slowest of them spent its time on.
+        let mut gpu = self.gpu_ms.clone();
+        gpu.sort_by(f32::total_cmp);
+        let at = |share: f32| gpu.get(((gpu.len() as f32 * share) as usize).min(gpu.len().saturating_sub(1))).copied();
+        if let (Some(half), Some(most), Some(nearly_all)) = (at(0.5), at(0.95), at(0.99)) {
+            let over = |ms: f32| gpu.iter().filter(|&&frame| frame > ms).count();
+            println!(
+                "  GPU frames     {half:>8.2} ms for half, {most:.2} for 95 in 100, {nearly_all:.2} for 99; {} slower \
+                 than 60 fps, {} than 144",
+                over(SLOW_FRAME_MS),
+                over(1000.0 / 144.0)
+            );
+            let mut passes = self.slowest_gpu.clone();
+            passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let top: Vec<String> = passes.iter().take(8).map(|(pass, ms)| format!("{pass} {ms:.2}")).collect();
+            println!("  the slowest GPU frame's passes: {}", top.join(" · "));
         }
         match self.streamed_by {
             Some(0) => println!("  worlds of blocks without end still making chunks round the camera"),
@@ -1051,6 +1101,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     });
     for frame in 1..=frames {
         let started = std::time::Instant::now();
+        let on_core = on_core_ns();
         if let Some((camera, velocity)) = flying
             && let Some(transform) = game.engine.world.get_mut::<Transform>(camera)
         {
@@ -1081,6 +1132,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             frame_gpu.push(renderer.gpu_frame_ms());
         }
         if let Some(cpu) = &mut cpu {
+            if let (Some(from), Some(to)) = (on_core, on_core_ns()) {
+                cpu.on_core_ms.push(to.saturating_sub(from) as f32 / 1.0e6);
+            }
+            cpu.add_gpu(renderer.gpu_frame_ms(), renderer.timings());
             cpu.add_frame(tick_ms, render_ms, timing, voxear_engine::blocks::streamed(&game.engine.world));
             let samples = voxear_core::profiling::end_frame();
             cpu.add_samples(&samples, timing);

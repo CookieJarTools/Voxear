@@ -3063,15 +3063,24 @@ impl View {
                 drawn.levels().into_iter().map(|level| (level, extracted.frame.vsm.planes[level])).collect()
             })
             .unwrap_or_default();
-        let view_terrains =
-            terrain::gather(terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain, &lamps, &sun_pages)
-                .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
+        // The sun's cascades are drawn only into its atlas: with virtual shadow maps, its pages pick their own.
+        let cascades = virtual_shadows.is_none();
+        let view_terrains = terrain::gather(
+            terrains,
+            &extracted.frame,
+            &extracted.entities,
+            extracted.has_sun && cascades,
+            &buffers.terrain,
+            &lamps,
+            &sun_pages,
+        )
+        .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let view_blocks = blocks::gather(
             &setup.blocks,
             &extracted,
             &buffers.blocks,
-            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows, portal.is_none()),
+            (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows && cascades, portal.is_none()),
             &lamps,
             &sun_pages,
         );

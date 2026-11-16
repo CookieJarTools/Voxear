@@ -37,11 +37,20 @@ use voxear_terrain::blocks::{BlockWorld, chunk::CHUNK, is_ground};
 
 use crate::storms::{SeaNow, Storms, WeatherAt, weather_at};
 
-/// How many cells of each grid are worked out a frame, at the most: those
-/// not yet known first, then the rest in turn.
+/// How many cells of each grid not yet known are worked out a frame, at the
+/// most.
 const LYING_EACH_FRAME: usize = 64;
 const COVER_EACH_FRAME: usize = 1024;
 const FLOOR_EACH_FRAME: usize = 256;
+/// About how often each cell of a grid already known is worked out again,
+/// in seconds, the rest in turn: what lies changes over tens of seconds,
+/// and cover and the sea floor only where blocks or colliders do.
+const LYING_AGAIN: f32 = 2.0;
+const COVER_AGAIN: f32 = 1.0;
+const FLOOR_AGAIN: f32 = 2.0;
+/// The shortest frame the grids are paced by, in seconds, so a paused game
+/// still sees what changes.
+const SHORTEST_FRAME: f32 = 1.0 / 144.0;
 /// How far over and under the viewer cover is looked for, in metres.
 const COVER_REACH: f32 = 40.0;
 /// How far over and under the viewer the ground is looked for, for a lying
@@ -129,14 +138,14 @@ impl<T: Copy + Default> Rolling<T> {
         DVec2::new((anchor[0] + i) as f64 + 0.5, (anchor[1] + j) as f64 + 0.5) * f64::from(self.cell)
     }
 
-    /// Works out up to `budget` cells by `work`, given each one's middle in
-    /// the level and what it held, if it was known: those not yet known
-    /// first, then the rest in turn.
-    fn refresh(&mut self, budget: usize, mut work: impl FnMut(DVec2, Option<T>) -> T) {
+    /// Works out by `work`, given each one's middle in the level and what it
+    /// held, if it was known, up to `new` cells not yet known, then `again`
+    /// of the rest in turn.
+    fn refresh(&mut self, (new, again): (usize, usize), mut work: impl FnMut(DVec2, Option<T>) -> T) {
         let mut done = 0;
         for index in 0..self.cells.len() {
-            if done >= budget {
-                return;
+            if done >= new {
+                break;
             }
             if !self.known[index] {
                 self.cells[index] = work(self.middle(index), None);
@@ -144,11 +153,17 @@ impl<T: Copy + Default> Rolling<T> {
                 done += 1;
             }
         }
-        for _ in done..budget.min(self.cells.len()) {
+        for _ in 0..again.min(self.cells.len()) {
             let index = self.next;
             self.next = (self.next + 1) % self.cells.len();
             self.cells[index] = work(self.middle(index), Some(self.cells[index]));
         }
+    }
+
+    /// How many cells to work out again over a frame `delta` seconds long
+    /// for each to be worked out about `every` seconds.
+    fn again(&self, delta: f32, every: f32) -> usize {
+        (self.cells.len() as f32 * delta.max(SHORTEST_FRAME) / every).ceil() as usize
     }
 
     /// Whether every cell has been worked out at least once.
@@ -499,12 +514,15 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
     if covered {
         kept.cover.follow(around);
         let tops = &mut kept.tops;
-        kept.cover.refresh(COVER_EACH_FRAME, |middle, _| {
+        let again = kept.cover.again(delta, COVER_AGAIN);
+        kept.cover.refresh((COVER_EACH_FRAME, again), |middle, _| {
             let xz = to_world(middle);
             let at = Vec3::new(xz.x, viewer.y, xz.y);
             let blocks = ground_top(tops, &worlds, at, COVER_REACH, COVER_REACH);
-            let over = physics
-                .and_then(|physics| collider_under(world, physics, at + Vec3::Y * COVER_REACH, COVER_REACH * 2.0));
+            // Only a collider over the highest block counts, so the ray down ends there.
+            let from = at + Vec3::Y * COVER_REACH;
+            let lowest = blocks.map_or(at.y - COVER_REACH, |top| top.max(at.y - COVER_REACH));
+            let over = physics.and_then(|physics| collider_under(world, physics, from, from.y - lowest));
             blocks.into_iter().chain(over).fold(OPEN, f32::max)
         });
     }
@@ -514,7 +532,8 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
     if let Some(top) = sea {
         kept.floor.follow(around);
         let tops = &mut kept.tops;
-        kept.floor.refresh(FLOOR_EACH_FRAME, |middle, _| {
+        let again = kept.floor.again(delta, FLOOR_AGAIN);
+        kept.floor.refresh((FLOOR_EACH_FRAME, again), |middle, _| {
             let xz = to_world(middle);
             let at = Vec3::new(xz.x, top - 0.01, xz.y);
             match ground_top(tops, &worlds, at, 0.0, FLOOR_REACH) {
@@ -529,7 +548,8 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
         kept.lying.follow(around);
         let clock = kept.clock;
         let tops = &mut kept.tops;
-        kept.lying.refresh(LYING_EACH_FRAME, |middle, was| {
+        let again = kept.lying.again(delta, LYING_AGAIN);
+        kept.lying.refresh((LYING_EACH_FRAME, again), |middle, was| {
             let xz = to_world(middle);
             let ground = Vec3::new(xz.x, viewer.y, xz.y);
             let height = ground_top(tops, &worlds, ground, GROUND_REACH, GROUND_REACH).unwrap_or(viewer.y);
@@ -760,7 +780,7 @@ pub(crate) mod tests {
         let mut grid: Rolling<f32> = Rolling::new(4, 2.0);
         grid.follow(DVec2::new(0.0, 0.0));
         let mut asked = 0;
-        grid.refresh(100, |middle, was| {
+        grid.refresh((100, 0), |middle, was| {
             asked += 1;
             assert!(was.is_none());
             middle.x as f32
@@ -772,14 +792,19 @@ pub(crate) mod tests {
         grid.follow(DVec2::new(2.5, 0.0));
         assert!(!grid.all_known());
         let mut new = Vec::new();
-        grid.refresh(4, |middle, was| {
-            if was.is_none() {
-                new.push(middle);
+        let mut again = 0;
+        grid.refresh((4, 3), |middle, was| {
+            match was {
+                None => new.push(middle),
+                Some(_) => again += 1,
             }
             middle.x as f32
         });
         assert_eq!(new.len(), 4);
         assert!(new.iter().all(|middle| middle.x == 5.0));
+        assert_eq!(again, 3, "and as many of the rest again as asked");
+        // A grid of sixteen worked out again about every second, over a frame a quarter of a second long.
+        assert_eq!(grid.again(0.25, 1.0), 4);
         let out = grid.grid(DVec3::new(1.0, 0.0, 0.0), |v| v);
         assert_eq!(out.corner, Vec2::new(-3.0, -4.0));
         assert_eq!(out.nearest(-2.9, -3.9), Some(-1.0));

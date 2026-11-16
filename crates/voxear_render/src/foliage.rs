@@ -26,7 +26,7 @@
 //! round to their cells again.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, hash_map::Entry},
     ops::Range,
     sync::Arc,
 };
@@ -115,15 +115,13 @@ impl Foliage {
     /// From how far its plants are impostors, if at all: as it says, or
     /// where the engine chooses, plants `AUTO_IMPOSTOR_SIZE` across or more
     /// from `AUTO_IMPOSTOR_DISTANCE` or past a third of the draw distance.
-    fn impostors_from(&self, plants: &[Plant], mesh_radius: f32) -> Option<f32> {
+    /// `typical` is its plants' usual scale ([`typical_scale`]).
+    fn impostors_from(&self, typical: f32, mesh_radius: f32) -> Option<f32> {
         match self.impostors {
             Impostors::Off => None,
             Impostors::From => Some(self.impostor_distance.max(0.0)),
-            Impostors::Auto => {
-                let typical = plants.iter().map(|plant| plant.scale).sum::<f32>() / plants.len().max(1) as f32;
-                (mesh_radius * 2.0 * typical >= AUTO_IMPOSTOR_SIZE)
-                    .then(|| AUTO_IMPOSTOR_DISTANCE.max(self.draw_distance / 3.0))
-            }
+            Impostors::Auto => (mesh_radius * 2.0 * typical >= AUTO_IMPOSTOR_SIZE)
+                .then(|| AUTO_IMPOSTOR_DISTANCE.max(self.draw_distance / 3.0)),
         }
     }
 
@@ -160,6 +158,11 @@ impl Foliage {
     }
 }
 
+/// The scale plants have on average.
+fn typical_scale(plants: &[Plant]) -> f32 {
+    plants.iter().map(|plant| plant.scale).sum::<f32>() / plants.len().max(1) as f32
+}
+
 /// Smooth value noise from 0 to 1, varying over about one unit.
 fn smooth_noise(x: f32, z: f32) -> f32 {
     let hash = |x: f32, z: f32| {
@@ -188,6 +191,10 @@ struct Built {
     /// What it was built from: the plants' list, where the Obj was, its
     /// mesh and material and distances.
     plants: Arc<Vec<Plant>>,
+    /// The plants' usual scale, which picks whether they have impostors.
+    typical: f32,
+    /// Which gather last added it, to let go of those no gather finds.
+    gathered: u64,
     model: Mat4,
     look: (MeshHandle, MaterialHandle, [u32; 10]),
     chunks: Vec<Chunk>,
@@ -207,6 +214,8 @@ struct Built {
 #[derive(Default)]
 pub(crate) struct FoliageCache {
     built: HashMap<Entity, Built>,
+    /// How many gathers there have been.
+    gathers: u64,
 }
 
 impl FoliageCache {
@@ -245,7 +254,12 @@ impl FoliageCache {
         impostors: &crate::impostors::ImpostorTable,
     ) {
         let origin = voxear_scene::WorldOrigin::of(world).0;
-        let mut seen = HashSet::new();
+        self.gathers += 1;
+        let gather = self.gathers;
+        // Each mesh's sphere, and each mesh and material's impostor, looked up once for every Foliage drawing them:
+        // a world's grown plants have a Foliage to each column, all of one plant.
+        let mut spheres: Vec<(MeshHandle, Option<(Vec3, f32)>)> = Vec::new();
+        let mut asked: Vec<((MeshHandle, MaterialHandle), Option<crate::Impostor>)> = Vec::new();
         let found = world
             .query_ref::<(Entity, &Foliage, &Plants, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>();
@@ -256,7 +270,6 @@ impl FoliageCache {
         // Drawn as many times as far as the machine's plant detail says (see `WorldBudget::plants`).
         let budget = voxear_terrain::WorldBudget::of(world);
         for (entity, foliage, plants, transform, placed) in found {
-            seen.insert(entity);
             let detailed;
             let foliage = match budget.plant_detail == 1.0 {
                 true => foliage,
@@ -275,25 +288,59 @@ impl FoliageCache {
                 |w| w.0,
             );
             let look = foliage.look();
-            let Some(bounds) = sphere(foliage.mesh) else { continue };
-            let impostor_from = foliage.impostors_from(&plants.plants, bounds.1);
+            let bounds = match spheres.iter().find(|(mesh, _)| *mesh == foliage.mesh) {
+                Some(&(_, bounds)) => bounds,
+                None => {
+                    let bounds = sphere(foliage.mesh);
+                    spheres.push((foliage.mesh, bounds));
+                    bounds
+                }
+            };
+            let Some(bounds) = bounds else { continue };
+            let entry = self.built.entry(entity);
+            let kept = match &entry {
+                Entry::Occupied(kept) => Some(kept.get()),
+                Entry::Vacant(_) => None,
+            };
+            let same_plants = kept.filter(|built| Arc::ptr_eq(&built.plants, &plants.plants));
+            let typical = same_plants.map_or_else(|| typical_scale(&plants.plants), |built| built.typical);
+            let impostor_from = foliage.impostors_from(typical, bounds.1);
             let impostor = match (impostor_from, impostors.quad) {
-                (Some(_), quad) => impostors.get_or_ask(foliage.mesh, foliage.material).zip(quad),
+                (Some(_), quad) => {
+                    let key = (foliage.mesh, foliage.material);
+                    let found = match asked.iter().find(|(asked, _)| *asked == key) {
+                        Some(&(_, found)) => found,
+                        None => {
+                            let found = impostors.get_or_ask(foliage.mesh, foliage.material);
+                            asked.push((key, found));
+                            found
+                        }
+                    };
+                    found.zip(quad)
+                }
                 (None, _) => None,
             };
-            let stale = self.built.get(&entity).is_none_or(|built| {
-                !Arc::ptr_eq(&built.plants, &plants.plants)
-                    || built.model != model
-                    || built.look != look
-                    || built.impostor != impostor.map(|(i, _)| i)
-                    || built.impostor_from != impostor_from.unwrap_or(f32::MAX)
+            let fresh = same_plants.is_some_and(|built| {
+                built.model == model
+                    && built.look == look
+                    && built.impostor == impostor.map(|(i, _)| i)
+                    && built.impostor_from == impostor_from.unwrap_or(f32::MAX)
             });
-            if stale {
-                let from = impostor_from.unwrap_or(f32::MAX);
-                let made = build(foliage, &plants.plants, model, look, bounds, impostor, from, origin);
-                self.built.insert(entity, made);
-            }
-            let built = &self.built[&entity];
+            let built = match entry {
+                Entry::Occupied(kept) if fresh => kept.into_mut(),
+                entry => {
+                    let from = impostor_from.unwrap_or(f32::MAX);
+                    let made = build(foliage, &plants.plants, model, look, bounds, impostor, from, origin);
+                    match entry {
+                        Entry::Occupied(mut kept) => {
+                            kept.insert(made);
+                            kept.into_mut()
+                        }
+                        Entry::Vacant(place) => place.insert(made),
+                    }
+                }
+            };
+            built.gathered = gather;
             let draw = foliage.draw_distance.max(0.0);
             for chunk in &built.chunks {
                 let near = (chunk.centre.distance(camera) - chunk.radius).max(0.0);
@@ -327,7 +374,7 @@ impl FoliageCache {
                 }
             }
         }
-        self.built.retain(|entity, _| seen.contains(entity));
+        self.built.retain(|_, built| built.gathered == gather);
     }
 }
 
@@ -376,6 +423,8 @@ fn build(
     let scale = model.to_scale_rotation_translation().0.max_element();
     let mut built = Built {
         plants: plants.clone(),
+        typical: typical_scale(plants),
+        gathered: 0,
         model,
         look,
         chunks: Vec::new(),

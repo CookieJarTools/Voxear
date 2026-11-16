@@ -770,6 +770,28 @@ struct BlockBodies {
     block_size: f32,
     meshes: Option<Arc<voxear_terrain::blocks::ChunkMeshes>>,
     chunks: HashMap<[i32; 3], (Arc<voxear_terrain::blocks::mesh::ChunkMesh>, BodyId, ShapeId)>,
+    /// The chunks of a world without end whose shapes are being made in the
+    /// background, by the faces they are made from; and those made, given
+    /// their bodies at the next step.
+    making: HashMap<[i32; 3], Arc<voxear_terrain::blocks::mesh::ChunkMesh>>,
+    made: Arc<std::sync::Mutex<Vec<MadeChunk>>>,
+}
+
+/// A chunk's shape made in the background: the chunk, the faces it was made
+/// from, and the shape where it could be made.
+type MadeChunk = ([i32; 3], Arc<voxear_terrain::blocks::mesh::ChunkMesh>, Option<crate::MadeShape>);
+
+/// A chunk's faces as a shape to stand on: its triangles in metres, and its
+/// fences and walls, a block and a half high, as boxes of triangles beside
+/// them.
+fn chunk_shape(mesh: &voxear_terrain::blocks::mesh::ChunkMesh, block_size: f32) -> Option<crate::MadeShape> {
+    let mut points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * block_size).collect();
+    let mut indices = mesh.indices.clone();
+    for [low, high] in &mesh.colliders {
+        let (low, high) = (Vec3::from(*low) * block_size, Vec3::from(*high) * block_size);
+        box_triangles(&mut points, &mut indices, low, high);
+    }
+    crate::MadeShape::mesh(&points, &indices)
 }
 
 /// A dug chunk's body: the chunk it was made from, and its body and shape
@@ -1235,14 +1257,22 @@ impl PhysicsScene {
                 .is_some_and(|kept| kept.layer == layer && kept.block_size == blocks.block_size);
             if !fits {
                 self.remove_block_world(entity);
-                let kept =
-                    BlockBodies { corner, layer, block_size: blocks.block_size, meshes: None, chunks: HashMap::new() };
+                let kept = BlockBodies {
+                    corner,
+                    layer,
+                    block_size: blocks.block_size,
+                    meshes: None,
+                    chunks: HashMap::new(),
+                    making: HashMap::new(),
+                    made: Arc::default(),
+                };
                 self.block_worlds.insert(entity, kept);
             }
-            // Nothing to do where its faces are those its bodies were made from, and it has not moved.
+            // Nothing to do where its faces are those its bodies were made from, it has not moved, and no shape is
+            // being made for it.
             let moved = self.block_worlds[&entity].corner != corner;
             let same = self.block_worlds[&entity].meshes.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes));
-            if !moved && same {
+            if !moved && same && self.block_worlds[&entity].making.is_empty() {
                 continue;
             }
             let mut kept = self.block_worlds.remove(&entity).expect("kept above");
@@ -1257,7 +1287,33 @@ impl PhysicsScene {
                 }
                 stays
             });
+            kept.making.retain(|key, _| blocks.meshes.contains_key(key));
+            // The shapes made in the background since, given bodies where their chunks' faces are still those they were
+            // made from and nothing made one meanwhile; the rest let go.
+            let made = std::mem::take(&mut *kept.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+            let mut background = Vec::new();
+            for (key, mesh, shape) in made {
+                let asked = kept.making.get(&key).is_some_and(|asked| Arc::ptr_eq(asked, &mesh));
+                let current = blocks.meshes.get(&key).is_some_and(|now| Arc::ptr_eq(now, &mesh));
+                if asked && current {
+                    kept.making.remove(&key);
+                    background.push((key, mesh, shape));
+                }
+            }
             let mut wanted: Vec<([i32; 3], &Arc<voxear_terrain::blocks::mesh::ChunkMesh>)> = Vec::new();
+            // A world without end's new chunks have their shapes made in the background, but for those within a chunk
+            // of a character or a body: those are made now, as are chunks whose faces changed, so nothing stood on
+            // or dug falls through.
+            let endless = blocks.columns.is_some();
+            let side_of = CHUNK as f32 * blocks.block_size;
+            let near_any: Vec<Vec3> = (self.characters.values().map(|walker| walker.placed))
+                .chain(self.bodies.values().map(|kept| kept.placed.0))
+                .collect();
+            let near = |key: &[i32; 3]| {
+                let low = at(key);
+                let high = low + Vec3::splat(side_of);
+                near_any.iter().any(|place| place.clamp(low, high).distance(*place) <= side_of)
+            };
             for (key, mesh) in blocks.meshes.iter() {
                 // Faces made again with the same triangles, as when only a neighbour's shading changed, keep their body.
                 let same = |made: &voxear_terrain::blocks::mesh::ChunkMesh| {
@@ -1272,29 +1328,40 @@ impl PhysicsScene {
                     }
                     continue;
                 }
+                // A chunk of water alone has no ground to stand on.
+                let ground = !mesh.indices.is_empty() || !mesh.colliders.is_empty();
+                let changed = kept.chunks.contains_key(key);
+                if endless && ground && !changed && !near(key) {
+                    if !kept.making.get(key).is_some_and(|asked| Arc::ptr_eq(asked, mesh)) {
+                        kept.making.insert(*key, mesh.clone());
+                        let (key, mesh, made, block_size) = (*key, mesh.clone(), kept.made.clone(), blocks.block_size);
+                        voxear_terrain::workers::spawn(move || {
+                            let shape = chunk_shape(&mesh, block_size);
+                            made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((key, mesh, shape));
+                        });
+                    }
+                    continue;
+                }
+                kept.making.remove(key);
                 if let Some((_, body, shape)) = kept.chunks.remove(key) {
                     self.world.remove_body(body);
                     self.world.release_shape(shape);
                     self.owners.remove(&body);
                 }
-                // A chunk of water alone has no ground to stand on.
-                if !mesh.indices.is_empty() || !mesh.colliders.is_empty() {
+                if ground {
                     wanted.push((*key, mesh));
                 }
             }
-            // The new chunks' shapes made on every core, then given bodies here.
+            // The chunks' shapes wanted now made on every core, then given bodies here with those made before.
             let block_size = blocks.block_size;
-            let made = voxear_terrain::workers::each(&wanted, |(_, mesh)| {
-                let mut points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * block_size).collect();
-                // Its fences and walls a block and a half high, as boxes of triangles beside its faces.
-                let mut indices = mesh.indices.clone();
-                for [low, high] in &mesh.colliders {
-                    let (low, high) = (Vec3::from(*low) * block_size, Vec3::from(*high) * block_size);
-                    box_triangles(&mut points, &mut indices, low, high);
+            let made = voxear_terrain::workers::each(&wanted, |(_, mesh)| chunk_shape(mesh, block_size));
+            let now = wanted.into_iter().zip(made).map(|((key, mesh), shape)| (key, mesh.clone(), shape));
+            for (key, mesh, shape) in now.chain(background) {
+                if let Some((_, body, shape)) = kept.chunks.remove(&key) {
+                    self.world.remove_body(body);
+                    self.world.release_shape(shape);
+                    self.owners.remove(&body);
                 }
-                crate::MadeShape::mesh(&points, &indices)
-            });
-            for ((key, mesh), shape) in wanted.into_iter().zip(made) {
                 let Some(shape) = shape else { continue };
                 let shape = self.world.keep_shape(shape);
                 let key = &key;

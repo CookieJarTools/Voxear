@@ -56,6 +56,14 @@ impl WorldQuality {
             WorldQuality::Ultra => (16, 48, 32, 512.0, 32_768.0, [1.5, 2.0, 1.5]),
             WorldQuality::Custom => return None,
         };
+        // The rings pushed out until their blocks show this many pixels at most, more on the cheaper presets; Low draws
+        // them where the distances put them.
+        let far_block_pixels = match self {
+            WorldQuality::Low => 0.0,
+            WorldQuality::Medium => 6.0,
+            WorldQuality::High => 4.0,
+            _ => 3.0,
+        };
         let [near_detail, far_detail, plant_detail] = detail;
         Some(WorldBudget {
             quality: self,
@@ -67,6 +75,7 @@ impl WorldQuality {
             near_detail,
             far_detail,
             plant_detail,
+            far_block_pixels,
         })
     }
 }
@@ -98,6 +107,12 @@ pub struct WorldBudget {
     /// many of the world's coarser rings its structures are built into,
     /// fewer under 1.
     pub plant_detail: f32,
+    /// The largest a coarser ring's blocks show at its inner edge, in
+    /// pixels of a screen 1080 tall: the rings are pushed out, the world's
+    /// own blocks drawn on past them, until they are no larger (see
+    /// [`WorldBudget::far_pushed_for`]). 0 draws the rings where the
+    /// distances put them.
+    pub far_block_pixels: f32,
 }
 
 impl Default for WorldBudget {
@@ -126,7 +141,25 @@ impl WorldBudget {
             near_detail: detail(self.near_detail),
             far_detail: detail(self.far_detail),
             plant_detail: detail(self.plant_detail),
+            far_block_pixels: block_pixels(self.far_block_pixels),
         }
+    }
+
+    /// How many times as far as its own blocks reach a world's first
+    /// coarser ring is pushed out (`stream::StreamFrom::pushed`), so that
+    /// ring's blocks show no larger than [`WorldBudget::far_block_pixels`]
+    /// where it begins, on a screen 1080 tall seen with a view `fov_y`
+    /// radians high: a world of blocks `block_size` metres a side whose own
+    /// blocks reach `near` metres. 1 for none, and
+    /// `stream::MOST_PUSHED` at most.
+    pub fn far_pushed_for(&self, near: f32, block_size: f32, fov_y: f32) -> f32 {
+        if self.far_block_pixels <= 0.0 {
+            return 1.0;
+        }
+        let per_pixel = 2.0 * (fov_y.clamp(0.05, 3.0) * 0.5).tan() / 1080.0;
+        // A block of the first coarser ring, twice as large as the world's own, where its ring would begin.
+        let shown = 2.0 * block_size.max(0.01) / (near.max(1.0) * per_pixel);
+        (shown / self.far_block_pixels).clamp(1.0, crate::blocks::stream::MOST_PUSHED)
     }
 
     /// How far a world whose own chunks reach `distance` metres has them
@@ -186,6 +219,14 @@ fn finite_or(value: f32, otherwise: f32) -> f32 {
 
 fn detail(value: f32) -> f32 {
     finite_or(value, 1.0).clamp(0.25, 4.0)
+}
+
+/// 0 for none, or a block's pixels from 1.5 to 32.
+fn block_pixels(value: f32) -> f32 {
+    match finite_or(value, 0.0) {
+        v if v <= 0.0 => 0.0,
+        v => v.clamp(1.5, 32.0),
+    }
 }
 
 /// The file a machine keeps a game's own budget in, beside its saves.
@@ -327,6 +368,24 @@ mod tests {
         assert_eq!([low, medium, high, ultra].map(|budget| budget.structure_rings(3)), [2, 3, 3, 3]);
         let least = WorldBudget { quality: WorldQuality::Custom, plant_detail: 0.25, ..high }.checked();
         assert_eq!(least.structure_rings(3), 1);
+    }
+
+    #[test]
+    fn rings_are_pushed_out_until_their_blocks_show_no_larger_than_the_preset_says() {
+        let [low, medium, high, ultra] =
+            [WorldQuality::Low, WorldQuality::Medium, WorldQuality::High, WorldQuality::Ultra]
+                .map(|quality| quality.budget().unwrap());
+        assert_eq!([low, medium, high, ultra].map(|budget| budget.far_block_pixels), [0.0, 6.0, 4.0, 3.0]);
+        let fov = 70f32.to_radians();
+        // Metre blocks seen 70° high: 2 m blocks show 8 pixels 192 m off, so High pushes its rings out twice as far.
+        let pushed = high.far_pushed_for(192.0, 1.0, fov);
+        assert!((pushed - 2.0).abs() < 0.02, "{pushed}");
+        // Where the first ring already begins far enough, and on Low, the rings stay where they are.
+        assert_eq!(high.far_pushed_for(2000.0, 1.0, fov), 1.0);
+        assert_eq!(low.far_pushed_for(64.0, 1.0, fov), 1.0);
+        // Ultra, further near, pushes less for smaller pixels; a narrow view pushes as far as it may and no further.
+        assert!(ultra.far_pushed_for(384.0, 1.0, fov) < pushed);
+        assert_eq!(high.far_pushed_for(32.0, 1.0, 0.1), crate::blocks::stream::MOST_PUSHED);
     }
 
     #[test]

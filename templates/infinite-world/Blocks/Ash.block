@@ -1,3 +1,4 @@
 # Voxear block: how it looks, which the worlds of blocks made of it list.
 color = [0.36, 0.35, 0.34]
+overlap = 2
 hardness = 1.0

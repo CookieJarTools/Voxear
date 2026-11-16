@@ -158,7 +158,7 @@ The written nodes still keep to the world: a Climate Mask of a biome is that bio
 
 ## Without end
 
-Generated ground can go on **without end**: tick **Endless** under its generator's settings, and its ground is made round the camera as it goes, from its generator, a column of chunks at a time on threads of their own, the nearest first.
+Generated ground can go on **without end**: tick **Endless** under its generator's settings, and its ground is made round the camera as it goes, from its generator, a column of chunks at a time on threads of their own, the nearest first: what is round the camera and where it is heading, then the rings out from it, a few of their columns always on the way so the horizon keeps up with a camera flying on.
 
 | Setting | What it does |
 | --- | --- |
@@ -166,6 +166,8 @@ Generated ground can go on **without end**: tick **Endless** under its generator
 | Far distance | How far coarser blocks are drawn beyond, in metres: up to 16 km with metre blocks (see [[Block Worlds#The far view]]) |
 
 Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is drawn, and never where it is. Only its own blocks near the camera can be built on and stood on.
+
+Where the rings begin, their blocks are at their largest on screen: with metre blocks and 256 m of its own, about seven pixels of a screen 1080 tall. **Far block size** in the quality settings keeps them smaller: the first ring is pushed out until its blocks show no larger than it says where it begins, each ring after it twice as far, and the world's own blocks are drawn on past the View distance out to the first ring, made from the generator as the rings are, for drawing alone: nothing stands, grows or is built on them there, and what you built shows as it does in a ring. How large blocks show goes by how high the game's camera sees, not by the window, so a window resized makes nothing again. Ultra keeps them to three pixels, High to four and Medium to six; Low draws the rings where the distances put them. It costs more blocks drawn and more made: on High, with metre blocks and a camera seeing 70° high, its own blocks are drawn out to 384 m where they stopped at 192 m.
 
 ### The far view
 
@@ -205,6 +207,7 @@ How much making worlds without end may spend, and how far they are drawn, is set
 | Near detail | How many times as far as the world's own View distance its blocks reach |
 | Far detail | How many times as far as the world's own Far distance its coarser blocks reach |
 | Plant detail | How many times as far as each Foliage's Draw distance its plants are drawn, the woods they show as far off starting that much further out. Under 0.75 a world's trees and towns of blocks are built into one coarser ring fewer, under 0.5 two fewer |
+| Far block size | The largest a coarser ring's blocks show where the ring begins, in pixels of a screen 1080 tall. The first ring is pushed out, the world's own blocks drawn on past where they are made, until they are no larger, each ring after it twice as far. 0 draws the rings where the distances put them |
 
 | | Low | Medium | High | Ultra |
 | --- | --- | --- | --- | --- |
@@ -216,6 +219,7 @@ How much making worlds without end may spend, and how far they are drawn, is set
 | Near detail | ×0.5 | ×0.75 | ×1 | ×1.5 |
 | Far detail | ×0.5 | ×0.75 | ×1 | ×2 |
 | Plant detail | ×0.5 | ×0.75 | ×1 | ×1.5 |
+| Far block size | 0 | 6 px | 4 px | 3 px |
 
 A project starts on High, which draws a world as far as it says, up to 192 m of its own blocks and 8 km of rings. A world of 256 m and 16 km is drawn to 192 m and 8 km on High, to 384 m and 32 km on Ultra, and to 64 m and 1 km on Low. However far it is drawn, every ring is as many columns across as the world's own blocks, each twice as large as the one inside it, so a world drawn further has wider rings, or a ring more round them, never a gap or a seam. A machine never uses more threads than one fewer than its cores, whatever the setting says.
 
@@ -238,7 +242,7 @@ World.Quality = WorldQuality.Ultra;
 World.SaveQuality();
 ```
 
-`World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance`, `World.FarDistance`, `World.NearDetail`, `World.FarDetail` and `World.PlantDetail` read and set the numbers, and setting one makes `World.Quality` Custom:
+`World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance`, `World.FarDistance`, `World.NearDetail`, `World.FarDetail`, `World.PlantDetail` and `World.FarBlockPixels` read and set the numbers, and setting one makes `World.Quality` Custom:
 
 ```csharp
 World.NearDetail = 1.25f;
@@ -541,7 +545,7 @@ Blocks.Break(impact, 2f);
 | Call | What it does |
 | --- | --- |
 | `Blocks.All` | Every block of the project |
-| `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
+| `Blocks.DefinitionAt(position)` | The block at a point, as it is drawn: grass under a block is its Covered block (see [[Blocks#Grass under a block]]); `Block.None` for air |
 | `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is. A [[Blocks#Blocks of parts|block of parts]] is met where its parts are: a slab lying low on its top, half a block down |
 | `Blocks.Set(position, block)` | Sets one block |
 | `Blocks.FloorHeight(position)` | How high the top of a generated world's [[Block Worlds#The floor|floor]] stands, in metres: nothing changes a block there or under it. NaN where no world has one |

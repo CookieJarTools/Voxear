@@ -11,10 +11,12 @@ internal sealed class BlockInfo
 {
 	private readonly string? tool;
 	private readonly string? data;
+	private readonly string? covered;
 	private readonly string?[] sounds = new string?[3];
 	private readonly List<(string? Item, int Low, int High, float Chance)> dropped = [];
 	private ToolKind? toolKind;
 	private Definition? dataAsset;
+	private Block? coveredBlock;
 	private List<BlockDrop>? drops;
 	private readonly Sound?[] loaded = new Sound?[3];
 
@@ -43,6 +45,7 @@ internal sealed class BlockInfo
 		Chops = json.TryGetProperty("chops", out var chops) ? chops.GetInt32() : 0;
 		Fells = json.TryGetProperty("fells", out var fells) && fells.GetBoolean();
 		IsSapling = json.TryGetProperty("grows", out var grows) && grows.ValueKind == JsonValueKind.String;
+		covered = json.TryGetProperty("covered", out var under) && under.ValueKind == JsonValueKind.String ? under.GetString() : null;
 		foreach (var drop in json.GetProperty("drops").EnumerateArray())
 		{
 			var count = drop.GetProperty("count");
@@ -75,6 +78,9 @@ internal sealed class BlockInfo
 	public ToolKind? Tool => toolKind ??= string.IsNullOrEmpty(tool) ? null : Definition.Load<ToolKind>(tool);
 
 	public Definition? Data => dataAsset ??= string.IsNullOrEmpty(data) ? null : Definition.Load<Definition>(data);
+
+	/// <summary>The block it shows as while a block covers its top; None for itself always.</summary>
+	public Block Covered => coveredBlock ??= string.IsNullOrEmpty(covered) ? Block.None : Block.FromKey(BlockInfos.Key(covered) ?? string.Empty);
 
 	public IReadOnlyList<BlockDrop> Drops
 	{

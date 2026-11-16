@@ -415,6 +415,34 @@ impl Game {
         self.load_level(&level, renderer)
     }
 
+    /// Makes the ground round where the world is seen from before the game
+    /// goes on, as a loading screen waits for it: terrains and worlds of
+    /// blocks without end, and the plants grown on them. No time passes and
+    /// no script runs meanwhile. True once all of it is made; false if
+    /// `limit` went by first, with what was made by then kept and the rest
+    /// still made as the game ticks.
+    pub fn make_world(&mut self, limit: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            let world = &mut self.engine.world;
+            crate::terrain::stream(world, &mut self.content);
+            crate::portals::find_exits(world);
+            crate::blocks::stream(world, &mut self.content);
+            crate::grown_plants::update(world, &mut self.content);
+            let made = crate::terrain::streamed(world)
+                && crate::blocks::streamed(world)
+                && crate::grown_plants::settled(world);
+            if made {
+                return true;
+            }
+            if started.elapsed() >= limit {
+                return false;
+            }
+            // The terrain's threads make it; this one only takes in what they finished.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     /// Changes level now, then frees what the old one used and the new one
     /// does not.
     pub fn load_level(&mut self, level: &str, renderer: Option<&mut Renderer>) -> Result<()> {

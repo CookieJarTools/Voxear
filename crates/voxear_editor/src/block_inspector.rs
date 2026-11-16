@@ -1,7 +1,7 @@
 //! A Block in the Inspector, laid out as a material's is. Its **Look**: its
 //! colour, the material every face is drawn with and those its top and
-//! bottom have of their own, its shape (a cube, a cube with tufts of leaves,
-//! or a vine), and which liquid it is (a liquid is drawn in its colour
+//! bottom have of their own, the block it shows as while covered, its shape
+//! (a cube, a cube with tufts of leaves, or a vine), and which liquid it is (a liquid is drawn in its colour
 //! alone, so its materials and its shape go). **Breaking**: how long it takes
 //! by hand, the kind of tool that breaks it fast, and the tier of that tool
 //! that gets its drops, and for a log, how many hits cut it through and
@@ -58,6 +58,8 @@ pub enum BlockRef {
     Data,
     /// The plant a sapling grows into.
     Grows,
+    /// The block it shows as while a block covers its top.
+    Covered,
 }
 
 impl BlockRef {
@@ -79,6 +81,7 @@ impl BlockRef {
             BlockRef::StepSound => block.sounds.step.as_deref(),
             BlockRef::Data => block.data.as_deref(),
             BlockRef::Grows => block.grows.as_deref(),
+            BlockRef::Covered => block.covered.as_deref(),
         }
     }
 
@@ -99,6 +102,7 @@ impl BlockRef {
             BlockRef::StepSound => block.sounds.step = reference,
             BlockRef::Data => block.data = reference,
             BlockRef::Grows => block.grows = reference,
+            BlockRef::Covered => block.covered = reference,
         }
     }
 
@@ -111,6 +115,7 @@ impl BlockRef {
             BlockRef::BreakSound | BlockRef::PlaceSound | BlockRef::StepSound => ("Sound", "audio"),
             BlockRef::Data => ("Data Asset", "file"),
             BlockRef::Grows => ("Plant", "sprout"),
+            BlockRef::Covered => ("Block", "block"),
         }
     }
 }
@@ -262,6 +267,9 @@ impl BlockFields {
             }
             field
         });
+        if block.liquid.is_none() {
+            field(ui, rows, BlockRef::Covered, "Covered");
+        }
         let shape = block.liquid.is_none().then(|| {
             let row = prop(ui, rows, "Shape");
             let tip = "Cube: a block as most are. Bushy: a cube with tufts of leaves reaching out past it. Vine: thin \
@@ -368,6 +376,12 @@ impl BlockFields {
                 slots,
                 parts,
             };
+        let covered = fields.slots.iter().find(|(which, ..)| *which == BlockRef::Covered);
+        if let Some(row) = covered.and_then(|(_, shown, _)| ui.parent(shown.field)) {
+            let tip = "What it shows as while a block lies on it, as grass is dirt under a block: a block of the same \
+                       shape. Whole blocks, water, low slabs and stairs cover it; leaves, glass and plants do not";
+            ui.set_tooltip(row, tip, None);
+        }
         fields.show_swatch(ui);
         fields
     }

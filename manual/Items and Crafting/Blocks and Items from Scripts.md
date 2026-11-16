@@ -31,6 +31,7 @@ else
 | `Name`, `Color`, `IsLiquid` | What it is called, its colour, and whether it is a liquid |
 | `Hardness`, `Unbreakable`, `Tool`, `Tier` | Its rules, as its Inspector has them |
 | `Chops`, `Fells`, `IsSapling` | For a log, how many hits cut it through and whether that fells its tree; whether it is a sapling |
+| `Covered` | The block it shows as while a block lies on it, as grass shows as dirt; `Block.None` for itself always (see [[Blocks#Grass under a block]]) |
 | `Drops` | What it drops: each an item, the fewest and most of it, and its chance |
 | `BreakSound`, `PlaceSound`, `StepSound` | Its sounds |
 | `Data<T>()` | Its Data asset, as your own type |

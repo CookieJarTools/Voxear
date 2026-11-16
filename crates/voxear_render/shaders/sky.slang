@@ -212,20 +212,20 @@ SkyFragmentOut skyFragment(SkyOut input)
         color += stars / STAR_BRIGHTNESS * seen * STARS_ON_SCREEN / exposureScale(frame) * frame->stars;
     }
     Clouds clouds = frame->lighting.clouds;
-    if (clouds.cover > 0.0 && clouds.view != NO_TEXTURE)
+    // The clouds in front of all of it: what they add, and how much of the sky behind shows through.
+    float4 seen = clouds.cover > 0.0 && clouds.view != NO_TEXTURE
+        ? textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.ndc * 0.5 + 0.5, 0.0)
+        : float4(0.0, 0.0, 0.0, 1.0);
+    // What falls from weather far off hangs under its cloud: in front of the clouds seen from under them, and behind
+    // them seen from above.
+    float4 curtain = weatherCurtain(frame, direction, 1.0e5, input.ndc * 0.5 + 0.5);
+    if (levelHeight(frame, frame->cameraPosition) < clouds.base)
     {
-        // The clouds in front of all of it: what they add, and how much of the sky behind shows through.
-        float4 seen = textures[NonUniformResourceIndex(clouds.view)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], input.ndc * 0.5 + 0.5, 0.0);
-        color = color * seen.a + seen.rgb;
+        color = (color * seen.a + seen.rgb) * curtain.a + curtain.rgb;
     }
-    // What falls from weather far off hangs under its cloud, in front of the sky behind it.
-    float sand, dark;
-    float through = weatherCurtain(frame, direction, 1.0e5, sand, dark);
-    if (through < 1.0)
+    else
     {
-        float3 level = normalize(float3(direction.x, 0.02, direction.z));
-        float3 lit = atmosphere ? atmosphereSky(frame, level) : frame->skyHorizon;
-        color = lerp(curtainColour(lit, sand, dark), color, through);
+        color = (color * curtain.a + curtain.rgb) * seen.a + seen.rgb;
     }
     o.color = float4(color, 1.0);
     o.velocity = skyMotion(frame, direction);
@@ -375,25 +375,8 @@ void skyLightMain()
 
 // ---------------------------------------------------------------- Clouds
 
-// How many steps through the clouds, and towards the sun from each (their reach is CLOUD_REACH, in clouds.slang).
-static const uint CLOUD_STEPS = 40;
-static const uint CLOUD_SUN_STEPS = 4;
 // How much of last frame's picture this frame's keeps.
 static const float CLOUD_KEPT = 0.9;
-
-// The sun's light on the clouds and the sky's, as the frame has them.
-void cloudLight(Frame* frame, out float3 sun, out float3 sky)
-{
-    if (frame->lighting.sky == SKY_ATMOSPHERE)
-    {
-        sun = sunThroughAtmosphere(frame);
-        SkyLight* light = buffers()->skyLight;
-        sky = light != nullptr ? light->sky.rgb : skyAroundNow(frame);
-        return;
-    }
-    sun = frame->sunColor;
-    sky = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
-}
 
 // The sun's light let through the clouds to the middle of their layer over each place round the camera, looking
 // down: red alone is read. Each texel's samples lie along the way to the sun, so a shadow falls where that way
@@ -689,16 +672,7 @@ float4 cloudsFragment(LutOut input) : SV_Target0
     if (covered > 0.0)
     {
         float3 color = seen.rgb;
-        if (frame->lighting.sky == SKY_ATMOSPHERE)
-        {
-            // The air between: counted a third as hazy as the ground's, which is far nearer.
-            float4 haze = aerialPerspectiveAt(frame, input.uv, distance * 0.3);
-            color = color * haze.a + haze.rgb * skyLook(frame) * covered;
-        }
-        else
-        {
-            color = lerp(color, frame->skyHorizon * covered, smoothstep(0.2, 1.0, distance / CLOUD_REACH));
-        }
+        color = cloudsHazed(frame, input.uv, color, covered, distance);
         // Gone into the distance before the march's end.
         float far = 1.0 - smoothstep(0.65, 1.0, distance / reach);
         seen = float4(color * far, 1.0 - covered * far);

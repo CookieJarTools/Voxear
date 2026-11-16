@@ -7831,6 +7831,8 @@ struct CloudView {
     weather: voxear_render::weather::Weather,
     /// A ground as dark as soil rather than a pale one.
     soil: bool,
+    /// Weather over parts of the level, as storms.
+    places: Vec<voxear_render::weather::WeatherPlace>,
 }
 
 impl CloudView {
@@ -7847,11 +7849,13 @@ impl CloudView {
             moon: false,
             weather: voxear_render::weather::Weather::default(),
             soil: false,
+            places: Vec::new(),
         }
     }
 }
 
-/// The view's picture, and the least the passes named "Cloud…" took together over sixty frames, in milliseconds.
+/// The view's picture, and the least the passes named "Cloud…" took together over sixty frames, in milliseconds:
+/// with weather over places, the Sky and Fog passes too, which draw what falls from it.
 fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess, Sky, SkyMode};
     let Ok(mut renderer) = Renderer::new_offscreen(view.size.0, view.size.1, &RendererSettings::default()) else {
@@ -7881,6 +7885,9 @@ fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     let post = if view.moon { PostProcess::default() } else { PostProcess::neutral() };
     world.insert_resource(PostProcess { anti_aliasing, ..post });
     world.insert_resource(view.weather);
+    if !view.places.is_empty() {
+        world.insert_resource(voxear_render::weather::WeatherPlaces(view.places.clone()));
+    }
     let mut time = 0.0;
     run(&mut renderer, &world, &mut time, 2);
     // A frame is never taken for longer than a quarter of a second.
@@ -7893,7 +7900,9 @@ fn cloud_render(view: &CloudView) -> Option<(Vec<u8>, f32)> {
     for _ in 0..60 {
         time += FRAME;
         renderer.render(&world, time).expect("frame renders");
-        let cloud = |(name, _): &&(String, f32)| name.starts_with("Cloud");
+        let falls = !view.places.is_empty();
+        let cloud =
+            |(name, _): &&(String, f32)| name.starts_with("Cloud") || (falls && (name == "Sky" || name == "Fog"));
         let spent: f32 = renderer.timings().iter().filter(cloud).map(|(_, ms)| *ms).sum();
         if spent > 0.0 {
             least = least.min(spent);
@@ -8186,4 +8195,41 @@ fn clouds_cost_little_at_full_hd() {
         // Twice the 1.5 ms they are meant to stay within, for a GPU other tests are sharing.
         assert!(least < 3.0, "{name}: {least} ms");
     }
+}
+
+/// A storm 2.5 km off, `across` degrees round from the sun, raining hard.
+fn storm_off(across: f32) -> voxear_render::weather::WeatherPlace {
+    let at = bearing(0.0, across) * 2500.0;
+    voxear_render::weather::WeatherPlace {
+        middle: voxear_core::math::Vec2::new(at.x, at.z),
+        radius: 900.0,
+        amounts: voxear_render::weather::WeatherKind::Storm.amounts(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_storm_stands_in_cloud_that_thins_out_round_it_and_costs_little_at_full_hd() {
+    use voxear_render::Clouds;
+    let size = (1920, 1080);
+    let looking = bearing(14.0, 70.0);
+    let view = |places| CloudView { looking, ground: true, size, places, ..CloudView::of(Clouds::default()) };
+    let Some((clear, _)) = cloud_render(&view(Vec::new())) else { return };
+    let (stormy, least) = cloud_render(&view(vec![storm_off(70.0)])).unwrap();
+    keep_sized("storm in its cloud.png", &stormy, size);
+    eprintln!("a storm: the cloud, sky and fog passes took {least:.2} ms at 1920x1080");
+    assert!(least < 3.0, "{least} ms");
+    // Cloud over the storm, and round it, out to either side, in a sky with none of its own; less of it further off.
+    let share = |x0: u32, x1: u32| {
+        let rows = |pixels: &[u8]| -> Vec<u8> {
+            (300..560)
+                .flat_map(|y| pixels[((y * size.0 + x0) * 4) as usize..((y * size.0 + x1) * 4) as usize].to_vec())
+                .collect()
+        };
+        cloud_share(&rows(&stormy), &rows(&clear))
+    };
+    let (over, beside, far) = (share(860, 1060), share(420, 620), share(0, 200));
+    assert!(over > 0.8, "over the storm: {over}");
+    assert!(beside > 0.3, "beside it: {beside}");
+    assert!(far < beside, "further off, less: {far} and {beside}");
 }

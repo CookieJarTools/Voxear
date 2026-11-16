@@ -419,3 +419,169 @@ float3 atmosphereAmbient(Frame* frame, float up, float3 sunLight)
     float3 ground = albedo * (sunLight * saturate(towardsSun(frame).y) / PI + sky);
     return lerp(ground, sky, up) * frame->ambient;
 }
+
+// ---------------------------------------------------------------- Clouds' light, and what falls from them
+
+// The sun's light on the clouds and the sky's, as the frame has them.
+void cloudLight(Frame* frame, out float3 sun, out float3 sky)
+{
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        sun = sunThroughAtmosphere(frame);
+        SkyLight* light = buffers()->skyLight;
+        sky = light != nullptr ? light->sky.rgb : skyAroundNow(frame);
+        return;
+    }
+    sun = frame->sunColor;
+    sky = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
+}
+
+// `color`, the light of `covered` of what lies `distance` metres off along the ray seen at `screenUv`, hazed by the
+// air in front of it as the clouds are. Under the atmosphere the air is counted a third as hazy as the ground's,
+// which is far nearer; a gradient sky's horizon takes over from a fifth of the clouds' reach out.
+float3 cloudsHazed(Frame* frame, float2 screenUv, float3 color, float covered, float distance)
+{
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        float4 haze = aerialPerspectiveAt(frame, screenUv, distance * 0.3);
+        return color * haze.a + haze.rgb * skyLook(frame) * covered;
+    }
+    return lerp(color, frame->skyHorizon * covered, smoothstep(0.2, 1.0, distance / CLOUD_REACH));
+}
+
+// The light on the undersides of the clouds over `xz` in the world, seen along `direction`, as the Clouds pass
+// lights them (sky.slang's cloudsMarched and cloudBlocksSeen): the sun through the cloud between them and it, the
+// light scattered round inside, and the sky's, all of it dimmed under heavy weather.
+float3 cloudUndersideLight(Frame* frame, float2 xz, float3 direction, float3 sun, float3 sky)
+{
+    Clouds clouds = frame->lighting.clouds;
+    float3 toSun = towardsSun(frame);
+    float heavy = cloudWeather(frame, xz).y;
+    if (clouds.kind == CLOUDS_BLOCKS)
+    {
+        // The lowest cube's underside, and the cubes between its middle and the sun.
+        float block = max(clouds.block, 1.0);
+        float3 low = float3(xz.x - clouds.drift.x, 0.5 * block, xz.y - clouds.drift.y);
+        float shade = 0.0;
+        for (uint j = 1; j <= (cloudsOn(frame) ? CLOUD_SUN_STEPS : 0); j++)
+        {
+            float3 p = low + toSun * (block * 1.2 * float(j));
+            shade += cloudCubeAt(frame, p.xz, p.y / clouds.thickness);
+        }
+        float3 solid = sun * (0.4 - 0.14) * 0.95 + sky * (0.7 - 0.3);
+        float3 mist = sun * (0.3 + 0.65 * exp(-0.7 * shade)) * 0.95 + sky * (0.45 + 0.55 * low.y / clouds.thickness);
+        return lerp(solid, mist, clouds.softness) * (1.0 - 0.72 * heavy);
+    }
+    // A little way in from the underside, where a ray from below meets the cloud; the cloud towards the sun in steps
+    // that double, as each of the march's steps finds it.
+    const float height = 0.08;
+    float shade = 0.0;
+    float reach = clouds.thickness * 0.04;
+    float along = 0.0;
+    for (uint j = 0; j < (cloudsOn(frame) ? CLOUD_SUN_STEPS : 0); j++)
+    {
+        float middle = along + reach * 0.5;
+        shade += cloudDensityAt(frame, xz + toSun.xz * middle, height + toSun.y * middle / clouds.thickness, false) * reach;
+        along += reach;
+        reach *= 2.0;
+    }
+    float direct = exp(-shade);
+    float scattered = 1.0 / (1.0 + 0.35 * shade);
+    float lining = min(miePhase(0.75, dot(direction, toSun)) * 4.0 * PI, 6.0);
+    float lit = (0.3 * direct + 0.7 * scattered) * 0.95 + direct * lining * 0.15;
+    return (sun * lit + sky * (0.3 + 0.7 * height)) * (1.0 - 0.5 * heavy);
+}
+
+// What falls from the weather over parts of the level, seen as a curtain hanging under its cloud, uneven, and
+// thinner towards the ground; blown sand is a wall a few hundred metres high. Rain and snow are lit as the
+// undersides of the clouds they fall from are, by the same sun and sky and as dark, and hazed with distance as those
+// clouds are, so a storm's cloud and what falls from it are one grey; blown sand is the colour of sand in the sky's
+// light. Gives what all of it adds in front of what lies `distance` metres off along `direction`, seen at
+// `screenUv`, and in alpha how much of that shows through it.
+static const float SAND_WALL = 350.0;
+float4 weatherCurtain(Frame* frame, float3 direction, float distance, float2 screenUv)
+{
+    float flat = length(direction.xz);
+    if (frame->sea.storms == 0 || flat < 1e-4)
+    {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    float2 along = direction.xz / flat;
+    float reach = distance * flat;
+    Clouds clouds = frame->lighting.clouds;
+    // How high the camera is over the level's ground, and how high the clouds' undersides are.
+    float camera = levelHeight(frame, frame->cameraPosition);
+    float under = clouds.base + 0.15 * clouds.thickness;
+    float3 color = 0.0;
+    float through = 1.0;
+    // The light, worked out for the first fall seen.
+    bool lit = false;
+    float3 sun = 0.0;
+    float3 sky = 0.0;
+    float3 sand = 0.0;
+    for (uint i = 0; i < frame->sea.storms; i++)
+    {
+        float4 place = frame->sea.places[i];
+        float2 falls = frame->sea.skies[i].zw * float2(1.0, 2.5);
+        if (falls.x + falls.y <= 0.0)
+        {
+            continue;
+        }
+        float2 to = place.xy - frame->cameraPosition.xz;
+        float nearest = dot(to, along);
+        float aside = dot(to, to) - nearest * nearest;
+        float within = place.z * place.z - aside;
+        if (within <= 0.0)
+        {
+            continue;
+        }
+        float half = sqrt(within);
+        float from = max(nearest - half, 0.0);
+        float until = min(nearest + half, reach);
+        if (until <= from)
+        {
+            continue;
+        }
+        const uint SAMPLES = 6;
+        float2 thick = 0.0;
+        // How far along the ground the fall is on the whole, by how much of it is where.
+        float2 middle = 0.0;
+        for (uint j = 0; j < SAMPLES; j++)
+        {
+            float t = lerp(from, until, (float(j) + 0.5) / float(SAMPLES));
+            float2 xz = frame->cameraPosition.xz + along * t;
+            float high = camera + direction.y * t / flat;
+            // Heavier here and lighter there, in shafts.
+            float shafts = 0.45 + 1.1 * cloudPatches(levelXZ(frame, xz, 65536.0) / max(place.z * 0.22, 40.0));
+            float share = weatherShare(frame, i, xz) * shafts;
+            // Rain and snow from the clouds' undersides down, thinning as they fall; sand from the ground up.
+            float rain = saturate((under - high) / (0.1 * clouds.thickness)) * (0.5 + 0.5 * saturate(high / under));
+            float wall = saturate((camera + SAND_WALL * (0.7 + 0.6 * shafts) - high) / 60.0);
+            float2 here = share * float2(rain, wall) * falls;
+            thick += here;
+            middle += float2(t, 1.0) * (here.x + here.y);
+        }
+        // A heavy fall hides what is a few hundred metres into it.
+        thick *= (until - from) / float(SAMPLES) / flat * 0.004;
+        float kept = exp(-thick.x - thick.y);
+        float added = through * (1.0 - kept);
+        through *= kept;
+        if (added <= 1e-4)
+        {
+            continue;
+        }
+        if (!lit)
+        {
+            cloudLight(frame, sun, sky);
+            float3 level = normalize(float3(direction.x, 0.02, direction.z));
+            float3 horizon = frame->lighting.sky == SKY_ATMOSPHERE ? skyToward(frame, level) * skyLook(frame) : frame->skyHorizon;
+            sand = float3(0.56, 0.4, 0.22) * dot(horizon, float3(0.2126, 0.7152, 0.0722)) * 1.7;
+            lit = true;
+        }
+        float t = middle.x / max(middle.y, 1e-6);
+        float3 falling = cloudUndersideLight(frame, frame->cameraPosition.xz + along * t, direction, sun, sky);
+        float3 seen = lerp(falling, sand, thick.y / max(thick.x + thick.y, 1e-6));
+        color += cloudsHazed(frame, screenUv, seen, 1.0, t / flat) * added;
+    }
+    return float4(color, through);
+}

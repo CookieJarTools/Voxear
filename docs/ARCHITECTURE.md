@@ -1172,9 +1172,16 @@ and the nearest whirlpools.
 The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and
 roughness, eight waves, four whirlpools. `cloudWeather` in `clouds.slang` fills the cloud layer in and makes it
 heavier over each place, in the clouds' own march and in their shadow map, so a storm far off is a dark mass of
-cloud with its shadow under it. `weatherCurtain` integrates what falls along a view ray through each place's
-cylinder, under the clouds' undersides for rain and snow and a few hundred metres up for sand; the sky pass lays
-it over the sky and the fog pass over the scene, the fog switched on at no density where any place has a fall.
+cloud with its shadow under it. Its cloud spreads past its reach, twice as far again and 2.5 km more: overcast at its
+edge, thinning out by a ragged edge drawn from two octaves of patch noise into a few scattered clouds, and
+lighter as it goes, so a storm stands in a spread of cloud rather than alone in a clear sky. `weatherCurtain` in
+`atmosphere.slang` integrates what falls along a view ray through each place's cylinder, under the clouds'
+undersides for rain and snow and a few hundred metres up for sand. Rain and snow are lit as the cloud over them
+is (`cloudUndersideLight`: the march's own steps towards the sun from just inside the underside, the same sun,
+sky and darkening) and hazed by their distance as the clouds are (`cloudsHazed`), so the cloud and what falls from
+it are one grey. The sky pass lays it over the sky, in front of the clouds from under them and behind them from
+above, and the fog pass over the scene, in front of the fog, which lies low and near, so a curtain reads the same
+over the ground as over the sky; the fog is switched on at no density where any place has a fall.
 
 The sea's swell is drawn without moving a vertex. A world of blocks' water is merged quads, flat at the sea's
 height, which is the height of a crest. `blockSwell` in `water.slang` walks each top face's view ray across

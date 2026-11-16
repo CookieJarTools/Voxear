@@ -79,14 +79,20 @@ float4 fogFragment(PostOut input) : SV_Target
 
     float glow = pow(saturate(dot(direction, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
     float3 color = (fogColourToward(frame, direction) + frame->sunColor * glow * 0.15) * fogOpenness(frame, point.xyz / point.w);
-    // What falls from weather far off, between here and there, as its own fog.
-    float sand, dark;
-    float through = weatherCurtain(frame, direction, distance, sand, dark);
-    if (through < 1.0)
+    // What falls from weather far off, between here and there, as the sky pass draws it: in front of the fog, which
+    // lies mostly low and near, so it is the same over the ground as over the sky; and seen from above the clouds,
+    // behind those in front of it.
+    float4 curtain = weatherCurtain(frame, direction, distance, input.uv);
+    if (curtain.a < 1.0)
     {
-        float3 curtain = curtainColour(fogColourToward(frame, direction), sand, dark);
-        float kept = (1.0 - saturate(amount)) * through;
-        color = (color * saturate(amount) + curtain * (1.0 - saturate(amount)) * (1.0 - through)) / max(1.0 - kept, 1e-5);
+        Clouds clouds = frame->lighting.clouds;
+        if (levelHeight(frame, frame->cameraPosition) >= clouds.base && clouds.cover > 0.0 && clouds.view != NO_TEXTURE)
+        {
+            float clear = sampleLinear(clouds.view, input.uv).a;
+            curtain = float4(curtain.rgb * clear, 1.0 - (1.0 - curtain.a) * clear);
+        }
+        float kept = (1.0 - saturate(amount)) * curtain.a;
+        color = (curtain.rgb + color * saturate(amount) * curtain.a) / max(1.0 - kept, 1e-5);
         amount = 1.0 - kept;
     }
     return float4(color, saturate(amount));

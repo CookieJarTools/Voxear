@@ -256,7 +256,9 @@ fn calls_are_refused_with_a_reason_a_tool_can_read() {
     assert_eq!(kind(ask(&mut editor, &mut renderer, "field.set", light)), ErrorKind::WrongValue);
     let unknown = json!({ "obj": made["obj"], "component": "light", "field": "glow", "value": 1 });
     assert_eq!(kind(ask(&mut editor, &mut renderer, "field.set", unknown)), ErrorKind::NoSuchField);
-    let level = done(&mut editor, &mut renderer, "editor.state", json!({}))["level"].clone();
+    let state = done(&mut editor, &mut renderer, "editor.state", json!({}));
+    assert!(state["dotnet_started"].is_boolean(), "a debugger reads whether it can attach yet: {state}");
+    let level = state["level"].clone();
     let open = json!({ "level": { "path": level } });
     assert_eq!(kind(ask(&mut editor, &mut renderer, "level.open", open)), ErrorKind::UnsavedConflict);
 

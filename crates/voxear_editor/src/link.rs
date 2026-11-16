@@ -135,10 +135,10 @@ pub const PROJECT_KEYS: &[&str] = &["portals.view_distance", "quality.particles"
 pub const CALLS: &[CallInfo] = &[
     CallInfo {
         name: "editor.state",
-        about: "What the editor has open: the project, its level and scenes, whether it plays, unsaved edits, the selection and how many steps there are to undo.",
+        about: "What the editor has open: the project, its level and scenes, whether it plays, unsaved edits, the selection and how many steps there are to undo. `dotnet_started` says whether .NET runs its scripts yet, which it does from the first Play on, for a debugger to attach.",
         args: &[],
         changes: false,
-        returns: "{ project, level, scenes, active_scene, playing, paused, unsaved, selection, undo, redo, tools_may_change, headless }",
+        returns: "{ project, level, scenes, active_scene, playing, paused, building_scripts, dotnet_started, unsaved, selection, undo, redo, tools_may_change, headless }",
     },
     CallInfo {
         name: "objs.list",

@@ -694,6 +694,7 @@ impl Editor {
             "playing": self.is_playing(),
             "paused": self.is_paused(),
             "building_scripts": self.describing.is_some() || self.play.is_building(),
+            "dotnet_started": voxear_scripting::dotnet_started(),
             "unsaved": self.unsaved,
             "selection": selection,
             "undo": self.history.depth(),

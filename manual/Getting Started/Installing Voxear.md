@@ -42,6 +42,18 @@ voxup manual remove 0.1.0
 
 The launcher can only change versions it installed itself. An engine folder added with **Locate an engine…** keeps the files it has.
 
+## Installing Whisk
+
+Whisk is the code editor Voxear opens your scripts in. It is not part of an engine version: one copy serves every version, and it keeps itself up to date once installed.
+
+In the launcher, go to **Settings** and click **Install** under **Code editor**. **Open** starts it, and a project's menu in **Projects** has **Open in Whisk**. **Remove** takes away the copy the launcher installed; a Whisk you installed yourself is left alone, and the launcher finds and uses it.
+
+```bash
+voxup whisk install
+voxup whisk open ~/VoxearProjects/MyGame
+voxup whisk remove
+```
+
 ## Checking your computer
 
 Each version of Voxear comes with a command-line tool called `vox`, in the `bin` folder of the install. (**Show in files** on a version's menu in **Installs** opens that folder.) Run this to check that your graphics card and .NET are ready:

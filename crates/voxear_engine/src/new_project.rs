@@ -87,7 +87,8 @@ const SETUP: [(&str, &str, &str); 3] = [
     ("sample-scene", "Sample scene", "A ground and a cube that turns, with the script that turns it"),
 ];
 
-const IDES: [(&str, &str); 3] = [("rider", "Rider"), ("visual-studio", "Visual Studio"), ("vscode", "VS Code")];
+const IDES: [(&str, &str); 4] =
+    [("whisk", "Whisk"), ("rider", "Rider"), ("visual-studio", "Visual Studio"), ("vscode", "VS Code")];
 
 /// What a new project is to be, as `vox new`'s flags give it.
 #[derive(Clone, Debug)]
@@ -380,8 +381,8 @@ public sealed class Turner : Behaviour
     )
 }
 
-/// The C# IDE's own files: the solution suits Rider and Visual Studio as it
-/// is, and VS Code is told to use it with C# Dev Kit.
+/// The C# IDE's own files: the solution suits Whisk, Rider and Visual Studio
+/// as it is, and VS Code is told to use it with C# Dev Kit.
 fn set_up_ide(folder: &Path, ide: &str, namespace: &str, step: &mut dyn FnMut(&str)) -> Result<()> {
     let name = IDES.iter().find(|(id, _)| *id == ide).map_or(ide, |(_, name)| name);
     step(&format!("Setting up {name}: open {namespace}.slnx"));

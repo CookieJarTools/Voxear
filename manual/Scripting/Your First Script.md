@@ -13,6 +13,14 @@ This page makes a script that spins a cube.
 
 Keep your scripts in the `Scripts` folder, or in folders inside it. Scripts anywhere else are not built.
 
+### Your code editor
+
+Scripts open in **Whisk** unless you pick another code editor in **Settings › Code editor**. Whisk opens the whole project with the script, at the line you asked for, so its suggestions and go to definition know every script in it. Install Whisk from the launcher's **Settings** (see [[Installing Voxear]]). If Whisk is picked but not installed, the script opens as your desktop opens text files, and the editor says how to get Whisk.
+
+**Open Project in Code Editor**, in the command palette, opens the project folder on its own.
+
+Tools set it as they set any setting, with `vox editor call settings.set key=code_editor value=Rider`, and open the project with `vox editor call command.run id="command:Open Project in Code Editor"` (see [[Driving the Editor from a Terminal]]).
+
 The new script looks like this, with your project's name in place of `MyGame`:
 
 ```csharp

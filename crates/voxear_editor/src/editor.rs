@@ -123,7 +123,7 @@ use crate::{
     props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
     script_handles::ScriptHandles,
-    settings::{self, Memory, SNAPS, SettingKind, SettingValue, Settings},
+    settings::{self, CodeEditor, Memory, SNAPS, SettingKind, SettingValue, Settings},
     lighting_panel::LightingPanel,
     project_settings::ProjectSettingsPanel,
     settings_panel::SettingsPanel,
@@ -250,6 +250,8 @@ pub(crate) enum Command {
     /// give up the bake under way.
     BakeLighting,
     CancelLightingBake,
+    /// Open the project's folder in the code editor the settings name.
+    OpenInCodeEditor,
 }
 
 /// How far in front of the Scene camera a new Obj goes.
@@ -2242,30 +2244,42 @@ impl Editor {
     }
 
     /// Opens a file at a line in the code editor the settings name, as a
-    /// stack frame clicked in the Console asks.
+    /// stack frame clicked in the Console asks, with the project beside it.
     pub fn open_source(&mut self, file: &Path, line: u32) {
         if let Some(opener) = &mut self.source_opener {
             return opener(file, line);
         }
-        let path = file.display().to_string();
-        let (program, args): (&str, Vec<String>) = match self.memory.settings.code_editor {
-            0 => ("code", vec!["--goto".into(), format!("{path}:{line}")]),
-            1 => ("rider", vec!["--line".into(), line.to_string(), path]),
-            2 => ("zed", vec![format!("{path}:{line}")]),
-            _ if cfg!(target_os = "macos") => ("open", vec![path]),
-            _ if cfg!(windows) => ("explorer", vec![path]),
-            _ => ("xdg-open", vec![path]),
-        };
-        match std::process::Command::new(program).args(&args).spawn() {
+        self.open_in_code_editor(Some((file, line)));
+    }
+
+    /// Opens the project's folder in the code editor the settings name.
+    pub fn open_project_in_code_editor(&mut self) {
+        let root = self.game.project.root.clone();
+        if let Some(opener) = &mut self.source_opener {
+            return opener(&root, 0);
+        }
+        self.open_in_code_editor(None);
+    }
+
+    /// Starts the code editor on the project and, when given, a file at a
+    /// line. Whisk picked but not installed opens the file as the desktop
+    /// does, and says how to get Whisk.
+    fn open_in_code_editor(&mut self, file: Option<(&Path, u32)>) {
+        let editor = self.memory.settings.code_editor;
+        let root = self.game.project.root.clone();
+        let command = editor.command(&root, file).or_else(|| {
+            self.notify("Whisk is not installed: add it in the Voxear Launcher's Settings, or pick another code editor in Settings");
+            CodeEditor::SystemDefault.command(&root, file)
+        });
+        let Some((program, args)) = command else { return };
+        match std::process::Command::new(&program).args(&args).spawn() {
             Ok(mut child) => {
                 // Waited on elsewhere, so it does not linger once it exits.
                 std::thread::spawn(move || child.wait());
             }
             Err(error) => {
-                let editor = settings::CODE_EDITORS[self.memory.settings.code_editor.min(3)];
-                self.notify(&format!(
-                    "Could not open it with {editor} ({error}); pick another in Settings, Code editor"
-                ));
+                let name = editor.name();
+                self.notify(&format!("Could not open it with {name} ({error}); pick another in Settings, Code editor"));
             }
         }
     }
@@ -2386,6 +2400,7 @@ impl Editor {
             Command::BakeReverb => self.bake_reverb(),
             Command::BakeLighting => self.bake_lighting(renderer),
             Command::CancelLightingBake => self.cancel_lighting_bake(renderer),
+            Command::OpenInCodeEditor => self.open_project_in_code_editor(),
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {

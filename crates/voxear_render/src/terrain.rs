@@ -26,7 +26,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Result;
 use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
-use voxear_rhi::{Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
+use voxear_rhi::{Buffer, Frames, Gpu, KeptBatch, MemoryLocation, Retired, vk};
 use voxear_terrain::{
     HeightTile, Heightmap, TILE_QUADS,
     dig::{CHUNK_SAMPLES, DugChunk, Excavation},
@@ -357,6 +357,10 @@ pub(crate) struct Terrains {
     /// What this frame copies.
     copies: Vec<Copy>,
     staging: Option<Buffer>,
+    /// The tiles' meshes for rays made this frame: their uploads and bottom
+    /// levels' builds, kept for the frame's own commands to do (see
+    /// `record`).
+    rays: Vec<KeptBatch>,
     drawn: Vec<Drawn>,
     /// The patch grid's indices, made with the first terrain.
     grid: Option<Buffer>,
@@ -398,7 +402,12 @@ impl Terrains {
             self.grid = Some(grid);
         }
         let grid = self.grid.as_ref().map_or(vk::Buffer::null(), |grid| grid.handle);
-        // The tiles' meshes for rays uploaded and built together, waited for once.
+        // Meshes for rays no frame's commands made are made now, before anything draws them.
+        for kept in self.rays.drain(..) {
+            gpu.do_kept(kept)?;
+        }
+        // The tiles' meshes for rays uploaded and built together, by the frame's own commands: submitted alone and
+        // waited for, they would wait for every frame the GPU is still drawing too.
         let batch = gpu.batch();
         for (entity, terrain, corner) in found {
             if any_hidden && crate::scene::hidden(world, entity) {
@@ -587,7 +596,9 @@ impl Terrains {
                 key,
             });
         }
-        batch.finish()?;
+        if let Some(kept) = batch.keep()? {
+            self.rays.push(kept);
+        }
         // What no longer is, or is no longer drawn, goes once the frames that drew it are done.
         let gone: Vec<u64> =
             self.resident.iter().filter(|(_, resident)| resident.seen != frame_index).map(|(key, _)| *key).collect();
@@ -617,6 +628,20 @@ impl Terrains {
             if let Some(pool) = &resident.dug {
                 drawn.dug_id = Some(*dug_ids.entry(drawn.key).or_insert_with(|| fg.import_buffer(&pool.buffer)));
             }
+        }
+        // The meshes for rays made this frame, before the top level of what rays meet is built with them.
+        if !self.rays.is_empty() {
+            let mut rays = std::mem::take(&mut self.rays);
+            for kept in &mut rays {
+                for buffer in kept.take_buffers() {
+                    frames.retire(Retired::Buffer(buffer));
+                }
+            }
+            fg.add_pass("Ray mesh uploads (terrain)", &[], &[], move |ctx| {
+                for kept in &rays {
+                    ctx.gpu.record_kept(ctx.cmd, kept);
+                }
+            });
         }
         if let Some(staging) = self.staging.take() {
             let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
@@ -657,6 +682,11 @@ impl Terrains {
         }
         if let Some(staging) = self.staging.take() {
             gpu.destroy_buffer(staging);
+        }
+        for mut kept in self.rays.drain(..) {
+            for buffer in kept.take_buffers() {
+                gpu.destroy_buffer(buffer);
+            }
         }
     }
 }

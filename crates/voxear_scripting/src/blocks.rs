@@ -547,6 +547,7 @@ pub(crate) unsafe extern "C" fn world_budget(which: i32) -> f32 {
             7 => budget.far_detail,
             8 => budget.plant_detail,
             9 => f32::from(u8::from(MachineBudget::of(world).kept)),
+            10 => budget.far_block_pixels,
             _ => return None,
         })
     };
@@ -582,6 +583,7 @@ pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
             6 => WorldBudget { near_detail: value, ..custom },
             7 => WorldBudget { far_detail: value, ..custom },
             8 => WorldBudget { plant_detail: value, ..custom },
+            10 => WorldBudget { far_block_pixels: value, ..custom },
             _ => return None,
         };
         budget.put(world);

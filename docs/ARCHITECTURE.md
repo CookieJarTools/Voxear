@@ -3822,7 +3822,9 @@ has the vines it has among its neighbours. A `.voxplant` with `vines` grows them
 each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
 chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
 `RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
-900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same, the ray meshes
+900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same (a world without
+end's new chunks' on the terrain's threads, their bodies added at a later step, but for those within a chunk of a
+character or a body and chunks changed, `BlockBodies::making`), the ray meshes
 made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
 too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
 room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose
@@ -3858,7 +3860,18 @@ showing under that band; and a coarse column whose finer columns all come after 
 `RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
 columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
 blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
-and a world drawn smooth draw their rings as before. Leaves past the sun's cascades take the share of sun a crown's
+and a world drawn smooth draw their rings as before. With a Far block size (`WorldBudget::far_pushed_for`), the first coarser ring is pushed
+out `pushed` times as far round where the world is looked at from (`StreamFrom::pushed`), each ring after it twice as
+far as the one before, and the world's own
+blocks are drawn on past its made columns out to the first ring: columns of them asked for and made at `FINE`, from
+`column_chunks` as a coarse column's are and meshed alone, kept in `BlockWorld::far` at level -1 so their keys never
+meet the near chunks', and given level 0 in the renderer's slots. The streamer asks for what is nearest first in
+metres (`BlockStreamer::ask`), from each place and from where the first is heading a second on (`lead`), each coarser
+ring two near columns further off and a coarse column whose four finer columns lie in the finer windows after all
+else (`COVERED`); a twelfth of the columns at once is kept for the rings whatever is nearer (`RINGS_ALWAYS`) and no
+more than a quarter are far tiles, which take long each. A far tile asks the generator's Volume only for the spans of
+ground that stands (`Voxels::spanned`), never for hollows such as caves, whose network a coarse column would reach
+over far and wide. Block tints' tiles are worked out on the terrain's threads and taken in as they are done. Leaves past the sun's cascades take the share of sun a crown's
 leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its

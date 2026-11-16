@@ -847,11 +847,18 @@ impl Woods {
             }
         }
         // Their climate, asked of the generator at once, and from it their biome where it keeps to any.
-        let mut liked = dry(world, (&xs, &zs, &heights), self.shore.filter(|_| !rule.under_water));
+        let shore = self.shore.filter(|_| !rule.under_water);
+        let columns: Vec<[u32; 2]> = wooded.iter().map(|(column, _)| *column).collect();
+        let mut liked = TILE_GROUND.with_borrow_mut(|kept| {
+            let kept = kept.of(world, making, tile);
+            kept.dry(world, (&columns, &xs, &zs, &heights), shore)
+        });
         let biomes = making.generate.placed.as_deref().filter(|_| !self.biomes.is_empty());
         if rule.temperature.is_some() || rule.humidity.is_some() || biomes.is_some() {
-            let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
-            world.climates(&xs, &zs, &heights, &mut warmth, &mut wetness);
+            let (warmth, wetness) = TILE_GROUND.with_borrow_mut(|kept| {
+                let kept = kept.of(world, making, tile);
+                kept.climates(world, (&columns, &xs, &zs, &heights))
+            });
             liked = (0..xs.len())
                 .map(|at| {
                     if !liked[at] {
@@ -903,6 +910,103 @@ impl Woods {
                 }
             }
         }
+    }
+}
+
+/// What the woods built into a far tile ask of its ground, kept for the
+/// tile on each thread: every wood built into it asks about the same
+/// columns. Whether each column is clear of rivers and lakes, there and
+/// [`super::structure::BY_WATER`] round it; and its climate on ground as
+/// high as it was last asked about.
+#[derive(Default)]
+struct TileGround {
+    key: Option<(u64, [u32; 3], u32, [i32; 2])>,
+    clear: Vec<Option<[bool; 2]>>,
+    climates: Vec<Option<(u32, f32, f32)>>,
+}
+
+thread_local! {
+    static TILE_GROUND: std::cell::RefCell<TileGround> = std::cell::RefCell::new(TileGround::default());
+}
+
+impl TileGround {
+    /// What is kept of `tile`'s ground, made by `world` for `making`:
+    /// nothing yet where it was another tile's.
+    fn of(&mut self, world: &crate::generate::WorldGen, making: &BlockMaking, tile: &FarTile) -> &mut Self {
+        let placed = [making.generate.position[0], making.generate.position[1], making.file.block_size];
+        let key = Some((world.hash(), placed.map(f32::to_bits), tile.level, tile.at));
+        if self.key != key {
+            let columns = (CHUNK * CHUNK) as usize;
+            *self = TileGround { key, clear: vec![None; columns], climates: vec![None; columns] };
+        }
+        self
+    }
+
+    /// [`dry`] for the places `(xs, zs)` in the tile's `columns`, their
+    /// ground `heights` metres high: clear of water read once a column.
+    fn dry(
+        &mut self,
+        world: &crate::generate::WorldGen,
+        (columns, xs, zs, heights): (&[[u32; 2]], &[f32], &[f32], &[f32]),
+        shore: Option<f32>,
+    ) -> Vec<bool> {
+        let index = |column: [u32; 2]| (column[1] * CHUNK + column[0]) as usize;
+        let missing: Vec<usize> = (0..columns.len()).filter(|&at| self.clear[index(columns[at])].is_none()).collect();
+        if !missing.is_empty() {
+            let by = super::structure::BY_WATER;
+            let round = [(0.0, 0.0), (by, 0.0), (-by, 0.0), (0.0, by), (0.0, -by)];
+            let (wx, wz): (Vec<f32>, Vec<f32>) =
+                missing.iter().flat_map(|&at| round.iter().map(move |(dx, dz)| (xs[at] + dx, zs[at] + dz))).unzip();
+            let water = world.water(&wx, &wz).map(|(water, _)| water);
+            let clear = |water: &f32| *water < crate::generate::nodes::NO_WATER * 0.5;
+            for (k, &at) in missing.iter().enumerate() {
+                let found = match &water {
+                    Some(water) => {
+                        let read = &water[k * round.len()..(k + 1) * round.len()];
+                        [clear(&read[0]), read.iter().all(clear)]
+                    }
+                    None => [true, true],
+                };
+                self.clear[index(columns[at])] = Some(found);
+            }
+        }
+        let sea = world.sea_level();
+        (0..columns.len())
+            .map(|at| {
+                let [here, round] = self.clear[index(columns[at])].unwrap_or([true, true]);
+                match shore {
+                    Some(shore) => heights[at] - sea >= shore && round,
+                    None => here,
+                }
+            })
+            .collect()
+    }
+
+    /// The climate at the places `(xs, zs)` in the tile's `columns`, on
+    /// ground `heights` metres high: how warm, and how wet. Each column's is
+    /// kept, and read again only where its ground is asked about at another
+    /// height.
+    fn climates(
+        &mut self,
+        world: &crate::generate::WorldGen,
+        (columns, xs, zs, heights): (&[[u32; 2]], &[f32], &[f32], &[f32]),
+    ) -> (Vec<f32>, Vec<f32>) {
+        let index = |column: [u32; 2]| (column[1] * CHUNK + column[0]) as usize;
+        let known = |kept: &Option<(u32, f32, f32)>, height: f32| kept.is_some_and(|(at, ..)| at == height.to_bits());
+        let missing: Vec<usize> =
+            (0..columns.len()).filter(|&at| !known(&self.climates[index(columns[at])], heights[at])).collect();
+        if !missing.is_empty() {
+            let pick = |from: &[f32]| missing.iter().map(|&at| from[at]).collect::<Vec<f32>>();
+            let (mx, mz, mh) = (pick(xs), pick(zs), pick(heights));
+            let (mut warmth, mut wetness) = (vec![0.0; missing.len()], vec![0.0; missing.len()]);
+            world.climates(&mx, &mz, &mh, &mut warmth, &mut wetness);
+            for (k, &at) in missing.iter().enumerate() {
+                self.climates[index(columns[at])] = Some((heights[at].to_bits(), warmth[k], wetness[k]));
+            }
+        }
+        (0..columns.len())
+            .map(|at| self.climates[index(columns[at])].map_or((0.0, 0.0), |(_, warm, wet)| (warm, wet)))
+            .unzip()
     }
 }
 

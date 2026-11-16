@@ -289,6 +289,10 @@ uint cascadeAt(Frame* frame, float3 position)
 // How much of the sun a terrain's surface takes where the sun's shadows do not reach, as terrainShading says: a face
 // of leaves there as much as a crown's leaves take where they do, most of them shaded by the others.
 static float terrainSunShare = 1.0;
+// How much of the light from all round reaches a terrain's surface, as terrainShading says: a block's face less
+// towards the corners the blocks round it close in. Taken with the ambient occlusion pass's, the less of the two;
+// the sun's light is its shadow's to dim.
+static float terrainOcclusion = 1.0;
 #endif
 
 // Foliage, lit as leaves are: light wrapped round past the side facing
@@ -572,6 +576,17 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
         lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], atlasUv, lookup.depth);
     }
     return lit / float(PCSS_FILTER_TAPS) * clouds;
+}
+
+// Whether the sun's shadows are drawn at a point: a page of its virtual shadow maps holds it, or one of its cascades
+// does. Without either, nothing in the sun's way is known there.
+bool sunShadowsReach(Frame* frame, float3 position)
+{
+    if (frame->vsm.pool != NO_TEXTURE)
+    {
+        return vsmTap(frame, vsmAcross(frame, position), vsmLevelFor(frame, position)).found;
+    }
+    return frame->shadowTexture != NO_TEXTURE && cascadeAt(frame, position) < CASCADES;
 }
 
 // The shadow atlas's cascades, each this many texels across (src/shadows.rs).
@@ -1256,7 +1271,9 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     bool facingSun = dot(facing, -frame->sunDirection) > 0.0;
     float shadow = facingSun ? min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
 #ifdef TERRAIN_SHADING
-    if (frame->shadowTexture == NO_TEXTURE || cascadeAt(frame, input.worldPosition) >= CASCADES)
+    // Past where the sun's shadows reach, a face of leaves takes a crown's share of the sun; within them, its shadow
+    // says how much, as the leaves of a crown shade each other in them.
+    if (!sunShadowsReach(frame, input.worldPosition))
     {
         shadow *= terrainSunShare;
     }
@@ -1325,6 +1342,9 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
+#ifdef TERRAIN_SHADING
+    occlusion.diffuse = min(occlusion.diffuse, terrainOcclusion);
+#endif
     float found;
     float3 reflected = environmentReflection(frame, input.position.xy, lightAt, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere, found);
     // A reflection that was found already stops where something is in its way, so ambient occlusion only darkens

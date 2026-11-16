@@ -210,6 +210,37 @@ float mirrorKeep(Frame* frame, int2 pixel)
     return lerp(1.0, MIRROR_MOVING_KEEP, mirror * frame->post.cameraMotion);
 }
 
+// How much of its history TAA keeps on what moves on its own, beyond the camera's motion: leaves swaying, a crowd
+// walking. Each frame the history is read a fraction of a pixel off where it lay, and a little of its detail goes
+// with it; kept in full under a sway of a fraction of a pixel a frame, a crown of leaves blurred to a smear and the
+// shadows on it trailed. A camera moving over still things keeps it all.
+static const float OWN_MOTION_KEEP = 0.85;
+// The motion of its own, in pixels a frame, at which a surface keeps OWN_MOTION_KEEP.
+static const float OWN_MOTION_PIXELS = 0.25;
+
+// How far, in pixels, the surface drawn at `pixel` (`size` of them across) moved on its own since last frame: its
+// `velocity` less what the camera's motion alone does to a still point at its depth.
+float ownMotion(Frame* frame, int2 pixel, float2 size, float2 velocity, float depth)
+{
+    float2 ndc = (float2(pixel) + 0.5) / size * 2.0 - 1.0;
+    float4 world = transform(frame->invViewProj, float4(ndc, depth, 1.0));
+    world /= world.w;
+    float4 now = transform(frame->unjitteredViewProj, world);
+    float4 before = transform(frame->prevViewProj, world);
+    if (now.w <= 0.0 || before.w <= 0.0)
+    {
+        return 0.0;
+    }
+    float2 still = (now.xy / now.w - before.xy / before.w) * 0.5;
+    return length((velocity - still) * size);
+}
+
+// How much of its history a pixel keeps for what moves on its own there.
+float ownMotionKeep(Frame* frame, int2 pixel, float2 size, float2 velocity, float depth)
+{
+    return lerp(1.0, OWN_MOTION_KEEP, saturate(ownMotion(frame, pixel, size, velocity, depth) / OWN_MOTION_PIXELS));
+}
+
 // The drawn pixel under an output pixel's middle, when TAA upscales.
 int2 mirrorPixel(Frame* frame, float2 uv)
 {
@@ -257,9 +288,11 @@ float4 taaFragment(PostOut input) : SV_Target
     float3 history = toYCoCg(compress(sampleHistory(push.textures.y, historyUv, float2(frame->viewport))));
     history = clipToBox(history, mean - 1.25 * deviation, mean + 1.25 * deviation);
 
-    // Keep less history when things move fast, so motion stays crisp.
-    float speed = length(velocity * float2(frame->viewport));
+    // Keep less history when things move fast, so motion stays crisp, and where they move on their own.
+    float2 size = float2(frame->viewport);
+    float speed = length(velocity * size);
     float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0)) * mirrorKeep(frame, pixel);
+    keep *= ownMotionKeep(frame, pixel + nearestOffset, size, velocity, nearest);
     return float4(expand(fromYCoCg(lerp(centre, history, keep))), 1.0);
 }
 
@@ -323,6 +356,7 @@ float4 taaUpscaleFragment(PostOut input) : SV_Target
 
     float speed = length(velocity * outputSize);
     float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0)) * mirrorKeep(frame, mirrorPixel(frame, input.uv));
+    keep *= ownMotionKeep(frame, nearestPixel, drawnSize, velocity, nearest);
     // A sample right on the pixel counts in full; one a pixel away, hardly.
     float fresh = (1.0 - keep) * nearestWeight;
     return float4(expand(fromYCoCg(lerp(history, current, fresh))), 1.0);

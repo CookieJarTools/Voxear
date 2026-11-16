@@ -1477,7 +1477,8 @@ history on camera cuts.
 3. **TAA.** The camera is jittered along an eight-frame Halton sequence. Each pixel reprojects last frame's result
    with a nine-tap Catmull-Rom filter, using the nearest surface's motion at edges. History is clipped to the
    neighbourhood's colour box in YCoCg, and blended in a tonemapped space so highlights do not flicker. Fast
-   motion keeps less history. History resets on the first frame, on resize and when TAA is switched on.
+   motion keeps less history, and so does what moves on its own, its motion less the camera's at its depth
+   (`ownMotionKeep`): swaying leaves keep their detail rather than blurring. History resets on the first frame, on resize and when TAA is switched on.
 4. **Depth of field:** a 48-tap golden-angle gather whose weights keep sharp foreground edges from bleeding.
 5. **Motion blur:** 12 taps along each pixel's motion, capped at 40 pixels.
 6. **Bloom:** six levels down with the 13-tap filter from Call of Duty: Advanced Warfare (Karis-averaged on the
@@ -3777,7 +3778,8 @@ against the frustum and last frame's depth and drawn by multi-draw-indirect, wit
 Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by where they are, each a palette of the
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
-way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
+way they face. The corners' shade dims the light from all round, the less of it and the ambient occlusion pass's,
+and leaves the sun to its shadow. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
 and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
 (`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a
@@ -3858,8 +3860,9 @@ showing under that band; and a coarse column whose finer columns all come after 
 `RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
 columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
 blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
-and a world drawn smooth draw their rings as before. Leaves past the sun's cascades take the share of sun a crown's
-leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes. Models of small coloured
+and a world drawn smooth draw their rings as before. Leaves past the sun's shadows, where no virtual shadow page or
+cascade holds them, take the share of sun a crown's leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are
+not flat sunlit boxes; within them their shadow says it. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the

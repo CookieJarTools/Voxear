@@ -2168,6 +2168,8 @@ struct View {
     /// The ray-traced GI's origins last frame, its spacing, and how many
     /// frames it has run, when it had probes this one can carry on from.
     ddgi_history: Option<([[i32; 4]; gpu::DDGI_CASCADES], f32, u32)>,
+    /// The light the GI's probes gathered last frame, to tell when it jumps.
+    ddgi_lit_by: Option<ddgi::LightKey>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
     /// The views through the Portals it sees, kept from frame to frame.
@@ -2370,6 +2372,7 @@ impl View {
             cloud_drift: [0.0; 2],
             ocean: water::OceanBuffers::new(gpu, &named, FRAMES_IN_FLIGHT)?,
             ddgi_history: None,
+            ddgi_lit_by: None,
             warned_meshlets: false,
             portals: Vec::new(),
             shadow_cache: shadow_cache::ShadowCache::default(),
@@ -3177,7 +3180,11 @@ impl View {
         let lit = extracted.post.global_illumination;
         // Probes whose rays are traced against the scene's triangles, so no light passes walls.
         let mut probes = None;
-        let previous_ddgi = self.ddgi_history.take();
+        // When the light jumps, as a look or lighting settings are swapped, the probes start again: they would keep
+        // the old light for a minute and more, in patches.
+        let lit_by = extracted.light_key;
+        let jumped = self.ddgi_lit_by.replace(lit_by).is_some_and(|before| lit_by.jumped_from(&before));
+        let previous_ddgi = self.ddgi_history.take().filter(|_| !jumped);
         let mut scene_hierarchy = (0, 0);
         // Plants of a Foliage come after the Objs; rays leave them out, as thousands of small moving meshes cost far
         // more to trace than they change the bounced light or a reflection. A frame that captures a reflection

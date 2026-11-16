@@ -379,10 +379,10 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "blocks.get",
-        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there.",
+        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there. `shows` is the block it is drawn as where that is another, as grass under a block shows as its Covered block.",
         args: &[arg("at", ArgKind::Vector, "Metres, in the world."), maybe("obj", ArgKind::Obj, "The Block World.")],
         changes: false,
-        returns: "{ obj, cell, block }",
+        returns: "{ obj, cell, block, shows }",
     },
     CallInfo {
         name: "blocks.set",
@@ -759,10 +759,10 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "world_quality.get",
-        about: "What making worlds of blocks spends now: its preset, threads, columns at once, megabytes uploaded a frame, view and far limits in metres, and near, far and plant details (how many times as far as a world says); whether this machine keeps its own; and the project's.",
+        about: "What making worlds of blocks spends now: its preset, threads, columns at once, megabytes uploaded a frame, view and far limits in metres, near, far and plant details (how many times as far as a world says), and the largest a coarser ring's blocks show in pixels; whether this machine keeps its own; and the project's.",
         args: &[],
         changes: false,
-        returns: "{ quality, threads, columns, upload, view_distance, far_distance, near_detail, far_detail, plant_detail, machine, project }",
+        returns: "{ quality, threads, columns, upload, view_distance, far_distance, near_detail, far_detail, plant_detail, far_block_pixels, machine, project }",
     },
     CallInfo {
         name: "world_quality.set",
@@ -777,6 +777,11 @@ pub const CALLS: &[CallInfo] = &[
             maybe("near_detail", ArgKind::Number, "How many times as far as the world says its own chunks reach."),
             maybe("far_detail", ArgKind::Number, "How many times as far as the world says its rings reach."),
             maybe("plant_detail", ArgKind::Number, "How many times as far as each Foliage says plants are drawn."),
+            maybe(
+                "far_block_pixels",
+                ArgKind::Number,
+                "The largest a coarser ring's blocks show where it begins, in pixels of a screen 1080 tall: the rings are pushed out until they are no larger. 0 for where the distances put them.",
+            ),
             maybe(
                 "machine",
                 ArgKind::Toggle,

@@ -28,102 +28,6 @@ bool cloudsOn(Frame* frame)
     return frame->lighting.clouds.cover > 0.0 && frame->lighting.clouds.noise != NO_TEXTURE;
 }
 
-// What the weather over parts of the level adds to the clouds over `xz` in the world: how far it fills them in
-// towards overcast, and how much heavier it makes them, each from 0 to 1.
-float2 cloudWeather(Frame* frame, float2 xz)
-{
-    float2 adds = 0.0;
-    for (uint i = 0; i < frame->sea.storms; i++)
-    {
-        adds = max(adds, frame->sea.skies[i].xy * weatherShare(frame, i, xz));
-    }
-    return adds;
-}
-
-// What falls from the weather over parts of the level, seen from outside it as a curtain hanging under its cloud,
-// uneven, and thinner towards the ground; blown sand is a wall a few hundred metres high. Gives how much of what
-// lies `distance` metres off along `direction` shows through all of it, in `sand` how much of what hides the rest
-// is blown sand rather than rain or snow, and in `dark` how dark the weather it falls from is.
-static const float SAND_WALL = 350.0;
-float weatherCurtain(Frame* frame, float3 direction, float distance, out float sand, out float dark)
-{
-    sand = 0.0;
-    dark = 0.0;
-    float flat = length(direction.xz);
-    if (frame->sea.storms == 0 || flat < 1e-4)
-    {
-        return 1.0;
-    }
-    float2 along = direction.xz / flat;
-    float reach = distance * flat;
-    Clouds clouds = frame->lighting.clouds;
-    // How high the camera is over the level's ground, and how high the clouds' undersides are.
-    float camera = frame->cameraPosition.y + frame->origin.w;
-    float under = clouds.base + 0.15 * clouds.thickness;
-    float through = 1.0;
-    float hidden = 0.0;
-    for (uint i = 0; i < frame->sea.storms; i++)
-    {
-        float4 place = frame->sea.places[i];
-        float4 sky = frame->sea.skies[i];
-        float2 falls = sky.zw * float2(1.0, 2.5);
-        if (falls.x + falls.y <= 0.0)
-        {
-            continue;
-        }
-        float2 to = place.xy - frame->cameraPosition.xz;
-        float nearest = dot(to, along);
-        float aside = dot(to, to) - nearest * nearest;
-        float within = place.z * place.z - aside;
-        if (within <= 0.0)
-        {
-            continue;
-        }
-        float half = sqrt(within);
-        float from = max(nearest - half, 0.0);
-        float until = min(nearest + half, reach);
-        if (until <= from)
-        {
-            continue;
-        }
-        const uint SAMPLES = 6;
-        float2 thick = 0.0;
-        for (uint j = 0; j < SAMPLES; j++)
-        {
-            float t = lerp(from, until, (float(j) + 0.5) / float(SAMPLES));
-            float2 xz = frame->cameraPosition.xz + along * t;
-            float high = camera + direction.y * t / flat;
-            // Heavier here and lighter there, in shafts.
-            float shafts = 0.45 + 1.1 * cloudPatches(levelXZ(frame, xz, 65536.0) / max(place.z * 0.22, 40.0));
-            float share = weatherShare(frame, i, xz) * shafts;
-            // Rain and snow from the clouds' undersides down, thinning as they fall; sand from the ground up.
-            float rain = saturate((under - high) / (0.1 * clouds.thickness)) * (0.5 + 0.5 * saturate(high / under));
-            float wall = saturate((camera + SAND_WALL * (0.7 + 0.6 * shafts) - high) / 60.0);
-            thick += share * float2(rain, wall) * falls;
-        }
-        // A heavy fall hides what is a few hundred metres into it.
-        thick *= (until - from) / float(SAMPLES) / flat * 0.004;
-        float kept = exp(-thick.x - thick.y);
-        float added = through * (1.0 - kept);
-        sand += added * thick.y / max(thick.x + thick.y, 1e-6);
-        // From inside it, what falls is the air's own colour: only a fall seen from outside is a dark curtain.
-        dark += added * sky.y * saturate(from / 300.0);
-        hidden += added;
-        through *= kept;
-    }
-    sand = hidden > 0.0 ? sand / hidden : 0.0;
-    dark = hidden > 0.0 ? dark / hidden : 0.0;
-    return through;
-}
-
-// The colour of what falls from weather far off, against a sky as bright as `lit`: grey, the darker the heavier
-// the weather, or the colour of blown sand.
-float3 curtainColour(float3 lit, float sand, float dark)
-{
-    float bright = dot(lit, float3(0.2126, 0.7152, 0.0722));
-    return lerp(bright * (0.75 - 0.4 * dark), float3(0.56, 0.4, 0.22) * bright * 1.7, sand);
-}
-
 // The baked noise at `p`, period 8: swirls in red, green and blue, round puffs in alpha, each about a half.
 float4 cloudNoise(Frame* frame, float3 p)
 {
@@ -162,9 +66,54 @@ float cloudPatches(float2 p)
     return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
 }
 
+// How far the cloud of weather over a part of the level spreads past its reach: twice as far again, and this many
+// metres more, so even a small storm sits in cloud several kilometres across. How wide the patches its ragged edge
+// is drawn out and in by are, in metres.
+static const float WEATHER_CLOUD_SPREAD = 2.0;
+static const float WEATHER_CLOUD_METRES = 2500.0;
+static const float WEATHER_CLOUD_PATCHES = 2200.0;
+
+// What the weather over parts of the level adds to the clouds over `xz` in the world: how far it fills them in
+// towards overcast, and how much heavier it makes them, each from 0 to 1. Over a storm the sky is overcast, as it
+// adds; round it, the cloud thins out into the sky by its ragged edge and lightens as it goes, overcast at its edge,
+// broken cloud and then a few scattered clouds, and none in a great storm's calm eye.
+float2 cloudWeather(Frame* frame, float2 xz)
+{
+    float2 adds = 0.0;
+    // Worked out for the first place near enough to need it: from -0.5 to 0.5, where the cloud reaches further out.
+    float ragged = 2.0;
+    for (uint i = 0; i < frame->sea.storms; i++)
+    {
+        float4 place = frame->sea.places[i];
+        float distance = length(xz - place.xy);
+        float spread = place.z * (1.0 + WEATHER_CLOUD_SPREAD) + WEATHER_CLOUD_METRES;
+        if (distance >= spread * 1.25)
+        {
+            continue;
+        }
+        if (ragged > 1.0)
+        {
+            float2 at = levelXZ(frame, xz, 65536.0) / WEATHER_CLOUD_PATCHES;
+            ragged = cloudPatches(at) * 0.65 + cloudPatches(at * 2.7 + 13.1) * 0.35 - 0.5;
+        }
+        // From where the place's own weather starts to fade (weatherShare) out to the spread's edge.
+        float fades = place.z * 0.55;
+        float beyond = (distance - fades) / (spread - fades) - ragged * 0.5;
+        float around = 1.0 - smoothstep(0.0, 1.0, beyond);
+        if (place.w > 0.0)
+        {
+            around *= smoothstep(place.w * 0.75, place.w * 1.25, distance / place.z);
+        }
+        float share = weatherShare(frame, i, xz);
+        adds = max(adds, frame->sea.skies[i].xy * float2(max(share, around), max(share, around * around)));
+    }
+    return adds;
+}
+
 // How far inside a cloud `at` is in the clouds' own pattern, which drifts over the world, `height` of the way up the
-// layer: 0 at a cloud's edge, 1 well inside, less than 0 outside. `q` is the place in the noise.
-float cloudInside(Frame* frame, float2 at, float height, out float3 q)
+// layer: 0 at a cloud's edge, 1 well inside, less than 0 outside. `q` is the place in the noise, and `weather` what
+// the weather over this part of the level adds there (cloudWeather).
+float cloudInside(Frame* frame, float2 at, float height, out float3 q, out float2 weather)
 {
     Clouds clouds = frame->lighting.clouds;
     // Below a quarter of the way up, a cloud keeps the outline it has there: the big ones all stand on the same flat
@@ -176,7 +125,8 @@ float cloudInside(Frame* frame, float2 at, float height, out float3 q)
     float patches = cloudPatches(at / (clouds.size * 5.0));
     float cover = saturate(clouds.cover + (patches - 0.5) * 0.6 * (1.0 - abs(clouds.cover * 2.0 - 1.0)));
     // Weather over this part of the level fills them in; a sky with no clouds of its own has them only there.
-    float filled = cloudWeather(frame, at + clouds.drift).x;
+    weather = cloudWeather(frame, at + clouds.drift);
+    float filled = weather.x;
     if (clouds.cover <= 0.001 && filled <= 0.0)
     {
         return -1.0;
@@ -189,24 +139,31 @@ float cloudInside(Frame* frame, float2 at, float height, out float3 q)
 
 // How much of a cube of a cloud built of them is cloud, from 0 for none to 1, for the cube `at` and `height` are in:
 // every place in a cube is as the cube's middle is. A solid cube is all cloud or none; a soft one is the fainter the
-// nearer its cloud's edge.
-float cloudCubeAt(Frame* frame, float2 at, float height)
+// nearer its cloud's edge. `weather` is what the weather over this part of the level adds there.
+float cloudCubeAt(Frame* frame, float2 at, float height, out float2 weather)
 {
     Clouds clouds = frame->lighting.clouds;
     at = (floor(at / clouds.block) + 0.5) * clouds.block;
     height = (floor(height * clouds.thickness / clouds.block) + 0.5) * clouds.block / clouds.thickness;
+    weather = 0.0;
     if (height <= 0.0 || height >= 1.0)
     {
         return 0.0;
     }
     float3 q;
     // Soft clouds lose their thin edges, so as much is left out here.
-    float inside = cloudInside(frame, at, height, q) - 0.2;
+    float inside = cloudInside(frame, at, height, q, weather) - 0.2;
     if (inside <= 0.0)
     {
         return 0.0;
     }
     return clouds.softness > 0.0 ? saturate(0.15 + inside / (0.8 * clouds.softness)) : 1.0;
+}
+
+float cloudCubeAt(Frame* frame, float2 at, float height)
+{
+    float2 weather;
+    return cloudCubeAt(frame, at, height, weather);
 }
 
 // How much light a metre of cloud takes out at `at` in the clouds' own pattern, `height` of the way up the layer
@@ -217,17 +174,19 @@ float cloudDensityIn(Frame* frame, float2 at, float height, bool fine)
     Clouds clouds = frame->lighting.clouds;
     if (clouds.kind == CLOUDS_BLOCKS)
     {
-        float cube = cloudCubeAt(frame, at, height);
-        return cube > 0.0 ? cube * clouds.density * CLOUD_THICK * (1.0 + cloudWeather(frame, at + clouds.drift).y) : 0.0;
+        float2 weather;
+        float cube = cloudCubeAt(frame, at, height, weather);
+        return cube > 0.0 ? cube * clouds.density * CLOUD_THICK * (1.0 + weather.y) : 0.0;
     }
     if (height <= 0.0 || height >= 1.0)
     {
         return 0.0;
     }
     float3 q;
+    float2 weather;
     // Drawn in a little the lower it goes under a quarter of the way up, so wisps too thin to reach the underside
     // hang above it.
-    float inside = saturate(cloudInside(frame, at, height, q) - max(0.25 - height, 0.0) * 1.4);
+    float inside = saturate(cloudInside(frame, at, height, q, weather) - max(0.25 - height, 0.0) * 1.4);
     inside *= saturate(height / 0.06) * saturate((1.0 - height) / 0.15);
     if (inside <= 0.0)
     {
@@ -244,7 +203,7 @@ float cloudDensityIn(Frame* frame, float2 at, float height, bool fine)
         inside = saturate((inside - bite) / (1.0 - bite));
     }
     // Thick soon after the edge, and heavier under weather.
-    return saturate(inside * 6.0) * clouds.density * CLOUD_THICK * (1.0 + cloudWeather(frame, at + clouds.drift).y);
+    return saturate(inside * 6.0) * clouds.density * CLOUD_THICK * (1.0 + weather.y);
 }
 
 // As cloudDensityIn, at `xz` in the world.
@@ -282,6 +241,9 @@ float cloudShadowAt(Frame* frame, float3 position)
 
 // How far the clouds are marched from the camera, in metres, fading out over the last third.
 static const float CLOUD_REACH = 36000.0;
+// How many steps through the clouds, and towards the sun from each.
+static const uint CLOUD_STEPS = 40;
+static const uint CLOUD_SUN_STEPS = 4;
 // The Earth's radius, in metres.
 static const float CLOUD_EARTH = 6360000.0;
 

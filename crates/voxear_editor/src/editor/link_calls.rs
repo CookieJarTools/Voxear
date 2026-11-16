@@ -1539,12 +1539,19 @@ impl Editor {
             if block == AIR && !given {
                 continue;
             }
-            let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
-            let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
-            let block = path.map(|entry| link::asset_ref(&self.game, &entry.path));
-            return done(json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": block }));
+            let named = |block| {
+                let guid = voxear_engine::blocks::block_guid(&self.game.engine.world, entity, block);
+                let path = guid.and_then(|guid| guid.parse().ok()).and_then(|guid| self.game.content.db().get(guid));
+                path.map(|entry| link::asset_ref(&self.game, &entry.path))
+            };
+            // And what it is drawn as, where that is another block: grass under a block shows as dirt.
+            let shown = blocks.shown(cell);
+            let shows = if shown == block { Json::Null } else { json!(named(shown)) };
+            let answer =
+                json!({ "obj": obj_ref(&self.game, entity), "cell": cell, "block": named(block), "shows": shows });
+            return done(answer);
         }
-        done(json!({ "obj": null, "cell": null, "block": null }))
+        done(json!({ "obj": null, "cell": null, "block": null, "shows": null }))
     }
 
     fn blocks_set(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {
@@ -1635,9 +1642,10 @@ impl Editor {
             "near_detail",
             "far_detail",
             "plant_detail",
+            "far_block_pixels",
         ]
         .map(number);
-        let mut given = [None; 8];
+        let mut given = [None; 9];
         for (at, read) in numbers.into_iter().enumerate() {
             given[at] = read?;
         }
@@ -1650,7 +1658,7 @@ impl Editor {
             budget = preset.budget().unwrap_or(WorldBudget { quality: WorldQuality::Custom, ..budget });
         }
         if given.iter().any(Option::is_some) {
-            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail] = given;
+            let [threads, columns, upload, view, far, near_detail, far_detail, plant_detail, far_block_pixels] = given;
             let whole = |n: Option<f32>, was: u32| n.map_or(was, |n| n.round() as u32);
             budget = WorldBudget {
                 quality: WorldQuality::Custom,
@@ -1662,6 +1670,7 @@ impl Editor {
                 near_detail: near_detail.unwrap_or(budget.near_detail),
                 far_detail: far_detail.unwrap_or(budget.far_detail),
                 plant_detail: plant_detail.unwrap_or(budget.plant_detail),
+                far_block_pixels: far_block_pixels.unwrap_or(budget.far_block_pixels),
             };
         }
         if quality.is_some() || given.iter().any(Option::is_some) {

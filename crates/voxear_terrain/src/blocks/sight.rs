@@ -9,7 +9,9 @@
 //! cheap and never hides what can be seen; a ravine's walls hide less than
 //! they could, which the depth test takes care of.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+
+use crate::coord_hash::CoordSet;
 
 use super::{
     BlockMap,
@@ -106,7 +108,7 @@ pub fn seen(
     sights_of: &HashMap<[i32; 3], u16>,
     from: [i32; 3],
     in_view: impl Fn([i32; 3]) -> bool,
-) -> Option<HashSet<[i32; 3]>> {
+) -> Option<CoordSet<[i32; 3]>> {
     let mut low = [i32::MAX; 3];
     let mut high = [i32::MIN; 3];
     for (key, _) in map.chunks() {
@@ -122,7 +124,7 @@ pub fn seen(
         None => ALL_SIGHTS,
         Some(_) => sights_of.get(&key).copied().unwrap_or(0),
     };
-    let mut reached = HashSet::new();
+    let mut reached = CoordSet::default();
     let mut queue = VecDeque::new();
     // From the camera's chunk every way, as though it came in through every face.
     reached.insert(from);

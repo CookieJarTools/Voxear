@@ -9,7 +9,7 @@ A scene's sky is one of two kinds:
 
 Either way, the sun's disc is drawn in the sky, in the direction and colour of the level's sun.
 
-The sky also gives everything a soft light from all around, called **ambient light**: coloured like the sky from above, and like the ground from below. It is what keeps the shady side of things from going black.
+The sky also gives everything a soft light from all around, called **ambient light**: coloured like the sky from above, and like the ground from below, lit by the sun as well as the sky. It is what keeps the shady side of things from going black, and lights the undersides of leaves and roofs warmer than the sky alone would; a paler `ground` throws more of the sun back up.
 
 ## Setting the sky
 

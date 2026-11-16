@@ -765,10 +765,12 @@ bool terrainShading(
     {
         discard;
     }
-    float shade = smooth ? 1.0 : lerp(0.35, 1.0, saturate(input.uv.x));
+    // The blocks closing a face's corners in shade the light from all round, as ambient occlusion does; the sun is
+    // its shadow's to dim, so a sunlit floor stays sunlit up to the wall beside it.
+    bool loose = !smooth && ((input.lod >> 8) & 3) != 0;
+    terrainOcclusion = smooth || loose ? 1.0 : lerp(0.35, 1.0, saturate(input.uv.x));
     if (world.surfaceCount == 0)
     {
-        base.rgb *= shade;
         return false;
     }
     // Where the face stands, not where the wind has swayed it to: its picture moves with it.
@@ -914,7 +916,6 @@ bool terrainShading(
         }
     }
     base = layer.base;
-    base.rgb *= shade;
     metallic = layer.metallic;
     roughness = layer.roughness;
     normal = normalizeOr(layer.normal, normal);

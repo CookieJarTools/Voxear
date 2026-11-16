@@ -491,6 +491,7 @@ impl Project {
         set_key(&mut document, "world", "near_detail", metres(budget.near_detail));
         set_key(&mut document, "world", "far_detail", metres(budget.far_detail));
         set_key(&mut document, "world", "plant_detail", metres(budget.plant_detail));
+        set_key(&mut document, "world", "far_block_pixels", metres(budget.far_block_pixels));
         std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
         self.file.world = budget;
         Ok(())

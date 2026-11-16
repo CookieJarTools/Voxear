@@ -271,6 +271,8 @@ pub struct ExtractedFrame {
     /// The sun shines through the canopy cookie, its look's, whose picture
     /// the renderer has.
     pub canopy_cookie: bool,
+    /// The light the GI's probes gather, to tell when it jumps.
+    pub light_key: crate::ddgi::LightKey,
     /// The camera's vertical field of view, in radians, for an upscaler.
     pub fov_y: f32,
     pub instances: Vec<GpuInstance>,
@@ -627,6 +629,8 @@ pub fn extract(
     // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
     // sky light as it is worked out.
     let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
+    // The sky's light as the GI's probes keep it, the flash aside (`ddgi::LightKey`).
+    let steady_sky = sky;
     sky.zenith += crate::weather::FLASH_COLOUR * flash;
     sky.horizon += crate::weather::FLASH_COLOUR * flash;
     let fov = camera.fov_y_degrees.to_radians();
@@ -1061,8 +1065,17 @@ pub fn extract(
         }
     }
 
+    let steady_light = pictured.unwrap_or([steady_sky.zenith, steady_sky.horizon, steady_sky.ground]);
+    let light_key = crate::ddgi::LightKey {
+        sun: Vec3::from(frame.sun_color),
+        sun_way: if sun_found { Vec3::from(frame.sun_direction) } else { Vec3::ZERO },
+        sky: steady_light.map(|light| light * steady_sky.ambient),
+        atmosphere: steady_sky.mode == SkyMode::Atmosphere,
+    };
+
     ExtractedFrame {
         canopy_cookie,
+        light_key,
         fov_y: camera.fov_y_degrees.to_radians(),
         block_voxels: worn.and_then(|worn| worn.voxels),
         block_water: water_look.block_water(),

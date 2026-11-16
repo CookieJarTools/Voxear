@@ -87,7 +87,7 @@ float fogOpenness(Frame* frame, float3 point)
 {
     // The open sky's light as the probes count it, from the atmosphere or the gradient.
     float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+        : gradientAmbient(frame, 0.5);
     float open = max(dot(sky, FOG_LUMA), 1e-5);
     float3 bakedAtCamera;
     float3 bakedAtPoint;

@@ -189,10 +189,37 @@ impl Kernel for InRegion {
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        for (at, out) in out.iter_mut().enumerate() {
-            *out = self.0.regions.weight(inputs[0][at], inputs[1][at], self.0.biome);
-        }
+        // Each biome's mask asks the same places in turn: they are looked out from once, for all of them.
+        LOOKED.with_borrow_mut(|looked| {
+            let regions = &self.0.regions;
+            let same = looked.id == regions.id() && looked.xs == inputs[0] && looked.zs == inputs[1];
+            if !same {
+                looked.id = regions.id();
+                (looked.xs.clear(), looked.zs.clear(), looked.lookouts.clear());
+                looked.xs.extend_from_slice(inputs[0]);
+                looked.zs.extend_from_slice(inputs[1]);
+                let lookouts = inputs[0].iter().zip(inputs[1]).map(|(&x, &z)| regions.lookout(x, z));
+                looked.lookouts.extend(lookouts);
+            }
+            for (out, lookout) in out.iter_mut().zip(&looked.lookouts) {
+                *out = lookout.weight(self.0.biome);
+            }
+        });
     }
+}
+
+/// The places a region mask last looked out from on this thread, by the
+/// regions they were looked at in, and what they saw.
+#[derive(Default)]
+struct Looked {
+    id: u64,
+    xs: Vec<f32>,
+    zs: Vec<f32>,
+    lookouts: Vec<crate::generate::regions::Lookout>,
+}
+
+thread_local! {
+    static LOOKED: std::cell::RefCell<Looked> = std::cell::RefCell::new(Looked::default());
 }
 
 /// How much of a mask from `low` to `high`, eased in over `feather`,

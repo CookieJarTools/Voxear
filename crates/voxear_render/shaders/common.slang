@@ -1160,6 +1160,29 @@ struct Frame
     LampShadows lampVsm;
 };
 
+// How much of a gradient sky's colours is its light from all round.
+static const float GRADIENT_AMBIENT = 0.35;
+
+// A gradient sky's light from all round on a surface facing `up` of the way up, 0 straight down to 1 straight up: its
+// colours' middle from above, and from below its ground colour lit by the sky and by the sun, the light a sunlit
+// ground throws back up, as the atmosphere's sky light has it (atmosphereAmbient). A pale ground lights the shade
+// from below more than a dark one. A sky drawn from a picture has its sunlit ground in the picture already.
+float3 gradientAmbient(Frame* frame, float up)
+{
+    float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5) * GRADIENT_AMBIENT;
+    float3 sunlit = frame->lighting.skyPicture == 0 ? frame->sunColor * saturate(-frame->sunDirection.y) / PI : 0.0;
+    float3 below = frame->groundColor * (GRADIENT_AMBIENT + sunlit);
+    return lerp(below, above, up) * frame->ambient;
+}
+
+// A gradient sky's own light from all round, as its colours give it, without the sunlit ground's: what the GI's rays
+// take from it, as they trace the ground and find its light themselves.
+float3 gradientSkyLight(Frame* frame, float up)
+{
+    float3 above = lerp(frame->skyHorizon, frame->skyZenith, 0.5);
+    return lerp(frame->groundColor, above, up) * GRADIENT_AMBIENT * frame->ambient;
+}
+
 // How far in front of the frame's cut `world` is, for SV_ClipDistance: what is behind it is not drawn.
 float cutAt(Frame* frame, float3 world)
 {

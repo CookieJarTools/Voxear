@@ -17,8 +17,9 @@
 //!
 //! Each frame [`update`] turns the clock, moves the made storms, and gives
 //! the renderer what lies near the viewer: the weather over each place
-//! (`voxear_render::weather::WeatherPlaces`, drawn from afar as cloud and a
-//! curtain under it), what that adds where the viewer stands
+//! (`voxear_render::weather::WeatherPlaces`, drawn from afar as cloud, a
+//! spread of broken cloud round it, and a curtain under it), what that adds
+//! where the viewer stands
 //! (`Weather::set_here`), and the sea under it
 //! (`voxear_render::sea::RoughSea`), with its whirlpools: those strong
 //! storms raise over deep water, the great ones that stand at seeded places

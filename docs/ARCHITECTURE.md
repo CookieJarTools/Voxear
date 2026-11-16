@@ -1023,7 +1023,9 @@ foundations Nanite is built on, so this is a later step rather than a rewrite:
 - point and spot
 - rectangle and disc area lights, using LTC
 - tube lights
-- sky light and emissive surfaces
+- sky light and emissive surfaces: a gradient sky's from its colours, its ground colour lit by the sky and by the
+  sun, the light a sunlit ground throws back up (`gradientAmbient` in `common.slang`), as the atmosphere's has
+  (`atmosphereAmbient`); the GI's rays take the sky's own (`gradientSkyLight`), as they find the ground's themselves
 - IES profiles and light cookies
 
 **Shadows.** The sun's shadows are virtual shadow maps (`src/vsm.rs`, `shaders/virtual_shadows.slang`), with four
@@ -1178,9 +1180,16 @@ and the nearest whirlpools.
 The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and
 roughness, eight waves, four whirlpools. `cloudWeather` in `clouds.slang` fills the cloud layer in and makes it
 heavier over each place, in the clouds' own march and in their shadow map, so a storm far off is a dark mass of
-cloud with its shadow under it. `weatherCurtain` integrates what falls along a view ray through each place's
-cylinder, under the clouds' undersides for rain and snow and a few hundred metres up for sand; the sky pass lays
-it over the sky and the fog pass over the scene, the fog switched on at no density where any place has a fall.
+cloud with its shadow under it. Its cloud spreads past its reach, twice as far again and 2.5 km more: overcast at its
+edge, thinning out by a ragged edge drawn from two octaves of patch noise into a few scattered clouds, and
+lighter as it goes, so a storm stands in a spread of cloud rather than alone in a clear sky. `weatherCurtain` in
+`atmosphere.slang` integrates what falls along a view ray through each place's cylinder, under the clouds'
+undersides for rain and snow and a few hundred metres up for sand. Rain and snow are lit as the cloud over them
+is (`cloudUndersideLight`: the march's own steps towards the sun from just inside the underside, the same sun,
+sky and darkening) and hazed by their distance as the clouds are (`cloudsHazed`), so the cloud and what falls from
+it are one grey. The sky pass lays it over the sky, in front of the clouds from under them and behind them from
+above, and the fog pass over the scene, in front of the fog, which lies low and near, so a curtain reads the same
+over the ground as over the sky; the fog is switched on at no density where any place has a fall.
 
 The sea's swell is drawn without moving a vertex. A world of blocks' water is merged quads, flat at the sea's
 height, which is the height of a crest. `blockSwell` in `water.slang` walks each top face's view ray across
@@ -1273,6 +1282,17 @@ and swaying bits as the look that creeps over it and from where. Twins are a fix
 a world numbering a new block appends looks and changes none. A second block over the same face is a second quad
 in the same place, later in the pool and discarded but for its fringe.
 
+**Grass under a block** is a look worked out from the block over it, never an edit. A `.block`'s `covered` names
+the block it shows as while covered; `resolved` turns that into the number of that block in the world, in the same
+state (a slab's slab), and `with_covered` numbers it after the world's blocks where it has none, as biomes' blocks are.
+`BlockFaces::covered` carries the number. `mesh_made` swaps each such block in its padded copy of the chunk for that
+block where `covers_below` says the block over it covers it (a whole block, water, a part whose underside is covered
+whole), bottom up so each reads the block over it as it is, and everything after (faces, looks, overlap, tints,
+collision) follows. The far rings and far tiles go through the same mesher; the map does the same along its runs. A
+change re-meshes the chunks round the block under it too. `BlockWorld::shown` gives the block as drawn, which a
+script's ray and `Blocks.DefinitionAt` report, so a covered grass block is mined as its earth. Saves and the network
+carry the grass as it is, so they are no larger.
+
 **Portals** *(implemented; light, shadows and sound through them, other levels and the server's checks planned)*.
 A `voxear_render::Portal` on an Obj is an opening `size` wide about the Obj and high from it, facing its +Z, that
 leads to another Portal. `Carry::between` is what going through does: turned about the near Portal, half a turn about
@@ -1335,8 +1355,8 @@ through each texel of the six faces against the scene the GI's rays see, by ray 
 lights each hit as the GI's rays do, with the shine of metals added from the probes, the GI and the sky as last
 captured (`ddgiShadeHit`). On the frame a probe is captured, the plants of any Foliage within 64 m of it are added
 to the traced instances, and the ray is checked against the flat tops of the sea and Pools (`probeCaptureWater`).
-Terrain's meshes for rays carry the material of the surface with the largest share at each point
-(`mesh::PROXY_MATERIAL`, in the vertex's wind word). The faces are averaged into mips, then each of six mips is
+Terrain's and a world of blocks' meshes for rays carry each point's surface's material (the surface with the largest
+share there, or the face's; `mesh::PROXY_MATERIAL`). The faces are averaged into mips, then each of six mips is
 filtered with GGX for its roughness. Each resolution (64 to 512) is one array of cubes; shading reads each probe's
 own, in order of importance and size, box-projected from its capture point, and takes what they leave from the GI's
 probes and then the sky. One probe is captured or loaded a frame; a probe captured once can be baked into a `.probes`
@@ -1483,7 +1503,8 @@ history on camera cuts.
 3. **TAA.** The camera is jittered along an eight-frame Halton sequence. Each pixel reprojects last frame's result
    with a nine-tap Catmull-Rom filter, using the nearest surface's motion at edges. History is clipped to the
    neighbourhood's colour box in YCoCg, and blended in a tonemapped space so highlights do not flicker. Fast
-   motion keeps less history. History resets on the first frame, on resize and when TAA is switched on.
+   motion keeps less history, and so does what moves on its own, its motion less the camera's at its depth
+   (`ownMotionKeep`): swaying leaves keep their detail rather than blurring. History resets on the first frame, on resize and when TAA is switched on.
 4. **Depth of field:** a 48-tap golden-angle gather whose weights keep sharp foreground edges from bleeding.
 5. **Motion blur:** 12 taps along each pixel's motion, capped at 40 pixels.
 6. **Bloom:** six levels down with the 13-tap filter from Call of Duty: Advanced Warfare (Karis-averaged on the
@@ -3783,7 +3804,8 @@ against the frustum and last frame's depth and drawn by multi-draw-indirect, wit
 Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by where they are, each a palette of the
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
-way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
+way they face. The corners' shade dims the light from all round, the less of it and the ambient occlusion pass's,
+and leaves the sun to its shadow. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
 and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
 (`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a
@@ -3825,14 +3847,19 @@ chunk column's ground is made and before its structures, a block of open air wit
 hash of its place, likelier beside a wall of its own column, and it hangs down through the air; a column made alone
 has the vines it has among its neighbours. A `.voxplant` with `vines` grows them up its trunk and under its crown
 (`PlantPart::Vine`, from a stream of numbers of their own, so the tree is the same tree without them). Further,
-each chunk's faces merged whatever their surfaces are its collision mesh and its mesh for the GI's rays (a smooth
-chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles;
-`RAYS_LEVEL`), the ray meshes kept in the meshes' shared pool of four million vertices, room for a world of cubes
-900 blocks across; the shapes made on every core and kept while a chunk's triangles stay the same, the ray meshes
-made a few a frame, the nearest the camera first, and uploaded and built in one GPU batch (`Gpu::batch`). A world
-too large for the pool goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the
-room of the farthest made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose
-faces did not change costs physics and the renderer no walk over its chunks. The frame's chunks go up within
+each chunk's faces merged by surface are its collision mesh and its mesh for the GI's rays, each point keeping its
+surface (`ChunkMesh::surfaces`), so the rays' hits take the colour of the face they meet (`mesh::PROXY_MATERIAL`; a
+smooth chunk's mesh for rays is its first coarser level, half a block off at most and half as many triangles,
+`RAYS_LEVEL`, each point its top's, sides' or bottom's surface by the way it faces). A mesh for rays is solid ground:
+a crown of leaf blocks is no cut-out sheet to them, though it bounces its leaves' colour. The ray meshes are kept in
+the meshes' shared pool of four million vertices, room for a world of cubes 900 blocks across; the shapes made on
+every core and kept while a chunk's triangles stay the same (a world without end's new chunks' on the terrain's
+threads, their bodies added at a later step, but for those within a chunk of a character or a body and chunks
+changed, `BlockBodies::making`), the ray meshes made a few a frame, the nearest the camera first, and uploaded and
+built in one GPU batch (`Gpu::batch`); made again where its surfaces' looks change. A world too large for the pool
+goes without its farthest chunks' ray meshes: as the camera moves, a nearer chunk takes the room of the farthest
+made, if that one is more than two chunks farther off (`PROXY_SWAP_MARGIN`). A world whose faces did not change costs
+physics and the renderer no walk over its chunks. The frame's chunks go up within
 `WorldBudget::upload` megabytes, shared by every world (16 on High), each pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
@@ -3864,8 +3891,20 @@ showing under that band; and a coarse column whose finer columns all come after 
 `RING_FADE_SECONDS` as they fade in, the finer columns waiting unseen till then. The streamer says which coarse
 columns show and since when; the renderer gives each chunk slot its two times and drops a face on the dither TAA
 blends, the two rings on its two halves (`blockRingHidden`), or without TAA cuts halfway. A view through a Portal
-and a world drawn smooth draw their rings as before. Leaves past the sun's cascades take the share of sun a crown's
-leaves take within them (`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes. Models of small coloured
+and a world drawn smooth draw their rings as before. With a Far block size (`WorldBudget::far_pushed_for`), the first coarser ring is pushed
+out `pushed` times as far round where the world is looked at from (`StreamFrom::pushed`), each ring after it twice as
+far as the one before, and the world's own
+blocks are drawn on past its made columns out to the first ring: columns of them asked for and made at `FINE`, from
+`column_chunks` as a coarse column's are and meshed alone, kept in `BlockWorld::far` at level -1 so their keys never
+meet the near chunks', and given level 0 in the renderer's slots. The streamer asks for what is nearest first in
+metres (`BlockStreamer::ask`), from each place and from where the first is heading a second on (`lead`), each coarser
+ring two near columns further off and a coarse column whose four finer columns lie in the finer windows after all
+else (`COVERED`); a twelfth of the columns at once is kept for the rings whatever is nearer (`RINGS_ALWAYS`) and no
+more than a quarter are far tiles, which take long each. A far tile asks the generator's Volume only for the spans of
+ground that stands (`Voxels::spanned`), never for hollows such as caves, whose network a coarse column would reach
+over far and wide. Block tints' tiles are worked out on the terrain's threads and taken in as they are done. Leaves past the sun's shadows, where no
+virtual shadow page or cascade holds them, take the share of sun a crown's leaves take within them
+(`BLOCK_CROWN_SUN`), so far crowns are not flat sunlit boxes; within them their shadow says it. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the
@@ -4455,7 +4494,10 @@ Every operation the editor can do should be scriptable.
 - `vox run <project> [--headless] [--frames N]` runs a project.
 - `vox render <project> [--post <preset>] [--debug-view <view>]` renders a frame offscreen to a PNG and prints GPU
   timings, culling stats and the adapted exposure. `--profile` times the CPU too, and `--profile-out <json>` saves
-  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`).
+  every frame's samples and passes as tools read them (`voxear_engine::profile_frames`). Before its frames it waits
+  for the ground round the camera, as a game's loading does (`Game::make_world`): terrains and worlds of blocks
+  without end are made on background threads, and a short render is otherwise over before any of it comes.
+  `--wait <seconds>` sets how long it waits at most (120 by default); `--wait 0` starts the frames at once.
 - `vox editor <project> [--screenshot <png>]` opens the editor, or renders it offscreen.
 - `vox scripts build <project>` builds the C# scripts alone, as `vox run` does before it starts, so a debugger can
   then start `vox run --no-build`, whose .NET starts at once.
@@ -4930,15 +4972,17 @@ through a small contract.
 - **Publishing** is by hand, with the launcher repository's `voxear-release`: `engine add` signs the archive with
   the engine key and lists it in the site's `engine/releases.toml`, then the archive and its `.minisig` go up as
   assets of the `engine-v<version>` release in VoxearReleases, and the site goes to its `gh-pages` branch.
-- **The release workflow** (`.github/workflows/release.yml`, run by hand from the Actions tab) packages both
-  platforms with one version, on Ubuntu 22.04 for an older glibc and on Windows, and keeps the archives as the run's
-  artifacts. With Publish ticked it also does what is otherwise done by hand: `voxear-release engine add` signs both
-  and lists them (pruning old nightlies), the archives and their signatures go up as the `engine-v<version>`
-  release of VoxearReleases, and the manifest is pushed to its `gh-pages` branch, archives first. Publishing needs
-  three secrets on the repository: the engine key's file, its password, and a token that can read the launcher
-  repository and write to VoxearReleases. Nothing runs on a schedule, since each run builds the engine twice on
-  paid runners.
-- **Not yet tried:** the workflow itself, and so the Windows build, which wait for a first run on GitHub.
+- **The release workflow** (`.github/workflows/release.yml`, run by hand from the Actions tab, and by itself every
+  night) packages both platforms with one version, on Ubuntu 22.04 for an older glibc and on Windows, and keeps the
+  archives as the run's artifacts. With Publish ticked it also does what is otherwise done by hand: `voxear-release
+  engine add` signs both and lists them (pruning old nightlies), the archives and their signatures go up as the
+  `engine-v<version>` release of VoxearReleases, and the manifest is pushed to its `gh-pages` branch, archives first.
+  Publishing needs three secrets on the repository: the engine key's file, its password, and a token that can read
+  the launcher repository and write to VoxearReleases.
+- **Nightlies** are built and published at 03:00 UTC each night, but only when master has a commit the last scheduled
+  nightly was not built from: a scheduled run looks up the commit of the last scheduled run that succeeded and stops
+  after working out the version when it is the same. Master reaches GitHub once a day, before that, from a task on
+  the main machine that first brings the roadmap, its pictures and the README up to date.
 
 ## Platforms and GPU support
 

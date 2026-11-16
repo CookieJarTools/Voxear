@@ -15,7 +15,9 @@
 # - VOXEAR_RELEASES_TOKEN: a token that can read CookieJarTools/VoxearLauncher, for voxear-release, and write to
 #   CookieJarTools/VoxearReleases, for its releases and its gh-pages branch.
 #
-# It runs only when asked, since each run builds the whole engine twice on paid runners.
+# It also runs by itself every night at 03:00 UTC as a published nightly, but only when master has a commit since
+# the last scheduled nightly was built; otherwise it stops after working out the version. The repository is public,
+# so its runs cost nothing.
 
 name: Release
 
@@ -35,9 +37,13 @@ on:
         description: Sign the archives and publish them for the launcher
         type: boolean
         default: false
+  schedule:
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
+  # For a scheduled run to look up the last scheduled nightly.
+  actions: read
 
 # One release at a time, since publishing adds to the one manifest.
 concurrency:
@@ -55,14 +61,18 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
       # Worked out once, so both platforms are packaged as the same version even across midnight.
       - id: version
         name: Work out the version
         env:
-          CHANNEL: ${{ inputs.channel }}
+          # A scheduled run has no inputs: it is a nightly.
+          CHANNEL: ${{ inputs.channel || 'nightly' }}
           VERSION: ${{ inputs.version }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           base=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           if [ -z "$VERSION" ]; then
@@ -75,10 +85,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "Voxear $VERSION, $CHANNEL" >> "$GITHUB_STEP_SUMMARY"
+          # A scheduled run builds only when master has moved since the last scheduled run that succeeded. A run that
+          # stops here succeeds on the same commit, so the chain holds; a failed one is tried again the next night.
+          skip=false
+          if [ "$EVENT" = schedule ]; then
+            last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --event schedule --status success \
+              --limit 1 --json headSha --jq '.[0].headSha // ""')
+            if [ "$last" = "$GITHUB_SHA" ]; then
+              skip=true
+              echo "Nothing new since the last nightly, built from $last" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
   package:
     name: Package (${{ matrix.platform }})
     needs: version
+    if: needs.version.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -143,7 +166,8 @@ jobs:
   publish:
     name: Publish
     needs: [version, package]
-    if: inputs.publish
+    # Every scheduled nightly is published.
+    if: inputs.publish || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}

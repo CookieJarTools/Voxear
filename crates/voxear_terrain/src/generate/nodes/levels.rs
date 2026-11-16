@@ -343,10 +343,38 @@ impl Kernel for Lay {
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        for (at, out) in out.iter_mut().enumerate() {
-            *out = self.at(inputs[0][at], inputs[1][at], inputs[2][at])[self.port];
-        }
+        // A Levels node's outputs each ask the same places in turn: they are laid once, for all of them.
+        let key = (self.areas.id(), [self.wall, self.ramps, self.coast, self.sea].map(f32::to_bits));
+        LAID.with_borrow_mut(|laid| {
+            let same = laid.key == key && laid.xs == inputs[0] && laid.zs == inputs[1] && laid.grounds == inputs[2];
+            if !same {
+                laid.key = key;
+                (laid.xs.clear(), laid.zs.clear(), laid.grounds.clear(), laid.made.clear());
+                laid.xs.extend_from_slice(inputs[0]);
+                laid.zs.extend_from_slice(inputs[1]);
+                laid.grounds.extend_from_slice(inputs[2]);
+                laid.made.extend((0..out.len()).map(|at| self.at(inputs[0][at], inputs[1][at], inputs[2][at])));
+            }
+            for (out, made) in out.iter_mut().zip(&laid.made) {
+                *out = made[self.port];
+            }
+        });
     }
+}
+
+/// The places a Levels node last laid on this thread, by its areas and
+/// settings, and all it made of each.
+#[derive(Default)]
+struct Laid {
+    key: (u64, [u32; 4]),
+    xs: Vec<f32>,
+    zs: Vec<f32>,
+    grounds: Vec<f32>,
+    made: Vec<[f32; 6]>,
+}
+
+thread_local! {
+    static LAID: std::cell::RefCell<Laid> = std::cell::RefCell::new(Laid::default());
 }
 
 impl Lay {

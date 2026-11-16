@@ -1270,6 +1270,13 @@ Done:
     (`weatherCurtain`, in the sky and with the fog), and what they add where the viewer stands laid over the
     level's own weather (`Weather::set_here`). Weather has an eighth amount, **dust**, and two more kinds,
     Blizzard and Sandstorm.
+  - **Part of the sky:** a storm's cloud spreads past its reach, three times its radius and 2.5 km more: overcast
+    at its edge and darker near it, thinning by a ragged edge into broken and then scattered cloud, so a storm no
+    longer stands alone in a clear sky. Its rain and snow are lit as the cloud over them is
+    (`cloudUndersideLight`) and hazed as clouds are (`cloudsHazed`), so cloud and rain are one grey; the curtain
+    hangs behind the clouds seen from above them. At 1080p on an RTX 3070 a storm 2.5 km off costs the cloud, sky
+    and fog passes 1.36 ms, against 0.86 ms for the lone cloud before, most of it the wider cloud. GPU test: cloud
+    over a storm, round it and less further off, and its cost.
   - **Rough seas:** a world of blocks' sea sinks under its faces by a swell of eight long waves in pairs, which run
     in groups whose crests rise and die away, as rough as the weather over it (`voxear_render::sea`): drawn in the water's fragment shader by walking the view ray across
     columns (`blockSwell`), as small cubes, block steps or smooth, with white water on the crests; no block

@@ -17,10 +17,12 @@
 //! - **dust** fills the air with blown sand: thick, dun and dim.
 //!
 //! Weather may lie over a part of the level only, as a storm does:
-//! [`WeatherPlaces`] lists where, and the frame draws each from afar, its
-//! cloud filled in over it and what falls from it under it. What it adds
-//! where the viewer stands is the weather's [`Weather::set_here`], laid
-//! over the level's own.
+//! [`WeatherPlaces`] lists where, and the frame draws each from afar: its
+//! cloud filled in over it, spreading past it as broken cloud that thins
+//! out into the sky round it, and what falls from it under it, lit as that
+//! cloud's underside is, so the two read as one. What it adds where the
+//! viewer stands is the weather's [`Weather::set_here`], laid over the
+//! level's own.
 //!
 //! What has fallen stays a while ([`WeatherGround`]): rain soaks every
 //! surface in half a minute and dries off over a few once it stops, and

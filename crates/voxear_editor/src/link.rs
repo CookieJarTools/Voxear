@@ -607,6 +607,40 @@ pub const CALLS: &[CallInfo] = &[
         returns: "As lighting.get",
     },
     CallInfo {
+        name: "shader_pack.list",
+        about: "Every shader pack there is to wear, the engine's, the project's and a player's, each with what \
+                `shader_pack.wear` takes to wear it, and the pack the Scene view wears: its passes, its options and \
+                how its last compile went.",
+        args: &[],
+        changes: false,
+        returns: "{ packs: [{ reference, name, description, source }], worn: { reference, standing, passes, options } }",
+    },
+    CallInfo {
+        name: "shader_pack.wear",
+        about: "Wears a shader pack in the Scene view and the game, as the Lighting page's Shader pack menu does, \
+                compiled before this answers, and draws it again whenever one of its files is saved; null takes it \
+                off. A pack that does not compile answers with Slang's message, and the one worn stays.",
+        args: &[maybe(
+            "pack",
+            ArgKind::Value,
+            "As `shader_pack.list` gives it: `builtin:evening`, a pack.toml of the project's, or `file:` and a folder; \
+             left out or null for none.",
+        )],
+        changes: false,
+        returns: "{ worn: { reference, standing, passes: [{ name, program, at, reads, writes }], options } }",
+    },
+    CallInfo {
+        name: "shader_pack.options",
+        about: "The worn shader pack's passes and options, each with its label, tooltip, kind and value now; with \
+                `option` and `value`, sets that option first, as its row on the pack's Inspector page does.",
+        args: &[
+            maybe("option", ArgKind::Text, "An option's name, as `options` lists it."),
+            maybe("value", ArgKind::Value, "A number, true or false, or one of a choice's choices."),
+        ],
+        changes: false,
+        returns: "{ worn: { reference, standing, passes, options: [{ key, label, about, kind, value }] } }",
+    },
+    CallInfo {
         name: "assets.list",
         about: "The project's assets and its packages', each with its GUID, path and kind.",
         args: &[
@@ -1400,6 +1434,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::LightProfile => ("lightprofile", true),
         AssetKind::Lighting => ("lighting", true),
         AssetKind::LookPack => ("lookpack", true),
+        AssetKind::ShaderPack => ("shaderpack", true),
         AssetKind::TexturePack => ("texturepack", true),
         AssetKind::Shader => ("shader", true),
         AssetKind::MotionSet => ("motionset", true),

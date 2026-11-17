@@ -279,6 +279,8 @@ pub struct ExtractedFrame {
     pub lights: Vec<GpuLight>,
     /// A directional light exists, so the sun's shadow cascades are needed.
     pub has_sun: bool,
+    /// The sky's light's own colour and how strong it is, as its light says, for a shader pack's frame.
+    pub sun_own: [f32; 4],
     /// How the sun's shadows are drawn, as the scene's lighting says.
     pub sun_shadows: crate::SunShadows,
     /// How lamps' shadows are drawn, as the scene's lighting says.
@@ -836,6 +838,7 @@ pub fn extract(
     // The local lights that may cast shadows, by their index in `lights`.
     let mut shadowed = Vec::new();
     let mut sun_found = false;
+    let mut sun_own = [0.0; 4];
     let mut canopy_cookie = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
     let sun_look = match (elsewhere, worn) {
@@ -898,6 +901,8 @@ pub fn extract(
                 }
                 frame.sun_direction = vec3(forward);
                 frame.sun_color = vec3(radiance * weather.sun());
+                let own = light.light_color();
+                sun_own = [own.x, own.y, own.z, light.intensity];
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
@@ -1148,6 +1153,7 @@ pub fn extract(
         instances,
         lights,
         has_sun: sun_found,
+        sun_own,
         local_shadows: Vec::new(),
         shadow_lights,
         sun_shadows: options

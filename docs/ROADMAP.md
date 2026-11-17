@@ -3683,13 +3683,33 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
   tools.
 
-## Shader packs (planned)
+## Shader packs (in progress)
 
 Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
 pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
 with their sky light and block light, its sky and final pass, and its shadows. The plan, the stages, what every
 program reads, how it fits the frame graph, live reload, builds and costs: [SHADER_PACKS.md](SHADER_PACKS.md).
-Nothing built yet.
+
+Done:
+- **A pack's own passes over the frame** (stage 1). A `Name.shaderpack` folder: `pack.toml` with options (numbers,
+  toggles, choices, each with a tooltip) and passes, and `.slang` programs that define `run`. Passes run at four
+  points: after the opaque surfaces and sky are lit, after the fog, after TAA, and over the finished picture. Each
+  reads what it lists (colour, depth, normals, motion, last frame's colour, the block light window, earlier passes'
+  targets) and writes the colour or a target of its own at full, half or quarter size, kept from frame to frame where
+  it asks. Packs come from the engine (`builtin:`), the project (a `ShaderPack` asset, shipped with its programs) and
+  a player's `ShaderPacks` folder (`file:`); compiled on threads with `slangc`, kept by a hash.
+  - **Evening**, built in: shafts of sun through leaves marched at half size, a golden haze towards the sun that the
+    sky light round the camera fades in caves, and a warm grade. About 0.8 ms at 1440p on an RTX 3070 looking into
+    the sun, the rays 0.5 ms of it (least of 60 frames).
+  - **Editor:** a Shader pack menu on the Lighting page, a pack's Inspector page (worn, compiled or Slang's message,
+    passes, options that change the picture at once), drawn again in a moment when a file is saved, and carried
+    into play. Calls `shader_pack.list`, `shader_pack.wear`, `shader_pack.options`; `vox render --shader-pack` and
+    `--shader-pack-option`.
+  - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
+    colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
+    each place, live reload and options carried over; the editor's menu, page and calls.
+  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
+    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

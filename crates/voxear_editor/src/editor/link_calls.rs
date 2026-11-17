@@ -481,6 +481,9 @@ impl Editor {
             }
             "lighting.get" => self.lighting_get(renderer),
             "lighting.set" => self.lighting_set(args, renderer),
+            "shader_pack.list" => self.shader_pack_list(),
+            "shader_pack.wear" => self.shader_pack_wear(args),
+            "shader_pack.options" => self.shader_pack_options(args),
             "settings.get" => done(self.settings_json(args)),
             "settings.set" => self.settings_set(args),
             "settings.show" => {

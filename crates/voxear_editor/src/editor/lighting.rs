@@ -60,6 +60,11 @@ impl Editor {
         self.lighting_panel.look_menu()
     }
 
+    /// The Lighting page's menu of shader packs to show the scene under.
+    pub fn lighting_shader_menu(&self) -> voxear_ui::NodeId {
+        self.lighting_panel.shader_menu()
+    }
+
     /// The Lighting page's menu of texture packs to show the scene under.
     pub fn lighting_texture_menu(&self) -> voxear_ui::NodeId {
         self.lighting_panel.texture_menu()
@@ -101,6 +106,7 @@ impl Editor {
             LightingAction::WearTextures(reference) => {
                 voxear_engine::texture_packs::wear(&mut self.game.content, reference.as_deref().unwrap_or_default())
             }
+            LightingAction::WearShaders(reference) => self.wear_shader_pack(reference.as_deref()),
             LightingAction::Bake => {
                 match self.baking_lighting() {
                     true => self.cancel_lighting_bake(renderer),
@@ -152,6 +158,7 @@ impl Editor {
             LightingAction::Set { .. }
             | LightingAction::Wear(_)
             | LightingAction::WearTextures(_)
+            | LightingAction::WearShaders(_)
             | LightingAction::Bake => {
                 return self.lighting_action(action, renderer);
             }

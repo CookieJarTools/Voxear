@@ -68,6 +68,10 @@ pub enum AssetKind {
     /// are drawn with in place of their own, which whoever plays the game
     /// picks.
     TexturePack,
+    /// A shader pack's `pack.toml`, in a folder named `Name.shaderpack`
+    /// beside its programs: passes of its own over the picture as the frame
+    /// is drawn, which whoever plays the game picks.
+    ShaderPack,
     /// A `.shader` file: a custom shader in Slang, its properties and how it
     /// works out a surface, moves vertices or takes light, which materials
     /// pick.
@@ -125,6 +129,10 @@ pub enum AssetKind {
 
 impl AssetKind {
     pub fn from_path(path: &Path) -> Option<Self> {
+        let in_pack = path.parent().and_then(Path::extension).is_some_and(|e| e.eq_ignore_ascii_case("shaderpack"));
+        if in_pack && path.file_name().is_some_and(|name| name == "pack.toml") {
+            return Some(Self::ShaderPack);
+        }
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         Some(match extension.as_str() {
             "gltf" | "glb" | "fbx" | "boxmodel" => Self::Model,

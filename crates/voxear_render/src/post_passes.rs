@@ -20,6 +20,7 @@ use crate::{
     passes::{begin_rendering, begin_rendering_in, bind, fullscreen},
     pipelines::{BLOOM_FORMAT, HDR_FORMAT, LDR_FORMAT, Pipelines},
     post::{AntiAliasingMode, PostProcess},
+    shader_packs::PackPoint,
 };
 
 /// Matches `BLOOM_LEVELS` in post.slang, which normalises the sum.
@@ -77,6 +78,9 @@ pub struct PostInput {
     /// AMD FSR 3.1, to take TAA's place where the settings choose it and the
     /// GPU can run it.
     pub fsr3: Option<Fsr3Input>,
+    /// A worn shader pack's passes after the fog, after TAA and over the
+    /// finished picture.
+    pub pack: Option<crate::shader_packs::PackRecorder>,
 }
 
 /// What FSR 3.1 needs of a view beyond the post-processing's own inputs.
@@ -125,6 +129,9 @@ pub fn record(
         let push = Push { textures: [depth_texture, 0, 0, 0], ..push };
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
+    }
+    if let Some(pack) = &input.pack {
+        pack.record(fg, PackPoint::AfterFog, hdr);
     }
     // FSR's reactive mask is made from the scene before and after what is drawn over it.
     let fsr_chosen = input.fsr3.is_some()
@@ -197,6 +204,10 @@ pub fn record(
         scene = current;
     }
 
+    if let Some(pack) = &input.pack {
+        scene = pack.record(fg, PackPoint::AfterTaa, scene);
+    }
+
     let bloom = settings.bloom.enabled && settings.bloom.intensity > 0.0;
     let metering = settings.exposure.auto;
     let mut levels = Vec::with_capacity(BLOOM_LEVELS);
@@ -233,10 +244,11 @@ pub fn record(
         }
     }
 
-    // Sharpening and FXAA need the finished image, so they get a pass of their own.
-    let finish = settings.anti_aliasing.mode == AntiAliasingMode::Fxaa
-        || settings.anti_aliasing.sharpness > 0.0
-        || input.keep_ldr;
+    // Sharpening and FXAA need the finished image, so they get a pass of their own, as a shader pack's passes over
+    // the finished picture do.
+    let pack_final = input.pack.as_ref().filter(|pack| pack.runs_at(PackPoint::Final));
+    let sharpened = settings.anti_aliasing.mode == AntiAliasingMode::Fxaa || settings.anti_aliasing.sharpness > 0.0;
+    let finish = sharpened || input.keep_ldr || pack_final.is_some();
     let composited = if finish { fg.create_image(gpu, bindless, "ldr", full(LDR_FORMAT))? } else { input.output };
     let bloom_texture = if bloom { fg.texture(levels[0].0).0 } else { NO_TEXTURE };
     let push = Push { textures: [fg.texture(scene).0, bloom_texture, 0, 0], output: u32::from(!finish), ..push };
@@ -260,13 +272,19 @@ pub fn record(
         draw_into(ctx, composite, &push, composited, composite_rect)
     });
 
+    let finished = match pack_final {
+        Some(pack) => pack.record(fg, PackPoint::Final, composited),
+        None => composited,
+    };
     if finish {
         let output = input.output;
-        let push = Push { textures: [fg.texture(composited).0, 0, 0, 0], size: origin(rect), ..push };
-        let images = [(composited, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
+        // Over a pack's picture with neither FXAA nor sharpening, only dithered.
+        let level = u32::from(pack_final.is_some() && !sharpened);
+        let push = Push { textures: [fg.texture(finished).0, 0, 0, 0], size: origin(rect), level, ..push };
+        let images = [(finished, ImageAccess::Sampled), (output, ImageAccess::ColorAttachment)];
         fg.add_pass("Finish", &images, &[], move |ctx| draw_into(ctx, pipelines.finish, &push, output, rect));
     }
-    Ok(finish.then_some(composited))
+    Ok(finish.then_some(finished))
 }
 
 /// AMD FSR 3.1 in TAA's place: the frame's exposure as FSR reads it, then

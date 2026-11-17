@@ -820,7 +820,9 @@ float3 sharpen(uint source, int2 pixel, float sharpness, float peak)
 float4 finishFragment(PostOut input) : SV_Target
 {
     Frame* frame = push.frame;
-    float3 color = frame->post.fxaa != 0
+    // push.level 1: a shader pack's finished picture, with neither FXAA nor sharpening, only dithered.
+    float3 color = push.level != 0 ? load(push.textures.x, viewPixel(input)).rgb
+        : frame->post.fxaa != 0
         ? fxaa(push.textures.x, input.uv, 1.0 / float2(frame->viewport))
         : sharpen(push.textures.x, viewPixel(input), frame->post.sharpness, max(frame->post.displayPeak, 1.0));
     // A display image is dithered as the encode pass fits it to the window.

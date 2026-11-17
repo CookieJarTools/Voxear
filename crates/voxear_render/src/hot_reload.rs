@@ -312,7 +312,7 @@ impl Drop for ShaderWatcher {
 /// The Slang compiler: `SLANGC`, else the one shipped beside the executable
 /// (`slang/bin/`, its libraries in `slang/lib/` where it looks for them),
 /// else `slangc` on the path.
-fn slangc() -> String {
+pub(crate) fn slangc() -> String {
     if let Ok(path) = std::env::var("SLANGC") {
         return path;
     }

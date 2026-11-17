@@ -872,8 +872,9 @@ fn covers(camera: MapCamera, aspect: f32, (reach, lower): (f32, f32), any_turn: 
     near
 }
 
-/// Hears the pointer on a map: a drag turns and tilts it, a drag with the
-/// middle button moves it over the ground, and the wheel zooms it.
+/// Hears the pointer on a map: a drag moves it over the ground, as one with
+/// the middle button does, a drag with the secondary button turns and tilts
+/// it, and the wheel zooms it.
 fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId)) {
     ui.take_wheel(node, true);
     // The wheel turned away brings the ground nearer, as it does in the editor's views.
@@ -881,7 +882,8 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId))
     if wheel != 0.0 {
         view.zoom = (view.zoom * (1.0 - wheel.signum() * 0.12)).clamp(1.0 / 64.0, 8.0);
     }
-    let (turning, moving) = (ui.is_pressed(node), ui.is_middle_pressed(node));
+    let turning = ui.is_secondary_pressed(node);
+    let moving = !turning && (ui.is_pressed(node) || ui.is_middle_pressed(node));
     let (Some(now), true) = (ui.pointer_position(), turning || moving) else {
         view.held = None;
         return;

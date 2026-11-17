@@ -7807,6 +7807,162 @@ fn a_box_model_draws_its_pixels_sharp_and_its_boxes_follow_their_bones() {
     assert!(red(at(&turned, 0.25, 0.75)), "the body stays");
 }
 
+/// A box model a block across at 8 pixels a block, standing at the middle:
+/// a white front with a hole at its upper left and a red patch at its lower
+/// right, its top raised a pixel by a yellow layer, and beside it, on the
+/// left as it is faced, a box of grey cubes.
+fn tint_figure() -> voxear_render::BoxModel {
+    use voxear_render::{BoxLayer, BoxModel, BoxSkin, Face, Sheet, Voxels};
+    let mut sheet = Sheet::filled(16, 16, [255; 4]);
+    sheet.set(0, 0, [0; 4]);
+    for (x, y) in (4..8).flat_map(|x| (4..8).map(move |y| (x, y))) {
+        sheet.set(x, y, [200, 40, 40, 255]);
+    }
+    for (x, y) in (8..16).flat_map(|x| (8..12).map(move |y| (x, y))) {
+        sheet.set(x, y, [230, 200, 40, 255]);
+    }
+    let mut model = BoxModel { pixels_per_block: 8.0, sheet, palette: vec![[160, 160, 160, 255]], ..BoxModel::default() };
+    let mut faces = [None; 6];
+    faces[Face::Front.index()] = Some([0.0, 0.0, 8.0, 8.0]);
+    faces[Face::Top.index()] = Some([0.0, 8.0, 8.0, 12.0]);
+    let mut raised = [None; 6];
+    raised[Face::Top.index()] = Some([8.0, 8.0, 16.0, 12.0]);
+    let body = model.add_bone("Body", None, Vec3::ZERO);
+    let front = model.add_box(body, Vec3::new(-4.0, 0.0, -2.0), [8, 8, 4], [0, 0]);
+    front.skin = BoxSkin::Faces(faces);
+    front.layer = Some(BoxLayer { skin: BoxSkin::Faces(raised), height: 1.0 });
+    model.add_box(body, Vec3::new(4.0, 0.0, -2.0), [4, 4, 4], [0, 0]).voxels = Some(Voxels::filled([4, 4, 4], 1));
+    model
+}
+
+/// The tint figure seen from in front, `distance` metres off, tinted or
+/// not, its LOD bias at `lod_bias`; or the wall behind it alone.
+fn tint_render(tint: Option<[f32; 3]>, lod_bias: f32, distance: f32, figure: bool) -> Option<Vec<u8>> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, NO_TINT, Pose, Sky};
+    let mut renderer = renderer()?;
+    let text = tint_figure().to_text();
+    let model = voxear_render::prepare_model("Figure.boxmodel", &mut |file| match file {
+        "Figure.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let imported = renderer.upload_model(&model).unwrap();
+    let mut world = World::new();
+    let toward = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 0.75, distance), toward, Vec3::ONE)));
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, toward, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    if figure {
+        let parts = imported
+            .nodes
+            .iter()
+            .map(|node| ModelPart {
+                mesh: node.mesh,
+                material: node.material,
+                transform: voxear_core::math::Mat4::IDENTITY,
+                node: 0,
+                skin: node.skin.map(|s| s as u32),
+            })
+            .collect();
+        let animation = imported.animation.clone().unwrap();
+        let bones: Arc<[voxear_core::math::Mat4]> =
+            animation.skeleton.model_matrices(&animation.skeleton.rest()).into();
+        let tints = [tint.unwrap_or(NO_TINT), NO_TINT, NO_TINT];
+        let drawn = ModelRenderer { animation: Some(animation), tints, lod_bias, ..ModelRenderer::new(parts) };
+        world.spawn((drawn, Pose { bones }, Transform::default()));
+    }
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer
+        .add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() })
+        .unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(400.0, 400.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, dark), wall));
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_tint_colours_a_box_models_pixels_and_cubes_and_keeps_its_holes_and_sharp_pixels_near_and_far() {
+    let tint = [1.0, 0.5, 0.25];
+    let Some(near) = tint_render(None, 0.0, 4.0, true) else { return };
+    let near_tinted = tint_render(Some(tint), 0.0, 4.0, true).unwrap();
+    // A bias that has the layers lie flat this near, as they do far off.
+    let flat = tint_render(None, 4.0, 4.0, true).unwrap();
+    let flat_tinted = tint_render(Some(tint), 4.0, 4.0, true).unwrap();
+    let wall = tint_render(None, 0.0, 4.0, false).unwrap();
+    let distant = tint_render(None, 0.0, 60.0, true).unwrap();
+    let distant_tinted = tint_render(Some(tint), 0.0, 60.0, true).unwrap();
+    let distant_wall = tint_render(None, 0.0, 60.0, false).unwrap();
+    for (name, pixels) in [
+        ("tint near.png", &near),
+        ("tint near tinted.png", &near_tinted),
+        ("tint flat.png", &flat),
+        ("tint flat tinted.png", &flat_tinted),
+        ("tint distant.png", &distant),
+        ("tint distant tinted.png", &distant_tinted),
+    ] {
+        keep_image(name, pixels);
+    }
+    let (eye, ahead) = (Vec3::new(0.0, 0.75, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let at = |pixels: &[u8], x: f32, y: f32| rgb_at(pixels, on_screen(eye, ahead, Vec3::new(x, y, 0.25)));
+    let grey = |[r, g, b]: [i32; 3]| r.max(g).max(b) - r.min(g).min(b) < 20;
+    let orange = |[r, g, b]: [i32; 3]| r > g + 30 && g > b + 15;
+    // Within the sheet's pixels: white at its third pixel across and down, red at its seventh.
+    let (white, red, hole, cubes) = ((0.1875, 0.6875), (-0.3125, 0.1875), (0.4375, 0.9375), (0.75, 0.25));
+    for (plain, tinted, view) in [(&near, &near_tinted, "near"), (&flat, &flat_tinted, "with its layers flat")] {
+        let (was, now) = (at(plain, white.0, white.1), at(tinted, white.0, white.1));
+        assert!(grey(was) && was[0] > 170, "{view}: the white pixel as made, {was:?}");
+        assert!(orange(now) && (now[0] - was[0]).abs() < 16, "{view}: the white pixel takes the tint, {now:?}");
+        let (was, now) = (at(plain, red.0, red.1), at(tinted, red.0, red.1));
+        assert!(now[0] > now[1] + 80 && (now[0] - was[0]).abs() < 16, "{view}: red stays red, {was:?} to {now:?}");
+        let (was, now) = (at(plain, cubes.0, cubes.1), at(tinted, cubes.0, cubes.1));
+        assert!(grey(was) && orange(now), "{view}: the grey cubes take the tint, {was:?} to {now:?}");
+        // The hole is a hole either way: the wall behind shows through it.
+        let behind = at(&wall, hole.0, hole.1);
+        for pixels in [plain, tinted] {
+            let seen = at(pixels, hole.0, hole.1);
+            assert!((0..3).all(|c| (seen[c] - behind[c]).abs() < 6), "{view}: the hole shows {seen:?}, not {behind:?}");
+        }
+        // Each pixel is one colour right up to the next, tinted as untinted: a twentieth of a pixel from the red.
+        let (edge, middle) = (at(tinted, 0.00625, 0.1875), at(tinted, 0.1875, 0.1875));
+        assert!((0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{view}: {edge:?} beside {middle:?}");
+        // The tint changes no pixel's being there: the same pixels differ from the wall alone.
+        assert_eq!(coverage_unlike(plain, tinted, &wall), 0, "{view}: the cut-out is the same");
+    }
+    // Near, the top's layer stands a pixel up over the box; flat, it does not, so the flat pictures are the far
+    // drawing.
+    let bump = |pixels: &[u8]| at(pixels, 0.0, 1.06);
+    let behind = at(&wall, 0.0, 1.06);
+    let unlike = |a: [i32; 3], b: [i32; 3]| (0..3).any(|c| (a[c] - b[c]).abs() > 12);
+    assert!(unlike(bump(&near), behind) && unlike(bump(&near_tinted), behind), "the raised layer near");
+    assert!(!unlike(bump(&flat), behind) && !unlike(bump(&flat_tinted), behind), "the layer lying flat");
+    // Sixty metres off, a few pixels across, it is still tinted, and covers what it did.
+    assert_eq!(coverage_unlike(&distant, &distant_tinted, &distant_wall), 0, "the far cut-out is the same");
+    let average = |pixels: &[u8]| {
+        let mut sum = [0i64; 3];
+        let mut count = 0;
+        for (seen, alone) in pixels.chunks_exact(4).zip(distant_wall.chunks_exact(4)) {
+            if (0..3).any(|c| seen[c].abs_diff(alone[c]) > 10) {
+                (0..3).for_each(|c| sum[c] += i64::from(seen[c]));
+                count += 1;
+            }
+        }
+        assert!(count > 4, "the figure shows far off");
+        sum.map(|channel| (channel / count) as i32)
+    };
+    let (was, now) = (average(&distant), average(&distant_tinted));
+    assert!(now[1] < was[1] - 20 && now[2] < now[1], "far off, the tint holds: {was:?} to {now:?}");
+}
+
+/// How many pixels differ from `alone` in one picture but not the other.
+fn coverage_unlike(a: &[u8], b: &[u8], alone: &[u8]) -> usize {
+    let covered = |seen: &[u8], wall: &[u8]| (0..3).any(|c| seen[c].abs_diff(wall[c]) > 10);
+    let pixels = a.chunks_exact(4).zip(b.chunks_exact(4)).zip(alone.chunks_exact(4));
+    pixels.filter(|((a, b), wall)| covered(a, wall) != covered(b, wall)).count()
+}
+
 /// The rotation of a camera looking along `direction`, level from side to side.
 fn looking_along(direction: Vec3) -> Quat {
     let direction = direction.normalize();

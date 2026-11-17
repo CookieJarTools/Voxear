@@ -16,6 +16,7 @@
 //! [`frame_end`] sends what is waiting.
 
 mod authority;
+mod dimensions;
 mod inputs;
 mod messages;
 mod prediction;
@@ -38,11 +39,17 @@ use voxear_net::{
     ServerEvent, Simulated, TokenRequest, Transport, UdpTransport, USER_DATA_BYTES, unix_seconds,
 };
 
-use inputs::{InputBuffer, Latch};
-pub use messages::Command;
 pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
 use replication::{Replication, Tracked, Viewer};
 pub use authority::{HeldBody, claim, has_authority};
+pub use dimensions::{
+    ArrivedEdits, EditPiece, describe, edits_in, failed as dimension_failed, forget_described, made as dimension_made,
+    may_cross, moves_here, owe_edits, take_edits, take_edits_wanted, to_make as dimensions_to_make,
+};
+pub(crate) use dimensions::{needed as dimensions_needed, player_places};
+use inputs::{InputBuffer, Latch};
+pub use messages::Command;
+pub use messages::DimensionWhat;
 pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
 pub use rewind::{MOST_REWIND, raycast_as_seen_by};
 pub use rpcs::{Rpc, RpcTarget};
@@ -65,6 +72,8 @@ pub struct NetStats {
     pub tick: u64,
     /// Times this client's predicted Objs were put right by the server.
     pub corrections: u64,
+    /// Bytes of dimensions' edits a server has sent, in all.
+    pub edit_bytes: u64,
 }
 
 /// A player in a session, numbered by the server: 0 is a host's own.
@@ -268,6 +277,9 @@ pub struct NetSession {
     commands: VecDeque<(u64, Command)>,
     /// The storms, as the server sends them and a client takes them in.
     storms: storms::StormSync,
+    /// Which dimensions each player has, and on a client what the server
+    /// named and the edits that came for them.
+    dims: dimensions::Dims,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -309,6 +321,7 @@ impl NetSession {
             authority: authority::Authority::default(),
             commands: VecDeque::new(),
             storms: storms::StormSync::default(),
+            dims: dimensions::Dims::default(),
         }
     }
 
@@ -380,6 +393,7 @@ impl NetSession {
             players: self.players.len(),
             tick: self.tick,
             corrections: self.prediction.corrections,
+            edit_bytes: self.dims.edit_bytes,
             ..NetStats::default()
         };
         let each: Vec<voxear_net::Stats> = match &self.end {
@@ -442,6 +456,7 @@ impl NetSession {
             }
         }
         let End::Server(server) = &mut self.end else { return };
+        let mut heard = Vec::new();
         for (&client, &player) in &self.by_client {
             let mut messages = Vec::new();
             while let Some(bytes) = server.receive(client, Channel::UNRELIABLE) {
@@ -479,10 +494,14 @@ impl NetSession {
                         let rpc = Rpc { entity: tracked.entity, key, caller: Some(player), tick, bytes };
                         self.rpcs.incoming.push_back(rpc);
                     }
+                    message @ (Message::Ready(_) | Message::Crossed { .. }) => heard.push((player, message)),
                     // Anything else from a client is dropped.
                     _ => {}
                 }
             }
+        }
+        for (player, message) in heard {
+            dimensions::heard(self, player, message);
         }
     }
 
@@ -543,14 +562,24 @@ impl NetSession {
                 Message::Level(level) => self.level_request = Some(level),
                 Message::Storms(bytes) => self.storms.arrived(bytes, rtt),
                 Message::Sync { tick, ahead } if ahead != messages::UNHEARD => self.keep_pace(tick, i64::from(ahead), rtt),
-                Message::Spawn { id, owner, origin, tick, state, fields } => {
+                Message::Spawn { id, owner, origin, dimension, tick, state, fields } => {
                     self.replication.note(id, tick, state);
+                    if let Some(remote) = self.replication.remote.get_mut(&id) {
+                        remote.placed = matches!(origin, Origin::Placed { .. });
+                        remote.dimension = dimension;
+                    }
                     self.replication.early_fields.insert(id, fields);
-                    self.replication.spawns.push(SpawnRequest { id, origin, owner, state });
+                    let request =
+                        SpawnRequest { id, origin, owner, state, dimension: voxear_scene::DimensionId::LEVEL };
+                    dimensions::spawn(self, dimension, request);
                 }
-                Message::Despawn(id) => {
-                    if let Some(entity) = self.replication.remote.remove(&id).and_then(|remote| remote.entity) {
-                        self.replication.despawns.push(entity);
+                Message::Despawn { id, gone } => {
+                    let Some(remote) = self.replication.remote.remove(&id) else { continue };
+                    match (remote.entity, gone || !remote.placed) {
+                        (Some(entity), true) => self.replication.despawns.push(entity),
+                        // Placed by a scene and only out of sight: kept, to be found again as it comes back.
+                        (Some(entity), false) => self.replication.unbinds.push(entity),
+                        (None, _) => {}
                     }
                 }
                 Message::Snapshot { tick, entries } => self.take_snapshot(tick, entries),
@@ -559,7 +588,7 @@ impl NetSession {
                     Some(entity) => self.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes }),
                     None => self.rpcs.early.push((self.now, id, key, tick, bytes)),
                 },
-                _ => {}
+                message => drop(self.dims.take_in(&message, &mut self.replication)),
             }
         }
         if matches!(state, ClientState::Failed(_) | ClientState::Disconnected(_)) && !self.ended {
@@ -627,9 +656,15 @@ impl NetSession {
     /// player's share of it, the Objs to make and take away on their
     /// machine and a snapshot of as much as fits.
     fn replicate(&mut self, world: &World) {
+        if !matches!(self.end, End::Server(_)) {
+            return;
+        }
+        let wanted = dimensions::wanted_by_players(world, self);
         let End::Server(server) = &mut self.end else { return };
         let replication = &mut self.replication;
         let gone = replication.capture(world);
+        let dims = &mut self.dims;
+        let (budget, rate) = (self.settings.bytes_per_second, self.settings.tick_rate);
         let outgoing = std::mem::take(&mut self.rpcs.outgoing);
         let owners = std::mem::take(&mut self.authority.changed_owners);
         let shared = self.settings.authority == NetAuthority::Shared;
@@ -637,6 +672,12 @@ impl NetSession {
         for (&client, player) in &self.by_client {
             let at = replication.viewpoint(*player);
             let Some(viewer) = replication.viewers.get_mut(player) else { continue };
+            // Which dimensions they have: those new named, those gone let go, before any Obj in one is sent.
+            let now = wanted.get(player).map_or(&[][..], Vec::as_slice);
+            for message in dims.update_viewer(*player, &mut viewer.dimensions, now, at.is_some()) {
+                let _ = server.send(client, Channel::RELIABLE, &message.encode(self.origin));
+            }
+            let seen = &viewer.dimensions;
             // What a lost snapshot carried goes again, as it is now.
             for delivery in server.take_deliveries(client) {
                 let voxear_net::Delivery::Lost(tag) = delivery else {
@@ -654,27 +695,40 @@ impl NetSession {
             let mut reliable = Vec::new();
             for id in &gone {
                 if viewer.known.remove(id).is_some() {
-                    reliable.push(Message::Despawn(*id));
+                    reliable.push(Message::Despawn { id: *id, gone: true });
                 }
             }
             let mut spawned = 0;
             for (&id, tracked) in &replication.objects {
-                let near = at.is_none_or(|at| at.distance(tracked.state.position) <= tracked.object.range);
-                let wanted = tracked.object.range <= 0.0 || near || tracked.owner == Some(*player);
+                // Within range in the same dimension, and in one they have.
+                let near = at.is_none_or(|(at, dimension)| {
+                    dimension == tracked.dimension && at.distance(tracked.state.position) <= tracked.object.range
+                });
+                let number = seen.number(tracked.dimension).filter(|_| seen.has(tracked.dimension));
+                let wanted =
+                    number.is_some() && (tracked.object.range <= 0.0 || near || tracked.owner == Some(*player));
                 match (wanted, viewer.known.get_mut(&id)) {
                     (true, None) if spawned < replication::SPAWNS_A_TICK => {
                         spawned += 1;
                         viewer.known.insert(id, (0, 0.0));
                         let (owner, origin, state) = (tracked.owner, tracked.origin.clone(), tracked.state);
-                        let fields = tracked.fields.clone();
-                        reliable.push(Message::Spawn { id, owner, origin, tick, state, fields });
+                        let (fields, dimension) = (tracked.fields.clone(), number.unwrap_or(0));
+                        reliable.push(Message::Spawn { id, owner, origin, dimension, tick, state, fields });
+                    }
+                    // Gone into another dimension they have: told so, for the tick it went.
+                    (true, Some((pending, _))) if tracked.crossed => {
+                        reliable.push(Message::Crossed { id, dimension: number.unwrap_or(0), tick });
+                        *pending |= tracked.changed;
                     }
                     (true, Some(_)) if shared && tracked.owner == Some(*player) => {}
                     (true, Some((pending, waited))) => {
                         *pending |= tracked.changed;
                         if *pending != 0 {
-                            // Nearer counts for more: full within ten metres, a fifth beyond fifty.
-                            let distance = at.map_or(0.0, |at| at.distance(tracked.state.position));
+                            // Nearer counts for more: full within ten metres, a fifth beyond fifty or in another dimension.
+                            let distance = at.map_or(0.0, |(at, dimension)| match dimension == tracked.dimension {
+                                true => at.distance(tracked.state.position),
+                                false => f32::MAX,
+                            });
                             let near = (1.0 - (distance - 10.0) / 40.0).clamp(0.2, 1.0);
                             *waited += tracked.object.priority.max(0.01) * near;
                             // A player's own go first, every tick, for their machine to check its predictions.
@@ -685,13 +739,17 @@ impl NetSession {
                     }
                     (false, Some(_)) => {
                         viewer.known.remove(&id);
-                        reliable.push(Message::Despawn(id));
+                        reliable.push(Message::Despawn { id, gone: false });
                     }
                     _ => {}
                 }
             }
             for message in reliable {
                 let _ = server.send(client, Channel::RELIABLE, &message.encode(self.origin));
+            }
+            // Dimensions' edits, a share of the budget a tick.
+            for bytes in dimensions::edits_to_send(&mut viewer.dimensions, budget, rate, &mut dims.edit_bytes) {
+                let _ = server.send(client, Channel::RELIABLE, &bytes);
             }
             for &(id, owner) in &owners {
                 if viewer.known.contains_key(&id) {
@@ -950,11 +1008,17 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     session.receive_server();
     session.receive_client();
     session.rpcs.expire(session.now);
+    dimensions::check_crossings(world, &mut session);
+    for entity in std::mem::take(&mut session.replication.unbinds) {
+        authority::unhold_body(world, entity);
+        world.remove::<Networked>(entity);
+    }
     while session.events.len() > MOST_EVENTS {
         session.events.pop_front();
     }
     if session.role == NetRole::Client {
         session.advance_shown(delta);
+        dimensions::settle_client(world, &mut session);
         let theirs: std::collections::HashSet<NetId> = session.prediction.ids.union(&session.authority.owned).copied().collect();
         session.replication.show(world, &theirs);
     }
@@ -978,6 +1042,7 @@ pub fn frame_end(world: &mut World) {
     // What is sent is where the ticks left each Obj, not where it is shown between them.
     let smoothed = crate::tick_smoothing::hide(world);
     authority::send_owned(world, &mut session);
+    dimensions::send_own_crossings(world, &mut session);
     session.replicate(world);
     storms::send(world, &mut session);
     session.flush();
@@ -1000,8 +1065,20 @@ pub fn track(world: &mut World, entity: voxear_ecs::Entity, origin: Origin) -> O
     // An owner and fields given before it was shared.
     let owner = world.remove::<WaitingOwner>(entity).and_then(|waiting| waiting.0);
     let fields = world.remove::<WaitingFields>(entity).map(|waiting| waiting.0).unwrap_or_default();
+    let dimension = voxear_scene::dimension_of(world, entity);
     let session = world.resource_mut::<NetSession>()?;
-    let tracked = Tracked { entity, origin, owner, object, state, changed: 0, fields_changed: false, fields };
+    let tracked = Tracked {
+        entity,
+        origin,
+        owner,
+        object,
+        state,
+        dimension,
+        crossed: false,
+        changed: 0,
+        fields_changed: false,
+        fields,
+    };
     session.replication.objects.insert(id, tracked);
     world.insert(entity, Networked { id, owner });
     Some(id)

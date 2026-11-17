@@ -1371,6 +1371,7 @@ pub fn asset_kind_id(kind: AssetKind) -> (&'static str, bool) {
         AssetKind::Texture => ("texture", false),
         AssetKind::Material => ("material", true),
         AssetKind::Scene => ("scene", true),
+        AssetKind::Dimension => ("dimension", true),
         AssetKind::Level => ("level", true),
         AssetKind::Prefab => ("prefab", true),
         AssetKind::Ui => ("ui", true),

@@ -165,6 +165,8 @@ pub struct PortalExit {
     pub at: Vec3,
     /// How far round it a world without end makes its own blocks.
     pub distance: f32,
+    /// The dimension the Portal it leads to is in, whose worlds make it.
+    pub dimension: voxear_scene::DimensionId,
 }
 
 /// The far sides being made this tick, as a world's resource, and how many
@@ -207,11 +209,17 @@ const CLEARS_IN: f32 = 0.4;
 pub(crate) fn find_exits(world: &mut World) {
     let was = world.remove_resource::<PortalExits>().unwrap_or_default();
     let Some(viewer) = crate::terrain::viewer(world) else { return };
-    // Where the world is seen from, and what each camera films: through a Portal ahead of its camera, it stands by
-    // one whose far side is the place the camera is still in.
-    let mut near = vec![viewer];
-    let cameras: Vec<Entity> = world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
-    near.extend(cameras.into_iter().filter_map(|camera| subject(world, camera)).map(|subject| place(world, subject)));
+    // Where the world is seen from, and what each camera films, each in its dimension: through a Portal ahead of
+    // its camera, it stands by one whose far side is the place the camera is still in.
+    let mut near = vec![(viewer, crate::dimensions::seen_from(world))];
+    let cameras: Vec<Entity> =
+        world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
+    near.extend(
+        cameras
+            .into_iter()
+            .filter_map(|camera| subject(world, camera))
+            .map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))),
+    );
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let switched = Switched::of(world);
     let exits: Vec<PortalExit> = world
@@ -224,7 +232,12 @@ pub(crate) fn find_exits(world: &mut World) {
             let pose = PortalPose::of(transform, placed);
             let kept = was.exits.iter().any(|exit| exit.portal == entity);
             let reach = portal.reach(&quality) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
-            let within = |from: &Vec3| {
+            // Near a place in its own dimension: one at the same numbers in another is nowhere near.
+            let here = voxear_scene::dimension_of(world, entity);
+            let within = |(from, dimension): &(Vec3, voxear_scene::DimensionId)| {
+                if *dimension != here {
+                    return false;
+                }
                 let local = pose.local(*from);
                 let (half, high) = (portal.size.x * 0.5, portal.size.y);
                 let nearest = Vec3::new(local.x.clamp(-half, half), local.y.clamp(0.0, high), 0.0);
@@ -232,7 +245,8 @@ pub(crate) fn find_exits(world: &mut World) {
             };
             near.iter().any(within).then_some(())?;
             let at = PortalPose::of_obj(world, to)?.position;
-            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance })
+            let dimension = voxear_scene::dimension_of(world, to);
+            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, dimension })
         })
         .collect();
     if exits.is_empty() && was.made_for.is_empty() {
@@ -244,8 +258,9 @@ pub(crate) fn find_exits(world: &mut World) {
 /// Where Portals are seen from: where the world is, each camera switched on
 /// (from the far side of a Portal that carries its view), and what each
 /// films.
-fn seen_from(world: &World) -> Vec<Vec3> {
-    let mut from: Vec<Vec3> = crate::terrain::viewer(world).into_iter().collect();
+fn seen_from(world: &World) -> Vec<(Vec3, voxear_scene::DimensionId)> {
+    let viewer = crate::terrain::viewer(world).map(|viewer| (viewer, crate::dimensions::seen_from(world)));
+    let mut from: Vec<(Vec3, voxear_scene::DimensionId)> = viewer.into_iter().collect();
     let cameras: Vec<Entity> = world
         .query_ref::<(Entity, &Camera)>()
         .without::<Destroying>()
@@ -255,8 +270,9 @@ fn seen_from(world: &World) -> Vec<Vec3> {
         .collect();
     for camera in cameras {
         let (_, rotation, position) = voxear_scene::world_matrix(world, camera).to_scale_rotation_translation();
-        from.push(ViewCarry::of(world, camera, position, rotation).0);
-        from.extend(subject(world, camera).map(|subject| place(world, subject)));
+        from.push((ViewCarry::of(world, camera, position, rotation).0, voxear_scene::dimension_of(world, camera)));
+        let subject = subject(world, camera);
+        from.extend(subject.map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))));
     }
     from
 }
@@ -295,7 +311,8 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
         let far = to.and_then(|to| PortalPose::of_obj(world, to));
         // Whether the ground is made where it leads, whoever it was made for: round the camera, or as another
         // Portal's far side. Where nothing streams, it is there as it stands.
-        let made = far.map(|far| crate::blocks::made_round(world, far.position, round));
+        let far_dimension = to.map_or(voxear_scene::DimensionId::LEVEL, |to| voxear_scene::dimension_of(world, to));
+        let made = far.map(|far| crate::blocks::made_round(world, (far.position, far_dimension), round));
         let ready = match made {
             Some(Some(made)) => {
                 let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
@@ -306,8 +323,12 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
             None => false,
         };
         let pose = PortalPose::of_obj(world, entity);
+        let here = voxear_scene::dimension_of(world, entity);
         let nearest = pose.map_or(f32::MAX, |pose| {
-            from.iter().map(|point| voxear_render::portals::away(&pose, portal.size, *point)).fold(f32::MAX, f32::min)
+            from.iter()
+                .filter(|(_, dimension)| *dimension == here)
+                .map(|(point, _)| voxear_render::portals::away(&pose, portal.size, *point))
+                .fold(f32::MAX, f32::min)
         });
         let reach = portal.reach(&quality);
         let was_near = was.is_some_and(|was| was.near);

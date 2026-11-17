@@ -311,6 +311,17 @@ pub struct ExtractedFrame {
     /// Where the world's middle is from the level's, in whole metres (see
     /// `voxear_scene::WorldOrigin`).
     pub origin: voxear_core::math::I64Vec3,
+    /// The dimension the view sees: nothing of any other is drawn in it.
+    pub dimension: voxear_scene::DimensionId,
+    /// Which dimension every Obj is in, as the view was taken.
+    pub dimensioned: std::sync::Arc<voxear_scene::Dimensioned>,
+}
+
+impl ExtractedFrame {
+    /// Whether an Obj is in the dimension the view sees.
+    pub fn sees(&self, entity: Entity) -> bool {
+        self.dimensioned.of_obj(entity) == self.dimension
+    }
 }
 
 /// What an instance was made from: its Obj, for a plant of a Foliage its
@@ -597,7 +608,7 @@ pub fn extract(
     // Nothing switched off draws, lights or looks: neither an Obj that is off nor a component.
     let switched = Switched::of(world);
     let on = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
-    let (camera, position, rotation) = world
+    let (camera, position, rotation, filming) = world
         .query_ref::<(voxear_ecs::Entity, &Camera, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
@@ -608,9 +619,18 @@ pub fn extract(
                 placed.map_or((local.scale, local.rotation, local.position), |w| w.0.to_scale_rotation_translation());
             // A camera whose view a Portal carries looks from the other side of it.
             let (position, rotation) = crate::portals::ViewCarry::of(world, entity, position, rotation);
-            (*camera, position, rotation)
+            (*camera, position, rotation, Some(entity))
         })
-        .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
+        .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY, None));
+    // A view sees one dimension: its camera's, or for a view through a Portal, the far Portal's. What is in any
+    // other is as if switched off.
+    let dimensioned = std::sync::Arc::new(voxear_scene::Dimensioned::of(world));
+    let dimension = match through {
+        Some(through) => through.dimension,
+        None => filming.map_or(voxear_scene::DimensionId::LEVEL, |entity| dimensioned.of_obj(entity)),
+    };
+    let switched = switched.only_in(dimension, dimensioned.clone());
+    let on = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
     // A view through a Portal looks from the far side, in a space of its own (see `portals::Through`): everything
     // drawn is moved into it at the end. `seen_from` is where the camera is in the world's, for what is picked by
     // how far it is.
@@ -656,7 +676,7 @@ pub fn extract(
     let scene_post = match options.post_override {
         Some(_) => scene_post,
         None => {
-            let blended = crate::post_volume::blend_volumes(world, scene_post, seen_from);
+            let blended = crate::post_volume::blend_volumes_in(world, scene_post, seen_from, &switched);
             let mut fog = weather.fog(blended.fog, sky.horizon);
             // What falls from weather far off is drawn with the fog: on, however thin, wherever any does.
             let falls = |place: &crate::weather::WeatherPlace| {
@@ -928,30 +948,34 @@ pub fn extract(
     }
     // The first world of blocks' sea level, in the world, which what grows under it sways by.
     let seas = world.query_ref::<(Entity, &crate::sea::SeaLevel, &Transform, Option<&WorldTransform>)>();
-    let level = seas.into_iter().min_by_key(|(entity, ..)| entity.to_bits()).map(|(_, level, local, placed)| {
-        placed.map_or(local.position.y, |placed| placed.0.w_axis.y) + level.0
-    });
+    let seas = seas.into_iter().filter(|(entity, ..)| switched.is_active(*entity));
+    let level = seas
+        .min_by_key(|(entity, ..)| entity.to_bits())
+        .map(|(_, level, local, placed)| placed.map_or(local.position.y, |placed| placed.0.w_axis.y) + level.0);
     frame.sea.level = level.unwrap_or(crate::sea::ANY_WATER);
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
     let water_look = worn.map(|worn| worn.water).unwrap_or_default();
-    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();
-    let ocean = seas.into_iter().next().map(|(ocean, transform, at, now)| {
-        let (_, rotation, position) = at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| {
-            w.0.to_scale_rotation_translation()
+    let seas = world
+        .query_ref::<(Entity, &crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>()
+        .without::<Destroying>();
+    let ocean =
+        seas.into_iter().find(|(entity, ..)| switched.is_active(*entity)).map(|(_, ocean, transform, at, now)| {
+            let (_, rotation, position) =
+                at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| w.0.to_scale_rotation_translation());
+            let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
+            (water_look.over_ocean(*ocean), position.y - offset.y, now.map_or_else(blown, |now| now.0))
         });
-        let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
-        (water_look.over_ocean(*ocean), position.y - offset.y, now.map_or_else(blown, |now| now.0))
-    });
     // Pools, streams and lava are not drawn through a Portal.
     let water_bodies = match through {
         Some(_) => crate::water::WaterBodies::default(),
-        None => water_bodies(world, position, water_look),
+        None => water_bodies(world, position, water_look, &switched),
     };
     // Lava lights what is round it.
     lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
     // And Particle Systems that cast a light: a fire's flicker, an explosion's flash.
-    lights.extend(crate::particles::lights(world, seen_from, crate::particles::time_of(world, time)));
+    let sees = |entity: Entity| switched.is_active(entity);
+    lights.extend(crate::particles::lights(world, seen_from, crate::particles::time_of(world, time), &sees));
     frame.light_count = lights.len() as u32;
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<(Entity, &crate::Seasons)>().without::<Destroying>();
@@ -1102,6 +1126,8 @@ pub fn extract(
         water_bodies,
         track_makers,
         origin,
+        dimension,
+        dimensioned,
     }
 }
 
@@ -1319,7 +1345,12 @@ mod tests {
 
 /// The Pools, the Streams and then the Dry Areas nearest `camera`, as many
 /// as a frame draws, and the points along the Streams.
-fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> crate::water::WaterBodies {
+fn water_bodies(
+    world: &World,
+    camera: Vec3,
+    look: crate::looks::WaterLook,
+    switched: &Switched,
+) -> crate::water::WaterBodies {
     use crate::water_bodies::{DryArea, MAX_STREAM_POINTS, MAX_WATER_BODIES, Pool, Stream};
     let placed = |transform: &Transform, at: Option<&WorldTransform>| {
         at.map_or((transform.position, transform.rotation), |w| {
@@ -1328,17 +1359,17 @@ fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> c
         })
     };
     let mut pools: Vec<(f32, crate::gpu::GpuWaterBody)> = world
-        .query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &Pool, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(pool, transform, at)| {
+        .filter(|(entity, ..)| switched.is_active(*entity))
+        .map(|(_, pool, transform, at)| {
             let (position, rotation) = placed(transform, at);
             (position.distance_squared(camera), look.over_pool(*pool).gpu(position, rotation))
         })
         .collect();
     // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
     type Dry = (f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>, Option<crate::gpu::GpuWaterBody>);
-    let switched = Switched::of(world);
     let gusts: Vec<Dry> = world
         .query_ref::<(Entity, &crate::WindZone, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
@@ -1352,10 +1383,11 @@ fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> c
     // A mesh Dry Area takes its own mesh or its Obj's Mesh Renderer's; with neither it keeps nothing dry. Each brings
     // its bilge, if it has one.
     let mut dries: Vec<Dry> = world
-        .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>, Option<&MeshRenderer>)>()
+        .query_ref::<(Entity, &DryArea, &Transform, Option<&WorldTransform>, Option<&MeshRenderer>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter_map(|(dry, transform, at, drawn)| {
+        .filter(|(entity, ..)| switched.is_active(*entity))
+        .filter_map(|(_, dry, transform, at, drawn)| {
             let (position, rotation) = placed(transform, at);
             let near = position.distance_squared(camera);
             match dry.shape {
@@ -1372,13 +1404,17 @@ fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> c
         })
         .collect();
     // The water a Stream can run into: the sea, at its level, and each Pool of water.
-    let sea = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(|(_, t, at)| placed(t, at).0.y);
+    let sea = world
+        .query_ref::<(Entity, &crate::Ocean, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .find(|(entity, ..)| switched.is_active(*entity))
+        .map(|(_, _, t, at)| placed(t, at).0.y);
     let ponds: Vec<(Pool, Vec3, Quat)> = world
-        .query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &Pool, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(pool, ..)| pool.liquid == crate::Liquid::Water)
-        .map(|(pool, t, at)| {
+        .filter(|(entity, pool, ..)| pool.liquid == crate::Liquid::Water && switched.is_active(*entity))
+        .map(|(_, pool, t, at)| {
             let (position, rotation) = placed(t, at);
             (*pool, position, rotation)
         })
@@ -1386,10 +1422,11 @@ fn water_bodies(world: &World, camera: Vec3, look: crate::looks::WaterLook) -> c
     // Each Stream's points along its Path, by how near the nearest of them is; a Stream of water running into a Pool
     // or the sea eases into it at its mouth.
     let mut streams: Vec<(f32, Stream, Vec<crate::water_bodies::StreamPoint>, Option<usize>)> = world
-        .query_ref::<(&Stream, &voxear_scene::Path, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &Stream, &voxear_scene::Path, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(stream, path, transform, at)| {
+        .filter(|(entity, ..)| switched.is_active(*entity))
+        .map(|(_, stream, path, transform, at)| {
             let mut points = stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0));
             let mut pours = None;
             if let Some(end) = points.last().map(|p| p.position).filter(|_| stream.liquid == crate::Liquid::Water) {

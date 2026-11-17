@@ -2130,6 +2130,23 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
   part-way through, the server deciding and checking crossings, Portals to other levels.
+- **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
+  Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
+  dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a
+  `[dimension]` table (kind Overworld, Dungeon or Caves; sky, weather, clock, how long it stays made, one or one for
+  each place that opens it), made with `Game::make_dimension` and let go with `let_go_dimension`, and a change of
+  level lets them all go. The world's sky, sun, post and weather follow the camera from dimension to dimension. A
+  view draws only its own dimension's Objs, lights, worlds of blocks, terrains, plants, water, particles, smoke and
+  mist, and starts its shadow pages, sky tables and bounced light again when it comes to see another, the other
+  worlds' chunks kept on the GPU. Physics keeps dimensions apart in Jolt's object layers and asks rays in the current
+  one; each world without end is made round the places of its own dimension alone; sound, rain, the clock's sun,
+  water, falling trees, saplings, biomes, block mobs, dropped items and scripts' block calls keep to theirs. Tests:
+  two worlds without end at one place, each made round its own dimension, a walker moved into the other standing on
+  its ground under its dark and rays meeting only its blocks; letting a dimension go; bodies of two dimensions at
+  one place never meeting; a GPU picture from one place in each dimension showing only its own field and lamp, and
+  the first again with nothing of the other's shadows. To come: Portals between dimensions, seen through; dungeons
+  in a dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
+  dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,

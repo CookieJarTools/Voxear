@@ -109,7 +109,12 @@ pub fn update(world: &mut World, content: &mut Content) {
     let viewer = crate::terrain::viewer(world);
     let mut kept = world.remove_resource::<TintTiles>().unwrap_or_default();
     kept.0.retain(|entity, _| worlds.iter().any(|(tinted, ..)| tinted == entity));
+    let seen = crate::dimensions::seen_from(world);
     for (entity, corner, (covers, cover, covered)) in worlds {
+        // A world of a dimension not seen keeps its tints as they are.
+        if viewer.is_some() && voxear_scene::dimension_of(world, entity) != seen {
+            continue;
+        }
         let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
         let Some(generator) = crate::blocks::generator(content, &asset.file) else { continue };
         let Some(generate) = asset.file.generate.as_ref() else { continue };

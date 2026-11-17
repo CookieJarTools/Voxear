@@ -1300,6 +1300,8 @@ impl Pool {
 #[derive(Clone)]
 pub(crate) struct DrawnBlocks {
     pub entity: Entity,
+    /// The dimension it is in: only views of that dimension draw it.
+    pub dimension: voxear_scene::DimensionId,
     pub corner: Vec3,
     /// How it is turned about its corner: none but for blocks that came
     /// loose, which the GI's rays do not see.
@@ -1827,6 +1829,7 @@ impl BlockWorlds {
             let (chunks, groups) = pool.draws();
             let drawn = DrawnBlocks {
                 entity,
+                dimension: voxear_scene::dimension_of(world, entity),
                 corner,
                 turn,
                 lit_by,
@@ -1866,6 +1869,7 @@ impl BlockWorlds {
             match self.leaving.get(&entity).and_then(|old| old.shown.clone()) {
                 Some(old) => {
                     self.drawn.push(DrawnBlocks {
+                        dimension: drawn.dimension,
                         corner,
                         turn,
                         lit_by,
@@ -2162,6 +2166,15 @@ pub struct BlockCounts {
 ///
 /// Where `rings`, as in a view not through a Portal, a world without end's
 /// rings fade into each other (see `voxear_terrain::blocks::RingFades`).
+/// The worlds of blocks a view in `dimension` draws, of every world drawn
+/// this frame.
+pub(crate) fn in_dimension(drawn: &Arc<[DrawnBlocks]>, dimension: voxear_scene::DimensionId) -> Arc<[DrawnBlocks]> {
+    match drawn.iter().all(|blocks| blocks.dimension == dimension) {
+        true => drawn.clone(),
+        false => drawn.iter().filter(|blocks| blocks.dimension == dimension).cloned().collect(),
+    }
+}
+
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,

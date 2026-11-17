@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
 
+use crate::dimensions::{DimensionId, Dimensioned};
 use crate::hierarchy::Parent;
 
 /// An engine component that can be switched off, as a scene file names it.
@@ -214,16 +215,36 @@ pub fn set_active(world: &mut World, entity: Entity, active: bool) {
 #[derive(Clone, Debug, Default)]
 pub struct Switched {
     inactive: HashSet<Entity>,
+    /// Where only one dimension's Objs count as on: that dimension, and
+    /// where every Obj is.
+    only_in: Option<(DimensionId, std::sync::Arc<Dimensioned>)>,
 }
 
 impl Switched {
     pub fn of(world: &World) -> Self {
-        Self { inactive: inactive_objs(world) }
+        Self { inactive: inactive_objs(world), only_in: None }
     }
 
-    /// Whether the Obj is on, as [`is_active`].
+    /// As [`Switched::of`], with every Obj outside `dimension` counted as
+    /// off too: what a view or a listener in that dimension skips.
+    pub fn in_dimension(world: &World, dimension: DimensionId) -> Self {
+        Self::of(world).only_in(dimension, std::sync::Arc::new(Dimensioned::of(world)))
+    }
+
+    /// The same, with every Obj outside `dimension` counted as off, where
+    /// `dimensioned` says where each Obj is.
+    pub fn only_in(self, dimension: DimensionId, dimensioned: std::sync::Arc<Dimensioned>) -> Self {
+        match dimension.is_level() && dimensioned.all_in_level() {
+            true => Self { only_in: None, ..self },
+            false => Self { only_in: Some((dimension, dimensioned)), ..self },
+        }
+    }
+
+    /// Whether the Obj is on, as [`is_active`], and in the dimension asked
+    /// after, where one was.
     pub fn is_active(&self, entity: Entity) -> bool {
         !self.inactive.contains(&entity)
+            && self.only_in.as_ref().is_none_or(|(dimension, dimensioned)| dimensioned.of_obj(entity) == *dimension)
     }
 
     /// Whether a component of the Obj does anything, as [`is_on`].
@@ -291,6 +312,26 @@ mod tests {
 
         set_active(&mut world, child, true);
         assert!(is_active(&world, grandchild));
+    }
+
+    #[test]
+    fn a_dimensions_objs_are_on_only_where_that_dimension_is_asked_after() {
+        use crate::{DimensionId, InDimension};
+        let mut world = World::new();
+        let level = world.spawn(Transform::IDENTITY);
+        let root = world.spawn((Transform::IDENTITY, InDimension(DimensionId(2))));
+        let child = world.spawn((Transform::IDENTITY, Parent(root)));
+        let in_level = Switched::in_dimension(&world, DimensionId::LEVEL);
+        assert!(in_level.is_active(level) && !in_level.is_active(root) && !in_level.is_active(child));
+        let in_two = Switched::in_dimension(&world, DimensionId(2));
+        assert!(!in_two.is_active(level) && in_two.is_active(root) && in_two.is_active(child));
+        set_active(&mut world, child, false);
+        assert!(!Switched::in_dimension(&world, DimensionId(2)).is_active(child), "still off by its own switch");
+        // With every Obj in the level's, asking after the level's is as asking after nothing.
+        let mut plain = World::new();
+        let obj = plain.spawn(Transform::IDENTITY);
+        assert!(Switched::in_dimension(&plain, DimensionId::LEVEL).is_active(obj));
+        assert!(!Switched::in_dimension(&plain, DimensionId(1)).is_active(obj));
     }
 
     #[test]

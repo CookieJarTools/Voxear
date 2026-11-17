@@ -608,7 +608,7 @@ struct BodyKey {
     collider: Collider,
     rigidbody: Option<Rigidbody>,
     scale: Vec3,
-    layer: u8,
+    layer: u16,
     /// A Mesh collider's [`ColliderMesh`] key.
     mesh: Option<u64>,
 }
@@ -627,7 +627,7 @@ struct Kept {
 struct Walker {
     id: CharacterId,
     controller: CharacterController,
-    layer: u8,
+    layer: u16,
     placed: Vec3,
     state: Option<CharacterState>,
     up: Vec3,
@@ -730,7 +730,7 @@ pub fn gravity_at(_world: &World, gravity: Vec3, _at: Vec3) -> Vec3 {
 struct TerrainBodies {
     heights: u64,
     corner: Vec3,
-    layer: u8,
+    layer: u16,
     tiles: Vec<Option<(Arc<voxear_terrain::HeightTile>, BodyId, ShapeId)>>,
     dug: HashMap<voxear_terrain::dig::ChunkKey, DugBody>,
 }
@@ -766,7 +766,7 @@ fn box_triangles(points: &mut Vec<Vec3>, indices: &mut Vec<u32>, low: Vec3, high
 
 struct BlockBodies {
     corner: Vec3,
-    layer: u8,
+    layer: u16,
     block_size: f32,
     meshes: Option<Arc<voxear_terrain::blocks::ChunkMeshes>>,
     chunks: HashMap<[i32; 3], (Arc<voxear_terrain::blocks::mesh::ChunkMesh>, BodyId, ShapeId)>,
@@ -805,14 +805,17 @@ struct PlantBodies {
     plants: Arc<Vec<Plant>>,
     model: Mat4,
     trunk: Trunk,
-    layer: u8,
+    layer: u16,
     removed: Arc<PlantSet>,
     bodies: Vec<Option<(BodyId, ShapeId)>>,
 }
 
-/// The layer an Obj is on, 0 without one.
-fn layer(world: &World, entity: Entity) -> u8 {
-    world.get::<Layer>(entity).map_or(0, |layer| layer.0)
+/// The layer an Obj is on, 0 without one, in its dimension: 32 more for
+/// each dimension, so bodies of two dimensions never collide.
+fn layer(world: &World, entity: Entity) -> u16 {
+    let own = world.get::<Layer>(entity).map_or(0, |layer| layer.0);
+    let dimension = voxear_scene::dimension_of(world, entity).0 % crate::DIMENSIONS;
+    dimension * 32 + u16::from(own % 32)
 }
 
 /// Two Objs as a pair, the same whichever comes first.
@@ -1179,7 +1182,7 @@ impl PhysicsScene {
     /// as a mesh, made again when the chunk changes, by pointer. A chunk
     /// whose triangles are still being made on the terrain's background
     /// threads keeps the body it had until they are done.
-    fn sync_dug(&mut self, entity: Entity, terrain: &voxear_terrain::Terrain, corner: Vec3, moved: bool, layer: u8) {
+    fn sync_dug(&mut self, entity: Entity, terrain: &voxear_terrain::Terrain, corner: Vec3, moved: bool, layer: u16) {
         use voxear_terrain::dig::Excavation;
         let mut kept = std::mem::take(&mut self.terrains.get_mut(&entity).expect("kept").dug);
         let mut now = HashMap::new();
@@ -2374,6 +2377,51 @@ mod tests {
             physics.step(&mut world, 1.0 / 60.0);
         }
         assert!((y(&world, ghost) - 0.5).abs() < 0.05, "{}", y(&world, ghost));
+    }
+
+    #[test]
+    fn objs_of_two_dimensions_at_one_place_never_meet_and_rays_ask_in_one() {
+        use voxear_scene::{DimensionId, InDimension};
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let other = DimensionId(3);
+        // Ground in each, the other's a metre higher, under a body in each falling from the same place.
+        let ground = world.spawn((Transform::from_position(Vec3::new(0.0, -0.5, 0.0)),));
+        world.insert(ground, Collider { size: [20.0, 1.0, 20.0], ..Collider::default() });
+        let raised = world.spawn((Transform::from_position(Vec3::new(0.0, 0.5, 0.0)), InDimension(other)));
+        world.insert(raised, Collider { size: [20.0, 1.0, 20.0], ..Collider::default() });
+        let falling = |world: &mut World| {
+            let obj = world.spawn((Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),));
+            world.insert(obj, Collider::default());
+            world.insert(obj, Rigidbody::default());
+            obj
+        };
+        let here = falling(&mut world);
+        let there = falling(&mut world);
+        world.insert(there, InDimension(other));
+        let mut physics = PhysicsScene::new();
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        let y = |world: &World, obj: Entity| world.get::<Transform>(obj).unwrap().position.y;
+        // Each stands on its own dimension's ground, one through the other.
+        assert!((y(&world, here) - 0.5).abs() < 0.05, "{}", y(&world, here));
+        assert!((y(&world, there) - 1.5).abs() < 0.05, "{}", y(&world, there));
+
+        let down =
+            |physics: &PhysicsScene| physics.raycast(Vec3::new(0.0, 10.0, 0.0), Vec3::NEG_Y, 30.0, u32::MAX, false);
+        assert_eq!(down(&physics).map(|hit| hit.obj), Some(here), "the level's is asked in first");
+        physics.world_mut().ask_in(other.0);
+        assert_eq!(down(&physics).map(|hit| hit.obj), Some(there));
+        assert_eq!(physics.overlap_sphere(Vec3::new(0.0, 0.0, 0.0), 0.3, u32::MAX, false), [raised]);
+
+        // Moved into the level's dimension, the other's body is made again there and falls onto its ground.
+        world.remove::<InDimension>(there);
+        world.get_mut::<Transform>(there).unwrap().position = Vec3::new(2.0, 4.0, 0.0);
+        for _ in 0..90 {
+            physics.step(&mut world, 1.0 / 60.0);
+        }
+        assert!((y(&world, there) - 0.5).abs() < 0.05, "{}", y(&world, there));
     }
 
     #[test]

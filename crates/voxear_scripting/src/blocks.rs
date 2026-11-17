@@ -55,6 +55,15 @@ fn worlds(world: &World) -> Vec<(Entity, Vec3)> {
         .collect()
 }
 
+/// The worlds of blocks a place is asked of: those of the dimension the game
+/// is seen from, as `Dimension.Current` says.
+fn worlds_seen(world: &World) -> Vec<(Entity, Vec3)> {
+    let current = voxear_scene::CurrentDimension::of(world);
+    let mut found = worlds(world);
+    found.retain(|(entity, _)| voxear_scene::dimension_of(world, *entity) == current);
+    found
+}
+
 /// The block at `at` in the first world of blocks with one there, and its
 /// Obj; 0 for air everywhere. A block is the one it is drawn as: grass under
 /// a block is the earth it shows as (see `BlockWorld::shown`).
@@ -64,7 +73,7 @@ pub(crate) unsafe extern "C" fn block_at(at: *const [f32; 3], obj: *mut u64) -> 
     }
     let at = Vec3::from(unsafe { *at });
     let found = with_world(|world| {
-        worlds(world).into_iter().find_map(|(entity, corner)| {
+        worlds_seen(world).into_iter().find_map(|(entity, corner)| {
             let blocks = world.get::<BlockWorld>(entity)?;
             let (cell, block) = blocks.block_at((at - corner).to_array());
             (block != AIR).then(|| (entity, blocks.shown(cell)))
@@ -86,7 +95,7 @@ pub(crate) unsafe extern "C" fn block_floor(at: *const [f32; 3], obj: *mut u64) 
         return f32::NAN;
     }
     let found = with_world(|world| {
-        worlds(world).into_iter().find_map(|(entity, corner)| {
+        worlds_seen(world).into_iter().find_map(|(entity, corner)| {
             let blocks = world.get::<BlockWorld>(entity)?;
             Some((entity, corner.y + (blocks.floor? + 1) as f32 * blocks.block_size))
         })
@@ -162,7 +171,7 @@ pub(crate) unsafe extern "C" fn block_set_named(
 fn set(shape: i32, a: Vec3, b: Vec3, picked: Picked, only: i32) -> i32 {
     with_world(|world| {
         let mut changed = 0;
-        for (entity, corner) in worlds(world) {
+        for (entity, corner) in worlds_seen(world) {
             // Its number here first: a world numbering the block now takes its faces on.
             let block = match picked {
                 Picked::Number(block) => block,
@@ -282,7 +291,7 @@ fn set(shape: i32, a: Vec3, b: Vec3, picked: Picked, only: i32) -> i32 {
 /// The first world of blocks with a block at `at`, a point in metres, and
 /// where that block is in it.
 fn block_place(world: &World, at: Vec3) -> Option<(Entity, [i32; 3])> {
-    worlds(world).into_iter().find_map(|(entity, corner)| {
+    worlds_seen(world).into_iter().find_map(|(entity, corner)| {
         let blocks = world.get::<BlockWorld>(entity)?;
         let (place, block) = blocks.block_at((at - corner).to_array());
         (block != AIR).then_some((entity, place))
@@ -467,7 +476,7 @@ pub(crate) unsafe extern "C" fn block_raycast(
         return 0;
     }
     let found = with_world(|world| {
-        worlds(world)
+        worlds_seen(world)
             .into_iter()
             .filter_map(|(entity, corner)| {
                 let blocks = world.get::<BlockWorld>(entity)?;

@@ -172,12 +172,13 @@ pub fn walk_block_mobs(world: &mut World, delta: f32) {
     if mobs.is_empty() {
         return;
     }
-    let worlds: Vec<(Vec3, f32, Arc<BlockMap>, Arc<[BlockFaces]>, BlockWorld)> = world
+    let worlds: Vec<(Vec3, f32, Arc<BlockMap>, Arc<[BlockFaces]>, BlockWorld, voxear_scene::DimensionId)> = world
         .query_ref::<(Entity, &BlockWorld, &Transform)>()
         .into_iter()
         .map(|(entity, blocks, transform)| {
             let corner = voxear_terrain::corner(transform, world.get::<WorldTransform>(entity));
-            (corner, blocks.block_size, blocks.blocks.clone(), blocks.faces.clone(), blocks.clone())
+            let dimension = voxear_scene::dimension_of(world, entity);
+            (corner, blocks.block_size, blocks.blocks.clone(), blocks.faces.clone(), blocks.clone(), dimension)
         })
         .collect();
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else { return };
@@ -188,11 +189,14 @@ pub fn walk_block_mobs(world: &mut World, delta: f32) {
             .get::<BlockMobState>(entity)
             .cloned()
             .unwrap_or_else(|| BlockMobState { seed: entity.index() ^ 0x9e37_79b9, ..BlockMobState::default() });
-        // The world of blocks it is in: the one it can stand in, or else the first there is.
-        let walked = worlds.iter().map(|(corner, size, blocks, faces, whole)| {
-            let water = whole.water_depth((at - *corner).to_array(), 4.0);
-            Walked { corner: *corner, size: *size, blocks: blocks.clone(), faces: faces.clone(), water }
-        });
+        // The world of blocks it is in: of its own dimension, the one it can stand in, or else the first there is.
+        let here = voxear_scene::dimension_of(world, entity);
+        let walked = worlds.iter().filter(|(.., dimension)| *dimension == here).map(
+            |(corner, size, blocks, faces, whole, _)| {
+                let water = whole.water_depth((at - *corner).to_array(), 4.0);
+                Walked { corner: *corner, size: *size, blocks: blocks.clone(), faces: faces.clone(), water }
+            },
+        );
         let tall_in = |walked: &Walked| (controller.height / walked.size).ceil().max(1.0) as u32;
         let mut walked: Vec<Walked> = walked.collect();
         let standing_in = |walked: &Walked| {

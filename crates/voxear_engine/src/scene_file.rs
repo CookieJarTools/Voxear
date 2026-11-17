@@ -1789,6 +1789,18 @@ pub fn spawn(
     };
     let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
     apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref() })?;
+    spawn_objs(engine, content, renderer, scene, skip)
+}
+
+/// Spawns a scene's Objs, but for those at the paths in `skip`, leaving the
+/// world's sky and post-processing as they are.
+pub fn spawn_objs(
+    engine: &mut Engine,
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    scene: &SceneFile,
+    skip: &HashSet<ObjPath>,
+) -> Result<Vec<(ObjPath, Entity)>> {
     let objs = without(prefab::expand(content, &scene.objs)?, skip);
     let template = Template::resolve(content, renderer, &objs)?;
     let entities = engine.spawn_template(&template, None, None)?;

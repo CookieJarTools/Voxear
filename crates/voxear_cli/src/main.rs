@@ -1616,6 +1616,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",
+            AssetKind::Dimension => "dimension",
             AssetKind::LookPack => "look pack",
             AssetKind::TexturePack => "texture pack",
             AssetKind::Shader => "shader",

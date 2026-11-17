@@ -434,7 +434,13 @@ fn shown_from(game: &voxear_engine::Game, gate: Entity, eye: Vec3) -> f32 {
     use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
     let projection = vulkan::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1);
     let view = Mat4::from_rotation_translation(Quat::IDENTITY, eye).inverse();
-    let sight = voxear_render::portals::in_sight(&game.engine.world, (eye, Vec3::ZERO), projection * view, 4, None);
+    let sight = voxear_render::portals::in_sight(
+        &game.engine.world,
+        (eye, Vec3::ZERO),
+        projection * view,
+        4,
+        (None, voxear_scene::DimensionId::LEVEL),
+    );
     sight.seen.iter().find(|seen| seen.entity == gate).map_or(0.0, |seen| seen.shown)
 }
 

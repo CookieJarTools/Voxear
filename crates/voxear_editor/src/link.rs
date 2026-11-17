@@ -715,7 +715,7 @@ pub const CALLS: &[CallInfo] = &[
             maybe("limit", ArgKind::Whole, "The most frames, the latest; 120 when left out."),
         ],
         changes: false,
-        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
+        returns: "{ frames: [{ frame, frame_ms, cpu_ms, gpu_ms, gpu_frame_ms, blocks: { draws, triangles, shadow_draws }, samples: [{ name, depth, ms, self_ms, calls, alloc? }], gpu: [{ pass, ms }] }], next }",
     },
     CallInfo {
         name: "capture",
@@ -832,6 +832,13 @@ pub const CALLS: &[CallInfo] = &[
         args: &[arg("reference", ArgKind::Text, "")],
         changes: false,
         returns: "{ title, text }",
+    },
+    CallInfo {
+        name: "layout.use",
+        about: "Shows a layout of the panels by its name, as the Layout menu does: Default, Profiling, or one saved.",
+        args: &[arg("name", ArgKind::Text, "As the Layout menu names it.")],
+        changes: false,
+        returns: "{ layout }",
     },
     CallInfo {
         name: "editor.wait",

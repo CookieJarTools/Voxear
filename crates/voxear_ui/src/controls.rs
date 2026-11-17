@@ -789,7 +789,7 @@ impl Ui {
                 edit.keep_caret_visible(width * scale, height * scale);
             }
             if !edit.placeholder.content.is_empty() {
-                let layout = edit.placeholder.shaped(fonts, layouts, shaping, font_stack);
+                let layout = edit.placeholder.shaped(fonts, layouts, shaping, font_stack, None);
                 layout.break_all_lines(None);
             }
         }

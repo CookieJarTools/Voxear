@@ -191,10 +191,16 @@ fn describe(
 
 /// `vox editor serve`: a headless editor answering tools until one asks it
 /// to close.
-pub fn serve(project: &Path, settings: impl Fn(&Project) -> voxear_render::RendererSettings, log: voxear_core::logging::LogCapture) -> Result<()> {
+pub fn serve(
+    project: &Path,
+    settings: impl Fn(&Project) -> voxear_render::RendererSettings,
+    log: voxear_core::logging::LogCapture,
+    size: (u32, u32),
+    rate: f32,
+) -> Result<()> {
     let project = Project::open(project)?;
     let settings = settings(&project);
-    voxear_editor::serve(project, &settings, log, HEADLESS_SIZE)
+    voxear_editor::serve(project, &settings, log, size, rate)
 }
 
 #[cfg(test)]

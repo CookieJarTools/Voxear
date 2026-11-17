@@ -100,6 +100,14 @@ enum EditorCommand {
         /// Project folder or its voxear.toml.
         #[arg(long, default_value = ".")]
         project: PathBuf,
+        /// How big the editor draws, as its captures come out.
+        #[arg(long, default_value_t = editor_link::HEADLESS_SIZE.0)]
+        width: u32,
+        #[arg(long, default_value_t = editor_link::HEADLESS_SIZE.1)]
+        height: u32,
+        /// Frames a second at most; 0 draws as fast as it can, to time the editor's frame.
+        #[arg(long, default_value_t = 30.0)]
+        rate: f32,
     },
 }
 
@@ -487,9 +495,9 @@ fn main() -> Result<()> {
             let code = editor_link::call(request, settings, log.expect("captured above"))?;
             std::process::exit(code);
         }
-        Commands::Editor { action: Some(EditorCommand::Serve { project }), .. } => {
+        Commands::Editor { action: Some(EditorCommand::Serve { project, width, height, rate }), .. } => {
             let settings = |project: &Project| RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(project, false) };
-            editor_link::serve(&project, settings, log.expect("captured above"))
+            editor_link::serve(&project, settings, log.expect("captured above"), (width, height), rate)
         }
         Commands::Mcp { project, no_headless } => mcp::serve(&project, !no_headless),
         Commands::Editor { action: None, project, screenshot, width, height, frames, open } => {

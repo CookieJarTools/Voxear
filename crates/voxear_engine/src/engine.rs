@@ -541,23 +541,33 @@ impl Engine {
         self.sync_script_time(self.time.delta);
         // The sea's long waves, where scripts and floating Objs ask about them.
         if crate::modules::has(&self.world, crate::modules::Module::Water) {
+            profile_scope!("Sea");
             crate::water::update(&mut self.world, self.time.elapsed);
         }
-        // Storms drift, and bring their weather to wherever the viewer is under them.
-        crate::storms::update(&mut self.world, self.time.delta, !self.edit_mode);
-        // The weather turns, and its rain and snow fall round the viewer.
-        crate::weather::update(&mut self.world, self.time.delta);
-        // What the weather leaves lying by place, what keeps it off, and how deep the sea is round the viewer.
-        crate::weather_maps::update(&mut self.world, self.time.delta, !self.edit_mode);
+        {
+            profile_scope!("Weather");
+            // Storms drift, and bring their weather to wherever the viewer is under them.
+            crate::storms::update(&mut self.world, self.time.delta, !self.edit_mode);
+            // The weather turns, and its rain and snow fall round the viewer.
+            crate::weather::update(&mut self.world, self.time.delta);
+        }
+        {
+            profile_scope!("Weather Maps");
+            // What the weather leaves lying by place, what keeps it off, and how deep the sea is round the viewer.
+            crate::weather_maps::update(&mut self.world, self.time.delta, !self.edit_mode);
+        }
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
         // The look pack worn is laid over the level's lighting as it is now.
         crate::look_packs::update(&mut self.world);
         // The level's clock turns while playing, and turns the sun where it says.
         crate::heat::turn_clock(&mut self.world, self.time.delta, !self.edit_mode);
-        crate::particles::start(&mut self.world, self.time.elapsed);
-        crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
-        crate::mist::trail_mists(&mut self.world, self.time.elapsed);
+        {
+            profile_scope!("Effects");
+            crate::particles::start(&mut self.world, self.time.elapsed);
+            crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
+            crate::mist::trail_mists(&mut self.world, self.time.elapsed);
+        }
         let year = self.first_seasons().and_then(|entity| self.world.get::<Seasons>(entity)).map(|s| s.time_of_year);
         let features = self.world.query_ref::<&voxear_render::Ocean>().into_iter().next().map(|ocean| ocean.features());
         let weather = self.world.resource::<crate::weather::Weather>().copied().unwrap_or_default();

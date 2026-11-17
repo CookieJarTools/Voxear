@@ -156,6 +156,8 @@ A headless editor saves nothing unless a call saves. So for more than one call, 
 
 `vox editor serve --project MyGame` keeps a headless editor open, answering calls until one closes it with `editor.quit`. If you open the editor while one is serving, the editor you open takes over: the headless one saves and closes.
 
+A headless editor draws at 1600×900, 30 frames a second. `--width` and `--height` draw it at your screen's size, and `--rate 0` draws each frame as soon as the last is done, so `profiler.frames` shows what a frame costs there.
+
 Only one editor on a project answers calls. An editor opened while another is still open, or still closing, waits, and answers once the other has closed.
 
 ## Exit codes
@@ -201,6 +203,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
 | `project.get` | The project's `voxear.toml`, as JSON |
 | `docs.search`, `docs.read` | Find and read pages of this manual and your own |
+| `layout.use` | Show a layout of the panels, as the Layout menu does |
 | `editor.wait`, `editor.quit` | Wait a few frames, and close the editor |
 
 ## Files changed outside the editor

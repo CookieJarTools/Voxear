@@ -884,28 +884,55 @@ impl Game {
             self.move_origin(by, renderer.as_deref_mut());
         }
         // Read once, before the scripts that ask about it.
-        self.input.update(delta);
+        {
+            profile_scope!("Input");
+            self.input.update(delta);
+        }
         let mouse = self.input.devices().mouse().delta;
         self.engine.world.insert_resource(crate::first_person::MouseLook { delta: mouse.into() });
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
-        give_collider_meshes(&mut self.engine.world, &mut self.content);
-        crate::particles::resolve(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        {
+            profile_scope!("Collider Meshes");
+            give_collider_meshes(&mut self.engine.world, &mut self.content);
+        }
+        {
+            profile_scope!("Particles");
+            crate::particles::resolve(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        }
         // Before physics steps, so ground made round the camera stands things on it this frame.
-        crate::terrain::stream(&mut self.engine.world, &mut self.content);
+        {
+            profile_scope!("Terrain Streaming");
+            crate::terrain::stream(&mut self.engine.world, &mut self.content);
+        }
         // The texture pack worn, where it changed: its materials first, then the worlds of blocks drawn with them.
         if let Some(renderer) = renderer.as_deref_mut() {
             crate::texture_packs::sync(&mut self.content, renderer);
         }
-        crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        {
+            profile_scope!("Block Refresh");
+            crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        }
         // The far sides of Portals near by are made with the ground round the camera, and each Portal opens
         // once its own is.
-        crate::portals::find_exits(&mut self.engine.world);
+        {
+            profile_scope!("Portals");
+            crate::portals::find_exits(&mut self.engine.world);
+        }
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::block_tints::update(&mut self.engine.world, &mut self.content);
-        crate::portals::update_far(&mut self.engine.world, delta);
-        crate::blocks::flow(&mut self.engine.world, delta);
-        crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
+        {
+            profile_scope!("Portals");
+            crate::portals::update_far(&mut self.engine.world, delta);
+        }
+        {
+            profile_scope!("Block Flow");
+            crate::blocks::flow(&mut self.engine.world, delta);
+        }
+        {
+            profile_scope!("Block Tick");
+            crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
+        }
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // Trees coming down, and what they broke into, while the game plays.
         if !self.engine.is_edit_mode() {
@@ -914,10 +941,14 @@ impl Game {
             crate::item_drops::update(&mut self.engine.world, &mut self.content, renderer.as_deref_mut(), delta);
             self.show_dropped_prefabs(renderer.as_deref_mut());
         }
-        crate::heat::prepare(&mut self.engine.world, &mut self.content);
-        crate::storms::prepare(&mut self.engine.world, &mut self.content);
+        {
+            profile_scope!("Heat and Storms");
+            crate::heat::prepare(&mut self.engine.world, &mut self.content);
+            crate::storms::prepare(&mut self.engine.world, &mut self.content);
+        }
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
         if let Some(renderer) = renderer.as_deref() {
+            profile_scope!("Mesh Boxes");
             crate::mesh_boxes::refresh(&mut self.engine.world, renderer);
         }
         if crate::modules::has(&self.engine.world, crate::modules::Module::Guns) {
@@ -925,8 +956,11 @@ impl Game {
             crate::guns::handling::give_handlings(&mut self.engine.world, &mut self.content);
         }
         // After the handlings, whose actions may be based on clips.
-        crate::animation::give_clips(&mut self.engine.world, &mut self.content);
-        crate::animation::give_mob_bones(&mut self.engine.world, &mut self.content);
+        {
+            profile_scope!("Clips");
+            crate::animation::give_clips(&mut self.engine.world, &mut self.content);
+            crate::animation::give_mob_bones(&mut self.engine.world, &mut self.content);
+        }
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;
@@ -948,10 +982,19 @@ impl Game {
             self.engine.tick(delta);
         }
         // Before the frame is drawn: what went through a Portal did not cross the world in a frame.
-        crate::portals::tell_renderer(&mut self.engine.world, renderer.as_deref_mut());
-        self.make_heat_changes(renderer.as_deref_mut());
+        {
+            profile_scope!("Portals");
+            crate::portals::tell_renderer(&mut self.engine.world, renderer.as_deref_mut());
+        }
+        {
+            profile_scope!("Heat and Storms");
+            self.make_heat_changes(renderer.as_deref_mut());
+        }
         // A block a script put down in a world that had not held it is drawn as it says from this frame.
-        crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        {
+            profile_scope!("Block Refresh");
+            crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
+        }
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.
         if !self.engine.is_edit_mode() {
             self.ui.sync_screens(&mut self.engine.world, &mut self.content);

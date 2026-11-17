@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine, with Portals between them and dungeons in their own; the editor, scripts, saves and networking planned)*
+### Dimensions *(in the engine, with Portals between them, dungeons in their own and networked play; the editor, scripts and saves planned)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -547,6 +547,32 @@ dimension to another.
   deep dungeon. Edits read from a `.blocks` file of a version before 4 (`edits::VERSION`) lose the changes in the
   spaces and ways of a dungeon that was under the land (`dungeons::drop_old_dungeon_edits`, the dungeons planned in
   the land again to find them; `BlockEdits::retain_blocks`).
+- **Networked** (`net::dimensions`, the game's part in `game::net_dimensions`). A server or host has a place for
+  each player, their first owned Obj in its dimension (`net::player_places`): every world of blocks without end
+  streams round each player in its own dimension (near ground alone where no camera is, so a dedicated server needs
+  none), dungeons' gates stand round each, and `find_exits` opens one Portal into a dimension loaded for it for each
+  player (`PortalExits::for_players`, `portals::open_for`) beside the one for where the game is seen from, so the
+  one-dimension limit is each player's; `link_dimensions` keeps what `net::dimensions_needed` says. Each player has
+  the level's dimension, their own Obj's and the far dimension of the Portal open for them or of any other open
+  Portal near them into one already made; the game describes each made dimension every frame (`net::describe`,
+  `DimensionWhat`: a `.dimension` asset's GUID and key, or a dungeon's gate, from `DungeonFrom` on its rock world),
+  and each one new to a player is named to them once (`Message::Dimension`) as a number on that connection, 0 being
+  the level's, and let go when no longer theirs (`LetGo`). Shared Objs keep their dimension (`Tracked::dimension`):
+  `Spawn` carries its number, an Obj goes to a player only in a dimension they have, its range within it, and one
+  gone into another dimension is `Crossed` for the tick, put on as that tick is shown (`settle_client`); a player
+  without that dimension gets `Despawn { gone: false }`, which leaves a placed Obj be, unbound. Players' machines
+  carry through Portals only what they run or predict (`net::moves_here`); with shared authority they send
+  `Crossed` for their own, which `check_crossings` takes where an open Portal into that dimension stands within 8 m
+  of the Obj, and else answers with where it is. As a dimension is named, the game is asked for its edits
+  (`take_edits_wanted`): every world of blocks of the dimension in an order both ends agree on (the level's by
+  their scenes' places, a file's by its paths, a dungeon's rock last), its changes as saves keep them (`all_changes`
+  for a world without end, else from `BuiltBlocks` or its base), cut into pieces of about 16 kB before packing,
+  nearest the place the player comes in first, each `VXBLOCKS` with the blocks numbered at run time
+  (`Message::Edits`), sent within half the connection's budget, then `EditsDone`. The machine finds or makes the
+  dimension (`dimensions_to_make`, `make_named`), renumbers and makes each piece (`blocks::take_in`: columns made
+  now take the blocks, the rest go with the world's pending changes), and answers `Ready`; until then its Portals
+  into the dimension stay shut (`edits_in`) and the server takes none of that player's Objs through
+  (`may_cross`). The level's edits go the same way once a player has an Obj of their own.
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes
@@ -4486,6 +4512,10 @@ The model is server-authoritative and ECS-native.
 - Prediction with rollback for owned entities, and interpolation for the rest.
 - Lag compensation.
 - Custom serialisers, with bit-packed delta compression against acknowledged snapshots.
+
+**Dimensions.** Players may be in different dimensions at once; the server makes ground round each, sends each
+only the Objs of the dimensions they have, decides crossings and sends a dimension's edits as a player comes into
+it. See *Dimensions*, "Networked".
 
 **Transport and testing.**
 - Transport is UDP plus QUIC (quinn), with relay and session/lobby interfaces.

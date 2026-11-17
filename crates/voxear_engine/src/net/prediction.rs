@@ -150,6 +150,11 @@ pub fn corrections(world: &mut World) -> Vec<Correction> {
 pub fn begin_replay(world: &mut World, correction: &Correction) {
     let before = world.get::<voxear_scene::Transform>(correction.entity).map_or(Vec3::ZERO, |t| t.position);
     correction.state.apply(world, correction.entity);
+    // In the dimension the server has it in, too.
+    if let Some(session) = world.remove_resource::<NetSession>() {
+        super::dimensions::put_back(world, &session, correction.id, correction.entity);
+        world.insert_resource(session);
+    }
     let Some(session) = world.resource_mut::<NetSession>() else { return };
     let fields = session.prediction.fields.get(&correction.id).cloned().unwrap_or_default();
     let updates = fields.into_iter().map(|(key, bytes)| (correction.entity, key, bytes));

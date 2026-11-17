@@ -74,9 +74,18 @@ The game is seen from the dimension its camera is in. Its sky, sun, post-process
 
 Once nothing has needed a dimension for its **Keep loaded** seconds, the game lets it go: no camera is in it, and the open Portal does not lead into it. Coming close again loads it again.
 
+## In a networked game
+
+Players can be in different dimensions at once: one in a dungeon, another in the town, a third in a second dungeon.
+
+- **The server** makes the ground round every player, in that player's own dimension, and round the far side of the Portal open for them. The one-dimension limit is for each player: each has one Portal open into a dimension loaded for it, so a server with players in three dungeons has three dungeons loaded. A dimension stays loaded while a player is in it or has a Portal open into it, and for its Keep loaded seconds after.
+- **Each player's machine** makes only the dimensions its own player is in or near. The server tells it which to make and when it may let one go.
+- **A dimension's changes come first.** When a player comes near a Portal into a dimension, the server sends every change made to that dimension's blocks: tunnels dug, walls built, doors left open. The nearest to where the player comes out go first. Until all of them are in, the Portal shows its mist on that player's machine, and the server takes none of the player's Objs through it. Changes made while players are inside go as your game's own RPCs.
+- **Objs** go to a player only while they are in a dimension the player has (see [[Sharing Objs]]). The server decides when an Obj goes through a Portal into another dimension.
+
 ## Not done yet
 
 - Changes to a dimension's blocks are not kept once it is let go, and saves do not keep them.
 - The editor does not show or edit a dimension yet. Write its file by hand, or copy a scene's Objs into it.
 - Scripts cannot load a dimension or move an Obj into one yet, except by sending it through a Portal.
-- A networked game sends no dimensions to the players who join.
+- In a networked game, a dimension made by code with no `.dimension` file, other than a dungeon's, is not sent to players. The server makes only worlds of blocks round each player, not terrains.

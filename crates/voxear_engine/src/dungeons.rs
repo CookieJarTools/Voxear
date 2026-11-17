@@ -171,6 +171,13 @@ impl DungeonGate {
     }
 }
 
+/// On the world of blocks of a dungeon's own dimension: the gate it was made
+/// from, for players' machines in a networked game to make their own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DungeonFrom(pub DungeonGate);
+
+impl voxear_ecs::Component for DungeonFrom {}
+
 /// On the world of blocks of a dungeon's own dimension: the dungeon as it
 /// was laid out there, in that world's blocks.
 #[derive(Clone, Debug)]
@@ -202,32 +209,43 @@ const GATE_PORTAL: [f32; 2] = [3.0, 4.0];
 /// When the gates were last looked for, and from where.
 #[derive(Default)]
 struct GatesLooked {
-    from: Option<Vec3>,
+    from: Vec<(Vec3, voxear_scene::DimensionId)>,
     ticks: u32,
 }
 
 /// Stands a Portal in the middle of the landing of the gate of each dungeon in a dimension
-/// of its own within reach of where the game is seen from, in the worlds of
-/// blocks of the dimension seen, and takes away those well past it. While
-/// the game plays.
+/// of its own within reach of where the game is seen from, and on a server
+/// of each player, in the worlds of blocks of their dimension, and takes away
+/// those well past them. While the game plays.
 pub fn stand_gates(world: &mut World, content: &mut Content) {
-    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let mut places: Vec<(Vec3, voxear_scene::DimensionId)> =
+        crate::terrain::viewer(world).map(|viewer| (viewer, crate::dimensions::seen_from(world))).into_iter().collect();
+    places.extend(crate::net::player_places(world).into_iter().map(|(_, at, dimension)| (at, dimension)));
+    if places.is_empty() {
+        return;
+    }
     let mut looked = world.remove_resource::<GatesLooked>().unwrap_or_default();
     looked.ticks += 1;
-    let moved = looked.from.is_none_or(|from| from.distance(viewer) > GATES_LOOKED_EVERY);
+    let moved = looked.from.len() != places.len()
+        || looked
+            .from
+            .iter()
+            .zip(&places)
+            .any(|(from, at)| from.1 != at.1 || from.0.distance(at.0) > GATES_LOOKED_EVERY);
     if !moved && looked.ticks < GATES_TICKS {
         world.insert_resource(looked);
         return;
     }
-    (looked.from, looked.ticks) = (Some(viewer), 0);
+    (looked.from, looked.ticks) = (places.clone(), 0);
     world.insert_resource(looked);
-    let seen = crate::dimensions::seen_from(world);
-    let worlds: Vec<Entity> = world
+    let worlds: Vec<(Entity, voxear_scene::DimensionId)> = world
         .query_ref::<(Entity, &BlockWorld, &BlockWorldAsset)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == seen)
-        .filter(|(_, _, asset)| {
+        .map(|(entity, ..)| (entity, voxear_scene::dimension_of(world, entity)))
+        .filter(|(_, dimension)| places.iter().any(|(_, at)| at == dimension))
+        .filter(|(entity, _)| {
+            let Some(asset) = world.get::<BlockWorldAsset>(*entity) else { return false };
             let built = asset.file.generate.as_ref().and_then(|generate| generate.built.as_deref());
             built.is_some_and(|built| {
                 built.list.iter().any(|structure| {
@@ -236,7 +254,6 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
                 })
             })
         })
-        .map(|(entity, ..)| entity)
         .collect();
     let standing: Vec<(Entity, DungeonGate, Vec3)> = world
         .query_ref::<(Entity, &DungeonGate, &Transform)>()
@@ -245,8 +262,18 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
         .map(|(entity, gate, transform)| (entity, *gate, transform.position))
         .collect();
     let mut wanted: Vec<DungeonGate> = Vec::new();
-    for entity in worlds {
+    let near = places.iter().map(|(at, dimension)| (*at, *dimension));
+    let each: Vec<(Entity, voxear_scene::DimensionId, Vec3)> = worlds
+        .iter()
+        .flat_map(|&(entity, here)| {
+            near.clone().filter(move |(_, d)| *d == here).map(move |(at, _)| (entity, here, at))
+        })
+        .collect();
+    for (entity, seen, viewer) in each {
         for (gate, pose) in gates_of(world, content, entity, viewer) {
+            if wanted.contains(&gate) {
+                continue;
+            }
             wanted.push(gate);
             if standing.iter().any(|(_, kept, _)| *kept == gate) {
                 continue;
@@ -260,7 +287,8 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
     }
     // Those not wanted now and well past where they are stood go.
     for (entity, gate, at) in standing {
-        if !wanted.contains(&gate) && at.distance(viewer) > GATES_WITHIN + GATES_KEPT_PAST {
+        let far = places.iter().all(|(from, _)| at.distance(*from) > GATES_WITHIN + GATES_KEPT_PAST);
+        if !wanted.contains(&gate) && far {
             world.insert(entity, Destroying);
         }
     }

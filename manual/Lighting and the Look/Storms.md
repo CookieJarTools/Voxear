@@ -2,7 +2,7 @@
 order: 2
 ---
 
-A **storm** is [[Weather]] with a place. It lies over a round part of the level, drifts with the wind, grows and dies. You see one coming as a dark mass of cloud with rain hanging under it, the same grey as the cloud, in a spread of broken cloud that thins out round it into the open sky; it reaches you, and you can walk out the other side. The level's own weather, the kind [[Lighting Settings]] and `Weather.Set` give, is still everywhere: a storm adds to it where the storm is.
+A **storm** is [[Weather]] with a place. It lies over a round part of the level, drifts with the wind, grows and dies. You see one coming as a dark mass of cloud with rain hanging under it, the same grey as the cloud, in a spread of broken cloud that thins out round it into the open sky; it reaches you, and you can walk out the other side. Its cloud stays where the storm is, wherever you stand or look from; one more than 6 km beyond its edge shows fainter, and none beyond 9 km. The level's own weather, the kind [[Lighting Settings]] and `Weather.Set` give, is still everywhere: a storm adds to it where the storm is.
 
 ## What a storm is where you stand
 

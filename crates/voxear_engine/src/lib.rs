@@ -38,6 +38,7 @@ mod lights;
 mod loading;
 pub mod memory;
 pub mod modules;
+pub mod navigation;
 pub mod new_project;
 mod obj_hierarchy;
 pub mod origin;

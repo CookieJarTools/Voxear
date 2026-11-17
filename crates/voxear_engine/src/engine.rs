@@ -661,7 +661,9 @@ impl Engine {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
             // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
-            // What walks by itself takes its step first, for what animates it to see.
+            // What walks by itself takes its step first, for what animates it to see, on places kept up with
+            // this frame's blocks.
+            crate::navigation::update(&mut self.world);
             crate::block_mob::walk_block_mobs(&mut self.world, self.time.delta);
             crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);

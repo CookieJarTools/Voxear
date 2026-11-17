@@ -1,11 +1,11 @@
 //! Block Mob: an Obj that walks through a world of blocks by itself. Given
 //! somewhere to go, a point, another Obj to keep near, or leave to wander,
-//! it finds a way over the blocks (`voxear_terrain::blocks::path`), round
-//! walls, up steps a block high and down drops, and walks it with its
-//! Character Controller, so it is held by everything that holds a
-//! character: blocks, other Objs, slopes. It turns to face the way it
-//! goes, falls where the ground ends, and in water deeper than it can
-//! stand in it swims up to keep its head out.
+//! it finds a way over the world's places (`voxear_nav`), round walls, up
+//! steps a block high and down drops, in the background, and walks it with
+//! its Character Controller, straight from corner to corner, so it is held
+//! by everything that holds a character: blocks, other Objs, slopes. It
+//! turns to face the way it goes, falls where the ground ends, and in water
+//! deeper than it can stand in it swims up to keep its head out.
 //!
 //! It moves the Obj and nothing else. A Mob Motion on the same Obj sees it
 //! move and animates its model; a game tells it where to go.
@@ -15,20 +15,24 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_scene::{Destroying, Transform, WorldTransform};
-use voxear_terrain::blocks::{
-    BlockFaces, BlockMap, BlockWorld,
-    path::{find_path, standing_near},
+use voxear_nav::{
+    BlockNav, FoundPath, PathAsk, PlaceRef, Walker,
+    blocks::search::{find_path, random_near},
+    threads::Job,
 };
+use voxear_scene::{Destroying, Transform, WorldTransform};
+use voxear_terrain::blocks::BlockWorld;
 
 use voxear_physics::Ground;
 
 use crate::physics::{CharacterController, PhysicsScene};
 
 /// How many places a search for a way may look at.
-const MOST_LOOKED_AT: usize = 4000;
-/// How often a way is found afresh while it walks, in seconds: the world
-/// changes, and what it follows moves.
+const MOST_LOOKED_AT: usize = 40_000;
+/// How many chunks of a long way are found place by place at once.
+const REFINED: u32 = 6;
+/// How often a way is found afresh while it walks, in seconds, though
+/// nothing on it changed: what it follows moves.
 const SEARCH_EVERY: f32 = 0.75;
 /// How long it stands between wanders, at least and at most, in seconds.
 const RESTS: (f32, f32) = (1.5, 5.0);
@@ -101,10 +105,15 @@ impl BlockMob {
 /// What a Block Mob is doing, kept by the engine.
 #[derive(Clone, Debug, Default)]
 pub struct BlockMobState {
-    /// The way it is walking, a place to stand each, counted in blocks from
-    /// its world's corner, and the next of them to reach.
-    way: Vec<[i32; 3]>,
+    /// The corners of the way it is walking, in the world, and the next of
+    /// them to reach.
+    way: Vec<Vec3>,
     next: usize,
+    /// What the way was found in: the chunks it goes through and the
+    /// navigation's version, so a change on it is noticed.
+    found: Option<Found>,
+    /// A way asked for, to take next frame.
+    asked: Option<Asked>,
     /// Where the way was found to, and how long until one is found afresh.
     found_to: Option<[i32; 3]>,
     search_in: f32,
@@ -121,11 +130,29 @@ pub struct BlockMobState {
     begun: bool,
 }
 
+/// A way found, without its places.
+#[derive(Clone, Debug)]
+struct Found {
+    version: u64,
+    chunks: Vec<[i32; 3]>,
+    reaches: bool,
+}
+
+/// A search for a way going on in the background.
+#[derive(Clone)]
+struct Asked(Arc<Job<FoundPath>>);
+
+impl std::fmt::Debug for Asked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Asked")
+    }
+}
+
 impl Component for BlockMobState {}
 
 impl BlockMobState {
-    /// The way it is walking, in blocks from its world's corner.
-    pub fn way(&self) -> &[[i32; 3]] {
+    /// The corners of the way it is walking, in the world.
+    pub fn way(&self) -> &[Vec3] {
         &self.way
     }
 
@@ -137,23 +164,42 @@ impl BlockMobState {
 }
 
 /// A world of blocks as a mob walks it: where its corner is, how large a
-/// block is, and its blocks.
+/// block is, its places, and how deep the water is where the mob is.
 struct Walked {
     corner: Vec3,
     size: f32,
-    blocks: Arc<BlockMap>,
-    faces: Arc<[BlockFaces]>,
+    nav: Arc<BlockNav>,
     water: Option<f32>,
 }
 
 impl Walked {
-    fn cell(&self, at: Vec3) -> [i32; 3] {
-        ((at - self.corner) / self.size).floor().as_ivec3().to_array()
+    /// A point in the world, in blocks from the world's corner.
+    fn local(&self, at: Vec3) -> [f32; 3] {
+        ((at - self.corner) / self.size).to_array()
+    }
+
+    /// A point in blocks from the world's corner, in the world.
+    fn world(&self, at: [f32; 3]) -> Vec3 {
+        self.corner + Vec3::from_array(at) * self.size
+    }
+
+    /// The place to stand nearest `at`, within `reach` blocks up or down.
+    fn standing(&self, at: Vec3, walker: Walker, reach: f32) -> Option<PlaceRef> {
+        self.nav.nearest(self.local(at), walker, 0.0, reach)
+    }
+
+    /// The block a place's feet are in.
+    fn cell(&self, at: PlaceRef) -> Option<[i32; 3]> {
+        self.nav.cell(at)
     }
 
     /// The middle of a place's floor, in the world.
-    fn floor(&self, cell: [i32; 3]) -> Vec3 {
-        self.corner + (Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32) + Vec3::new(0.5, 0.0, 0.5)) * self.size
+    fn floor(&self, cell: [i32; 3], walker: Walker) -> Vec3 {
+        let middle = [cell[0] as f32 + 0.5, cell[1] as f32 + 0.1, cell[2] as f32 + 0.5];
+        match self.nav.standing_at(middle, walker, 0.5).and_then(|at| self.nav.point(at)) {
+            Some(point) => self.world(point),
+            None => self.world([middle[0], cell[1] as f32, middle[2]]),
+        }
     }
 }
 
@@ -172,33 +218,39 @@ pub fn walk_block_mobs(world: &mut World, delta: f32) {
     if mobs.is_empty() {
         return;
     }
-    let worlds: Vec<(Vec3, f32, Arc<BlockMap>, Arc<[BlockFaces]>, BlockWorld)> = world
+    let worlds: Vec<(Entity, Vec3, f32, BlockWorld)> = world
         .query_ref::<(Entity, &BlockWorld, &Transform)>()
         .into_iter()
         .map(|(entity, blocks, transform)| {
             let corner = voxear_terrain::corner(transform, world.get::<WorldTransform>(entity));
-            (corner, blocks.block_size, blocks.blocks.clone(), blocks.faces.clone(), blocks.clone())
+            (entity, corner, blocks.block_size, blocks.clone())
         })
         .collect();
+    // Every world a mob may walk in has its places kept from now on.
+    let navs: Vec<Option<Arc<BlockNav>>> =
+        worlds.iter().map(|(entity, ..)| crate::navigation::nav_of(world, *entity)).collect();
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else { return };
     let gravity = physics.gravity().length();
     for (entity, mut mob, controller) in mobs {
         let Some(at) = world.get::<Transform>(entity).map(|transform| transform.position) else { continue };
-        let mut state = world
-            .get::<BlockMobState>(entity)
-            .cloned()
-            .unwrap_or_else(|| BlockMobState { seed: entity.index() ^ 0x9e37_79b9, ..BlockMobState::default() });
-        // The world of blocks it is in: the one it can stand in, or else the first there is.
-        let walked = worlds.iter().map(|(corner, size, blocks, faces, whole)| {
-            let water = whole.water_depth((at - *corner).to_array(), 4.0);
-            Walked { corner: *corner, size: *size, blocks: blocks.clone(), faces: faces.clone(), water }
+        // Mobs made together search on different frames: each its own share of the time between searches.
+        let mut state = world.get::<BlockMobState>(entity).cloned().unwrap_or_else(|| BlockMobState {
+            seed: entity.index() ^ 0x9e37_79b9,
+            search_in: SEARCH_EVERY * (entity.index() % 8) as f32 / 8.0,
+            ..BlockMobState::default()
         });
-        let tall_in = |walked: &Walked| (controller.height / walked.size).ceil().max(1.0) as u32;
+        // The world of blocks it is in: the one it can stand in, or else the first there is.
+        let walked = worlds.iter().zip(&navs).filter_map(|((_, corner, size, whole), nav)| {
+            let water = whole.water_depth((at - *corner).to_array(), 4.0);
+            Some(Walked { corner: *corner, size: *size, nav: nav.clone()?, water })
+        });
+        let walker_in =
+            |walked: &Walked| Walker::blocks((controller.height / walked.size).ceil().clamp(1.0, 64.0) as u16);
         let mut walked: Vec<Walked> = walked.collect();
-        let standing_in = |walked: &Walked| {
-            standing_near(&walked.blocks, &walked.faces, walked.cell(at + Vec3::Y * 0.1), tall_in(walked), 2)
-        };
-        let place = walked.iter().position(|walked| standing_in(walked).is_some()).unwrap_or(0);
+        let place = walked
+            .iter()
+            .position(|walked| walked.standing(at + Vec3::Y * 0.1, walker_in(walked), 2.0).is_some())
+            .unwrap_or(0);
         let walked = (!walked.is_empty()).then(|| walked.swap_remove(place));
 
         // A step a block high is one it climbs.
@@ -214,13 +266,13 @@ pub fn walk_block_mobs(world: &mut World, delta: f32) {
 
         let mut along = Vec3::ZERO;
         if let Some(walked) = &walked {
-            let tall = tall_in(walked);
-            let standing = standing_in(walked);
-            state.home = state.home.or(standing);
-            let target = target(world, &mob, &mut state, walked, (at, standing), tall, delta);
+            let walker = walker_in(walked);
+            let standing = walked.standing(at + Vec3::Y * 0.1, walker, 2.0);
+            state.home = state.home.or(standing.and_then(|place| walked.cell(place)));
+            let target = target(world, &mob, &mut state, walked, (at, standing), walker, delta);
             mob.arrived = target.is_none();
             if let (Some(target), Some(standing)) = (target, standing) {
-                along = towards(&mut state, walked, standing, target, at, tall, delta);
+                along = towards(&mut state, walked, standing, target, at, walker, delta);
             } else if let Some(target) = target {
                 // In the air or the water, with nowhere to find a way from: straight at it.
                 along = Vec3::new(target.x - at.x, 0.0, target.z - at.z).normalize_or_zero();
@@ -273,8 +325,8 @@ fn target(
     mob: &BlockMob,
     state: &mut BlockMobState,
     walked: &Walked,
-    (at, standing): (Vec3, Option<[i32; 3]>),
-    tall: u32,
+    (at, standing): (Vec3, Option<PlaceRef>),
+    walker: Walker,
     delta: f32,
 ) -> Option<Vec3> {
     let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
@@ -287,52 +339,80 @@ fn target(
         }
         MobGoal::Wander { radius } => {
             let (home, standing) = (state.home?, standing?);
-            if state.heading == Some(standing) || state.heading.is_none() {
+            let standing_cell = walked.cell(standing)?;
+            if state.heading == Some(standing_cell) || state.heading.is_none() {
                 // There, or not yet heading anywhere: it stands a while, then picks somewhere new.
                 state.rest -= delta;
                 if state.rest > 0.0 {
                     return None;
                 }
                 let reach = (radius / walked.size).max(1.0);
-                let pick = [(state.chance() * 2.0 - 1.0) * reach, (state.chance() * 2.0 - 1.0) * reach];
-                let cell = [home[0] + pick[0].round() as i32, standing[1], home[2] + pick[1].round() as i32];
-                state.heading =
-                    standing_near(&walked.blocks, &walked.faces, cell, tall, 3).filter(|cell| *cell != standing);
+                let from = walked.nav.standing_at(
+                    [home[0] as f32 + 0.5, home[1] as f32 + 0.1, home[2] as f32 + 0.5],
+                    walker,
+                    3.0,
+                );
+                let pick = state.chance();
+                let seed = (pick * u32::MAX as f32) as u32;
+                let costs = voxear_nav::AreaCosts::default();
+                state.heading = from
+                    .and_then(|from| random_near(&walked.nav, from, walker, &costs, reach, seed))
+                    .and_then(|to| walked.cell(to))
+                    .filter(|cell| *cell != standing_cell);
                 state.rest = RESTS.0 + state.chance() * (RESTS.1 - RESTS.0);
             }
-            state.heading.map(|cell| walked.floor(cell))
+            state.heading.map(|cell| walked.floor(cell, walker))
         }
     }
 }
 
-/// The way to walk this frame, along the ground: towards the next place of
-/// the way to `target`, a way found afresh when the target is another
-/// place or it is time.
+/// The way to walk this frame, along the ground: towards the next corner
+/// of the way to `target`. A way is asked for afresh when the target is
+/// another place, when a chunk the way goes through changed, or when it is
+/// time; it is searched for in the background and taken the next frame.
 fn towards(
     state: &mut BlockMobState,
     walked: &Walked,
-    standing: [i32; 3],
+    standing: PlaceRef,
     target: Vec3,
     at: Vec3,
-    tall: u32,
+    walker: Walker,
     delta: f32,
 ) -> Vec3 {
-    let to = standing_near(&walked.blocks, &walked.faces, walked.cell(target + Vec3::Y * 0.1), tall, 3);
-    state.search_in -= delta;
-    if let Some(to) = to
-        && (state.found_to != Some(to) || state.search_in <= 0.0)
+    // The way asked for last frame.
+    if let Some(Asked(job)) = state.asked.take()
+        && let Some(found) = job.take()
     {
-        state.way = find_path(&walked.blocks, &walked.faces, standing, to, tall, MOST_LOOKED_AT).unwrap_or_default();
-        (state.next, state.found_to, state.search_in) = (1, Some(to), SEARCH_EVERY);
+        state.way = found.corners.iter().map(|corner| walked.world(*corner)).collect();
+        state.next = 1;
+        let reaches = found.status == voxear_nav::PathStatus::Complete;
+        state.found = Some(Found { version: found.version, chunks: found.chunks, reaches });
+    }
+    let to = walked.standing(target + Vec3::Y * 0.1, walker, 3.0).and_then(|place| walked.cell(place));
+    state.search_in -= delta;
+    let stale = state.found.as_ref().is_some_and(|found| {
+        let nav = &walked.nav;
+        nav.version() != found.version
+            && found.chunks.iter().any(|key| {
+                nav.slot_of(*key).and_then(|slot| nav.slot(slot)).is_none_or(|slot| slot.changed > found.version)
+            })
+    });
+    if state.asked.is_none() && (state.found_to != to || state.search_in <= 0.0 || stale) {
+        let from = walked.nav.point(standing).unwrap_or(walked.local(at));
+        let mut ask = PathAsk::new(from, walked.local(target), walker);
+        (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
+        let nav = walked.nav.clone();
+        state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask))));
+        (state.found_to, state.search_in) = (to, SEARCH_EVERY);
     }
     let flat = |point: Vec3| Vec3::new(point.x - at.x, 0.0, point.z - at.z);
-    // Past each place of the way as it is reached.
-    while state.way.get(state.next).is_some_and(|cell| flat(walked.floor(*cell)).length() < walked.size * 0.3) {
+    // Past each corner of the way as it is reached.
+    while state.way.get(state.next).is_some_and(|corner| flat(*corner).length() < walked.size * 0.3) {
         state.next += 1;
     }
     match state.way.get(state.next) {
-        Some(cell) => flat(walked.floor(*cell)).normalize_or_zero(),
-        // At the last place, or with no way found: straight to the point itself, where it is near.
+        Some(corner) => flat(*corner).normalize_or_zero(),
+        // At the last corner, or with no way found: straight to the point itself, where it is near.
         None if flat(target).length() < walked.size * 1.5 => flat(target).normalize_or_zero(),
         None => Vec3::ZERO,
     }

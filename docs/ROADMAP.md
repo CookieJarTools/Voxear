@@ -2025,7 +2025,7 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     an Obj, or wandering near where it began (`MobGoal`). Ways are found on the blocks
     (`voxear_terrain::blocks::path::find_path`: a block at a time, up one, down three, as many clear over the
     ground as it is tall, water waded a block deep and gone round deeper, a search that gives up after so many
-    places), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
+    places; since moved onto `voxear_nav`'s places, see M9), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
     step a block high; it turns to face its way, falls, and swims up in deep water. It runs before animation, so
     a Mob Motion on the same Obj walks the model. C#: `Obj.BlockMob`/`AddBlockMob` (`MoveTo`, `Follow`, `Wander`,
     `Stop`, `Arrived`, `Goal`, `Speed`, `TurnSpeed`, `Swims`) and `Obj.MobMotion`/`AddMobMotion` (`LookAt`,
@@ -3517,12 +3517,36 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 
-## M9 — Navigation, cameras and Timeline
+## M9 — Navigation, cameras and Timeline (in progress)
 
-- Navigation:
-  - grid, layered grid, recast and point graphs
-  - async paths, modifiers and runtime graph updates
-  - RVO avoidance
+- Navigation, for block worlds first, then mesh levels:
+  - [x] **Places in worlds of blocks** (`voxear_nav`, a crate of its own): where something can stand, made from
+    a world's blocks chunk by chunk through a walking table (five bytes a place: its height, the room over it,
+    its floor's top in sixteenths so slabs are stood on half a block down, its area, standing or wading; about
+    7 KB for a chunk of rolling land, 12 KB with caves), steps between them worked out as they are walked by the
+    walker's own height, step and drop, eight ways with no corner of a wall cut; regions of places a few to a
+    chunk for walkers one, two and three blocks tall, and a coarse graph of edges between them, each crossed
+    where its steps are; ways found over regions and then over places kept to them, leaning a little towards the
+    goal (`greed`, 1.25: some 2% dearer, a tenth of the places looked at), a long way found place by place only
+    for its first chunks (`Continues`), the nearest way where the goal cannot be reached (`Partial`), and the way
+    pulled tight into corners walked straight between; a world's places kept up with its blocks on navigation's
+    own threads (`threads`), only the chunks whose `Arc` changed made again, the rest shared, a small change
+    waited for the frame after it, ground streaming in taken when it is done. **Block Mob** walks on them:
+    searches in the background, taken the next frame, staggered by the mob's number, a way found again when a
+    chunk it goes through changes, straight corner to corner. Timings (test build, least of 20): a chunk's
+    places 0.2 ms (0.5 ms with caves), a 100-block way 0.5 ms, a 500-block way 0.6 ms. Tests: places on slabs,
+    in water and across chunks; regions, walls and drops; ways round walls, up steps, over fords, partial and
+    continuing; ways reaching wherever a search a block at a time reaches, the coarse graph keeping them within
+    5% of the cheapest; chunks edited, streaming out and back, a block numbered for the first time; the timings;
+    the Block Mob tests as they were.
+  - [ ] Nav Agents: the component (`Destination`, paths, corners, costs), searches queued with a budget,
+    steering, avoidance between agents on the workers, moving by the Character Controller or along the nav for
+    crowds, in the fixed step; Block Mob on a Nav Agent; the C# API
+  - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
+    block and by Nav Area boxes; Nav Links; walkers two blocks wide
+  - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
+  - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
+  - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 

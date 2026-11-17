@@ -221,6 +221,20 @@ pub trait ScriptServices {
         None
     }
 
+    /// Puts an Obj inside another, or at the top with none, as
+    /// `Obj.SetParent` asks, keeping it where it is in the world or where
+    /// it is from its parent: whether its parent changed, or why it could
+    /// not. `None` leaves it to the engine's own, which knows no scenes.
+    fn set_parent(
+        &mut self,
+        _world: &mut World,
+        _entity: Entity,
+        _parent: Option<Entity>,
+        _keep_world: bool,
+    ) -> Option<Result<bool, String>> {
+        None
+    }
+
     /// The open scenes' state as JSON, for a save of the scene: the level's
     /// GUID, the keys of the Objs scenes loaded that are gone, and the root
     /// of each copy scripts made from a prefab, with the prefab's GUID and
@@ -726,6 +740,17 @@ pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
 /// [`ScriptServices::set_model`]); none outside them.
 pub fn set_model(world: &mut World, entity: Entity, reference: &str) -> Option<Result<()>> {
     with_services(|services| services.set_model(world, entity, reference))
+}
+
+/// Puts an Obj inside another through the lent services (see
+/// [`ScriptServices::set_parent`]); none outside them.
+pub fn set_parent(
+    world: &mut World,
+    entity: Entity,
+    parent: Option<Entity>,
+    keep_world: bool,
+) -> Option<Result<bool, String>> {
+    with_services(|services| services.set_parent(world, entity, parent, keep_world)).flatten()
 }
 
 /// A change a script makes to how an Obj draws its model.

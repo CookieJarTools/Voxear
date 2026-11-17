@@ -833,6 +833,12 @@ Later:
   - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
     in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
     `On…2D` messages in C#
+  - [x] Objs put inside others while the game runs (`voxear_engine::set_parent`): setting `Obj.Parent`, or
+    `Obj.SetParent(parent, keepWorldPlace)`, keeps the Obj where it is in the world or in its own place, and is
+    refused inside itself, into another dimension, or for an Obj a scene loaded, into another scene. Physics, the
+    smoothing between ticks, dimensions, saves of the scene, the play-mode Hierarchy and networked parents follow;
+    `vox editor call obj.parent`. A Character Controller inside a moving deck stands on it where it is that step.
+    A kinematic Rigidbody moves at its Obj's speed each step and stops with it; a teleport gives it none
 - **Built-in vehicle physics**, on Jolt's vehicle constraints:
   - [x] wheeled vehicles (cars, trucks, motorbikes) with suspension, engine and gearbox, and differentials: a
     `Vehicle` beside a Rigidbody, driven on the `Wheel`s of its child Objs, whose Objs physics turns and drops

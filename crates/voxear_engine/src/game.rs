@@ -185,6 +185,19 @@ impl Game {
     /// keeps anything; and lets a game's options keep what they set there
     /// (see `voxear_terrain::MachineBudget`). A built game, `vox run` and the
     /// editor do this; tests and pictures keep to the project's.
+    /// Puts an Obj inside another, or at the top of its scene with none,
+    /// while the game runs, as a script's `Obj.SetParent` does (see
+    /// [`crate::set_parent`]): refused into another scene, another
+    /// dimension, or inside itself.
+    pub fn set_parent(
+        &mut self,
+        entity: Entity,
+        parent: Option<Entity>,
+        keep_world: bool,
+    ) -> Result<bool, crate::ParentError> {
+        crate::obj_hierarchy::set_parent(&mut self.engine.world, Some(&self.levels), entity, parent, keep_world)
+    }
+
     pub fn use_machine_budget(&mut self, company: Option<&str>) {
         let file = crate::player::machine_file(company, self.project.name());
         let project = self.project.file.world;
@@ -2001,6 +2014,17 @@ impl ScriptServices for GameServices<'_> {
         self.content.keep_prefab(PrefabId(prefab), keep);
     }
 
+    fn set_parent(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        parent: Option<Entity>,
+        keep_world: bool,
+    ) -> Option<Result<bool, String>> {
+        let done = crate::obj_hierarchy::set_parent(world, Some(self.levels), entity, parent, keep_world);
+        Some(done.map_err(|error| error.to_string()))
+    }
+
     fn obj_key(&self, world: &World, entity: Entity) -> Option<String> {
         if let Some((scene, path)) = self.levels.place_of(entity) {
             return Some(format!("{scene}:{path}"));
@@ -2048,7 +2072,29 @@ impl ScriptServices for GameServices<'_> {
         plants.sort();
         let plants: Vec<serde_json::Value> =
             plants.into_iter().map(|(key, gone)| serde_json::json!({ "obj": key, "gone": gone })).collect();
-        Some(serde_json::json!({ "level": level, "gone": gone, "spawned": spawned, "plants": plants }).to_string())
+        // The Objs scripts put inside others, or at the top, but the copies' roots, which `spawned` places.
+        let mut moved: Vec<(Entity, String)> = world
+            .query_ref::<(Entity, &crate::obj_hierarchy::Reparented, Option<&Spawned>)>()
+            .into_iter()
+            .filter(|(entity, _, spawned)| spawned.is_none_or(|spawned| spawned.root != *entity))
+            .filter(|(entity, ..)| !is_doomed(world, doomed, *entity))
+            .filter_map(|(entity, ..)| Some((entity, self.obj_key(world, entity)?)))
+            .collect();
+        moved.sort_by_key(|(entity, _)| entity.index());
+        // One inside an Obj a save cannot find again is left where its scene or prefab puts it.
+        let moved: Vec<serde_json::Value> = moved
+            .into_iter()
+            .filter_map(|(entity, key)| {
+                let parent = match world.get::<Parent>(entity) {
+                    Some(parent) => Some(self.obj_key(world, parent.0)?),
+                    None => None,
+                };
+                Some(serde_json::json!({ "obj": entity.to_bits(), "key": key, "parent": parent }))
+            })
+            .collect();
+        let state =
+            serde_json::json!({ "level": level, "gone": gone, "spawned": spawned, "plants": plants, "moved": moved });
+        Some(state.to_string())
     }
 
     fn asset_guid(&self, asset: AssetName<'_>) -> Option<String> {

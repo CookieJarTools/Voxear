@@ -29,6 +29,8 @@ protected override void Update()
 
 A Rigidbody is simulated only where its Obj's authority is. Elsewhere it is held still and moved as it is told.
 
+The machine with an Obj's authority also decides which shared Obj it is inside. To take a player aboard a boat, call `SetParent` on the player's own machine. The server and everyone else follow. A script on the server that does it is undone by the owner's next update.
+
 ## Changing hands
 
 The server can give any Obj to anyone with `NetObject.Owner`. A player can ask for one no one owns, as to pick it up, with `NetObject.Claim()`, and the server gives it to them. Whoever an Obj changes hands to, every machine hears of it. When a player leaves, the server takes back everything that was theirs.

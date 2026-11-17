@@ -736,6 +736,43 @@ impl Levels {
         self.scenes.iter().find(|scene| scene.objs.iter().any(|(_, e)| *e == entity)).map(|scene| scene.guid)
     }
 
+    /// The scene an Obj belongs to while the game runs: the scene that
+    /// loaded it, or the one that loaded the nearest Obj it is inside; an
+    /// Obj scripts made at the top belongs to the active scene, as it
+    /// unloads with that.
+    pub fn home_scene(&self, world: &World, entity: Entity) -> Option<AssetGuid> {
+        let mut at = Some(entity);
+        for _ in 0..256 {
+            let Some(obj) = at else { break };
+            if let Some(scene) = self.scene_of(obj) {
+                return Some(scene);
+            }
+            at = world.get::<Parent>(obj).map(|parent| parent.0);
+        }
+        self.active_scene_guid()
+    }
+
+    /// Why `family`, an Obj and everything under it, may not go inside
+    /// `parent`, or to the top with none, while the game runs: an Obj a
+    /// scene loaded stays in that scene, so goes only inside an Obj of the
+    /// same one. The scenes it and `parent` are in, by path, or `None` when
+    /// it may.
+    pub fn parent_refused(&self, world: &World, family: &[Entity], parent: Option<Entity>) -> Option<(String, String)> {
+        let tracked = self.tracked(family);
+        let own = family.first().and_then(|&obj| self.scene_of(obj));
+        let home = match parent {
+            Some(parent) => self.home_scene(world, parent),
+            // At the top, an Obj a scene loaded stays in it; one scripts made goes into the active scene.
+            None => own.or_else(|| self.active_scene_guid()),
+        };
+        let away = tracked.iter().find(|obj| Some(obj.scene) != home)?;
+        let path = |guid: Option<AssetGuid>| {
+            let scene = self.scenes.iter().find(|scene| Some(scene.guid) == guid);
+            scene.map_or_else(|| "no scene".to_string(), |scene| scene.path.clone())
+        };
+        Some((path(Some(away.scene)), path(home)))
+    }
+
     /// Where Objs are kept, in the order their scenes keep them.
     pub fn tracked(&self, entities: &[Entity]) -> Vec<Tracked> {
         let mut found = Vec::new();

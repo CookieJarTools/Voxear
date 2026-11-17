@@ -21,7 +21,7 @@ Obj.LookAt(new Vector3(0f, 0f, 10f));
 - `WorldPosition` and `WorldRotation` say where it is in the world. You can read them, but not set them.
 - `Forward`, `Right` and `Up` are the directions the Obj faces, in the world.
 - For the scale, set the whole Transform: `Obj.Transform = Obj.Transform with { Scale = new Vector3(2f) };`
-- `Parent` is the Obj this one is inside, or an Obj that is not valid for one at the top. `Children` are the Objs directly inside it, not those further in.
+- `Parent` is the Obj this one is inside, or an Obj that is not valid for one at the top. `Children` are the Objs directly inside it, not those further in. To change it, see [Putting an Obj inside another](#putting-an-obj-inside-another).
 - `MeshBox` is the box round the mesh the Obj draws, where the Obj is: its corners `Least` and `Most` in the mesh's own space, and its `Frame` in the world. It is null for an Obj that draws no mesh, until the mesh has loaded, and in a game with no window, such as a server.
 
 Distances are in metres and angles in degrees. Y is up and Z is forward.
@@ -29,6 +29,36 @@ Distances are in metres and angles in degrees. Y is up and Z is forward.
 With the [[Floating Origin]] switched on, the middle of the world moves along with the camera now and then, and every position moves with it. A position a script keeps in a field of its own moves too when the field is marked `[WorldPosition]`.
 
 Vectors and rotations are .NET's own `Vector3` and `Quaternion`, from `System.Numerics`. Voxear adds the helpers Unity users expect, such as `Vector3.Up`, `Vector3.MoveTowards`, `Quaternion.AngleAxis`, `Quaternion.RotateTowards` and `Mathf`.
+
+## Putting an Obj inside another
+
+```csharp
+// A boat takes a passenger aboard, and lets them off at the dock:
+passenger.Parent = boat;
+passenger.Parent = Obj.None;
+
+// The same, and the full form:
+passenger.SetParent(boat);
+sword.SetParent(hand, keepWorldPlace: false);
+```
+
+Setting `Parent`, or calling `SetParent`, puts the Obj and everything inside it inside another Obj while the game runs. From then on it moves, turns and scales with its new parent. `Obj.None` puts it back at the top of its scene.
+
+- **Kept where it is.** By default the Obj stays where it is in the world. Its `Position`, `Rotation` and scale are worked out again from the new parent, so nothing jumps. Physics sees no move, and an Obj shown between fixed steps carries on smoothly.
+- **Kept in its own place.** With `keepWorldPlace: false` the Obj keeps its `Position`, `Rotation` and scale, now measured from the new parent, so it is set down there at once. Use it to put a sword in a hand at the hand's grip. Its bodies get no speed from the jump.
+- **Riding.** A passenger with a Character Controller inside a moving deck rides it: each step the deck's collider is where the deck is before the passenger moves, so the passenger neither sinks into the deck nor is left a step behind. The deck can be a plain Collider, a kinematic Rigidbody or a dynamic one. Let the passenger off with `Parent = Obj.None` when they step ashore.
+
+Some moves are refused, with an `InvalidOperationException` that says why:
+
+| Refused | Why |
+|---|---|
+| Inside itself, or inside an Obj that is inside it | It would be its own parent |
+| Inside an Obj in another dimension | Move it there first, as a Portal does |
+| An Obj a scene loaded, into an Obj of another scene | Each scene's Objs unload with it. An Obj a script made can go anywhere. |
+
+A save of the scene keeps where each Obj went (see [[Saving the Game]]). With networking, an Obj inside a networked Obj is inside it on every machine, and one put at the top is at the top on every machine. An Obj inside an Obj that is not networked stays inside whatever each machine's own scene put it in (see [[Sharing Objs]]).
+
+While the game plays in the editor, the Hierarchy shows the move. Dragging an Obj there does the same as `SetParent`. Tools do it with `vox editor call obj.parent` (see [[Driving the Editor from a Terminal]]).
 
 ## Finding other Objs
 

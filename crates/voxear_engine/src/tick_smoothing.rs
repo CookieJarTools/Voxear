@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use voxear_ecs::{Entity, World};
-use voxear_core::math::Vec3;
+use voxear_core::math::{Mat4, Vec3};
 use voxear_scene::{Parent, Transform};
 
 /// Ticked frames an Obj may stand still before it is no longer watched.
@@ -124,6 +124,21 @@ pub fn carried(world: &mut World, entity: Entity, carry: &voxear_render::Carry) 
     for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
         pose.position = carry.point(pose.position);
         pose.rotation = carry.turn(pose.rotation);
+    }
+}
+
+/// An Obj was put inside another Obj, kept where it is in the world (see
+/// `crate::obj_hierarchy::set_parent`): the poses kept for it are measured
+/// from its new parent too, by `change`, from where they were measured
+/// before, so it is shown moving on evenly rather than sliding between the
+/// two.
+pub fn reparented(world: &mut World, entity: Entity, change: Mat4) {
+    let Some(smoothing) = world.resource_mut::<TickSmoothing>() else { return };
+    let Some(obj) = smoothing.objs.get_mut(&entity) else { return };
+    for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
+        let (scale, rotation, position) = (change * pose.matrix()).to_scale_rotation_translation();
+        let scale = if scale.abs_diff_eq(pose.scale, 1e-5) { pose.scale } else { scale };
+        *pose = Transform::new(position, rotation.normalize(), scale);
     }
 }
 

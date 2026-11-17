@@ -935,3 +935,58 @@ fn a_portals_view_distance_is_the_projects_or_its_own_and_a_tool_sets_both() {
     let wrong = json!({ "key": "portals.view_distance", "value": -3.0 });
     assert_eq!(ask(&mut editor, &mut renderer, "project.set", wrong).unwrap_err().kind, ErrorKind::WrongValue);
 }
+
+#[test]
+fn a_tool_puts_an_obj_inside_another_while_editing_and_while_playing() {
+    let dir = hello_copy();
+    // A level of its own, of a deck with a boat and a rider and a shore beside it, with no behaviours to play.
+    let (deck, shore) = ("0b0a7d1e2f3a4b5c6d7e8f9a0b1c2d3e", "1c1b8e2f3a4b5c6d7e8f9a0b1c2d3e4f");
+    let write = |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+    write(
+        "Scenes/Deck.scene",
+        "format = 1\n\n[[obj]]\nid = 1\nname = \"Boat\"\nposition = [2.0, 0.5, 1.0]\nrotation = [0.0, 40.0, 0.0]\n\n[[obj]]\nid = 2\nname = \"Rider\"\nposition = [0.0, 1.0, 0.0]\n",
+    );
+    write("Scenes/Deck.scene.meta", &format!("guid = \"{deck}\"\n"));
+    write("Scenes/Shore.scene", "format = 1\n\n[[obj]]\nid = 1\nname = \"Dock\"\n");
+    write("Scenes/Shore.scene.meta", &format!("guid = \"{shore}\"\n"));
+    write(
+        "Levels/Harbour.level",
+        "format = 1\n\n[[scene]]\nscene = \"Scenes/Shore.scene\"\n\n[[scene]]\nscene = \"Scenes/Deck.scene\"\n",
+    );
+    let settings = dir.path().join("voxear.toml");
+    let project = std::fs::read_to_string(&settings).unwrap();
+    std::fs::write(&settings, project.replace("Levels/Day.level", "Levels/Harbour.level")).unwrap();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let (rider, boat) = (json!({ "scene": deck, "path": "2" }), json!({ "scene": deck, "path": "1" }));
+    let dock = json!({ "scene": shore, "path": "1" });
+    let entity = |editor: &Editor, obj: &Value| link::resolve_obj(&editor.game, obj).unwrap();
+    let placed =
+        |editor: &Editor, obj: &Value| voxear_scene::world_matrix(&editor.game.engine.world, entity(editor, obj));
+    let parent = |editor: &Editor, obj: &Value| {
+        editor.game.engine.world.get::<voxear_scene::Parent>(entity(editor, obj)).map(|parent| parent.0)
+    };
+
+    // While editing, as the Hierarchy moves it, one step to undo.
+    let was = placed(&editor, &rider);
+    let moved = done(&mut editor, &mut renderer, "obj.parent", json!({ "obj": rider, "parent": boat }));
+    assert_eq!(moved["changed"], true);
+    assert_eq!(parent(&editor, &rider), Some(entity(&editor, &boat)));
+    assert!(placed(&editor, &rider).abs_diff_eq(was, 1e-4), "kept where it is in the world");
+    let refused = ask(&mut editor, &mut renderer, "obj.parent", json!({ "obj": boat, "parent": rider }));
+    assert!(refused.is_err_and(|error| error.message.contains("inside itself")), "a loop is refused");
+    done(&mut editor, &mut renderer, "undo", json!({}));
+    assert_eq!(parent(&editor, &rider), None, "undone");
+
+    // While playing, as a script's Obj.SetParent: into another scene is refused, aboard is not.
+    done(&mut editor, &mut renderer, "play", json!({}));
+    let refused = ask(&mut editor, &mut renderer, "obj.parent", json!({ "obj": rider, "parent": dock }));
+    assert!(refused.is_err_and(|error| error.message.contains("stays in its scene")), "into another scene");
+    let moved =
+        done(&mut editor, &mut renderer, "obj.parent", json!({ "obj": rider, "parent": boat, "keep_world": true }));
+    assert_eq!(moved["changed"], true);
+    assert_eq!(parent(&editor, &rider), Some(entity(&editor, &boat)));
+    assert!(editor.game.engine.world.has::<voxear_engine::Reparented>(entity(&editor, &rider)), "for a save");
+    let off = done(&mut editor, &mut renderer, "obj.parent", json!({ "obj": rider }));
+    assert_eq!((off["changed"].clone(), parent(&editor, &rider)), (json!(true), None), "back at the top");
+    editor.stop(&mut renderer);
+}

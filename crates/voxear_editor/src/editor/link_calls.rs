@@ -245,6 +245,7 @@ impl Editor {
             "obj.duplicate" => self.obj_duplicate(args, renderer),
             "obj.delete" => self.obj_delete(args),
             "obj.move" => self.obj_move(args),
+            "obj.parent" => self.obj_parent(args),
             "component.add" => self.component_add(args, renderer),
             "component.remove" => self.component_change(args, |game, entity, part, _| {
                 props::remove(&mut game.engine.world, entity, part);
@@ -1023,12 +1024,27 @@ impl Editor {
             (None, None, None, Some(scene)) => Destination::SceneEnd(link::resolve_project_asset(&self.game, scene)?.0),
             _ => return Err(bad("give one of `into`, `before`, `after` or `scene`")),
         };
-        let moved = objs::move_obj(&mut self.game, entity, to);
+        let moved =
+            objs::move_obj_checked(&mut self.game, entity, to).map_err(|error| refuse(ErrorKind::WrongValue, error))?;
         if let Some((before, after)) = moved.clone() {
             self.record(Edit::Moved { entity, before, after });
         }
         self.shown_again();
         done(json!({ "changed": moved.is_some() }))
+    }
+
+    fn obj_parent(&mut self, args: &Json) -> Called {
+        let entity = self.obj_arg(args)?;
+        let parent = args.get("parent").filter(|parent| !parent.is_null());
+        let parent = parent.map(|parent| link::resolve_obj(&self.game, parent)).transpose()?;
+        let keep_world = opt_bool(args, "keep_world").unwrap_or(true);
+        let (changed, moved) = objs::set_parent(&mut self.game, entity, parent, keep_world)
+            .map_err(|error| refuse(ErrorKind::WrongValue, error))?;
+        if let Some((before, after)) = moved {
+            self.record(Edit::Moved { entity, before, after });
+        }
+        self.shown_again();
+        done(json!({ "changed": changed }))
     }
 
     fn component_add(&mut self, args: &Json, renderer: &mut Renderer) -> Called {

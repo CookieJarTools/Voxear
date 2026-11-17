@@ -111,6 +111,7 @@ pub use levels::{
     LEVEL_FORMAT, LevelChange, LevelFile, LevelOptions, LevelScene, LevelSummary, Levels, Tracked, summarise,
 };
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
+pub use obj_hierarchy::{ParentError, Reparented, family, set_parent};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{

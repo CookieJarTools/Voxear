@@ -242,6 +242,21 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "obj.parent",
+        about: "Puts an Obj inside another, or at the top of its scene without `parent`, as a script's Obj.SetParent does, while the game plays too: kept where it is in the world unless `keep_world` is false. Refused inside itself, and while playing, into another scene or dimension.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj."),
+            maybe("parent", ArgKind::Obj, "The Obj it goes inside; left out, the top of its scene."),
+            maybe(
+                "keep_world",
+                ArgKind::Toggle,
+                "Keeps it where it is in the world, as it does left out; false keeps its position, rotation and scale from its new parent.",
+            ),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
         name: "component.add",
         about: "Adds a component to an Obj, as Add Component does.",
         args: &[arg("obj", ArgKind::Obj, "The Obj."), arg("component", ArgKind::Component, "")],

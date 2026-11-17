@@ -179,7 +179,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | Calls | What they do |
 | --- | --- |
 | `editor.state`, `objs.list`, `obj.get`, `components`, `kinds` | Read what is open, the Objs and their components |
-| `obj.create`, `obj.set`, `obj.duplicate`, `obj.delete`, `obj.move` | Make, change, copy, delete and move Objs |
+| `obj.create`, `obj.set`, `obj.duplicate`, `obj.delete`, `obj.move`, `obj.parent` | Make, change, copy, delete and move Objs, and put one inside another while the game plays |
 | `component.add`, `component.remove`, `component.enable` | Add, take off, and switch components on or off |
 | `field.set`, `field.reset`, `field.choices`, `list.add`, `list.remove` | Change fields, as the Inspector does |
 | `undo`, `redo`, `batch` | Step back and forward, and make several changes one step |

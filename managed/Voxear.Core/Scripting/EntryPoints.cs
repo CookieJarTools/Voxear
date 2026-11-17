@@ -104,6 +104,7 @@ internal static unsafe class EntryPoints
 			Storms.Dispatch();
 			Trees.Dispatch();
 			Portal.Dispatch();
+			Dimensions.Dispatch();
 			ModuleHooks.Dispatch?.Invoke();
 			Localized.Dispatch();
 			SaveWrite.Update();

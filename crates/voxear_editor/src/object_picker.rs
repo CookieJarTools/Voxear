@@ -74,6 +74,8 @@ pub enum Chosen {
     Effect(voxear_render::Starter),
     /// The Definition a new data asset holds, by its full name.
     Definition(String),
+    /// The kind of a new dimension.
+    Dimension(voxear_engine::dimensions::DimensionKind),
     /// A node to add to the graph in the Generator panel, by its place among
     /// the kinds of node there are.
     GraphNode(usize),
@@ -110,6 +112,8 @@ pub enum PickFor {
     NewShader { folder: String },
     /// The starter a new particle effect in this folder is a copy of.
     NewEffect { folder: String },
+    /// The kind of a new dimension, in this folder.
+    NewDimension { folder: String },
     /// The Definition a new data asset in this folder holds.
     NewDataAsset { folder: String },
     /// The control of the binding picked in the Input Actions window.
@@ -479,6 +483,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Key(Some(key)) if game.input.action(key).is_some() => ("gamepad", action_controls(game, key)),
                 Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
+                Pick::Portal(portal) => ("globe", portal.file.clone()),
                 Pick::Asset(Some(reference)) if builtin_material(reference) => ("material", "Built in".into()),
                 Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => {
                     ("shader", "Built in".into())

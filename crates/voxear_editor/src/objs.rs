@@ -1246,8 +1246,25 @@ pub enum Destination {
 /// Moves an Obj, and everything under it, keeping where it is in the world,
 /// as Unity does. It goes into the scene of where it lands, and to its place
 /// in that scene's order. Returns where it was and is now, or `None` when
-/// nothing changed or it would go inside itself.
+/// nothing changed, it would go inside itself, or the game plays and the
+/// move is refused (see [`move_obj_checked`]), which the log says.
 pub fn move_obj(game: &mut Game, entity: Entity, to: Destination) -> Option<(Placing, Placing)> {
+    move_obj_checked(game, entity, to).unwrap_or_else(|error| {
+        tracing::warn!("{error}");
+        None
+    })
+}
+
+/// Moves an Obj as [`move_obj`] does, saying why when it may not go: while
+/// the game plays, a new parent is set as a script's `Obj.SetParent` sets
+/// it (see `voxear_engine::set_parent`), with its physics, the smoothing
+/// between ticks and saves brought along, and refused into another scene or
+/// dimension.
+pub fn move_obj_checked(
+    game: &mut Game,
+    entity: Entity,
+    to: Destination,
+) -> Result<Option<(Placing, Placing)>, String> {
     let world = &game.engine.world;
     let family = family(world, entity);
     let target = match to {
@@ -1255,25 +1272,30 @@ pub fn move_obj(game: &mut Game, entity: Entity, to: Destination) -> Option<(Pla
         Destination::SceneEnd(_) => None,
     };
     if target.is_some_and(|t| family.contains(&t)) {
-        return None;
+        return Ok(None);
     }
     let parent = match to {
         Destination::Into(t) => Some(t),
         Destination::Before(t) | Destination::After(t) => world.get::<Parent>(t).map(|p| p.0),
         Destination::SceneEnd(_) => None,
     };
+    let Some(before) = Placing::of(game, entity) else { return Ok(None) };
+    if !game.engine.is_edit_mode() && before.parent != parent {
+        game.set_parent(entity, parent, true).map_err(|error| error.to_string())?;
+    }
     let scene = match (to, target) {
         (Destination::SceneEnd(scene), _) => Some(scene),
         (_, Some(t)) => game.levels.scene_of(t),
         _ => None,
     };
-    let scene = scene.or_else(|| game.levels.scene_of(entity)).or_else(|| game.levels.active_scene_guid())?;
+    let Some(scene) = scene.or_else(|| game.levels.scene_of(entity)).or_else(|| game.levels.active_scene_guid()) else {
+        return Ok(None);
+    };
     let anchor = match to {
         Destination::Before(t) => Some(t),
         Destination::After(t) => next_sibling(game, t, scene, &family),
         Destination::Into(_) | Destination::SceneEnd(_) => None,
     };
-    let before = Placing::of(game, entity)?;
     let world = &game.engine.world;
     let inside = parent.map_or(Mat4::IDENTITY, |p| world_matrix(world, p));
     let (scale, rotation, position) = (inside.inverse() * world_matrix(world, entity)).to_scale_rotation_translation();
@@ -1284,7 +1306,47 @@ pub fn move_obj(game: &mut Game, entity: Entity, to: Destination) -> Option<(Pla
     let after = Placing { parent, transform, tracked };
     after.apply(game, entity);
     let moved = after.parent != before.parent || after.tracked != before.tracked;
-    moved.then_some((before, after))
+    Ok(moved.then_some((before, after)))
+}
+
+/// Puts an Obj inside another, or at the top of its scene with none, as a
+/// script's `Obj.SetParent` does: kept where it is in the world, or with
+/// `keep_world` off, keeping its Transform from its new parent. While the
+/// game plays it goes as the engine sets a parent, refused into another
+/// scene or dimension; while editing, as the Hierarchy moves it. Whether it
+/// moved, and while editing where it was and is, to undo.
+pub fn set_parent(
+    game: &mut Game,
+    entity: Entity,
+    parent: Option<Entity>,
+    keep_world: bool,
+) -> Result<(bool, Option<(Placing, Placing)>), String> {
+    let world = &game.engine.world;
+    if world.get::<Parent>(entity).map(|p| p.0) == parent {
+        return Ok((false, None));
+    }
+    if parent.is_some_and(|parent| family(world, entity).contains(&parent)) {
+        return Err("an Obj cannot go inside itself, or inside an Obj inside it".to_string());
+    }
+    let to = match parent {
+        Some(parent) => Destination::Into(parent),
+        None => {
+            let scene = game.levels.home_scene(world, entity).or_else(|| game.levels.active_scene_guid());
+            Destination::SceneEnd(scene.ok_or("no scene is open")?)
+        }
+    };
+    if !game.engine.is_edit_mode() {
+        let changed = game.set_parent(entity, parent, keep_world).map_err(|error| error.to_string())?;
+        move_obj_checked(game, entity, to)?;
+        return Ok((changed, None));
+    }
+    let kept = game.engine.world.get::<Transform>(entity).copied();
+    let Some((before, mut after)) = move_obj_checked(game, entity, to)? else { return Ok((false, None)) };
+    if let Some(kept) = kept.filter(|_| !keep_world) {
+        after.transform = kept;
+        after.apply(game, entity);
+    }
+    Ok((true, Some((before, after))))
 }
 
 /// The next Obj under the same parent as `of` in its scene's order, leaving

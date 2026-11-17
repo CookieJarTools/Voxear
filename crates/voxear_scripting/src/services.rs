@@ -221,6 +221,20 @@ pub trait ScriptServices {
         None
     }
 
+    /// Puts an Obj inside another, or at the top with none, as
+    /// `Obj.SetParent` asks, keeping it where it is in the world or where
+    /// it is from its parent: whether its parent changed, or why it could
+    /// not. `None` leaves it to the engine's own, which knows no scenes.
+    fn set_parent(
+        &mut self,
+        _world: &mut World,
+        _entity: Entity,
+        _parent: Option<Entity>,
+        _keep_world: bool,
+    ) -> Option<Result<bool, String>> {
+        None
+    }
+
     /// The open scenes' state as JSON, for a save of the scene: the level's
     /// GUID, the keys of the Objs scenes loaded that are gone, and the root
     /// of each copy scripts made from a prefab, with the prefab's GUID and
@@ -317,6 +331,41 @@ pub trait ScriptServices {
     /// `voxear_engine::dungeons`).
     fn dungeons_json(&mut self, _world: &World, obj: u64, _at: [f32; 4]) -> Result<String> {
         anyhow::bail!("dungeons are read only in a running game, not here (Obj {obj})")
+    }
+
+    /// For a world of blocks without end, every change from its ground: those
+    /// of its chunks made now and those kept for chunks not made. None for
+    /// any other world, whose changes are told from how its level built it.
+    fn endless_changes(
+        &mut self,
+        _world: &World,
+        _entity: Entity,
+    ) -> Option<voxear_terrain::blocks::edits::BlockEdits> {
+        None
+    }
+
+    /// For a world of blocks without end, makes `edits` all its changes from
+    /// its ground: into the chunks made now, and kept for those not. False
+    /// for any other world.
+    fn put_endless_changes(
+        &mut self,
+        _world: &mut World,
+        _entity: Entity,
+        _edits: &voxear_terrain::blocks::edits::BlockEdits,
+    ) -> bool {
+        false
+    }
+
+    /// The changes of every dimension but the level's, each kept apart, for
+    /// a save of the scene: none where none changed.
+    fn dimension_edits(&mut self, _world: &mut World) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Puts back what [`dimension_edits`](Self::dimension_edits) kept: how
+    /// many dimensions made now took theirs.
+    fn apply_dimension_edits(&mut self, _world: &mut World, _bytes: &[u8]) -> Result<i32> {
+        Ok(0)
     }
 
     /// The GUID of the block numbered `block` in the world of blocks on
@@ -726,6 +775,17 @@ pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
 /// [`ScriptServices::set_model`]); none outside them.
 pub fn set_model(world: &mut World, entity: Entity, reference: &str) -> Option<Result<()>> {
     with_services(|services| services.set_model(world, entity, reference))
+}
+
+/// Puts an Obj inside another through the lent services (see
+/// [`ScriptServices::set_parent`]); none outside them.
+pub fn set_parent(
+    world: &mut World,
+    entity: Entity,
+    parent: Option<Entity>,
+    keep_world: bool,
+) -> Option<Result<bool, String>> {
+    with_services(|services| services.set_parent(world, entity, parent, keep_world)).flatten()
 }
 
 /// A change a script makes to how an Obj draws its model.

@@ -8348,3 +8348,95 @@ fn a_gun_handlings_actions_are_based_on_clips_in_its_inspector() {
     assert_eq!(read().pack.camera, voxear_engine::guns::handling::PackCamera::Eyes);
     shot(&mut renderer, "gun-handling-inspector.png");
 }
+/// The mean of each pixel's brightest channel over a part of the picture,
+/// a share of `rect` from its left and top, from 0 to 255.
+fn brightness(pixels: &[u8], width: u32, rect: [f32; 4], part: [f32; 4]) -> f32 {
+    let [x, y, w, h] = rect;
+    let (left, top) = ((x + w * part[0]) as u32, (y + h * part[1]) as u32);
+    let (right, bottom) = ((x + w * part[2]) as u32, (y + h * part[3]) as u32);
+    let (mut sum, mut count) = (0.0_f32, 0.0_f32);
+    for row in top..bottom {
+        for column in left..right {
+            let at = ((row * width + column) * 4) as usize;
+            sum += f32::from(pixels[at].max(pixels[at + 1]).max(pixels[at + 2]));
+            count += 1.0;
+        }
+    }
+    sum / count.max(1.0)
+}
+
+#[test]
+fn a_dimension_shows_under_a_header_of_its_own_and_alone_in_its_scene_view() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    // Enclosed: dark all round, a lamp over a stone in it.
+    let grotto = "format = 1\n\n[dimension]\nkind = \"caves\"\n\n[[obj]]\nid = 1\nname = \"Stone\"\nposition = [0.0, 0.0, 0.0]\nscale = [2.0, 2.0, 2.0]\n[obj.renderer]\nmesh = \"builtin:cube\"\n\n[[obj]]\nid = 2\nname = \"Lamp\"\nposition = [0.0, 3.0, -3.0]\n[obj.light]\ntype = \"point\"\nintensity = 40.0\nrange = 20.0\n";
+    std::fs::create_dir_all(dir.path().join("Dimensions")).unwrap();
+    std::fs::write(dir.path().join("Dimensions/Grotto.dimension"), grotto).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let menu = editor.ui.find(editor.ui.root(), "dimension").unwrap();
+    assert!(!editor.ui.is_visible(menu), "with only the level's, the Scene view has no Dimension menu");
+    let level_sky = {
+        for _ in 0..30 {
+            frame(&mut editor, &mut renderer);
+        }
+        shot(&mut renderer, "dimension-level.png");
+        let (width, _, pixels) = renderer.read_pixels().unwrap();
+        brightness(&pixels, width, editor.scene_camera().unwrap().rect, [0.05, 0.05, 0.3, 0.2])
+    };
+
+    let file = editor.game.content.db().guid_of("Dimensions/Grotto.dimension").unwrap();
+    let id = editor.open_dimension(file, &mut renderer).unwrap();
+    assert_eq!(editor.scene_dimension(), id);
+    // Looked at from in front of the stone, as a person would come at it.
+    let camera = editor.scene_view_cameras()[0].1;
+    let place = voxear_scene::Transform::new(
+        voxear_core::math::Vec3::new(0.0, 1.5, -8.0),
+        voxear_core::math::Quat::IDENTITY,
+        voxear_core::math::Vec3::ONE,
+    );
+    *editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap() = place;
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(editor.ui.is_visible(menu), "the Dimension menu shows once there is more than the level's");
+    assert!(hierarchy_row(&editor.ui, "Grotto").is_some(), "the dimension's header");
+    assert!(hierarchy_row(&editor.ui, "Stone").is_some(), "its Objs under it");
+    shot(&mut renderer, "dimension-grotto.png");
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let rect = editor.scene_camera().unwrap().rect;
+    let dark = brightness(&pixels, width, rect, [0.05, 0.05, 0.3, 0.2]);
+    let stone = brightness(&pixels, width, rect, [0.45, 0.4, 0.55, 0.6]);
+    assert!(dark + 30.0 < level_sky, "the grotto has no sky: {dark} against the level's {level_sky}");
+    assert!(stone > dark + 20.0, "its lamp lights its stone: {stone} against {dark} round it");
+
+    // Its settings changed as the Inspector changes them: written into its file, and taken at once.
+    let mut settings =
+        voxear_engine::dimensions::DimensionSettings::of(voxear_engine::dimensions::DimensionKind::Overworld);
+    settings.keep_loaded = Some(5.0);
+    editor.save_dimension_settings("Dimensions/Grotto.dimension", settings.clone()).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("Dimensions/Grotto.dimension")).unwrap();
+    let read = voxear_engine::dimensions::DimensionFile::parse(&text, "Grotto").unwrap();
+    assert_eq!(read.settings, settings);
+    assert_eq!(read.scene.objs.len(), 2, "its Objs kept");
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "dimension-grotto-sky.png");
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let open = brightness(&pixels, width, editor.scene_camera().unwrap().rect, [0.05, 0.05, 0.3, 0.2]);
+    assert!(open > dark + 30.0, "an overworld has a sky: {open} against {dark} as caves");
+
+    // The level's again, from where its Scene view left it.
+    assert!(editor.show_dimension(voxear_engine::dimensions::DimensionId::LEVEL));
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    let again = brightness(&pixels, width, editor.scene_camera().unwrap().rect, [0.05, 0.05, 0.3, 0.2]);
+    assert!((again - level_sky).abs() < 12.0, "the level's sky comes back: {again} against {level_sky}");
+}

@@ -833,6 +833,12 @@ Later:
   - [x] 2D physics on Box2D v3 (through `boxdd-sys`): Collider 2D (box, circle, capsule, trigger) and Rigidbody 2D
     in scenes, prefabs, the Inspector and the Scene view, and `Collider2D`, `Rigidbody2D`, `Physics2D` and the
     `On…2D` messages in C#
+  - [x] Objs put inside others while the game runs (`voxear_engine::set_parent`): setting `Obj.Parent`, or
+    `Obj.SetParent(parent, keepWorldPlace)`, keeps the Obj where it is in the world or in its own place, and is
+    refused inside itself, into another dimension, or for an Obj a scene loaded, into another scene. Physics, the
+    smoothing between ticks, dimensions, saves of the scene, the play-mode Hierarchy and networked parents follow;
+    `vox editor call obj.parent`. A Character Controller inside a moving deck stands on it where it is that step.
+    A kinematic Rigidbody moves at its Obj's speed each step and stops with it; a teleport gives it none
 - **Built-in vehicle physics**, on Jolt's vehicle constraints:
   - [x] wheeled vehicles (cars, trucks, motorbikes) with suspension, engine and gearbox, and differentials: a
     `Vehicle` beside a Rigidbody, driven on the `Wheel`s of its child Objs, whose Objs physics turns and drops
@@ -1974,6 +1980,23 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   not, throws up a burst of drops, as big as it is fast and wide, cleared once they have fallen (`water::splash`);
   one that ploughs through half in it throws up smaller ones as it goes; lava throws up blobs of molten rock.
   `Water.Splash` makes one from C#.
+- **Trails** (`water_trails.rs`, `shaders/water_trails.slang`, `voxear_engine::water_trails`): what moves on water
+  leaves a wake. A swimmer leaves ripples and a short trail of foam, and rings spread from it as it treads water; a
+  boat, or anything moving across the water, a V of waves that spreads out and fades, narrower the faster it goes,
+  with white water down its middle; rings where something goes in or comes out. A wave equation over a square round
+  each view's camera, its texels holding the world's cells modulo its size so it scrolls with nothing moved, stirred
+  by every body that cuts the surface pushing the water out of where it now is and letting it back where it was (so
+  only what moves against the water stirs it), a swimmer's strokes and a boat's pitching putting chevrons in the V;
+  carried down rivers by a grid of the current the engine keeps round the viewer. Every water surface reads it: the sea,
+  Pools, Streams and worlds of blocks' water. Blocky on worlds of blocks: the water stands in squares a quarter of a
+  block across, stepping with the ripples, its foam a square at a time. Characters and bodies with a Collider stir
+  the water with nothing set up; a **Water Wake** tunes or stops an Obj's (Size, Strength, Foam; C# `Obj.WaterWake`),
+  and gives an Obj with no body one. Project Settings ▸ Graphics ▸ Water Trails: Quality (Off, Low, Medium, High:
+  256 to 1024 texels a side), Area, Look (Match the Water, Smooth, Blocky), through `project.set` too. Tests: a
+  swimmer's ripples and foam that fade, a boat's V spreading behind it, rings and foam where something drops in,
+  ripples carried down a river, trails on a Pool and none with Quality Off, squares on a world of blocks, and what the
+  passes cost: 0.016 ms at Medium and 0.058 ms at High on an RTX 3070 (the least of 60 frames at 1920×1080), the
+  water's own pass no slower than frame-to-frame noise.
 
 ## M6 — Animation (in progress)
 
@@ -2229,7 +2252,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
   dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
   others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
-  fire. Networked: the server (or host) makes the ground of worlds of blocks round every player in their own
+  fire. In the editor: a `.dimension` file opens beside the level as a scene does, its Objs under a header of their
+  own in the Hierarchy, edited, undone and saved into its file with its `[dimension]` table; its settings in the
+  Inspector with tooltips; Project ▸ + ▸ New Dimension of a kind. Each Scene view shows one dimension, picked from
+  its Dimension menu, keeping a camera place in each, and selecting an Obj of another shows that one; gizmos and
+  clicks keep to the view's dimension. A Portal's Leads To picks a Portal of any dimension's file (`into`), its gizmo
+  names the far dimension, and Go Through shows the far Portal; a dungeon's gate stands in the editor, a click
+  selects it, and Open Dungeon makes its dimension to look round, listed as not saved. `vox editor call` and `vox
+  mcp`: `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`,
+  `obj.move_to_dimension`, `dungeon.open`, and `dungeon.layouts` with each dungeon's site, dimension and stage.
+  Tests: a dimension made, shown, given a new Obj and saved with its settings, a Portal in the level picked into
+  its Way Back and gone through, an Obj moved into it, let go with `discard`; a dungeon opened from its gate and
+  left again by its way out, nothing of it saved; GPU pictures of a Scene view showing a dark grotto alone under its
+  header, the grotto taking a sky as its settings change, and the level's sky coming back.
+  Networked: the server (or host) makes the ground of worlds of blocks round every player in their own
   dimension, with no camera of its own, stands dungeons' gates round each, and opens one Portal into a loaded
   dimension for each player, so a server with players in three dungeons has the three loaded; each player's machine
   makes only the dimensions the server names to it (a `.dimension` asset and key, or a dungeon's gate, then a number
@@ -2245,8 +2281,23 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
   75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
   player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
-  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the editor's dimension view, the script
-  API (dungeon stages and growth among it), saves per dimension, and terrains of height round every player.
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs.
+  Scripts and saves: `Ref<Dimension>` fields picked in the Inspector, `Dimension.Current`, `obj.Dimension`,
+  `obj.MoveTo(dimension, position)` (made first, awaited until its ground stands), `Dimension.Entered` and `Left`,
+  `Portal.CreatePair` across two dimensions and `PortalPassage` saying both; Objs scripts make at the top of the
+  hierarchy go into the current dimension; the full way `Dimensions.Make(dimension, key)`, `Dimensions.Made`, and a
+  `DimensionInstance` with `KeepLoaded`, `LetGo()`, `WhenReady`, its own `Blocks`, `Physics`, `Weather`, `Sky` and
+  `Clock`, and `Use()` to ask every call of it. Dungeons grow: `dungeon.Stage`, `Grow()` (only while nobody is in its
+  dimension), `IsCleared`, `Dimension`, `Portal` and `MakeDimension()`; a stage adds a floor under the last, every
+  space of the floors above where it stood (the last floor's end is laid as an arena would be, then made its way
+  down). A dimension let go keeps its changes and gets them back when made again; a save of the scene keeps each
+  dimension's apart (a `VXDM` entry, none for one never changed: 99 bytes for three blocks, put back in under a
+  millisecond), which dimension each Obj is in, and the dungeons' stages beside their sites. Fixed in passing: an
+  endless world's script save left out changes to chunks streamed away. Tests: a dimension's changes kept through
+  streaming out, let go and made again, and a save; a dungeon grown with nobody in it, made a floor deeper with
+  its first floor and a tower kept, refused while somebody is in it; a grown plan keeping its floors in three
+  seeds; a C# script making a dimension, asking its blocks from the level, moving itself and the camera in,
+  hearing it, making Portals across, and a save putting them back. To come: terrains of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -3718,7 +3769,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
     an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
     every Project Settings row and every component's fields reached. Manual: Areas and Costs.
-  - [ ] Nav Links; climbing vines, ropes and ladders; walkers two blocks wide; agent types in Project Settings
+  - [x] **Nav Links** (`navigation::NavLink`, Add Component ▸ Navigation ▸ Nav Link: End in the Obj's own space,
+    Kind Walk, Jump, Climb or Teleport, Both Ways, Cost): searches take each as one step, from the place nearest its
+    Obj to the place nearest its end, costing as far as it goes and its cost more, the coarse graph too
+    (`voxear_nav::Link`, `Joins`); its two ends are always corners of a way, marked by the link's kind
+    (`FoundPath::links`); agents cross it along its line, or an arc for a jump, at once for a teleport, whatever
+    way they move. Drawn as arrows by the Navigation gizmo. Tests: a way over a wall only by a link, one way only;
+    an agent climbing a ladder link onto a platform four blocks high, by its controller and along the nav;
+    every component's fields reached. Manual: Nav Links.
+  - [ ] climbing vines and ropes without a link; walkers two blocks wide; agent types in Project Settings; costs
+    per agent
   - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
     `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
     its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
@@ -3728,7 +3788,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
     ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
   - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
-  - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
+  - [x] **Baked nav meshes for levels of models** (`voxear_nav::mesh`): every still collider's triangles
+    (`navigation::bake_triangles`, from the level's real middle) laid into a grid of columns 0.3 m across, each
+    triangle clipped to each column so walls count as well as floors; a span's top walkable where its triangles
+    are no steeper than 45° and the span over it leaves 1.8 m; cells joined to those beside within a step of
+    0.45 m, those nearer than 0.35 m to an edge let go; the rest gathered into rectangles following the floor's
+    height at their corners, joined along the edges they share. Searches are an A* over the rectangles, each
+    entered at the middle of its edge, then the funnel through the edges crossed. Kept beside the level as a
+    `.nav` file (`VXNV`, LZ4), read as the level opens (`LevelNav`), shipped with it. Agents with no world of
+    blocks under them walk it (searches at once: a 279 m way 0.04 ms), by their Character Controller or along the
+    mesh; `navigation.path` and scripts' `Navigation` find ways over it. The editor bakes it on a thread from a
+    level's Inspector (**Bake Navigation**), the palette and `navigation.bake`; the Navigation gizmo draws its
+    rectangles. Timings (test build): a level 200 m square with 144 blocks on it bakes in 2.4 s. Tests: a box gone
+    round off its sides; a ramp joining two floors and one too steep not; a floor over a floor kept apart; a
+    corner turned on its inside; the file read back the same; the timings; agents walking round a wall on a baked
+    mesh by both ways of moving; a tool baking a level and finding a way over it, and the gizmo's picture.
+    Manual: Levels of Models.
+  - [ ] cutting nav meshes at run time for Nav Obstacles; bake settings per agent type
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
@@ -3830,8 +3906,13 @@ Done:
   - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
     colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
     each place, live reload and options carried over; the editor's menu, page and calls.
-  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
-    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
+- **Block faces and leaves lit by a pack's programs** (stage 2, without water). `[surface] blocks` and `leaves`, each
+  `float3 run(BlockSurface surface, BlockLighting light)`: the face (colour, normals, corner shade, sky light and block
+  light, look, what it is) and the light it sees (sun, shadow, sky, the blocks' glow, occlusion, reflections, lamps,
+  and the engine's own terms and colour). Compiled into the engine's block shader, swapped in while worn. Evening's
+  `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun.
+  - Not yet: water's surface programs (stage 2's rest), its own tonemap and sky (3), shadows (4), and players' menu
+    and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

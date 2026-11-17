@@ -88,8 +88,8 @@ pub fn shapes(
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    // An Obj that is off shows no icons, as in Unity.
-    let switched = voxear_scene::Switched::of(world);
+    // An Obj that is off shows no icons, as in Unity, nor one in another dimension than the view's.
+    let switched = voxear_scene::Switched::in_dimension(world, camera.dimension);
     for (entity, transform, placed, light, lens, sound) in marked {
         let (light, lens) = (light.filter(|_| markers.lights), lens.filter(|_| markers.cameras));
         let sound = sound.filter(|_| markers.sounds);

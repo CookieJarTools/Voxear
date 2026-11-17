@@ -56,6 +56,8 @@ pub struct PathAsk {
     pub reach: f32,
     /// Boxes giving the places in them another area, as Nav Areas do.
     pub boxes: Vec<crate::AreaBox>,
+    /// Links a search may take as one step each, as Nav Links are.
+    pub links: Vec<crate::Link>,
     /// How much a search over many regions leans towards the goal: 1 finds
     /// the cheapest way there is; more finds one sooner that may cost a
     /// little more, never more than this many times the cheapest.
@@ -74,6 +76,7 @@ impl PathAsk {
             across: 3.0,
             reach: 4.0,
             boxes: Vec::new(),
+            links: Vec::new(),
             greed: GREED,
         }
     }
@@ -116,6 +119,9 @@ pub struct FoundPath {
     pub jumps: Vec<bool>,
     /// The shut doors along it, each the block of its lower half, in turn.
     pub doors: Vec<[i32; 3]>,
+    /// For each corner, the kind of the link it is reached by from the one
+    /// before, where it is (see [`crate::Link::kind`]).
+    pub links: Vec<Option<u8>>,
 }
 
 impl FoundPath {
@@ -136,6 +142,7 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
     let goal = nav.nearest(ask.to, walker, ask.across, ask.reach);
     let class = nav.class_of(walker);
     let target = goal.and_then(|goal| nav.point(goal)).unwrap_or(ask.to);
+    let joins = Joins::of(nav, ask);
     // A coarse way first, unless the two are in one region.
     let mut corridor = None;
     let mut looked = 0;
@@ -145,8 +152,8 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
         let same = goal
             .is_some_and(|goal| goal.slot == start.slot && nav.region_of(goal, class) == nav.region_of(start, class));
         if !same {
-            let found =
-                coarse(nav, class, start, goal.map(|goal| (goal.slot, nav.region_of(goal, class))), target, ask);
+            let goal_region = goal.map(|goal| (goal.slot, nav.region_of(goal, class)));
+            let found = coarse(nav, class, start, goal_region, target, ask, &joins);
             looked += found.looked;
             let mut nodes = found.nodes;
             // A long way is found place by place for its first part.
@@ -163,13 +170,15 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
             corridor = Some(Corridor { nodes, ends_short: short, next });
         }
     }
-    let mut found = SCRATCH
-        .with(|scratch| fine(&mut scratch.borrow_mut(), nav, class, start, goal, target, corridor.as_ref(), ask));
+    let mut found = SCRATCH.with(|scratch| {
+        fine(&mut scratch.borrow_mut(), nav, class, start, goal, target, corridor.as_ref(), ask, &joins)
+    });
     looked += found.looked;
     // The regions are a walker's that does everything; one that does less may find no way through them, so it
     // looks again without them, as far as it may.
     if !found.reached && goal.is_some() && corridor.as_ref().is_some_and(|corridor| !corridor.ends_short) {
-        let free = SCRATCH.with(|scratch| fine(&mut scratch.borrow_mut(), nav, None, start, goal, target, None, ask));
+        let free =
+            SCRATCH.with(|scratch| fine(&mut scratch.borrow_mut(), nav, None, start, goal, target, None, ask, &joins));
         looked += free.looked;
         if free.reached {
             found = free;
@@ -182,7 +191,22 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
         (true, false, _) if goal.is_some() => PathStatus::Complete,
         _ => PathStatus::Partial,
     };
-    let kept = tight::pull(nav, &fine.places, walker, &|at| cost_of(nav, ask, at));
+    let mut kept = tight::pull(nav, &fine.places, walker, &|at| cost_of(nav, ask, at));
+    // Each link's two ends are corners, so what walks it knows where it is taken.
+    let linked: Vec<(usize, u8)> = (1..fine.places.len())
+        .filter_map(|at| joins.between(fine.places[at - 1], fine.places[at]).map(|kind| (at, kind)))
+        .collect();
+    kept.extend(linked.iter().flat_map(|(at, _)| [at - 1, *at]));
+    kept.sort_unstable();
+    kept.dedup();
+    let links = kept
+        .iter()
+        .enumerate()
+        .map(|(at, &place)| {
+            let joined = at > 0 && kept[at - 1] + 1 == place;
+            linked.iter().find(|(end, _)| joined && *end == place).map(|(_, kind)| *kind)
+        })
+        .collect();
     let corners = kept.iter().filter_map(|&at| nav.point(fine.places[at])).collect();
     // A corner is jumped to where the place before it is more than a column away.
     let apart = |a: PlaceRef, b: PlaceRef| match (nav.cell(a), nav.cell(b)) {
@@ -219,6 +243,60 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
         looked,
         jumps,
         doors,
+        links,
+    }
+}
+
+/// The links a search may take, from place to place, each with what it
+/// costs and its kind, both ways where a link goes both ways.
+#[derive(Default)]
+struct Joins {
+    list: Vec<(PlaceRef, PlaceRef, f32, u8)>,
+}
+
+/// A coarse edge as a search crosses it: into region `region` at
+/// `crossing`.
+struct Edge {
+    region: u16,
+    crossing: [f32; 3],
+}
+
+impl Joins {
+    /// `ask`'s links, each end at the place to stand nearest it.
+    fn of(nav: &BlockNav, ask: &PathAsk) -> Self {
+        let mut list = Vec::new();
+        for link in &ask.links {
+            let near = |at: [f32; 3]| nav.nearest(at, ask.walker, 1.5, 2.0);
+            let (Some(from), Some(to)) = (near(link.from), near(link.to)) else { continue };
+            let (Some(a), Some(b)) = (nav.point(from), nav.point(to)) else { continue };
+            let cost = distance(a, b) + link.cost.max(0.0);
+            list.push((from, to, cost, link.kind));
+            if link.both_ways {
+                list.push((to, from, cost, link.kind));
+            }
+        }
+        Self { list }
+    }
+
+    /// The links out of place `at`.
+    fn out(&self, at: PlaceRef) -> impl Iterator<Item = &(PlaceRef, PlaceRef, f32, u8)> {
+        self.list.iter().filter(move |(from, ..)| *from == at)
+    }
+
+    /// The links out of region `region` of chunk `slot`.
+    fn out_of<'a>(
+        &'a self,
+        nav: &'a BlockNav,
+        class: usize,
+        slot: u32,
+        region: u16,
+    ) -> impl Iterator<Item = &'a (PlaceRef, PlaceRef, f32, u8)> + 'a {
+        self.list.iter().filter(move |(from, ..)| from.slot == slot && nav.region_of(*from, class) == region)
+    }
+
+    /// The kind of the link from `a` to `b`, if one joins them.
+    fn between(&self, a: PlaceRef, b: PlaceRef) -> Option<u8> {
+        self.list.iter().find(|(from, to, ..)| *from == a && *to == b).map(|(.., kind)| *kind)
     }
 }
 
@@ -273,6 +351,7 @@ fn coarse(
     goal: Option<(u32, u16)>,
     target: [f32; 3],
     ask: &PathAsk,
+    joins: &Joins,
 ) -> Coarse {
     struct Node {
         g: f32,
@@ -314,22 +393,34 @@ fn coarse(
         let Some(regions) = slot.regions.get(class) else { continue };
         let here = regions.regions.get(usize::from(region)).map_or(1.0, |region| region_cost(region.areas, &ask.costs));
         let outer = slot.outer.get(class);
+        // Each region it leads to: by an edge, crossed where the edge is, or by a link from a place in it.
         let edges = regions.inner.from(region).iter().chain(outer.map_or(&[][..], |outer| outer.from(region)));
-        for edge in edges {
-            let to_slot = match usize::from(edge.to) == around_index([0, 0, 0]) {
-                true => slot_at,
-                false => slot.around[usize::from(edge.to)],
-            };
+        let mut next: Vec<(u32, u16, [f32; 3], f32)> = edges
+            .map(|edge| {
+                let to_slot = match usize::from(edge.to) == around_index([0, 0, 0]) {
+                    true => slot_at,
+                    false => slot.around[usize::from(edge.to)],
+                };
+                (to_slot, edge.region, edge.crossing, distance(entry, edge.crossing) * here.max(least))
+            })
+            .collect();
+        for &(from, to, cost, _) in joins.out_of(nav, class, slot_at, region) {
+            let (Some(from_point), Some(to_point)) = (nav.point(from), nav.point(to)) else { continue };
+            let walked = distance(entry, from_point) * here.max(least) + cost;
+            next.push((to.slot, nav.region_of(to, class), to_point, walked));
+        }
+        for (to_slot, to_region_number, crossing, step) in next {
             let Some(other) = nav.slot(to_slot) else { continue };
             let Some(to_region) =
-                other.regions.get(class).and_then(|regions| regions.regions.get(usize::from(edge.region)))
+                other.regions.get(class).and_then(|regions| regions.regions.get(usize::from(to_region_number)))
             else {
                 continue;
             };
             if !region_cost(to_region.areas, &ask.costs).is_finite() {
                 continue;
             }
-            let cost = g + distance(entry, edge.crossing) * here.max(least);
+            let edge = Edge { region: to_region_number, crossing };
+            let cost = g + step;
             let key = key(to_slot, edge.region);
             let index = match found.get(&key) {
                 Some(&index) if nodes[index as usize].closed || nodes[index as usize].g <= cost => continue,
@@ -485,6 +576,7 @@ fn fine(
     target: [f32; 3],
     corridor: Option<&Corridor>,
     ask: &PathAsk,
+    joins: &Joins,
 ) -> Fine {
     scratch.stamp = scratch.stamp.wrapping_add(1);
     if scratch.stamp == 0 {
@@ -547,6 +639,10 @@ fn fine(
             // on is cut.
             level[way] = to_feet == feet && crossed.is_finite();
             let cost = crossed + (to_feet - feet).abs() as f32 / 16.0 * UPWARD;
+            scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
+        }
+        // Along a link.
+        for &(_, to, cost, _) in joins.out(at) {
             scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
         }
         // Over gaps, for a walker that jumps.

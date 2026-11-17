@@ -15,6 +15,7 @@
 
 pub mod avoid;
 pub mod blocks;
+pub mod mesh;
 pub mod steer;
 pub mod threads;
 
@@ -42,6 +43,21 @@ pub const DOOR: u8 = 4;
 pub const NOT_WALKABLE: u8 = 5;
 /// The first of a project's own areas, four of them.
 pub const CUSTOM: u8 = 6;
+
+/// A link a level's maker puts between two places: a ladder, a gap to jump,
+/// a hole to drop down, a door that takes you elsewhere. A search may take
+/// it as one step, from the place to stand nearest `from` to the one
+/// nearest `to` (and back where `both_ways`), costing as far as it goes and
+/// `cost` more. `kind` says how what walks it crosses it. In blocks from
+/// the world's corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Link {
+    pub from: [f32; 3],
+    pub to: [f32; 3],
+    pub both_ways: bool,
+    pub cost: f32,
+    pub kind: u8,
+}
 
 /// A box of a world given an area, as a Nav Area component marks a road
 /// through a town: a place whose feet are in it is of that area, whatever

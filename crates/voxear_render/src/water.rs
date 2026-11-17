@@ -299,6 +299,19 @@ pub struct Water {
     /// Whether the camera is under the top of a world of blocks' sea, whose
     /// swell is then drawn from where it is (`blockSeaInsideFragment`).
     inside: bool,
+    /// The trails on the water round the camera, when there are any.
+    pub(crate) trails: Option<Trails>,
+}
+
+/// A frame's trails on the water (see `water_trails`): the two images they
+/// are kept in, which held them last frame, this frame's, and the image
+/// that holds them once moved on, which the water reads.
+#[derive(Clone, Copy)]
+pub(crate) struct Trails {
+    pub images: [ImageId; 2],
+    pub parity: bool,
+    pub gpu: crate::water_trails::GpuTrails,
+    pub now: ImageId,
 }
 
 /// The waves and caustics a view worked out, for a view through a Portal
@@ -544,6 +557,7 @@ impl Water {
                 && bodies.bodies[..bodies.pools as usize].first().is_some_and(|body| in_block_sea(body, camera)),
             blocks,
             shared: shared.is_some(),
+            trails: None,
         })
     }
 }
@@ -688,7 +702,7 @@ pub struct WaterTargets {
     pub sampled: Vec<ImageId>,
 }
 
-fn compute_barrier(ctx: &crate::graph::PassContext) {
+pub(crate) fn compute_barrier(ctx: &crate::graph::PassContext) {
     let barrier = [vk::MemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
         .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
@@ -815,7 +829,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, inside, trails, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -936,6 +950,7 @@ pub fn record(
     });
     let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
     waves.extend([foam_now, floor_image, floor_depth, pattern, caustics, lens_now]);
+    waves.extend(trails.map(|trails| trails.now));
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;

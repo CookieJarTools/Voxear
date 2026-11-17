@@ -23,6 +23,8 @@ const SWIM: [f32; 4] = [0.2, 0.35, 1.0, 0.45];
 const DOOR: [f32; 4] = [1.0, 0.6, 0.2, 0.55];
 /// How an agent's way is drawn.
 const WAY: [f32; 4] = [1.0, 0.85, 0.25, 1.0];
+/// How a Nav Link is drawn.
+const LINK: [f32; 4] = [0.85, 0.45, 1.0, 1.0];
 
 impl Editor {
     /// Draws the Navigation gizmo where it is switched on.
@@ -86,6 +88,43 @@ impl Editor {
             for (kind, triangles) in squares.into_iter().enumerate() {
                 let color = [STAND, WADE, SWIM, DOOR][kind];
                 debug_draw::solid(triangles, color, 0.0, style);
+            }
+        }
+        // The level's baked nav mesh: each polygon near the camera, a little over its floor.
+        if let Some((mesh, offset)) = voxear_engine::navigation::level_nav(world) {
+            let seen = eye + offset;
+            let mut triangles = Vec::new();
+            for poly in &mesh.polys {
+                let nearest =
+                    Vec3::new(seen.x.clamp(poly.min[0], poly.max[0]), seen.y, seen.z.clamp(poly.min[1], poly.max[1]));
+                if (nearest - seen).length() > REACH {
+                    continue;
+                }
+                let inset = 0.04;
+                let corner = |x: f32, z: f32| Vec3::new(x, poly.height_at(x, z) + 0.05, z) - offset;
+                let (x0, z0, x1, z1) =
+                    (poly.min[0] + inset, poly.min[1] + inset, poly.max[0] - inset, poly.max[1] - inset);
+                let [a, b, c, d] = [corner(x0, z0), corner(x1, z0), corner(x1, z1), corner(x0, z1)];
+                triangles.extend([[a, c, b], [a, d, c]]);
+                if triangles.len() > MOST * 2 {
+                    break;
+                }
+            }
+            debug_draw::solid(triangles, STAND, 0.0, style);
+        }
+        // Each Nav Link, from its Obj to its end, an arrow, both ways where it goes both ways.
+        let links: Vec<(Vec3, Vec3, bool)> = world
+            .query_ref::<(Entity, &voxear_engine::navigation::NavLink)>()
+            .into_iter()
+            .filter_map(|(entity, link)| {
+                let (from, to) = voxear_engine::navigation::link_ends(world, entity, link)?;
+                Some((from, to, link.both_ways))
+            })
+            .collect();
+        for (from, to, both) in links {
+            debug_draw::arrow(from + Vec3::Y * 0.2, to + Vec3::Y * 0.2, LINK, 0.0, style);
+            if both {
+                debug_draw::arrow(to + Vec3::Y * 0.2, from + Vec3::Y * 0.2, LINK, 0.0, style);
             }
         }
         // Each agent's way, corner to corner, a little over the floor.

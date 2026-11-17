@@ -12,7 +12,7 @@ namespace Voxear;
 /// It is called Obj rather than Object because Object collides with System.Object in every file
 /// that uses System.
 /// </summary>
-public readonly struct Obj : IEquatable<Obj>
+public readonly partial struct Obj : IEquatable<Obj>
 {
 	public static readonly Obj None = default;
 
@@ -126,8 +126,15 @@ public readonly struct Obj : IEquatable<Obj>
 	/// <summary>The Obj's rotation in the world, through all its parents. Like Unity's rotation.</summary>
 	public Quaternion WorldRotation => Native.GetWorldTransform(Id).Rotation;
 
-	/// <summary>The Obj this one is inside, or None for one at the top of its scene.</summary>
-	public Obj Parent => ObjHierarchy.ParentOf(this);
+	/// <summary>
+	/// The Obj this one is inside, or None for one at the top of its scene. Setting it puts the Obj inside another, or
+	/// at the top with None, keeping it where it is in the world, as SetParent does.
+	/// </summary>
+	public Obj Parent
+	{
+		get { return ObjHierarchy.ParentOf(this); }
+		set { SetParent(value); }
+	}
 
 	/// <summary>
 	/// The Objs directly inside this one, not those further in, in the order the engine itself goes through them. It
@@ -146,6 +153,19 @@ public readonly struct Obj : IEquatable<Obj>
 	public Vector3 Up => WorldRotation.Up;
 
 	internal ulong Id { get; }
+
+	/// <summary>
+	/// Puts the Obj, and everything inside it, inside another Obj, or at the top of its scene with None, as a boat takes
+	/// a passenger aboard and lets them off. With keepWorldPlace it stays where it is in the world, its Position and
+	/// Rotation worked out again from the new parent, and physics sees no move; without, it keeps its Position and
+	/// Rotation, so it is set down at once where they put it in its new parent, as through a Portal. Throws when the
+	/// parent is the Obj itself or inside it, is in another dimension, or is in another scene than an Obj a scene
+	/// loaded.
+	/// </summary>
+	public void SetParent(Obj parent, bool keepWorldPlace = true)
+	{
+		ObjHierarchy.SetParent(this, parent, keepWorldPlace);
+	}
 
 	/// <summary>Turns the Obj so it faces a point in the world, keeping its up towards Vector3.Up.</summary>
 	public void LookAt(Vector3 target)
@@ -446,6 +466,19 @@ public readonly struct Obj : IEquatable<Obj>
 	{
 		NativeComponent.Set(NativeComponent.ReflectionProbe, this, NativeComponent.Add, Vector4.Zero);
 		return new ReflectionProbe(this);
+	}
+
+	/// <summary>
+	/// The Obj's Water Wake, which tunes or stops the trail it leaves on water. Not valid when it has none; it still
+	/// leaves one as its body does.
+	/// </summary>
+	public WaterWake WaterWake => new WaterWake(this);
+
+	/// <summary>Gives the Obj a Water Wake, stirring the water as its body would, unless it has one, and returns it.</summary>
+	public WaterWake AddWaterWake()
+	{
+		NativeComponent.Set(NativeComponent.WaterWake, this, NativeComponent.Add, Vector4.Zero);
+		return new WaterWake(this);
 	}
 
 	/// <summary>

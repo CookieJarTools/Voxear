@@ -21,7 +21,7 @@ Rest the pointer on a setting's name to see what it does, what more or less of i
 | Audio | Headphones, room reverb and its mode, ray-traced sound and its GPU budget, Steam Audio in builds |
 | Content | How builds pack assets: compression, merging small bundles and splitting large ones, and (under Advanced) patterns of assets always included or left out |
 | Foliage | How plants move: the wind on a fair day, how far they bend, and whether what walks through them pushes them aside (see [[Wind]]) |
-| Graphics | What drawing through [[Portals]] may spend |
+| Graphics | What drawing through [[Portals]] and [[Trails|trails on water]] may spend |
 | Input | The input actions the game plays with, and a button that opens the Input Actions window |
 | Localization | The languages the game is in, the one it is written in first, and the fonts each falls back to (see [[Fonts]]) |
 | Modules | A toggle for each of the engine's optional systems (see [[Modules]]) |
@@ -70,6 +70,10 @@ interaction = true
 ```
 
 Scripts can change all of it as the game runs, with `Foliage.Wind`, `Foliage.Bend`, `Foliage.Interaction`, or `Foliage.Motion` for everything at once; the project's settings stay as they are.
+
+## Water trails
+
+Whatever moves on water leaves ripples, a V of waves and foam behind it, worked out over a square of water round the camera. **Quality** is how finely: Low, Medium or High, 256, 512 or 1024 texels a side, or Off for none. **Area** is how far across the square is, 64 m by default. **Look** is how they are drawn: **Match the Water**, the default, stands them in small squares a quarter of a block across on worlds of blocks and keeps them smooth on the sea, Pools and Streams; **Smooth** and **Blocky** draw them one way on all water. See [[Trails]].
 
 ## Input actions
 

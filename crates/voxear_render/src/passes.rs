@@ -611,6 +611,10 @@ pub fn record(
         if !water.shares_waves() {
             crate::water::record_waves(fg, (pipelines, push), water);
         }
+        // What has moved across the water lately: its trails' ripples run on.
+        if let Some(trails) = water.trails.filter(|trails| trails.gpu.dispatches() > 0) {
+            crate::water_trails::record(fg, (pipelines, push), (trails.images, trails.parity), &trails.gpu);
+        }
     }
     let mut tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     if let Some(clouds) = frame.clouds {

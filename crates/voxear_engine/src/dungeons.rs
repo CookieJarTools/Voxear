@@ -16,16 +16,19 @@ use voxear_terrain::blocks::{
 use crate::{Content, blocks::BlockWorldAsset};
 
 /// The dungeons of the world of blocks on `obj` (0 for each world of blocks
-/// of the level, in the order of their Objs) whose layouts reach within
-/// `at[3]` metres of the point `at` in the level, as JSON.
+/// of the dimension asked of, in the order of their Objs) whose layouts
+/// reach within `at[3]` metres of the point `at` in the level, as JSON. In a
+/// dungeon's own dimension, its world of rock lists the dungeon whole.
 pub fn dungeons_json(world: &World, content: &mut Content, obj: u64, at: [f32; 4]) -> Result<String> {
     let worlds: Vec<Entity> = match obj {
         0 => {
+            let current = crate::dimensions::current(world);
             let mut worlds: Vec<Entity> = world
                 .query_ref::<(Entity, &BlockWorld)>()
                 .without::<Destroying>()
                 .into_iter()
                 .map(|(e, _)| e)
+                .filter(|&entity| voxear_scene::dimension_of(world, entity) == current)
                 .collect();
             worlds.sort_by_key(|entity| entity.to_bits());
             worlds
@@ -39,7 +42,85 @@ pub fn dungeons_json(world: &World, content: &mut Content, obj: u64, at: [f32; 4
     Ok(json!({ "dungeons": dungeons }).to_string())
 }
 
+/// The gate of the dungeon in a dimension of its own whose site is nearest
+/// `site` (in metres in the generator's world, as `dungeon.layouts` gives
+/// it in its `site`'s `at`), within 32 m, of the world of blocks on `obj` (0 for any of the
+/// level's); for opening that dungeon without a Portal standing in its gate.
+pub fn gate_at(world: &World, content: &mut Content, obj: u64, site: [f32; 2]) -> Option<DungeonGate> {
+    use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+    let worlds: Vec<Entity> = match obj {
+        0 => world.query_ref::<(Entity, &BlockWorld)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect(),
+        obj => vec![Entity::from_bits(obj)],
+    };
+    let mut best: Option<(f32, DungeonGate)> = None;
+    for entity in worlds {
+        let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
+        let file = asset.file.clone();
+        let Some(generate) = file.generate.as_ref() else { continue };
+        let Some(built) = generate.built.as_deref() else { continue };
+        let Some(landed) = crate::blocks::generator(content, &file) else { continue };
+        let size = file.block_size.max(0.01);
+        let generator = voxear_terrain::blocks::generate::ground_generator(generate, &landed, size);
+        let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
+        let halved = voxear_terrain::blocks::generate::halved(generate) && !file.smooth;
+        let laid = (file.block_size, generate.position, generate.lowest_open(), halved);
+        for (which, found, _) in dungeons_near(built, &generator, biomes, laid, site, 32.0) {
+            let own = matches!(
+                &built.list[which].blocks,
+                StructureBlocks::Dungeon(dungeon) if dungeon.place == DungeonPlace::OwnDimension
+            );
+            let away = (found.at[0] - site[0]).hypot(found.at[1] - site[1]);
+            if own && best.as_ref().is_none_or(|(nearest, _)| away < *nearest) {
+                best = Some((away, DungeonGate { world: entity, structure: which, site: found.at, seed: found.seed }));
+            }
+        }
+    }
+    best.map(|(_, gate)| gate)
+}
+
+/// What scripts hold of a dungeon besides its layout: its site, as its stage
+/// is kept by; its stage and whether it was cleared; its dimension where it
+/// is made, and the Portal stood in its gate where one is.
+fn about(world: &World, gate: DungeonGate, world_guid: voxear_assets::AssetGuid) -> Value {
+    let stage = DungeonStages::of(world, gate.site());
+    let dimensions = world.resource::<crate::dimensions::Dimensions>();
+    let made = dimensions.and_then(|dimensions| dimensions.find_by_key(gate.key(world_guid)));
+    let handle = made.and_then(|id| crate::dimensions::handle_of(world, id));
+    let portal = world
+        .query_ref::<(Entity, &DungeonGate)>()
+        .without::<Destroying>()
+        .into_iter()
+        .find(|(_, standing)| **standing == gate)
+        .map(|(entity, _)| entity.to_bits());
+    json!({
+        "site": { "world": gate.world.to_bits(), "structure": gate.structure, "at": gate.site, "seed": gate.seed },
+        "stage": stage.stage, "cleared": stage.cleared, "dimension": handle, "portal": portal,
+    })
+}
+
+/// The dungeon a dungeon's own world of rock holds, laid out in that world.
+fn inside(world: &World, entity: Entity, layout: &DungeonLayout) -> Option<Value> {
+    let id = voxear_scene::dimension_of(world, entity);
+    let gate = world.resource::<crate::dimensions::Dimensions>()?.get(id)?.dungeon?;
+    let guid = world.get::<BlockWorldAsset>(gate.world).map(|asset| asset.guid)?;
+    let size = world.get::<BlockWorld>(entity)?.block_size;
+    let transform = world.get::<Transform>(entity)?;
+    let corner = voxear_terrain::corner(transform, world.get::<WorldTransform>(entity));
+    let metres = |block: [f32; 3]| (corner + Vec3::new(block[0], block[1], block[2]) * size).to_array();
+    let centre = |block: [i32; 3]| metres([block[0] as f32 + 0.5, block[1] as f32 + 1.0, block[2] as f32 + 0.5]);
+    let mut found = layout_json(layout, gate.structure, entity, &metres, &centre, size);
+    let about = about(world, gate, guid);
+    if let (Some(found), Some(about)) = (found.as_object_mut(), about.as_object()) {
+        found.extend(about.clone());
+        found.insert("inside".into(), Value::Bool(true));
+    }
+    Some(found)
+}
+
 fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) -> Result<Vec<Value>> {
+    if let Some(DungeonInside(layout)) = world.get::<DungeonInside>(entity) {
+        return Ok(inside(world, entity, layout).into_iter().collect());
+    }
     let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Ok(Vec::new()) };
     let file = asset.file.clone();
     let Some(generate) = file.generate.as_ref() else { return Ok(Vec::new()) };
@@ -59,9 +140,24 @@ fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) 
     let found = dungeons_near(built, &generator, biomes, laid, near, at[3].max(0.0));
     let metres = |block: [f32; 3]| (corner + Vec3::new(block[0], block[1], block[2]) * size).to_array();
     let centre = |block: [i32; 3]| metres([block[0] as f32 + 0.5, block[1] as f32 + 1.0, block[2] as f32 + 0.5]);
+    let guid = asset.guid;
     Ok(found
         .into_iter()
-        .map(|(which, _, layout)| layout_json(&layout, which, entity, &metres, &centre, size))
+        .map(|(which, site, layout)| {
+            let mut found = layout_json(&layout, which, entity, &metres, &centre, size);
+            let gate = DungeonGate { world: entity, structure: which, site: site.at, seed: site.seed };
+            if let (Some(found), Value::Object(about)) = (found.as_object_mut(), about(world, gate, guid)) {
+                found.extend(about);
+            }
+            // Whether it is in a dimension of its own, behind a Portal in its gate, or under the land.
+            use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+            let own = matches!(
+                &built.list[which].blocks,
+                StructureBlocks::Dungeon(dungeon) if dungeon.place == DungeonPlace::OwnDimension
+            );
+            found["place"] = json!(if own { "own_dimension" } else { "in_the_land" });
+            found
+        })
         .collect())
 }
 
@@ -160,15 +256,78 @@ impl voxear_ecs::Component for DungeonGate {}
 
 impl DungeonGate {
     /// What tells this dungeon's dimension from every other's: the world it
-    /// stands in, which dungeon of it, and its site.
+    /// stands in, which dungeon of it, and its site. Saves keep it, so it is
+    /// worked out the same way by every build: a 64-bit FNV-1a of the
+    /// world's GUID, the structure's number and the site's two numbers.
     pub fn key(&self, world_asset: voxear_assets::AssetGuid) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        world_asset.hash(&mut hasher);
-        self.structure.hash(&mut hasher);
-        self.site.map(f32::to_bits).hash(&mut hasher);
-        hasher.finish()
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut take = |bytes: &[u8]| {
+            for byte in bytes {
+                hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        take(&world_asset.to_u128().to_le_bytes());
+        take(&(self.structure as u32).to_le_bytes());
+        take(&self.site[0].to_bits().to_le_bytes());
+        take(&self.site[1].to_bits().to_le_bytes());
+        // Never 0, which is a dimension's key where its asset makes only one.
+        hash.max(1)
     }
+
+    /// Which dungeon it is, as its stage is kept by: its world, which of
+    /// that world's structures, and its site.
+    pub fn site(&self) -> DungeonSite {
+        DungeonSite { world: self.world, structure: self.structure, site: self.site.map(f32::to_bits) }
+    }
+}
+
+/// Which dungeon of the level's: its world of blocks, which of that world's
+/// structures it is, and its site, in metres in the world's generator, as
+/// the bits of its two numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DungeonSite {
+    pub world: Entity,
+    pub structure: usize,
+    pub site: [u32; 2],
+}
+
+/// How far each dungeon of the level has grown, and whether it was cleared,
+/// as scripts set them: a dungeon with neither is at its first stage and not
+/// cleared, and is not listed. A save of the scene keeps them beside each
+/// dungeon's site (`Dungeons` in Voxear.Core).
+#[derive(Clone, Debug, Default)]
+pub struct DungeonStages(pub std::collections::HashMap<DungeonSite, DungeonStage>);
+
+/// A dungeon's stage and whether it was cleared.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DungeonStage {
+    /// How many floors it has grown by: each adds one under the last.
+    pub stage: u32,
+    pub cleared: bool,
+}
+
+impl DungeonStages {
+    pub fn of(world: &World, site: DungeonSite) -> DungeonStage {
+        world.resource::<Self>().and_then(|stages| stages.0.get(&site).copied()).unwrap_or_default()
+    }
+
+    /// Sets a dungeon's stage and cleared flag, taking it off the list where
+    /// both are as they start.
+    pub fn set(world: &mut World, site: DungeonSite, stage: DungeonStage) {
+        let mut stages = world.remove_resource::<Self>().unwrap_or_default();
+        match stage == DungeonStage::default() {
+            true => drop(stages.0.remove(&site)),
+            false => drop(stages.0.insert(site, stage)),
+        }
+        world.insert_resource(stages);
+    }
+}
+
+/// How many floors a dungeon has at a stage: those its site gives it, and
+/// one more for each stage, up to the most a dungeon goes down.
+pub fn floors_at_stage(dungeon: &voxear_terrain::blocks::dungeon::Dungeon, seed: u32, stage: u32) -> u32 {
+    let most = voxear_terrain::blocks::dungeon::MOST_FLOORS;
+    dungeon.floors_at(seed).saturating_add(stage).min(most)
 }
 
 /// On the world of blocks of a dungeon's own dimension: the gate it was made
@@ -216,7 +375,8 @@ struct GatesLooked {
 /// Stands a Portal in the middle of the landing of the gate of each dungeon in a dimension
 /// of its own within reach of where the game is seen from, and on a server
 /// of each player, in the worlds of blocks of their dimension, and takes away
-/// those well past them. While the game plays.
+/// those well past them. In the editor too, where a gate is selected to open
+/// its dungeon.
 pub fn stand_gates(world: &mut World, content: &mut Content) {
     let mut places: Vec<(Vec3, voxear_scene::DimensionId)> =
         crate::terrain::viewer(world).map(|viewer| (viewer, crate::dimensions::seen_from(world))).into_iter().collect();
@@ -255,11 +415,11 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
             })
         })
         .collect();
-    let standing: Vec<(Entity, DungeonGate, Vec3)> = world
+    let standing: Vec<(Entity, DungeonGate, Vec3, voxear_scene::DimensionId)> = world
         .query_ref::<(Entity, &DungeonGate, &Transform)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(entity, gate, transform)| (entity, *gate, transform.position))
+        .map(|(entity, gate, transform)| (entity, *gate, transform.position, voxear_scene::dimension_of(world, entity)))
         .collect();
     let mut wanted: Vec<DungeonGate> = Vec::new();
     let near = places.iter().map(|(at, dimension)| (*at, *dimension));
@@ -275,7 +435,7 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
                 continue;
             }
             wanted.push(gate);
-            if standing.iter().any(|(_, kept, _)| *kept == gate) {
+            if standing.iter().any(|(_, kept, ..)| *kept == gate) {
                 continue;
             }
             let portal = voxear_render::Portal { size: GATE_PORTAL.into(), ..voxear_render::Portal::default() };
@@ -285,9 +445,11 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
             voxear_scene::set_dimension(world, made, seen);
         }
     }
-    // Those not wanted now and well past where they are stood go.
-    for (entity, gate, at) in standing {
-        let far = places.iter().all(|(from, _)| at.distance(*from) > GATES_WITHIN + GATES_KEPT_PAST);
+    // Those not wanted now and well past every place in their own dimension go. With none there, they stay: a gate
+    // seen from inside its dungeon is the way back out.
+    for (entity, gate, at, dimension) in standing {
+        let mut own = places.iter().filter(|(_, there)| *there == dimension).peekable();
+        let far = own.peek().is_some() && own.all(|(from, _)| at.distance(*from) > GATES_WITHIN + GATES_KEPT_PAST);
         if !wanted.contains(&gate) && far {
             world.insert(entity, Destroying);
         }

@@ -242,6 +242,21 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ changed }",
     },
     CallInfo {
+        name: "obj.parent",
+        about: "Puts an Obj inside another, or at the top of its scene without `parent`, as a script's Obj.SetParent does, while the game plays too: kept where it is in the world unless `keep_world` is false. Refused inside itself, and while playing, into another scene or dimension.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj."),
+            maybe("parent", ArgKind::Obj, "The Obj it goes inside; left out, the top of its scene."),
+            maybe(
+                "keep_world",
+                ArgKind::Toggle,
+                "Keeps it where it is in the world, as it does left out; false keeps its position, rotation and scale from its new parent.",
+            ),
+        ],
+        changes: true,
+        returns: "{ changed }",
+    },
+    CallInfo {
         name: "component.add",
         about: "Adds a component to an Obj, as Add Component does.",
         args: &[arg("obj", ArgKind::Obj, "The Obj."), arg("component", ArgKind::Component, "")],
@@ -473,7 +488,69 @@ pub const CALLS: &[CallInfo] = &[
             maybe("reach", ArgKind::Number, "How far round to look, in metres: 500 when left out."),
         ],
         changes: false,
-        returns: "{ dungeons: [{ world, structure, floors, entrance, spaces, ways, lights }] }",
+        returns: "{ dungeons: [{ world, structure, site, place, dimension, stage, floors, entrance, spaces, ways, lights }] }",
+    },
+    CallInfo {
+        name: "dungeon.open",
+        about: "Makes the dimension of a dungeon that is in a dimension of its own, as its gate's Open Dungeon does, and shows its way out in the Scene view: to look round it while editing. Its dimension is made by code, as the game makes it, and nothing of it is saved.",
+        args: &[
+            maybe("site", ArgKind::Value, "The dungeon's site as `dungeon.layouts` gives it, or where it is: [x, z] in metres."),
+            maybe("obj", ArgKind::Obj, "A dungeon's gate, the Portal standing in it, in place of its site; or the Block World to look for the site in."),
+        ],
+        changes: false,
+        returns: "{ dimension, way_out }",
+    },
+    CallInfo {
+        name: "dimension.list",
+        about: "The dimensions made: the level's own first, then each other, with its number, its name, its kind and settings, the `.dimension` file it was made from (none for one made by code, as a dungeon's), its key (which of its file's it is, as each dungeon's), and its Objs at the top. `shown` is the dimension the Scene view in use shows.",
+        args: &[],
+        changes: false,
+        returns: "{ shown, dimensions: [{ dimension, name, file, key, kind, sky, weather, clock, keep_loaded, instances, saved, objs }] }",
+    },
+    CallInfo {
+        name: "dimension.show",
+        about: "Shows a dimension in the Scene view in use, from where it last looked from there, as its Dimension menu does; the game's sky, sun and weather are then that dimension's.",
+        args: &[arg("dimension", ArgKind::Value, "Its number, as `dimension.list` gives it (0 for the level's), or its `.dimension` file once made.")],
+        changes: false,
+        returns: "{ shown }",
+    },
+    CallInfo {
+        name: "dimension.create",
+        about: "Makes a new `.dimension` file of a kind, as Project ▸ + ▸ New Dimension does: its settings, and a Portal, Way Back, for a Portal in the level to lead into.",
+        args: &[
+            arg("kind", ArgKind::Choice(&["overworld", "dungeon", "caves"]), "What it is for, which sets good values for the rest of its settings."),
+            maybe("folder", ArgKind::Text, "The folder to make it in, from the project's: Dimensions when left out."),
+        ],
+        changes: true,
+        returns: "{ asset: { guid, path } }",
+    },
+    CallInfo {
+        name: "dimension.make",
+        about: "Makes the dimension of a `.dimension` file: while editing, opens the file alongside the level, its Objs to edit and save under a header of their own; while playing, made as a script would make it. The Scene view in use then shows it.",
+        args: &[arg("dimension", ArgKind::Asset, "The .dimension file.")],
+        changes: false,
+        returns: "{ dimension }",
+    },
+    CallInfo {
+        name: "dimension.let_go",
+        about: "Lets a dimension go, its Objs with it: a `.dimension` file open in the editor closes, which with edits not saved needs `discard`; one made by code, as a dungeon's, goes. A Scene view showing it goes back to the level's.",
+        args: &[
+            arg("dimension", ArgKind::Value, "Its number, as `dimension.list` gives it, or its `.dimension` file."),
+            maybe("discard", ArgKind::Toggle, "Let it go with its file's edits not saved."),
+        ],
+        changes: true,
+        returns: "{}",
+    },
+    CallInfo {
+        name: "obj.move_to_dimension",
+        about: "Moves an Obj at the top, everything under it with it, into another dimension, at the same place in that dimension's coordinates or at `at`. While editing it moves into the file of the dimension it goes into (the level's active scene for the level's); a dimension made by code takes Objs only while playing.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj."),
+            arg("dimension", ArgKind::Value, "Its number, as `dimension.list` gives it (0 for the level's), or its `.dimension` file."),
+            maybe("at", ArgKind::Vector, "Where it goes there, in metres."),
+        ],
+        changes: true,
+        returns: "{ dimension }",
     },
     CallInfo {
         name: "navigation.status",
@@ -481,6 +558,13 @@ pub const CALLS: &[CallInfo] = &[
         args: &[],
         changes: false,
         returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
+    },
+    CallInfo {
+        name: "navigation.bake",
+        about: "Bakes the open level's nav mesh from its still colliders, as its Inspector's Bake Navigation does, for agents on levels of models; written beside the level as its `.nav` file. Answers once the bake is done.",
+        args: &[],
+        changes: true,
+        returns: "{ path, polygons }",
     },
     CallInfo {
         name: "navigation.path",
@@ -1024,7 +1108,7 @@ pub fn opt_wholes(args: &Json, name: &str) -> Result<Option<Vec<u32>>, LinkError
     wholes.map(Some).ok_or_else(|| bad(format!("`{name}` is a list of whole numbers")))
 }
 
-fn numbers(value: &Json) -> Option<Vec<f32>> {
+pub(crate) fn numbers(value: &Json) -> Option<Vec<f32>> {
     value.as_array()?.iter().map(|n| n.as_f64().map(|n| n as f32)).collect()
 }
 
@@ -1152,6 +1236,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::BlockMob
             | Part::NavAgent
             | Part::NavArea
+            | Part::NavLink
             | Part::MotionMatcher
             | Part::BoneAttachment
             | Part::FirstPersonView
@@ -1172,7 +1257,8 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::Terrain
             | Part::BlockWorld
             | Part::VoxelTerrain
-            | Part::TrackMaker => true,
+            | Part::TrackMaker
+            | Part::WaterWake => true,
             // A Model Renderer comes with a model placed whole (`obj.create` with `model`), not from Add Component.
             Part::Model => false,
             Part::Behaviour(_) => false,
@@ -1372,14 +1458,30 @@ pub fn pick_json(game: &Game, pick: &Pick) -> Option<Json> {
         Pick::Obj(Some(target)) => Some(obj_ref(game, *target)),
         Pick::Asset(Some(path)) => Some(asset_ref(game, path)),
         Pick::Key(Some(key)) => Some(json!({ "key": key })),
+        Pick::Portal(portal) => Some(json!({ "dimension": portal.file, "obj": portal.portal.to_string() })),
         Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) => None,
     }
+}
+
+/// A Portal in a dimension's file as a tool names it, `{ dimension, obj }`,
+/// its file by path or GUID and its Obj by its id, written as `pick_json`
+/// writes it, so the two compare.
+fn file_portal_json(game: &Game, json: &Json) -> Option<Json> {
+    let dimension = json.get("dimension")?;
+    let (_, path, kind) = resolve_project_asset(game, dimension).ok()?;
+    let obj = match json.get("obj")? {
+        Json::Number(id) => id.to_string(),
+        Json::String(path) => path.clone(),
+        _ => return None,
+    };
+    (kind == AssetKind::Dimension).then(|| json!({ "dimension": path, "obj": obj }))
 }
 
 /// The choice of a reference field's menu a tool's value names: by the
 /// value `field.choices` gives it, or by its label.
 pub fn offered_pick(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, json: &Json) -> Option<Pick> {
     let choices = props::choices(game, types, entity, prop);
+    let json = &file_portal_json(game, json).unwrap_or_else(|| json.clone());
     let by_value = choices.iter().find(|(_, pick)| pick_json(game, pick).is_some_and(|value| value == *json));
     let by_label = || json.as_str().and_then(|text| choices.iter().find(|(label, _)| label == text));
     by_value.or_else(by_label).map(|(_, pick)| pick.clone())

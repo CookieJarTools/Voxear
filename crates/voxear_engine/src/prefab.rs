@@ -435,6 +435,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.block_mob = instance.block_mob.clone().or(root.block_mob.clone());
     root.nav_agent = instance.nav_agent.clone().or(root.nav_agent.clone());
     root.nav_area = instance.nav_area.or(root.nav_area);
+    root.nav_link = instance.nav_link.or(root.nav_link);
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
     root.first_person = instance.first_person.clone().or(root.first_person.clone());
@@ -464,6 +465,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.track_maker = instance.track_maker.or(root.track_maker);
+    root.water_wake = instance.water_wake.or(root.water_wake);
     root.cave_shape = instance.cave_shape.or(root.cave_shape);
     root.cave_exit = instance.cave_exit.or(root.cave_exit);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
@@ -536,6 +538,7 @@ pub struct TemplateObj {
     pub block_mob: Option<crate::block_mob::BlockMob>,
     pub nav_agent: Option<crate::nav_agent::NavAgent>,
     pub nav_area: Option<crate::navigation::NavArea>,
+    pub nav_link: Option<crate::navigation::NavLink>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
     pub first_person: Option<crate::first_person::FirstPersonView>,
@@ -557,6 +560,7 @@ pub struct TemplateObj {
     pub heat_body: Option<crate::heat::HeatBody>,
     pub foliage_interaction: Option<FoliageInteraction>,
     pub track_maker: Option<voxear_render::TrackMaker>,
+    pub water_wake: Option<voxear_render::WaterWake>,
     pub cave_shape: Option<voxear_terrain::generate::CaveShape>,
     pub cave_exit: Option<voxear_terrain::generate::CaveExit>,
     /// A Foliage, where there is a renderer to draw it, and how it was
@@ -764,6 +768,9 @@ impl Template {
             if let Some(area) = obj.nav_area {
                 world.insert(entity, area);
             }
+            if let Some(link) = obj.nav_link {
+                world.insert(entity, link);
+            }
             if let Some(matcher) = obj.motion_matcher.clone() {
                 world.insert(entity, matcher);
             }
@@ -823,6 +830,9 @@ impl Template {
             }
             if let Some(maker) = obj.track_maker {
                 world.insert(entity, maker);
+            }
+            if let Some(wake) = obj.water_wake {
+                world.insert(entity, wake);
             }
             if let Some(shape) = obj.cave_shape {
                 world.insert(entity, shape);
@@ -1415,6 +1425,7 @@ pub(crate) fn resolve_obj(
         block_mob: data.block_mob.clone(),
         nav_agent: data.nav_agent.clone(),
         nav_area: data.nav_area,
+        nav_link: data.nav_link,
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
         first_person: data.first_person.clone(),
@@ -1435,6 +1446,7 @@ pub(crate) fn resolve_obj(
         heat_body: data.heat_body.clone(),
         foliage_interaction: data.foliage_interaction,
         track_maker: data.track_maker,
+        water_wake: data.water_wake,
         cave_shape: data.cave_shape,
         cave_exit: data.cave_exit,
         layer: data.layer.clone(),

@@ -462,6 +462,8 @@ pub struct GpuFrame {
     pub bake: GpuBake,
     pub vsm: GpuVirtualShadows,
     pub lamp_vsm: GpuLampShadows,
+    /// This view's trails on water (see `water_trails`).
+    pub trails: crate::water_trails::GpuTrails,
 }
 
 /// How the level's bake lights it, as `Bake` in the shaders: its lights come
@@ -1279,6 +1281,9 @@ pub struct GpuBuffers {
     /// light, a byte each (see `blocks::GpuLightVolume`).
     pub block_light: u64,
     pub block_light_bytes: u64,
+    /// The frame a worn shader pack's surface programs read
+    /// (`shader_packs::GpuPackFrame`); 0 with none worn.
+    pub pack_frame: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1701,12 +1706,16 @@ mod tests {
         assert_eq!(size_of::<GpuVirtualShadows>(), vsm);
         let lamp_vsm = 32 + 16 * LOCAL_SHADOW_LIGHTS + 16 * crate::lamp_vsm::PAGES_A_FRAME;
         assert_eq!(size_of::<GpuLampShadows>(), lamp_vsm);
+        // Each body that stirs the water, the flow two cells a row, then five rows of words.
+        let trails = 64 * crate::water_trails::MAX_STIRS + 8 * crate::water_trails::FLOW_CELLS.pow(2) + 16 * 5;
+        assert_eq!(size_of::<crate::water_trails::GpuTrails>(), trails);
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
             64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 16 + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 32 + seasons + local_shadows + 352 + tracks + 16 + size_of::<crate::sea::GpuSea>() + 16 + size_of::<GpuBake>()
                 + vsm
                 + lamp_vsm
+                + trails
         );
         assert_eq!(size_of::<GpuBake>(), 32 + 8 + 16 + 16);
         assert_eq!(size_of::<GpuOcean>(), 352);
@@ -1715,7 +1724,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 74 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 75 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);

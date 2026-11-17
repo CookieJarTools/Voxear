@@ -103,6 +103,8 @@ pub struct ViewCamera {
     pub rect: [f32; 4],
     /// World units per logical pixel one unit in front of the camera.
     spread: f32,
+    /// The dimension it shows: what is in any other has no marks in it.
+    pub dimension: voxear_scene::DimensionId,
 }
 
 impl ViewCamera {
@@ -122,6 +124,7 @@ impl ViewCamera {
             up: transform.rotation * Vec3::Y,
             rect,
             spread: 2.0 * (fov * 0.5).tan() / rect[3].max(1.0),
+            dimension: voxear_scene::dimension_of(world, camera),
         })
     }
 
@@ -202,12 +205,30 @@ pub fn pick(
             consider(along, entity);
         }
     }
+    // A Portal by its opening, a dungeon's gate the engine stands among them, to open its dungeon from.
+    let portals = world.query_ref::<(Entity, &voxear_render::Portal)>().without::<Destroying>();
+    for (entity, portal) in portals {
+        let shown = !world.has::<EditorOnly>(entity) || world.has::<voxear_engine::dungeons::DungeonGate>(entity);
+        if !shown || voxear_scene::dimension_of(world, entity) != camera.dimension {
+            continue;
+        }
+        let Some(pose) = voxear_render::PortalPose::of_obj(world, entity) else { continue };
+        let facing = direction.dot(pose.front());
+        if facing.abs() < 1e-4 {
+            continue;
+        }
+        let along = (pose.position - origin).dot(pose.front()) / facing;
+        let local = pose.local(origin + direction * along);
+        if along > 0.0 && local.x.abs() <= portal.size.x * 0.5 && (0.0..=portal.size.y).contains(&local.y) {
+            consider(along, entity);
+        }
+    }
     let marked = world
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    // An Obj that is off shows no icon to click, as in Unity.
-    let switched = Switched::of(world);
+    // An Obj that is off, or in another dimension, shows no icon to click, as in Unity.
+    let switched = Switched::in_dimension(world, camera.dimension);
     for (entity, transform, placed, light, lens, sound) in marked {
         if !markers.show(light.is_some(), lens.is_some(), sound.is_some()) || !switched.is_active(entity) {
             continue;
@@ -287,8 +308,8 @@ fn mesh_hits(
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    // What is not drawn is not hit.
-    let switched = Switched::of(world);
+    // What is not drawn is not hit: nor is what is in another dimension than the one seen.
+    let switched = Switched::in_dimension(world, voxear_scene::CurrentDimension::of(world));
     let drawn = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
     let mut hits = Vec::new();
     let mut try_box = |entity: Entity, matrix: Mat4, (min, max): (Vec3, Vec3), mesh: Option<MeshHandle>| {

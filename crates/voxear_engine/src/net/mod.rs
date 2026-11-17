@@ -627,6 +627,7 @@ impl NetSession {
                 scale: if mask & 4 != 0 { parts.scale } else { base.scale },
                 mist: if mask & 8 != 0 { parts.mist } else { base.mist },
                 root: if mask & 1 != 0 { parts.root } else { base.root },
+                parent: if mask & replication::PARENT != 0 { parts.parent } else { base.parent },
             };
             replication.note(id, tick, state);
         }
@@ -1147,6 +1148,19 @@ pub fn set_owner(world: &mut World, entity: voxear_ecs::Entity, owner: Option<Pl
         if changed {
             session.authority.changed_owners.push((id, owner));
         }
+    }
+}
+
+/// An Obj was put inside another, or at the top, while the game runs (see
+/// `crate::set_parent`). Players' machines follow a shared Obj inside
+/// another shared one, or to the top; inside one that is not shared they
+/// cannot tell which, which the server warns of.
+pub(crate) fn reparented(world: &World, entity: voxear_ecs::Entity, parent: Option<voxear_ecs::Entity>) {
+    let serving = world.resource::<NetSession>().is_some_and(|session| session.role() != NetRole::Client);
+    if serving && world.has::<Networked>(entity) && parent.is_some_and(|parent| !world.has::<Networked>(parent)) {
+        tracing::warn!(
+            "a shared Obj went inside one that is not shared, which players' machines cannot follow; give it a Net Object"
+        );
     }
 }
 

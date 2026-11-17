@@ -28,8 +28,8 @@ pub struct HeldBody {
 impl Component for HeldBody {}
 
 /// A state's parts a player sends for their own Objs: all but fields,
-/// which go reliably as they change.
-const OWN_PARTS: u8 = 0b1111;
+/// which go reliably as they change, the networked Obj each is inside too.
+const OWN_PARTS: u8 = 0b10_1111;
 
 #[derive(Default)]
 pub(super) struct Authority {
@@ -129,6 +129,7 @@ fn take_in_server(world: &mut World, session: &mut NetSession) {
         let remote = tracked.owner.is_some_and(|owner| Some(owner) != local);
         hold(world, tracked.entity, !remote);
         if let Some((_, state)) = authority.states.get(id).filter(|_| remote) {
+            state.apply_parent(world, tracked.entity);
             state.apply(world, tracked.entity);
         }
     }

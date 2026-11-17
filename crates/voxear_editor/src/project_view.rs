@@ -105,6 +105,10 @@ pub enum ProjectEvent {
     /// `anchor`, to make a copy of the one picked in `folder` (from the
     /// project's folder).
     NewEffect { folder: String, anchor: NodeId },
+    /// New Dimension was chosen: the editor offers the kinds of dimension
+    /// under `anchor`, to make one of the kind picked in `folder` (from the
+    /// project's folder).
+    NewDimension { folder: String, anchor: NodeId },
     /// New Data Asset was chosen: the editor offers the scripts'
     /// Definitions under `anchor`, to make a data asset of the one picked in
     /// `folder` (from the project's folder).
@@ -140,6 +144,7 @@ enum MenuAction {
     New(NewFile),
     NewShader,
     NewEffect,
+    NewDimension,
     NewDataAsset,
 }
 
@@ -1020,6 +1025,11 @@ impl ProjectView {
             match kind {
                 NewFile::Shader => add(MenuItem::new("New Shader…").enabled(open_to_new), Some(MenuAction::NewShader)),
                 NewFile::UnlitShader | NewFile::UiShader | NewFile::LookShader => {}
+                // Dimensions too: one item offering each kind.
+                NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Overworld) => {
+                    add(MenuItem::new("New Dimension…").enabled(open_to_new), Some(MenuAction::NewDimension));
+                }
+                NewFile::Dimension(_) => {}
                 _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }
@@ -1102,6 +1112,10 @@ impl ProjectView {
             MenuAction::NewShader => {
                 let folder = self.contents.borrow().folders[folder].path.clone();
                 vec![ProjectEvent::NewShader { folder, anchor: self.path }]
+            }
+            MenuAction::NewDimension => {
+                let folder = self.contents.borrow().folders[folder].path.clone();
+                vec![ProjectEvent::NewDimension { folder, anchor: self.path }]
             }
             MenuAction::NewEffect => {
                 let folder = self.contents.borrow().folders[folder].path.clone();

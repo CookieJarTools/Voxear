@@ -1,6 +1,8 @@
-//! The rail's drawer: Levels, Lighting, Project Settings or Settings, which open over the left of the
-//! dock from the rail's buttons, a third of the window wide. The same button,
-//! or the drawer's close button, closes it.
+//! The rail's drawer: Levels, Lighting, Project Settings or Preferences,
+//! which open over the left of the dock from the rail's buttons, a third of
+//! the window wide, and Project Settings and Preferences wider, for their
+//! categories beside their settings. The same button, or the drawer's close
+//! button, closes it.
 
 use super::Editor;
 
@@ -10,7 +12,7 @@ pub enum Drawer {
     Levels,
     Lighting,
     Project,
-    Settings,
+    Preferences,
 }
 
 impl Editor {
@@ -23,7 +25,7 @@ impl Editor {
         } else if self.ui.clicked(nodes.rail_project) {
             Some(Drawer::Project)
         } else if self.ui.clicked(nodes.rail_settings) {
-            Some(Drawer::Settings)
+            Some(Drawer::Preferences)
         } else {
             None
         };
@@ -43,16 +45,18 @@ impl Editor {
         self.ui.set_visible(nodes.drawer_levels, drawer == Some(Drawer::Levels));
         self.ui.set_visible(nodes.drawer_lighting, drawer == Some(Drawer::Lighting));
         self.ui.set_visible(nodes.drawer_project, drawer == Some(Drawer::Project));
-        self.ui.set_visible(nodes.drawer_settings, drawer == Some(Drawer::Settings));
+        self.ui.set_visible(nodes.drawer_preferences, drawer == Some(Drawer::Preferences));
         self.ui.set_checked(nodes.rail_levels, drawer == Some(Drawer::Levels));
         self.ui.set_checked(nodes.rail_lighting, drawer == Some(Drawer::Lighting));
         self.ui.set_checked(nodes.rail_project, drawer == Some(Drawer::Project));
-        self.ui.set_checked(nodes.rail_settings, drawer == Some(Drawer::Settings));
+        self.ui.set_checked(nodes.rail_settings, drawer == Some(Drawer::Preferences));
+        let wide = matches!(drawer, Some(Drawer::Project | Drawer::Preferences));
+        self.ui.set_class(nodes.drawer, "drawer-wide", wide);
         let title = match drawer {
             Some(Drawer::Levels) => "Levels",
             Some(Drawer::Lighting) => "Lighting",
             Some(Drawer::Project) => "Project Settings",
-            Some(Drawer::Settings) => "Settings",
+            Some(Drawer::Preferences) => "Preferences",
             None => "",
         };
         self.ui.set_text(nodes.drawer_title, title);
@@ -66,15 +70,16 @@ impl Editor {
         self.drawer
     }
 
-    /// Shows a panel by id: Levels, Lighting, Project Settings and Settings in the drawer, and the rest
-    /// in the dock, opened again if it was closed.
+    /// Shows a panel by id: Levels, Lighting, Project Settings and
+    /// Preferences in the drawer, and the rest in the dock, opened again if
+    /// it was closed. "settings" is Preferences, by its older name.
     pub(super) fn show_panel(&mut self, id: &str) {
         match id {
             "levels" => self.open_drawer(Some(Drawer::Levels)),
             "lighting" => self.open_drawer(Some(Drawer::Lighting)),
             // "project" is the Project panel, in the dock.
             "project-settings" => self.open_drawer(Some(Drawer::Project)),
-            "settings" => self.open_drawer(Some(Drawer::Settings)),
+            "preferences" | "settings" => self.open_drawer(Some(Drawer::Preferences)),
             _ => self.open_panel(id),
         }
     }

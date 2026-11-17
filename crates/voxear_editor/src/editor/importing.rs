@@ -326,9 +326,6 @@ impl Editor {
                 Err(TryRecvError::Empty) => {}
             }
         }
-        if let Some(key) = self.settings_panel.folder_clicked(&self.ui) {
-            self.choose_setting_folder(key);
-        }
         if let Some((chosen, key)) = &self.imports.choosing_folder {
             let key = *key;
             match chosen.try_recv() {

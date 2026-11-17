@@ -1,12 +1,12 @@
-//! The project's layers in the Inspector, as Unity's Tags and Layers: each
-//! of the 32 layers' names, typed in place, layer 0 always Default, and
+//! The project's layers in the Inspector and in Project Settings: each of
+//! the 32 layers' names, typed in place, layer 0 always Default, and
 //! under them the Layer Collision Matrix, a tick for each pair of named
 //! layers whose Objs collide. It opens from Add Layer… at the foot of the
 //! Inspector's Layer menu, and from the command palette. Each change is
 //! written to `voxear.toml` at once (see `Project::set_layers`), and the
 //! world's `Layers` follow it.
 //!
-//! The matrix is a triangle, as Unity's: a row for each named layer, and a
+//! The matrix is a triangle: a row for each named layer, and a
 //! column for each, last first, numbered along the top, so that each pair
 //! has one tick. Over a tick, its row's name and its column's number light
 //! up, and the two layers' names show under the matrix.
@@ -50,33 +50,17 @@ pub(crate) struct LayersView {
 }
 
 impl LayersView {
-    pub fn build(ui: &mut Ui, root: NodeId, layers: &Layers) -> Self {
-        let header = ui.panel(root, Style::column());
-        ui.add_class(header, "inspector-header");
-        let top = ui.panel(header, Style::row());
-        ui.add_class(top, "header-row");
-        let tile = ui.panel(top, Style::row());
-        ui.add_class(tile, "obj-tile");
-        ui.icon(tile, "layers");
-        let title = ui.add_label(top, "Layers");
-        ui.add_class(title, "asset-name");
-
-        let rows = part(ui, root, "Layers", "layers");
-        let mut names = Vec::new();
-        for layer in 0..LAYER_COUNT as u8 {
-            let row = prop(ui, rows, &format!("Layer {layer}"));
-            if layer == 0 {
-                let fixed = ui.add_label(row, layers.name(0));
-                ui.add_class(fixed, "layer-fixed");
-                continue;
-            }
-            let field = ui.text_field(row, layers.name(layer));
-            ui.add_class(field, "value-input");
-            ui.set_name(field, &format!("layer-name-{layer}"));
-            names.push((layer, field));
+    /// The layers' names in `names` and the matrix in `matrix`, as Project
+    /// Settings shows them, under Tags and Layers and Physics.
+    pub fn in_settings(ui: &mut Ui, names: NodeId, matrix: NodeId, layers: &Layers) -> Self {
+        let fields = name_rows(ui, names, layers, "settings-layer-name");
+        for row in ui.children(names) {
+            ui.add_class(row, "setting");
         }
+        Self::with_matrix(ui, fields, matrix, layers)
+    }
 
-        let rows = part(ui, root, "Collision Matrix", "pivot");
+    fn with_matrix(ui: &mut Ui, names: Vec<(u8, NodeId)>, rows: NodeId, layers: &Layers) -> Self {
         let matrix = ui.panel(rows, Style::column());
         ui.add_class(matrix, "layer-matrix");
         let pair = ui.add_label(rows, "");
@@ -192,12 +176,21 @@ impl LayersView {
     }
 }
 
-/// A section, headed by its icon and title, returning where its rows go.
-fn part(ui: &mut Ui, root: NodeId, title: &str, icon: &str) -> NodeId {
-    let line = ui.panel(root, Style::default());
-    ui.add_class(line, "divider");
-    let foldout = ui.foldout(root, title, true);
-    ui.add_class(foldout, "section");
-    ui.set_foldout_icon(foldout, icon);
-    ui.foldout_content(foldout).expect("a foldout has content")
+/// A row for each layer's name, typed in place, layer 0 always Default;
+/// each field named from `name` and its number.
+fn name_rows(ui: &mut Ui, rows: NodeId, layers: &Layers, name: &str) -> Vec<(u8, NodeId)> {
+    let mut names = Vec::new();
+    for layer in 0..LAYER_COUNT as u8 {
+        let row = prop(ui, rows, &format!("Layer {layer}"));
+        if layer == 0 {
+            let fixed = ui.add_label(row, layers.name(0));
+            ui.add_class(fixed, "layer-fixed");
+            continue;
+        }
+        let field = ui.text_field(row, layers.name(layer));
+        ui.add_class(field, "value-input");
+        ui.set_name(field, &format!("{name}-{layer}"));
+        names.push((layer, field));
+    }
+    names
 }

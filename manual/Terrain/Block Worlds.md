@@ -193,7 +193,7 @@ With the [[Floating Origin]] switched on, positions stay exact however far the c
 
 ### Quality and detail
 
-How much making worlds without end may spend, and how far they are drawn, is set in **Project Settings ▸ World ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**. A slow machine draws less; a fast one can draw a world further than it says, for a better view.
+How much making worlds without end may spend, and how far they are drawn, is set in **Project Settings ▸ Quality ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**. A slow machine draws less; a fast one can draw a world further than it says, for a better view.
 
 | Setting | What it does |
 | --- | --- |
@@ -341,7 +341,7 @@ The depth is read from the blocks every few metres over the 250 metres round the
 
 ### Frozen seas
 
-Where the air over the sea is two degrees below freezing or colder (see [[Temperature]]), the sea freezes over, in a few minutes, and thaws again in a few once the air is above freezing. A sea that is that cold when the level loads is frozen from the start. Where it is part frozen it lies in floes, a block or a few across, more of them the colder it has been; frozen hard, it is ice all over, white where snow lies on it.
+Where the air over the sea is two degrees below freezing or colder (see [[Temperature]]), the sea freezes over, in a few minutes, and thaws again in a few once the air is above freezing. A sea that is that cold when the level loads is frozen from the start, out to the far view. Where it is part frozen it lies in floes, a block or a few across, more of them the colder it has been; frozen hard, it is ice all over, white where snow lies on it.
 
 Frozen sea holds still in any storm, and it bears weight: players, characters and anything that falls on it stand on it, and slide, for it grips as little as ice does. It is still water under the ice, and no block changes. `Storms.At(position).Ground.Frozen` tells how much of the sea there is frozen.
 

@@ -160,7 +160,7 @@ Simulated systems are still cheap. A million particles are stepped in about a fi
 
 ## The particle budget
 
-Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. Particles with tails take six times as much. **Project Settings ▸ Quality ▸ Budget** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
+Every simulated system has room for as many particles as it can have out at once: its Rate times its longest Lifetime, plus its Burst. Particles with tails take six times as much. **Project Settings ▸ Quality ▸ Most particles** is the most room all of them may have between them, a million particles to begin with. A system there's no room for isn't drawn, and the Console says so once. In `voxear.toml` the budget is `particles` under `[quality]`. Each particle takes 36 bytes of graphics memory, so the full million is 36 MB, taken only as systems need it.
 
 The stats overlay (**F1** in a game) and the Profiler show **Particles**: how many are alive, of the budget. The Profiler's GPU list has **Particle simulation** and **Particles**, the time spent stepping and drawing them, with **Particle meshes** and **Particles (half size)** beside them when a level has those.
 

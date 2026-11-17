@@ -13,7 +13,7 @@ When a project opens, the editor shows its first level, ready to change. Nothing
 - **Project** and **Console**, under the Scene: the files in your project, and the messages your game and the editor write.
 - **Inspector**, on the right: everything about the Obj or file you have selected, ready to change.
 
-Along the top are the **command bar**, the **Play**, **Pause** and **Step** buttons, the **Window** button that lists every panel, and **Build**. The narrow strip on the far left, the side bar, opens **Levels**, to open another level, **Project Settings**, for the systems the project has (see [[Modules]]), and **Settings**, and holds any buttons your game adds (see [[Side Bar Items]]).
+Along the top are the **command bar**, the **Play**, **Pause** and **Step** buttons, the **Window** button that lists every panel, and **Build**. The narrow strip on the far left, the side bar, opens **Levels**, to open another level, **Lighting**, **Project Settings**, the game's own settings (see [[Project Settings]]), and **Preferences**, the editor's (see [[Preferences]]), and holds any buttons your game adds (see [[Side Bar Items]]).
 
 The bar at the bottom says what the editor is doing: building your scripts, playing, or that you have changes to save.
 
@@ -36,7 +36,7 @@ Hold the **right mouse button** over the Scene view to fly:
 
 Move the mouse while you hold the button to look around. Let go to stop flying.
 
-The camera flies faster the longer you keep moving, up to 32 times its speed after about six seconds, so a tap is a nudge and a held key crosses a large level. It starts from its own speed again when you let go of the keys. **Speed up while flying** in the Settings turns this off.
+The camera flies faster the longer you keep moving, up to 32 times its speed after about six seconds, so a tap is a nudge and a held key crosses a large level. It starts from its own speed again when you let go of the keys. **Speed up while flying**, in **Preferences ▸ Scene View**, turns this off.
 
 To find an Obj, select it and press **F**, or double-click it in the Hierarchy. The camera glides to show it whole, looking the same way it did. **Ctrl+Shift+F** does the opposite, as in Unity: it moves the selected Objs to where the camera is, facing the way it looks, which is handy for placing a camera or a light just where you are looking from.
 
@@ -55,7 +55,7 @@ Hold **Ctrl** while you drag to snap: moves go in steps of the size shown in the
 
 To select several Objs, hold **Ctrl** and click each in the Scene view or the Hierarchy; Ctrl and a click on one already selected takes it out again, and **Shift** and a click in the Hierarchy selects every Obj between. You can also drag a box over the Scene view from an empty spot: everything it touches is selected, added to what was with Ctrl or Shift held. The handles sit on the Obj you selected first, and the rest move, turn and scale with it, all as one step to undo. **Delete** and **Ctrl+D** act on them all, and the Scene view outlines each one while there are several. The Inspector shows the first Obj, with how many it edits beside its name. It shows only the components every selected Obj has, and a value they hold differently shows **—**. A value you change there goes to every selected Obj, and for Position, Rotation, Scale and other values with several parts, only the part you typed in changes on each.
 
-To change a number without typing, drag left or right on its name: the pointer turns into a left-right arrow over a name that does this, and the number follows it, faster for large numbers and four times as fast with **Shift** held. A whole drag is one step to undo. It works on every number in the Inspector, the Lighting page and Settings.
+To change a number without typing, drag left or right on its name: the pointer turns into a left-right arrow over a name that does this, and the number follows it, faster for large numbers and four times as fast with **Shift** held. A whole drag is one step to undo. It works on every number in the Inspector, the Lighting page, Project Settings and Preferences.
 
 ## Undo and saving
 

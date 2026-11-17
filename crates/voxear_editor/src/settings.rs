@@ -5,174 +5,384 @@
 //! tests and screenshots open it, starts from the defaults and writes
 //! nothing.
 //!
-//! Each setting is described once in [`SETTINGS`], which the Settings panel
-//! shows and the command palette searches.
+//! Each setting is described once in [`PREFERENCES`], which the Preferences
+//! window shows, its search and the command palette find, and `vox editor
+//! call` lists.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value as Json, json};
 use voxear_ui::{Color, Theme};
 
 pub use crate::code_editor::CodeEditor;
+use crate::setting_info::{Category, Kind, SectionHelp, Setting, kept_word, shown_label};
 
 /// The most items the palette remembers having run.
 const RECENT: usize = 8;
 /// How many blocks the brush built with are remembered.
 const RECENT_BLOCKS: usize = 24;
-/// The snap distances the tool strip and Settings offer, in metres.
+/// The snap distances the tool strip and Preferences offer, in metres.
 pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
-
-/// The editors scripts open in, as the Code editor setting lists them: the
-/// names of [`CodeEditor::ALL`]. The last opens the file as the desktop
-/// does, without its line.
-pub const CODE_EDITORS: [&str; 5] = {
-    let mut names = [""; 5];
-    let mut at = 0;
-    while at < names.len() {
-        names[at] = CodeEditor::ALL[at].name();
-        at += 1;
-    }
-    names
-};
 
 /// The themes the Theme setting offers before Custom, which is whatever the
 /// base, accent and contrast were last set to.
 pub const THEMES: [(&str, Theme); 2] = [("Dark", Theme::DARK), ("Light", Theme::LIGHT)];
 
-/// What a setting holds, and so how it is shown and changed.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SettingKind {
-    Toggle,
-    /// One of these, by index.
-    Choice(&'static [&'static str]),
-    /// A number from `min` to `max`, with its unit.
-    Number {
-        min: f32,
-        max: f32,
-        unit: &'static str,
+/// The categories down the Preferences window's side, in order.
+pub const CATEGORIES: &[Category] = &[
+    Category { name: "General", about: "The Project panel", manual: "Getting Started/Preferences" },
+    Category { name: "Appearance", about: "The editor's theme and colours", manual: "Getting Started/Preferences" },
+    Category {
+        name: "Console",
+        about: "How the Console shows its lines and traces",
+        manual: "Finding Problems/The Console",
     },
-    /// A colour, picked from its swatch.
-    Color,
-    /// A folder on this machine, picked in the desktop's folder chooser,
-    /// or none. Kept as a path, so it has no [`SettingValue`] (see
-    /// [`Settings::folder`]).
-    Folder,
-}
-
-/// One setting: the key it is kept and found by, what it is called, the
-/// group it shows in, and what it holds.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SettingInfo {
-    pub key: &'static str,
-    pub title: &'static str,
-    pub group: &'static str,
-    pub kind: SettingKind,
-}
-
-pub const SETTINGS: [SettingInfo; 27] = [
-    SettingInfo {
-        key: "snap",
-        title: "Snap distance",
-        group: "Scene view",
-        kind: SettingKind::Choice(&["0.1 m", "0.25 m", "0.5 m", "1 m"]),
+    Category {
+        name: "External Tools",
+        about: "The code editor, and folders the editor watches",
+        manual: "Getting Started/Preferences",
     },
-    SettingInfo {
-        key: "handle_position",
-        title: "Handle position",
-        group: "Scene view",
-        kind: SettingKind::Choice(&["Pivot", "Center"]),
+    Category { name: "Keys", about: "Every command's keys", manual: "Getting Started/Preferences" },
+    Category { name: "Play Mode", about: "How Play starts and plays", manual: "Getting Started/Playing Your Game" },
+    Category {
+        name: "Scene View",
+        about: "The Scene view's camera, handles, overlays and gizmos",
+        manual: "Getting Started/A Tour of the Editor",
     },
-    SettingInfo {
-        key: "handle_space",
-        title: "Handle space",
-        group: "Scene view",
-        kind: SettingKind::Choice(&["Global", "Local"]),
+    Category {
+        name: "Tools",
+        about: "What programs reaching the editor may do",
+        manual: "The Command Line/Driving the Editor from a Terminal",
     },
-    SettingInfo {
-        key: "fly_speed",
-        title: "Fly speed",
-        group: "Scene view",
-        kind: SettingKind::Number { min: 0.25, max: 250.0, unit: "m/s" },
-    },
-    SettingInfo { key: "fly_speeds_up", title: "Speed up while flying", group: "Scene view", kind: SettingKind::Toggle },
-    SettingInfo { key: "show_stats", title: "Show stats", group: "Scene view", kind: SettingKind::Toggle },
-    SettingInfo { key: "show_axis_gizmo", title: "Show axis gizmo", group: "Scene view", kind: SettingKind::Toggle },
-    SettingInfo { key: "show_gizmos", title: "Show gizmos", group: "Scene view", kind: SettingKind::Toggle },
-    SettingInfo { key: "vehicle_gizmos", title: "Vehicle debug", group: "Scene view", kind: SettingKind::Toggle },
-    SettingInfo {
-        key: "scene_shading",
-        title: "Shading",
-        group: "Scene view",
-        kind: SettingKind::Choice(&["Lit", "Unlit", "Wireframe", "Lit Wireframe", "Heat", "Lightmap Density"]),
-    },
-    SettingInfo { key: "start_paused", title: "Start paused", group: "Play mode", kind: SettingKind::Toggle },
-    SettingInfo { key: "save_before_play", title: "Save before play", group: "Play mode", kind: SettingKind::Toggle },
-    SettingInfo {
-        key: "clear_console_on_play",
-        title: "Clear Console on play",
-        group: "Play mode",
-        kind: SettingKind::Toggle,
-    },
-    SettingInfo { key: "error_pause", title: "Pause on error", group: "Play mode", kind: SettingKind::Toggle },
-    SettingInfo {
-        key: "reload_while_playing",
-        title: "Reload changed scripts while playing",
-        group: "Play mode",
-        kind: SettingKind::Toggle,
-    },
-    SettingInfo {
-        key: "console_collapse",
-        title: "Collapse identical lines",
-        group: "Console",
-        kind: SettingKind::Toggle,
-    },
-    SettingInfo { key: "console_mine_only", title: "My code only", group: "Console", kind: SettingKind::Toggle },
-    SettingInfo { key: "console_namespaces", title: "Show namespaces", group: "Console", kind: SettingKind::Toggle },
-    SettingInfo { key: "console_parameters", title: "Show parameters", group: "Console", kind: SettingKind::Toggle },
-    SettingInfo {
-        key: "code_editor",
-        title: "Code editor",
-        group: "Console",
-        kind: SettingKind::Choice(&CODE_EDITORS),
-    },
-    SettingInfo {
-        key: "theme",
-        title: "Theme",
-        group: "Appearance",
-        kind: SettingKind::Choice(&["Dark", "Light", "Custom"]),
-    },
-    SettingInfo { key: "theme_base", title: "Base colour", group: "Appearance", kind: SettingKind::Color },
-    SettingInfo { key: "theme_accent", title: "Accent colour", group: "Appearance", kind: SettingKind::Color },
-    SettingInfo {
-        key: "theme_contrast",
-        title: "Contrast",
-        group: "Appearance",
-        kind: SettingKind::Number { min: 0.0, max: 100.0, unit: "%" },
-    },
-    SettingInfo {
-        key: "prefab_parts",
-        title: "Open out prefabs to their Objs",
-        group: "Project panel",
-        kind: SettingKind::Toggle,
-    },
-    SettingInfo {
-        key: "tools_may_change",
-        title: "Let tools change the project",
-        group: "Tools",
-        kind: SettingKind::Toggle,
-    },
-    SettingInfo { key: "fab_downloads", title: "Watch for downloads", group: "Fab", kind: SettingKind::Folder },
 ];
 
-/// A setting's value, as the panel and palette show and change it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SettingValue {
-    Toggle(bool),
-    Choice(usize),
-    Number(f32),
-    /// `0xRRGGBB`.
-    Color(u32),
-}
+/// Lines of help under sections' titles.
+pub const HELP: &[SectionHelp] = &[
+    SectionHelp {
+        category: "Play Mode",
+        section: "Networked Play",
+        help: "For projects with the Networking module; the button beside Play sets these too.",
+    },
+    SectionHelp { category: "Keys", section: "Shortcuts", help: "Shortcuts cannot be changed yet." },
+];
+
+const SNAP_CHOICES: &[(&str, &str)] = &[("0.1 m", "0.1"), ("0.25 m", "0.25"), ("0.5 m", "0.5"), ("1 m", "1")];
+const SHADING: &[(&str, &str)] = &[
+    ("Lit", "lit"),
+    ("Unlit", "unlit"),
+    ("Wireframe", "wireframe"),
+    ("Lit Wireframe", "lit-wireframe"),
+    ("Heat", "heat"),
+    ("Lightmap Density", "lightmap-density"),
+];
+const THEME_CHOICES: &[(&str, &str)] = &[("Dark", "dark"), ("Light", "light"), ("Custom", "custom")];
+const ROW_HEIGHTS: &[(&str, &str)] = &[("Short", "18"), ("Cosy", "20"), ("Tall", "24")];
+const CATEGORY_SHOWN: &[(&str, &str)] = &[("Off", "off"), ("Dot", "dot"), ("Name", "name")];
+const KEPT_LINES: &[(&str, &str)] = &[("1,000", "1000"), ("5,000", "5000"), ("10,000", "10000"), ("50,000", "50000")];
+const PLAY_AS: &[(&str, &str)] = &[("Offline", "offline"), ("Host", "host"), ("Server", "server")];
+const NETWORKS: &[(&str, &str)] = &[("Perfect", "perfect"), ("Good", "good"), ("Average", "average"), ("Bad", "bad")];
+
+/// The editors scripts open in, as the Code editor setting lists them: the
+/// names of [`CodeEditor::ALL`]. The last opens the file as the desktop
+/// does, without its line.
+pub const CODE_EDITORS: [(&str, &str); 5] = {
+    let mut names = [("", ""); 5];
+    let mut at = 0;
+    while at < names.len() {
+        names[at] = (CodeEditor::ALL[at].name(), CodeEditor::ALL[at].name());
+        at += 1;
+    }
+    names
+};
+
+/// Every setting Preferences shows, in order (see `setting_info`). Each is
+/// kept by its key in [`Settings`].
+pub const PREFERENCES: &[Setting] = &[
+    Setting::new(
+        ("General", "Project Panel"),
+        "prefab_parts",
+        "Open out prefabs",
+        Kind::Toggle,
+        "Prefabs in the Project panel open out to the Objs they hold, as models open out to their parts.",
+    ),
+    Setting::new(
+        ("Appearance", "Theme"),
+        "theme",
+        "Theme",
+        Kind::Choice(THEME_CHOICES),
+        "The editor's colours. Custom keeps the base, accent and contrast as they are set; changing any of them makes it Custom.",
+    ),
+    Setting::new(
+        ("Appearance", "Theme"),
+        "theme_base",
+        "Base colour",
+        Kind::Color,
+        "The colour the editor's ground and panels are made from.",
+    ),
+    Setting::new(
+        ("Appearance", "Theme"),
+        "theme_accent",
+        "Accent colour",
+        Kind::Color,
+        "The colour of the selection, of focus and of controls that are on.",
+    ),
+    Setting::new(
+        ("Appearance", "Theme"),
+        "theme_contrast",
+        "Contrast",
+        Kind::Number { min: 0.0, max: 100.0, unit: "%", whole: false, slider: true },
+        "How far apart panels, fields and lines stand from the ground. Higher reads more clearly; lower is calmer.",
+    ),
+    Setting::new(
+        ("Console", "Rows"),
+        "console_row_height",
+        "Row height",
+        Kind::Choice(ROW_HEIGHTS),
+        "How tall each line of the Console is. Taller is easier to read; shorter shows more lines.",
+    ),
+    Setting::new(
+        ("Console", "Rows"),
+        "console_tint",
+        "Colour by kind",
+        Kind::Toggle,
+        "Warnings and errors take their colour across the whole line, not only in their mark.",
+    ),
+    Setting::new(
+        ("Console", "Rows"),
+        "console_stripes",
+        "Alternating rows",
+        Kind::Toggle,
+        "Every other line is shaded, to follow long lines across.",
+    ),
+    Setting::new(
+        ("Console", "Rows"),
+        "console_category",
+        "Show category",
+        Kind::Choice(CATEGORY_SHOWN),
+        "How a line shows its category: not at all, as a dot in its colour, or by its name.",
+    ),
+    Setting::new(
+        ("Console", "Rows"),
+        "console_collapse",
+        "Collapse identical lines",
+        Kind::Toggle,
+        "Identical lines show once, with how many there were.",
+    ),
+    Setting::new(
+        ("Console", "Stack Traces"),
+        "console_namespaces",
+        "Namespaces",
+        Kind::Toggle,
+        "A trace's frames show their namespaces, as Voxear.Physics.",
+    ),
+    Setting::new(
+        ("Console", "Stack Traces"),
+        "console_parameters",
+        "Parameters",
+        Kind::Toggle,
+        "A trace's frames show their methods' parameters.",
+    ),
+    Setting::new(
+        ("Console", "Stack Traces"),
+        "console_mine_only",
+        "My code only",
+        Kind::Toggle,
+        "A trace folds away the frames that are not the project's own.",
+    ),
+    Setting::new(
+        ("Console", "Lines"),
+        "console_kept",
+        "Lines held",
+        Kind::Choice(KEPT_LINES),
+        "How many lines the Console holds before the oldest go. More keeps a longer history and uses more memory.",
+    ),
+    Setting::new(
+        ("Console", "Lines"),
+        "clear_console_on_play",
+        "Clear on play",
+        Kind::Toggle,
+        "The Console is emptied each time Play starts.",
+    ),
+    Setting::new(
+        ("Console", "Colours"),
+        "console.settings",
+        "Colours",
+        Kind::Button("Open Console Settings"),
+        "Opens the Console's own settings, with a live sample, where the colours of errors, warnings and traces are picked.",
+    ),
+    Setting::new(
+        ("External Tools", "Code"),
+        "code_editor",
+        "Code editor",
+        Kind::Choice(&CODE_EDITORS),
+        "The editor scripts and the project open in, at the line asked for. System Default opens the file as the desktop does, without its line.",
+    ),
+    Setting::new(
+        ("External Tools", "Downloads"),
+        "fab_downloads",
+        "Watch for downloads",
+        Kind::Folder,
+        "The folder the browser downloads into: Megascans downloaded from Fab into it are imported when the editor gets the focus back. None watches nothing.",
+    ),
+    Setting::new(
+        ("Keys", "Shortcuts"),
+        "keys",
+        "Shortcuts",
+        Kind::Part,
+        "Every command that has keys, and its keys, as the command bar shows them.",
+    ),
+    Setting::new(
+        ("Play Mode", "Starting"),
+        "start_paused",
+        "Start paused",
+        Kind::Toggle,
+        "Play starts paused, to step through the first frames.",
+    ),
+    Setting::new(
+        ("Play Mode", "Starting"),
+        "save_before_play",
+        "Save before play",
+        Kind::Toggle,
+        "Unsaved changes are saved each time Play starts.",
+    ),
+    Setting::new(
+        ("Play Mode", "Starting"),
+        "reload_while_playing",
+        "Reload scripts while playing",
+        Kind::Toggle,
+        "Scripts changed while playing reload into the running game; off waits for play to stop.",
+    ),
+    Setting::new(
+        ("Play Mode", "Starting"),
+        "error_pause",
+        "Pause on error",
+        Kind::Toggle,
+        "Play pauses when an error is logged, to look at the moment it happened.",
+    ),
+    Setting::new(
+        ("Play Mode", "Networked Play"),
+        "multiplayer",
+        "Play as",
+        Kind::Choice(PLAY_AS),
+        "How Play plays: offline; as a host, which runs the game and plays it; or as the first player of a dedicated server.",
+    ),
+    Setting::new(
+        ("Play Mode", "Networked Play"),
+        "test_players",
+        "Test players",
+        Kind::Number { min: 0.0, max: MOST_TEST_PLAYERS as f64, unit: "", whole: true, slider: false },
+        "How many more players' windows open with networked Play, each a player of its own.",
+    ),
+    Setting::new(
+        ("Play Mode", "Networked Play"),
+        "test_network",
+        "Test network",
+        Kind::Choice(NETWORKS),
+        "How bad the network networked Play goes through is made, with lag, jitter and loss, to see how the game holds up.",
+    ),
+    Setting::new(
+        ("Scene View", "Camera"),
+        "fly_speed",
+        "Fly speed",
+        Kind::Number { min: 0.25, max: 250.0, unit: "m/s", whole: false, slider: false },
+        "How fast the Scene view's camera flies; the mouse wheel changes it while flying.",
+    ),
+    Setting::new(
+        ("Scene View", "Camera"),
+        "fly_speeds_up",
+        "Speed up while flying",
+        Kind::Toggle,
+        "The camera flies faster the longer it moves without stopping, up to 32 times its speed after six seconds.",
+    ),
+    Setting::new(
+        ("Scene View", "Handles"),
+        "snap",
+        "Snap",
+        Kind::Choice(SNAP_CHOICES),
+        "How far the handles move in a step while Ctrl is held.",
+    ),
+    Setting::new(
+        ("Scene View", "Handles"),
+        "handle_position",
+        "Handle position",
+        Kind::Choice(&[("Pivot", "pivot"), ("Center", "center")]),
+        "Where the handles sit: at the selected Obj's pivot, or in the middle of its bounds.",
+    ),
+    Setting::new(
+        ("Scene View", "Handles"),
+        "handle_space",
+        "Handle space",
+        Kind::Choice(&[("Global", "global"), ("Local", "local")]),
+        "Whether the handles follow the world's axes or the selected Obj's own.",
+    ),
+    Setting::new(
+        ("Scene View", "Overlays"),
+        "scene_shading",
+        "Shading",
+        Kind::Choice(SHADING),
+        "How the Scene view draws: lit as the game is, unlit, as wireframe, by temperature, or by how finely lightmaps cover each surface.",
+    ),
+    Setting::new(
+        ("Scene View", "Overlays"),
+        "show_stats",
+        "Show stats",
+        Kind::Toggle,
+        "The frame's time, draw calls and triangles over the Scene view.",
+    ),
+    Setting::new(
+        ("Scene View", "Overlays"),
+        "show_axis_gizmo",
+        "Show axis gizmo",
+        Kind::Toggle,
+        "The axes in the Scene view's corner, which turn the view to look along one.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
+        "show_gizmos",
+        "Show gizmos",
+        Kind::Toggle,
+        "Lights, cameras and the other gizmos are drawn in the Scene view, with what the selected one reaches.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
+        "light_gizmos",
+        "Lights",
+        Kind::Toggle,
+        "Lights' gizmos: their icons, and the reach of the one selected.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
+        "camera_gizmos",
+        "Cameras",
+        Kind::Toggle,
+        "Cameras' gizmos: their icons, and what the one selected sees.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
+        "audio_gizmos",
+        "Audio sources",
+        Kind::Toggle,
+        "Audio Sources' gizmos: their icons, and how far the one selected is heard.",
+    ),
+    Setting::new(
+        ("Scene View", "Gizmos"),
+        "vehicle_gizmos",
+        "Vehicle debug",
+        Kind::Toggle,
+        "Every Vehicle's wheels drawn while playing: their suspension, contacts and slip.",
+    ),
+    Setting::new(
+        ("Tools", "Editor Link"),
+        "tools_may_change",
+        "Let tools change the project",
+        Kind::Toggle,
+        "Programs reaching the editor through vox editor call and vox mcp may change the project, not only read it. A tool may turn this off for itself; only you can turn it back on.",
+    ),
+];
+
+/// The most test players' windows networked Play opens.
+pub const MOST_TEST_PLAYERS: u32 = 7;
 
 /// How the editor's Play plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,7 +475,7 @@ pub struct Settings {
     pub test_network: TestNetwork,
     pub save_before_play: bool,
     pub clear_console_on_play: bool,
-    /// Play pauses when an error is logged, as Unity's Error Pause does.
+    /// Play pauses when an error is logged.
     pub error_pause: bool,
     /// Scripts changed while playing reload into the running game, rather
     /// than waiting for play to stop.
@@ -314,7 +524,7 @@ pub struct Settings {
     pub fab_downloads: Option<PathBuf>,
 }
 
-/// A Console filter saved by name, as Sifter keeps them: a search, and the
+/// A Console filter saved by name: a search, and the
 /// levels and categories it hides.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -376,74 +586,122 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn get(&self, key: &str) -> Option<SettingValue> {
+    /// A setting's value, by its key in [`PREFERENCES`], as the window and
+    /// `vox editor call` show it (see `setting_info`).
+    pub fn value(&self, key: &str) -> Option<Json> {
+        let choice = |options: &[(&'static str, &'static str)], word: &str| json!(shown_label(options, word));
+        let colour = |hex: u32| json!(format!("#{hex:06x}"));
         Some(match key {
-            "snap" => SettingValue::Choice(SNAPS.iter().position(|s| (s - self.snap).abs() < 1e-4).unwrap_or(1)),
-            "handle_position" => SettingValue::Choice(usize::from(self.centred)),
-            "handle_space" => SettingValue::Choice(usize::from(self.local)),
-            "fly_speed" => SettingValue::Number(self.fly_speed),
-            "fly_speeds_up" => SettingValue::Toggle(self.fly_speeds_up),
-            "show_stats" => SettingValue::Toggle(self.show_stats),
-            "show_axis_gizmo" => SettingValue::Toggle(self.show_axis_gizmo),
-            "show_gizmos" => SettingValue::Toggle(self.show_gizmos),
-            "vehicle_gizmos" => SettingValue::Toggle(self.vehicle_gizmos),
-            "scene_shading" => SettingValue::Choice(self.scene_shading),
-            "prefab_parts" => SettingValue::Toggle(self.prefab_parts),
-            "start_paused" => SettingValue::Toggle(self.start_paused),
-            "save_before_play" => SettingValue::Toggle(self.save_before_play),
-            "clear_console_on_play" => SettingValue::Toggle(self.clear_console_on_play),
-            "error_pause" => SettingValue::Toggle(self.error_pause),
-            "reload_while_playing" => SettingValue::Toggle(self.reload_while_playing),
-            "console_collapse" => SettingValue::Toggle(self.console_collapse),
-            "console_mine_only" => SettingValue::Toggle(self.console_mine_only),
-            "console_namespaces" => SettingValue::Toggle(self.console_namespaces),
-            "console_parameters" => SettingValue::Toggle(self.console_parameters),
-            "code_editor" => SettingValue::Choice(self.code_editor.index()),
-            "theme" => SettingValue::Choice(self.theme),
-            "theme_base" => SettingValue::Color(self.theme_base),
-            "theme_accent" => SettingValue::Color(self.theme_accent),
-            "theme_contrast" => SettingValue::Number(self.theme_contrast),
-            "tools_may_change" => SettingValue::Toggle(self.tools_may_change),
+            "snap" => json!(SNAP_CHOICES[SNAPS.iter().position(|s| (s - self.snap).abs() < 1e-4).unwrap_or(1)].0),
+            "handle_position" => json!(if self.centred { "Center" } else { "Pivot" }),
+            "handle_space" => json!(if self.local { "Local" } else { "Global" }),
+            "fly_speed" => json!(self.fly_speed),
+            "fly_speeds_up" => json!(self.fly_speeds_up),
+            "show_stats" => json!(self.show_stats),
+            "show_axis_gizmo" => json!(self.show_axis_gizmo),
+            "show_gizmos" => json!(self.show_gizmos),
+            "light_gizmos" => json!(self.light_gizmos),
+            "camera_gizmos" => json!(self.camera_gizmos),
+            "audio_gizmos" => json!(self.audio_gizmos),
+            "vehicle_gizmos" => json!(self.vehicle_gizmos),
+            "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
+            "prefab_parts" => json!(self.prefab_parts),
+            "start_paused" => json!(self.start_paused),
+            "save_before_play" => json!(self.save_before_play),
+            "clear_console_on_play" => json!(self.clear_console_on_play),
+            "error_pause" => json!(self.error_pause),
+            "reload_while_playing" => json!(self.reload_while_playing),
+            "multiplayer" => json!(PLAY_AS[self.multiplayer as usize].0),
+            "test_players" => json!(self.test_players),
+            "test_network" => json!(self.test_network.name()),
+            "console_collapse" => json!(self.console_collapse),
+            "console_mine_only" => json!(self.console_mine_only),
+            "console_namespaces" => json!(self.console_namespaces),
+            "console_parameters" => json!(self.console_parameters),
+            "console_row_height" => choice(ROW_HEIGHTS, &format!("{}", self.console_row_height.round())),
+            "console_tint" => json!(self.console_tint),
+            "console_stripes" => json!(self.console_stripes),
+            "console_category" => json!(CATEGORY_SHOWN.get(self.console_category).map_or("Name", |(label, _)| *label)),
+            "console_kept" => choice(KEPT_LINES, &self.console_kept.to_string()),
+            "code_editor" => json!(self.code_editor.name()),
+            "theme" => json!(THEME_CHOICES.get(self.theme).map_or("Custom", |(label, _)| *label)),
+            "theme_base" => colour(self.theme_base),
+            "theme_accent" => colour(self.theme_accent),
+            "theme_contrast" => json!(self.theme_contrast),
+            "tools_may_change" => json!(self.tools_may_change),
+            "fab_downloads" => json!(self.fab_downloads.as_ref().map(|folder| folder.display().to_string())),
             _ => return None,
         })
     }
 
-    /// Sets a setting, keeping a number inside its range. Returns whether it
-    /// changed.
-    pub fn set(&mut self, key: &str, value: SettingValue) -> bool {
+    /// Sets a setting to a value `setting_info::check` has passed, keeping a
+    /// number inside its range. Returns whether it changed.
+    pub fn set_value(&mut self, key: &str, value: &Json) -> bool {
         let before = self.clone();
-        match (key, value) {
-            ("snap", SettingValue::Choice(i)) => self.snap = SNAPS[i.min(SNAPS.len() - 1)],
-            ("handle_position", SettingValue::Choice(i)) => self.centred = i == 1,
-            ("handle_space", SettingValue::Choice(i)) => self.local = i == 1,
-            ("fly_speed", SettingValue::Number(n)) => self.fly_speed = n.clamp(0.25, 250.0),
-            ("fly_speeds_up", SettingValue::Toggle(on)) => self.fly_speeds_up = on,
-            ("show_stats", SettingValue::Toggle(on)) => self.show_stats = on,
-            ("show_axis_gizmo", SettingValue::Toggle(on)) => self.show_axis_gizmo = on,
-            ("show_gizmos", SettingValue::Toggle(on)) => self.show_gizmos = on,
-            ("vehicle_gizmos", SettingValue::Toggle(on)) => self.vehicle_gizmos = on,
-            ("scene_shading", SettingValue::Choice(i)) => self.scene_shading = i.min(4),
-            ("prefab_parts", SettingValue::Toggle(on)) => self.prefab_parts = on,
-            ("tools_may_change", SettingValue::Toggle(on)) => self.tools_may_change = on,
-            ("start_paused", SettingValue::Toggle(on)) => self.start_paused = on,
-            ("save_before_play", SettingValue::Toggle(on)) => self.save_before_play = on,
-            ("clear_console_on_play", SettingValue::Toggle(on)) => self.clear_console_on_play = on,
-            ("error_pause", SettingValue::Toggle(on)) => self.error_pause = on,
-            ("reload_while_playing", SettingValue::Toggle(on)) => self.reload_while_playing = on,
-            ("console_collapse", SettingValue::Toggle(on)) => self.console_collapse = on,
-            ("console_mine_only", SettingValue::Toggle(on)) => self.console_mine_only = on,
-            ("console_namespaces", SettingValue::Toggle(on)) => self.console_namespaces = on,
-            ("console_parameters", SettingValue::Toggle(on)) => self.console_parameters = on,
-            ("code_editor", SettingValue::Choice(i)) => self.code_editor = CodeEditor::at(i),
-            ("theme", SettingValue::Choice(i)) => self.set_theme(i),
+        let on = value.as_bool().unwrap_or_default();
+        let number = value.as_f64().unwrap_or_default() as f32;
+        let word = value.as_str().unwrap_or_default();
+        let at = |options: &[(&'static str, &'static str)]| options.iter().position(|(label, _)| *label == word);
+        let hex = || word.strip_prefix('#').and_then(|hex| u32::from_str_radix(hex, 16).ok());
+        match key {
+            "snap" => self.snap = SNAPS[at(SNAP_CHOICES).unwrap_or(1)],
+            "handle_position" => self.centred = word == "Center",
+            "handle_space" => self.local = word == "Local",
+            "fly_speed" => self.fly_speed = number.clamp(0.25, 250.0),
+            "fly_speeds_up" => self.fly_speeds_up = on,
+            "show_stats" => self.show_stats = on,
+            "show_axis_gizmo" => self.show_axis_gizmo = on,
+            "show_gizmos" => self.show_gizmos = on,
+            "light_gizmos" => self.light_gizmos = on,
+            "camera_gizmos" => self.camera_gizmos = on,
+            "audio_gizmos" => self.audio_gizmos = on,
+            "vehicle_gizmos" => self.vehicle_gizmos = on,
+            "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
+            "prefab_parts" => self.prefab_parts = on,
+            "tools_may_change" => self.tools_may_change = on,
+            "start_paused" => self.start_paused = on,
+            "save_before_play" => self.save_before_play = on,
+            "clear_console_on_play" => self.clear_console_on_play = on,
+            "error_pause" => self.error_pause = on,
+            "reload_while_playing" => self.reload_while_playing = on,
+            "multiplayer" => {
+                self.multiplayer = [PlayAs::Offline, PlayAs::Host, PlayAs::Server][at(PLAY_AS).unwrap_or(0)]
+            }
+            "test_players" => self.test_players = (number.round() as u32).min(MOST_TEST_PLAYERS),
+            "test_network" => self.test_network = TestNetwork::ALL[at(NETWORKS).unwrap_or(0)],
+            "console_collapse" => self.console_collapse = on,
+            "console_mine_only" => self.console_mine_only = on,
+            "console_namespaces" => self.console_namespaces = on,
+            "console_parameters" => self.console_parameters = on,
+            "console_row_height" => {
+                self.console_row_height = kept_word(ROW_HEIGHTS, word).and_then(|n| n.parse().ok()).unwrap_or(20.0)
+            }
+            "console_tint" => self.console_tint = on,
+            "console_stripes" => self.console_stripes = on,
+            "console_category" => self.console_category = at(CATEGORY_SHOWN).unwrap_or(2),
+            "console_kept" => {
+                self.console_kept = kept_word(KEPT_LINES, word).and_then(|n| n.parse().ok()).unwrap_or(10_000)
+            }
+            "code_editor" => {
+                let index = CodeEditor::ALL.iter().position(|editor| editor.name() == word).unwrap_or(0);
+                self.code_editor = CodeEditor::at(index);
+            }
+            "theme" => self.set_theme(at(THEME_CHOICES).unwrap_or(0)),
             // Changing one of the three makes the theme Custom.
-            ("theme_base", SettingValue::Color(c)) if c != self.theme_base => (self.theme_base, self.theme) = (c, 2),
-            ("theme_accent", SettingValue::Color(c)) if c != self.theme_accent => {
-                (self.theme_accent, self.theme) = (c, 2)
+            "theme_base" => {
+                if let Some(c) = hex().filter(|c| *c != self.theme_base) {
+                    (self.theme_base, self.theme) = (c, 2);
+                }
             }
-            ("theme_contrast", SettingValue::Number(n)) if n.clamp(0.0, 100.0) != self.theme_contrast => {
-                (self.theme_contrast, self.theme) = (n.clamp(0.0, 100.0), 2)
+            "theme_accent" => {
+                if let Some(c) = hex().filter(|c| *c != self.theme_accent) {
+                    (self.theme_accent, self.theme) = (c, 2);
+                }
             }
+            "theme_contrast" if number.clamp(0.0, 100.0) != self.theme_contrast => {
+                (self.theme_contrast, self.theme) = (number.clamp(0.0, 100.0), 2)
+            }
+            "fab_downloads" => self.fab_downloads = value.as_str().map(PathBuf::from),
             _ => {}
         }
         *self != before
@@ -486,24 +744,15 @@ impl Settings {
     }
 
     /// A setting as words: "On", "0.25 m", "6 m/s".
-    pub fn describe(&self, info: &SettingInfo) -> String {
-        match (self.get(info.key), info.kind) {
-            (Some(SettingValue::Toggle(on)), _) => if on { "On" } else { "Off" }.into(),
-            (Some(SettingValue::Choice(i)), SettingKind::Choice(options)) => {
-                options.get(i).copied().unwrap_or_default().into()
-            }
-            (Some(SettingValue::Number(n)), SettingKind::Number { unit, .. }) => {
-                format!("{} {unit}", (n * 100.0).round() / 100.0)
-            }
-            (Some(SettingValue::Color(c)), _) => Color::hex(c).css(),
-            (None, SettingKind::Folder) => self.folder(info.key).map_or("None".into(), |f| f.display().to_string()),
-            _ => String::new(),
-        }
+    pub fn describe(&self, setting: &Setting) -> String {
+        let value = self.value(setting.key).unwrap_or(Json::Null);
+        crate::setting_info::describe(setting, &value)
     }
 }
 
-pub fn info(key: &str) -> Option<&'static SettingInfo> {
-    SETTINGS.iter().find(|s| s.key == key)
+/// The setting of Preferences whose key this is.
+pub fn info(key: &str) -> Option<&'static Setting> {
+    PREFERENCES.iter().find(|s| s.key == key)
 }
 
 /// A layout saved with Save Layout As: its name, and the arrangement it
@@ -641,9 +890,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut memory = Memory::open(dir.path());
         assert_eq!(memory.settings, Settings::default(), "nothing kept yet");
-        assert!(memory.settings.set("snap", SettingValue::Choice(3)));
-        assert!(!memory.settings.set("snap", SettingValue::Choice(3)), "the same again is no change");
-        assert!(memory.settings.set("fly_speed", SettingValue::Number(1000.0)));
+        assert!(memory.settings.set_value("snap", &json!("1 m")));
+        assert!(!memory.settings.set_value("snap", &json!("1 m")), "the same again is no change");
+        assert!(memory.settings.set_value("fly_speed", &json!(1000.0)));
         assert_eq!(memory.settings.fly_speed, 250.0, "kept inside its range");
         memory.save();
         for key in ["command:Save", "obj:Lamp", "command:Save"] {
@@ -658,12 +907,12 @@ mod tests {
 
         let mut themed = Settings::default();
         assert_eq!(themed.theme(), Theme::DARK, "the default theme's own choices");
-        assert!(themed.set("theme", SettingValue::Choice(1)));
+        assert!(themed.set_value("theme", &json!("Light")));
         assert_eq!(themed.theme(), Theme::LIGHT, "a theme brings its choices");
-        assert!(themed.set("theme_accent", SettingValue::Color(0xe2a04a)));
+        assert!(themed.set_value("theme_accent", &json!("#e2a04a")));
         assert_eq!(themed.describe(info("theme").unwrap()), "Custom", "changing one makes it Custom");
         assert_eq!(themed.theme().base, Theme::LIGHT.base, "keeping the rest");
-        assert!(!themed.set("theme_contrast", SettingValue::Number(50.0)), "the same contrast is no change");
+        assert!(!themed.set_value("theme_contrast", &json!(50.0)), "the same contrast is no change");
 
         let forgetful = Memory::forgetful();
         forgetful.save();
@@ -675,7 +924,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut memory = Memory::open(dir.path());
         let watched = info("fab_downloads").unwrap();
-        assert_eq!((watched.kind, memory.settings.describe(watched).as_str()), (SettingKind::Folder, "None"));
+        assert_eq!((watched.kind, memory.settings.describe(watched).as_str()), (Kind::Folder, "None"));
         let downloads = dir.path().join("Downloads");
         assert!(memory.settings.set_folder("fab_downloads", Some(downloads.clone())));
         assert!(!memory.settings.set_folder("fab_downloads", Some(downloads.clone())), "the same again is no change");
@@ -686,5 +935,27 @@ mod tests {
         assert_eq!(again.settings.describe(watched), downloads.display().to_string());
         assert!(again.settings.set_folder("fab_downloads", None));
         assert_eq!(again.settings.fab_downloads, None);
+    }
+
+    #[test]
+    fn every_preference_reads_back_what_it_is_set_to_and_has_a_tooltip() {
+        let defaults = Settings::default();
+        for setting in PREFERENCES {
+            assert!(CATEGORIES.iter().any(|c| c.name == setting.category), "{} has a category", setting.key);
+            assert!(setting.tip.len() > 20 && setting.tip.ends_with('.'), "{} has a tooltip", setting.key);
+            if !setting.settable() {
+                continue;
+            }
+            let value = defaults.value(setting.key).unwrap_or_else(|| panic!("{} reads", setting.key));
+            let checked = crate::setting_info::check(setting, &value);
+            assert!(checked.is_ok() || value.is_null(), "{}'s default {value} is a value for it", setting.key);
+            let mut changed = defaults.clone();
+            assert!(!changed.set_value(setting.key, &value), "{} set to what it is is no change", setting.key);
+        }
+        let mut changed = defaults.clone();
+        assert!(changed.set_value("console_row_height", &json!("Tall")) && changed.console_row_height == 24.0);
+        assert!(changed.set_value("test_network", &json!("Bad")) && changed.test_network == TestNetwork::Bad);
+        assert!(changed.set_value("multiplayer", &json!("Host")) && changed.multiplayer == PlayAs::Host);
+        assert_eq!(changed.value("console_kept"), Some(json!("10,000")));
     }
 }

@@ -117,6 +117,25 @@ pub struct PlayerSettings {
     /// The modules the project has.
     #[serde(default = "crate::modules::Modules::older_project")]
     pub modules: crate::modules::Modules,
+    /// The project's `[time]` steps.
+    #[serde(default)]
+    pub time: crate::project::TimeSettings,
+    /// The gravity the project's physics starts with, in 3D and 2D.
+    #[serde(default = "default_gravity")]
+    pub gravity: [f32; 3],
+    #[serde(default = "default_gravity_2d")]
+    pub gravity_2d: [f32; 2],
+    /// The input actions the project's `[input]` picks, by GUID or path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_actions: Option<String>,
+}
+
+fn default_gravity() -> [f32; 3] {
+    crate::project::PhysicsSettings::default().gravity
+}
+
+fn default_gravity_2d() -> [f32; 2] {
+    crate::project::PhysicsSettings::default().gravity_2d
 }
 
 fn is_medium(quality: &crate::sound_tracing::RayQualityName) -> bool {
@@ -265,7 +284,11 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             },
             content: ContentSettings::default(),
             layers: LayerSettings { names: settings.layers.clone() },
-            physics: PhysicsSettings { ignore: settings.ignore.clone() },
+            physics: PhysicsSettings {
+                gravity: settings.gravity,
+                gravity_2d: settings.gravity_2d,
+                ignore: settings.ignore.clone(),
+            },
             localization: LocalizationSettings {
                 languages: settings.languages.clone(),
                 fonts: settings.language_fonts.clone(),
@@ -284,6 +307,8 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             quality: crate::project::QualitySettings { particles: settings.particles },
             world: settings.world,
             portals: settings.portals,
+            time: settings.time,
+            input: crate::project::InputSettings { actions: settings.input_actions.clone() },
             modules: Some(settings.modules),
         },
     };

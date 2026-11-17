@@ -9,7 +9,7 @@ pub const PROJECT_FILE: &str = "voxear.toml";
 /// What an engine install is, at its root: its version, channel and platform.
 pub const ENGINE_FILE: &str = "engine.toml";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectFile {
     pub project: ProjectInfo,
@@ -35,9 +35,90 @@ pub struct ProjectFile {
     /// What Portals may spend (see [`PortalSettings`]).
     #[serde(default)]
     pub portals: PortalSettings,
+    /// How long the game's fixed steps and frames may be (see [`TimeSettings`]).
+    #[serde(default)]
+    pub time: TimeSettings,
+    /// Which input actions the game plays with (see [`InputSettings`]).
+    #[serde(default)]
+    pub input: InputSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub modules: Option<crate::modules::Modules>,
+}
+
+impl ProjectFile {
+    /// A project named `name` with every setting its default, as a new
+    /// `voxear.toml` with only `[project]` in it reads.
+    pub fn defaults(name: &str) -> Self {
+        Self {
+            project: ProjectInfo { name: name.to_string(), scripts: None, start_level: None, engine: None },
+            content: ContentSettings::default(),
+            layers: LayerSettings::default(),
+            physics: PhysicsSettings::default(),
+            localization: LocalizationSettings::default(),
+            audio: AudioSettings::default(),
+            network: crate::net::NetworkSettings::default(),
+            floating_origin: crate::origin::OriginSettings::default(),
+            quality: QualitySettings::default(),
+            world: voxear_terrain::WorldBudget::default(),
+            portals: PortalSettings::default(),
+            time: TimeSettings::default(),
+            input: InputSettings::default(),
+            modules: None,
+        }
+    }
+}
+
+/// How long the game's steps may be. Physics, FixedUpdate and everything
+/// else that must not depend on the frame rate run in fixed steps of
+/// `fixed_step` seconds, as many as the time passed needs; a networked game
+/// steps at its tick rate instead. A frame longer than `max_step` counts as
+/// that long, so a hitch or a breakpoint does not throw everything forward,
+/// and no frame runs more than `max_fixed_steps` fixed steps, the rest
+/// dropped, so a slow machine does not fall further and further behind.
+///
+/// ```toml
+/// [time]
+/// fixed_step = 0.02       # 50 a second
+/// max_step = 0.25
+/// max_fixed_steps = 5
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TimeSettings {
+    pub fixed_step: f32,
+    pub max_step: f32,
+    pub max_fixed_steps: u32,
+}
+
+impl Default for TimeSettings {
+    fn default() -> Self {
+        Self { fixed_step: 1.0 / 50.0, max_step: voxear_core::time::MAX_DELTA, max_fixed_steps: 5 }
+    }
+}
+
+impl TimeSettings {
+    /// Puts the steps into the engine, from its next frame.
+    pub fn put(&self, engine: &mut crate::Engine) {
+        engine.set_fixed_delta(self.fixed_step);
+        engine.set_frame_limits(self.max_step, self.max_fixed_steps);
+    }
+}
+
+/// The input actions the game plays with: an `.inputactions` file, by GUID
+/// or path, or none for the project's first by path, or Voxear's own where
+/// it has none.
+///
+/// ```toml
+/// [input]
+/// actions = "Input/Player.inputactions"
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InputSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<String>,
 }
 
 /// How much the project lets the renderer spend. `particles` is the most
@@ -49,7 +130,7 @@ pub struct ProjectFile {
 /// [quality]
 /// particles = 250000
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct QualitySettings {
     pub particles: u32,
@@ -143,7 +224,7 @@ impl QualitySettings {
 /// With `ray_traced`, sound is heard through the scene the GPU traces for
 /// the GI, blocks and terrain too, within `ray_budget` milliseconds of GPU
 /// time a frame (see `crate::sound_tracing`); a level may set its own.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioSettings {
     pub headphones: bool,
@@ -202,37 +283,69 @@ pub(crate) enum ReverbModeName {
 /// [localization.fonts]
 /// ja = ["Fonts/NotoSansJP-Regular.otf"]
 /// ```
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LocalizationSettings {
     pub languages: Vec<String>,
     pub fonts: std::collections::BTreeMap<String, Vec<String>>,
 }
 
-/// The project's layers' names, by number from layer 0, as Unity's Tags
-/// and Layers name them; an empty name is a layer not used.
+/// The project's layers' names, by number from layer 0, as Project
+/// Settings' Tags and Layers name them; an empty name is a layer not used.
 ///
 /// ```toml
 /// [layers]
 /// names = ["Default", "Ignore Raycast", "Player", "Enemy"]
 /// ```
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LayerSettings {
     pub names: Vec<String>,
 }
 
-/// Physics for the whole project: the pairs of layers whose Objs pass
-/// through each other, every other pair colliding.
+/// Physics for the whole project: the pull of gravity a world starts with,
+/// in 3D and in 2D, in metres per second per second, which scripts may
+/// change as the game runs; and the pairs of layers whose Objs pass through
+/// each other, every other pair colliding.
 ///
 /// ```toml
 /// [physics]
+/// gravity = [0.0, -9.81, 0.0]
+/// gravity_2d = [0.0, -9.81]
 /// ignore = [["Player", "Player"], ["Enemy", "Pickup"]]
 /// ```
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PhysicsSettings {
+    pub gravity: [f32; 3],
+    pub gravity_2d: [f32; 2],
     pub ignore: Vec<[String; 2]>,
+}
+
+impl Default for PhysicsSettings {
+    fn default() -> Self {
+        Self { gravity: [0.0, -9.81, 0.0], gravity_2d: [0.0, -9.81], ignore: Vec::new() }
+    }
+}
+
+/// The gravity a physics scene starts with, from the project's
+/// `[physics]`; a scene made without it has Earth's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StartingGravity {
+    pub three: voxear_core::math::Vec3,
+    pub two: voxear_core::math::Vec2,
+}
+
+impl PhysicsSettings {
+    /// Puts the gravity where the engine finds it as it makes its physics
+    /// scenes.
+    pub fn put(&self, world: &mut voxear_ecs::World) {
+        let finite = |n: f32| if n.is_finite() { n } else { 0.0 };
+        world.insert_resource(StartingGravity {
+            three: voxear_core::math::Vec3::from_array(self.gravity.map(finite)),
+            two: voxear_core::math::Vec2::from_array(self.gravity_2d.map(finite)),
+        });
+    }
 }
 
 /// What the content build treats as roots, beside every level and prefab.
@@ -249,7 +362,7 @@ pub struct PhysicsSettings {
 ///
 /// Patterns are project paths where `*` matches within a folder, `**` any
 /// number of folders, and `?` one character.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContentSettings {
     pub include: Vec<String>,
@@ -281,15 +394,18 @@ impl Default for ContentSettings {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectInfo {
     pub name: String,
     /// The game's C# project, relative to the project root.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scripts: Option<PathBuf>,
     /// The level to load first: a `.level` path or GUID.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_level: Option<String>,
     /// The engine version the project uses, as the launcher pins it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
 }
 
@@ -520,6 +636,52 @@ impl Project {
         Ok(())
     }
 
+    /// One setting as `voxear.toml` writes it, by its table and key
+    /// (`audio.reverb_mode`), whether the file writes it or not: what the
+    /// project plays with. None for a key no setting has.
+    pub fn setting(&self, key: &str) -> Option<toml::Value> {
+        let file = toml::Value::try_from(&self.file).ok()?;
+        let (table, name) = key.split_once('.')?;
+        file.get(table)?.get(name).cloned()
+    }
+
+    /// What a setting is where the file writes none.
+    pub fn default_setting(key: &str) -> Option<toml::Value> {
+        let file = toml::Value::try_from(ProjectFile::defaults("")).ok()?;
+        let (table, name) = key.split_once('.')?;
+        file.get(table)?.get(name).cloned()
+    }
+
+    /// Writes one setting into `voxear.toml` by its table and key: its
+    /// default, or none, takes the key out, and its table with its last, so
+    /// the file holds only what differs. The rest of the file is kept as it
+    /// is, comments and all. Refused, with the file as it was, for a value
+    /// the project could not be read with.
+    pub fn set_setting(&mut self, key: &str, value: Option<toml::Value>) -> Result<()> {
+        let (table, name) = key.split_once('.').with_context(|| format!("`{key}` is not a table and a key"))?;
+        let default = Self::default_setting(key);
+        let value = value.filter(|value| default.as_ref().is_none_or(|default| !same_setting(value, default)));
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let item = match value {
+            Some(value) => {
+                let written: toml_edit::Value =
+                    value.to_string().parse().with_context(|| format!("{value} is not a value for {key}"))?;
+                Some(toml_edit::value(written))
+            }
+            None => None,
+        };
+        set_key(&mut document, table, name, item);
+        let written = document.to_string();
+        let mut file: ProjectFile = toml::from_str(&written).with_context(|| format!("{key} cannot be that"))?;
+        file.world = file.world.checked();
+        std::fs::write(&path, written).with_context(|| format!("writing {}", path.display()))?;
+        self.file = file;
+        Ok(())
+    }
+
     pub fn scripts_project(&self) -> Option<PathBuf> {
         self.file.project.scripts.as_ref().map(|p| self.root.join(p))
     }
@@ -581,6 +743,24 @@ pub fn core_assembly(configuration: &str) -> PathBuf {
         return root.join("managed").join("Voxear.Core.dll");
     }
     root.join("target").join("managed").join(configuration).join("Voxear.Core.dll")
+}
+
+/// Whether two settings are the same, numbers as closely as the engine
+/// keeps them: an `f32` read back is not quite the number written.
+fn same_setting(a: &toml::Value, b: &toml::Value) -> bool {
+    use toml::Value;
+    let number = |value: &Value| match value {
+        Value::Float(n) => Some(*n as f32),
+        Value::Integer(n) => Some(*n as f32),
+        _ => None,
+    };
+    match (a, b) {
+        (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_setting(a, b)),
+        _ => match (number(a), number(b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => a == b,
+        },
+    }
 }
 
 /// Sets a key in a table of the file, making the table when it has none,
@@ -688,6 +868,42 @@ mod tests {
             written.starts_with("# Orbit\n") && !written.contains("[world]"),
             "High again, the section goes: {written}"
         );
+    }
+
+    #[test]
+    fn a_setting_is_written_by_its_key_only_where_it_differs_and_refused_where_it_cannot_be() {
+        use toml::Value;
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join(PROJECT_FILE), "# Orbit\n[project]\nname = \"Orbit\"\n").unwrap();
+        let mut project = Project::open(folder.path()).unwrap();
+        let read = || std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert_eq!(
+            project.setting("time.max_fixed_steps"),
+            Some(Value::Integer(5)),
+            "the default where it is not written"
+        );
+        assert_eq!(Project::default_setting("network.port"), Some(Value::Integer(7777)));
+
+        project.set_setting("time.fixed_step", Some(Value::Float(0.01))).unwrap();
+        project
+            .set_setting("physics.gravity", Some(Value::Array(vec![0.0.into(), (-1.62).into(), 0.0.into()])))
+            .unwrap();
+        assert!(read().starts_with("# Orbit\n") && read().contains("[time]\nfixed_step = 0.01"), "{}", read());
+        assert_eq!(project.file.time.fixed_step, 0.01);
+        assert_eq!(Project::open(folder.path()).unwrap().file.physics.gravity, [0.0, -1.62, 0.0], "read back");
+
+        // A value the project could not be read with is refused, the file as it was.
+        let before = read();
+        assert!(project.set_setting("audio.reverb_mode", Some(Value::String("echo".into()))).is_err());
+        assert!(project.set_setting("time.max_fixed_steps", Some(Value::Float(2.5))).is_err());
+        assert_eq!(read(), before);
+        assert!(project.set_setting("nonsense", None).is_err());
+
+        // Back to the default, the line goes, and the table with its last.
+        project.set_setting("time.fixed_step", Some(Value::Float(0.02))).unwrap();
+        assert!(!read().contains("[time]"), "{}", read());
+        project.set_setting("physics.gravity", None).unwrap();
+        assert!(!read().contains("[physics]") && project.file.physics.gravity[1] == -9.81, "{}", read());
     }
 
     #[test]

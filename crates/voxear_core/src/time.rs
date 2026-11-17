@@ -29,7 +29,13 @@ impl Time {
     }
 
     pub fn advance(&mut self, unscaled_delta: f32) {
-        self.unscaled_delta = unscaled_delta.clamp(0.0, MAX_DELTA);
+        self.advance_within(unscaled_delta, MAX_DELTA);
+    }
+
+    /// Moves time on as [`advance`](Self::advance) does, a frame counting as
+    /// no longer than `longest` seconds.
+    pub fn advance_within(&mut self, unscaled_delta: f32, longest: f32) {
+        self.unscaled_delta = unscaled_delta.clamp(0.0, longest.max(0.0));
         self.delta = self.unscaled_delta * self.time_scale;
         self.elapsed += f64::from(self.delta);
         self.frame += 1;

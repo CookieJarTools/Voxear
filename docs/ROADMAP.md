@@ -273,7 +273,8 @@ Done so far:
   `bin/`), game scripts build against the engine running them (`managed/Voxear.Scripts.props`), projects accept the
   launcher's version pin, `voxear-editor --project` opens one, `vox new` makes one (Empty or 3D) for the launcher's
   form, and `voxear-dist` packages a checkout as a release archive with its `engine.toml`. Signed nightly releases
-  are published with the manifest the launcher reads (CookieJarTools/VoxearReleases). Scripts' interop reads and
+  are published with the manifest the launcher reads (CookieJarTools/VoxearReleases). A nightly is built and
+  published each night at 03:00 UTC when master has moved since the last one. Scripts' interop reads and
   writes C#'s values unaligned, which a Release `Voxear.Core` needs.
 - **C# hot reload:** changed scripts build in the background and reload, into the running game while playing: every
   behaviour is made again from its new class under the same handle with its fields carried over (private ones,
@@ -1460,6 +1461,12 @@ Done:
   - Tests: the mesher (a block of grass in a floor of stone, two blocks over one face, an edge and a corner
     apart, a covered face, a step, sides, a block that takes none), a world's faces and twins, a pack that keeps blocks to themselves, and GPU pictures
     in colours and under a pixel pack looked at enlarged.
+- **Grass under a block:** a block's **Covered** block (`covered` in its file, `Block.Covered` in C#) is the
+  block it shows as while a block lies on it: Dirt, for grass, so ground is grass on top and earth down a cliff and
+  under a wall. Worked out from the block over it as the world is drawn, near and far, with nothing written to the
+  world, its saves or the network; mined, it breaks as what it shows, and `blocks.get` says what that is. The
+  Infinite World template's grasses, moss and forest floors show as Dirt, and its grass, snow and moss creep over
+  soils, soils over gravel and stone.
   - Later: a setting for how deep the fringe goes, a picture of a block's own for its fringe.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query

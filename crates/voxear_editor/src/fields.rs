@@ -581,6 +581,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("Model" | "ModelAsset") => Some(AssetKind::Model),
         Some("Scene" | "SceneAsset") => Some(AssetKind::Scene),
         Some("Level" | "LevelAsset") => Some(AssetKind::Level),
+        Some("Dimension") => Some(AssetKind::Dimension),
         Some("Sound") => Some(AssetKind::Sound),
         Some("LightingSettings") => Some(AssetKind::Lighting),
         Some("LookPack") => Some(AssetKind::LookPack),

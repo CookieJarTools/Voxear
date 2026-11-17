@@ -4,7 +4,8 @@ A **shader pack** is a set of shader programs that replaces how a game is lit an
 leaves and water, its shadows, its sky, and passes over the whole picture, such as fog, rays through leaves, a
 coloured grade or a painted look. It is chosen by whoever plays, as a look pack or a texture pack is, and anything
 it leaves out is the engine's own. This page is the plan. Its first stage, a pack's own passes over the frame, is
-built ([What stage 1 built](#what-stage-1-built)); the rest is not yet.
+built ([What stage 1 built](#what-stage-1-built)), and of the second, programs that light block faces and leaves
+([What stage 2 built](#what-stage-2-built)); the rest is not yet.
 
 ## What Voxear has today
 
@@ -152,7 +153,8 @@ passes took the same with and without it. The plan's estimates, before it was bu
    --shader-pack`. A built-in pack shows it: rays through leaves and a warm evening grade. Fog, outlines, a painted
    look and colour grades can be made with this alone.
 2. **Surface programs for block faces, leaves and water**, with the block's kind and its sky light and block light.
-   This is where a pack changes how blocks are lit, not only how the picture is finished.
+   This is where a pack changes how blocks are lit, not only how the picture is finished. ✅ Block faces and leaves
+   built; water not yet.
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
    its own sky and clouds.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
@@ -186,6 +188,30 @@ As planned, with these settled on the way:
   game runs; keeping them on disk, and compiling a game's packs when its content is built, are stage 5's.
 - **Not in stage 1:** reading the sun's shadow and the surface id image, and pictures of a pack's own (noise, a
   grade's table).
+
+## What stage 2 built
+
+Programs that light block faces and leaves; water's is still to come. Settled on the way:
+
+- **How:** a pack's `[surface]` names a `blocks` program and, if it likes, a `leaves` one. The engine compiles its own
+  `blocks.slang` again with `VOXEAR_PACK_BLOCKS` defined and a file of its making on the include path, which has the
+  pack's options and each program in a namespace of its own; `shading.slang`'s fragment shader then hands the face to
+  `packBlockColor` where it would have added up its light. While the pack is worn the renderer draws with that module
+  in place of its own, every pipeline made again (a game's custom shaders kept); taken off, with its own again.
+- **What a program is given:** `BlockSurface` (where, its normals, its colour after tints, snow and the wet, how rough
+  and metallic, what it gives off, its corner's shade, its sky light and block light, its look's number and what it
+  is) and `BlockLighting` (the sun's way, light and shadow, the sky's light and the blocks' own as much as the face's
+  light lets in, occlusion, what it reflects, and the engine's own terms, which add up to its colour, and that colour).
+  So the easy way in is to reweigh the engine's terms, and the full one to light the face from what reaches it. It
+  returns the light leaving the face, before the air's haze and the clouds in front.
+- **Not the block's number:** a face carries its look's number in its world, not its block's; a pack knows no game's
+  block numbers anyway. It has the look and what the face is: leaves, a sheet of leaves or a vine, a block of parts,
+  cut out, glowing, of a world drawn smooth, cut into small cubes.
+- **Vertices stay the engine's**, as the plan has them; the question below stays open until water wants waves.
+- **The frame** a surface program reads is `PackFrame`, reached through the engine's table of buffers, and written
+  for every view, those through Portals too.
+- **Not yet:** water (blocks', the sea's and Pools'), models and the sky (stage 3); what the GI's rays and reflection
+  probes see of blocks is still the engine's lighting.
 
 ## Questions to settle
 

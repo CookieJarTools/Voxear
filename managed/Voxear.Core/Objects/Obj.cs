@@ -12,7 +12,7 @@ namespace Voxear;
 /// It is called Obj rather than Object because Object collides with System.Object in every file
 /// that uses System.
 /// </summary>
-public readonly struct Obj : IEquatable<Obj>
+public readonly partial struct Obj : IEquatable<Obj>
 {
 	public static readonly Obj None = default;
 

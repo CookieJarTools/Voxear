@@ -2245,8 +2245,24 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
   75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
   player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
-  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the editor's dimension view, the script
-  API (dungeon stages and growth among it), saves per dimension, and terrains of height round every player.
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs.
+  Scripts and saves: `Ref<Dimension>` fields picked in the Inspector, `Dimension.Current`, `obj.Dimension`,
+  `obj.MoveTo(dimension, position)` (made first, awaited until its ground stands), `Dimension.Entered` and `Left`,
+  `Portal.CreatePair` across two dimensions and `PortalPassage` saying both; Objs scripts make at the top of the
+  hierarchy go into the current dimension; the full way `Dimensions.Make(dimension, key)`, `Dimensions.Made`, and a
+  `DimensionInstance` with `KeepLoaded`, `LetGo()`, `WhenReady`, its own `Blocks`, `Physics`, `Weather`, `Sky` and
+  `Clock`, and `Use()` to ask every call of it. Dungeons grow: `dungeon.Stage`, `Grow()` (only while nobody is in its
+  dimension), `IsCleared`, `Dimension`, `Portal` and `MakeDimension()`; a stage adds a floor under the last, every
+  space of the floors above where it stood (the last floor's end is laid as an arena would be, then made its way
+  down). A dimension let go keeps its changes and gets them back when made again; a save of the scene keeps each
+  dimension's apart (a `VXDM` entry, none for one never changed: 99 bytes for three blocks, put back in under a
+  millisecond), which dimension each Obj is in, and the dungeons' stages beside their sites. Fixed in passing: an
+  endless world's script save left out changes to chunks streamed away. Tests: a dimension's changes kept through
+  streaming out, let go and made again, and a save; a dungeon grown with nobody in it, made a floor deeper with
+  its first floor and a tower kept, refused while somebody is in it; a grown plan keeping its floors in three
+  seeds; a C# script making a dimension, asking its blocks from the level, moving itself and the camera in,
+  hearing it, making Portals across, and a save putting them back. To come: the editor's dimension view, and terrains
+  of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -3855,8 +3871,13 @@ Done:
   - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
     colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
     each place, live reload and options carried over; the editor's menu, page and calls.
-  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
-    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
+- **Block faces and leaves lit by a pack's programs** (stage 2, without water). `[surface] blocks` and `leaves`, each
+  `float3 run(BlockSurface surface, BlockLighting light)`: the face (colour, normals, corner shade, sky light and block
+  light, look, what it is) and the light it sees (sun, shadow, sky, the blocks' glow, occlusion, reflections, lamps,
+  and the engine's own terms and colour). Compiled into the engine's block shader, swapped in while worn. Evening's
+  `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun.
+  - Not yet: water's surface programs (stage 2's rest), its own tonemap and sky (3), shadows (4), and players' menu
+    and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

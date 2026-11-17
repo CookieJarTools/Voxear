@@ -148,6 +148,8 @@ A dungeon's dimension is loaded as a player comes close to the Portal in its gat
 
 The dungeon is dark but for its own fires, braziers and crystal: it has no sky, sun or weather. To give one more, name a `.dimension` in its **Dimension** setting. Each of its dimensions then starts from that file: its lighting, its sounds and its Objs, with the dungeon's world added.
 
+What players change inside a dungeon is kept with its dimension: when it is let go, and in a save of the scene (see [[Dimensions#What is kept|What is kept]]).
+
 A world made before dimensions may have changes saved in its dungeons, such as a lamp on a room's floor or a tunnel dug off a hall. Those places are rock now, so such changes are left out as the world loads. Changes anywhere else stay as they were.
 
 ### Floors and spaces
@@ -180,6 +182,12 @@ Every space is cut out of the rock with an edge that wanders in and out, so natu
 - **Overgrowth:** vines hang from the roofs near the way in, thinning with depth.
 - **Lights:** braziers along the main path every 14 m, blue crystal on side ways, pools of firelight down the halls, lava glowing in the chasm.
 - **Shafts:** where level land lies over a great hall, a crack lets daylight fall into it.
+
+### Stages
+
+A dungeon in a dimension of its own grows. Its **stage** starts at 0, with the floors its site gives it. Each stage adds a floor under the last, down to twelve: the last floor's arena becomes its shaft down, and a new arena waits on the new floor. The floors above stay as they were, every space where it stood, so what players changed in them still fits.
+
+Scripts decide when a dungeon grows, with `dungeon.Grow()`. It only grows while nobody is inside. Its stage and a **cleared** flag, for the game's own rules, are saved with the scene beside the dungeon's site, a few bytes a dungeon.
 
 ### Settings
 
@@ -244,6 +252,26 @@ foreach (var room in dungeon.SpacesOf(DungeonSpaceKind.Room))
 	SpawnGuards(room.SpawnPoint());
 }
 ```
+
+A dungeon in a dimension of its own also gives:
+
+| Call | What it does |
+| --- | --- |
+| `dungeon.Stage` | How far it has grown: 0 as its site makes it |
+| `dungeon.Grow()` | Grows it a floor, while nobody is inside. False where it did not grow |
+| `dungeon.IsCleared` | A flag of the game's own, saved beside its stage |
+| `dungeon.Dimension` | Its own dimension, while it is made |
+| `dungeon.Portal` | The Portal in its gate, while one stands there |
+| `dungeon.MakeDimension()` | Makes its dimension without going near its gate, to fill it before anybody arrives |
+
+```csharp
+if (dungeon.IsCleared && dungeon.Grow())
+{
+	dungeon.IsCleared = false;   // a floor deeper, and a new boss waiting
+}
+```
+
+Inside a dungeon's dimension, `Dungeons.Near` lists that dungeon whole, its spaces in its dimension's coordinates, with `IsInside` set.
 
 `vox editor call dungeon.layouts` gives the same, as JSON in the level's metres, and `vox editor call dungeon.starter` makes the starter dungeon. A dungeon's settings are its file's, read and changed with `asset.get` and `asset.set`. For a dungeon in a dimension of its own, the land holds its gate alone, so `Dungeons` lists its entrance and the landing where its Portal stands.
 

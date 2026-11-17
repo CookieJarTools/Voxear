@@ -64,8 +64,8 @@ pub use saves::{
 };
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,
-    ui_screen_document,
+    SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, set_model,
+    ui_panel_document, ui_screen_document,
 };
 pub use trees::FelledInfo;
 pub use ui_rows::RowWork;

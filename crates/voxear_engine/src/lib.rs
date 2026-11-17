@@ -30,6 +30,7 @@ pub mod lod_groups;
 pub mod map;
 mod levels;
 pub mod mesh_boxes;
+pub mod model_renderers;
 pub mod lighting;
 pub mod connected_tiles;
 pub mod look_packs;

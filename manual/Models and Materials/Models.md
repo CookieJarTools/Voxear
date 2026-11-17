@@ -35,7 +35,7 @@ Drag the model from the Project panel into the Scene view. As in Unity, it shows
 
 The new Obj is named after the model. A model of one part gets a **Mesh Renderer** that draws it with its own material. A model of several parts, such as a whole building, stays one Obj too: its **Model Renderer** draws every part where the model puts it, each with the model's material for it, so the Hierarchy shows one Obj however many parts it has. Each part is still culled, given its LOD and shadowed on its own, and clicking any part in the Scene view selects the Obj.
 
-The Model Renderer shows the **Model** it draws, its **LOD bias** (as a Mesh Renderer's) and how many **Parts** it has. To move, hide or change one part on its own, open the Model Renderer's menu (the **⋯** on its header, or a right-click) and pick **Unpack to Objs**: the Obj then has an Obj inside it for each part, each with a Mesh Renderer, where the model puts it. Ctrl+Z packs it back up.
+The Model Renderer shows the **Model** it draws, its **Tint**, a colour over everything it draws (see [[Tints and Parts]]), its **LOD bias** (as a Mesh Renderer's) and how many **Parts** it has. To move, hide or change one part on its own, open the Model Renderer's menu (the **⋯** on its header, or a right-click) and pick **Unpack to Objs**: the Obj then has an Obj inside it for each part, each with a Mesh Renderer, where the model puts it. Ctrl+Z packs it back up.
 
 In the Hierarchy, a model's Obj has a button of its own at the right of its row, apart from its arrow: click it to list the model's parts under it, greyed, by the names the model gives them. Where many parts share a name, as in a model whose every node is called `mesh`, each shows its material's name after it.
 

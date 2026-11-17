@@ -99,6 +99,7 @@ impl Engine {
         crate::animation::bones::register();
         crate::animation::pose_ops::register();
         crate::mesh_boxes::register();
+        crate::model_renderers::register();
         crate::obj_hierarchy::register();
         crate::guns::register();
         crate::net::register();

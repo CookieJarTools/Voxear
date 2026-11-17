@@ -10,6 +10,7 @@
 //! changes nothing here.
 
 pub mod build;
+pub mod moving;
 pub mod places;
 pub mod regions;
 pub mod search;
@@ -91,9 +92,11 @@ impl BlockNav {
         &self.walkers
     }
 
-    /// Which of [`walkers`](Self::walkers) `walker` is, if it is one.
+    /// Which of [`walkers`](Self::walkers) `walker` shares regions with,
+    /// if any: the one as tall, stepping and dropping as far.
     pub fn class_of(&self, walker: Walker) -> Option<usize> {
-        self.walkers.iter().position(|kept| *kept == walker)
+        let class = walker.class();
+        self.walkers.iter().position(|kept| *kept == class)
     }
 
     /// How many times it has been made again since it began.
@@ -364,6 +367,9 @@ fn straight_step<G: Ground>(
                 break;
             }
             let over = feet.max(to_feet) + height;
+            if !walker_may(walker, to.kind) {
+                continue;
+            }
             if top >= over && to.top(column.cy) >= over {
                 let at = PlaceRef { slot: column.slot, index: column.first + n as u16, x: x as u8, z: z as u8 };
                 return Some((at, *to, column.cy));
@@ -371,6 +377,89 @@ fn straight_step<G: Ground>(
         }
     }
     None
+}
+
+/// Whether `walker` may be in a place of `kind`: water too deep to stand
+/// in only if it swims, a shut door only if it opens doors.
+#[inline]
+pub(crate) fn walker_may(walker: Walker, kind: PlaceKind) -> bool {
+    match kind {
+        PlaceKind::Swim => walker.swims,
+        PlaceKind::Door => walker.doors,
+        PlaceKind::Stand | PlaceKind::Wade => true,
+    }
+}
+
+/// Where a jump from `from` along the axis `(dx, dz)` lands, over a gap of
+/// one block or more, as many as `walker.jump`: on a place a few columns
+/// on, its feet no more than a block under the walker's or half a block
+/// over, every column between dropping away more than a step, with room in
+/// each for the walker over its feet and a block more for the jump. The
+/// place, and how many columns on it is.
+pub(crate) fn jump_step<G: Ground>(
+    ground: &G,
+    from: PlaceRef,
+    dx: i32,
+    dz: i32,
+    walker: Walker,
+) -> Option<(PlaceRef, Place, i32)> {
+    if walker.jump == 0 {
+        return None;
+    }
+    let (place, cy) = ground.place(from);
+    let (feet, top) = (place.feet(cy), place.top(cy));
+    let height = i32::from(walker.height);
+    let arc = feet + height + 16;
+    if top < arc {
+        return None;
+    }
+    for across in 1..=i32::from(walker.jump) + 1 {
+        let column = |far: i32| places_across(ground, from, dx * far, dz * far);
+        // The landing: a column `across` on with a place near the walker's height.
+        if across > 1 {
+            let landing = column(across).into_iter().find(|(_, to, to_cy)| {
+                let to_feet = to.feet(*to_cy);
+                (feet - 16..=feet + 8).contains(&to_feet)
+                    && to.top(*to_cy) >= feet.max(to_feet) + height
+                    && matches!(to.kind, PlaceKind::Stand | PlaceKind::Wade)
+            });
+            if let Some((at, to, _)) = landing {
+                return Some((at, to, across));
+            }
+        }
+        // Or a gap: nothing to walk on at its height, and room over the drop for the jump.
+        let gap = column(across);
+        let walkable = gap
+            .iter()
+            .any(|(_, to, to_cy)| to.feet(*to_cy) > feet - 24 && to.feet(*to_cy) <= feet + i32::from(walker.step));
+        let room = gap.iter().any(|(_, to, to_cy)| to.feet(*to_cy) <= feet - 24 && to.top(*to_cy) >= arc);
+        if walkable || !room || across > i32::from(walker.jump) {
+            return None;
+        }
+    }
+    None
+}
+
+/// The places of the column `(dx, dz)` from `from`'s, in the chunks from
+/// one under its own to one over, highest first, each with its chunk's
+/// height.
+fn places_across<G: Ground>(ground: &G, from: PlaceRef, dx: i32, dz: i32) -> Vec<(PlaceRef, Place, i32)> {
+    let side = CHUNK as i32;
+    let (nx, nz) = (i32::from(from.x) + dx, i32::from(from.z) + dz);
+    let (ox, oz) = (nx.div_euclid(side), nz.div_euclid(side));
+    let (x, z) = (nx.rem_euclid(side) as u32, nz.rem_euclid(side) as u32);
+    if ox.abs() > 1 || oz.abs() > 1 {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for oy in [1, 0, -1] {
+        let Some(column) = ground.column(from.slot, [ox, oy, oz], x, z) else { continue };
+        for (n, to) in column.places.iter().enumerate().rev() {
+            let at = PlaceRef { slot: column.slot, index: column.first + n as u16, x: x as u8, z: z as u8 };
+            found.push((at, *to, column.cy));
+        }
+    }
+    found
 }
 
 #[cfg(test)]

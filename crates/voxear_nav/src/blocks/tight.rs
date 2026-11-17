@@ -7,7 +7,9 @@
 //! area dearer than the way it shortens went through.
 
 use super::{BlockNav, PlaceRef, step, walking::Walker};
-use crate::AreaCosts;
+
+/// What a block of a place costs to cross.
+pub type Cost<'a> = dyn Fn(PlaceRef) -> f32 + 'a;
 
 /// The longest straight line looked for, in blocks: past this a way keeps
 /// a corner even on open ground, so pulling a long way tight stays cheap.
@@ -15,7 +17,7 @@ const LONGEST: i32 = 96;
 
 /// Whether `walker` can walk straight from place `from` to place `to`,
 /// through no area costing more than `dearest`.
-pub fn straight(nav: &BlockNav, from: PlaceRef, to: PlaceRef, walker: Walker, costs: &AreaCosts, dearest: f32) -> bool {
+pub fn straight(nav: &BlockNav, from: PlaceRef, to: PlaceRef, walker: Walker, costs: &Cost<'_>, dearest: f32) -> bool {
     walk_line(nav, from, to, walker, costs, dearest).is_some_and(|end| end == to)
 }
 
@@ -27,7 +29,7 @@ pub fn walk_line(
     from: PlaceRef,
     to: PlaceRef,
     walker: Walker,
-    costs: &AreaCosts,
+    costs: &Cost<'_>,
     dearest: f32,
 ) -> Option<PlaceRef> {
     let (a, b) = (nav.cell(from)?, nav.cell(to)?);
@@ -48,7 +50,24 @@ pub fn walk_line(
             gap if gap < 0.0 => (sx, 0),
             _ => (0, sz),
         };
-        at = step(nav, at, mx, mz, walker)?.0;
+        at = match (mx != 0, mz != 0) {
+            // Through a corner: both ways round it walkable, ending in one place, so no wall's corner is cut.
+            (true, true) => {
+                // Each way round, the block it passes may be crossed too.
+                let passable = |on: PlaceRef| costs(on) <= dearest;
+                let by_x = step(nav, at, mx, 0, walker)
+                    .filter(|(on, _)| passable(*on))
+                    .and_then(|(on, _)| step(nav, on, 0, mz, walker));
+                let by_z = step(nav, at, 0, mz, walker)
+                    .filter(|(on, _)| passable(*on))
+                    .and_then(|(on, _)| step(nav, on, mx, 0, walker));
+                match (by_x, by_z) {
+                    (Some((a, _)), Some((b, _))) if a == b => a,
+                    _ => return None,
+                }
+            }
+            _ => step(nav, at, mx, mz, walker)?.0,
+        };
         if mx != 0 {
             next_x += across_x;
             cell[0] += mx;
@@ -57,8 +76,7 @@ pub fn walk_line(
             next_z += across_z;
             cell[1] += mz;
         }
-        let (place, _) = nav.place(at)?;
-        if costs.of(place.area) > dearest {
+        if costs(at) > dearest {
             return None;
         }
     }
@@ -68,12 +86,12 @@ pub fn walk_line(
 /// Which of a way's `places` to keep as corners: the first, the last, and
 /// between them each place a straight line from the corner before cannot
 /// reach past.
-pub fn pull(nav: &BlockNav, places: &[PlaceRef], walker: Walker, costs: &AreaCosts) -> Vec<usize> {
+pub fn pull(nav: &BlockNav, places: &[PlaceRef], walker: Walker, costs: &Cost<'_>) -> Vec<usize> {
     if places.len() <= 2 {
         return (0..places.len()).collect();
     }
     let cells: Vec<[i32; 3]> = places.iter().map(|&at| nav.cell(at).unwrap_or_default()).collect();
-    let cost = |at: usize| nav.place(places[at]).map_or(1.0, |(place, _)| costs.of(place.area));
+    let cost = |at: usize| costs(places[at]);
     // Where the way turns: a line to the end of each straight run is all that needs trying.
     let way = |at: usize| [cells[at + 1][0] - cells[at][0], cells[at + 1][2] - cells[at][2]];
     let mut turns: Vec<usize> = (1..places.len() - 1).filter(|&at| way(at) != way(at - 1)).collect();

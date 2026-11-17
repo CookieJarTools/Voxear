@@ -728,6 +728,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     theme: dungeon.theme,
                     size: dungeon.size,
                     floors: dungeon.floors,
+                    place: dungeon.place,
+                    dimension: dungeon.dimension.clone(),
                     entrances: dungeon.entrances.clone(),
                     cover: dungeon.cover,
                     caves: dungeon.caves,

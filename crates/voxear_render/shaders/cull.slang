@@ -308,7 +308,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     Material material = buffers()->materials[instance.material];
     if (frame->wind.strength > 0.0 && material.windBend > 0.0)
     {
-        radius *= 1.0 + 0.1 * material.windBend * frame->wind.strength * (1.0 + frame->wind.gusts);
+        radius *= 1.0 + 0.1 * material.windBend * frame->wind.bend * frame->wind.strength * (1.0 + frame->wind.gusts);
     }
     // A custom shader's vertex function moves it this far at most, and a skinned one's pose as far as it reaches.
     radius += material.maxOffset + instance.reach;

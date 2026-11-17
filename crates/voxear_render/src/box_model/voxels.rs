@@ -363,16 +363,22 @@ pub(super) struct Onto {
 }
 
 /// Builds a sculpted box's cubes into `data`: each face of a cube that has
-/// no cube against it, those of one colour side by side as one face.
+/// no cube against it, those of one colour side by side as one face. In a
+/// model that bends in the wind, as a plant does, faces are joined only
+/// along the level: each layer of cubes moves as far as its height says
+/// (`shaders/wind.slang`), so a face taller than a cube would bend straight
+/// past the corners of the faces beside it, and gaps would open there.
 pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox, voxels: &Voxels, on: &Onto) {
     let size = model_box.size;
     let each = on.reach * 2.0 / Vec3::from(size.map(|side| side.max(1) as f32));
+    let joins = |way: Vec3| model.wind_bend <= 0.0 || on.place.transform_vector3(way).y.abs() < 1e-4;
     for face in Face::ALL {
         let normal = face.normal();
         let (across, down) = face.across_and_down();
         // The axis the face looks along, and the two it lies across, by number.
         let axis_of = |way: Vec3| way.abs().max_position();
         let (n, u, v) = (axis_of(normal), axis_of(across), axis_of(down));
+        let (wide_joins, tall_joins) = (joins(across), joins(down));
         let out = normal[n] as i32;
         let world_normal = on.place.transform_vector3(normal).normalize_or_zero();
         for layer in 0..size[n] as i32 {
@@ -399,9 +405,16 @@ pub(super) fn build(data: &mut MeshData, model: &BoxModel, model_box: &ModelBox,
                         a += 1;
                         continue;
                     }
-                    let run = (a..wide).take_while(|at| shown[at + wide * b] == color).count();
-                    let rows =
-                        (b..tall).take_while(|row| (a..a + run).all(|at| shown[at + wide * row] == color)).count();
+                    let run = match wide_joins {
+                        true => (a..wide).take_while(|at| shown[at + wide * b] == color).count(),
+                        false => 1,
+                    };
+                    let rows = match tall_joins {
+                        true => {
+                            (b..tall).take_while(|row| (a..a + run).all(|at| shown[at + wide * row] == color)).count()
+                        }
+                        false => 1,
+                    };
                     for row in b..b + rows {
                         shown[a + wide * row..a + run + wide * row].fill(0);
                     }

@@ -2,7 +2,33 @@
 order: 5
 ---
 
-Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after. The same wind carries smoke, dust and sparks: a Particle System picks up as much of it as its **Wind** says (see [[Particle Systems]]).
+Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. A light breeze blows over every level on a fair day, harder in rain and hardest in a storm, and one **Wind Zone** sets the level's wind in full. Every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after. A Wind Zone's wind, and the weather's, carries smoke, dust and sparks too: a Particle System picks up as much of it as its **Wind** says (see [[Particle Systems]]).
+
+## How plants move in the whole game
+
+**Project Settings ▸ Foliage** says how every plant moves (see [[Project Settings]]):
+
+| Setting | What it does |
+| --- | --- |
+| Wind | How hard the wind blows over a level with no Wind Zone on a fair day, as a Wind Zone's Strength: 0.5, a light breeze, by default; 1 a breeze that sways trees. Rain and storms blow harder on top. 0 keeps plants still until the weather turns |
+| Bend | How far every plant bends, in the wind and when pushed, times its own **Wind bend**: 0 holds every plant still |
+| Interaction | Whether characters, and Objs with a Foliage Interaction, push plants aside as they pass |
+| Push strength | How hard they push, times each one's own **Strength** (under Advanced) |
+| Spring back | How many seconds a pushed plant takes to stand most of the way up again (under Advanced) |
+
+The fair day's wind blows along +X, the way clouds drift over a level with no wind. A script changes any of it as the game runs, from the next frame, and the project's settings stay as they are:
+
+```csharp
+// Calm in the valley, and nothing tramples the flower beds.
+Foliage.Wind = 0.2f;
+Foliage.Interaction = false;
+
+// Everything at once.
+Foliage.Motion = new FoliageMotion { Wind = 1.5f, Bend = 1.2f, Spring = 2f };
+
+// Which way, and how hard, the wind blows over the plants this moment.
+Vector2 blowing = Foliage.Blowing;
+```
 
 Under water there is no wind: plants rooted under the sea sway back and forth with its swell instead, slowly, and less the deeper they stand, and under a Pool's still water they drift a little (see [[The Ocean]]).
 
@@ -18,7 +44,7 @@ Add a **Wind Zone** to any Obj (Add Component, then Rendering). The wind blows a
 | Gust speed | How fast gusts travel downwind, in metres a second |
 | Turbulence | How much plants sway back and forth and across the wind, rather than lean steadily with it |
 
-Only the level's first Global Wind Zone blows over the whole level. Without one, nothing moves on a still day. [[Weather]] has wind of its own, so plants stir in rain and toss in a storm with no Wind Zone at all, and with one it blows harder. A Wind Zone can also blow the sea's wind: see [[The Ocean]].
+Only the level's first Global Wind Zone blows over the whole level, in place of the fair day's wind. [[Weather]] has wind of its own, so plants stir harder in rain and toss in a storm, with a Wind Zone or without, and a storm's wind rises as it nears. A Wind Zone can also blow the sea's wind: see [[The Ocean]].
 
 ### Wind over part of the sea
 
@@ -59,7 +85,7 @@ In a material file, `wind_bend = 1.0` and `wind_flutter = 0.5`.
 
 ### Plants of cubes
 
-A [[Box Models|box model]] has its own **Wind bend**, in the Inspector while it is open in the Model window, under **Model**. Set it and every one of that plant bends in the wind and away from what walks through it, wherever it stands or grows. Nothing flutters: a plant of cubes leans whole, and what reaches out from over its foot, such as a tree's crown, sways a little on its own.
+A [[Box Models|box model]] has its own **Wind bend**, in the Inspector while it is open in the Model window, under **Model**. Set it and every one of that plant bends in the wind and away from what walks through it, wherever it stands or grows. Nothing flutters: a plant of cubes bends whole, each layer of its cubes sliding over the one below as far as its height says, so its faces stay flat and square and nothing parts. It is pushed by what stands at its foot, so a bush leans away from someone walking into it as one. Its faces are made no taller than one of its cubes, so a plant that bends is a little more to draw than one that does not: in a meadow of grass, flowers and bushes, about a tenth of a millisecond a frame on a mid-range GPU.
 
 | Plant | Wind bend |
 | --- | --- |
@@ -73,7 +99,7 @@ A low, wide plant bends less for the same number than a tall, thin one, so a tuf
 
 ### Blocks that sway
 
-Leaves built of blocks sway too. Turn on a block's **Sways in wind** (see [[Blocks]]), or draw it with a foliage material, and the corners of its faces move a little with the wind, each at its own pace, as gusts cross the crown. A corner that touches a block standing still does not move, so leaves stay fixed to their wood and to the ground, and no gap opens anywhere. A block's corner moves at most about a fifth of a block.
+Leaves built of blocks sway too. Turn on a block's **Sways in wind** (see [[Blocks]]), or draw it with a foliage material, and the corners of its faces move a little with the wind, each at its own pace, as gusts cross the crown. They part round someone walking into them, too, as a bush of leaf blocks does. A corner that touches a block standing still does not move, so leaves stay fixed to their wood and to the ground, and no gap opens anywhere. A block's corner moves at most about a fifth of a block in the wind, and under half a block wind and push together.
 
 A block of [[Blocks#Bushy leaves|bushy leaves]] sways its tufts with its corners, a little further, as they reach out past the block. A [[Blocks#Vines|vine]] that hangs free sways from where it is fixed, and one against a wall stays still.
 
@@ -102,7 +128,11 @@ Add a **Foliage Interaction** to anything else that should push plants: vehicles
 | Radius | How far round the Obj plants are pushed, in metres. About a character's width for a character, wider for a vehicle |
 | Strength | How hard: 1 bends grass well over, 0.3 just stirs it |
 
-Pushing works with or without a Wind Zone, on any plant whose material has a **Wind bend**. Plants are pushed within about 32 metres of the camera, by the 16 pushers nearest it.
+Pushing works with or without a Wind Zone, on any plant whose material has a **Wind bend**, and on leaf blocks that sway. A pusher bends the plants rooted about as high as it stands, within its radius and a metre and a half above or below it, so a field under a bridge is left alone by whoever crosses. A plant bends as far up as the pusher reaches, and above that it is carried along: a pole taller than someone leans from where they push it. A tall plant is pushed where it stands, so a crown over a path does not part round someone walking under it; leaf blocks are pushed only as high as the pusher reaches. Plants are pushed within about 32 metres of the camera, by the 16 pushers nearest it. **Project Settings ▸ Foliage** turns pushing off for the whole game, or makes it harder or slower to spring back.
+
+## Shadows
+
+A plant's shadow moves with it. The sun's shadow pages are kept from frame to frame with plants drawn in them standing still, and a plant reads its own shadow from where it stands, so the shadows of its leaves on itself move with it and never swim across it. The shadows plants cast on the ground stay where the plants stand, as they move so little. With the sun's shadows drawn as cascades, every frame, plants cast their shadows as they move.
 
 In a scene file:
 

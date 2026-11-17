@@ -537,6 +537,11 @@ pub struct PortalQuality {
     /// How far from its opening a camera sees a Portal's far side, in
     /// metres, for each Portal without a view distance of its own.
     pub view_distance: f32,
+    /// How near a camera comes to a Portal into a dimension that is loaded
+    /// for it, as a dungeon's gate, before that dimension is loaded, in
+    /// metres. Only the nearest such Portal within it is open at a time, so
+    /// no more than one such dimension is ever loaded.
+    pub dimension_distance: f32,
 }
 
 impl Default for PortalQuality {
@@ -549,6 +554,7 @@ impl Default for PortalQuality {
             water: true,
             draw_distance: 0.0,
             view_distance: 96.0,
+            dimension_distance: 24.0,
         }
     }
 }

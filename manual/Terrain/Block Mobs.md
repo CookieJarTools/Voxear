@@ -2,7 +2,7 @@
 order: 20
 ---
 
-A **Block Mob** walks an Obj through a [[Block Worlds|Block World]] by itself. Tell it where to go, or leave it to wander, and it finds its own way over the blocks: round walls, up steps one block high, and down drops. It is what makes an animal, a villager or a monster move about.
+A **Block Mob** walks an Obj through a [[Block Worlds|Block World]] by itself. Tell it where to go, or leave it to wander, and it finds its own way over the blocks: round walls, up steps one block high, and down drops. It is what makes an animal, a villager or a monster move about. It walks as a [[Nav Agents|Nav Agent]] walks; give the Obj a Nav Agent of its own to use that agent's settings, such as how it moves.
 
 A Block Mob only moves the Obj. To see a creature walk, the Obj also needs a model and something to animate it: a [[Box Models|box model]] and a [[Mob Motion]] are made for this.
 
@@ -30,8 +30,11 @@ Press Play. The creature walks to somewhere nearby, stands a while, and goes som
 - It climbs a step **one block** high, and up slabs and stairs. Anything higher is a wall, and it goes round.
 - It drops down up to **three blocks**.
 - It needs as many clear blocks over the ground as its Character Controller is high.
-- It wades water one block deep, but would rather not, and goes round deeper water. If it ends up in deep water anyway, it swims.
+- It wades water one block deep, but would rather not. With **Swims** on it swims across deeper water; off, it goes round. If it ends up in deep water anyway, it swims.
+- It jumps a gap one or two blocks across rather than go the long way round.
+- It stops at a shut door. To have a creature open doors, give its Obj a [[Nav Agents|Nav Agent]] of its own with **Opens Doors** on.
 - It finds its way in the background, so a field full of mobs costs the frame little. A long way, across many chunks, is worked out a few chunks at a time as it walks.
+- It goes round other mobs, [[Nav Agents]] and the player, and they go round it.
 - It looks for a new way when blocks along its way are placed or dug, when what it follows moves, and about once a second.
 
 A place it cannot reach is not an error. It goes as near as it can, and looks again. In a world without end, it cannot find a way through ground that has not been made yet: it goes as far as the made ground lets it.
@@ -82,6 +85,6 @@ public sealed class Pet : Behaviour
 ## Not done yet
 
 - Health, damage, drops, spawning and what a creature decides to do. A Block Mob walks where it is told; deciding is a game's own, or a package's.
-- Jumping gaps, climbing ladders and opening doors. A Block Mob walks through a door that is open and stops at one that is shut.
+- Climbing ladders, vines and ropes.
 - Flying and swimming creatures that find ways through air or water.
-- Block Mobs over the network. A game can send where each one is and call `MobMotion.MoveAs` so it walks as it moves.
+- Block Mobs over the network sent by the engine. Only the machine with authority over a mob moves it, the server for a server's mobs; a game sends where each one is and calls `MobMotion.MoveAs` so it walks as it moves.

@@ -27,6 +27,8 @@ pub(crate) fn temple() -> Dungeon {
             vine: 44,
         },
         floors: [2, 2],
+        // Under the land, as these tests check how it keeps under it.
+        place: DungeonPlace::InTheLand,
         ..Dungeon::default()
     }
 }
@@ -102,7 +104,7 @@ fn every_space_lies_under_the_land_with_rock_over_it_in_rolling_hills_and_on_esc
     let mut planned = 0;
     let mut kinds = std::collections::BTreeSet::new();
     for world in [Arc::new(Preset::RollingHills.world()), escarpments()] {
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
         for site in sites(&world).into_iter().take(10) {
             let Some(layout) = plan(&dungeon, &ground, site, 7, -400) else { continue };
             planned += 1;
@@ -118,7 +120,7 @@ fn every_space_lies_under_the_land_with_rock_over_it_in_rolling_hills_and_on_esc
 fn a_dungeon_goes_down_floor_by_floor_through_its_set_pieces_to_the_boss() {
     let dungeon = temple();
     let world = Preset::RollingHills.world();
-    let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+    let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
     let layout = sites(&world).into_iter().find_map(|site| plan(&dungeon, &ground, site, 7, -400)).expect("a dungeon");
     let live: Vec<&Space> = layout.spaces.iter().filter(|space| space.height >= 0).collect();
     assert_eq!(layout.floors, 2);
@@ -167,7 +169,7 @@ fn a_dungeon_goes_down_floor_by_floor_through_its_set_pieces_to_the_boss() {
 fn timing_probe() {
     let dungeon = temple();
     let world = Preset::RollingHills.world();
-    let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+    let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
     for site in sites(&world).into_iter().take(6) {
         let t = std::time::Instant::now();
         let tl = t.elapsed();
@@ -182,4 +184,92 @@ fn timing_probe() {
             layout.as_ref().map(|l| l.spaces.iter().filter(|s| s.height >= 0).count())
         );
     }
+}
+
+/// Whether every live space of `layout` is reached from its landing along
+/// its ways.
+fn all_reached(layout: &DungeonLayout) -> bool {
+    let mut reached = vec![false; layout.spaces.len()];
+    reached[0] = true;
+    loop {
+        let mut more = false;
+        for way in &layout.ways {
+            if let Some(from) = way.from
+                && way.to < reached.len()
+                && reached[from] != reached[way.to]
+            {
+                reached[from] = true;
+                reached[way.to] = true;
+                more = true;
+            }
+        }
+        if !more {
+            break;
+        }
+    }
+    layout.spaces.iter().enumerate().all(|(at, space)| space.height < 0 || reached[at])
+}
+
+#[test]
+fn a_dungeon_in_its_own_dimension_is_its_gate_alone_in_the_land() {
+    let dungeon = Dungeon { place: DungeonPlace::OwnDimension, ..temple() };
+    let world = Preset::RollingHills.world();
+    let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
+    let mut planned = 0;
+    for site in sites(&world).into_iter().take(10) {
+        let Some(gate) = plan(&dungeon, &ground, site, 7, -400) else { continue };
+        planned += 1;
+        // An entrance, the grand stair down from it, and the landing at its foot, under the land; nothing more.
+        assert_eq!(gate.floors, 1);
+        assert_eq!(gate.spaces.len(), 1);
+        assert_eq!(gate.spaces[0].kind, SpaceKind::Landing);
+        assert_eq!(gate.ways.len(), 1);
+        assert_eq!(gate.ways[0].kind, WayKind::Grand);
+        assert!(gate.shafts.is_empty());
+        assert_under(&gate, &ground, dungeon.cover as i32);
+        // Its blocks reach as far as its gate does, a fraction of a whole dungeon's.
+        let reach = (gate.high[0] - gate.low[0]).max(gate.high[2] - gate.low[2]);
+        assert!(
+            reach as f32 <= dungeon.reach() * 2.0,
+            "reaches {reach} blocks across, at most {}",
+            dungeon.reach() * 2.0
+        );
+    }
+    assert!(planned >= 4, "{planned} gates planned");
+    assert!(dungeon.reach() * 3.0 < temple().reach(), "{} against {}", dungeon.reach(), temple().reach());
+}
+
+#[test]
+fn a_dungeon_in_rock_goes_as_deep_as_it_is_asked_and_its_portal_stands_clear_by_the_stair() {
+    let dungeon = Dungeon { place: DungeonPlace::OwnDimension, ..temple() };
+    let world = Preset::RollingHills.world();
+    let turn = |block: BlockId, _: u8| block;
+    let rock = 30;
+    let built = in_rock(&dungeon, &world, 1.0, (7, 6), rock, &turn).expect("planned on rock");
+    let layout = &built.layout;
+    // Six floors, past the four a dungeon under the land may have, down to one boss, every space reached.
+    assert_eq!(layout.floors, 6);
+    let live: Vec<&Space> = layout.spaces.iter().filter(|space| space.height >= 0).collect();
+    assert_eq!(live.iter().filter(|space| space.kind == SpaceKind::Arena).count(), 1, "one boss");
+    assert!(all_reached(layout), "every space reached from the landing");
+    assert_eq!(layout.entrance.kind, EntranceKind::Sinkhole);
+    // Rock all round: under the dungeon, past its sides and over the hall.
+    let blocks = &built.blocks;
+    assert_ne!(blocks.get([layout.low[0] - 2, layout.low[1] - 2, layout.low[2] - 2]), AIR);
+    let mouth = layout.entrance.at;
+    assert_ne!(blocks.get([mouth[0], ROCK_TOP + 15, mouth[2]]), AIR, "a roof of rock over the hall");
+    // The Portal stands on the rock, with room for one coming out of it, and looks over the sinkhole.
+    let [x, y, z] = built.arrival;
+    assert_ne!(blocks.get([x, y - 1, z]), AIR, "rock under it");
+    for up in 0..4 {
+        assert_eq!(blocks.get([x, y + up, z]), AIR, "air {up} over its foot");
+    }
+    let ahead = [x as f32 + built.facing[0] * 15.0, z as f32 + built.facing[1] * 15.0].map(|v| v.floor() as i32);
+    assert_eq!(blocks.get([ahead[0], y - 2, ahead[1]]), AIR, "the sinkhole ahead of it");
+    // Inside a space, air; the same from the same seed.
+    let room = live.iter().find(|space| space.kind == SpaceKind::Room).expect("a room");
+    assert_eq!(blocks.get([room.at[0], room.at[1] + 3, room.at[2]]), AIR);
+    let again = in_rock(&dungeon, &world, 1.0, (7, 6), rock, &turn).unwrap();
+    assert_eq!(again.layout, built.layout);
+    assert_eq!(again.arrival, built.arrival);
 }

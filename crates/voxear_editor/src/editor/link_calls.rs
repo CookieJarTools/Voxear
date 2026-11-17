@@ -298,6 +298,23 @@ impl Editor {
                 self.dungeon_starter(args, renderer)
             }
             "dungeon.layouts" => self.dungeon_layouts(args),
+            "navigation.status" => self.navigation_status(),
+            "navigation.path" => self.navigation_path(args),
+            "navigation.nearest" => {
+                let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
+                let reach = args.get("reach").and_then(Json::as_f64).unwrap_or(4.0) as f32;
+                let place = voxear_engine::nav_agent::nearest_place(&mut self.game.engine.world, at, reach);
+                done(json!({ "place": place.map(|place| place.to_array()) }))
+            }
+            "navigation.agents" => self.navigation_agents(),
+            "nav_agent.set_destination" => {
+                let entity = self.obj_arg(args)?;
+                let to = opt_vector(args, "to")?.map(Vec3::from_array);
+                let agent = self.game.engine.world.get_mut::<voxear_engine::nav_agent::NavAgent>(entity);
+                let agent = agent.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Nav Agent"))?;
+                (agent.destination, agent.stopped) = (to, false);
+                done(json!({}))
+            }
             "reflection_probe.capture" => {
                 let entity = self.obj_arg(args)?;
                 let probe = self.game.engine.world.get_mut::<voxear_render::ReflectionProbe>(entity);
@@ -1572,6 +1589,88 @@ impl Editor {
         done(answer)
     }
 
+    fn navigation_status(&mut self) -> Called {
+        use voxear_engine::{block_mob::BlockMob, nav_agent::NavAgent, navigation::NavWorlds};
+        let world = &self.game.engine.world;
+        let worlds: Vec<Json> = world.resource::<NavWorlds>().map_or_else(Vec::new, |navs| {
+            navs.worlds()
+                .map(|(entity, builder)| {
+                    let nav = builder.nav();
+                    let (chunks, places) = nav.counts();
+                    json!({
+                        "world": link::obj_ref(&self.game, entity),
+                        "chunks": chunks,
+                        "places": places,
+                        "kilobytes": (nav.bytes() as f64 / 1024.0 * 10.0).round() / 10.0,
+                        "version": nav.version(),
+                        "made": builder.made,
+                        "build_ms": (builder.spent.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
+                        "settled": builder.is_settled(),
+                    })
+                })
+                .collect()
+        });
+        let agents = world.query_ref::<&NavAgent>().into_iter().count();
+        let mobs = world.query_ref::<&BlockMob>().into_iter().count();
+        done(json!({ "worlds": worlds, "agents": agents, "mobs": mobs }))
+    }
+
+    fn navigation_path(&mut self, args: &Json) -> Called {
+        let from = Vec3::from_array(opt_vector(args, "from")?.ok_or_else(|| bad("`from` is missing"))?);
+        let to = Vec3::from_array(opt_vector(args, "to")?.ok_or_else(|| bad("`to` is missing"))?);
+        let height = args.get("height").and_then(Json::as_f64).unwrap_or(1.8) as f32;
+        let began = std::time::Instant::now();
+        let (status, corners, cost) = voxear_engine::nav_agent::find_way(&mut self.game.engine.world, from, to, height);
+        let ms = began.elapsed().as_secs_f64() * 1000.0;
+        let length: f32 = corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        done(json!({
+            "status": format!("{status:?}"),
+            "corners": corners.iter().map(|corner| corner.to_array()).collect::<Vec<_>>(),
+            "cost": cost,
+            "length": length,
+            "ms": (ms * 1000.0).round() / 1000.0,
+        }))
+    }
+
+    fn navigation_agents(&mut self) -> Called {
+        use voxear_engine::{
+            block_mob::{BlockMob, BlockMobState},
+            nav_agent::{NavAgent, NavAgentState},
+        };
+        let world = &self.game.engine.world;
+        let mut agents = Vec::new();
+        let walkers: Vec<Entity> = world
+            .query_ref::<(Entity, &voxear_scene::Transform)>()
+            .into_iter()
+            .filter(|(entity, _)| world.has::<NavAgent>(*entity) || world.has::<BlockMob>(*entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in walkers {
+            let at = world.get::<voxear_scene::Transform>(entity).map_or(Vec3::ZERO, |transform| transform.position);
+            let state = world.get::<NavAgentState>(entity);
+            let destination = match world.get::<NavAgent>(entity) {
+                Some(agent) => agent.destination,
+                None => world.get::<BlockMobState>(entity).and_then(|state| state.destination),
+            };
+            let arrived = match (world.get::<NavAgent>(entity), state) {
+                (Some(agent), Some(state)) => state.is_arrived(agent),
+                (None, _) => world.get::<BlockMob>(entity).is_some_and(|mob| mob.arrived),
+                (Some(agent), None) => agent.destination.is_none(),
+            };
+            agents.push(json!({
+                "obj": link::obj_ref(&self.game, entity),
+                "at": at.to_array(),
+                "destination": destination.map(|to| to.to_array()),
+                "arrived": arrived,
+                "status": state.map_or("None".to_string(), |state| format!("{:?}", state.status)),
+                "remaining": state.map_or(0.0, |state| state.remaining(at)),
+                "velocity": state.map_or([0.0; 3], |state| state.velocity.to_array()),
+                "corners": state.map_or_else(Vec::new, |state| state.corners.iter().map(|c| c.to_array()).collect()),
+            }));
+        }
+        done(json!({ "agents": agents }))
+    }
+
     fn blocks_get(&self, args: &Json) -> Called {
         use voxear_terrain::blocks::{BlockWorld, chunk::AIR, light};
         let at = Vec3::from_array(opt_vector(args, "at")?.ok_or_else(|| bad("`at` is missing"))?);
@@ -1933,6 +2032,8 @@ impl Editor {
                 self.game.project = project;
                 let file = &self.game.project.file;
                 file.portals.put(&mut self.game.engine.world);
+                file.navigation.put(&mut self.game.engine.world);
+                self.game.engine.world.insert_resource(file.foliage.bounded());
                 file.quality.put(&mut self.game.engine.world);
                 file.physics.put(&mut self.game.engine.world);
                 voxear_engine::modules::put(&mut self.game.engine.world, self.game.project.modules());

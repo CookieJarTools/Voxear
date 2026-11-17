@@ -115,6 +115,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Water | Whether the water of a far side's Block Worlds is drawn |
 | Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
 | View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Graphics ▸ Portals |
+| Dimension Distance | How close a camera comes to a Portal into another [[Dimensions|dimension]], as a dungeon's gate, before that dimension is loaded, in metres: 24. Only the nearest such Portal is open at a time. Also in Project Settings ▸ Graphics ▸ Portals |
 
 ```toml
 [portals]
@@ -125,6 +126,7 @@ far_side_distance = 96.0
 water = true
 draw_distance = 0.0
 view_distance = 96.0
+dimension_distance = 24.0
 ```
 
 ## In scene files

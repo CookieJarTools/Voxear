@@ -20,6 +20,7 @@ Rest the pointer on a setting's name to see what it does, what more or less of i
 | --- | --- |
 | Audio | Headphones, room reverb and its mode, ray-traced sound and its GPU budget, Steam Audio in builds |
 | Content | How builds pack assets: compression, merging small bundles and splitting large ones, and (under Advanced) patterns of assets always included or left out |
+| Foliage | How plants move: the wind on a fair day, how far they bend, and whether what walks through them pushes them aside (see [[Wind]]) |
 | Graphics | What drawing through [[Portals]] may spend |
 | Input | The input actions the game plays with, and a button that opens the Input Actions window |
 | Localization | The languages the game is in, the one it is written in first, and the fonts each falls back to (see [[Fonts]]) |
@@ -57,6 +58,19 @@ max_step = 0.1
 gravity = [0.0, -1.62, 0.0]   # the Moon's
 ```
 
+## Foliage
+
+Grass, flowers, bushes and leaves sway in the wind and part round whatever walks through them. **Wind** is how hard the wind blows over a level with no Wind Zone on a fair day, as a Wind Zone's Strength: 0.5, a light breeze, by default. Rain and storms blow harder on top, so plants toss in a storm with nothing set up; at 0 they stand still until the weather turns. **Bend** is how far every plant bends, in the wind and when pushed, times its own **Wind bend**. **Interaction** lets characters, and Objs with a Foliage Interaction, push plants aside; under Advanced, **Push strength** says how hard and **Spring back** how long a pushed plant takes to stand again. See [[Wind]].
+
+```toml
+[foliage]
+wind = 1.0          # breezy on a fair day
+bend = 1.2
+interaction = true
+```
+
+Scripts can change all of it as the game runs, with `Foliage.Wind`, `Foliage.Bend`, `Foliage.Interaction`, or `Foliage.Motion` for everything at once; the project's settings stay as they are.
+
 ## Input actions
 
 A project with several `.inputactions` files picks the one the game plays with in **Input ▸ Actions file**. With none picked, the game uses the first by path, or Voxear's own when the project has none.
@@ -74,6 +88,7 @@ vox editor call project_settings.get category=Time
 vox editor call project.set key=time.fixed_step value=0.01
 vox editor call project.set key=audio.reverb_mode value=Convolution
 vox editor call project.set key=physics.gravity value=[0,-1.62,0]
+vox editor call project.set key=foliage.wind value=1.5
 vox editor call settings.show key=physics.gravity
 ```
 

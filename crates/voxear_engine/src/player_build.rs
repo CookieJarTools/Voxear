@@ -229,6 +229,8 @@ pub fn build(
         particles: project.file.quality.particles,
         world: project.file.world,
         portals: project.file.portals,
+        navigation: project.file.navigation.clone(),
+        foliage: project.file.foliage,
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,

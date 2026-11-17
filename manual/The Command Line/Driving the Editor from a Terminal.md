@@ -188,6 +188,9 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts` | Make the starter temple dungeon for a Block World, and read the dungeons its generator lays out near a point |
+| `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, and what every Nav Agent and Block Mob is doing |
+| `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
+| `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |
 | `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |
 | `reflection_probe.capture`, `reflection_probes.bake` | Capture a Reflection Probe again, and bake the open level's probes beside it |
 | `reverb_probes.bake` | Bake the open level's Reverb Probes beside it |

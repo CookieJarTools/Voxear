@@ -762,7 +762,7 @@ struct Sea
 // all of it to over half its reach, fading from there to its reach, and none in its eye.
 float weatherShare(Frame* frame, uint index, float2 xz);
 
-// The level's wind; mirrors GpuWind in src/gpu.rs. Strength 0 without a Wind Zone.
+// The level's wind; mirrors GpuWind in src/gpu.rs. Strength 0 without a Wind Zone or a fair day's wind.
 struct Wind
 {
     float2 direction;
@@ -771,7 +771,8 @@ struct Wind
     float gustSize;
     float gustSpeed;
     float turbulence;
-    float pad;
+    // How far plants bend, in the wind and pushed, as many times as their own bend says (FoliageMotion::bend).
+    float bend;
 };
 
 // The level's seasons for its plants; mirrors GpuSeasons in src/gpu.rs (see seasons.slang).
@@ -818,6 +819,9 @@ struct Pushes
     int2 origin;
     float cell;
     uint count;
+    // How many seconds a push takes to fall to a third as plants spring back.
+    float spring;
+    float3 pad;
 };
 
 // Tracks in the ground round the camera (src/tracks.rs, tracks.slang): TRACK_TEXELS a side, each how deep the ground
@@ -1950,8 +1954,9 @@ struct Buffers
     uint2* bvhTable;
     BvhNode* sceneNodes;
     TraceInstance* sceneInstances;
-    // The grid of pushes through foliage, a push each cell.
-    float2* foliagePushes;
+    // The grid of pushes through foliage, each cell's push along x and z, how high what made it stood and how far
+    // up and down from there it reaches (foliage_push.slang).
+    float4* foliagePushes;
     // Under the atmosphere, the sun's light and the sky's, once a frame (atmosphere.slang's SkyLight); else null.
     SkyLight* skyLight;
     // Each material's custom shader's properties, MATERIAL_PROPERTIES a material.

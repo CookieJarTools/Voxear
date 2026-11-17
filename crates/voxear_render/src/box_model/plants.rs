@@ -805,26 +805,32 @@ mod tests {
     }
 
     #[test]
-    fn starter_plants_bend_in_the_wind_but_for_the_rock_and_a_trees_crown_sways_more_than_its_trunk() {
+    fn starter_plants_bend_in_the_wind_but_for_the_rock_and_no_face_of_one_is_taller_than_a_cube() {
         for plant in StarterPlant::ALL {
-            let prepared = plant.model().prepared("Plants/Test.boxmodel");
-            let (material, vertices) = (&prepared.materials[0].desc, &prepared.meshes[0].0.vertices);
+            let model = plant.model();
+            let prepared = model.prepared("Plants/Test.boxmodel");
+            let (material, mesh) = (&prepared.materials[0].desc, &prepared.meshes[0].0);
             assert_eq!(material.wind_bend > 0.0, !plant.is_still(), "{}", plant.name());
             assert_eq!(material.wind_flutter, 0.0, "cubes do not flutter apart");
-            if plant.is_still() {
-                continue;
+            // Nothing sways on its own: a plant of cubes bends whole, each layer as far as its height says.
+            let masks = crate::mesh::NO_WIND_MASKS;
+            assert!(mesh.vertices.iter().all(|vertex| vertex.wind == masks), "{}", plant.name());
+            // A face of a plant that bends spans one layer of cubes at most, so none bends past another's corner.
+            let cube = model.pixel_size();
+            let tallest = mesh
+                .indices
+                .chunks(3)
+                .map(|triangle| {
+                    let heights = triangle.iter().map(|&i| mesh.vertices[i as usize].position[1]);
+                    let (low, high) = heights.fold((f32::MAX, f32::MIN), |(low, high), y| (low.min(y), high.max(y)));
+                    high - low
+                })
+                .fold(0.0, f32::max);
+            if !plant.is_still() {
+                assert!(tallest <= cube * 1.001, "{}: a face {tallest} tall", plant.name());
+            } else if plant == StarterPlant::Rock {
+                assert!(tallest > cube * 1.5, "a still one's faces are joined up it: {tallest}");
             }
-            // Nothing flutters; faces that meet at a place sway alike there; and what is further out sways more.
-            assert!(vertices.iter().all(|vertex| vertex.wind[0] == 0 && vertex.wind[1] == 0), "{}", plant.name());
-            let mut swayed = std::collections::HashMap::new();
-            for vertex in vertices {
-                let place = vertex.position.map(f32::to_bits);
-                assert_eq!(*swayed.entry(place).or_insert(vertex.wind[2]), vertex.wind[2], "{}", plant.name());
-            }
-            let out = |vertex: &crate::mesh::Vertex| vertex.position[0].hypot(vertex.position[2]);
-            let furthest = vertices.iter().max_by(|a, b| out(a).total_cmp(&out(b))).unwrap();
-            let nearest = vertices.iter().min_by(|a, b| out(a).total_cmp(&out(b))).unwrap();
-            assert!(furthest.wind[2] == 255 && nearest.wind[2] < 70, "{}: {}", plant.name(), nearest.wind[2]);
         }
         // A build keeps the bend: cooked and read back, the tuft's material has it.
         let tuft = StarterPlant::Tuft.model().prepared("Plants/Tuft.boxmodel");

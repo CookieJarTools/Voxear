@@ -35,12 +35,29 @@ pub struct ProjectFile {
     /// What Portals may spend (see [`PortalSettings`]).
     #[serde(default)]
     pub portals: PortalSettings,
+    /// How plants move in the wind and when pushed (see
+    /// `voxear_render::FoliageMotion`).
+    ///
+    /// ```toml
+    /// [foliage]
+    /// wind = 0.5          # a fair day's wind where a level has no Wind Zone; rain and storms blow harder
+    /// bend = 1.0          # how far plants bend, times each plant's own Wind bend
+    /// interaction = true  # whether characters push plants aside
+    /// push = 1.0          # how hard they push, times each pusher's own strength
+    /// spring = 0.8        # seconds for a pushed plant to spring back to a third
+    /// ```
+    #[serde(default)]
+    pub foliage: voxear_render::FoliageMotion,
     /// How long the game's fixed steps and frames may be (see [`TimeSettings`]).
     #[serde(default)]
     pub time: TimeSettings,
     /// Which input actions the game plays with (see [`InputSettings`]).
     #[serde(default)]
     pub input: InputSettings,
+    /// What each kind of ground costs things finding their way (see
+    /// `crate::navigation::NavigationSettings`).
+    #[serde(default)]
+    pub navigation: crate::navigation::NavigationSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,8 +80,10 @@ impl ProjectFile {
             quality: QualitySettings::default(),
             world: voxear_terrain::WorldBudget::default(),
             portals: PortalSettings::default(),
+            foliage: voxear_render::FoliageMotion::default(),
             time: TimeSettings::default(),
             input: InputSettings::default(),
+            navigation: crate::navigation::NavigationSettings::default(),
             modules: None,
         }
     }
@@ -154,6 +173,7 @@ impl Default for QualitySettings {
 /// water = true            # whether the water of a far side's worlds of blocks is drawn
 /// draw_distance = 0.0     # how far ahead a far side is drawn; 0 for as far as the world is
 /// view_distance = 96.0    # how far off a Portal without its own still shows its far side
+/// dimension_distance = 24.0  # how near a Portal into a dimension loaded for it the dimension is loaded
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -165,6 +185,7 @@ pub struct PortalSettings {
     pub water: bool,
     pub draw_distance: f32,
     pub view_distance: f32,
+    pub dimension_distance: f32,
 }
 
 impl Default for PortalSettings {
@@ -178,6 +199,7 @@ impl Default for PortalSettings {
             water: quality.water,
             draw_distance: quality.draw_distance,
             view_distance: quality.view_distance,
+            dimension_distance: quality.dimension_distance,
         }
     }
 }
@@ -193,6 +215,7 @@ impl PortalSettings {
             water: self.water,
             draw_distance: self.draw_distance.max(0.0),
             view_distance: self.view_distance.max(0.0),
+            dimension_distance: self.dimension_distance.clamp(2.0, 1000.0),
         });
     }
 }

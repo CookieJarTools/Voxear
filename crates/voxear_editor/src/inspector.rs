@@ -1283,6 +1283,13 @@ impl Inspector {
                 if let Prop::Storm(field) = value {
                     meta.range = crate::storm_props::range(*field).map(|r| r.map(f64::from));
                 }
+                if let Prop::NavArea(field) = value {
+                    meta.tooltip = Some(crate::nav_props::area_tooltip(*field).to_string());
+                }
+                if let Prop::Nav(field) = value {
+                    meta.range = crate::nav_props::range(*field).map(|r| r.map(f64::from));
+                    meta.tooltip = Some(crate::nav_props::tooltip(*field).to_string());
+                }
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
                 }
@@ -2292,6 +2299,8 @@ pub(crate) fn built_in_parts() -> Vec<(Part, &'static str)> {
         (Part::CaveShape, "Terrain"),
         (Part::CaveExit, "Terrain"),
         (Part::BlockMob, "Terrain"),
+        (Part::NavAgent, "Navigation"),
+        (Part::NavArea, "Navigation"),
         (Part::Audio, "Audio"),
         (Part::Listener, "Audio"),
         (Part::ReverbProbe, "Audio"),
@@ -3008,6 +3017,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Animator) => "animator",
         Some(Part::MobMotion) => "mob_motion",
         Some(Part::BlockMob) => "block_mob",
+        Some(Part::NavAgent) => "nav_agent",
+        Some(Part::NavArea) => "nav_area",
         Some(Part::MotionMatcher) => "motion_matcher",
         Some(Part::BoneAttachment) => "bone_attachment",
         Some(Part::FirstPersonView) => "first_person",

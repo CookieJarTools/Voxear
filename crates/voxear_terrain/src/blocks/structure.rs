@@ -41,8 +41,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 pub use super::dungeon::{
-    Dungeon, DungeonBlockNames, DungeonBlocks, DungeonDef, DungeonPasses, DungeonRoom, DungeonSize, DungeonSizes,
-    DungeonTheme, EntranceKind, RoomRole,
+    Dungeon, DungeonBlockNames, DungeonBlocks, DungeonDef, DungeonPasses, DungeonPlace, DungeonRoom, DungeonSize,
+    DungeonSizes, DungeonTheme, EntranceKind, RoomRole,
 };
 use super::{
     chunk::{AIR, BlockId, CHUNK, Chunk},
@@ -962,12 +962,19 @@ pub(crate) struct Ground<'a> {
     pub(crate) biomes: Option<&'a WorldBiomes>,
     /// Whether its top is laid in half blocks (see `generate::BlockGenerate::slabs`).
     pub(crate) halved: bool,
+    /// Where its top is flat rock at one height, as in a dungeon's own
+    /// dimension, that block: there is no sea, river or cave in it, and the
+    /// generator is not asked.
+    pub(crate) flat: Option<i32>,
 }
 
 impl Ground<'_> {
     /// [`Ground::top`] of each of `columns`, the generator asked for all at
     /// once.
     pub(crate) fn tops(&self, columns: &[[i32; 2]]) -> Vec<i32> {
+        if let Some(top) = self.flat {
+            return vec![top; columns.len()];
+        }
         let xs: Vec<f32> = columns.iter().map(|c| self.position[0] + (c[0] as f32 + 0.5) * self.size).collect();
         let zs: Vec<f32> = columns.iter().map(|c| self.position[1] + (c[1] as f32 + 0.5) * self.size).collect();
         let mut heights = vec![0.0; columns.len()];
@@ -991,6 +998,9 @@ impl Ground<'_> {
     /// its top is laid in half blocks and one lies there, so what is built
     /// stands in the slab's place, not half a block over it.
     pub(crate) fn top(&self, x: i32, z: i32) -> i32 {
+        if let Some(top) = self.flat {
+            return top;
+        }
         let height = self.world.height_at(
             self.position[0] + (x as f32 + 0.5) * self.size,
             self.position[1] + (z as f32 + 0.5) * self.size,
@@ -1328,7 +1338,8 @@ pub fn dungeons_near(
     near: [f32; 2],
     reach: f32,
 ) -> Vec<(usize, Site, Arc<super::dungeon::DungeonLayout>)> {
-    let checks = SiteFits::new(Ground { world, size: at.0, position: at.1, biomes, halved: at.3 }, structures);
+    let checks =
+        SiteFits::new(Ground { world, size: at.0, position: at.1, biomes, halved: at.3, flat: None }, structures);
     let mut found = Vec::new();
     for (which, structure) in structures.list.iter().enumerate() {
         let StructureBlocks::Dungeon(dungeon) = &structure.blocks else { continue };
@@ -1410,7 +1421,7 @@ fn build_looking(
     (looks, feet): (&[f32], &dyn Fn([i32; 2]) -> Option<i32>),
 ) {
     let side = CHUNK as i32;
-    let ground = Ground { world, size, position, biomes, halved };
+    let ground = Ground { world, size, position, biomes, halved, flat: None };
     // Nothing is built below the world's lowest block.
     let mut set = |at: [i32; 3], block: BlockId| {
         if at[1] >= bottom {
@@ -1940,7 +1951,8 @@ mod tests {
         let make = |[cx, cz]: [i32; 2]| {
             // Plain ground of block 1 up to the generator's height, a block a metre.
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-            let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+            let ground =
+                Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
             for z in 0..32 {
                 for x in 0..32 {
                     let (gx, gz) = (cx * 32 + x, cz * 32 + z);
@@ -2050,7 +2062,7 @@ mod tests {
             biomes: Vec::new(),
         };
         let structures = WorldStructures { list: vec![trees], ..WorldStructures::default() };
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
         let make = |[cx, cz]: [i32; 2]| {
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
             for z in 0..32 {
@@ -2139,7 +2151,7 @@ mod tests {
     #[test]
     fn a_town_grows_streets_from_its_middle_with_houses_along_them_apart_facing_them() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
         let town = village();
         let mut houses_laid = 0;
         for seed in 0..12u32 {
@@ -2238,7 +2250,7 @@ mod tests {
     #[test]
     fn roads_join_neighbouring_towns_over_the_ground_the_same_from_every_chunk_they_cross() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None, halved: false, flat: None };
         let town = Town { roads: true, road: 13, bridge: 14, ..village() };
         let structure = PlacedStructure {
             placement: Placement {
@@ -2314,7 +2326,8 @@ mod tests {
         let warm = BiomeDef { temperature: [split, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
         let biomes = Biomes::new(vec![cool, warm], 15.0, 0.3, world.seed());
         let biomes = WorldBiomes { regions: None, biomes, blocks: Vec::new() };
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes), halved: false };
+        let ground =
+            Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes), halved: false, flat: None };
         let base = village();
         let piece = |wall: BlockId| TownPiece {
             blocks: base.houses[1].piece.blocks.iter().map(|&b| if b == AIR { AIR } else { wall }).collect(),

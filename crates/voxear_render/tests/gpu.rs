@@ -8201,6 +8201,55 @@ fn clouds_glide_past_a_camera_going_by_and_do_not_step() {
 }
 
 #[test]
+fn clouds_keep_their_shape_wherever_the_viewer_stands_by_a_storm() {
+    use voxear_render::{
+        Clouds, PostProcess, Sky, SkyMode,
+        weather::{Weather, WeatherAmounts},
+    };
+    // Fair-weather clouds looked up at while the weather where the viewer stands changes, as it does walking under a
+    // storm's edge. A storm's cloud is drawn where it lies; what it adds where the viewer stands filled in every cloud
+    // in the sky as well, so the whole sky changed shape as the player walked, and in a Scene view whenever the player
+    // walked at all. The level's own weather still fills them in.
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((
+        Camera::default(),
+        Transform::new(Vec3::new(0.0, 1.7, 0.0), looking_along(bearing(35.0, 0.0)), Vec3::ONE),
+    ));
+    let sun = looking_along(-bearing(50.0, 30.0));
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { mode: SkyMode::Atmosphere, clouds: Clouds::covering(0.4), ..Sky::default() });
+    world.insert_resource(PostProcess::neutral());
+    let mut time = 0.0;
+    let mut picture = |renderer: &mut Renderer, world: &World| -> Vec<f32> {
+        run(renderer, world, &mut time, 60);
+        let (_, _, pixels) = renderer.read_pixels().unwrap();
+        pixels.chunks_exact(4).map(|p| f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2])).collect()
+    };
+    let apart = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(a, b)| (a - b).abs()).sum::<f32>() / a.len() as f32;
+    let clear = picture(&mut renderer, &world);
+    // A second apart, the clouds drift on the wind: how much the sky changes by itself.
+    let later = picture(&mut renderer, &world);
+    let mut weather = Weather::default();
+    weather.set_here(WeatherAmounts { cloud: 1.0, ..WeatherAmounts::default() });
+    world.insert_resource(weather);
+    let under = picture(&mut renderer, &world);
+    keep_image("clouds by a storm.png", &renderer.read_pixels().unwrap().2);
+    world.insert_resource(Weather::custom(WeatherAmounts { cloud: 1.0, ..WeatherAmounts::default() }));
+    let cloudy = picture(&mut renderer, &world);
+    let (drift, stood, level) = (apart(&clear, &later), apart(&later, &under), apart(&under, &cloudy));
+    eprintln!(
+        "the sky changed by {drift:.2} drifting, {stood:.2} by a storm where the viewer stands, {level:.2} by the level's weather"
+    );
+    // Filled in to overcast, the sky changed by 180 grey levels a pixel.
+    assert!(
+        stood < drift * 1.5 + 2.0,
+        "a storm where the viewer stands leaves the clouds as they are: {stood} against {drift} drifting"
+    );
+    assert!(level > 20.0, "the level's own weather fills in the clouds: {level}");
+}
+
+#[test]
 fn clouds_built_of_cubes_have_flat_faces_and_square_shadows() {
     use voxear_render::Clouds;
     let Some((clear, _)) = cloud_render(&CloudView::of(Clouds::default())) else { return };

@@ -418,6 +418,9 @@ const LEAVES: f32 = 0.06;
 /// How far from the viewer storms are looked for, in metres: as far as
 /// they are drawn.
 pub const SEEN_FROM: f64 = 9000.0;
+/// Over how many metres before [`SEEN_FROM`] a storm's weather is drawn
+/// fainter, to nothing there.
+const SEEN_FADING: f64 = 3000.0;
 /// How far from the viewer whirlpools are looked for, in metres.
 const POOLS_FROM: f64 = 1500.0;
 
@@ -829,7 +832,14 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
                 over.push(storm.id);
             }
         }
-        places.push(place);
+        // Drawn fainter the further off its reach is, to nothing where it is no longer looked for: its cloud spreads
+        // kilometres past its reach, so one that came into the list whole filled in a patch of sky at once as the
+        // viewer walked.
+        let seen = around.map_or(1.0, |around| {
+            let beyond = DVec2::from(storm.middle).distance(around) - f64::from(storm.radius);
+            1.0 - smooth((SEEN_FROM - SEEN_FADING) as f32, SEEN_FROM as f32, beyond as f32)
+        });
+        places.push(WeatherPlace { amounts: place.amounts.scaled(seen), rough: place.rough * seen, ..place });
     }
     for &id in over.iter().filter(|id| !storms.over.contains(id)) {
         storms.events.push(StormEvent::Arrived(id));
@@ -1096,6 +1106,28 @@ mod tests {
         update(&mut world, 3.0, true);
         assert!(world.resource::<Storms>().unwrap().made.is_empty());
         assert!(world.resource::<WeatherPlaces>().unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn a_far_storm_is_drawn_fainter_to_nothing_where_it_is_no_longer_looked_for() {
+        // Its cloud spreads kilometres past its reach: one that came into the list whole, as the viewer walked the
+        // last few metres to where storms are looked for, filled in a patch of sky at once.
+        let radius = 900.0;
+        let drawn = |distance: f32| {
+            let mut world = world_with_viewer(Vec3::new(0.0, 2.0, 0.0));
+            let id = start(&mut world, Vec3::new(distance, 0.0, 0.0), radius, 1.0, StormKind::Thunderstorm);
+            world.resource_mut::<Storms>().unwrap().made_mut(id).unwrap().grows = 0.0;
+            update(&mut world, 0.0, true);
+            world.resource::<WeatherPlaces>().unwrap().0.first().map_or(0.0, |place| place.amounts.cloud)
+        };
+        let limit = SEEN_FROM as f32 + radius;
+        // Just inside where storms are looked for and just outside: nothing to tell them apart.
+        assert!(drawn(limit - 1.0) < 0.01, "as good as gone: {}", drawn(limit - 1.0));
+        assert_eq!(drawn(limit + 1.0), 0.0);
+        // Nearer, whole; and between, a little more with each 100 m nearer.
+        assert_eq!(drawn(limit - SEEN_FADING as f32 - 1.0), 1.0);
+        let nearing: Vec<f32> = (0..=30).map(|k| drawn(limit - 100.0 * k as f32)).collect();
+        assert!(nearing.windows(2).all(|pair| pair[1] >= pair[0] && pair[1] - pair[0] < 0.06), "{nearing:?}");
     }
 
     #[test]

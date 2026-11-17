@@ -1171,10 +1171,14 @@ often and how large, and how the sea is drawn.
 viewer, and gives the renderer three things. `WeatherPlaces` is each storm as a `WeatherPlace`: its middle in the
 world, its reach and eye, how rough it makes the sea, and the `WeatherAmounts` it adds at its middle, which
 `storms::amounts(kind, strength, celsius, humidity)` makes from the open air's temperature there
-(`heat::open_air`: the climate and the time of day, with no shelter or sources). `Weather::set_here` is what the
-storms add where the viewer stands, by the temperature there; `Weather::now` is then the more of the level's own
-weather and that, so rain, snow, fog, wind, wet ground and lightning follow the viewer into and out of a storm
-with nothing else changed. `RoughSea` is the sea: its look, swell height, heading, the storms' clock as its time,
+(`heat::open_air`: the climate and the time of day, with no shelter or sources). Over the last 3 km before 9 km
+past its reach a place is drawn fainter, to nothing where it is no longer looked for: its cloud spreads kilometres
+past its reach, and one that came into the list whole filled in a patch of sky as the viewer walked the last few
+metres. `Weather::set_here` is what the storms add where the viewer stands, by the temperature there;
+`Weather::now` is then the more of the level's own weather and that, so rain, snow, fog, wind, wet ground,
+lightning and the light follow the viewer into and out of a storm. The clouds' cover, thickness and density are
+the level's own weather (`Weather::everywhere`) alone: the storm's cloud is drawn where it lies, and taking what it
+adds where the viewer stands reshaped every cloud in the sky as the player walked. `RoughSea` is the sea: its look, swell height, heading, the storms' clock as its time,
 and the nearest whirlpools.
 
 The frame carries all of it as one `GpuSea` (`Sea` in the shaders): up to eight places with their skies and

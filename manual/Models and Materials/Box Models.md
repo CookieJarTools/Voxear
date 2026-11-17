@@ -160,6 +160,8 @@ Press on the model to paint the pixel under the pointer, and drag to paint along
 
 The large square beside the tools is the colour you paint with. Click it to open the colour picker, and click it again to put the picker away. The small squares after it are the colours the sheet already uses, most used first. Click one to paint with it again.
 
+**Tint**, **Tint 2**, **Tint 3** and **Own** say which of an Obj's tints the colour painted with takes, for every pixel and cube of that colour. Every colour takes the first until told otherwise; **Own** keeps it as painted, as a buckle on a coat dyed any colour. See [[Tints and Parts]]. Sculpting has the same choice for the cubes' colours.
+
 **Symmetry** makes a stroke on the model paint the other side of the body as well, so a face or a pattern stays even.
 
 **Lay Out** gives every box room of its own on the sheet and moves its pixels with it. Use it after you have made boxes bigger or added boxes where the sheet was full, when two boxes show the same pixels by mistake. Boxes that share their pixels on purpose, such as a mirrored arm, still share them. The sheet doubles in size when it is too small.
@@ -361,6 +363,7 @@ voxels = "…"
 | Setting | What it does |
 | --- | --- |
 | `palette` | The colours of the model's cubes, each as `rrggbb`, up to 255. Change one here and every cube of that colour changes |
+| `tints` | Which tint each colour of the model's pixels and cubes takes, where it is not the first: `"second"`, `"third"`, or `"none"` to keep its own colour (see [[Tints and Parts]]) |
 | `voxels` | The box's cubes, one for each pixel of its `size`, packed as text. Each side is from 1 to 64 |
 
 ### Clips

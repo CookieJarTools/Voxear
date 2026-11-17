@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 
-use voxear_core::math::{Mat4, Vec3};
+use voxear_core::math::{Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, Gpu, MemoryLocation, vk};
 use voxear_scene::Destroying;
@@ -52,6 +52,31 @@ pub struct HiddenBones {
 }
 
 impl Component for HiddenBones {}
+
+/// The bones of a model's skeleton a script has switched off, in its
+/// skeleton's order: the skin bound to them, and to every bone under them,
+/// is drawn nowhere, shadows included, as it is drawn in to the bone that
+/// was switched off. Kept until switched on again; the bones themselves
+/// stay where the pose has them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BonesOff {
+    pub off: Vec<bool>,
+}
+
+impl Component for BonesOff {}
+
+impl BonesOff {
+    /// Whether each bone is drawn nowhere: switched off itself, or under
+    /// one that is. Parents come before their children in a skeleton.
+    pub fn reach(&self, skeleton: &crate::Skeleton) -> Vec<Option<usize>> {
+        let mut gone: Vec<Option<usize>> = Vec::with_capacity(skeleton.bones.len());
+        for (index, bone) in skeleton.bones.iter().enumerate() {
+            let own = self.off.get(index).copied().unwrap_or(false).then_some(index);
+            gone.push(own.or_else(|| bone.parent.and_then(|parent| gone.get(parent).copied().flatten())));
+        }
+        gone
+    }
+}
 
 /// Where a part's posed vertices are this frame and last, and how far its
 /// pose reaches past its mesh's bounds.
@@ -126,6 +151,8 @@ impl Skinning {
             let Some(animation) = &model.animation else { continue };
             let hidden = world.get::<HiddenBones>(entity);
             let hidden = |joint: usize| hidden.is_some_and(|hidden| hidden.bones.get(joint).copied().unwrap_or(false));
+            // The bone each switched-off bone's skin is drawn in to, its own or the one above it switched off.
+            let gone = world.get::<BonesOff>(entity).map(|off| off.reach(&animation.skeleton)).unwrap_or_default();
             for (index, part) in model.parts.iter().enumerate() {
                 let Some(skin) = part.skin.and_then(|skin| animation.skins.get(skin as usize)) else { continue };
                 let (Some((skin_offset, count)), Some(source)) =
@@ -144,7 +171,14 @@ impl Skinning {
                 let (centre, radius) = assets.mesh_sphere(part.mesh).unwrap_or((Vec3::ZERO, 0.0));
                 for (&joint, bind) in skin.joints.iter().zip(&skin.inverse_binds) {
                     let bone = pose.bones.get(joint).copied().unwrap_or(Mat4::IDENTITY);
-                    let m = (bone * *bind).transpose();
+                    // Drawn in to a point, so its triangles cover nothing, in any pass.
+                    let m = match gone.get(joint).copied().flatten() {
+                        Some(off) => {
+                            let at = pose.bones.get(off).copied().unwrap_or(bone).w_axis;
+                            Mat4::from_cols(Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, at).transpose()
+                        }
+                        None => (bone * *bind).transpose(),
+                    };
                     let shown = if hidden(joint) { 1.0 } else { 0.0 };
                     rows.extend([
                         m.x_axis.to_array(),
@@ -233,5 +267,22 @@ impl Skinning {
             gpu.destroy_buffer(matrices);
             gpu.destroy_buffer(pointers);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Bone, BonePose, Skeleton};
+
+    #[test]
+    fn a_bone_switched_off_takes_the_bones_under_it() {
+        let bone = |name: &str, parent| Bone { name: name.into(), parent, rest: BonePose::default() };
+        let skeleton = Skeleton {
+            bones: vec![bone("Body", None), bone("Head", Some(0)), bone("Jaw", Some(1)), bone("Arm", Some(0))],
+        };
+        let off = BonesOff { off: vec![false, true, false, false] };
+        assert_eq!(off.reach(&skeleton), vec![None, Some(1), Some(1), None], "drawn in to the head");
+        assert!(BonesOff::default().reach(&skeleton).iter().all(Option::is_none));
     }
 }

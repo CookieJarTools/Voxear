@@ -89,3 +89,13 @@ A script can also put a document on screen itself, with `UiDocument.Load`. See [
 - Saving `Hud.vui` while the game plays shows the change at once. Elements are found again by their names, and keep their handlers.
 - When your scripts reload while the game plays, `OnUiBuilt` runs again, so the button carries on. Handlers added in `Start` stop until you play again.
 - Builds include every `.vui` file, and the style sheets it names, by themselves.
+
+## Checking a menu from the command line
+
+`vox render --ui` draws the game's UI over the picture it saves, as a player sees it: the Screen UIs, and the menus and screens scripts open. It lets you check a menu, or a screen such as a character's creation, without opening a window:
+
+```bash
+vox render --ui --out menu.png --frames 30
+```
+
+`--ui-scale 2` draws it twice as large, as on a screen of twice the pixels. Give scripts enough `--frames` to build their UI first.

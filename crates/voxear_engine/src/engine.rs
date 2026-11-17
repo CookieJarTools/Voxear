@@ -676,6 +676,8 @@ impl Engine {
             self.run_phase(Phase::PoseUpdate);
             self.run_script_systems(SCRIPT_POSE);
             self.flush();
+            // Worn parts, posed by the skeletons they follow as those now stand, before what is attached to them.
+            crate::animation::follow_skeletons(&mut self.world);
             crate::animation::attach_to_bones(&mut self.world);
             // What animation walked through a Portal goes through too.
             if !self.edit_mode {

@@ -7722,8 +7722,13 @@ fn four_pixel_figure() -> voxear_render::BoxModel {
 /// The figure seen from in front, read from its file's text or cooked
 /// first, at rest or with its head turned a quarter over onto its side.
 fn figure_render(cooked: bool, turned_head: bool) -> Option<Vec<u8>> {
+    figure_render_with(cooked, turned_head, false)
+}
+
+/// The figure, its head switched off or not.
+fn figure_render_with(cooked: bool, turned_head: bool, head_off: bool) -> Option<Vec<u8>> {
     use std::sync::Arc;
-    use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
+    use voxear_render::{BonesOff, ModelPart, ModelRenderer, Pose, Sky};
     let mut renderer = renderer()?;
     let text = four_pixel_figure().to_text();
     let model = voxear_render::prepare_model("Figure.boxmodel", &mut |file| match file {
@@ -7760,7 +7765,14 @@ fn figure_render(cooked: bool, turned_head: bool) -> Option<Vec<u8>> {
         pose[1].rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
     }
     let bones: Arc<[voxear_core::math::Mat4]> = animation.skeleton.model_matrices(&pose).into();
-    world.spawn((ModelRenderer { animation: Some(animation), ..ModelRenderer::new(parts) }, Pose { bones }, Transform::default()));
+    let figure = world.spawn((
+        ModelRenderer { animation: Some(animation), ..ModelRenderer::new(parts) },
+        Pose { bones },
+        Transform::default(),
+    ));
+    if head_off {
+        world.insert(figure, BonesOff { off: vec![false, true] });
+    }
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
     world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
@@ -7838,10 +7850,23 @@ fn tint_figure() -> voxear_render::BoxModel {
 /// The tint figure seen from in front, `distance` metres off, tinted or
 /// not, its LOD bias at `lod_bias`; or the wall behind it alone.
 fn tint_render(tint: Option<[f32; 3]>, lod_bias: f32, distance: f32, figure: bool) -> Option<Vec<u8>> {
+    use voxear_render::NO_TINT;
+    let tints = [tint.unwrap_or(NO_TINT), NO_TINT, NO_TINT];
+    box_figure_render(&tint_figure(), tints, lod_bias, distance, figure)
+}
+
+/// A box model seen from in front as `tint_render` sees it, with three tints.
+fn box_figure_render(
+    model: &voxear_render::BoxModel,
+    tints: [[f32; 3]; 3],
+    lod_bias: f32,
+    distance: f32,
+    figure: bool,
+) -> Option<Vec<u8>> {
     use std::sync::Arc;
-    use voxear_render::{ModelPart, ModelRenderer, NO_TINT, Pose, Sky};
+    use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
     let mut renderer = renderer()?;
-    let text = tint_figure().to_text();
+    let text = model.to_text();
     let model = voxear_render::prepare_model("Figure.boxmodel", &mut |file| match file {
         "Figure.boxmodel" => Ok(text.clone().into_bytes()),
         other => anyhow::bail!("no {other}"),
@@ -7868,7 +7893,6 @@ fn tint_render(tint: Option<[f32; 3]>, lod_bias: f32, distance: f32, figure: boo
         let animation = imported.animation.clone().unwrap();
         let bones: Arc<[voxear_core::math::Mat4]> =
             animation.skeleton.model_matrices(&animation.skeleton.rest()).into();
-        let tints = [tint.unwrap_or(NO_TINT), NO_TINT, NO_TINT];
         let drawn = ModelRenderer { animation: Some(animation), tints, lod_bias, ..ModelRenderer::new(parts) };
         world.spawn((drawn, Pose { bones }, Transform::default()));
     }
@@ -7956,11 +7980,57 @@ fn a_tint_colours_a_box_models_pixels_and_cubes_and_keeps_its_holes_and_sharp_pi
     assert!(now[1] < was[1] - 20 && now[2] < now[1], "far off, the tint holds: {was:?} to {now:?}");
 }
 
+#[test]
+fn a_box_models_colours_take_the_second_tint_or_keep_their_own() {
+    use voxear_render::{NO_TINT, TintSlot};
+    let mut model = tint_figure();
+    model.set_tint_of([200, 40, 40, 255], None);
+    model.set_tint_of([160, 160, 160, 255], Some(TintSlot::Second));
+    let Some(plain) = box_figure_render(&model, [NO_TINT; 3], 0.0, 4.0, true) else { return };
+    let tinted = box_figure_render(&model, [[1.0, 0.5, 0.25], [0.25, 0.5, 1.0], NO_TINT], 0.0, 4.0, true).unwrap();
+    let far = box_figure_render(&model, [[1.0, 0.5, 0.25], [0.25, 0.5, 1.0], NO_TINT], 4.0, 4.0, true).unwrap();
+    keep_image("tint slots.png", &tinted);
+    let (eye, ahead) = (Vec3::new(0.0, 0.75, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let at = |pixels: &[u8], x: f32, y: f32| rgb_at(pixels, on_screen(eye, ahead, Vec3::new(x, y, 0.25)));
+    for (pixels, view) in [(&tinted, "near"), (&far, "with its layers flat")] {
+        // White takes the first tint, orange.
+        let white = at(pixels, 0.1875, 0.6875);
+        assert!(white[0] > white[1] + 30 && white[1] > white[2] + 15, "{view}: {white:?}");
+        // The red keeps its own colour, as untinted.
+        let (was, now) = (at(&plain, -0.3125, 0.1875), at(pixels, -0.3125, 0.1875));
+        assert!((0..3).all(|c| (now[c] - was[c]).abs() < 6), "{view}: the red kept, {was:?} to {now:?}");
+        // The grey cubes take the second, blue.
+        let cubes = at(pixels, 0.75, 0.25);
+        assert!(cubes[2] > cubes[0] + 30 && cubes[2] > cubes[1] + 10, "{view}: the cubes take blue, {cubes:?}");
+        // A mask's tints keep the edges sharp: a twentieth of a pixel from the red, the white is all white.
+        let (edge, middle) = (at(pixels, 0.00625, 0.1875), at(pixels, 0.1875, 0.1875));
+        assert!((0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{view}: {edge:?} beside {middle:?}");
+    }
+}
+
 /// How many pixels differ from `alone` in one picture but not the other.
 fn coverage_unlike(a: &[u8], b: &[u8], alone: &[u8]) -> usize {
     let covered = |seen: &[u8], wall: &[u8]| (0..3).any(|c| seen[c].abs_diff(wall[c]) > 10);
     let pixels = a.chunks_exact(4).zip(b.chunks_exact(4)).zip(alone.chunks_exact(4));
     pixels.filter(|((a, b), wall)| covered(a, wall) != covered(b, wall)).count()
+}
+
+#[test]
+fn a_bone_switched_off_takes_its_boxes_and_their_shadow_with_it() {
+    let Some(shown) = figure_render_with(false, false, false) else { return };
+    let off = figure_render_with(false, false, true).unwrap();
+    keep_image("box model head off.png", &off);
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let at = |pixels: &[u8], x: f32, y: f32| rgb_at(pixels, on_screen(eye, ahead, Vec3::new(x, y, 0.5)));
+    let red = |[r, g, b]: [i32; 3]| r > g.max(b) + 80;
+    assert!(red(at(&shown, 0.25, 1.75)), "the head shown");
+    assert!(red(at(&off, 0.25, 0.75)), "the body stays");
+    // Where the head was, the wall, and no darker than the wall beside it, which the sun lights: no head, and no
+    // head's shadow, which would take the sun's light from it. The middle of the picture is a little brighter.
+    let wall = |x: f32, y: f32| rgb_at(&off, on_screen(eye, ahead, Vec3::new(x, y, -2.9)));
+    let (behind, beside) = (wall(0.0, 1.5), wall(-1.5, 1.5));
+    assert!((0..3).all(|c| behind[c] >= beside[c] - 4), "{behind:?} where the head was, {beside:?} beside it");
+    assert!(!red(behind) && (0..3).all(|c| (behind[c] - behind[0]).abs() < 8), "grey wall, {behind:?}");
 }
 
 /// The rotation of a camera looking along `direction`, level from side to side.

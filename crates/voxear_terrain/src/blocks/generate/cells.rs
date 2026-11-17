@@ -84,7 +84,7 @@ const MOVED_KEPT: usize = 16;
 
 /// How many hectares drain into a place before a river starts there, where
 /// the land lies in levels.
-const LEVEL_RIVERS: f32 = 40.0;
+const LEVEL_RIVERS: f32 = 24.0;
 
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.

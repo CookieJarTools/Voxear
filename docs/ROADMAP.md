@@ -2840,6 +2840,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     stand in nearly half the areas; canyons wind as long ravines; spires are fewer and smaller; a biome's own land
     keeps a quarter of its height past 45 m. Areas' and biomes' borders bend hard so they wind instead of looking
     many-sided. Rivers in a world of levels start only from 40 ha of ground, so fewer and larger.
+  - ~~**Wide lowland:**~~ done: a world of levels lies mostly low, the uplands rising out of wide lowland here and
+    there, and a biome's land rolls less over the lowland than over the uplands; its rivers start from 24 ha, as
+    flat land gathers less water. In a real project's endless world, land under 100 m over the sea went from 7% to
+    55% and nearly flat land from 14% to 31%. Generators' version raised, so kept far views are made again.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the

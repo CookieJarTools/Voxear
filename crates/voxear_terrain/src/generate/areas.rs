@@ -241,6 +241,19 @@ pub const SINK_EDGE: f32 = 0.32;
 pub const MOST_RISE: f32 = 55.0;
 pub const MOST_SINK: f32 = 70.0;
 
+/// How much of the broad climb's pattern lies at the lowest level: wide
+/// lowland, the land rising out of it to the uplands over the rest.
+const LOWLAND: f32 = 0.35;
+
+/// How far up the land's broad climb is, from 0 at the lowest level to 1
+/// at the highest, where its pattern is `share` of the way up: low over
+/// the lowest part of the pattern, then rising slowly at first, so most
+/// land lies low and the uplands stand over it here and there.
+fn lowland(share: f32) -> f32 {
+    let t = ((share - LOWLAND) / (1.0 - LOWLAND)).clamp(0.0, 1.0);
+    t * t
+}
+
 /// How far from where the world starts the land lies low, in metres, and
 /// over how many spacings past that it climbs to its full height.
 const START_LOW: f32 = 400.0;
@@ -410,7 +423,7 @@ impl Areas {
     /// which escarpment's slope, how far up it, and how high its ground is.
     ///
     /// The land climbs from Lowest to Highest over a broad pattern many
-    /// areas wide, and on that climb lie escarpments: long even slopes
+    /// areas wide, most of it lying low, and on that climb lie escarpments: long even slopes
     /// rising one way, each ending in a drop as tall as it rose, all facing
     /// much the same way and winding as they go. Some drops are a level
     /// tall, others fade away into the slope. Basins sink to the lowest
@@ -439,7 +452,7 @@ impl Areas {
             }
             None => (1.0, 1.0),
         };
-        let climb = self.plan.low + top * ((broad - 0.5) * 1.5 + 0.5).clamp(0.0, 1.0) * away;
+        let climb = self.plan.low + top * lowland(((broad - 0.5) * 1.5 + 0.5).clamp(0.0, 1.0)) * away;
         // How tall the escarpments are here.
         let size = spacing * RISE_SIZE;
         let tall = noise::gradient(at[0] / size, at[1] / size, seed ^ 0x7A11);

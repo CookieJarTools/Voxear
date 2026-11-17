@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "shader_pack_frame.slang"
+
 [[vk::binding(0, 0)]] Texture2D textures[];
 [[vk::binding(1, 0)]] SamplerState samplers[];
 [[vk::binding(2, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float> storageImagesR32f[];
@@ -2031,6 +2033,8 @@ struct Buffers
     // shading.slang).
     BlockLightVolume* blockLight;
     uint* blockLightBytes;
+    // The frame a worn shader pack's surface programs read (shader_pack_surface.slang); null with none worn.
+    PackFrame* packFrame;
 };
 
 struct Push

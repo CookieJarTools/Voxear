@@ -1452,7 +1452,13 @@ the block light window's addresses) and add its passes to the frame graph at eac
 image before TAA (copied first for the pass to read), into images of its own after TAA and over the finished
 picture, which the Finish pass then dithers. A pass that reads normals has the depth passes run; one that reads
 history has the colour after TAA copied each frame; a kept target is a pair of history images. With no pack worn
-none of this is recorded.
+none of this is recorded. A pack's `[surface]` programs (`blocks`, `leaves`) light block faces: `compile` builds the
+engine's `blocks.slang` again with `VOXEAR_PACK_BLOCKS` and a `project_pack_blocks.slang` it writes (the options, each
+program in a namespace, `packBlockColor`), and `CompiledPack::modules` carries it; the renderer makes every pipeline
+again from its shaders with that module in place (`pack_modules`), and back without it when the pack goes.
+`shading.slang`'s fragment shader keeps the engine's terms apart under that define and hands them, with the face
+(`terrainKind` from `terrainShading` says what it is), to the pack, which reads its `PackFrame` through
+`Buffers::packFrame`, written for every view.
 
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps

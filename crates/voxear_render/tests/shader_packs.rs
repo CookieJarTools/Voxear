@@ -340,7 +340,8 @@ fn trees_at_evening(renderer: &mut Renderer) -> World {
             for z in 37..44i32 {
                 for x in trunk as i32 - 3..trunk as i32 + 4 {
                     // Leaves with gaps, a pattern of holes the sun comes through.
-                    let hash = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663) ^ z.wrapping_mul(83_492_791)) as u32;
+                    let hash =
+                        (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663) ^ z.wrapping_mul(83_492_791)) as u32;
                     if hash % 5 > 1 {
                         blocks.set([x, y, z], leaves);
                     }
@@ -364,7 +365,8 @@ fn trees_at_evening(renderer: &mut Renderer) -> World {
                 fills_in: 0.0,
                 liquid: Default::default(),
                 glitter: false,
-                leafy: false,
+                // The leaves' look is drawn as leaves are.
+                leafy: look.color == [0.22, 0.48, 0.18],
                 mixed: false,
                 tint: 0,
             }
@@ -418,6 +420,7 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
         None => PackFiles::Embedded(shader_packs::builtin_files("evening").unwrap()),
     };
     let evening = Arc::new(shader_packs::compile(&manifest, &files).unwrap());
+    assert_eq!(evening.modules.len(), 1, "its block faces' program, beside its passes");
     world.insert_resource(WornShaderPack::new(evening.clone()));
     let worn = render(&mut renderer, &world, 24);
     // The same, without the rays.
@@ -425,6 +428,17 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
     no_rays.options[0] = 0.0;
     world.insert_resource(no_rays);
     let without_rays = render(&mut renderer, &world, 24);
+    // And without the leaves' glow.
+    let mut no_glow = WornShaderPack::new(world.resource::<WornShaderPack>().unwrap().pack.clone());
+    no_glow.options[0] = 0.0;
+    no_glow.options[4] = 0.0;
+    world.insert_resource(no_glow);
+    let without_glow = render(&mut renderer, &world, 24);
+    keep_image("evening without glow.png", &without_glow, (WIDTH, HEIGHT));
+    let crowns = |pixels: &[u8]| averages(pixels, WIDTH / 2 - 60..WIDTH / 2 + 60, 60..85).0;
+    let (glowing, dull) = (crowns(&without_rays), crowns(&without_glow));
+    eprintln!("the crowns against the sun: {glowing:.1} with their glow, {dull:.1} without");
+    assert!(glowing > dull + 5.0, "leaves glow against the sun: {glowing} against {dull}");
     keep_image("evening plain.png", &plain, (WIDTH, HEIGHT));
     keep_image("evening worn.png", &worn, (WIDTH, HEIGHT));
     keep_image("evening without rays.png", &without_rays, (WIDTH, HEIGHT));
@@ -443,4 +457,111 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
     eprintln!("the rays brighten the middle by {middle:.1}, the side by {side:.1}");
     assert!(middle > 4.0, "rays towards the sun: {middle}");
     assert!(middle > side * 2.0, "most towards the sun: {middle} against {side}");
+}
+
+/// The trees at evening as a plain picture: no TAA, fixed exposure.
+fn trees_plain(renderer: &mut Renderer) -> World {
+    let mut world = trees_at_evening(renderer);
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.reflections.enabled = false;
+    world.insert_resource(post);
+    world
+}
+
+/// The grass in front of the trees, a crown's leaves, and the sky over them.
+const GRASS: (u32, u32) = (WIDTH / 2, HEIGHT - 12);
+const CROWN: (u32, u32) = (40, 72);
+const OVER: (u32, u32) = (WIDTH / 2, 8);
+
+/// Whether two pictures are the same but for the dither and a few pixels at
+/// shadows' edges, which the sun's shadow pages draw a little differently
+/// from run to run: how many differ by more than a little, and by how much
+/// on average.
+fn alike(a: &[u8], b: &[u8]) -> (usize, f32) {
+    let pixels: Vec<u8> =
+        a.chunks(4).zip(b.chunks(4)).map(|(a, b)| (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap()).collect();
+    let off = pixels.iter().filter(|&&d| d > 4).count();
+    (off, pixels.iter().map(|&d| f32::from(d)).sum::<f32>() / pixels.len() as f32)
+}
+
+/// A pack of `[surface]` programs alone, in a folder of its own.
+fn surfaces(surface: &str, programs: &[(&str, &str)]) -> CompiledPack {
+    let manifest = format!(
+        "[options]\nlevel = {{ kind = \"number\", range = [0.0, 2.0], default = 1.0 }}\n[surface]\n{surface}\n"
+    );
+    pack(&manifest, programs).unwrap_or_else(|error| panic!("{error:#}"))
+}
+
+#[test]
+fn a_blocks_program_lights_every_face_and_a_leaves_program_the_leaves() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let plain = render(&mut renderer, &world, 3);
+    let red =
+        "float3 run(BlockSurface surface, BlockLighting light)\n{\n    return float3(options().level, 0.0, 0.0);\n}\n";
+    let blue = "float3 run(BlockSurface surface, BlockLighting light)\n{\n    return float3(0.0, 0.0, 1.0);\n}\n";
+    let compiled = surfaces(
+        "blocks = \"faces.slang\"\nleaves = \"leaves.slang\"",
+        &[("faces.slang", red), ("leaves.slang", blue)],
+    );
+    assert_eq!(compiled.modules.len(), 1, "the engine's block shader, compiled with them");
+    wear(&mut world, compiled);
+    let worn = render(&mut renderer, &world, 3);
+    assert!(renderer.pack_surfaces_drawn());
+    keep_image("surfaces worn.png", &worn, (WIDTH, HEIGHT));
+    let ([r, g, b], [lr, lg, lb]) = (rgb_at(&worn, GRASS.0, GRASS.1), rgb_at(&worn, CROWN.0, CROWN.1));
+    assert!(r > g + 120 && g == b, "the grass lit red by its program: {r} {g} {b}");
+    assert!(lb > lr + 120 && lr == lg, "the leaves blue by theirs: {lr} {lg} {lb}");
+    let (sky, before) = (rgb_at(&worn, OVER.0, OVER.1), rgb_at(&plain, OVER.0, OVER.1));
+    assert!((0..3).all(|c| (sky[c] - before[c]).abs() <= 2), "the sky as it was: {sky:?} against {before:?}");
+    // An option the program reads, set as whoever plays sets it.
+    if let Some(worn) = world.resource_mut::<WornShaderPack>() {
+        worn.options[0] = 0.25;
+    }
+    let dim = rgb_at(&render(&mut renderer, &world, 2), GRASS.0, GRASS.1)[0];
+    assert!(dim < r - 40, "a quarter as bright: {dim} against {r}");
+    // Taken off, block faces are the engine's again.
+    world.remove_resource::<WornShaderPack>();
+    let again = render(&mut renderer, &world, 3);
+    assert!(!renderer.pack_surfaces_drawn());
+    let (off, mean) = alike(&plain, &again);
+    assert!(off < (WIDTH * HEIGHT / 200) as usize && mean < 0.6, "as it was: {off} pixels off, {mean:.2} on average");
+}
+
+#[test]
+fn a_blocks_program_is_given_the_engines_light_whole_and_by_its_terms() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = trees_plain(&mut renderer);
+    let plain = render(&mut renderer, &world, 10);
+    let whole = "float3 run(BlockSurface surface, BlockLighting light)\n{\n    return light.engine;\n}\n";
+    wear(&mut world, surfaces("blocks = \"faces.slang\"", &[("faces.slang", whole)]));
+    let engine = render(&mut renderer, &world, 10);
+    let terms = "float3 run(BlockSurface surface, BlockLighting light)\n{\n    \
+                 return light.sunTerm + light.ambientTerm + light.reflectionTerm + light.lamps + light.emission;\n}\n";
+    wear(&mut world, surfaces("blocks = \"faces.slang\"", &[("faces.slang", terms)]));
+    let summed = render(&mut renderer, &world, 10);
+    // Lit by the sun alone, as the program works it out from what the face is and the light it sees.
+    let own = "float3 run(BlockSurface surface, BlockLighting light)\n{\n    \
+               return surface.color * light.sunLight * light.shadow * saturate(dot(surface.normal, light.sunDirection)) / 3.14159;\n}\n";
+    wear(&mut world, surfaces("blocks = \"faces.slang\"", &[("faces.slang", own)]));
+    let sunlit = render(&mut renderer, &world, 3);
+    keep_image("surfaces sun alone.png", &sunlit, (WIDTH, HEIGHT));
+    keep_image("surfaces plain.png", &plain, (WIDTH, HEIGHT));
+    keep_image("surfaces engine.png", &engine, (WIDTH, HEIGHT));
+    keep_image("surfaces terms.png", &summed, (WIDTH, HEIGHT));
+    for (name, picture) in [("the engine's", &engine), ("its terms added up", &summed)] {
+        let (off, mean) = alike(&plain, picture);
+        eprintln!("{name}: {off} pixels off, {mean:.3} on average");
+        assert!(off < (WIDTH * HEIGHT / 200) as usize && mean < 0.6, "{name}: {off} pixels off, {mean:.2} on average");
+    }
+    // The sun's light alone: the sunlit grass between the trunks lit, though less than with the sky's light too, and
+    // the grass in the crowns' shadow black.
+    let (lit, plain_lit) = (rgb_at(&sunlit, WIDTH / 2, 140), rgb_at(&plain, WIDTH / 2, 140));
+    let shade = rgb_at(&sunlit, GRASS.0, GRASS.1);
+    eprintln!("sunlit grass {lit:?} against {plain_lit:?}; shade {shade:?}");
+    assert!(lit[1] > 100 && lit[1] < plain_lit[1], "sunlit: {lit:?} against {plain_lit:?}");
+    assert!(shade.iter().all(|&c| c < 8), "in shadow: {shade:?}");
 }

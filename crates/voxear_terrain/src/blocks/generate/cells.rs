@@ -92,6 +92,16 @@ const LEVEL_RIVERS: f32 = 24.0;
 const LEVEL_RIVER_WIDTH: f32 = 24.0;
 const LEVEL_RIVER_DEPTH: f32 = 3.5;
 
+/// Where the land lies in levels, great rivers run first, over points 256 m
+/// apart: from where this many hectares drain into a point, carried on as
+/// far as Run On says, across the lowland to the sea, so wide and deep
+/// where a square kilometre drains into them.
+const GREAT_RIVERS: f32 = 400.0;
+const GREAT_SPACING: f32 = 256.0;
+const GREAT_RUN_ON: f32 = 12_000.0;
+const GREAT_WIDTH: f32 = 26.0;
+const GREAT_DEPTH: f32 = 4.0;
+
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.
 pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_size: f32) -> Source<'a> {
@@ -136,7 +146,7 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         _ => crate::generate::land::add_land(&mut graph, biomes, world.sea_level(), clear_of(generate), regions_of(generate), generate.levels.as_ref()),
     };
     if rivered {
-        crate::generate::nodes::add_rivers(&mut graph, rivers_of(generate));
+        add_rivers(&mut graph, generate);
     }
     if !voxels {
         graph.add_voxels(own, false);
@@ -285,6 +295,34 @@ fn detach(graph: &mut crate::generate::Graph) {
     }
 }
 
+/// Runs the rivers `generate` has down `graph`'s ground: in a world of
+/// levels, great rivers first and the rest down what they leave.
+fn add_rivers(graph: &mut crate::generate::Graph, generate: &BlockGenerate) {
+    match great_rivers_of(generate) {
+        Some(great) => crate::generate::nodes::add_great_rivers(graph, great, rivers_of(generate)),
+        None => crate::generate::nodes::add_rivers(graph, rivers_of(generate)),
+    };
+}
+
+/// The great rivers `generate` runs down its ground before the rest, where
+/// its land lies in levels: few, from far up the uplands, broad and deep,
+/// and carried on across the lowland to the sea.
+fn great_rivers_of(generate: &BlockGenerate) -> Option<Rivers> {
+    generate.levels.as_ref()?;
+    Some(Rivers {
+        spacing: GREAT_SPACING,
+        source: GREAT_RIVERS,
+        width: GREAT_WIDTH,
+        depth: GREAT_DEPTH,
+        valley: 160.0,
+        falls: 8.0,
+        lakes: 0.0,
+        run_on: GREAT_RUN_ON,
+        seed: 1,
+        ..Rivers::default()
+    })
+}
+
 /// The rivers `generate` runs down its ground. Land in levels lies on long
 /// even slopes, down which water runs side by side: fewer rivers, each from
 /// more ground, and wider, read better there.
@@ -344,7 +382,7 @@ pub fn write_land(
     );
     steps.land = (first, mark(&graph));
     if rivered {
-        crate::generate::nodes::add_rivers(&mut graph, rivers_of(generate));
+        add_rivers(&mut graph, generate);
     }
     steps.rivers = (steps.land.1, mark(&graph));
     if !voxels {

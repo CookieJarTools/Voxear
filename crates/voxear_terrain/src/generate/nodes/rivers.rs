@@ -41,6 +41,17 @@
 //! a river and its banks, fading out across its valley, for a biome to grow
 //! sand or reeds by water.
 //!
+//! Water already standing on the ground, wired into Standing, is taken as
+//! the sea is: rivers run into it and leave the ground under it as it is.
+//! So a coarser Rivers node, over points further apart, wired in before,
+//! lays great rivers, and this node's rivers run into them. Run On carries
+//! every river on down its way that far past where it starts, as wide as
+//! there, so a great river crosses flat land, where too little drains in to
+//! keep it going, to the sea. Where rivers are carried on, a hollow spills
+//! only towards lower ground, its river cutting through the rim, so water
+//! never comes round to where it was; and each turn is drawn as a curve,
+//! so rivers over points far apart do not run in straight lines.
+//!
 //! It is sums, products, square roots and `floor`, so every machine makes
 //! the same rivers.
 
@@ -64,7 +75,7 @@ use crate::{
 
 /// Rivers where `source` hectares drain into a point, `width` metres wide
 /// and `depth` deep where a square kilometre does, over points `spacing`
-/// metres apart.
+/// metres apart, each running on at least `run_on` metres down its way.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rivers {
@@ -76,6 +87,7 @@ pub struct Rivers {
     pub falls: f32,
     pub lakes: f32,
     pub meander: f32,
+    pub run_on: f32,
     pub seed: u32,
 }
 
@@ -90,14 +102,16 @@ impl Default for Rivers {
             falls: 5.0,
             lakes: 12.0,
             meander: 0.6,
+            run_on: 0.0,
             seed: 0,
         }
     }
 }
 
 impl Rivers {
-    /// Its input.
+    /// Its inputs: the ground, and water already standing on it.
     pub const GROUND: usize = 0;
+    pub const STANDING: usize = 1;
     /// Its outputs.
     pub const HEIGHT: usize = 0;
     pub const WATER: usize = 1;
@@ -116,11 +130,12 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("falls", "Falls", 1.0, 1000.0, "m"),
     ValueSpec::number("lakes", "Lakes", 0.0, 100000.0, "ha"),
     ValueSpec::number("meander", "Meander", 0.0, 1.0, ""),
+    ValueSpec::number("run_on", "Run On", 0.0, 50000.0, "m").advanced(),
     ValueSpec::number("spacing", "Spacing", 16.0, 1000.0, "m").advanced(),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
 ];
 
-const INPUTS: &[Port] = &[Port::field("ground", "Ground")];
+const INPUTS: &[Port] = &[Port::field("ground", "Ground"), Port::field("standing", "Standing")];
 
 const OUTPUTS: &[Port] = &[
     Port::field("height", "Height"),
@@ -154,8 +169,9 @@ impl Kind for Rivers {
             4 => Value::Number(self.falls),
             5 => Value::Number(self.lakes),
             6 => Value::Number(self.meander),
-            7 => Value::Number(self.spacing),
-            8 => Value::Whole(self.seed),
+            7 => Value::Number(self.run_on),
+            8 => Value::Number(self.spacing),
+            9 => Value::Whole(self.seed),
             _ => return None,
         })
     }
@@ -169,15 +185,21 @@ impl Kind for Rivers {
             (4, Value::Number(number)) => self.falls = number,
             (5, Value::Number(number)) => self.lakes = number,
             (6, Value::Number(number)) => self.meander = number,
-            (7, Value::Number(number)) => self.spacing = number,
-            (8, Value::Whole(whole)) => self.seed = whole,
+            (7, Value::Number(number)) => self.run_on = number,
+            (8, Value::Number(number)) => self.spacing = number,
+            (9, Value::Whole(whole)) => self.seed = whole,
             _ => {}
         }
     }
 
     fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V {
         let ground = cx.input(node, Self::GROUND, at);
-        let program = cx.input_program(node, Self::GROUND);
+        // Water already standing on the ground, as a coarser network's rivers: read with the ground at each point.
+        let standing = cx.input(node, Self::STANDING, at);
+        let program = match standing {
+            Some(_) => cx.inputs_program(node, &[Self::GROUND, Self::STANDING]),
+            None => cx.input_program(node, Self::GROUND),
+        };
         let (Some(ground), Some(program)) = (ground, program) else {
             return match port {
                 Self::HEIGHT => cx.constant(0.0),
@@ -187,7 +209,11 @@ impl Kind for Rivers {
         };
         let seed = seed_for(cx, node, self.seed);
         let finder = Arc::new(Finder::new(self, cx.world.scale.max(0.01), cx.world.sea_level, seed, program));
-        cx.run(Ran { finder, what: port.min(Self::BANKS) as u8 }, &[at.x, at.z, ground])
+        let ran = Ran { finder, what: port.min(Self::BANKS) as u8 };
+        match standing {
+            Some(standing) => cx.run(ran, &[at.x, at.z, ground, standing]),
+            None => cx.run(ran, &[at.x, at.z, ground]),
+        }
     }
 }
 
@@ -208,6 +234,39 @@ pub fn add_rivers(graph: &mut crate::generate::Graph, rivers: Rivers) -> bool {
     wired
 }
 
+/// Runs `great`, a coarser network for great rivers only, down `graph`'s
+/// ground, and `rivers` down the ground it leaves, its rivers running into
+/// the great rivers' water as into the sea: two Rivers nodes between what
+/// is wired into its Output's Height and the Output, the higher of their
+/// Water and of their Falls wired into the Output's. False, and nothing
+/// done, where it has no Output or no ground wired in.
+pub fn add_great_rivers(graph: &mut crate::generate::Graph, great: Rivers, rivers: Rivers) -> bool {
+    use crate::generate::{
+        NodeKind,
+        nodes::{Math, Operation, Output},
+    };
+    let Some(output) = graph.output().map(|node| (node.id, node.at)) else { return false };
+    let Some(link) = graph.link_into(output.0, Output::HEIGHT).copied() else { return false };
+    let (x, y) = (output.1[0], output.1[1]);
+    let great = graph.add(NodeKind::Rivers(great), [x - 560.0, y + 380.0]);
+    let fine = graph.add(NodeKind::Rivers(rivers), [x - 280.0, y + 380.0]);
+    let higher = || NodeKind::Math(Math { operation: Operation::Max, a: 0.0, b: 0.0 });
+    let water = graph.add(higher(), [x - 140.0, y + 300.0]);
+    let falls = graph.add(higher(), [x - 140.0, y + 460.0]);
+    let wired = graph.connect(link.from, link.output, great, Rivers::GROUND)
+        && graph.connect(great, Rivers::HEIGHT, fine, Rivers::GROUND)
+        && graph.connect(great, Rivers::WATER, fine, Rivers::STANDING)
+        && graph.connect(fine, Rivers::HEIGHT, output.0, Output::HEIGHT)
+        && graph.connect(great, Rivers::WATER, water, 0)
+        && graph.connect(fine, Rivers::WATER, water, 1)
+        && graph.connect(water, 0, output.0, Output::WATER)
+        && graph.connect(great, Rivers::FALLS, falls, 0)
+        && graph.connect(fine, Rivers::FALLS, falls, 1)
+        && graph.connect(falls, 0, output.0, Output::FALLS);
+    debug_assert!(wired, "a world's great rivers wire up");
+    wired
+}
+
 /// How many points a side a tile of them is, worked out at once.
 const TILE: i32 = 32;
 
@@ -219,22 +278,17 @@ const REACH: i32 = 8;
 /// running near it.
 const LOOKED: i32 = 2;
 
-/// How many points round a tile what drains into each is counted for: those
-/// a place in it looks at, and the hollows they run into.
-const KNOWN: i32 = LOOKED + SPILL as i32 + 1;
-
-/// How far past a tile the points are read to count what drains into those
-/// in it and round it: as far as any point counted can be, the way from
-/// there, and as far as water spilt from a hollow on it is followed, so
-/// every tile finds the same ways for its points.
-const MARGIN: i32 = KNOWN + 2 * REACH + SPILL_STEPS as i32 + SPILL as i32 + 4;
+/// How many points down its way a river is carried on, at most: its Run On.
+const MOST_RUN: i32 = 64;
 
 /// How far water spilt from a hollow is followed to see whether it comes
 /// back to it, in steps.
 const SPILL_STEPS: usize = 8;
 
-/// How many points from a hollow it may spill over to.
+/// How many points from a hollow it may spill over to, and where rivers
+/// are carried on, as a great river is across flat land to the sea.
 const SPILL: usize = 2;
+const CARRIED_SPILL: usize = 4;
 
 /// How far off its place in the grid a point is, at most, as a share of
 /// the spacing.
@@ -303,6 +357,16 @@ const MOUTH_REACH: f32 = 2.0;
 /// it reaches the shore across a beach whose points stand in the shallows.
 const SHALLOWS: f32 = 6.0;
 
+/// Into how many straight pieces a river's curve round a turn is cut, to
+/// find how near a place is to it.
+const BEND_PIECES: usize = 8;
+
+/// Where rivers are carried on, how wide and deep one is at its head, as a
+/// share of how wide and deep it would be from what drains into it there:
+/// it widens down its first stretch.
+const HEAD_WIDTH: f32 = 0.3;
+const HEAD_DEPTH: f32 = 0.5;
+
 /// How thick a waterfall's curtain is, in metres.
 const CURTAIN: f32 = 1.6;
 
@@ -351,6 +415,11 @@ struct Point {
     /// a spring's at a river's head, or a pond where a river ends in a
     /// hollow; 0 for none.
     pool: f32,
+    /// Whether it lies under water already standing on the ground, which
+    /// a river runs into as into the sea.
+    drowned: bool,
+    /// Whether a river runs into it.
+    fed: bool,
 }
 
 /// A Rivers node's settings held to their ranges, for the ground its
@@ -367,9 +436,29 @@ struct Finder {
     valley: f32,
     falls: f32,
     meander: f32,
+    /// How many points down its way a river is carried on past where it
+    /// starts, as wide as there, and how many points from a hollow it may
+    /// spill over to.
+    run: i32,
+    spill: usize,
+    /// How many points either way of its own cell a place looks at for
+    /// rivers running near it.
+    looked: i32,
+    /// How many points round a tile what drains into each is counted for:
+    /// those a place in it looks at, and the hollows they run into.
+    known: i32,
+    /// How far past a tile the points are read to count what drains into
+    /// those in it and round it: as far as any point counted can be, the
+    /// way from there, as far as a river is carried on, and as far as water
+    /// spilt from a hollow on it is followed, so every tile finds the same
+    /// ways for its points.
+    margin: i32,
     sea: f32,
     seed: u32,
+    /// The ground's program, and with it the water standing on the ground
+    /// where that is wired in.
     ground: Arc<Program>,
+    standing: bool,
     id: u64,
 }
 
@@ -378,17 +467,28 @@ struct Finder {
 /// made on many threads at once. Each is worked out by the first thread to
 /// ask for it, and any other asking meanwhile waits for it rather than
 /// working it out too.
-type Tile = Arc<std::sync::OnceLock<Arc<Vec<Point>>>>;
+type Tile = Arc<std::sync::OnceLock<Arc<TileMade>>>;
+
+/// A tile's points, and where rivers are carried on, for each of its
+/// cells, the points whose rivers, pools or lakes reach a place in it, as
+/// steps from it: from `starts[cell]` to `starts[cell + 1]` of `reach`.
+#[derive(Debug, Default)]
+struct TileMade {
+    points: Vec<Point>,
+    starts: Vec<u32>,
+    reach: Vec<[i8; 2]>,
+}
 static TILES: Mutex<Vec<(u64, [i32; 2], Tile)>> = Mutex::new(Vec::new());
 
 /// How many tiles are kept.
 const KEPT: usize = 48;
 
-/// The ground at the points of blocks of them `GROUND_BLOCK` a side, by the
-/// ground's program, the seed and the spacing, and the block: kept, shared
+/// The ground at the points of blocks of them `GROUND_BLOCK` a side, and
+/// the water standing on it, by the ground's program, the seed and the
+/// spacing, and the block: kept, shared
 /// by every thread, so the tiles round one need not read again what their
 /// margins share.
-type Grounds = std::collections::HashMap<(u64, [i32; 2]), Arc<Vec<f32>>>;
+type Grounds = std::collections::HashMap<(u64, [i32; 2]), Arc<Vec<[f32; 2]>>>;
 static GROUNDS: std::sync::LazyLock<Mutex<Grounds>> = std::sync::LazyLock::new(Default::default);
 const GROUND_BLOCK: i32 = 16;
 /// How many blocks are kept before all are let go.
@@ -406,10 +506,20 @@ impl Finder {
         // A point drains this many hectares.
         let hectares = spacing * spacing / 10_000.0;
         let points = |area: f32| (area / hectares).round().max(1.0);
+        let run = (number(set.run_on, 0.0, 50000.0) * scale / spacing).ceil().min(MOST_RUN as f32) as i32;
+        let standing = ground.outputs.len() > 1;
+        let spill = if run > 0 { CARRIED_SPILL } else { SPILL };
+        // A place looks as far round for rivers as a hollow spills, so it finds the whole of a stretch over a rim;
+        // where turns are drawn as curves, as far again as halfway along the next stretch.
+        let looked = if run > 0 { spill as i32 + 2 } else { LOOKED };
+        let known = looked + spill as i32 + 1;
         let mut key = Key::default();
         key.name("rivers").number(spacing).number(set.source).number(set.lakes).number(set.width);
         key.number(set.depth).number(set.valley).number(set.falls).number(set.meander).number(sea).whole(seed);
         key.whole(ground.hash as u32).whole((ground.hash >> 32) as u32);
+        if run > 0 || standing {
+            key.whole(run as u32).whole(u32::from(standing));
+        }
         Self {
             spacing,
             source: points(number(set.source, 0.5, 100000.0)),
@@ -419,9 +529,15 @@ impl Finder {
             valley: number(set.valley, 0.0, 2000.0) * scale,
             falls: number(set.falls, 1.0, 1000.0),
             meander: number(set.meander, 0.0, 1.0),
+            run,
+            spill,
+            looked,
+            known,
+            margin: known + 2 * REACH + SPILL_STEPS as i32 + spill as i32 + 4 + run,
             sea,
             seed,
             ground,
+            standing,
             id: key.hash(),
         }
     }
@@ -437,14 +553,17 @@ impl Finder {
 
     /// The points of tile `tile`, kept from the last time they were worked
     /// out where they can be.
-    fn tile(&self, tile: [i32; 2]) -> Arc<Vec<Point>> {
+    fn tile(&self, tile: [i32; 2]) -> Arc<TileMade> {
         let cell = {
             let mut tiles = TILES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match tiles.iter().find(|(id, known, _)| *id == self.id && *known == tile) {
                 Some(kept) => kept.2.clone(),
                 None => {
-                    if tiles.len() >= KEPT {
-                        tiles.remove(0);
+                    // Each network keeps its own last few, so a fine one's many tiles never push out a coarse one's.
+                    if tiles.iter().filter(|(id, _, _)| *id == self.id).count() >= KEPT
+                        && let Some(oldest) = tiles.iter().position(|(id, _, _)| *id == self.id)
+                    {
+                        tiles.remove(oldest);
                     }
                     let cell = Tile::default();
                     tiles.push((self.id, tile, cell.clone()));
@@ -457,16 +576,16 @@ impl Finder {
     }
 
     /// The ground at the points of the `side` by `side` square from point
-    /// `first`, row after row: read from the blocks of points kept, those
-    /// not kept read now, all at once, and kept.
-    fn grounds(&self, first: [i32; 2], side: usize) -> Vec<f32> {
+    /// `first`, row after row, and the water standing on it: read from the
+    /// blocks of points kept, those not kept read now, all at once, and kept.
+    fn grounds(&self, first: [i32; 2], side: usize) -> Vec<[f32; 2]> {
         let block = |v: i32| v.div_euclid(GROUND_BLOCK);
         let (low, high) = (
             [block(first[0]), block(first[1])],
             [block(first[0] + side as i32 - 1), block(first[1] + side as i32 - 1)],
         );
         let wanted: Vec<[i32; 2]> = (low[1]..=high[1]).flat_map(|z| (low[0]..=high[0]).map(move |x| [x, z])).collect();
-        let mut found: Vec<([i32; 2], Arc<Vec<f32>>)> = {
+        let mut found: Vec<([i32; 2], Arc<Vec<[f32; 2]>>)> = {
             let kept = GROUNDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let id = self.ground.hash ^ u64::from(self.seed) ^ u64::from(self.spacing.to_bits()) << 32;
             wanted.iter().filter_map(|&at| Some((at, kept.get(&(id, at))?.clone()))).collect()
@@ -485,19 +604,25 @@ impl Finder {
                 .map(|at| (at[0], at[1]))
                 .unzip();
             let mut read = vec![0.0; xs.len()];
-            self.ground.run(xs.len(), Givens { x: &xs, z: &zs, ..Givens::default() }, &mut [&mut read]);
+            let mut standing = vec![NO_WATER; xs.len()];
+            let givens = Givens { x: &xs, z: &zs, ..Givens::default() };
+            match self.standing {
+                true => self.ground.run(xs.len(), givens, &mut [&mut read, &mut standing]),
+                false => self.ground.run(xs.len(), givens, &mut [&mut read]),
+            }
             let id = self.ground.hash ^ u64::from(self.seed) ^ u64::from(self.spacing.to_bits()) << 32;
             let mut kept = GROUNDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if kept.len() + missing.len() > GROUNDS_KEPT {
                 kept.clear();
             }
             for (k, &at) in missing.iter().enumerate() {
-                let values = Arc::new(read[k * each..(k + 1) * each].to_vec());
+                let both = (k * each..(k + 1) * each).map(|at| [read[at], standing[at]]);
+                let values = Arc::new(both.collect::<Vec<_>>());
                 kept.insert((id, at), values.clone());
                 found.push((at, values));
             }
         }
-        let mut grounds = vec![0.0; side * side];
+        let mut grounds = vec![[0.0; 2]; side * side];
         for (at, ground) in grounds.iter_mut().enumerate() {
             let (x, z) = (first[0] + (at % side) as i32, first[1] + (at / side) as i32);
             let held = [block(x), block(z)];
@@ -507,14 +632,19 @@ impl Finder {
         grounds
     }
 
-    fn make_tile(&self, tile: [i32; 2]) -> Vec<Point> {
-        let first = [tile[0] * TILE - MARGIN, tile[1] * TILE - MARGIN];
-        let side = (TILE + 2 * MARGIN) as usize;
+    fn make_tile(&self, tile: [i32; 2]) -> TileMade {
+        let margin = self.margin;
+        let first = [tile[0] * TILE - margin, tile[1] * TILE - margin];
+        let side = (TILE + 2 * margin) as usize;
         let index = |x: usize, z: usize| z * side + x;
         let places: Vec<[f32; 2]> = (0..side * side)
             .map(|at| self.place([first[0] + (at % side) as i32, first[1] + (at / side) as i32]))
             .collect();
-        let read = self.grounds(first, side);
+        let both = self.grounds(first, side);
+        let read: Vec<f32> = both.iter().map(|both| both[0]).collect();
+        // Which points lie under water already standing on the ground, and how high it stands.
+        let standing: Vec<f32> = both.iter().map(|both| both[1]).collect();
+        let drowned: Vec<bool> = (0..both.len()).map(|at| standing[at] > read[at]).collect();
         // Each point's ground averaged with the eight round it, so water finds the broad valleys and not the gullies
         // and bumps between points, which leave no hollows to stop it. The window's outer ring keeps its own.
         let mut ground = read.clone();
@@ -555,14 +685,15 @@ impl Finder {
         // by the ways down alone, near it, so every tile decides it alike.
         let steepest = down.clone();
         let mut spill: Vec<(usize, f32)> = Vec::with_capacity(24);
-        for z in SPILL + 1..side - SPILL - 1 {
-            for x in SPILL + 1..side - SPILL - 1 {
+        let spill_reach = self.spill;
+        for z in spill_reach + 1..side - spill_reach - 1 {
+            for x in spill_reach + 1..side - spill_reach - 1 {
                 let here = index(x, z);
                 if !hollow[here] {
                     continue;
                 }
                 spill.clear();
-                let reach = SPILL as i32;
+                let reach = spill_reach as i32;
                 for dz in -reach..=reach {
                     for dx in -reach..=reach {
                         if (dx, dz) != (0, 0) {
@@ -585,16 +716,38 @@ impl Finder {
                     }
                     index(vx, vz) == here
                 };
-                if let Some(&(over, _)) = spill.iter().find(|(candidate, _)| !leads_back(*candidate)) {
+                // Where rivers are carried on, a hollow spills only where its water goes on down to lower ground than
+                // its own, or the sea: so water never comes round to where it was, and a river carried on never runs
+                // in a ring.
+                let lower = |from: usize| {
+                    let (mut vx, mut vz) = (from % side, from / side);
+                    for _ in 0..=SPILL_STEPS {
+                        let there = index(vx, vz);
+                        if ground[there] < ground[here] {
+                            return true;
+                        }
+                        let Some([dx, dz]) = steepest[there] else { return false };
+                        (vx, vz) = ((vx as i32 + i32::from(dx)) as usize, (vz as i32 + i32::from(dz)) as usize);
+                        if vx < 1 || vz < 1 || vx >= side - 1 || vz >= side - 1 {
+                            return false;
+                        }
+                    }
+                    false
+                };
+                let goes = |candidate: usize| match self.run > 0 {
+                    true => lower(candidate),
+                    false => !leads_back(candidate),
+                };
+                if let Some(&(over, _)) = spill.iter().find(|(candidate, _)| goes(*candidate)) {
                     let (ox, oz) = ((over % side) as i32 - x as i32, (over / side) as i32 - z as i32);
                     down[here] = Some([ox as i8, oz as i8]);
                 }
             }
         }
-        // How many points drain through each of the tile's, and those round it: every point within reach up its
-        // way, whichever tile counts it.
+        // How many points drain through each of the tile's, and those round it as far as a river is carried on
+        // to them: every point within reach up its way, whichever tile counts it.
         let counted = |x: usize, z: usize| {
-            let inner = (MARGIN - KNOWN) as usize..(MARGIN + TILE + KNOWN) as usize;
+            let inner = (margin - self.known - self.run) as usize..(margin + TILE + self.known + self.run) as usize;
             inner.contains(&x) && inner.contains(&z)
         };
         // How much each point counts: more the higher it stands over the ground round it.
@@ -615,6 +768,9 @@ impl Finder {
             })
             .collect();
         let mut catch = vec![0.0f32; places.len()];
+        // Where rivers are carried on, the lowest ground over the sea up each point's way within reach: a river's
+        // water stands no higher, so it never rises where it spills over a hollow's rim, but cuts through.
+        let mut lowest = ground.clone();
         let mut been: Vec<(i32, i32)> = Vec::new();
         for z in 1..side - 1 {
             for x in 1..side - 1 {
@@ -631,7 +787,9 @@ impl Finder {
                         break;
                     }
                     if counted(vx as usize, vz as usize) {
-                        catch[index(vx as usize, vz as usize)] += weight[index(x, z)];
+                        let there = index(vx as usize, vz as usize);
+                        catch[there] += weight[index(x, z)];
+                        lowest[there] = lowest[there].min(ground[index(x, z)].max(self.sea));
                     }
                     let Some([dx, dz]) = down[index(vx as usize, vz as usize)] else { break };
                     (vx, vz) = (vx + i32::from(dx), vz + i32::from(dz));
@@ -641,10 +799,51 @@ impl Finder {
                 }
             }
         }
+        // A river carried on down its way from where it starts, as far as Run On says, as wide as there: on across
+        // flat land where too little drains in to keep it going, until it meets the sea or standing water, or ends in
+        // a hollow.
+        let mut carried = catch.clone();
+        if self.run > 0 {
+            let inner = (margin - self.known - self.run) as usize..(margin + TILE + self.known + self.run) as usize;
+            let starts = |at: usize| {
+                catch[at] >= self.source && !drowned[at] && ground[at] >= self.sea - SHALLOWS && down[at].is_some()
+            };
+            for z in 1..side - 1 {
+                for x in 1..side - 1 {
+                    let start = index(x, z);
+                    if !starts(start) {
+                        continue;
+                    }
+                    let (mut vx, mut vz) = (x as i32, z as i32);
+                    been.clear();
+                    while let Some([dx, dz]) = down[index(vx as usize, vz as usize)] {
+                        (vx, vz) = (vx + i32::from(dx), vz + i32::from(dz));
+                        let far = (vx - x as i32).abs().max((vz - z as i32).abs());
+                        if far > self.run || vx < 1 || vz < 1 || vx >= side as i32 - 1 || vz >= side as i32 - 1 {
+                            break;
+                        }
+                        let there = index(vx as usize, vz as usize);
+                        if been.contains(&(vx, vz)) || drowned[there] || ground[there] < self.sea - SHALLOWS {
+                            break;
+                        }
+                        been.push((vx, vz));
+                        if inner.contains(&(vx as usize)) && inner.contains(&(vz as usize)) {
+                            carried[there] = carried[there].max(catch[start]);
+                            lowest[there] = lowest[there].min(lowest[start]);
+                        }
+                    }
+                }
+            }
+        }
         // A hollow's lake, as high as the lowest of the ground round it, where enough drains into it.
         let lake = |x: usize, z: usize| -> Option<f32> {
             let here = index(x, z);
-            if self.lakes == 0.0 || !hollow[here] || catch[here] < self.lakes || ground[here] < self.sea {
+            if self.lakes == 0.0
+                || !hollow[here]
+                || drowned[here]
+                || catch[here] < self.lakes
+                || ground[here] < self.sea
+            {
                 return None;
             }
             // As high as the lowest of the ground round it, and no higher than where it spills.
@@ -665,58 +864,145 @@ impl Finder {
         };
         // Whether a river runs from a point: enough drains into it, it is over the sea or in its shallows, so it runs
         // on across the shore, and it drains on.
-        let river = |at: usize| catch[at] >= self.source && ground[at] >= self.sea - SHALLOWS && down[at].is_some();
+        let river = |at: usize| {
+            carried[at] >= self.source && ground[at] >= self.sea - SHALLOWS && down[at].is_some() && !drowned[at]
+        };
         let point = |x: usize, z: usize| {
             let here = index(x, z);
-            let (width, depth) = size(catch[here]);
+            let (width, depth) = size(carried[here]);
             let mut point = Point { at: places[here], down: down[here], width, depth, ..Point::default() };
+            if drowned[here] {
+                // Under water standing on the ground: a river runs into it as into the sea.
+                (point.drowned, point.level) = (true, standing[here]);
+                return point;
+            }
             let pool = (width * POOL_WIDTHS).max(LEAST_POOL);
             if let Some(level) = lake(x, z) {
                 // Its water runs on from it where it spills, as a river where enough drains into it.
                 (point.lake, point.level) = (true, level);
-                point.river = catch[here] >= self.source;
+                point.river = carried[here] >= self.source;
             } else {
                 point.river = river(here);
-                let mut level = ground[here] - depth;
-                // Running into a lake, as high as it.
-                if let Some([dx, dz]) = down[here]
-                    && let Some(lake) = lake((x as i32 + i32::from(dx)) as usize, (z as i32 + i32::from(dz)) as usize)
-                {
-                    level = level.max(lake);
+                let mut level = match self.run > 0 {
+                    true => lowest[here].min(ground[here]) - depth,
+                    false => ground[here] - depth,
+                };
+                // Running into a lake, as high as it, and into water standing on the ground.
+                if let Some([dx, dz]) = down[here] {
+                    let (tx, tz) = ((x as i32 + i32::from(dx)) as usize, (z as i32 + i32::from(dz)) as usize);
+                    if let Some(lake) = lake(tx, tz) {
+                        level = level.max(lake);
+                    }
+                    if drowned[index(tx, tz)] {
+                        level = level.max(standing[index(tx, tz)]);
+                    }
                 }
                 point.level = level.max(self.sea);
-                // A river's head, which no river runs into, rises from a spring's pool.
-                let fed = ROUND.iter().any(|&(dx, dz)| {
+                // A river's head, which no river runs into, rises from a spring's pool. Where rivers are carried on,
+                // one spilling into it from further than the points round it counts too.
+                let feeds = |dx: i32, dz: i32| {
                     let there = index((x as i32 + dx) as usize, (z as i32 + dz) as usize);
                     down[there] == Some([-dx as i8, -dz as i8]) && river(there)
-                });
+                };
+                let fed = match self.run > 0 {
+                    true => {
+                        let reach = self.spill as i32;
+                        (-reach..=reach).any(|dz| (-reach..=reach).any(|dx| (dx, dz) != (0, 0) && feeds(dx, dz)))
+                    }
+                    false => ROUND.iter().any(|&(dx, dz)| feeds(dx, dz)),
+                };
+                point.fed = fed;
                 if point.river && !fed {
-                    point.pool = pool;
+                    match self.run > 0 {
+                        // A river carried on, as a great one is, rises narrow where the streams feeding it gather.
+                        true => (point.width, point.depth) = (width * HEAD_WIDTH, depth * HEAD_DEPTH),
+                        false => point.pool = pool,
+                    }
                 }
                 // A river that runs into a hollow with no lake to hold it ends in a pond there.
-                if down[here].is_none() && catch[here] >= self.source && ground[here] >= self.sea + MOUTH {
+                if down[here].is_none() && carried[here] >= self.source && ground[here] >= self.sea + MOUTH {
                     (point.pool, point.level) = (pool, ground[here] - 0.3);
                 }
             }
             point
         };
         // The tile's points and those round it as far as a place in it looks.
-        let from = (MARGIN - LOOKED) as usize;
-        let wide = (TILE + 2 * LOOKED) as usize;
+        let looked = self.looked;
+        let from = (margin - looked) as usize;
+        let wide = (TILE + 2 * looked) as usize;
         let round: Vec<Point> = (0..wide * wide).map(|at| point(from + at % wide, from + at / wide)).collect();
         let wet = |x: usize, z: usize| {
             let point = &round[z * wide + x];
             point.river || point.lake || point.pool > 0.0
         };
         let mut points = Vec::with_capacity((TILE * TILE) as usize);
-        for z in LOOKED as usize..(LOOKED + TILE) as usize {
-            for x in LOOKED as usize..(LOOKED + TILE) as usize {
-                let reach = LOOKED as usize;
+        for z in looked as usize..(looked + TILE) as usize {
+            for x in looked as usize..(looked + TILE) as usize {
+                let reach = looked as usize;
                 let near = (z - reach..=z + reach).any(|z| (x - reach..=x + reach).any(|x| wet(x, z)));
                 points.push(Point { near, ..round[z * wide + x] });
             }
         }
-        points
+        if self.run == 0 {
+            return TileMade { points, ..TileMade::default() };
+        }
+        // Where rivers are carried on, a place looks far round, so each cell keeps the points whose river, pool or
+        // lake can reach a place in it, and a place looks at those alone.
+        let mut each: Vec<Vec<[i8; 2]>> = vec![Vec::new(); (TILE * TILE) as usize];
+        let valley = self.valley.max(RIM + LEVEE);
+        for (at, from_point) in round.iter().enumerate() {
+            let (x, z) = (from + at % wide, from + at / wide);
+            let mut reached: Vec<[f32; 2]> = vec![from_point.at];
+            let mut pad: f32 = 0.0;
+            if from_point.lake {
+                pad = pad.max(LAKE_REACH * self.spacing + RIM + LEVEE);
+            }
+            if from_point.pool > 0.0 {
+                pad = pad.max(from_point.pool + POOL_SIDE.max(RIM + LEVEE));
+            }
+            if let Some([dx, dz]) = from_point.down.filter(|_| from_point.river) {
+                let (tx, tz) = ((x as i32 + i32::from(dx)) as usize, (z as i32 + i32::from(dz)) as usize);
+                let to = point(tx, tz);
+                let mut widest = from_point.width.max(to.width);
+                reached.push(to.at);
+                if self.into_sea(&to) {
+                    let on = |k: usize| from_point.at[k] + (to.at[k] - from_point.at[k]) * MOUTH_REACH;
+                    reached.push([on(0), on(1)]);
+                }
+                if let Some([ax, az]) = to.down.filter(|_| to.river && !to.lake) {
+                    let after = point((tx as i32 + i32::from(ax)) as usize, (tz as i32 + i32::from(az)) as usize);
+                    reached.push([(to.at[0] + after.at[0]) * 0.5, (to.at[1] + after.at[1]) * 0.5]);
+                    widest = widest.max(after.width);
+                }
+                pad = pad.max(valley + widest * 0.5 * (1.0 + MOUTH_WIDENS) + 1.0);
+            }
+            if pad <= 0.0 {
+                continue;
+            }
+            let low = |k: usize| reached.iter().map(|at| at[k]).fold(f32::MAX, f32::min) - pad;
+            let high = |k: usize| reached.iter().map(|at| at[k]).fold(f32::MIN, f32::max) + pad;
+            let cells = |k: usize| {
+                let first = tile[k] * TILE;
+                let low = ((low(k) / self.spacing).floor() as i32).max(first);
+                let high = ((high(k) / self.spacing).floor() as i32).min(first + TILE - 1);
+                low..=high
+            };
+            let own = [first[0] + x as i32, first[1] + z as i32];
+            for cz in cells(1) {
+                for cx in cells(0) {
+                    let local = ((cz - tile[1] * TILE) * TILE + cx - tile[0] * TILE) as usize;
+                    each[local].push([(own[0] - cx) as i8, (own[1] - cz) as i8]);
+                }
+            }
+        }
+        let mut made = TileMade { points, starts: Vec::with_capacity(each.len() + 1), reach: Vec::new() };
+        for (cell, steps) in each.into_iter().enumerate() {
+            made.starts.push(made.reach.len() as u32);
+            made.points[cell].near = !steps.is_empty();
+            made.reach.extend(steps);
+        }
+        made.starts.push(made.reach.len() as u32);
+        made
     }
 }
 
@@ -724,23 +1010,36 @@ impl Finder {
 /// at hand while a row is worked out.
 struct Near<'a> {
     finder: &'a Finder,
-    tiles: Vec<([i32; 2], Arc<Vec<Point>>)>,
+    tiles: Vec<([i32; 2], Arc<TileMade>)>,
 }
 
 impl Near<'_> {
     fn point(&mut self, cell: [i32; 2]) -> Point {
+        let (tile, local) = self.made(cell);
+        tile.points[local]
+    }
+
+    /// The points whose rivers, pools or lakes reach a place in `cell`,
+    /// where rivers are carried on.
+    fn reaching(&mut self, cell: [i32; 2]) -> Vec<[i32; 2]> {
+        let (tile, local) = self.made(cell);
+        let steps = &tile.reach[tile.starts[local] as usize..tile.starts[local + 1] as usize];
+        steps.iter().map(|&[dx, dz]| [cell[0] + i32::from(dx), cell[1] + i32::from(dz)]).collect()
+    }
+
+    /// The tile `cell` is in, and its place in it.
+    fn made(&mut self, cell: [i32; 2]) -> (Arc<TileMade>, usize) {
         let tile = [cell[0].div_euclid(TILE), cell[1].div_euclid(TILE)];
         let local = (cell[1].rem_euclid(TILE) * TILE + cell[0].rem_euclid(TILE)) as usize;
-        if let Some((_, points)) = self.tiles.iter().find(|(known, _)| *known == tile) {
-            return points[local];
+        if let Some((_, made)) = self.tiles.iter().find(|(known, _)| *known == tile) {
+            return (made.clone(), local);
         }
-        let points = self.finder.tile(tile);
-        let point = points[local];
+        let made = self.finder.tile(tile);
         if self.tiles.len() >= 8 {
             self.tiles.remove(0);
         }
-        self.tiles.push((tile, points));
-        point
+        self.tiles.push((tile, made.clone()));
+        (made, local)
     }
 }
 
@@ -767,9 +1066,14 @@ struct Made {
 
 impl Finder {
     /// What the rivers and lakes near `(x, z)` make of ground `ground` high
-    /// there.
-    fn at(&self, near: &mut Near, x: f32, z: f32, ground: f32) -> Made {
+    /// there, where water already standing on the ground stands `standing`
+    /// high.
+    fn at(&self, near: &mut Near, x: f32, z: f32, ground: f32, standing: f32) -> Made {
         let mut made = Made { height: ground, water: NO_WATER, falls: 0.0, banks: 0.0 };
+        // Under water standing on the ground, as a great river's, its ground is left as it is.
+        if standing > ground {
+            return made;
+        }
         // Read where the world is bent, so rivers wind between their points.
         let bend = self.meander * self.spacing * 0.45;
         let wide = self.spacing * 1.7;
@@ -788,9 +1092,16 @@ impl Finder {
         let mut nearest: Option<Reached> = None;
         let mut lakes: Vec<Point> = Vec::new();
         let mut pools: Vec<Point> = Vec::new();
-        for dz in -LOOKED..=LOOKED {
-            for dx in -LOOKED..=LOOKED {
-                let from = [cell[0] + dx, cell[1] + dz];
+        // The points round whose rivers, pools and lakes may reach the place: where rivers are carried on, those its
+        // cell keeps.
+        let round: Vec<[i32; 2]> = match self.run > 0 {
+            true => near.reaching(cell),
+            false => (-self.looked..=self.looked)
+                .flat_map(|dz| (-self.looked..=self.looked).map(move |dx| [cell[0] + dx, cell[1] + dz]))
+                .collect(),
+        };
+        {
+            for from in round {
                 let point = near.point(from);
                 if point.lake {
                     lakes.push(point);
@@ -799,8 +1110,20 @@ impl Finder {
                     pools.push(point);
                 }
                 let Some([sx, sz]) = point.down.filter(|_| point.river) else { continue };
-                let to = near.point([from[0] + i32::from(sx), from[1] + i32::from(sz)]);
-                if let Some(river) = self.stretch(&point, &to, [wx, wz], cut) {
+                let next = [from[0] + i32::from(sx), from[1] + i32::from(sz)];
+                let to = near.point(next);
+                let found = match self.run > 0 {
+                    // Where rivers are carried on, over points far apart, each turn is drawn as a curve.
+                    true => {
+                        let after = to
+                            .down
+                            .filter(|_| to.river && !to.lake)
+                            .map(|[ax, az]| near.point([next[0] + i32::from(ax), next[1] + i32::from(az)]));
+                        self.curved(&point, &to, after.as_ref(), [wx, wz], cut)
+                    }
+                    false => self.stretch(&point, &to, [wx, wz], cut, 0.0, f32::MAX),
+                };
+                if let Some(river) = found {
                     if nearest.is_none_or(|nearest| river.past < nearest.past) {
                         nearest = Some(river);
                     }
@@ -875,21 +1198,84 @@ impl Finder {
         made
     }
 
+    /// What the river from `from` down to `to` and on to `after`, where
+    /// it goes on, makes of place `at`, its course curving round `to` from
+    /// halfway along the stretch before to halfway along the next; and
+    /// straight from `from` where it is a river's head.
+    fn curved(&self, from: &Point, to: &Point, after: Option<&Point>, at: [f32; 2], cut: f32) -> Option<Reached> {
+        let head = if from.fed { None } else { self.stretch(from, to, at, cut, 0.0, 0.5) };
+        let rest = match after {
+            Some(after) => self.bend(from, to, after, at, cut),
+            None => self.stretch(from, to, at, cut, 0.5, f32::MAX),
+        };
+        match (head, rest) {
+            (Some(head), Some(rest)) => Some(if head.past < rest.past { head } else { rest }),
+            (head, rest) => head.or(rest),
+        }
+    }
+
+    /// What the river turning at `to`, from `from` and on to `after`,
+    /// makes of place `at`: its course a curve from halfway along the
+    /// stretch before to halfway along the next, drawn towards `to`.
+    fn bend(&self, from: &Point, to: &Point, after: &Point, at: [f32; 2], cut: f32) -> Option<Reached> {
+        let start = [(from.at[0] + to.at[0]) * 0.5, (from.at[1] + to.at[1]) * 0.5];
+        let end = [(to.at[0] + after.at[0]) * 0.5, (to.at[1] + after.at[1]) * 0.5];
+        let curve = |u: f32| {
+            let (a, b, c) = ((1.0 - u) * (1.0 - u), 2.0 * u * (1.0 - u), u * u);
+            [a * start[0] + b * to.at[0] + c * end[0], a * start[1] + b * to.at[1] + c * end[1]]
+        };
+        // The nearest place on the curve, found along a few straight pieces of it.
+        let mut nearest = (f32::MAX, 0.0);
+        let mut last = start;
+        for piece in 1..=BEND_PIECES {
+            let u1 = piece as f32 / BEND_PIECES as f32;
+            let next = curve(u1);
+            let (ax, az) = (next[0] - last[0], next[1] - last[1]);
+            let (px, pz) = (at[0] - last[0], at[1] - last[1]);
+            let on = ((px * ax + pz * az) / (ax * ax + az * az).max(1e-6)).clamp(0.0, 1.0);
+            let (cx, cz) = (px - ax * on, pz - az * on);
+            let off = cx * cx + cz * cz;
+            if off < nearest.0 {
+                nearest = (off, (piece as f32 - 1.0 + on) / BEND_PIECES as f32);
+            }
+            last = next;
+        }
+        let (off, u) = (nearest.0.sqrt(), nearest.1);
+        match u < 0.5 {
+            true => self.reached(from, to, 0.5 + u, off, cut),
+            false => self.reached(to, after, u - 0.5, off, cut),
+        }
+    }
+
     /// What the stretch of river from `from` down to `to` makes of place
     /// `at`, where it is near enough to change it, its banks as cut there as
-    /// `cut` says, from 0 for shelving to 1.
-    fn stretch(&self, from: &Point, to: &Point, at: [f32; 2], cut: f32) -> Option<Reached> {
+    /// `cut` says, from 0 for shelving to 1: the part of it from `first` to
+    /// `last` of the way along.
+    fn stretch(&self, from: &Point, to: &Point, at: [f32; 2], cut: f32, first: f32, last: f32) -> Option<Reached> {
         let (ax, az) = (to.at[0] - from.at[0], to.at[1] - from.at[1]);
         let long = (ax * ax + az * az).sqrt().max(1e-3);
         let (px, pz) = (at[0] - from.at[0], at[1] - from.at[1]);
         // A river running into the sea runs on straight past its point there, whose place may be on the beach,
         // until it meets the sea: what is under the sea is left as it is.
-        let into_sea = !to.river && !to.lake && to.level <= self.sea;
-        let reach = if into_sea { MOUTH_REACH } else { 1.0 };
-        let on = ((px * ax + pz * az) / (long * long)).clamp(0.0, reach);
+        let reach = if self.into_sea(to) { MOUTH_REACH } else { 1.0 };
+        let on = ((px * ax + pz * az) / (long * long)).clamp(first, reach.min(last));
         let (cx, cz) = (px - ax * on, pz - az * on);
         let off = (cx * cx + cz * cz).sqrt();
-        let t = on.min(1.0);
+        self.reached(from, to, on, off, cut)
+    }
+
+    /// Whether a river running down to `to` runs into the sea there, or
+    /// water standing on the ground.
+    fn into_sea(&self, to: &Point) -> bool {
+        !to.river && !to.lake && (to.level <= self.sea || to.drowned)
+    }
+
+    /// What the stretch of river from `from` down to `to` makes of a place
+    /// `on` of the way along it and `off` metres to its side.
+    fn reached(&self, from: &Point, to: &Point, on: f32, off: f32, cut: f32) -> Option<Reached> {
+        let (ax, az) = (to.at[0] - from.at[0], to.at[1] - from.at[1]);
+        let long = (ax * ax + az * az).sqrt().max(1e-3);
+        let t = on.clamp(0.0, 1.0);
         // As wide and deep as its upper end, and the lower's where a river goes on from it.
         let (width, depth) = match to.river || to.lake {
             true => (from.width + (to.width - from.width) * t, from.depth + (to.depth - from.depth) * t),
@@ -938,7 +1324,8 @@ impl Finder {
 }
 
 /// A Rivers node's ground, water, falls or banks at each place, by `what`
-/// (its output's number), from rows of x, z and the ground wired in.
+/// (its output's number), from rows of x, z and the ground wired in, and
+/// the water standing on it where that is wired in too.
 #[derive(Debug)]
 struct Ran {
     finder: Arc<Finder>,
@@ -952,17 +1339,60 @@ impl Kernel for Ran {
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        let mut near = Near { finder: &self.finder, tiles: Vec::new() };
-        for (at, out) in out.iter_mut().enumerate() {
-            let made = self.finder.at(&mut near, inputs[0][at], inputs[1][at], inputs[2][at]);
-            *out = match usize::from(self.what) {
-                Rivers::HEIGHT => made.height,
-                Rivers::WATER => made.water,
-                Rivers::FALLS => made.falls,
-                _ => made.banks,
-            };
+        // A Rivers node's outputs each ask the same places in turn: they are worked out once, for all of them. Not
+        // while the places are worked out, which may run another Rivers node's on this thread for the ground.
+        let what = usize::from(self.what).min(Rivers::BANKS);
+        let same = |made: &RanMade| {
+            made.id == self.finder.id
+                && made.rows.len() == inputs.len()
+                && made.rows.iter().zip(inputs).all(|(kept, row)| kept.as_slice() == *row)
+        };
+        let found = MADE.with_borrow(|kept| {
+            let made = kept.iter().find(|made| same(made))?;
+            for (out, made) in out.iter_mut().zip(&made.made) {
+                *out = made[what];
+            }
+            Some(())
+        });
+        if found.is_some() {
+            return;
         }
+        let mut near = Near { finder: &self.finder, tiles: Vec::new() };
+        let standing = inputs.get(3).copied().unwrap_or_default();
+        let made: Vec<[f32; 4]> = (0..out.len())
+            .map(|at| {
+                let standing = standing.get(at).copied().unwrap_or(NO_WATER);
+                let made = self.finder.at(&mut near, inputs[0][at], inputs[1][at], inputs[2][at], standing);
+                [made.height, made.water, made.falls, made.banks]
+            })
+            .collect();
+        for (out, made) in out.iter_mut().zip(&made) {
+            *out = made[what];
+        }
+        // Kept for each of the last few nodes, as a great river's node and the one after it ask in turn.
+        let rows = inputs.iter().map(|row| row.to_vec()).collect();
+        MADE.with_borrow_mut(|kept| {
+            if kept.len() >= MADE_KEPT {
+                kept.remove(0);
+            }
+            kept.push(RanMade { id: self.finder.id, rows, made });
+        });
     }
+}
+
+/// The places a Rivers node last worked out on this thread, by its
+/// finder, and its height, water, falls and banks at each.
+#[derive(Default)]
+struct RanMade {
+    id: u64,
+    rows: Vec<Vec<f32>>,
+    made: Vec<[f32; 4]>,
+}
+
+const MADE_KEPT: usize = 4;
+
+thread_local! {
+    static MADE: std::cell::RefCell<Vec<RanMade>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -1142,6 +1572,115 @@ mod tests {
         }
         assert!(flowing > 100, "{flowing} places where the water flows");
         assert!(uphill * 50 <= flowing, "{uphill} of {flowing} run uphill");
+    }
+
+    /// Starter `name`'s ground with great rivers run down it before its own rivers: a network over points 256 m
+    /// apart, each river carried on 12 km.
+    fn with_great_rivers(name: &str) -> WorldGen {
+        let (_, plain) = with_and_without(name);
+        let mut graph = plain.graph().clone();
+        let great = Rivers {
+            spacing: 256.0,
+            source: 300.0,
+            width: 26.0,
+            depth: 4.0,
+            valley: 160.0,
+            falls: 8.0,
+            lakes: 0.0,
+            run_on: 12_000.0,
+            seed: 1,
+            ..Rivers::default()
+        };
+        assert!(add_great_rivers(&mut graph, great, Rivers::default()));
+        WorldGen::new(7, 1.0, plain.sea_level(), graph)
+    }
+
+    /// How many pieces of river and lake water, joined side to side, over `least` square metres, meet the sea, in
+    /// a square of places `step` metres apart, `side` a side.
+    fn meeting_the_sea(heights: &[f32], water: &[f32], sea: f32, side: usize, step: f32, least: f32) -> usize {
+        // A river's mouth cuts under the sea's level: water over ground anywhere is a river's or a lake's.
+        let river = |at: usize| wet(water[at]) && water[at] > heights[at];
+        let salt = |at: usize| heights[at] < sea && !river(at);
+        let mut seen = vec![false; heights.len()];
+        let mut meeting = 0;
+        for start in 0..heights.len() {
+            if seen[start] || !river(start) {
+                continue;
+            }
+            seen[start] = true;
+            let (mut stack, mut size, mut meets) = (vec![start], 0usize, false);
+            while let Some(at) = stack.pop() {
+                size += 1;
+                let (x, z) = (at % side, at / side);
+                let round = [(x > 0, at.wrapping_sub(1)), (x + 1 < side, at + 1)];
+                let round = round.into_iter().chain([(z > 0, at.wrapping_sub(side)), (z + 1 < side, at + side)]);
+                for (inside, there) in round {
+                    if !inside {
+                        continue;
+                    }
+                    meets |= salt(there);
+                    if !seen[there] && river(there) {
+                        seen[there] = true;
+                        stack.push(there);
+                    }
+                }
+            }
+            if meets && size as f32 * step * step > least {
+                meeting += 1;
+            }
+        }
+        meeting
+    }
+
+    #[test]
+    fn great_rivers_are_carried_on_to_the_sea_and_the_rest_run_into_them_without_walls() {
+        let world = with_great_rivers("Alpine");
+        testing::checked(&world);
+        let sea = world.sea_level();
+        let (side, step) = (500, 16.0);
+        let (xs, zs) = grid(-4000.0, -4000.0, step, side);
+        let mut heights = vec![0.0; xs.len()];
+        world.heights(&xs, &zs, &mut heights);
+        let (water, falls) = world.water(&xs, &zs).unwrap();
+        // More rivers over a few hectares meet the sea than where there are no great rivers.
+        let (own, _) = with_and_without("Alpine");
+        let mut own_heights = vec![0.0; xs.len()];
+        own.heights(&xs, &zs, &mut own_heights);
+        let (own_water, _) = own.water(&xs, &zs).unwrap();
+        let great = meeting_the_sea(&heights, &water, sea, side, step, 30_000.0);
+        let before = meeting_the_sea(&own_heights, &own_water, sea, side, step, 30_000.0);
+        assert!(great > before && great >= 2, "{great} rivers over 3 ha meet the sea, against {before}");
+        // Some of it is broad: 60 m across.
+        let broad = (0..xs.len()).filter(|&at| {
+            let wide = |dx: f32, dz: f32| {
+                let (wx, wz) = (vec![xs[at] - dx, xs[at] + dx], vec![zs[at] - dz, zs[at] + dz]);
+                world.water(&wx, &wz).unwrap().0.iter().all(|&w| wet(w) && w > sea + 0.5)
+            };
+            at % 7 == 0 && wet(water[at]) && water[at] > sea + 0.5 && wide(30.0, 0.0) && wide(0.0, 30.0)
+        });
+        assert!(broad.count() > 0, "no river 60 m across");
+        // A metre either way from water, the ground is as high as the water or there is water too, the sea's where it
+        // is under the sea, where the rivers run into the great ones as much as anywhere. A waterfall's curtain
+        // stands over its pool.
+        let (mut asked, mut walls) = (0, 0);
+        let curtain = |falls: f32| falls > 0.0;
+        let watered = |at: usize| wet(water[at]) && heights[at] < water[at] && !curtain(falls[at]);
+        for at in (0..xs.len()).filter(|&at| watered(at)).step_by(3) {
+            let near_xs = [xs[at] - 1.0, xs[at] + 1.0, xs[at], xs[at]];
+            let near_zs = [zs[at], zs[at], zs[at] - 1.0, zs[at] + 1.0];
+            let mut beside = [0.0; 4];
+            world.heights(&near_xs, &near_zs, &mut beside);
+            let (beside_water, beside_falls) = world.water(&near_xs, &near_zs).unwrap();
+            for k in 0..4 {
+                asked += 1;
+                let filled = wet(beside_water[k]) || beside[k] < sea || curtain(beside_falls[k]);
+                if !filled && beside[k] < water[at] - 0.3 {
+                    walls += 1;
+                }
+            }
+        }
+        assert!(asked > 1000, "{asked} places beside water asked");
+        assert!(walls * 1000 <= asked, "{walls} of {asked} places beside water lower than it and dry");
     }
 
     #[test]

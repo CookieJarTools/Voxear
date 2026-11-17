@@ -203,7 +203,9 @@ High ground counts for more than low, as rain and snow gather sooner off hills a
 | Lakes | How much ground drains into a hollow before it holds a lake, in hectares; none at 0. A lake stands as high as the lowest of the ground round it, and rivers run in and out of it |
 | Meander | How much the rivers wind, 0 to 1 |
 
-Under Advanced: **Spacing** (how far apart the grid's points are) and **Seed**.
+Under Advanced: **Run On** (how far every river runs on down its way past where it starts, in metres, as wide as there; 0 for none), **Spacing** (how far apart the grid's points are) and **Seed**.
+
+**Great rivers.** Wire one Rivers node's Height into a second's Ground and its Water into the second's **Standing**, and take the higher of their Water, and of their Falls, into the Output's with Max nodes. The first, over points far apart (256 m) with a high Source and a long Run On, lays a few broad rivers that run on across flat land to the sea, where too little drains in to keep a river going; the second lays the smaller rivers, which run into the great ones' water as into the sea and leave the ground under it as it is. Where rivers are carried on, a hollow spills only towards lower ground, its river cutting through the rim, and each turn is drawn as a curve, so rivers over points so far apart do not run in straight lines.
 
 A river's water always runs downhill. Its bed is cut into the ground in a bowl, dropping steeply from its edge to a broad middle, and its banks rise from just over its water up its valley's sides: in some stretches at once, where it has cut into them as on the outside of a bend, elsewhere along a low shelving strip. Where the ground beside it is lower than its water, a low rim holds it in, so water never stands over the air beside it.
 
@@ -216,7 +218,7 @@ Where a river comes from and where it goes:
 | A lake | It runs in at the lake's level, and out where the lake spills. No bank is raised inside a lake |
 | A hollow too shallow for a lake | A pond, dug where it ends, so no river stops in the grass |
 
-**In:** Ground. **Out:** Height, Water (the water's height where there is a river or a lake), Falls (how many metres of a waterfall pour down there), Banks (1 on a river and its banks, fading out across its valley).
+**In:** Ground, Standing (water already standing on the ground, as a coarser Rivers node's Water: rivers run into it as into the sea). **Out:** Height, Water (the water's height where there is a river or a lake), Falls (how many metres of a waterfall pour down there), Banks (1 on a river and its banks, fading out across its valley).
 
 The water flows down its slope: a [[Block Worlds#Rivers and currents|river in a Block World]] carries what floats in it, and drags characters wading it.
 

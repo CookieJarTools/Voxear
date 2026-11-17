@@ -71,8 +71,9 @@ pub(crate) fn lay_out(graph: &mut Graph, steps: &Steps, biomes: &[BiomeDef], nam
     first_row.retain(|part| !part.nodes.is_empty());
     let mut second_row = Vec::new();
     if !rivers.is_empty() {
-        let text = "Rivers run down the land as it is shaped above, and lakes fill its hollows: their water and \
-                    falls go into the Output.";
+        let text = "Rivers run down the land as it is shaped above, and lakes fill its hollows: in a world of \
+                    levels a few great rivers first, carried on to the sea, and the rest running into them. Their \
+                    water and falls go into the Output.";
         second_row.push(Part::new("Rivers", text, rivers));
     }
     if !voxels.is_empty() {

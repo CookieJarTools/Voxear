@@ -52,7 +52,7 @@ pub(crate) const MOST_OVER: f32 = 64.0;
 
 /// Counted into every program's hash: raised whenever a kernel's numbers
 /// change, so what was made by the old ones is made again.
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 /// Where a node is asked for its output: at rows of `x` and `z`, in metres
 /// in the generator's world.
@@ -364,6 +364,22 @@ impl<'a> Compiler<'a> {
         let field = cx.input(node, input, at)?;
         let program = Arc::new(cx.finish(&[field]).0);
         self.input_programs.insert((node, input), program.clone());
+        Some(program)
+    }
+
+    /// What is wired into each of `inputs` of `node`, as one program of its own with an output for each, in their
+    /// order: as `input_program`, for a kernel that reads several of its inputs somewhere else. None where any has
+    /// no wire.
+    pub fn inputs_program(&mut self, node: NodeId, inputs: &[usize]) -> Option<Arc<Program>> {
+        let kept = (node, usize::MAX - inputs.iter().fold(0, |sum, input| sum * 16 + input + 1));
+        if let Some(program) = self.input_programs.get(&kept) {
+            return Some(program.clone());
+        }
+        let mut cx = Compiler::new(self.graph, self.world, false);
+        let at = cx.places();
+        let fields = inputs.iter().map(|&input| cx.input(node, input, at)).collect::<Option<Vec<V>>>()?;
+        let program = Arc::new(cx.finish(&fields).0);
+        self.input_programs.insert(kept, program.clone());
         Some(program)
     }
 

@@ -28,7 +28,10 @@
 mod natural;
 pub(crate) mod scripts;
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{DVec2, Vec2, Vec3};
@@ -444,10 +447,19 @@ pub struct Storms {
     /// is in it.
     seed: u32,
     generator: Option<(Arc<WorldGen>, [f64; 2])>,
+    /// The generator's climate where each natural storm began, by that
+    /// place's bits, as storms near the viewer ask for it each frame: the
+    /// same for as long as the storm lives, and a whole run of the
+    /// generator's climate to work out. Forgotten when the generator is
+    /// another.
+    climates: Arc<Mutex<HashMap<[u64; 2], (f32, f32)>>>,
     rules: Option<StormRules>,
     /// The rules scripts asked for, where no Obj holds any.
     asked: Option<StormRules>,
 }
+
+/// How many places' climates the storms keep (see `Storms::climates`).
+const KEPT_CLIMATES: usize = 4096;
 
 /// What a save keeps of the storms, and what a player joining is sent: the
 /// clock and what scripts made.
@@ -673,9 +685,19 @@ impl Storms {
     /// How wet the generator's climate is at a place, in metres from the
     /// level's middle; middling without a generator.
     fn wetness(&self, at: DVec2) -> (f32, f32) {
-        self.generator.as_ref().map_or((15.0, 0.5), |(generator, offset)| {
-            generator.climate((at.x + offset[0]) as f32, (at.y + offset[1]) as f32, generator.sea_level())
-        })
+        let Some((generator, offset)) = &self.generator else { return (15.0, 0.5) };
+        let mut climates = self.climates.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let key = [at.x.to_bits(), at.y.to_bits()];
+        if let Some(&climate) = climates.get(&key) {
+            return climate;
+        }
+        // Kept for the storms of a few generations; the oldest are not told apart, all go at once.
+        if climates.len() >= KEPT_CLIMATES {
+            climates.clear();
+        }
+        let climate = generator.climate((at.x + offset[0]) as f32, (at.y + offset[1]) as f32, generator.sea_level());
+        climates.insert(key, climate);
+        climate
     }
 
     /// How far under the sea the generator's ground is at a place, in
@@ -776,6 +798,10 @@ pub fn prepare(world: &mut World, content: &mut Content) {
     let mut storms = world.remove_resource::<Storms>().unwrap_or_default();
     let rules = rules.or(storms.asked);
     storms.seed = first.as_ref().map_or(0, |(generator, _)| generator.seed());
+    let same = |(a, at): &(Arc<WorldGen>, [f64; 2]), (b, to): &(Arc<WorldGen>, [f64; 2])| Arc::ptr_eq(a, b) && at == to;
+    if !matches!((&storms.generator, &first), (Some(was), Some(now)) if same(was, now)) {
+        storms.climates.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+    }
     storms.generator = first;
     storms.rules = rules;
     world.insert_resource(storms);

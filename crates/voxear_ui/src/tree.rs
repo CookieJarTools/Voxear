@@ -197,33 +197,104 @@ pub(crate) struct Text {
     pub shaped: Option<((f32, bool), Layout<u16>)>,
     /// For rich text: how parts of it differ, and its links.
     pub spans: Vec<crate::Span>,
+    /// The width its shaped lines were broken at and the way they were
+    /// aligned when it was last drawn, so a frame that changes neither
+    /// draws them as they are; none once measuring or shaping it again has
+    /// broken them otherwise.
+    pub drawn_at: Option<(Option<u32>, parley::Alignment)>,
 }
 
 impl Text {
     pub fn new(content: &str) -> Self {
-        Self { content: content.to_owned(), style: TextStyle::default(), shaped: None, spans: Vec::new() }
+        Self {
+            content: content.to_owned(),
+            style: TextStyle::default(),
+            shaped: None,
+            spans: Vec::new(),
+            drawn_at: None,
+        }
     }
 
     /// Shaped at physical size, so hinting and line breaks match the pixels
     /// it is drawn at, its lines' heights rounded to whole pixels there when
-    /// `whole_pixels`.
+    /// `whole_pixels`. Plain text shaped before as this is, as the numbers a
+    /// panel shows often are, is a copy of that from `cache`.
     pub(crate) fn shaped(
         &mut self,
         fonts: &mut FontContext,
         layouts: &mut LayoutContext<u16>,
         (scale, whole_pixels): (f32, bool),
         stack: &crate::fonts::FontStack,
+        cache: Option<&mut ShapedCache>,
     ) -> &mut Layout<u16> {
         if self.shaped.as_ref().is_none_or(|(at, _)| *at != (scale, whole_pixels)) {
-            let mut builder = layouts.ranged_builder(fonts, &self.content, scale, whole_pixels);
-            builder.push_default(StyleProperty::FontSize(self.style.size));
-            builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
-            builder.push_default(StyleProperty::FontFamily(stack.families(self.style.family)));
-            builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
-            crate::rich::push_spans(&mut builder, &self.spans, &self.style, stack);
-            self.shaped = Some(((scale, whole_pixels), builder.build(&self.content)));
+            self.drawn_at = None;
+            let key = ShapedKey {
+                content: self.content.clone(),
+                size: self.style.size.to_bits(),
+                weight: self.style.weight.to_bits(),
+                family: self.style.family,
+                line_height: self.style.line_height.to_bits(),
+                scale: scale.to_bits(),
+                whole_pixels,
+            };
+            let cache = cache.filter(|_| self.spans.is_empty());
+            let kept = cache.as_ref().and_then(|cache| cache.layouts.get(&key)).cloned();
+            let layout = kept.unwrap_or_else(|| {
+                let mut builder = layouts.ranged_builder(fonts, &self.content, scale, whole_pixels);
+                builder.push_default(StyleProperty::FontSize(self.style.size));
+                builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
+                builder.push_default(StyleProperty::FontFamily(stack.families(self.style.family)));
+                builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
+                crate::rich::push_spans(&mut builder, &self.spans, &self.style, stack);
+                let layout = builder.build(&self.content);
+                if let Some(cache) = cache {
+                    cache.keep(key, &layout);
+                }
+                layout
+            });
+            self.shaped = Some(((scale, whole_pixels), layout));
         }
         &mut self.shaped.as_mut().expect("shaped above").1
+    }
+}
+
+/// What a plain text is shaped from: its content, its font's size, weight,
+/// family and line height, and the display scale, rounded to whole pixels
+/// or not.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ShapedKey {
+    content: String,
+    size: u32,
+    weight: u32,
+    family: crate::Family,
+    line_height: u32,
+    scale: u32,
+    whole_pixels: bool,
+}
+
+/// Plain texts as they were last shaped, for a text given the same content
+/// again, as numbers a panel shows over and over: shaping is most of what
+/// laying out a changed label costs. Forgotten when the fonts change, and
+/// all at once when it holds [`SHAPED_KEPT`].
+#[derive(Default)]
+pub(crate) struct ShapedCache {
+    layouts: HashMap<ShapedKey, Layout<u16>>,
+}
+
+/// How many shaped texts the cache holds before it starts again.
+const SHAPED_KEPT: usize = 2048;
+
+impl ShapedCache {
+    fn keep(&mut self, key: ShapedKey, layout: &Layout<u16>) {
+        if self.layouts.len() >= SHAPED_KEPT {
+            self.layouts.clear();
+        }
+        self.layouts.insert(key, layout.clone());
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.layouts.clear();
     }
 }
 
@@ -249,6 +320,8 @@ pub struct Ui {
     pub(crate) registered_fonts: HashSet<String>,
     pub(crate) fonts_given: u64,
     pub(crate) layouts: LayoutContext<u16>,
+    /// Plain texts shaped before, for the same text given again.
+    pub(crate) shaped: ShapedCache,
     pub(crate) atlas: GlyphAtlas,
     /// Logical size and display scale of the last frame.
     pub(crate) viewport: (f32, f32, f32),
@@ -366,6 +439,7 @@ impl Ui {
             registered_fonts: HashSet::new(),
             fonts_given: 0,
             layouts: LayoutContext::new(),
+            shaped: ShapedCache::default(),
             atlas: GlyphAtlas::new(),
             viewport: (0.0, 0.0, 0.0),
             restyles: vec![(root, true)],
@@ -1150,11 +1224,11 @@ impl Ui {
             let style = taffy::Style { size, ..self.tree.style(self.root).cloned().unwrap_or_default() };
             let _ = self.tree.set_style(self.root, style);
         }
-        let (fonts, layouts, stack) = (&mut self.fonts, &mut self.layouts, &self.font_stack);
+        let (fonts, layouts, stack, cache) = (&mut self.fonts, &mut self.layouts, &self.font_stack, &mut self.shaped);
         let space = Size { width: AvailableSpace::Definite(viewport.0), height: AvailableSpace::Definite(viewport.1) };
         let shaping = (scale, self.whole_pixels);
         let measured = self.tree.compute_layout_with_measure(self.root, space, |input, _, element, style| {
-            measure(input, element, style, fonts, layouts, shaping, stack)
+            measure(input, element, style, (fonts, layouts, cache), shaping, stack)
         });
         measured.expect("the root is in this tree");
     }
@@ -1196,6 +1270,7 @@ impl Ui {
     /// Shapes every text again, and lays every text field out again, with
     /// the fonts as they are now.
     fn fonts_changed(&mut self) {
+        self.shaped.clear();
         self.reshape(self.root);
         for field in self.fields.clone() {
             if let Some(crate::controls::Control::TextField(edit)) =

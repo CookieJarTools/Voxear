@@ -209,6 +209,9 @@ const MAX_LIGHTS: u64 = 1024;
 /// The meshlet lists start with room for this many meshlets of each
 /// instance list's draws, and grow with the scene (see `gpu::meshlet_list`).
 const FIRST_MESHLET_CAPACITY: u32 = 4096;
+/// How large a view's buffer of the blocks' indirect draws is made at
+/// first, in bytes: room for three thousand runs.
+const BLOCK_DRAWS_FIRST: u64 = 64 * 1024;
 /// A view whose instances' draws could turn into more meshlets than this
 /// draws whole LODs instead. The main view's lists hold twice as many, and
 /// the meshlet pass runs a workgroup for every 32 of a list's, which stays
@@ -423,6 +426,9 @@ struct FrameBuffers {
     terrain: Buffer,
     /// This view's worlds of blocks and their surfaces (see `blocks`).
     blocks: Buffer,
+    /// Their lists' runs as indirect draws, made the first time a view
+    /// draws blocks (see `blocks::ViewBlocks::write_draws`).
+    block_draws: Option<Buffer>,
     /// The openings of the Portals this view sees (see `portals`).
     portal_quads: Buffer,
     /// The weather's grids round the viewer (see `weather_maps`).
@@ -508,6 +514,24 @@ impl FrameBuffers {
             self.lamp_vsm = Some(VsmBuffers::new(gpu, &format!("{}lamp vsm", self.prefix), slot, words)?);
         }
         Ok(self.lamp_vsm.as_mut().expect("made above"))
+    }
+
+    /// Makes sure the blocks' indirect draws have room for `needed`, making
+    /// the buffer again half as large again when they do not. The caller has
+    /// waited for this slot's last frame, so the old one can go at once.
+    fn fit_block_draws(&mut self, gpu: &Gpu, slot: usize, needed: usize) -> Result<&Buffer> {
+        let size = (needed.max(1) * size_of::<blocks::BlockDraw>()) as u64;
+        let have = self.block_draws.as_ref().map_or(0, |buffer| buffer.size);
+        if size > have {
+            let size = size.max(have + have / 2).max(BLOCK_DRAWS_FIRST);
+            let name = format!("{}block draws {slot}", self.prefix);
+            let made =
+                gpu.create_buffer(&name, size, vk::BufferUsageFlags::INDIRECT_BUFFER, MemoryLocation::CpuToGpu)?;
+            if let Some(old) = self.block_draws.replace(made) {
+                gpu.destroy_buffer(old);
+            }
+        }
+        Ok(self.block_draws.as_ref().expect("made above"))
     }
 
     /// Makes sure the meshlet lists have room for `needed`, making them
@@ -2445,8 +2469,12 @@ impl View {
                 stats_readback,
                 vsm,
                 lamp_vsm,
+                block_draws,
                 ..
             } = buffers;
+            for buffer in block_draws {
+                frames.retire(Retired::Buffer(buffer));
+            }
             for buffer in vsm.into_iter().chain(lamp_vsm).flat_map(|vsm| [vsm.table, vsm.gpu_table, vsm.requests, vsm.readback]) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -2891,7 +2919,7 @@ impl View {
             }
         }
         drop(instancing);
-        let shadowing = profile_marker!("Shadow Setup").scope();
+        let shadow_setup = profile_marker!("Shadow Setup").scope();
         // The local lights' slots of their atlases, and what of the shadows of what stands still they keep.
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let shadowing = !extracted.shadow_lights.is_empty();
@@ -3033,6 +3061,7 @@ impl View {
         let ao_reset = self.ao_history != Some(extent);
         self.ao_history = occluded.then_some(extent);
         let light_count = extracted.lights.len().min(MAX_LIGHTS as usize);
+        drop(shadow_setup);
         drop(extracting);
 
         // As many meshlets as every instance's draw could turn into, so the meshlet lists never drop any.
@@ -3061,7 +3090,6 @@ impl View {
             }
             false => None,
         };
-        drop(shadowing);
         let gathers = profile_marker!("Gathers").scope();
         let buffers = &self.buffers[slot];
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
@@ -3088,7 +3116,7 @@ impl View {
         )
         .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
-        let view_blocks = blocks::gather(
+        let mut view_blocks = blocks::gather(
             &setup.blocks,
             &extracted,
             &buffers.blocks,
@@ -3096,6 +3124,11 @@ impl View {
             &lamps,
             &sun_pages,
         );
+        // Each list a world draws, one indirect call however many runs it has.
+        if let Some(view_blocks) = &mut view_blocks {
+            view_blocks.write_draws(|count| self.buffers[slot].fit_block_draws(gpu, slot, count))?;
+        }
+        let buffers = &self.buffers[slot];
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let gathered = grass::gather(terrains, &extracted.frame, extracted.origin, &buffers.grass);
@@ -4403,6 +4436,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         meshlet_capacity: MeshletCapacity { all: FIRST_MESHLET_CAPACITY, two_sided: 0 },
         vsm: None,
         lamp_vsm: None,
+        block_draws: None,
         prefix: prefix.to_string(),
     })
 }

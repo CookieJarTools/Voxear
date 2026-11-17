@@ -53,6 +53,28 @@ fn labels_measure_their_text_and_wrap() {
 }
 
 #[test]
+fn a_label_given_back_its_text_or_anothers_is_laid_out_and_drawn_as_that_text_was() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let row = ui.panel(root, Style::row().at(0.0, 0.0));
+    let label = ui.label(row, "0.12 ms", TextStyle::default().size(14.0));
+    let other = ui.label(row, "", TextStyle::default().size(14.0));
+    let first = ui.frame(WIDTH, HEIGHT, 1.0);
+    let (width, glyphs_before) = (ui.rect(label)[2], glyphs(&first.quads));
+
+    // Shaped once, the same text again, in it or in another label, comes out the same.
+    ui.set_text(label, "123.45 ms");
+    ui.frame(WIDTH, HEIGHT, 1.0);
+    assert!(ui.rect(label)[2] > width, "a longer text is wider");
+    ui.set_text(label, "0.12 ms");
+    ui.set_text(other, "0.12 ms");
+    let again = ui.frame(WIDTH, HEIGHT, 1.0);
+    assert_eq!(ui.rect(label)[2], width);
+    assert_eq!(ui.rect(other)[2], width);
+    assert_eq!(glyphs(&again.quads), glyphs_before * 2, "both labels draw every glyph");
+}
+
+#[test]
 fn frames_draw_shapes_then_glyphs_and_upload_the_atlas_once() {
     let mut ui = Ui::new();
     let root = ui.root();

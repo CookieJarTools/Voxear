@@ -29,7 +29,7 @@ MILESTONES = [
     ("M10", "2D and networking", "Replication, RPCs and prediction, sprites and tilemaps", "now"),
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),
     ("M12", "Ship it", "Builds end to end, crash reports, store uploads", "planned"),
-    ("", "Shader packs", "A player's own passes and block lighting; water, sky and shadows next", "now"),
+    ("", "Shader packs", "A player's own passes, block and water lighting; sky and shadows next", "now"),
     ("M13", "Virtualised geometry", "Clusters of triangles, streamed and rasterised on the GPU", "planned"),
 ]
 

@@ -103,7 +103,8 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
                 "blocks" => {
                     ("Blocks", "Lights every block's faces, and leaves where the pack has no program of their own")
                 }
-                _ => ("Leaves", "Lights faces of leaves, and sheets of leaves and of vines"),
+                "leaves" => ("Leaves", "Lights faces of leaves, and sheets of leaves and of vines"),
+                _ => ("Water", "Lights the sea, Pools, Streams and worlds of blocks' water"),
             };
             let row = prop(ui, rows, label);
             let value = ui.add_label(row, program);

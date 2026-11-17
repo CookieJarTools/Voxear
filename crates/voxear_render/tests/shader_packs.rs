@@ -420,7 +420,7 @@ fn the_evening_pack_warms_a_world_of_blocks_and_lays_rays_through_its_leaves() {
         None => PackFiles::Embedded(shader_packs::builtin_files("evening").unwrap()),
     };
     let evening = Arc::new(shader_packs::compile(&manifest, &files).unwrap());
-    assert_eq!(evening.modules.len(), 1, "its block faces' program, beside its passes");
+    assert_eq!(evening.modules.len(), 2, "its programs for block faces and for water, beside its passes");
     world.insert_resource(WornShaderPack::new(evening.clone()));
     let worn = render(&mut renderer, &world, 24);
     // The same, without the rays.
@@ -564,4 +564,117 @@ fn a_blocks_program_is_given_the_engines_light_whole_and_by_its_terms() {
     eprintln!("sunlit grass {lit:?} against {plain_lit:?}; shade {shade:?}");
     assert!(lit[1] > 100 && lit[1] < plain_lit[1], "sunlit: {lit:?} against {plain_lit:?}");
     assert!(shade.iter().all(|&c| c < 8), "in shadow: {shade:?}");
+}
+
+/// A world of blocks with a pond in it, standing in the sea, seen from over its edge: the pond near, the sea round it.
+fn pond_in_the_sea(renderer: &mut Renderer) -> World {
+    use voxear_render::{BlockLook, Ocean, SurfaceLook};
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        file::{BlockFile, BlockKind},
+    };
+    let mut file = BlockFile::default();
+    file.ground.size = [24, 24];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.03, 0.3, 0.42]) });
+    let water = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for z in 8..16 {
+        for x in 8..16 {
+            blocks.set([x, 3, z], water);
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+    };
+    let mut world = World::new();
+    let corner = Transform::from_position(Vec3::new(-12.0, 0.0, -12.0));
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, corner));
+    world.spawn((Ocean::default(), Transform::default()));
+    let towards = (Vec3::new(0.0, 3.0, 4.0) - Vec3::new(0.0, 14.0, -18.0)).normalize();
+    let rotation = Quat::from_rotation_y(towards.x.atan2(towards.z)) * Quat::from_rotation_x(-towards.y.asin());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 14.0, -18.0), rotation, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, sharpness: 0.0, ..AntiAliasing::default() };
+    let mut post = PostProcess { anti_aliasing, ..PostProcess::neutral() };
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    post.reflections.enabled = false;
+    world.insert_resource(post);
+    world
+}
+
+/// How many pixels are mostly red, and how many red and blue alike, over green.
+fn red_and_magenta(pixels: &[u8]) -> (usize, usize) {
+    let (mut red, mut magenta) = (0, 0);
+    for pixel in pixels.chunks(4) {
+        let [r, g, b] = [pixel[0], pixel[1], pixel[2]].map(i32::from);
+        red += usize::from(r > g + 80 && b < g + 20);
+        magenta += usize::from(r > g + 80 && b > g + 80);
+    }
+    (red, magenta)
+}
+
+#[test]
+fn a_water_program_lights_the_sea_and_a_worlds_water_and_is_given_the_engines_light() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = pond_in_the_sea(&mut renderer);
+    let plain = render(&mut renderer, &world, 6);
+    keep_image("water plain.png", &plain, (WIDTH, HEIGHT));
+    let kinds = "float3 run(WaterSurface surface, WaterLighting light)\n{\n    float level = options().level;\n    \
+                 if ((surface.kind & WATER_IS_BLOCKS) != 0)\n    {\n        return float3(level, 0.0, 0.0);\n    }\n    \
+                 return (surface.kind & WATER_IS_SEA) != 0 ? float3(level, 0.0, level) : light.engine;\n}\n";
+    let compiled = surfaces("water = \"water.slang\"", &[("water.slang", kinds)]);
+    assert_eq!(compiled.modules.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["water"]);
+    wear(&mut world, compiled);
+    let painted = render(&mut renderer, &world, 6);
+    keep_image("water painted.png", &painted, (WIDTH, HEIGHT));
+    assert!(renderer.pack_surfaces_drawn());
+    let (pond, sea) = red_and_magenta(&painted);
+    eprintln!("{pond} pixels of the pond red, {sea} of the sea magenta");
+    assert!(pond > 1500 && sea > 4000, "{pond} of the pond, {sea} of the sea");
+    assert_eq!(red_and_magenta(&plain), (0, 0));
+    // Given the engine's colour back, as it was; and its colour without foam laid back over the foam, near enough.
+    let whole = "float3 run(WaterSurface surface, WaterLighting light)\n{\n    return light.engine;\n}\n";
+    wear(&mut world, surfaces("water = \"water.slang\"", &[("water.slang", whole)]));
+    let engine = render(&mut renderer, &world, 6);
+    keep_image("water engine.png", &engine, (WIDTH, HEIGHT));
+    let (off, mean) = alike(&plain, &engine);
+    eprintln!("the engine's: {off} pixels off, {mean:.3} on average");
+    assert!(
+        off < (WIDTH * HEIGHT / 100) as usize && mean < 1.0,
+        "the engine's: {off} pixels off, {mean:.2} on average"
+    );
+    world.remove_resource::<WornShaderPack>();
+    render(&mut renderer, &world, 2);
+    assert!(!renderer.pack_surfaces_drawn());
 }

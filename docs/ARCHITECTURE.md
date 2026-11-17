@@ -1487,7 +1487,9 @@ program in a namespace, `packBlockColor`), and `CompiledPack::modules` carries i
 again from its shaders with that module in place (`pack_modules`), and back without it when the pack goes.
 `shading.slang`'s fragment shader keeps the engine's terms apart under that define and hands them, with the face
 (`terrainKind` from `terrainShading` says what it is), to the pack, which reads its `PackFrame` through
-`Buffers::packFrame`, written for every view.
+`Buffers::packFrame`, written for every view. A `water` program is compiled the same way into `water.slang` with
+`VOXEAR_PACK_WATER` (`project_pack_water.slang`, `packWaterColor`), handed the water by `waterFragment` and
+`blockWaterLit` before the air's haze (`SURFACE_MODULES` lists the modules).
 
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps

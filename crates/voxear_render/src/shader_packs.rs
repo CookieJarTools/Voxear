@@ -82,6 +82,7 @@ pub const BUILTIN: [(&str, &str, &[(&str, &str)]); 1] = [(
         ("light.slang", include_str!("../shader_packs/evening.shaderpack/light.slang")),
         ("grade.slang", include_str!("../shader_packs/evening.shaderpack/grade.slang")),
         ("faces.slang", include_str!("../shader_packs/evening.shaderpack/faces.slang")),
+        ("water.slang", include_str!("../shader_packs/evening.shaderpack/water.slang")),
     ],
 )];
 
@@ -356,12 +357,16 @@ pub struct PackSurfaces {
     pub blocks: Option<String>,
     /// Faces of leaves, and sheets of leaves and of vines.
     pub leaves: Option<String>,
+    /// Water: the sea, Pools, Streams and worlds of blocks' water; its
+    /// program defines `float3 run(WaterSurface surface, WaterLighting
+    /// light)`.
+    pub water: Option<String>,
 }
 
 impl PackSurfaces {
     /// Its programs, as the manifest names them.
     pub fn named(&self) -> Vec<(&'static str, &str)> {
-        let named = [("blocks", &self.blocks), ("leaves", &self.leaves)];
+        let named = [("blocks", &self.blocks), ("leaves", &self.leaves), ("water", &self.water)];
         named.into_iter().filter_map(|(key, program)| program.as_deref().map(|program| (key, program))).collect()
     }
 }
@@ -520,13 +525,17 @@ impl PackManifest {
         let file: ManifestFile = toml::from_str(text)?;
         ensure!(file.format <= PACK_FORMAT, "written by a newer Voxear (format {})", file.format);
         let surface = &file.surface;
-        for (key, program) in [("water", &surface.water), ("models", &surface.models), ("sky", &surface.sky)] {
+        for (key, program) in [("models", &surface.models), ("sky", &surface.sky)] {
             ensure!(
                 program.is_none(),
                 "[surface] {key}: programs that light the {key} are not drawn yet, only blocks'"
             );
         }
-        let surfaces = PackSurfaces { blocks: surface.blocks.clone(), leaves: surface.leaves.clone() };
+        let surfaces = PackSurfaces {
+            blocks: surface.blocks.clone(),
+            leaves: surface.leaves.clone(),
+            water: surface.water.clone(),
+        };
         for (key, program) in surfaces.named() {
             check_program(program).with_context(|| format!("[surface] {key}"))?;
         }
@@ -745,28 +754,62 @@ fn options_code(manifest: &PackManifest) -> String {
     code
 }
 
-/// The file Voxear compiles into its own shader that draws block faces for
-/// a pack's surface programs (`shaders/shading.slang` includes it as
-/// `project_pack_blocks.slang`): the pack's options, each program in a
-/// namespace of its own, by its file's place, and `packBlockColor`, which
-/// lights a face with the leaves' program where it is leaves and there is
-/// one, else the blocks' program, else as the engine does.
-pub fn surface_wrapper(manifest: &PackManifest, blocks: Option<&Path>, leaves: Option<&Path>) -> String {
-    let included = |path: &Path| path.to_string_lossy().replace('\\', "/");
+/// The engine's shader modules a pack's surface programs are compiled
+/// into: each module's name, what it is compiled with defined, and the file
+/// it then includes, which [`surface_wrapper`] writes.
+pub const SURFACE_MODULES: [(&str, &str, &str); 2] = [
+    ("blocks", "VOXEAR_PACK_BLOCKS", "project_pack_blocks.slang"),
+    ("water", "VOXEAR_PACK_WATER", "project_pack_water.slang"),
+];
+
+impl PackSurfaces {
+    /// Whether the pack has a program for the engine's module `module`.
+    pub fn compiles_into(&self, module: &str) -> bool {
+        match module {
+            "blocks" => self.blocks.is_some() || self.leaves.is_some(),
+            "water" => self.water.is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// The file Voxear compiles into its own shader `module` for a pack's
+/// surface programs (`shaders/shading.slang` includes it for block faces
+/// as `project_pack_blocks.slang`, `shaders/water.slang` for water as
+/// `project_pack_water.slang`): the pack's options, each program in a
+/// namespace of its own by its file's place as `place` gives it, and the
+/// function the engine calls. For block faces, `packBlockColor` lights a
+/// face with the leaves' program where it is leaves and there is one, else
+/// the blocks' program, else as the engine does; for water,
+/// `packWaterColor`.
+pub fn surface_wrapper(manifest: &PackManifest, module: &str, place: &dyn Fn(&str) -> PathBuf) -> String {
+    let included = |program: &str| place(program).to_string_lossy().replace('\\', "/");
+    let surfaces = &manifest.surfaces;
     let mut code = String::from("// Made by Voxear for a shader pack's surface programs.\n\n");
     code.push_str("#include \"shader_pack_surface.slang\"\n\n");
     code.push_str(&options_code(manifest));
-    for (space, program) in [("pack_blocks", blocks), ("pack_leaves", leaves)] {
+    let programs = match module {
+        "water" => vec![("pack_water", &surfaces.water)],
+        _ => vec![("pack_blocks", &surfaces.blocks), ("pack_leaves", &surfaces.leaves)],
+    };
+    for (space, program) in programs {
         if let Some(program) = program {
             code.push_str(&format!("namespace {space}\n{{\n#include \"{}\"\n}}\n\n", included(program)));
         }
     }
+    let unworn = "    if (frame() == nullptr)\n    {\n        return light.engine;\n    }\n";
+    if module == "water" {
+        code.push_str("float3 packWaterColor(WaterSurface surface, WaterLighting light)\n{\n");
+        code.push_str(unworn);
+        code.push_str("    return pack_water::run(surface, light);\n}\n");
+        return code;
+    }
     code.push_str("float3 packBlockColor(BlockSurface surface, BlockLighting light)\n{\n");
-    code.push_str("    if (frame() == nullptr)\n    {\n        return light.engine;\n    }\n");
-    if leaves.is_some() {
+    code.push_str(unworn);
+    if surfaces.leaves.is_some() {
         code.push_str("    if ((surface.kind & BLOCK_LEAVES) != 0)\n    {\n        return pack_leaves::run(surface, light);\n    }\n");
     }
-    match blocks {
+    match surfaces.blocks {
         Some(_) => code.push_str("    return pack_blocks::run(surface, light);\n}\n"),
         None => code.push_str("    return light.engine;\n}\n"),
     }
@@ -895,17 +938,17 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
             defines: &[],
         })
         .collect();
-    let surfaces = &manifest.surfaces;
-    if surfaces.blocks.is_some() || surfaces.leaves.is_some() {
-        // Named by the programs' own names here, for the hash; by where they are once written, below.
-        let named = |program: &Option<String>| program.as_ref().map(PathBuf::from);
-        let wrapped = surface_wrapper(manifest, named(&surfaces.blocks).as_deref(), named(&surfaces.leaves).as_deref());
-        jobs.push(Job {
-            label: "its surface programs".to_string(),
-            files: vec![("project_pack_blocks.slang".to_string(), wrapped)],
-            engine_module: Some("blocks"),
-            defines: &["VOXEAR_PACK_BLOCKS"],
-        });
+    for (module, define, file) in &SURFACE_MODULES {
+        if manifest.surfaces.compiles_into(module) {
+            // Named by the programs' own names here, for the hash; by where they are once written, below.
+            let wrapped = surface_wrapper(manifest, module, &|program| PathBuf::from(program));
+            jobs.push(Job {
+                label: format!("its surface programs for {module}"),
+                files: vec![(file.to_string(), wrapped)],
+                engine_module: Some(*module),
+                defines: std::slice::from_ref(define),
+            });
+        }
     }
     let results: Vec<Result<Arc<[u8]>>> = std::thread::scope(|scope| {
         let handles: Vec<_> = jobs
@@ -928,11 +971,7 @@ pub fn compile(manifest: &PackManifest, files: &PackFiles) -> Result<CompiledPac
                     for (name, text) in &job.files {
                         let text = match job.engine_module {
                             // The surface programs' wrapper names their files where they are.
-                            Some(_) => surface_wrapper(
-                                manifest,
-                                manifest.surfaces.blocks.as_ref().map(|program| folder.join(program)).as_deref(),
-                                manifest.surfaces.leaves.as_ref().map(|program| folder.join(program)).as_deref(),
-                            ),
+                            Some(module) => surface_wrapper(manifest, module, &|program| folder.join(program)),
                             None => text.clone(),
                         };
                         std::fs::write(dir.join(name), text)?;
@@ -1544,7 +1583,7 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         fails(&pass.replace("a.slang", "../a.slang"), "not a file in the pack's folder");
         fails(&pass.replace("a.slang", "a.hlsl"), "not a .slang file");
         fails(&pass.replace("final", "after_sky"), "unknown variant");
-        fails(&format!("[surface]\nwater = \"w.slang\"\n{pass}"), "[surface] water");
+        fails(&format!("[surface]\nsky = \"s.slang\"\n{pass}"), "[surface] sky");
         fails("[surface]\nblocks = \"../b.slang\"", "not a file in the pack's folder");
         fails("[surface]\nshadows = \"s.slang\"", "unknown field");
         fails(&format!("[options]\nx = {{ kind = \"number\", range = [1.0, 0.0], default = 0.5 }}\n{pass}"), "range");
@@ -1579,14 +1618,14 @@ writes = { target = "rays", format = "rgba16f", scale = 0.5 }
         .unwrap();
         assert!(manifest.passes.is_empty());
         assert_eq!(manifest.surfaces.named(), [("blocks", "faces.slang"), ("leaves", "leaves.slang")]);
-        let wrapped = surface_wrapper(&manifest, Some(Path::new("/p/faces.slang")), Some(Path::new("/p/leaves.slang")));
+        let wrapped = surface_wrapper(&manifest, "blocks", &|program| Path::new("/p").join(program));
         assert!(wrapped.contains("#include \"shader_pack_surface.slang\"") && wrapped.contains("    bool warm;"));
         assert!(wrapped.contains("namespace pack_blocks\n{\n#include \"/p/faces.slang\"\n}"));
         assert!(wrapped.contains("return pack_leaves::run(surface, light);"));
         assert!(wrapped.contains("return pack_blocks::run(surface, light);"));
         // Leaves alone: every other face as the engine lights it.
         let leaves = PackManifest::parse("[surface]\nleaves = \"leaves.slang\"\n").unwrap();
-        let wrapped = surface_wrapper(&leaves, None, Some(Path::new("leaves.slang")));
+        let wrapped = surface_wrapper(&leaves, "blocks", &|program| PathBuf::from(program));
         assert!(wrapped.contains("pack_leaves::run") && wrapped.ends_with("    return light.engine;\n}\n"));
     }
 

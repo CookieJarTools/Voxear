@@ -4,8 +4,8 @@ A **shader pack** is a set of shader programs that replaces how a game is lit an
 leaves and water, its shadows, its sky, and passes over the whole picture, such as fog, rays through leaves, a
 coloured grade or a painted look. It is chosen by whoever plays, as a look pack or a texture pack is, and anything
 it leaves out is the engine's own. This page is the plan. Its first stage, a pack's own passes over the frame, is
-built ([What stage 1 built](#what-stage-1-built)), and of the second, programs that light block faces and leaves
-([What stage 2 built](#what-stage-2-built)); the rest is not yet.
+built ([What stage 1 built](#what-stage-1-built)), and so is the second, programs that light block faces, leaves and
+water ([What stage 2 built](#what-stage-2-built)); the rest is not yet.
 
 ## What Voxear has today
 
@@ -153,8 +153,7 @@ passes took the same with and without it. The plan's estimates, before it was bu
    --shader-pack`. A built-in pack shows it: rays through leaves and a warm evening grade. Fog, outlines, a painted
    look and colour grades can be made with this alone.
 2. **Surface programs for block faces, leaves and water**, with the block's kind and its sky light and block light.
-   This is where a pack changes how blocks are lit, not only how the picture is finished. ✅ Block faces and leaves
-   built; water not yet.
+   This is where a pack changes how blocks are lit, not only how the picture is finished. ✅ Built.
 3. **The final pass and the sky:** a pack's own tonemap and grade in place of the engine's and the look shader, and
    its own sky and clouds.
 4. **Shadows:** a pack's shadow settings and filter, then coloured shadows through leaves and glass, then a pack's
@@ -191,7 +190,7 @@ As planned, with these settled on the way:
 
 ## What stage 2 built
 
-Programs that light block faces and leaves; water's is still to come. Settled on the way:
+Programs that light block faces, leaves and water. Settled on the way:
 
 - **How:** a pack's `[surface]` names a `blocks` program and, if it likes, a `leaves` one. The engine compiles its own
   `blocks.slang` again with `VOXEAR_PACK_BLOCKS` defined and a file of its making on the include path, which has the
@@ -210,8 +209,15 @@ Programs that light block faces and leaves; water's is still to come. Settled on
 - **Vertices stay the engine's**, as the plan has them; the question below stays open until water wants waves.
 - **The frame** a surface program reads is `PackFrame`, reached through the engine's table of buffers, and written
   for every view, those through Portals too.
-- **Not yet:** water (blocks', the sea's and Pools'), models and the sky (stage 3); what the GI's rays and reflection
-  probes see of blocks is still the engine's lighting.
+- **Water** is the same again: `[surface] water` names a program, `float3 run(WaterSurface surface, WaterLighting
+  light)`, compiled into the engine's `water.slang` with `VOXEAR_PACK_WATER`. Both of its fragment shaders hand it over,
+  the sea's, Pools' and Streams' and worlds of blocks' water's: the surface (its rippled normal, how far the view goes
+  through it, how much foam, a world of blocks' water's sky and block light, what it is) and the light (the sun, the
+  sky, how much it mirrors and what, what lies behind and how much of it comes through, the water's own light, its
+  glints, and the engine's colour without its foam and with it). The water seen from under the sea or a Pool stays the
+  engine's; lava is never water's. The water shader is large: compiling it with a pack's program takes about a minute.
+- **Not yet:** models and the sky (stage 3); what the GI's rays and reflection probes see of blocks and water is still
+  the engine's lighting.
 
 ## Questions to settle
 

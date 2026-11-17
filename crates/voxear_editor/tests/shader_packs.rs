@@ -70,14 +70,15 @@ fn frame(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
     editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
 }
 
-/// Frames until `done`, for a minute at most: a pack with surface programs compiles the engine's block shader.
+/// Frames until `done`, for three minutes at most: a pack with surface programs compiles the engine's block and
+/// water shaders, the water's taking a minute.
 fn frames_until(
     editor: &mut voxear_editor::Editor,
     renderer: &mut Renderer,
     done: impl Fn(&voxear_editor::Editor) -> bool,
 ) -> bool {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(60) {
+    while started.elapsed() < Duration::from_secs(180) {
         frame(editor, renderer);
         if done(editor) {
             return true;
@@ -95,7 +96,7 @@ fn call(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str,
         frame(editor, renderer);
         match answer.try_recv() {
             Ok(answered) => return answered.unwrap_or_else(|error| panic!("{name}: {error}")),
-            Err(TryRecvError::Empty) => assert!(began.elapsed().as_secs() < 60, "{name} was not answered"),
+            Err(TryRecvError::Empty) => assert!(began.elapsed().as_secs() < 300, "{name} was not answered"),
             Err(TryRecvError::Disconnected) => panic!("{name} was dropped"),
         }
     }

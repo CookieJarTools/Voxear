@@ -2903,9 +2903,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     millions of sites and a few hundred dungeons; a ring that builds structures into the tile its ground would be
     makes that tile from what its chunks asked of the generator; and with nothing nearer to make, the far view's
     tiles take every thread. On a copy of a block game's world at High from a fresh start, all the far view shown
-    in 174 s where its third ring was not half made at 330 s, settled in 175 s where it took 409 s, and about half
-    the work (1,466 CPU-seconds where it was about 3,000), the settled picture the same. Tests: a tile made from a
-    column's answers is the tile made alone; what is kept lately.
+    in 106 s where it took 212 s (its third ring in 89 s where it took 190 s), settled in 122 s where it took
+    245 s, with 922 CPU-seconds of work where it took 1,595; the settled picture the same. Flying, more of the
+    world is made and drawn, so frames cost more while it comes in. Tests: a tile made from a column's answers is
+    the tile made alone; what is kept lately.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that

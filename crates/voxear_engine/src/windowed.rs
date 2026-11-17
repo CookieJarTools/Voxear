@@ -164,6 +164,7 @@ impl App {
             self.game.display.hdr_changed = true;
         }
         if let Some(setup) = self.setup.take() {
+            renderer.show_splash("Loading");
             setup(&mut self.game, &mut renderer)?;
         }
         self.renderer = Some(renderer);

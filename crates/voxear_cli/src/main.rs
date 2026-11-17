@@ -1295,8 +1295,7 @@ fn renderer_settings(project: &Project, renderdoc: bool) -> RendererSettings {
     RendererSettings {
         renderdoc,
         capture_folder: Some(project.root.join(".voxear").join("Captures")),
-        hot_reload: false,
-        software_rays: false,
+        ..RendererSettings::default()
     }
 }
 

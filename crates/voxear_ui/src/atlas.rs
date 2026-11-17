@@ -80,6 +80,11 @@ impl GlyphAtlas {
         SIZE
     }
 
+    /// How much the atlas's pixel at `x`, `y` is covered, 0 to 255.
+    pub fn coverage(&self, x: u32, y: u32) -> u8 {
+        self.pixels.get((y * SIZE + x) as usize).copied().unwrap_or(0)
+    }
+
     /// The glyph at `size` pixels, rasterised and packed on first use.
     /// `None` for glyphs with no pixels, such as spaces.
     pub fn glyph(

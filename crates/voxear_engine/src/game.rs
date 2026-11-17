@@ -474,7 +474,8 @@ impl Game {
         }
         let (text, path) = self.content.asset_text(asset, voxear_assets::AssetKind::Dimension)?;
         let file = DimensionFile::parse(&text, &path)?;
-        let surroundings = self.dimension_surroundings(&file).with_context(|| format!("loading {path}"))?;
+        let surroundings = dimensions::file_surroundings(&mut self.engine, &mut self.content, &file)
+            .with_context(|| format!("loading {path}"))?;
         let world = &mut self.engine.world;
         let id = dimensions::make_empty(world, file.settings.clone(), Some(surroundings), self.levels.current())
             .with_context(|| format!("making {path}: there are as many dimensions as there can be"))?;
@@ -719,50 +720,6 @@ impl Game {
             }
             None => false,
         }
-    }
-
-    /// A dimension file's sky, sun, post-processing and weather: the level's,
-    /// with its own lighting, `[sky]` and `[post]` laid over them as a
-    /// scene's are; dark all round where it has no sky, and clear where it
-    /// has no weather.
-    fn dimension_surroundings(
-        &mut self,
-        file: &crate::dimensions::DimensionFile,
-    ) -> Result<crate::dimensions::Surroundings> {
-        use crate::dimensions::{DimensionId, Dimensions, Surroundings};
-        let world = &self.engine.world;
-        let level = match world.resource::<Dimensions>() {
-            Some(dimensions) => dimensions.surroundings(world, DimensionId::LEVEL),
-            None => Surroundings::copy(world),
-        };
-        let scene = &file.scene;
-        let own = match scene.lighting.is_some() || scene.sky.is_some() || scene.post.is_some() {
-            true => {
-                let before = Surroundings::copy(&self.engine.world);
-                level.put(&mut self.engine.world);
-                let lighting = match &scene.lighting {
-                    Some(reference) => {
-                        Some((reference.as_str(), self.content.lighting(&self.content.parse(reference)?)?))
-                    }
-                    None => None,
-                };
-                let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
-                let environment =
-                    crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref() };
-                let applied = crate::scene_file::apply_environment(&mut self.engine, environment);
-                let own = Surroundings::copy(&self.engine.world);
-                before.put(&mut self.engine.world);
-                applied?;
-                own
-            }
-            false => level,
-        };
-        let settings = &file.settings;
-        Ok(match (settings.sky(), settings.weather()) {
-            (false, _) => Surroundings::enclosed(own.post()),
-            (true, false) => own.cleared(),
-            (true, true) => own,
-        })
     }
 
     /// Changes level now, then frees what the old one used and the new one
@@ -1242,10 +1199,9 @@ impl Game {
         // once its own is.
         {
             profile_scope!("Portals");
-            // A Portal in the gate of each dungeon in a dimension of its own near where the game is seen from.
-            if !self.engine.is_edit_mode() {
-                crate::dungeons::stand_gates(&mut self.engine.world, &mut self.content);
-            }
+            // A Portal in the gate of each dungeon in a dimension of its own near where the game is seen from, in
+            // the editor too, where it is opened from to look round.
+            crate::dungeons::stand_gates(&mut self.engine.world, &mut self.content);
             crate::portals::find_exits(&mut self.engine.world);
             // A Portal into a dimension not made yet makes it once near enough, and its far side is found next tick.
             self.link_dimensions(delta, renderer.as_deref_mut());

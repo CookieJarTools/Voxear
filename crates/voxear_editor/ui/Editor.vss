@@ -854,6 +854,25 @@
     background-color: var(--vx-hover);
 }
 
+/* A Scene view's Dimension menu, beside its shading. */
+.dimension-menu {
+    height: 22px;
+    padding: 0px 6px;
+    gap: 4px;
+    border-width: 0px;
+    background-color: transparent;
+}
+
+.dimension-menu:hover {
+    background-color: var(--vx-hover);
+}
+
+/* A Portal's Go Through and a dungeon gate's Open Dungeon. */
+.portal-buttons {
+    gap: 6px;
+    margin: 2px 0px 6px 0px;
+}
+
 .search {
     flex-direction: row;
     align-items: center;

@@ -187,7 +187,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
 | `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
-| `dungeon.starter`, `dungeon.layouts` | Make the starter temple dungeon for a Block World, and read the dungeons its generator lays out near a point |
+| `dungeon.starter`, `dungeon.layouts`, `dungeon.open` | Make the starter temple dungeon for a Block World, read the dungeons its generator lays out near a point, and open a dungeon's own dimension to look round |
+| `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`, `obj.move_to_dimension` | List the dimensions made, show one in the Scene view, make a `.dimension` file of a kind, open or let go of one, and move an Obj into another |
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, and what every Nav Agent and Block Mob is doing |
 | `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
@@ -280,6 +281,27 @@ vox editor call graph.comment.add asset=Worlds/Island.worldgen title="Coast" tex
 `graph.comment.set` changes a comment's title, text, place or size, and `graph.comment.remove` takes it out. Where the graph is open in its panel, each call is a step of the panel's undo and is saved as the panel saves; otherwise the file is written. Comments make no difference to the ground or the shader.
 
 `block_world.write_land obj=…` writes the levels and biome land a Block World lays into its generator into the generator's graph, each part in a comment, as **Write Land into Generator** does (see [[Block Worlds#Writing the land into the generator]]).
+
+## Dimensions
+
+`dimension.create kind=caves` makes a `.dimension` file in Dimensions (see [[Dimensions]]), and `dimension.make dimension=Dimensions/New Dimension.dimension` opens it beside the level, as opening it in the Project does. Its Objs then edit and save as a scene's, and the Scene view shows it. `dimension.list` lists the dimensions made, each by a number, with its kind, its settings, its file, and its Objs at the top. The level's own is number 0:
+
+```bash
+vox editor call dimension.list
+vox editor call dimension.show dimension=0
+```
+
+`dimension.show` shows one in the Scene view, by its number or its file. `obj.move_to_dimension obj=… dimension=1 at=[0,2,3]` moves an Obj there, into that dimension's file. `dimension.let_go` lets one go; a file with edits not saved needs `discard=true`.
+
+A Portal leads into a dimension's Portal by `field.set` on its `to`, the far Portal named by its file and its Obj:
+
+```bash
+vox editor call field.set obj=… component=portal field=to value='{"dimension": "Dimensions/Caves.dimension", "obj": 1}'
+```
+
+`field.choices` on the same field lists each Portal it can lead to, those in dimensions' files among them.
+
+A dungeon in a dimension of its own is opened by its site, as `dungeon.layouts` gives it or where it is, or by the Portal in its gate: `dungeon.open site=[-307.8,-820.7]`. It answers with the dimension's number and its way out. `dungeon.layouts` gives each dungeon's `site`, its `place`, its `dimension` once made (its number, as `dimension.list` gives it), its `stage` and whether it is `cleared`.
 
 ## What tools cannot do yet
 

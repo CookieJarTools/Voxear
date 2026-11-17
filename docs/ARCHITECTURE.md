@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine, with Portals between them, dungeons in their own, networked play, scripts and saves; the editor planned)*
+### Dimensions *(in the engine and the editor, with Portals between them, dungeons in their own, networked play, scripts and saves)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -547,6 +547,24 @@ dimension to another.
   deep dungeon. Edits read from a `.blocks` file of a version before 4 (`edits::VERSION`) lose the changes in the
   spaces and ways of a dungeon that was under the land (`dungeons::drop_old_dungeon_edits`, the dungeons planned in
   the land again to find them; `BlockEdits::retain_blocks`).
+- **In the editor** (`voxear_editor::editor::dimensions`, `dimension_views`, `dimension_inspector`). A `.dimension`
+  opens as a scene does: `Levels` loads it as a scene of its own kind (`OpenDimension`: its dimension and its
+  settings), spawning its Objs with `spawn_objs` into a dimension made for it (`file_surroundings`, as
+  `make_dimension` does), and saves it back as a `DimensionFile`, its settings over its Objs. Closing it lets its
+  dimension go. Objs made at run time go into the scene of their dimension (`adopt_runtime_objs`): the active scene
+  for the level's, a dimension's own file, or none for one made by code, which is not saved; each frame
+  `keep_scene_dimensions` puts each scene's roots in its scene's dimension, so moving an Obj between headers in the
+  Hierarchy moves it between dimensions. While another dimension is current, setting the level's lighting goes to
+  the level's kept surroundings (`level_aside`, `level_back`). Each Scene view's camera is in the dimension it shows
+  (its own `InDimension`), so each view draws one; the one in use sets `ViewerDimension` as soon as it changes, and
+  keeps a camera place for each dimension. Gizmos, icons and clicks are of the view's dimension (`ViewCamera::dimension`,
+  `Switched::in_dimension`). A Portal's Leads To may pick `Pick::Portal`, a Portal of a dimension's file read from it
+  or, where open, from its Objs, which sets `PortalInto`; Go Through finds the far Portal (`dimension_views::far_portal`:
+  its `to` in another dimension, its `into` in an open file, or the level's Portal whose `into` names it). Dungeon
+  gates stand in edit mode too (`stand_gates`, which takes a gate away only once every place in its own dimension is
+  well past it, so one seen from inside its dungeon stays); Open Dungeon calls
+  `make_dungeon_dimension` and links the gate and the way out both ways. The calls are `dimension.*`,
+  `obj.move_to_dimension` and `dungeon.open`; `dungeons::gate_at` finds a dungeon by its site without a gate standing.
 - **Networked** (`net::dimensions`, the game's part in `game::net_dimensions`). A server or host has a place for
   each player, their first owned Obj in its dimension (`net::player_places`): every world of blocks without end
   streams round each player in its own dimension (near ground alone where no camera is, so a dedicated server needs

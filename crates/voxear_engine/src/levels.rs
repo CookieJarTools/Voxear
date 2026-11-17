@@ -158,6 +158,17 @@ struct LoadedScene {
     lighting: Option<(String, Lighting)>,
     sky: Option<scene_file::SkyData>,
     post: Option<toml::Table>,
+    /// For a `.dimension` opened as a scene, as the editor opens one: the
+    /// dimension its Objs are in and its file's settings.
+    dimension: Option<OpenDimension>,
+}
+
+/// A `.dimension` open as a scene: the dimension made for it and its file's
+/// `[dimension]` settings, written back with its Objs.
+#[derive(Clone, Debug)]
+pub struct OpenDimension {
+    pub id: crate::dimensions::DimensionId,
+    pub settings: crate::dimensions::DimensionSettings,
 }
 
 /// A scene a level wants, from its file or the level it stands on.
@@ -269,6 +280,10 @@ impl Levels {
         let (mut captured, _) = scene_file::capture_scene_with_ids(&engine.world, content, &open.objs);
         (captured.sky, captured.post) = (open.sky, open.post.clone());
         captured.lighting = open.lighting.as_ref().map(|(reference, _)| reference.clone());
+        if let Some(dimension) = &open.dimension {
+            let (now, on_disk) = dimension_texts(&project.join(&open.path), &dimension.settings, captured);
+            return on_disk.is_some() && on_disk == now.ok();
+        }
         let on_disk = scene_file::read(&project.join(&open.path)).ok().and_then(|s| toml::to_string(&s).ok());
         on_disk.is_some() && on_disk == toml::to_string(&captured).ok()
     }
@@ -312,7 +327,11 @@ impl Levels {
             return Ok(false);
         }
         let entry = content.db().get(scene).with_context(|| format!("no asset with GUID {scene}"))?;
-        ensure!(entry.kind == AssetKind::Scene, "{} is not a .scene file", entry.path);
+        ensure!(
+            matches!(entry.kind, AssetKind::Scene | AssetKind::Dimension),
+            "{} is not a .scene or .dimension file",
+            entry.path
+        );
         let target = Target { guid: scene, path: entry.path.clone(), reload: false, required: true };
         let loaded = self.load_scene(engine, content, renderer, &target)?;
         self.scenes.push(loaded);
@@ -388,6 +407,76 @@ impl Levels {
     /// opened on its own, rather than being one it asks for.
     pub fn opened_alongside(&self, scene: AssetGuid) -> bool {
         self.scenes.iter().any(|s| s.guid == scene) && !self.wanted.contains(&scene)
+    }
+
+    /// The `.dimension` files open as scenes, each with the dimension made
+    /// for it.
+    pub fn open_dimensions(&self) -> Vec<(AssetGuid, &str, &OpenDimension)> {
+        self.scenes.iter().filter_map(|s| Some((s.guid, s.path.as_str(), s.dimension.as_ref()?))).collect()
+    }
+
+    /// Each Obj an open scene keeps, with its path in the scene's file.
+    pub fn tracked_in(&self, scene: AssetGuid) -> Vec<(Entity, ObjPath)> {
+        let open = self.scenes.iter().find(|s| s.guid == scene);
+        open.map(|s| s.objs.iter().map(|(path, entity)| (*entity, path.clone())).collect()).unwrap_or_default()
+    }
+
+    /// The open scene that is a dimension's file, by its dimension.
+    pub fn dimension_scene(&self, id: crate::dimensions::DimensionId) -> Option<AssetGuid> {
+        self.scenes.iter().find(|s| s.dimension.as_ref().is_some_and(|d| d.id == id)).map(|s| s.guid)
+    }
+
+    /// The dimension an open scene's Objs are in: the level's for a scene,
+    /// its own for a dimension's file.
+    pub fn dimension_of_scene(&self, scene: AssetGuid) -> Option<crate::dimensions::DimensionId> {
+        let open = self.scenes.iter().find(|s| s.guid == scene)?;
+        Some(open.dimension.as_ref().map_or(crate::dimensions::DimensionId::LEVEL, |d| d.id))
+    }
+
+    /// Puts the root Objs of each open scene in its scene's dimension where
+    /// they are not, as after the editor moves Objs between a level's scene
+    /// and a dimension's file, or makes one in a dimension's. Returns how
+    /// many moved.
+    pub fn keep_scene_dimensions(&self, world: &mut World) -> usize {
+        let mut moving = Vec::new();
+        for scene in &self.scenes {
+            let id = scene.dimension.as_ref().map_or(crate::dimensions::DimensionId::LEVEL, |d| d.id);
+            for &(_, entity) in &scene.objs {
+                let root = world.is_alive(entity) && !world.has::<Parent>(entity) && !world.has::<Destroying>(entity);
+                if root && crate::dimensions::dimension_of(world, entity) != id {
+                    moving.push((entity, id));
+                }
+            }
+        }
+        for &(entity, id) in &moving {
+            crate::dimensions::set_dimension(world, entity, id);
+        }
+        moving.len()
+    }
+
+    /// Gives a dimension's file open as a scene new settings, which its next
+    /// save writes, its dimension changed to match. False where it is not
+    /// open.
+    pub fn set_dimension_settings(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        scene: AssetGuid,
+        settings: crate::dimensions::DimensionSettings,
+    ) -> Result<bool> {
+        let Some(open) = self.scenes.iter_mut().find(|s| s.guid == scene) else { return Ok(false) };
+        let Some(dimension) = open.dimension.as_mut() else { return Ok(false) };
+        dimension.settings = settings.clone();
+        let scene = scene_file::SceneFile {
+            lighting: open.lighting.as_ref().map(|(reference, _)| reference.clone()),
+            sky: open.sky,
+            post: open.post.clone(),
+            ..scene_file::SceneFile::default()
+        };
+        let file = crate::dimensions::DimensionFile { settings: settings.clone(), scene };
+        let surroundings = crate::dimensions::file_surroundings(engine, content, &file)?;
+        crate::dimensions::change(&mut engine.world, dimension.id, settings, surroundings);
+        Ok(true)
     }
 
     /// Moves from the scenes loaded now to those a level (its path, its
@@ -467,21 +556,63 @@ impl Levels {
     ) -> Result<LoadedScene> {
         // A prefab opened on its own reads as a scene: both are a list of Objs.
         // And a particle effect opened on its own as a scene of its emitters, an Obj each.
+        // And a dimension's file as a scene of its Objs, spawned in a dimension of its own.
         let kind = content.db().get(target.guid).map_or(AssetKind::Scene, |entry| entry.kind);
-        let kind = if matches!(kind, AssetKind::Prefab | AssetKind::Particles) { kind } else { AssetKind::Scene };
+        let kind = match kind {
+            AssetKind::Prefab | AssetKind::Particles | AssetKind::Dimension => kind,
+            _ => AssetKind::Scene,
+        };
         let (text, path) = content.asset_text(target.guid, kind)?;
+        let mut dimension = None;
         let scene = match kind {
             AssetKind::Particles => {
                 let effect = voxear_render::ParticleEffect::from_toml(&text);
                 crate::particles::effect_scene(&effect.map_err(|error| anyhow::anyhow!("reading {path}: {error}"))?)
+            }
+            AssetKind::Dimension => {
+                let file = crate::dimensions::DimensionFile::parse(&text, &path)?;
+                let surroundings = crate::dimensions::file_surroundings(engine, content, &file)
+                    .with_context(|| format!("loading {path}"))?;
+                let settings = file.settings.clone();
+                let made = crate::dimensions::make_empty(
+                    &mut engine.world,
+                    settings.clone(),
+                    Some(surroundings),
+                    self.current.as_deref(),
+                );
+                let id = made.with_context(|| format!("making {path}: there are as many dimensions as there can be"))?;
+                dimension = Some(OpenDimension { id, settings });
+                file.scene
             }
             _ => scene_file::parse(&text, &path)?,
         };
         self.persistent.retain(|_, entity| engine.world.is_alive(*entity));
         let survivors: HashSet<ObjPath> =
             self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
-        let objs = scene_file::spawn(engine, content, renderer, &scene, &survivors)
-            .with_context(|| format!("loading {}", target.path))?;
+        let objs = match &dimension {
+            // A dimension's file leaves the world's sky alone: its own is kept for when it is seen.
+            Some(open) => {
+                let objs = scene_file::spawn_objs(engine, content, renderer, &scene, &survivors);
+                let objs = objs.with_context(|| format!("loading {}", target.path));
+                let objs = match objs {
+                    Ok(objs) => objs,
+                    Err(error) => {
+                        crate::dimensions::let_go(&mut engine.world, open.id);
+                        return Err(error);
+                    }
+                };
+                let world = &mut engine.world;
+                for &(_, entity) in &objs {
+                    if !world.has::<Parent>(entity) {
+                        crate::dimensions::set_dimension(world, entity, open.id);
+                    }
+                }
+                crate::dimensions::record_made(world, open.id, (Some(target.guid), 0), objs.clone());
+                objs
+            }
+            None => scene_file::spawn(engine, content, renderer, &scene, &survivors)
+                .with_context(|| format!("loading {}", target.path))?,
+        };
         // A scene's Objs are where it puts them from the level's real middle, wherever the world's has got to.
         if voxear_scene::WorldOrigin::of(&engine.world).is_moved() {
             let world = &mut engine.world;
@@ -500,23 +631,32 @@ impl Levels {
             None => None,
         };
         let (sky, post) = (scene.sky, scene.post);
-        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, lighting, sky, post })
+        Ok(LoadedScene { guid: target.guid, path: target.path.clone(), objs, lighting, sky, post, dimension })
     }
 
     /// The sky and post-processing come from the active scene, or failing
     /// that, the last one with any; lighting a script applied replaces them.
+    /// A dimension's file lights its own dimension, not the level. While
+    /// another dimension is current, the level's are set aside for it.
     fn apply_environment(&self, engine: &mut Engine) -> Result<()> {
+        let away = crate::dimensions::level_aside(&mut engine.world);
+        let applied = self.apply_level_environment(engine);
+        crate::dimensions::level_back(&mut engine.world, away);
+        applied
+    }
+
+    fn apply_level_environment(&self, engine: &mut Engine) -> Result<()> {
         if let Some((reference, lit)) = &self.applied_lighting {
             let lighting = Some((reference.as_str(), lit));
             return scene_file::apply_environment(engine, scene_file::Environment { lighting, sky: None, post: None });
         }
-        let active = self.scenes.iter().find(|s| Some(s.guid) == self.active);
-        let sky = active.and_then(|s| s.sky).or_else(|| self.scenes.iter().rev().find_map(|s| s.sky));
-        let post =
-            active.and_then(|s| s.post.as_ref()).or_else(|| self.scenes.iter().rev().find_map(|s| s.post.as_ref()));
+        let level = || self.scenes.iter().rev().filter(|s| s.dimension.is_none());
+        let active = level().find(|s| Some(s.guid) == self.active);
+        let sky = active.and_then(|s| s.sky).or_else(|| level().find_map(|s| s.sky));
+        let post = active.and_then(|s| s.post.as_ref()).or_else(|| level().find_map(|s| s.post.as_ref()));
         let lighting = active
             .and_then(|s| s.lighting.as_ref())
-            .or_else(|| self.scenes.iter().rev().find_map(|s| s.lighting.as_ref()))
+            .or_else(|| level().find_map(|s| s.lighting.as_ref()))
             .map(|(reference, lit)| (reference.as_str(), lit));
         scene_file::apply_environment(engine, scene_file::Environment { lighting, sky, post })
     }
@@ -616,11 +756,22 @@ impl Levels {
                 }
                 continue;
             }
-            let on_disk = scene_file::read(&file).ok().and_then(|s| toml::to_string(&s).ok());
-            if on_disk.is_some() && on_disk == toml::to_string(&captured).ok() {
-                continue;
+            // A dimension's file keeps its settings over its Objs.
+            if let Some(dimension) = &scene.dimension {
+                let (text, on_disk) = dimension_texts(&file, &dimension.settings, captured);
+                let text = text.with_context(|| format!("saving {}", scene.path))?;
+                if on_disk.as_deref() != Some(text.as_str()) {
+                    std::fs::write(&file, text).with_context(|| format!("saving {}", scene.path))?;
+                    written.push(scene.path.clone());
+                }
+            } else {
+                let on_disk = scene_file::read(&file).ok().and_then(|s| toml::to_string(&s).ok());
+                if on_disk.is_some() && on_disk == toml::to_string(&captured).ok() {
+                    continue;
+                }
+                scene_file::write(&file, &captured).with_context(|| format!("saving {}", scene.path))?;
+                written.push(scene.path.clone());
             }
-            scene_file::write(&file, &captured).with_context(|| format!("saving {}", scene.path))?;
             // Objs that had no id have one now, which the next save keeps.
             for (path, entity) in &mut scene.objs {
                 if path.ids().is_empty()
@@ -629,7 +780,6 @@ impl Levels {
                     *path = ObjPath::new(id);
                 }
             }
-            written.push(scene.path.clone());
         }
         // Terrains the level changed, which are assets of their own.
         written.extend(crate::terrain::save(content, project)?);
@@ -656,10 +806,35 @@ impl Levels {
             let mut captured = scene_file::capture_scene(&edit.world, content, &scene.objs);
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
             captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
+            let (lighting, sky, post) = (scene.lighting.clone(), scene.sky, scene.post.clone());
+            // A dimension open in the editor goes into play as edited, made as a Portal into it would make it, so
+            // it is let go as one would be once nothing needs it.
+            if let Some(open) = &scene.dimension {
+                let world = &edit.world;
+                let surroundings = world
+                    .resource::<crate::dimensions::Dimensions>()
+                    .map(|dimensions| dimensions.surroundings(world, open.id));
+                let current = copy.current.as_deref();
+                let made = crate::dimensions::make_empty(&mut play.world, open.settings.clone(), surroundings, current);
+                let id = made.context("there are as many dimensions as there can be")?;
+                let objs = scene_file::spawn_objs(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
+                    .with_context(|| format!("starting {}", scene.path))?;
+                for &(_, entity) in &objs {
+                    if !play.world.has::<Parent>(entity) {
+                        crate::dimensions::set_dimension(&mut play.world, entity, id);
+                    }
+                }
+                crate::dimensions::record_made(&mut play.world, id, (Some(scene.guid), 0), objs.clone());
+                crate::dimensions::made_on_demand(&mut play.world, id);
+                let dimension = Some(OpenDimension { id, settings: open.settings.clone() });
+                let (guid, path) = (scene.guid, scene.path.clone());
+                copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, dimension });
+                continue;
+            }
             let objs = scene_file::spawn(play, content, renderer.as_deref_mut(), &captured, &HashSet::new())
                 .with_context(|| format!("starting {}", scene.path))?;
-            let (lighting, sky, post) = (scene.lighting.clone(), scene.sky, scene.post.clone());
-            copy.scenes.push(LoadedScene { guid: scene.guid, path: scene.path.clone(), objs, lighting, sky, post });
+            let (guid, path) = (scene.guid, scene.path.clone());
+            copy.scenes.push(LoadedScene { guid, path, objs, lighting, sky, post, dimension: None });
         }
         copy.apply_environment(play)?;
         // The level's lighting bake goes with it, as baked, even before the level is saved.
@@ -892,18 +1067,34 @@ impl Levels {
             .chain(self.persistent.values().copied())
             .collect();
         let active = self.active;
-        let index = self.scenes.iter().position(|s| Some(s.guid) == active).or(self.scenes.len().checked_sub(1));
-        let Some(active) = index.map(|i| &mut self.scenes[i]) else { return };
-        let runtime = engine
-            .world
+        let level = |s: &LoadedScene| s.dimension.is_none();
+        let index = self.scenes.iter().position(|s| Some(s.guid) == active && level(s));
+        let Some(index) = index.or_else(|| self.scenes.iter().rposition(level)).or(self.scenes.len().checked_sub(1))
+        else {
+            return;
+        };
+        let world = &engine.world;
+        let runtime: Vec<Entity> = world
             .query_ref::<(Entity, &Name)>()
             .without::<Parent>()
             .without::<Destroying>()
             .without::<EditorOnly>()
             .into_iter()
             .map(|(entity, _)| entity)
-            .filter(|entity| !tracked.contains(entity));
-        active.objs.extend(runtime.map(|entity| (ObjPath::default(), entity)));
+            .filter(|entity| !tracked.contains(entity))
+            .collect();
+        // Each goes into the scene of its dimension: the active one for the level's, a dimension's own file for
+        // one opened as a scene, and none for a dimension made by code, as a dungeon's, which is not saved.
+        for entity in runtime {
+            let dimension = crate::dimensions::dimension_of(world, entity);
+            let at = match dimension.is_level() {
+                true => Some(index),
+                false => self.scenes.iter().position(|s| s.dimension.as_ref().is_some_and(|d| d.id == dimension)),
+            };
+            if let Some(at) = at {
+                self.scenes[at].objs.push((ObjPath::default(), entity));
+            }
+        }
     }
 }
 
@@ -1050,7 +1241,31 @@ fn unload(engine: &mut Engine, scene: &LoadedScene, keep_persistent: bool) -> Ve
     for entity in detach {
         engine.world.remove::<Parent>(entity);
     }
-    let doomed: Vec<Entity> = alive.into_iter().filter(|e| !kept.contains(e)).collect();
+    let mut doomed: Vec<Entity> = alive.into_iter().filter(|e| !kept.contains(e)).collect();
+    // A dimension's file closing lets its dimension go, and whatever else is in it.
+    if let Some(open) = &scene.dimension {
+        for &entity in &kept {
+            if !engine.world.has::<Parent>(entity) {
+                crate::dimensions::set_dimension(&mut engine.world, entity, crate::dimensions::DimensionId::LEVEL);
+            }
+        }
+        let rest = crate::dimensions::let_go(&mut engine.world, open.id).unwrap_or_default();
+        let rest: Vec<Entity> = rest.into_iter().filter(|entity| !doomed.contains(entity)).collect();
+        doomed.extend(rest);
+    }
     engine.destroy_objs(&doomed);
     scene.objs.iter().filter(|(_, e)| kept.contains(e)).cloned().collect()
+}
+
+/// A dimension's file as it would be saved with `captured` as its scene,
+/// and as it is on disk, each written the same way so the two compare.
+fn dimension_texts(
+    file: &Path,
+    settings: &crate::dimensions::DimensionSettings,
+    captured: scene_file::SceneFile,
+) -> (Result<String>, Option<String>) {
+    let now = crate::dimensions::DimensionFile { settings: settings.clone(), scene: captured }.to_toml();
+    let on_disk = std::fs::read_to_string(file).ok();
+    let on_disk = on_disk.and_then(|text| crate::dimensions::DimensionFile::parse(&text, "").ok()?.to_toml().ok());
+    (now, on_disk)
 }

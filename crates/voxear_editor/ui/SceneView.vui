@@ -11,6 +11,10 @@
             <Option>Heat</Option>
             <Option>Lightmap Density</Option>
         </Dropdown>
+        <!-- Which dimension it shows, while more than the level's are made. -->
+        <Dropdown name="dimension" class="dimension-menu">
+            <Option>Level</Option>
+        </Dropdown>
         <Button name="gizmos" class="header-button">Gizmos</Button>
         <Button name="gizmos-menu" class="icon-button"><Icon icon="chevron-down" /></Button>
         <Button name="scene-maximize" class="icon-button"><Icon icon="maximize" /></Button>

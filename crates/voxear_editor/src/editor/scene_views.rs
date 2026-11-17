@@ -92,6 +92,11 @@ pub(super) struct SceneView {
     /// While the game plays, its camera in the level as edited, which is put
     /// where this one flew to when play stops.
     pub(super) edit_camera: Option<Entity>,
+    /// The Dimension menu, the dimensions it lists, and where the camera
+    /// was in each it has shown (see `dimensions`).
+    pub(super) dimension_menu: NodeId,
+    pub(super) listed: Vec<(voxear_engine::dimensions::DimensionId, String)>,
+    pub(super) places: std::collections::HashMap<voxear_engine::dimensions::DimensionId, Transform>,
 }
 
 impl SceneView {
@@ -137,9 +142,16 @@ impl SceneView {
             show_gizmos: true,
             gizmo_shows: None,
             edit_camera: None,
+            dimension_menu: find(ui, "dimension"),
+            listed: Vec::new(),
+            places: Default::default(),
         };
         ui.set_visible(view.prefab_bar, false);
         ui.set_visible(view.particle_strip, false);
+        ui.set_visible(view.dimension_menu, false);
+        let tip = "Which dimension this Scene view shows: the level's, a .dimension file open alongside it, or a \
+                   dungeon opened from its gate. Each keeps where the view looked from in it.";
+        ui.set_tooltip(view.dimension_menu, tip, None);
         view
     }
 
@@ -341,6 +353,7 @@ impl Editor {
         std::mem::swap(&mut self.scene, &mut self.scene_views[index]);
         self.hovered_handle = None;
         self.tools.hover(None);
+        self.seen_from_scene_view();
     }
 
     /// Every Scene view's header: its shading menu and Gizmos button change

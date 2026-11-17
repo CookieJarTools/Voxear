@@ -3487,6 +3487,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Portal => {
             world.remove::<voxear_render::PortalFar>(entity);
             drop(world.remove::<Portal>(entity));
+            world.remove::<voxear_engine::portals::PortalInto>(entity);
         }
         Part::Collider2D => drop(world.remove::<Collider2D>(entity)),
         Part::Rigidbody2D => drop(world.remove::<Rigidbody2D>(entity)),
@@ -3611,9 +3612,22 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let connected = world.get::<Joint>(entity)?.connected;
             Value::Obj(connected.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
         }
+        // Into a dimension's file as its picker lists it; to another dimension's Portal with that dimension's name.
         Prop::PortalTo => {
-            let to = world.get::<Portal>(entity)?.to;
-            Value::Obj(to.and_then(|obj| world.get::<Name>(obj)).map_or_else(|| "None".into(), |n| n.0.clone()))
+            let to = world.get::<Portal>(entity)?.to.filter(|to| world.is_alive(*to));
+            if let Some(into) = crate::dimension_views::into_of(game, entity) {
+                return Some(Value::Obj(into.label()));
+            }
+            let named = to.and_then(|obj| Some((obj, world.get::<Name>(obj)?.0.clone())));
+            let here = voxear_scene::dimension_of(world, entity);
+            Value::Obj(match named {
+                Some((obj, name)) if voxear_scene::dimension_of(world, obj) != here => {
+                    let far = voxear_scene::dimension_of(world, obj);
+                    format!("{name} · {}", voxear_engine::dimensions::name_of(world, &game.content, far))
+                }
+                Some((_, name)) => name,
+                None => "None".into(),
+            })
         }
         Prop::PortalSize => Value::Vector(world.get::<Portal>(entity)?.size.to_array().to_vec()),
         Prop::PortalOpen => Value::Toggle(world.get::<Portal>(entity)?.open),
@@ -4614,11 +4628,23 @@ pub fn pick(
         // The Portal picked leads back, unless it already leads somewhere: two join both ways from one pick.
         (Prop::PortalTo, Pick::Obj(obj)) => {
             let world = &mut game.engine.world;
+            world.remove::<voxear_engine::portals::PortalInto>(entity);
             let to = obj.filter(|&obj| obj != entity && world.has::<Portal>(obj));
             if let Some(other) = to.and_then(|to| world.get_mut::<Portal>(to)).filter(|other| other.to.is_none()) {
                 other.to = Some(entity);
             }
             with(world, entity, |portal: &mut Portal| portal.to = to)
+        }
+        // Into a Portal of a dimension's file: linked as the game makes that dimension.
+        (Prop::PortalTo, Pick::Portal(far)) => {
+            let world = &mut game.engine.world;
+            if !world.has::<Portal>(entity) {
+                return false;
+            }
+            let portal = voxear_engine::lod_groups::FileRef::new(&far.portal);
+            let link = voxear_engine::portals::DimensionLink { dimension: far.file.clone(), portal };
+            world.insert(entity, voxear_engine::portals::PortalInto(link));
+            with(world, entity, |portal: &mut Portal| portal.to = None)
         }
         (Prop::CameraFollows, Pick::Obj(obj)) => {
             let world = &mut game.engine.world;
@@ -4879,18 +4905,32 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
         // A Portal leads to another: every other Obj with one. A camera follows any Obj.
+        // A Portal leads to another of its own dimension, or into a Portal of a dimension's file.
         Prop::PortalTo | Prop::CameraFollows => {
             let world = &game.engine.world;
             let mut found = vec![("None".to_string(), Pick::Obj(None))];
             let named = world.query_ref::<(Entity, &Name)>().without::<voxear_scene::Destroying>();
+            let here = voxear_scene::dimension_of(world, entity);
             let mut others: Vec<(String, Pick)> = named
                 .into_iter()
                 .filter(|(other, _)| *other != entity && !world.has::<voxear_scene::EditorOnly>(*other))
-                .filter(|(other, _)| *prop == Prop::CameraFollows || world.has::<Portal>(*other))
+                .filter(|(other, _)| {
+                    *prop == Prop::CameraFollows
+                        || (world.has::<Portal>(*other) && voxear_scene::dimension_of(world, *other) == here)
+                })
                 .map(|(other, name)| (name.0.clone(), Pick::Obj(Some(other))))
                 .collect();
             others.sort_by(|a, b| a.0.cmp(&b.0));
             found.extend(others);
+            if *prop == Prop::PortalTo {
+                let own = game.levels.place_of(entity);
+                let files = crate::dimension_views::file_portals_of(game).into_iter();
+                let itself = |far: &crate::dimension_views::FilePortal| {
+                    own.as_ref().is_some_and(|(scene, path)| (*scene, path) == (far.dimension, &far.portal))
+                };
+                let files = files.filter(|far| !itself(far));
+                found.extend(files.map(|far| (far.label(), Pick::Portal(far))));
+            }
             return found;
         }
         // A joint holds to an Obj physics moves: every other with a Rigidbody, or the world.
@@ -4952,7 +4992,7 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
         return "A joint holds to another Obj with a Rigidbody".to_string();
     }
     if *prop == Prop::PortalTo {
-        return "A Portal leads to another Obj with a Portal".to_string();
+        return "A Portal leads to another Obj with a Portal, or one in a dimension's file".to_string();
     }
     let Prop::Field { behaviour, path } = prop else {
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));

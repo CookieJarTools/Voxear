@@ -633,6 +633,113 @@ pub fn let_go(world: &mut World, id: DimensionId) -> Option<Vec<Entity>> {
     Some(doomed)
 }
 
+/// A dimension file's sky, sun, post-processing and weather: the level's,
+/// with its own lighting, `[sky]` and `[post]` laid over them as a scene's
+/// are; dark all round where it has no sky, and clear where it has no
+/// weather.
+pub fn file_surroundings(
+    engine: &mut crate::Engine,
+    content: &mut crate::Content,
+    file: &DimensionFile,
+) -> Result<Surroundings> {
+    let world = &engine.world;
+    let level = match world.resource::<Dimensions>() {
+        Some(dimensions) => dimensions.surroundings(world, DimensionId::LEVEL),
+        None => Surroundings::copy(world),
+    };
+    let scene = &file.scene;
+    let own = match scene.lighting.is_some() || scene.sky.is_some() || scene.post.is_some() {
+        true => {
+            let before = Surroundings::copy(&engine.world);
+            level.put(&mut engine.world);
+            let lighting = match &scene.lighting {
+                Some(reference) => Some((reference.as_str(), content.lighting(&content.parse(reference)?)?)),
+                None => None,
+            };
+            let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
+            let environment = crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref() };
+            let applied = crate::scene_file::apply_environment(engine, environment);
+            let own = Surroundings::copy(&engine.world);
+            before.put(&mut engine.world);
+            applied?;
+            own
+        }
+        false => level,
+    };
+    let settings = &file.settings;
+    Ok(match (settings.sky(), settings.weather()) {
+        (false, _) => Surroundings::enclosed(own.post()),
+        (true, false) => own.cleared(),
+        (true, true) => own,
+    })
+}
+
+/// While a dimension other than the level's is current, puts the level's
+/// sky, sun, post-processing and weather in the world for something that
+/// sets them, as a scene's lighting does, and returns the current one's to
+/// put back with [`level_back`]. None while the level's is current.
+pub fn level_aside(world: &mut World) -> Option<Surroundings> {
+    let dimensions = world.resource::<Dimensions>()?;
+    if dimensions.current.is_level() {
+        return None;
+    }
+    let level = dimensions.level.clone();
+    let own = Surroundings::copy(world);
+    level.put(world);
+    Some(own)
+}
+
+/// Keeps what the world has now as the level's and puts back the current
+/// dimension's, after [`level_aside`].
+pub fn level_back(world: &mut World, own: Option<Surroundings>) {
+    let Some(own) = own else { return };
+    let level = Surroundings::copy(world);
+    if let Some(dimensions) = world.resource_mut::<Dimensions>() {
+        dimensions.level = level;
+    }
+    own.put(world);
+}
+
+/// Gives a dimension made new settings and surroundings, as when its file's
+/// are changed while it is open in the editor. False where it was not made.
+pub fn change(world: &mut World, id: DimensionId, settings: DimensionSettings, surroundings: Surroundings) -> bool {
+    let Some(mut dimensions) = world.remove_resource::<Dimensions>() else { return false };
+    let current = dimensions.current == id;
+    let found = dimensions.made.iter_mut().find(|made| made.id == id).map(|made| {
+        made.settings = settings;
+        if !current {
+            made.kept = surroundings.clone();
+        }
+    });
+    if found.is_some() && current {
+        surroundings.put(world);
+    }
+    world.insert_resource(dimensions);
+    found.is_some()
+}
+
+/// What a dimension is called where it is listed: its file's name, "Level"
+/// for the level's own, or what it is with its key for one made by code,
+/// as a dungeon's.
+pub fn name_of(world: &World, content: &crate::Content, id: DimensionId) -> String {
+    if id.is_level() {
+        return "Level".into();
+    }
+    let Some(made) = world.resource::<Dimensions>().and_then(|dimensions| dimensions.get(id)) else {
+        return format!("Dimension {}", id.0);
+    };
+    let file = made.asset.and_then(|asset| content.db().get(asset)).map(|entry| {
+        let name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+        name.strip_suffix(".dimension").unwrap_or(name).to_string()
+    });
+    match (file, made.settings.kind) {
+        (Some(name), _) if made.key == 0 => name,
+        (Some(name), _) => format!("{name} {:04x}", made.key & 0xffff),
+        (None, DimensionKind::Dungeon) => format!("Dungeon {:04x}", made.key & 0xffff),
+        (None, kind) => format!("{kind:?} {}", id.0),
+    }
+}
+
 /// Each frame, before anything reads the sky or streams ground: follows the
 /// camera into whichever dimension it is in, the world's sky, sun,
 /// post-processing and weather becoming that dimension's; and once the

@@ -16,6 +16,7 @@ impl Editor {
         if !self.is_playing() {
             debug_draw::advance(delta);
         }
+        self.label_far_dimensions();
         let camera = view
             .and_then(|(viewport, camera)| ViewCamera::new(&self.game.engine.world, camera, self.ui.rect(viewport)));
         let rect = camera.as_ref().map_or([0.0; 4], |camera| camera.rect);

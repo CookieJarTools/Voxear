@@ -4419,7 +4419,8 @@ engine's glue is `voxear_engine::navigation`.
   Nav Area boxes mark one); Nav Links; wider walkers.
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level
   (`.nav`), with run-time cutting for Nav Obstacles.
-- **The editor and tools**: a Navigation overlay, Project Settings ▸ Navigation, and `navigation.*` calls.
+- **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
+  `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
 - **Co-op and dimensions**: agents only where they have authority; Portals as links, within a dimension and
   between dimensions.
 

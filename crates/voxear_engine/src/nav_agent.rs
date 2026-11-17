@@ -905,6 +905,28 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
     walked.into_iter().nth(index)
 }
 
+/// The way from `from` to `to` for something `height` metres tall that
+/// swims, opens doors and jumps, over the world of blocks `from` is in, of
+/// the dimension the game is seen from: how it ends, its corners in the
+/// world, and what it costs.
+pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathStatus, Vec<Vec3>, f32) {
+    let found = walked_at(world, from, height).map(|walked| {
+        let walker = walked.walker_of(&NavAgent::default(), height);
+        let found = find_path(&walked.nav, &PathAsk::new(walked.local(from), walked.local(to), walker));
+        (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
+    });
+    found.unwrap_or((PathStatus::None, Vec::new(), 0.0))
+}
+
+/// The place to stand nearest `at`, on its floor, no more than `reach`
+/// metres off, in the dimension the game is seen from.
+pub fn nearest_place(world: &mut World, at: Vec3, reach: f32) -> Option<Vec3> {
+    let walked = walked_at(world, at, 1.8)?;
+    let reach = (reach / walked.size).max(0.5);
+    let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
+    Some(walked.world(walked.nav.point(place)?))
+}
+
 fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
     let found_point = |at: Option<Vec3>| Some(at.map_or([0.0; 4], |at| [at.x, at.y, at.z, 1.0]));
     match (what, written) {
@@ -914,13 +936,7 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
         }
         (FIND, Some([x, y, z, _])) => {
             let (from, height) = { (asked(world).from, asked(world).height) };
-            let to = Vec3::new(x, y, z);
-            let found = walked_at(world, from, height).map(|walked| {
-                let ask = PathAsk::new(walked.local(from), walked.local(to), walked.walker(height));
-                let found = find_path(&walked.nav, &ask);
-                (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
-            });
-            asked(world).found = found.unwrap_or((PathStatus::None, Vec::new(), 0.0));
+            asked(world).found = find_way(world, from, Vec3::new(x, y, z), height);
         }
         (FOUND, None) => {
             let (status, corners, cost) = &asked(world).found;
@@ -932,15 +948,7 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
             let corner = *asked.found.1.get(asked.corner)?;
             return Some([corner.x, corner.y, corner.z, 0.0]);
         }
-        (NEAREST, Some([x, y, z, reach])) => {
-            let at = Vec3::new(x, y, z);
-            let nearest = walked_at(world, at, 1.8).and_then(|walked| {
-                let reach = (reach / walked.size).max(0.5);
-                let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
-                Some(walked.world(walked.nav.point(place)?))
-            });
-            asked(world).nearest = nearest;
-        }
+        (NEAREST, Some([x, y, z, reach])) => asked(world).nearest = nearest_place(world, Vec3::new(x, y, z), reach),
         (NEAREST_FOUND, None) => return found_point(asked(world).nearest),
         (RANDOM, Some([x, y, z, radius])) => {
             let at = Vec3::new(x, y, z);

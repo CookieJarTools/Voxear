@@ -157,6 +157,8 @@ pub(crate) struct PreparedMaterial {
     pub metallic_roughness: Option<usize>,
     pub normal: Option<usize>,
     pub emissive: Option<usize>,
+    /// Which of an Obj's tints fall where (see `MaterialDesc::tint_mask`).
+    pub tint_mask: Option<usize>,
 }
 
 impl PreparedMaterial {
@@ -165,7 +167,15 @@ impl PreparedMaterial {
     /// still work and taking the materials back needs no new ones.
     pub(crate) fn plain(name: &str) -> Self {
         let desc = MaterialDesc::default();
-        Self { name: name.to_string(), desc, base_color: None, metallic_roughness: None, normal: None, emissive: None }
+        Self {
+            name: name.to_string(),
+            desc,
+            base_color: None,
+            metallic_roughness: None,
+            normal: None,
+            emissive: None,
+            tint_mask: None,
+        }
     }
 }
 
@@ -318,6 +328,7 @@ impl PreparedModel {
         self.textures.clear();
         for material in &mut self.materials {
             (material.base_color, material.metallic_roughness, material.normal, material.emissive) = (None, None, None, None);
+            material.tint_mask = None;
         }
     }
 
@@ -539,6 +550,7 @@ fn material_desc(material: &PreparedMaterial, textures: &[TextureId]) -> Materia
         metallic_roughness_texture: texture(material.metallic_roughness),
         normal_texture: texture(material.normal),
         emissive_texture: texture(material.emissive),
+        tint_mask: texture(material.tint_mask),
         ..material.desc
     }
 }
@@ -719,7 +731,16 @@ impl Preparer {
             ..MaterialDesc::default()
         };
         let name = name.to_string();
-        self.model.materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
+        let tint_mask = None;
+        self.model.materials.push(PreparedMaterial {
+            name,
+            desc,
+            base_color,
+            metallic_roughness,
+            normal,
+            emissive,
+            tint_mask,
+        });
         let index = self.model.materials.len() - 1;
         self.materials.insert(key, index);
         Ok(Some(index))

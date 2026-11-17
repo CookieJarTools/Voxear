@@ -131,7 +131,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
-pub use skinning::{HiddenBones, Pose};
+pub use skinning::{BonesOff, HiddenBones, Pose};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
@@ -161,7 +161,7 @@ pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plant
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
-pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS};
+pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS, TintSlot};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use effects::{
     BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, longest_life as particles_longest_life, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
@@ -1334,6 +1334,12 @@ impl Renderer {
 
     /// A mesh's box in its own space, min and max corners, for picking. The
     /// box of its bounding sphere for a mesh uploaded cooked.
+    /// Whether a material has a tint mask, so an Obj's second and third
+    /// tints show on it.
+    pub fn tint_masked(&self, material: MaterialHandle) -> bool {
+        self.assets.as_ref().is_some_and(|assets| assets.tint_masked(material))
+    }
+
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }

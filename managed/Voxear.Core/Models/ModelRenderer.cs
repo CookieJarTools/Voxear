@@ -21,6 +21,7 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 	private const int TintValue = 3;
 	private const int LodBiasValue = 4;
 	private const int PartsValue = 5;
+	private const int FollowsValue = 6;
 	private const int ModelText = 0;
 	private const int SetModelText = 1;
 
@@ -65,8 +66,8 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 	/// </summary>
 	public Color Tint
 	{
-		get { return GetTint(0); }
-		set { SetTint(0, value); }
+		get { return GetTint(TintSlot.First); }
+		set { SetTint(TintSlot.First, value); }
 	}
 
 	/// <summary>Shifts which level of detail each part draws: 1 switches to simpler ones sooner, -1 later.</summary>
@@ -78,6 +79,17 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 
 	/// <summary>How many parts it draws.</summary>
 	public int PartCount => (int)NativeComponent.Number(NativeComponent.ModelRenderer, Obj, PartsValue, 0f);
+
+	/// <summary>
+	/// The Obj whose skeleton poses the model every frame, bone by bone by name, as a part worn on a body follows it;
+	/// <see cref="Obj.None"/> when nothing does. Bones the other skeleton has not stand at rest from those they hang
+	/// from. Set to the Obj's parent, as the Inspector's Follow parent, it is kept when the scene is saved.
+	/// </summary>
+	public Obj Follows
+	{
+		get { return NativeComponent.Get(NativeComponent.ModelRenderer, Obj, FollowsValue, out var value) ? NativeComponent.ObjOf(value) : Obj.None; }
+		set { NativeComponent.Set(NativeComponent.ModelRenderer, Obj, FollowsValue, NativeComponent.ValueOf(value)); }
+	}
 
 	/// <summary>Takes the Model Renderer off its Obj, with how its bones were posed.</summary>
 	public void Remove()
@@ -115,16 +127,21 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 		return $"{Obj}'s Model Renderer";
 	}
 
-	private Color GetTint(int slot)
+	/// <summary>
+	/// One of its three tints; white when it has none. The second and third show where its model says they fall: a
+	/// box model's colours that take them, or a material's tint mask.
+	/// </summary>
+	public Color GetTint(TintSlot slot)
 	{
-		return NativeComponent.Get(NativeComponent.ModelRenderer, Obj, TintValue | slot << 8, out var value)
+		return NativeComponent.Get(NativeComponent.ModelRenderer, Obj, TintValue | (int)slot << 8, out var value)
 			? new Color(value.X, value.Y, value.Z)
 			: Color.White;
 	}
 
-	private void SetTint(int slot, Color tint)
+	/// <summary>Sets one of its three tints, each channel held within 0 and 1.</summary>
+	public void SetTint(TintSlot slot, Color tint)
 	{
-		NativeComponent.Set(NativeComponent.ModelRenderer, Obj, TintValue | slot << 8, new Vector4(tint.R, tint.G, tint.B, 1f));
+		NativeComponent.Set(NativeComponent.ModelRenderer, Obj, TintValue | (int)slot << 8, new Vector4(tint.R, tint.G, tint.B, 1f));
 	}
 
 	internal static bool Draw(Obj obj, ModelAsset model)

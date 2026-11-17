@@ -23,6 +23,7 @@ const REMOVE: i32 = 2;
 const TINT: i32 = 3;
 const LOD_BIAS: i32 = 4;
 const PARTS: i32 = 5;
+const FOLLOWS: i32 = 6;
 
 // What `texts` answers: the model, by GUID, and a model to draw in its place, which gives the Obj a Model Renderer
 // when it has none.
@@ -85,8 +86,33 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (PARTS, None) => {
             Some([world.get::<ModelRenderer>(entity).map_or(0, |drawn| drawn.parts.len()) as f32, 0.0, 0.0, 0.0])
         }
+        (FOLLOWS, None) => Some(obj_value(crate::animation::followed(world, entity))),
+        (FOLLOWS, Some(value)) if has => {
+            let of = obj_of(value).filter(|&of| of != entity && world.is_alive(of));
+            let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+            // Its parent, as a scene writes it; another Obj, for this run alone.
+            match of {
+                Some(of) if Some(of) != parent => drop(world.insert(entity, crate::animation::FollowSkeleton { of })),
+                _ => drop(world.remove::<crate::animation::FollowSkeleton>(entity)),
+            }
+            if let Some(source) = world.get_mut::<ModelSource>(entity) {
+                source.0.follow_parent = of.is_some() && of == parent;
+            }
+            Some(obj_value(crate::animation::followed(world, entity)))
+        }
         _ => None,
     }
+}
+
+/// An Obj as a value scripts read: its id's two halves, bit for bit.
+fn obj_value(obj: Option<Entity>) -> [f32; 4] {
+    let bits = obj.map_or(0, Entity::to_bits);
+    [f32::from_bits(bits as u32), f32::from_bits((bits >> 32) as u32), 0.0, 0.0]
+}
+
+fn obj_of([low, high, ..]: [f32; 4]) -> Option<Entity> {
+    let bits = u64::from(low.to_bits()) | u64::from(high.to_bits()) << 32;
+    (bits != 0).then(|| Entity::from_bits(bits))
 }
 
 fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
@@ -112,6 +138,7 @@ fn remove(world: &mut World, entity: Entity) {
     world.remove::<ModelSource>(entity);
     world.remove::<Pose>(entity);
     world.remove::<AnimatorState>(entity);
+    world.remove::<voxear_render::BonesOff>(entity);
 }
 
 /// Has `entity` draw the model `reference` names, by GUID or project
@@ -162,6 +189,7 @@ pub fn set_model(
     if other_bones {
         world.remove::<Pose>(entity);
         world.remove::<AnimatorState>(entity);
+        world.remove::<voxear_render::BonesOff>(entity);
     }
     Ok(())
 }

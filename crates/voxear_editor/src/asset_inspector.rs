@@ -376,7 +376,7 @@ struct MaterialFields {
     /// The colour's and the emission's swatches, which open the colour picker.
     swatches: [NodeId; 2],
     /// Each map's picture, in [`MaterialMap::ALL`]'s order, with its path.
-    maps: [(Slot, Option<String>); 5],
+    maps: [(Slot, Option<String>); 6],
     /// How far its height map moves it, and how finely it is diced.
     displacement: NodeId,
     detail: NodeId,
@@ -1406,7 +1406,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
             ui.set_text(*field, &number(value));
         }
     }
-    let labels = ["Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Height Map"];
+    let labels = ["Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Height Map", "Tint Mask"];
     let maps = MaterialMap::ALL.map(|map| {
         let at = MaterialMap::ALL.iter().position(|&m| m == map).unwrap_or_default();
         let slot = slot(ui, rows, labels[at], "texture");

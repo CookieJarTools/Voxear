@@ -58,6 +58,18 @@ public sealed class Dresser : SystemBase
 			case 2:
 				Obj.Find("Bare").Model.Remove();
 				Log.Info($"removed: {Obj.Find("Bare").Model.IsValid} {Obj.Find("Bare").Skeleton.IsValid}");
+				model.SetTint(TintSlot.Second, Color.Hex("#204060"));
+				Log.Info($"second: {Hex(model.GetTint(TintSlot.Second))} {Hex(model.GetTint(TintSlot.Third))} {Hex(model.Tint)}");
+				var body = Obj.Find("Bare");
+				body.AddModel(ModelAsset.Load("Characters/Tail.boxmodel"));
+				model.Follows = body;
+				Log.Info($"follows: {model.Follows == body} {Obj.Find("Ground").Model.Follows.IsValid}");
+				break;
+			case 3:
+				var follower = Obj.Find("Wearer").Model;
+				Log.Info($"followed: {follower.Follows == Obj.Find("Bare")}");
+				follower.Follows = Obj.None;
+				Log.Info($"let go: {follower.Follows.IsValid}");
 				break;
 		}
 	}
@@ -147,7 +159,7 @@ fn a_script_tints_an_objs_model_and_puts_another_in_its_place() {
         assert_eq!(drawn.gpu_tints()[0], 0xc0 | 0x80 << 8 | 0x40 << 16 | 0xff << 24);
     }
 
-    for _ in 0..2 {
+    for _ in 0..3 {
         game.tick(1.0 / 60.0, renderer.as_mut());
     }
     let lines = lines(&log);
@@ -161,10 +173,17 @@ fn a_script_tints_an_objs_model_and_puts_another_in_its_place() {
     assert!(lines.iter().any(|l| l.contains("Levels/Day.level is not a model")), "{lines:#?}");
     has("added: True 2 #ffffff");
     has("removed: False False");
+    has("second: #204060 #ffffff #c08040");
+    has("follows: True False");
+    has("followed: True");
+    has("let go: False");
     let world = &game.engine.world;
     let tail = game.content.db().guid_of("Characters/Tail.boxmodel").unwrap();
     assert_eq!(world.get::<ModelSource>(entity).unwrap().0.model, tail.to_string(), "kept by its GUID");
-    assert!(world.get::<Pose>(entity).is_none(), "posed afresh on other bones");
+    let tint2 = [0x20, 0x40, 0x60].map(|channel| channel as f32 / 255.0);
+    let saved = &world.get::<ModelSource>(entity).unwrap().0;
+    assert!(saved.tint2.iter().zip(tint2).all(|(a, b)| (a - b).abs() < 1e-3), "{:?}", saved.tint2);
+    assert!(!saved.follow_parent, "another Obj than its parent is followed for this run alone");
 }
 
 /// A copy of Hello, inside the repository, where its scripts find the

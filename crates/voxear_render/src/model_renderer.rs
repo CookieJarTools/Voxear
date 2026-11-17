@@ -39,6 +39,38 @@ pub struct ModelRenderer {
     /// one model can be tinted apart. A box model's pixels and cubes keep
     /// their sharp edges and holes, near and far.
     pub tints: [[f32; 3]; TINTS],
+    /// Whether any part's material has a tint mask, so its second and
+    /// third tints show where the mask says.
+    pub masked: bool,
+}
+
+/// Which of a Model Renderer's tints: without a tint mask the first tints
+/// the whole model; with one, each where the mask says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TintSlot {
+    #[default]
+    First,
+    Second,
+    Third,
+}
+
+impl TintSlot {
+    pub const ALL: [Self; TINTS] = [Self::First, Self::Second, Self::Third];
+
+    /// Its place among a Model Renderer's tints.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The colour a tint mask has where this tint falls: red, green or blue.
+    pub fn mask_color(slot: Option<Self>) -> [u8; 4] {
+        match slot {
+            Some(Self::First) => [255, 0, 0, 255],
+            Some(Self::Second) => [0, 255, 0, 255],
+            Some(Self::Third) => [0, 0, 255, 255],
+            None => [0, 0, 0, 255],
+        }
+    }
 }
 
 /// How many tints a Model Renderer has.
@@ -51,7 +83,7 @@ impl Component for ModelRenderer {}
 
 impl ModelRenderer {
     pub fn new(parts: Vec<ModelPart>) -> Self {
-        Self { parts: parts.into(), lod_bias: 0.0, animation: None, tints: [NO_TINT; TINTS] }
+        Self { parts: parts.into(), lod_bias: 0.0, animation: None, tints: [NO_TINT; TINTS], masked: false }
     }
 
     /// Its tints as an instance carries them: each sRGB RGBA8 in its bits,

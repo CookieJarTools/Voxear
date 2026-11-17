@@ -31,7 +31,7 @@ use std::{
 
 use voxear_core::math::Vec3;
 use voxear_engine::animation::{MobMotion, MobPoser, MotionInput};
-use voxear_render::{BoxHit, BoxKey, BoxModel, BoxSkin, Face, Renderer, on_step};
+use voxear_render::{BoxHit, BoxKey, BoxModel, BoxSkin, Face, Renderer, TintSlot, on_step};
 use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
 use crate::{
@@ -53,6 +53,15 @@ const BONE: u64 = 4096;
 
 /// The most of a sheet's colours the bar offers to paint with again.
 const SWATCHES: usize = 12;
+
+/// Which of an Obj's tints the colour painted with takes, as the bar offers
+/// them: the three tints, and last, none.
+const TINT_CHOICES: [(&str, &str); 4] = [
+    ("Tint", "This colour takes an Obj's tint"),
+    ("Tint 2", "This colour takes an Obj's second tint"),
+    ("Tint 3", "This colour takes an Obj's third tint"),
+    ("Own", "This colour keeps its own, whatever an Obj's tints"),
+];
 
 /// What a change is to, for changes close together to merge into one step.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -310,6 +319,10 @@ pub struct ModelPanel {
     color: [u8; 4],
     /// The colour the swatch and the picker last showed.
     color_shown: Option<[u8; 4]>,
+    /// Which of an Obj's tints the colour painted with takes, and the colour
+    /// and choice it last showed.
+    tint_choice: NodeId,
+    tint_shown: Option<([u8; 4], usize)>,
     symmetry: NodeId,
     on_layer: NodeId,
     lay_out: NodeId,
@@ -408,6 +421,11 @@ impl ModelPanel {
         ui.set_tooltip(swatch, "The colour painted with", None);
         let swatches = ui.panel(paint_bar, Style::row());
         ui.add_class(swatches, "model-bar-group");
+        let tint_choice = ui.segmented(paint_bar);
+        for (label, tip) in TINT_CHOICES {
+            let segment = ui.add_segment(tint_choice, label, None);
+            ui.set_tooltip(segment, tip, None);
+        }
         let symmetry = button(ui, paint_bar, "Symmetry", "A stroke on the model paints the other side of the body too");
         let tip = "A stroke on the model paints the layer of the box under it, in place of the box's own pixels";
         let on_layer = button(ui, paint_bar, "Layer", tip);
@@ -465,6 +483,8 @@ impl ModelPanel {
             offered: Vec::new(),
             color: [226, 84, 84, 255],
             color_shown: None,
+            tint_choice,
+            tint_shown: None,
             symmetry,
             on_layer,
             lay_out,
@@ -1119,11 +1139,34 @@ impl ModelPanel {
         if let Some(color) = taken.and_then(|at| self.offered.get(at)) {
             self.color = *color;
         }
+        self.update_tint_choice(ui);
         if self.color_shown != Some(self.color) {
             self.color_shown = Some(self.color);
             let [r, g, b, _] = self.color;
             ui.set_inline_style(self.swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
             self.picker.set(ui, PickedColor::srgb([r, g, b].map(|channel| f32::from(channel) / 255.0)), false);
+        }
+    }
+
+    /// Which tint the colour painted with takes: shown afresh when the
+    /// colour changes, and given to the model's colour when picked.
+    fn update_tint_choice(&mut self, ui: &mut Ui) {
+        let Some(model) = self.open.as_ref().map(|open| &open.model) else { return };
+        let taken = |slot: Option<TintSlot>| slot.map_or(TINT_CHOICES.len() - 1, TintSlot::index);
+        let shown = taken(model.tint_of(self.color));
+        let picked = ui.segment(self.tint_choice);
+        match self.tint_shown {
+            Some((color, was)) if color == self.color && picked != was => {
+                let mut model = model.clone();
+                model.set_tint_of(self.color, TintSlot::ALL.get(picked).copied());
+                self.tint_shown = Some((self.color, picked));
+                self.change(model, None);
+            }
+            Some((color, was)) if color == self.color && was == shown => {}
+            _ => {
+                ui.set_segment(self.tint_choice, shown);
+                self.tint_shown = Some((self.color, shown));
+            }
         }
     }
 

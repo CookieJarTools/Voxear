@@ -827,6 +827,9 @@ pub enum Prop {
     /// how many parts it draws.
     ModelAsset,
     ModelTint,
+    ModelTint2,
+    ModelTint3,
+    ModelFollow,
     ModelLodBias,
     ModelParts,
     FoliageFade,
@@ -1276,7 +1279,13 @@ impl Prop {
             | Prop::FoliageSpread
             | Prop::FoliageImpostors
             | Prop::FoliageImpostorDistance => Part::Foliage,
-            Prop::ModelAsset | Prop::ModelTint | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
+            Prop::ModelAsset
+            | Prop::ModelTint
+            | Prop::ModelTint2
+            | Prop::ModelTint3
+            | Prop::ModelFollow
+            | Prop::ModelLodBias
+            | Prop::ModelParts => Part::Model,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -1684,6 +1693,9 @@ impl Prop {
             Prop::FoliageSpread => "color_spread",
             Prop::ModelAsset => "model",
             Prop::ModelTint => "tint",
+            Prop::ModelTint2 => "tint2",
+            Prop::ModelTint3 => "tint3",
+            Prop::ModelFollow => "follow_parent",
             Prop::ModelLodBias => "lod_bias",
             Prop::ModelParts => "parts",
             Prop::FoliageFade => "fade_distance",
@@ -2421,7 +2433,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props.extend([Prop::FoliageHealthy, Prop::FoliageDry, Prop::FoliageSpread]);
             crate::plants_props::props(world, entity, props)
         }
-        Part::Model => vec![Prop::ModelAsset, Prop::ModelTint, Prop::ModelLodBias, Prop::ModelParts],
+        Part::Model => {
+            let mut props = vec![Prop::ModelAsset, Prop::ModelTint];
+            // A mask's other tints, where a part's material has one.
+            if world.get::<ModelRenderer>(entity).is_some_and(|drawn| drawn.masked) {
+                props.extend([Prop::ModelTint2, Prop::ModelTint3]);
+            }
+            props.extend([Prop::ModelFollow, Prop::ModelLodBias, Prop::ModelParts]);
+            props
+        }
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -2878,6 +2898,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::FoliageSpread => "Colour patches",
         Prop::ModelAsset => "Model",
         Prop::ModelTint => "Tint",
+        Prop::ModelTint2 => "Tint 2",
+        Prop::ModelTint3 => "Tint 3",
+        Prop::ModelFollow => "Follow parent",
         Prop::ModelLodBias => "LOD bias",
         Prop::ModelParts => "Parts",
         Prop::FoliageFade => "Fade distance",
@@ -3573,6 +3596,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
         Prop::ModelAsset => Value::Asset(path_of(game, &world.get::<ModelSource>(entity)?.0.model)?),
         Prop::ModelTint => Value::Color(model_tint(world, entity, 0)?.map(round3)),
+        Prop::ModelTint2 => Value::Color(model_tint(world, entity, 1)?.map(round3)),
+        Prop::ModelTint3 => Value::Color(model_tint(world, entity, 2)?.map(round3)),
+        Prop::ModelFollow => Value::Toggle(world.get::<ModelSource>(entity)?.0.follow_parent),
         Prop::ModelLodBias => Value::Number(world.get::<ModelRenderer>(entity)?.lod_bias),
         Prop::ModelParts => Value::Fixed(world.get::<ModelRenderer>(entity)?.parts.len().to_string()),
         Prop::LightSoftness => Value::Number(light()?.softness),
@@ -5149,6 +5175,11 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |model: &mut ModelRenderer| model.lod_bias = n.clamp(-4.0, 4.0))
         }
         (Prop::ModelTint, Value::Color(color)) => set_model_tint(world, entity, 0, color),
+        (Prop::ModelTint2, Value::Color(color)) => set_model_tint(world, entity, 1, color),
+        (Prop::ModelTint3, Value::Color(color)) => set_model_tint(world, entity, 2, color),
+        (Prop::ModelFollow, Value::Toggle(on)) => {
+            with(world, entity, |source: &mut ModelSource| source.0.follow_parent = on)
+        }
         (Prop::FoliageHealthy, Value::Color(color)) => {
             with(world, entity, |f: &mut Foliage| f.healthy_color = color.map(|c| c.clamp(0.0, 1.0)))
         }

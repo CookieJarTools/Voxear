@@ -1209,7 +1209,8 @@ pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &Mod
     let nodes = content.model(renderer, guid)?.to_vec();
     let parts = model_parts(content, renderer, &nodes, data)?;
     let animation = content.model_animation(guid);
-    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, tints: data.tints(), ..ModelRenderer::new(parts) })
+    let masked = parts.iter().any(|part| renderer.tint_masked(part.material));
+    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, tints: data.tints(), masked, ..ModelRenderer::new(parts) })
 }
 
 /// A Model Renderer with no parts to draw but the model's skeleton and

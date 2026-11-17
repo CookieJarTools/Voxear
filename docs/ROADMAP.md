@@ -3718,7 +3718,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
     an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
     every Project Settings row and every component's fields reached. Manual: Areas and Costs.
-  - [ ] Nav Links; climbing vines, ropes and ladders; walkers two blocks wide; agent types in Project Settings
+  - [x] **Nav Links** (`navigation::NavLink`, Add Component ▸ Navigation ▸ Nav Link: End in the Obj's own space,
+    Kind Walk, Jump, Climb or Teleport, Both Ways, Cost): searches take each as one step, from the place nearest its
+    Obj to the place nearest its end, costing as far as it goes and its cost more, the coarse graph too
+    (`voxear_nav::Link`, `Joins`); its two ends are always corners of a way, marked by the link's kind
+    (`FoundPath::links`); agents cross it along its line, or an arc for a jump, at once for a teleport, whatever
+    way they move. Drawn as arrows by the Navigation gizmo. Tests: a way over a wall only by a link, one way only;
+    an agent climbing a ladder link onto a platform four blocks high, by its controller and along the nav;
+    every component's fields reached. Manual: Nav Links.
+  - [ ] climbing vines and ropes without a link; walkers two blocks wide; agent types in Project Settings; costs
+    per agent
   - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
     `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
     its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing

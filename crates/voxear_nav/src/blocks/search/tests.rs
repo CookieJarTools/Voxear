@@ -184,7 +184,7 @@ fn ways_reach_where_a_search_a_block_at_a_time_reaches_and_the_coarse_graph_keep
             let alone = SCRATCH.with(|scratch| {
                 let start = nav.nearest(on(from), ask.walker, 1.0, 2.0).unwrap();
                 let goal = nav.nearest(on(to), ask.walker, 3.0, 4.0);
-                fine(&mut scratch.borrow_mut(), &nav, None, start, goal, on(to), None, &ask)
+                fine(&mut scratch.borrow_mut(), &nav, None, start, goal, on(to), None, &ask, &Joins::default())
             });
             assert!(alone.reached);
             let best = alone.cost.max(1.0);
@@ -342,4 +342,25 @@ fn a_road_is_walked_cheaply_ground_nothing_walks_on_is_gone_round_and_a_box_give
     let mut ask = PathAsk::new(on([1, 1, 2]), on([13, 1, 2]), Walker::blocks(2));
     ask.boxes.push(crate::AreaBox { min: [7.0, 0.0, 13.0], max: [10.0, 4.0, 16.0], area: crate::NOT_WALKABLE });
     assert_eq!(find_path(&nav, &ask).status, PathStatus::Partial);
+}
+
+#[test]
+fn a_link_is_taken_where_there_is_no_other_way_and_its_ends_are_corners() {
+    // A wall two blocks high all the way across the floor: no way over it but a link.
+    let mut blocks = floor();
+    for z in 0..16 {
+        blocks.set([8, 1, z], STONE);
+        blocks.set([8, 2, z], STONE);
+    }
+    let nav = nav_of(&blocks);
+    let mut ask = PathAsk::new(on([3, 1, 4]), on([13, 1, 4]), Walker::blocks(2));
+    assert_eq!(find_path(&nav, &ask).status, PathStatus::Partial);
+    ask.links.push(crate::Link { from: on([7, 1, 10]), to: on([9, 1, 10]), both_ways: false, cost: 1.0, kind: 3 });
+    let over = find_path(&nav, &ask);
+    assert_eq!(over.status, PathStatus::Complete, "{:?}", over.corners);
+    let at = over.links.iter().position(|link| *link == Some(3)).expect("a corner reached by the link");
+    assert_eq!((cell(over.corners[at - 1]), cell(over.corners[at])), ([7, 1, 10], [9, 1, 10]));
+    // One way only: no way back over it.
+    let back = find_path(&nav, &PathAsk { from: on([13, 1, 4]), to: on([3, 1, 4]), ..ask.clone() });
+    assert_eq!(back.status, PathStatus::Partial);
 }

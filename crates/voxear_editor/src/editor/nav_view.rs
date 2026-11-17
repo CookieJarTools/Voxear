@@ -23,6 +23,8 @@ const SWIM: [f32; 4] = [0.2, 0.35, 1.0, 0.45];
 const DOOR: [f32; 4] = [1.0, 0.6, 0.2, 0.55];
 /// How an agent's way is drawn.
 const WAY: [f32; 4] = [1.0, 0.85, 0.25, 1.0];
+/// How a Nav Link is drawn.
+const LINK: [f32; 4] = [0.85, 0.45, 1.0, 1.0];
 
 impl Editor {
     /// Draws the Navigation gizmo where it is switched on.
@@ -86,6 +88,21 @@ impl Editor {
             for (kind, triangles) in squares.into_iter().enumerate() {
                 let color = [STAND, WADE, SWIM, DOOR][kind];
                 debug_draw::solid(triangles, color, 0.0, style);
+            }
+        }
+        // Each Nav Link, from its Obj to its end, an arrow, both ways where it goes both ways.
+        let links: Vec<(Vec3, Vec3, bool)> = world
+            .query_ref::<(Entity, &voxear_engine::navigation::NavLink)>()
+            .into_iter()
+            .filter_map(|(entity, link)| {
+                let (from, to) = voxear_engine::navigation::link_ends(world, entity, link)?;
+                Some((from, to, link.both_ways))
+            })
+            .collect();
+        for (from, to, both) in links {
+            debug_draw::arrow(from + Vec3::Y * 0.2, to + Vec3::Y * 0.2, LINK, 0.0, style);
+            if both {
+                debug_draw::arrow(to + Vec3::Y * 0.2, from + Vec3::Y * 0.2, LINK, 0.0, style);
             }
         }
         // Each agent's way, corner to corner, a little over the floor.

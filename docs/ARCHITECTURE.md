@@ -3805,7 +3805,14 @@ Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by wh
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. The corners' shade dims the light from all round, the less of it and the ambient occlusion pass's,
-and leaves the sun to its shadow. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
+and leaves the sun to its shadow. A world of cubes keeps light for each block (`blocks::light`): sky light from open
+sky and block light from blocks that give it, 0 to 15 each, flooded a step less a block, worked out exactly for a
+box from the blocks within 15 of it and the columns' tops, never saved. The streamer lights a column from the nine
+round it as its faces are made; an edit solves a box round itself again and draws again the chunks whose light
+changed. Each quad has a third word beside its two, its corners' light (the mean of the open blocks touching each
+corner), kept in its own region of the pool, and greedy merging keys on it. With `BlockLighting::Blocks`, the
+default, `blocks.slang` and `shading.slang` light a face by it in place of the GI's probes: the sky's light by sky
+light, the world's glow colour by block light, the sun past its shadows by sky light. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
 and each sun cascade only their faces turned towards the sun. A world's faces can be drawn as made of small cubes
 (`BlockVoxels` on its `BlockLook`, `voxels` and `relief` in its file): `blockCubes` walks the camera's ray across a

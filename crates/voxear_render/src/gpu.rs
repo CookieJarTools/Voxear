@@ -1261,6 +1261,10 @@ pub struct GpuBuffers {
     /// `lightmaps` and `lightmapper`).
     pub baked_instances: u64,
     pub bake_job: u64,
+    /// The light kept for the blocks round the camera, and its blocks'
+    /// light, a byte each (see `blocks::GpuLightVolume`).
+    pub block_light: u64,
+    pub block_light_bytes: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top

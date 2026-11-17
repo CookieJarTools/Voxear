@@ -36,6 +36,7 @@ pub mod file;
 pub mod flow;
 pub mod generate;
 pub mod grow;
+pub mod light;
 pub mod map;
 pub mod map_known;
 pub mod mesh;
@@ -120,6 +121,8 @@ pub struct BlockFaces {
     /// a button stays on once pressed, in hundredths.
     pub travel: u16,
     pub press: u16,
+    /// How much light it gives, from 0 for none to 15 (see [`light`]).
+    pub light: u8,
 }
 
 /// A block drawn as parts, a few boxes, in place of a cube.
@@ -164,6 +167,7 @@ impl BlockFaces {
             rest,
             travel,
             press,
+            light: 0,
         }
     }
 
@@ -418,9 +422,21 @@ impl BlockMap {
     /// Each chunk's faces, worked out on every core, each block drawn with
     /// the surfaces `faces` gives it (see `file::BlockFile::faces`).
     pub fn mesh_all(&self, faces: &[BlockFaces], smooth: bool) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
+        self.mesh_lit(faces, smooth, None)
+    }
+
+    /// Each chunk's faces, as [`mesh_all`](Self::mesh_all) makes them, lit
+    /// by `light` where it is given.
+    pub fn mesh_lit(
+        &self,
+        faces: &[BlockFaces],
+        smooth: bool,
+        light: Option<&light::LightMap>,
+    ) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
         voxear_core::profile_scope!("Block Meshing");
         let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
-        let meshes = crate::workers::each(&keys, |&key| mesh_any(self, key, faces, smooth));
+        let light = light.map(|light| light as &dyn light::LightAt);
+        let meshes = crate::workers::each(&keys, |&key| mesh_lit(self, key, faces, smooth, &|_| true, light));
         keys.into_iter().zip(meshes).filter(|(_, mesh)| !mesh.is_empty()).map(|(k, m)| (k, Arc::new(m))).collect()
     }
 }
@@ -472,6 +488,10 @@ pub struct BlockWorld {
     /// from its corner (see `generate::BlockFloor`): no change reaches it or
     /// anything under it. None where it has no floor.
     pub floor: Option<i32>,
+    /// Each block's sky light and block light, for a world of cubes (see
+    /// [`light`]): worked out from its blocks, never saved, and kept up as
+    /// they change. Empty for a world drawn smooth.
+    pub light: Arc<light::LightMap>,
 }
 
 impl Component for BlockWorld {}
@@ -560,7 +580,8 @@ impl BlockWorld {
     /// chunk's faces worked out with `faces`, and any water running in it
     /// set flowing on.
     pub fn made(blocks: BlockMap, faces: &[BlockFaces], block_size: f32, smooth: bool) -> Self {
-        let meshes = blocks.mesh_all(faces, smooth);
+        let light = if smooth { light::LightMap::default() } else { light::LightMap::of(&blocks, faces) };
+        let meshes = blocks.mesh_lit(faces, smooth, (!smooth).then_some(&light));
         let flowing = running(&blocks, faces);
         Self {
             blocks: Arc::new(blocks),
@@ -579,6 +600,7 @@ impl BlockWorld {
             pressed: Arc::default(),
             clock: 0.0,
             floor: None,
+            light: Arc::new(light),
         }
     }
 
@@ -818,12 +840,20 @@ impl BlockWorld {
         // A block that shows as another while covered is drawn by what is over it: a change reaches the block
         // under it too.
         let covering = !self.smooth && any_covered(&self.faces);
+        let mut lit: Vec<[i32; 3]> = Vec::new();
         for (at, block, fill) in changes {
             if at[1] <= floor || blocks.get(at) == block && blocks.fill(at) == fill {
                 continue;
             }
+            let was = blocks.get(at);
             blocks.set_cell(at, block, fill);
             changed += 1;
+            // Only a block that lets light through otherwise, or gives other light, changes any block's light.
+            let kind =
+                |id: BlockId| (light::passes(&self.faces, id), self.faces.get(usize::from(id)).map_or(0, |f| f.light));
+            if kind(was) != kind(block) {
+                lit.push(at);
+            }
             if wet {
                 flowing.extend(flow::reached(at));
             }
@@ -847,9 +877,26 @@ impl BlockWorld {
                 }
             }
         }
+        // Light flooded again round what changed: the chunks whose light changed are drawn again too.
+        let timing = std::env::var_os("VOXEAR_LIGHT_TIMES").map(|_| std::time::Instant::now());
+        let before = reached.len();
+        if !self.smooth && !lit.is_empty() {
+            let light = Arc::make_mut(&mut self.light);
+            reached.extend(light.relight(&self.blocks, &self.faces, &lit));
+        }
+        let lit_in = timing.map(|start| start.elapsed().as_secs_f64() * 1000.0);
         reached.sort_unstable();
         reached.dedup();
         self.remesh(&reached);
+        if let (Some(start), Some(lit_in)) = (timing, lit_in) {
+            let all = start.elapsed().as_secs_f64() * 1000.0;
+            eprintln!(
+                "light edit of {} blocks: lit in {lit_in:.2} ms, {} chunks meshed again ({before} for their blocks) in {:.2} ms",
+                lit.len(),
+                reached.len(),
+                all - lit_in
+            );
+        }
         if !flowing.is_empty() {
             Arc::make_mut(&mut self.flowing).extend(flowing);
         }
@@ -871,9 +918,10 @@ impl BlockWorld {
         voxear_core::profile_scope!("Block Meshing");
         let (blocks, faces, smooth) = (&self.blocks, &self.faces, self.smooth);
         let made = |column: [i32; 2]| self.columns.as_ref().is_none_or(|made| made.contains(&column));
+        let light = (!smooth).then_some(&*self.light as &dyn light::LightAt);
         let meshed = crate::workers::each(keys, |&key| match (smooth, near) {
             (true, true) => smooth::mesh_near(blocks, key, faces, &made),
-            _ => mesh_made(blocks, key, faces, smooth, &made),
+            _ => mesh_lit(blocks, key, faces, smooth, &made, light),
         });
         let meshes = Arc::make_mut(&mut self.meshes);
         for (key, mesh) in keys.iter().zip(meshed) {
@@ -890,6 +938,9 @@ impl BlockWorld {
     /// kinds of block changed how they are drawn.
     pub fn with_faces(&self, faces: &[BlockFaces], smooth: bool) -> Self {
         let mut world = Self { meshes: Arc::default(), faces: faces.into(), smooth, ..self.clone() };
+        // What lets light through or gives it may be other now.
+        world.light =
+            Arc::new(if smooth { light::LightMap::default() } else { light::LightMap::of(&world.blocks, faces) });
         let keys: Vec<[i32; 3]> = world.blocks.chunks().map(|(key, _)| *key).collect();
         world.mesh_again(&keys, false);
         world
@@ -904,7 +955,7 @@ impl BlockWorld {
             let joins = (faces.connects, faces.mixes, faces.overlap, faces.covered);
             let shape = (faces.water, faces.see_through, faces.sways, faces.shape, joins);
             let parts = (faces.state, faces.family, faces.motion, faces.covers, faces.part, faces.custom, faces.rest);
-            let parts = (parts, faces.travel, faces.press);
+            let parts = (parts, faces.travel, faces.press, faces.light);
             (faces.top, faces.sides, faces.bottom, shape, parts)
         };
         if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {
@@ -953,9 +1004,22 @@ pub fn mesh_made(
     smooth: bool,
     made: &dyn Fn([i32; 2]) -> bool,
 ) -> ChunkMesh {
+    mesh_lit(map, key, faces, smooth, made, None)
+}
+
+/// Chunk `key`'s faces in `map`, as [`mesh_made`] makes them, a world of
+/// cubes' lit by `light` where it is given (see `mesh::ChunkMesh::light`).
+pub fn mesh_lit(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    smooth: bool,
+    made: &dyn Fn([i32; 2]) -> bool,
+    light: Option<&dyn light::LightAt>,
+) -> ChunkMesh {
     match smooth {
         true => smooth::mesh_made(map, key, faces, made),
-        false => mesh::mesh_made(map, key, faces, made),
+        false => mesh::mesh_lit(map, key, faces, made, light),
     }
 }
 

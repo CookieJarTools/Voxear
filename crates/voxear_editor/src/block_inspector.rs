@@ -15,7 +15,9 @@
 //! block takes it up at once (see `editor::blocks`).
 
 use voxear_terrain::blocks::{
-    block::{BlockDef, BlockDrop, BlockHeat, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH},
+    block::{
+        BlockDef, BlockDrop, BlockHeat, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH, MOST_BLOCK_LIGHT,
+    },
     shape::{BlockFacing, BlockMotion, BoxDef, MOST_BOXES, MOST_KEYS, MOST_SWING, MotionEase, MotionKey, UseKind},
 };
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
@@ -191,6 +193,8 @@ pub struct BlockFields {
     tint: Option<NodeId>,
     /// How far up the order of blocks that meet it lies; none for a liquid.
     overlap: Option<NodeId>,
+    /// How much light it gives.
+    light: NodeId,
     /// Its shape; none for a liquid.
     shape: Option<NodeId>,
     tier: NodeId,
@@ -267,6 +271,13 @@ impl BlockFields {
             }
             field
         });
+        let light = number_field(ui, rows, "Light", f32::from(block.light));
+        if let Some(row) = ui.parent(light) {
+            let tip = "How much light it gives, from 0 for none to 15: a torch 14, lava 15. It floods out through the \
+                       blocks round it that let light pass, a step less each block, and lights Block Worlds lit by \
+                       Block Light";
+            ui.set_tooltip(row, tip, None);
+        }
         if block.liquid.is_none() {
             field(ui, rows, BlockRef::Covered, "Covered");
         }
@@ -363,6 +374,7 @@ impl BlockFields {
                 sways,
                 tint,
                 overlap,
+                light,
                 shape,
                 tier,
                 chops,
@@ -459,6 +471,9 @@ impl BlockFields {
         }
         if let Some(overlap) = self.overlap.and_then(|overlap| changed_number(ui, overlap)) {
             (block.overlap, typed) = (overlap.round().clamp(0.0, 255.0) as u8, true);
+        }
+        if let Some(light) = changed_number(ui, self.light) {
+            (block.light, typed) = (light.round().clamp(0.0, f32::from(MOST_BLOCK_LIGHT)) as u8, true);
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);

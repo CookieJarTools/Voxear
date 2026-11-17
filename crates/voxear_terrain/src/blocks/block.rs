@@ -63,6 +63,7 @@
 //! ```toml
 //! color = [0.9, 0.3, 0.05]
 //! heat = { celsius = 1100.0, reach = 4.0 }  # magma: hot round it, as ice is cold
+//! light = 15                                # and it lights what is round it, from 1 to 15
 //! ```
 
 use anyhow::Result;
@@ -139,6 +140,12 @@ pub struct BlockDef {
     /// snow. None for a block that is as warm as where it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heat: Option<BlockHeat>,
+    /// How much light it gives, from 0 for none to [`MOST_BLOCK_LIGHT`]:
+    /// a torch, lava, a lamp. Its light floods out through the blocks
+    /// round it that let light pass, a step less each block (see
+    /// `blocks::light`).
+    #[serde(skip_serializing_if = "is_no_light")]
+    pub light: u8,
     /// Whether its colour takes the biome it is in: grass and leaves green
     /// in a forest and yellowed on a savanna, fading from one to the other
     /// where biomes meet (see `generate::tints`).
@@ -186,6 +193,13 @@ pub struct BlockDef {
     /// `.voxplant`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grows: Option<String>,
+}
+
+/// The most light a block gives.
+pub const MOST_BLOCK_LIGHT: u8 = 15;
+
+fn is_no_light(light: &u8) -> bool {
+    *light == 0
 }
 
 fn is_four(chops: &u8) -> bool {
@@ -507,6 +521,7 @@ impl Default for BlockDef {
             drops: Vec::new(),
             sounds: BlockSounds::default(),
             heat: None,
+            light: 0,
             tint: BlockTint::None,
             usable: false,
             press_time: None,
@@ -573,7 +588,7 @@ impl BlockDef {
     /// Whether it is drawn as `other` is, whatever their rules.
     pub fn looks_like(&self, other: &Self) -> bool {
         let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
-        let shape = |block: &Self| (block.liquid, block.overlap, block.shape, block.covered.clone());
+        let shape = |block: &Self| (block.liquid, block.overlap, block.shape, block.covered.clone(), block.light);
         look(self) == look(other) && shape(self) == shape(other) && self.part_look() == other.part_look()
     }
 
@@ -614,6 +629,7 @@ impl BlockDef {
         kind.shape = if kind.water { BlockShape::Cube } else { self.shape };
         kind.part = self.part_look();
         kind.tint = self.tint;
+        kind.light = self.light.min(MOST_BLOCK_LIGHT);
         // A cube made a slab is one still.
         kind.shaped();
     }
@@ -636,6 +652,14 @@ mod tests {
         assert!(water.to_text().contains("liquid = \"water\""));
         assert_eq!(BlockDef::parse(&water.to_text()).unwrap(), water);
         assert!(BlockDef::parse("colour = [1.0, 0.0, 0.0]").is_err(), "a key it does not know is a mistake");
+        // A block that gives light says how much; one that gives none says nothing of it.
+        assert!(!grass.to_text().contains("light"));
+        let torch = BlockDef { light: 14, ..BlockDef::colored([1.0, 0.8, 0.4]) };
+        assert!(torch.to_text().contains("light = 14"));
+        assert_eq!(BlockDef::parse(&torch.to_text()).unwrap(), torch);
+        let mut lit = BlockKind::of("Blocks/Torch.block");
+        torch.fill(&mut lit);
+        assert_eq!(lit.light, 14);
 
         // A world's entry naming the block is drawn as the block says, and a kind made a block is the same block.
         let mut kind = BlockKind::of("Blocks/Grass.block");

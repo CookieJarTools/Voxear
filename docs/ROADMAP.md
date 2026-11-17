@@ -3545,6 +3545,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
   tools.
 
+## Shader packs (planned)
+
+Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
+pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
+with their sky light and block light, its sky and final pass, and its shadows. The plan, the stages, what every
+program reads, how it fits the frame graph, live reload, builds and costs: [SHADER_PACKS.md](SHADER_PACKS.md).
+Nothing built yet.
+
 ## M13 — Virtualised geometry (Nanite-style)
 
 M1 and M5 already lay the groundwork: meshlets, the visibility buffer and two-phase Hi-Z culling. This milestone

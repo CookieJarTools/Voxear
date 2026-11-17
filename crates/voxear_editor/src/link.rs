@@ -379,10 +379,10 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "blocks.get",
-        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there. `shows` is the block it is drawn as where that is another, as grass under a block shows as its Covered block.",
+        about: "The block at a point of the world, in metres, in a Block World: `obj`'s, or the first with one there. `shows` is the block it is drawn as where that is another, as grass under a block shows as its Covered block. `sky_light` and `block_light` are the light kept for the block, each from 0 to 15, in a world of cubes.",
         args: &[arg("at", ArgKind::Vector, "Metres, in the world."), maybe("obj", ArgKind::Obj, "The Block World.")],
         changes: false,
-        returns: "{ obj, cell, block, shows }",
+        returns: "{ obj, cell, block, shows, sky_light, block_light }",
     },
     CallInfo {
         name: "blocks.set",

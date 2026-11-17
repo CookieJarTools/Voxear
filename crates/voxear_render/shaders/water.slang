@@ -3868,6 +3868,9 @@ struct BlockWaterOut
     nointerpolation float2 fall : FALL;
     // How many blocks its water has fallen here, a side of falling water.
     float fallen : FALLEN;
+    // Its block's sky light and block light, each from 0 to 1, in a world lit by the light kept for its blocks
+    // (blockCornerLight in block_quads.slang).
+    nointerpolation float2 lit : BLOCK_LIGHT;
 };
 
 // How fast water running out sideways from what feeds it flows, and a river's current, in metres a second
@@ -3947,6 +3950,7 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     bool falling = whole && facing != 2 && facing != 3 && kept > 0;
     o.fall = float2(falling ? 1.0 : 0.0, whole && facing == 2 ? float((quad.y >> 8) & 15) : 0.0);
     o.fallen = 0.0;
+    o.lit = b.lit;
     if (falling)
     {
         // A block further at each block down the quad from its top.
@@ -4187,6 +4191,17 @@ FragmentOut blockWaterLit(
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float shadow = sunShadow(frame, at, face);
+    // Lit by the light kept for its world's blocks (blockAmbient in shading.slang): the sky's light and what it
+    // reflects of its surroundings as much as its sky light lets in, its blocks' light over them, and the sun as its
+    // sky light lets it in, past its shadows in their place.
+    BlockWorld world = buffers()->blockWorlds[input.water.x];
+    bool kept = (world.flags & BLOCKS_LIT) != 0;
+    float skyShare = kept ? blockSkyShare(input.lit.x, world.glow.w) : 1.0;
+    float3 glowLight = kept ? world.glow.rgb * blockGlowShare(input.lit.y) : 0.0;
+    if (kept)
+    {
+        shadow *= blockSunShare(input.lit.x, sunShadowsReach(frame, at));
+    }
     float3 nx = ddx(n);
     float3 ny = ddy(n);
     float turning = min(2.0 * 0.159 * (dot(nx, nx) + dot(ny, ny)), 0.18);
@@ -4201,6 +4216,11 @@ FragmentOut blockWaterLit(
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
     float3 ambient = ambientLight(frame, at, s, sunLight, atmosphere);
     float3 reflected = surroundingsReflection(frame, at, n, reflect(-v, n), s.roughness, ambient, atmosphere);
+    if (kept)
+    {
+        ambient = ambient * skyShare + glowLight;
+        reflected = reflected * skyShare + glowLight;
+    }
     float2 pixel = input.position.xy;
     float mirroredAt;
     float4 mirrored = waterScreenReflection(frame, at, reflect(-v, n), s.roughness, pixel, mirroredAt);

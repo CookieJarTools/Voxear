@@ -986,6 +986,7 @@ pub fn block_json(content: &mut Content, reference: &str) -> Result<String> {
         "shape": BlockShape::ALL.iter().position(|shape| *shape == block.shape).unwrap_or(0),
         "chops": block.slice().map_or(0, |_| block.chops),
         "fells": block.fells,
+        "light": block.light.min(voxear_terrain::blocks::block::MOST_BLOCK_LIGHT),
         "grows": block.grows,
         "covered": block.covered,
         "usable": block.part_look().usable || matches!(
@@ -1173,7 +1174,12 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
     let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
     let motions: Vec<voxear_render::GpuBlockMotion> =
         file.motions().iter().map(|(motion, swing)| voxear_render::GpuBlockMotion::of(motion.as_ref(), *swing)).collect();
-    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels, motions: motions.into() })
+    let light = voxear_render::BlockLight {
+        kept: file.lighting.is_blocks() && !file.smooth,
+        glow: voxear_core::math::Vec3::from(crate::content::linear(file.glow_color))
+            * file.glow.clamp(0.0, voxear_render::BlockLight::BRIGHTEST),
+    };
+    Ok(BlockLook { material: fallback, surfaces: surfaces.into(), voxels, motions: motions.into(), light })
 }
 
 /// Keeps every world of blocks' file and blocks in `content` as its

@@ -4470,8 +4470,11 @@ engine's glue is `voxear_engine::navigation`.
   crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
   a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
   to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
-- **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level
-  (`.nav`), with run-time cutting for Nav Obstacles.
+- **Mesh levels**: run-time cutting for Nav Obstacles, terrain heightfields in the bake, and bake settings per
+  agent type. (The baked nav mesh is done: `voxear_nav::mesh::bake` lays still colliders' triangles into a grid
+  of spans, keeps the walkable tops with room over them, shrinks them by the walker's radius and gathers them
+  into rectangles joined by shared edges; searches are an A* over rectangles and the funnel; `.nav` beside the
+  level, `navigation::LevelNav`, used by agents with no world of blocks under them.)
 - **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
   `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
 - **Co-op and dimensions**: agents only where they have authority; Portals as links, within a dimension and

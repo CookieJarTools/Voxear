@@ -48,6 +48,7 @@ mod modules;
 mod multiplayer;
 mod particle_effects;
 mod path_bakes;
+mod nav_bakes;
 mod probe_bakes;
 mod reverb_bakes;
 mod lighting_bakes;
@@ -250,6 +251,7 @@ pub(crate) enum Command {
     PseudoText,
     /// Bake the open level's sound paths.
     BakePaths,
+    BakeNav,
     /// Bake the open level's reflection probes.
     BakeProbes,
     /// Bake the open level's reverb probes.
@@ -370,6 +372,7 @@ pub struct Editor {
     notice: Option<(String, Instant)>,
     /// The open level's sound paths, while they bake.
     path_bake: Option<path_bakes::PathBake>,
+    nav_bake: Option<nav_bakes::NavBake>,
     /// The open level's reflection probes baking, and how the last bake ended.
     probe_bake: Option<probe_bakes::ProbeBake>,
     probe_bake_end: Option<Result<probe_bakes::ProbesBaked, String>>,
@@ -752,6 +755,7 @@ impl Editor {
             discard_armed: None,
             notice: None,
             path_bake: None,
+            nav_bake: None,
             probe_bake: None,
             probe_bake_end: None,
             reverb_bake: None,
@@ -1195,6 +1199,7 @@ impl Editor {
         self.mark_viewport_areas(&views);
         self.update_axis_gizmos();
         self.finish_path_bake();
+        self.finish_nav_bake();
         self.update_probe_bake(renderer);
         self.update_reverb_bake();
         self.update_lighting_bake(renderer);
@@ -1494,6 +1499,7 @@ impl Editor {
             AssetAction::DropRemap { model, part, source } => self.drop_remap(&model, &part, &source, renderer),
             AssetAction::ExtractMaterials(model) => self.extract_materials(&model, renderer),
             AssetAction::BakePaths(level) => self.bake_level_paths(&level),
+            AssetAction::BakeNav(level) => self.bake_level_nav(&level),
             AssetAction::BakeProbes(level) => self.bake_level_probes(&level),
             AssetAction::BakeReverb(level) => self.bake_level_reverb(&level),
         }
@@ -2522,6 +2528,7 @@ impl Editor {
             Command::Layers => self.inspect_layers(),
             Command::PseudoText => self.toggle_pseudo_text(),
             Command::BakePaths => self.bake_paths(),
+            Command::BakeNav => self.bake_nav(),
             Command::BakeProbes => self.bake_probes(),
             Command::BakeReverb => self.bake_reverb(),
             Command::BakeLighting => self.bake_lighting(renderer),
@@ -3298,6 +3305,7 @@ impl Editor {
             Some((text, _)) => text.clone(),
             None => match self
                 .path_bake_status()
+                .or_else(|| self.nav_bake_status())
                 .or_else(|| self.probe_bake_status())
                 .or_else(|| self.reverb_bake_status())
                 .or_else(|| self.lighting_bake_status(renderer))
@@ -3311,6 +3319,7 @@ impl Editor {
         let busy = self.play.is_building()
             || self.describing.is_some()
             || self.path_bake.is_some()
+            || self.nav_bake.is_some()
             || self.probe_bake.is_some()
             || self.reverb_bake.is_some()
             || self.lighting_bake.is_some();

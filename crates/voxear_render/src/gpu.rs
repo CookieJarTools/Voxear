@@ -1701,7 +1701,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 72 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 74 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);
@@ -1709,8 +1709,10 @@ mod tests {
         // Its corner and block size, three addresses, four words, its small cubes' count and depth, its sea's top,
         // then its motions' and moving blocks' addresses and how many of each, how it is turned, its far tints'
         // corner, and where its rings fade into each other: their clock and coarsest level, its fades' address, and
-        // their place, reach and band.
-        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16 + 16 + 32);
+        // their place, reach and band; then its blocks' light's colour and its quads' light's address, and two words.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16 + 16 + 32 + 32);
+        // The light round the camera: its first block and whether it has one, its corner and block size, its colour.
+        assert_eq!(size_of::<crate::blocks::GpuLightVolume>(), 16 + 16 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 96);
         assert_eq!(size_of::<GpuMist>(), 64);

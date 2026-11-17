@@ -52,10 +52,10 @@ glow = 1.0
 
 - `Block.Light` is how much light a block gives, from 0 to 15.
 - `vox editor call blocks.get at=[x,y,z]` gives the block there with its `sky_light` and `block_light`.
-- `vox editor call field.set obj=World component=block_world field=lighting value=scene` lights a Block World as the scene is, and `value=block_light` by block light again; `vox mcp` has the same calls.
+- `vox editor call field.set obj=World component=block_world field=lighting value=Scene` lights a Block World as the scene is, and `value="Block Light"` by block light again; `light_color` and `light_strength` set its blocks' light. `vox mcp` has the same calls.
 
 ## What it costs
 
-Light is worked out on the terrain's threads as each column's faces are made, from the eight columns round it, as its faces are. Placing or digging a block floods its light again round it, and draws again the chunks whose light changed, beside those its faces did. A chunk keeps a byte a block where its light varies, one where all its blocks have the same light, and nothing under open sky.
+Light is worked out on the terrain's threads as each column's faces are made, from the eight columns round it, as its faces are: in a world of metre blocks, about a quarter of the time making the column's faces takes. Placing or digging a block floods its light again round it, a few milliseconds, and draws again the chunks whose light changed, beside those its faces did. A chunk keeps a byte a block where its light varies, one where all its blocks have the same light, and nothing under open sky: about 50 KB a column of a generated world. Drawing by it costs under a tenth of a millisecond a frame.
 
 Light is never saved and never sent over the network: every machine works it out from the blocks, so saves and what goes to players who join stay as small as the blocks' changes.

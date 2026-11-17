@@ -878,25 +878,13 @@ impl BlockWorld {
             }
         }
         // Light flooded again round what changed: the chunks whose light changed are drawn again too.
-        let timing = std::env::var_os("VOXEAR_LIGHT_TIMES").map(|_| std::time::Instant::now());
-        let before = reached.len();
         if !self.smooth && !lit.is_empty() {
             let light = Arc::make_mut(&mut self.light);
             reached.extend(light.relight(&self.blocks, &self.faces, &lit));
         }
-        let lit_in = timing.map(|start| start.elapsed().as_secs_f64() * 1000.0);
         reached.sort_unstable();
         reached.dedup();
         self.remesh(&reached);
-        if let (Some(start), Some(lit_in)) = (timing, lit_in) {
-            let all = start.elapsed().as_secs_f64() * 1000.0;
-            eprintln!(
-                "light edit of {} blocks: lit in {lit_in:.2} ms, {} chunks meshed again ({before} for their blocks) in {:.2} ms",
-                lit.len(),
-                reached.len(),
-                all - lit_in
-            );
-        }
         if !flowing.is_empty() {
             Arc::make_mut(&mut self.flowing).extend(flowing);
         }

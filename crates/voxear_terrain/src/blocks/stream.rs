@@ -1041,7 +1041,6 @@ impl BlockStreamer {
                         let keys = from.chunks().map(|(key, _)| *key).filter(|key| [key[0], key[2]] == at);
                         let keys: Vec<[i32; 3]> = keys.collect();
                         // A world of cubes' light, worked out from the columns round it, as its faces are made.
-                        let timing = std::env::var_os("VOXEAR_LIGHT_TIMES").map(|_| std::time::Instant::now());
                         let (light, lit) = match (making.file.smooth, heights(&from)) {
                             (false, Some(heights)) => {
                                 let (light, lit) = light_column(&from, &making.faces, at, heights);
@@ -1049,25 +1048,13 @@ impl BlockStreamer {
                             }
                             _ => (Vec::new(), None),
                         };
-                        let lit_in = timing.map(|start| start.elapsed().as_secs_f64() * 1000.0);
                         let meshes = keys
                             .into_iter()
                             .map(|key| {
                                 let lit = lit.as_ref().map(|lit| lit as &dyn LightAt);
                                 (key, mesh_lit(&from, key, &making.faces, making.file.smooth, &|_| true, lit))
                             })
-                            .collect::<Vec<_>>();
-                        if let Some(start) = timing {
-                            let bytes: usize = light.iter().map(|(_, chunk)| chunk.bytes()).sum();
-                            let words: usize = meshes.iter().map(|(_, mesh)| mesh.quads.len()).sum();
-                            let all = start.elapsed().as_secs_f64() * 1000.0;
-                            let lit_in = lit_in.unwrap_or_default();
-                            eprintln!(
-                                "light column {at:?}: lit in {lit_in:.1} ms, meshed in {:.1} ms, {} chunks lit, {bytes} bytes, {words} quads",
-                                all - lit_in,
-                                light.len()
-                            );
-                        }
+                            .collect();
                         let _ = send.send(Finished::Meshed { number, at, meshes, light, from });
                     }
                     making_now.fetch_sub(1, Ordering::AcqRel);

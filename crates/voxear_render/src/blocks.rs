@@ -2629,14 +2629,19 @@ mod tests {
         let quad = |x: u32, surface: u8| pack([x, 0, 0], [1, 1], 0, surface, [3; 4]);
         let mut mesh = ChunkMesh { quads: vec![quad(0, 1), quad(1, 0), quad(2, 2), quad(3, 1)], ..Default::default() };
         mesh.buckets = [0, 3, 4, 4, 4, 4, 4, 4, 4];
+        // Each quad's light, by the place it came in: it goes where its quad goes.
+        mesh.light = vec![10, 11, 12, 13];
         let cut: Arc<[bool]> = Arc::from([false, true, false]);
-        let (quads, counts) = arranged(&mesh, 5, &cut);
+        let (quads, light, counts) = arranged(&mesh, 5, &cut);
         let surfaces: Vec<u8> = quads.iter().map(|quad| quad[1] as u8).collect();
         assert_eq!(surfaces, [0, 2, 1, 1], "the solid first in the first facing, in the order they came");
+        assert_eq!(light, [11, 12, 10, 13], "each quad's light with it");
         assert_eq!(counts, [1, 1, 0, 0, 0, 0]);
         assert!(quads.iter().all(|quad| quad[1] >> 16 == 5), "each with its slot");
-        // A world with nothing cut out keeps its quads as they came.
-        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).1, [0; FACINGS]);
+        // A world with nothing cut out keeps its quads as they came; one made with no light is open sky.
+        assert_eq!(arranged(&mesh, 0, &Arc::from([false; 3])).2, [0; FACINGS]);
+        let unlit = ChunkMesh { light: Vec::new(), ..mesh.clone() };
+        assert_eq!(arranged(&unlit, 0, &cut).1, [OPEN_SKY_WORD; 4]);
         // Drawn from the pool's 100th quad: the cut runs are the last of each facing.
         let draw = ChunkDraw {
             key: [0; 4],

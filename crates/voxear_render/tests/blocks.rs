@@ -3635,7 +3635,7 @@ fn sealed_room_render(kept: bool, lamp: bool, gi: bool) -> Option<Vec<u8>> {
     let mut world = World::new();
     world.spawn((BlockWorld::made(blocks, &faces, 1.0, false), look, Transform::default()));
     // From a corner of the room towards the lamp, a little down.
-    let view = Quat::from_rotation_y(-135f32.to_radians()) * Quat::from_rotation_x(-0.25);
+    let view = Quat::from_rotation_y(45f32.to_radians()) * Quat::from_rotation_x(0.25);
     world.spawn((Camera::default(), Transform::new(Vec3::new(25.5, 9.0, 25.5), view, Vec3::ONE)));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
     world.spawn((Light::directional(Vec3::ONE, 4.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));

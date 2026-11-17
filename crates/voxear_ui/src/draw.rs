@@ -38,8 +38,7 @@ pub(crate) fn measure(
     input: LayoutInput,
     element: Option<&mut Element>,
     style: &taffy::Style,
-    fonts: &mut FontContext,
-    layouts: &mut LayoutContext<u16>,
+    (fonts, layouts, cache): (&mut FontContext, &mut LayoutContext<u16>, &mut crate::tree::ShapedCache),
     (scale, whole_pixels): (f32, bool),
     stack: &crate::fonts::FontStack,
 ) -> LayoutOutput {
@@ -93,7 +92,7 @@ pub(crate) fn measure(
             };
             // Broken here at the width measured, its lines are drawn otherwise than when last drawn.
             text.drawn_at = None;
-            let layout = text.shaped(fonts, layouts, (scale, whole_pixels), stack);
+            let layout = text.shaped(fonts, layouts, (scale, whole_pixels), stack, Some(cache));
             layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
                 width: known.width.unwrap_or(layout.width() / scale),

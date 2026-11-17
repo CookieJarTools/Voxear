@@ -966,9 +966,10 @@ pub fn extract(
         })
         .collect();
     // The level's Wind Zone, or a fair day's wind, as the weather makes it.
-    frame.wind = crate::wind::plants_wind(world, weather, motion);
+    let blows = |entity: Entity| on(entity, Switch::WindZone);
+    frame.wind = crate::wind::plants_wind_where(world, weather, motion, &blows);
     // The sea's wind is the Wind Zone's, or the weather's own: a fair day's breeze is the plants' alone.
-    let zone = crate::wind::level_zone(world).map(|(zone, rotation)| (weather.wind(zone), rotation));
+    let zone = crate::wind::level_zone(world, &blows).map(|(zone, rotation)| (weather.wind(zone), rotation));
     let zone = zone.or_else(|| weather.wind_alone());
     if !frame.pushes.spring.is_normal() {
         frame.pushes.spring = motion.spring;

@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_scene::{Destroying, Switch, Switched, Transform};
+use voxear_scene::{CurrentDimension, Destroying, Dimensioned, Switch, Switched, Transform};
 
 use crate::{FoliageMotion, gpu::GpuWind, weather::WeatherAmounts};
 
@@ -122,23 +122,39 @@ impl WindZone {
     }
 }
 
-/// The level's first Global Wind Zone that is on, and how its Obj is
-/// turned, which blows over the whole level.
-pub(crate) fn level_zone(world: &World) -> Option<(WindZone, Quat)> {
-    let switched = Switched::of(world);
+/// The level's first Global Wind Zone that `on` says is on, as a view
+/// sees the dimension it is in, and how its Obj is turned, which blows over
+/// the whole level.
+pub(crate) fn level_zone(world: &World, on: &dyn Fn(Entity) -> bool) -> Option<(WindZone, Quat)> {
     let zones = world.query_ref::<(Entity, &WindZone, &Transform)>().without::<Destroying>();
-    let global = |(entity, zone, _): &(Entity, &WindZone, &Transform)| {
-        zone.shape == WindShape::Global && switched.is_on(world, *entity, Switch::WindZone)
-    };
+    let global = |(entity, zone, _): &(Entity, &WindZone, &Transform)| zone.shape == WindShape::Global && on(*entity);
     zones.into_iter().find(global).map(|(_, zone, transform)| (*zone, transform.rotation))
 }
 
-/// The wind plants feel over the level under `weather`: the first Global
-/// Wind Zone that is on, or with none a fair day's wind as hard as
-/// `motion` says, either blowing harder in rain and storms; and how far
-/// plants bend, as `motion` says. Strength 0 in still weather with neither.
+/// Whether a Wind Zone is on in the dimension the game is seen from.
+fn on_here(world: &World) -> impl Fn(Entity) -> bool + '_ {
+    let dimensioned = std::sync::Arc::new(Dimensioned::of(world));
+    let switched = Switched::of(world).only_in(CurrentDimension::of(world), dimensioned);
+    move |entity| switched.is_on(world, entity, Switch::WindZone)
+}
+
+/// The wind plants feel over the level under `weather`, in the dimension the
+/// game is seen from: the first Global Wind Zone that is on, or with none a
+/// fair day's wind as hard as `motion` says, either blowing harder in rain
+/// and storms; and how far plants bend, as `motion` says. Strength 0 in
+/// still weather with neither.
 pub fn plants_wind(world: &World, weather: WeatherAmounts, motion: FoliageMotion) -> GpuWind {
-    let zone = level_zone(world).map(|(zone, rotation)| (weather.wind(zone), rotation));
+    plants_wind_where(world, weather, motion, &on_here(world))
+}
+
+/// As [`plants_wind`], with the Wind Zones `on` says are on.
+pub(crate) fn plants_wind_where(
+    world: &World,
+    weather: WeatherAmounts,
+    motion: FoliageMotion,
+    on: &dyn Fn(Entity) -> bool,
+) -> GpuWind {
+    let zone = level_zone(world, on).map(|(zone, rotation)| (weather.wind(zone), rotation));
     let zone = zone.or_else(|| weather.wind_over(motion.wind));
     let mut wind = zone.map_or_else(GpuWind::default, |(zone, rotation)| zone.gpu(rotation));
     wind.bend = motion.bend;

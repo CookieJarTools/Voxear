@@ -780,6 +780,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
     Some(match short(name) {
         "AudioSource" => |world, entity| world.has::<AudioSource>(entity),
         "BlockMob" => |world, entity| world.has::<voxear_engine::block_mob::BlockMob>(entity),
+        "NavAgent" => |world, entity| world.has::<voxear_engine::nav_agent::NavAgent>(entity),
         "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),
         "Buoyancy" => |world, entity| world.has::<voxear_engine::water::Buoyancy>(entity),
         "Camera" => |world, entity| world.has::<voxear_render::Camera>(entity),

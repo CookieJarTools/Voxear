@@ -55,6 +55,10 @@ impl Walking {
     pub fn is_wet(self) -> bool {
         self.bits & WET != 0
     }
+
+    pub fn is_door(self) -> bool {
+        self.bits & DOOR != 0
+    }
 }
 
 /// What each of a world's blocks is to something walking, by its number.
@@ -96,7 +100,8 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
     }
     let part = part_of(faces, id);
     let door = u8::from(kind.shape == BlockShape::Door) * DOOR;
-    let stands = u8::from(part & PART_TALL == 0) * STANDS;
+    // A fence or a wall is too high to stand on, and a door is no floor.
+    let stands = u8::from(part & PART_TALL == 0 && door == 0) * STANDS;
     // The top of a block of parts is the highest of its boxes as it rests.
     let floor = match is_part(faces, id) && part & PART_SOLID != 0 {
         true => part_boxes(kind.shape, BlockState::from_byte(kind.state), Around::default(), kind.custom.as_ref())
@@ -110,19 +115,24 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
 }
 
 /// How something walks a world of blocks, in sixteenths of a block: how
-/// tall it is, how high it steps up, and how far it drops.
+/// tall it is, how high it steps up, and how far it drops; and what more it
+/// does: whether it swims across deep water, opens shut doors, and jumps
+/// gaps (as many blocks across as `jump`, none for 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Walker {
     pub height: u16,
     pub step: u16,
     pub drop: u16,
+    pub swims: bool,
+    pub doors: bool,
+    pub jump: u8,
 }
 
 impl Walker {
     /// A walker `tall` blocks high that steps up a block and drops three,
-    /// as mobs walk worlds of blocks.
+    /// as mobs walk worlds of blocks, and does nothing more.
     pub const fn blocks(tall: u16) -> Self {
-        Self { height: tall * 16, step: 16, drop: 48 }
+        Self { height: tall * 16, step: 16, drop: 48, swims: false, doors: false, jump: 0 }
     }
 
     /// A walker `height` metres tall in a world of blocks `size` metres a
@@ -130,7 +140,20 @@ impl Walker {
     /// `drop`.
     pub fn of(height: f32, step: f32, drop: f32, size: f32) -> Self {
         let sixteenths = |metres: f32| (metres / size.max(1e-3) * 16.0).ceil().clamp(1.0, 4096.0) as u16;
-        Self { height: sixteenths(height), step: sixteenths(step).max(16), drop: sixteenths(drop) }
+        Self { height: sixteenths(height), step: sixteenths(step).max(16), drop: sixteenths(drop), ..Self::blocks(1) }
+    }
+
+    /// The same walker swimming, opening doors and jumping as `swims`,
+    /// `doors` and `jump` say.
+    pub const fn with(self, swims: bool, doors: bool, jump: u8) -> Self {
+        Self { swims, doors, jump, ..self }
+    }
+
+    /// The walker whose regions it shares: as tall, stepping and dropping
+    /// as far, doing everything any walker does (see [`WALKERS`]), so a way
+    /// over regions never misses one it could take.
+    pub const fn class(self) -> Self {
+        self.with(true, true, MOST_JUMP)
     }
 
     /// How many whole blocks its drop and its step reach, at most: how far
@@ -140,6 +163,10 @@ impl Walker {
     }
 }
 
-/// The walkers places are gathered into regions for, by default: one, two
-/// and three blocks tall.
-pub const WALKERS: [Walker; 3] = [Walker::blocks(2), Walker::blocks(1), Walker::blocks(3)];
+/// The widest gap a walker jumps, in blocks.
+pub const MOST_JUMP: u8 = 2;
+
+/// The walkers places are gathered into regions for, by default: two, one
+/// and three blocks tall, each doing everything a walker does (see
+/// [`Walker::class`]).
+pub const WALKERS: [Walker; 3] = [Walker::blocks(2).class(), Walker::blocks(1).class(), Walker::blocks(3).class()];

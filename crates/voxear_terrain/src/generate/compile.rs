@@ -52,7 +52,7 @@ pub(crate) const MOST_OVER: f32 = 64.0;
 
 /// Counted into every program's hash: raised whenever a kernel's numbers
 /// change, so what was made by the old ones is made again.
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// Where a node is asked for its output: at rows of `x` and `z`, in metres
 /// in the generator's world.

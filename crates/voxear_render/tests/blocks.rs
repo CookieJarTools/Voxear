@@ -2903,7 +2903,10 @@ fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves(
     assert!(unlike(&stiff, &calm, all.clone()) < 0.001, "which are as leaves in no wind");
     let moved = unlike(&windy, &windy_later, all.clone());
     assert!(moved > 0.004, "leaves that sway stir from moment to moment: {moved}");
-    assert!(unlike(&windy, &calm, all.clone()) > 0.004, "and stand apart from where they are in a calm");
+    // Their edges stand apart from where they are in a calm. Their faces are lit as in a calm: a swaying block reads
+    // the sun's shadow where it stands, so its shadow on itself moves with it.
+    let apart = unlike(&windy, &calm, all.clone());
+    assert!(apart > 0.001, "and stand apart from where they are in a calm: {apart}");
     // The grass at the camera's feet is as still as ever, past the crown's shadow.
     let ground = HEIGHT * 5 / 6..HEIGHT;
     assert!(unlike(&windy, &windy_later, ground.clone()) < 0.001, "the ground does not move");
@@ -2915,6 +2918,101 @@ fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves(
     };
     let (stood, stands) = (trunk(&calm), trunk(&windy));
     assert!(stood.0.is_some() && stands == stood, "{stands:?} against {stood:?}");
+}
+
+/// A low bush of swaying leaf blocks on a field of grass, and a crown of them high over it, seen from in front with
+/// no wind, as it is after forty frames with someone standing in the bush at `pusher` or no one, and plants moving as
+/// `motion` says.
+fn pushed_leaves_render(pusher: Option<Vec3>, motion: Option<voxear_render::FoliageMotion>) -> Option<Vec<u8>> {
+    use voxear_render::{FoliageInteraction, Walkers};
+    use voxear_terrain::blocks::file::BlockKind;
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { sways: true, ..BlockKind::colored("Leaves", [0.16, 0.42, 0.12]) });
+    let leaves = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for z in 10..14 {
+        for x in 14..19 {
+            for y in [4, 5, 10, 11, 12] {
+                blocks.set([x, y, z], leaves);
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+                leafy: false,
+                mixed: false,
+                tint: 0,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook {
+        material: default,
+        surfaces: Arc::from(surfaces),
+        voxels: Default::default(),
+        motions: Arc::from([]),
+        light: Default::default(),
+    };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(16.5, 7.5, 2.0))));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(at) = pusher {
+        world.insert_resource(Walkers(vec![(at, FoliageInteraction { radius: 2.0, strength: 1.0 })]));
+    }
+    if let Some(motion) = motion {
+        world.insert_resource(motion);
+    }
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    for frame in 1..=40 {
+        renderer.render(&world, frame as f32 / 60.0).expect("frame renders");
+    }
+    Some(renderer.read_pixels().expect("pixels").2)
+}
+
+#[test]
+fn leaf_blocks_part_round_someone_standing_in_them_but_not_a_crown_high_over_them() {
+    use voxear_render::FoliageMotion;
+    // Someone in the bush's front left corner, as wide round as two blocks.
+    let inside = Some(Vec3::new(14.5, 5.0, 10.5));
+    let Some(alone) = pushed_leaves_render(None, None) else { return };
+    let pushed = pushed_leaves_render(inside, None).unwrap();
+    let off =
+        pushed_leaves_render(inside, Some(FoliageMotion { interaction: false, wind: 0.0, ..FoliageMotion::default() }));
+    keep_image("leaves alone.png", &alone);
+    keep_image("leaves pushed.png", &pushed);
+    let unlike = |a: &[u8], b: &[u8], rows: std::ops::Range<u32>| {
+        let differs = |x: u32, y: u32| (0..3).any(|c| rgb_at(a, x, y)[c].abs_diff(rgb_at(b, x, y)[c]) > 6);
+        let count = rows.clone().flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| differs(x, y)).count();
+        count as f32 / (rows.len() as u32 * WIDTH) as f32
+    };
+    let (crown, bush) = (0..HEIGHT * 2 / 5, HEIGHT / 2..HEIGHT);
+    let parted = unlike(&alone, &pushed, bush.clone());
+    assert!(parted > 0.004, "the bush parts round who stands in it: {parted}");
+    let crowned = unlike(&alone, &pushed, crown);
+    assert!(crowned < 0.001, "the crown high over them stands as it stood: {crowned}");
+    let ignored = unlike(&alone, &off.unwrap(), 0..HEIGHT);
+    assert!(ignored < 0.001, "nothing parts with interaction off: {ignored}");
 }
 
 /// A picture of leaves, 16 pixels a side: leaves in three greens with clear gaps between them.

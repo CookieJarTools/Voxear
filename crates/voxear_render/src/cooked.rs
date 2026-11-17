@@ -33,8 +33,9 @@ use crate::{
 /// a body each bone moves, for a model that says. 13: how much a material
 /// bends and flutters in the wind, for a plant that is a box model. 14:
 /// meshes' lightmap UVs in the payload. 15: whether each material is
-/// two-sided.
-pub const COOKED_VERSION: u32 = 17;
+/// two-sided. 18: a box model that bends in the wind is cooked with no face
+/// taller than one of its cubes, and no branch masks.
+pub const COOKED_VERSION: u32 = 18;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed

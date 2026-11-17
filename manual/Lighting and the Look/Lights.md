@@ -159,7 +159,7 @@ Each piece, a page, keeps what stands still from frame to frame and is drawn aga
 - Turning the camera or walking on only draws the pages coming into view; a page the view asks for is drawn within a frame or two, and until then the next coarser one stands in for it.
 - The sun turning by more than a twentieth of a degree draws every page again, over a few frames. A sun that moves slowly across the sky costs a little each time it turns that far.
 
-Plants of a Foliage and leaves on a wind-swayed material keep still in the sun's virtual shadows, as drawing their sway into kept pages would show where one page was drawn at another moment. Switch to cascades for a scene where their shadows should sway.
+Plants of a Foliage, leaves on a wind-swayed material and swaying leaf blocks keep still in the sun's virtual shadows, as drawing their sway into kept pages would show where one page was drawn at another moment. A swaying plant reads its shadow from where it stands, so its own shadow on itself moves with it and does not swim; its shadow on the ground stays put. Switch to cascades for a scene where their shadows on the ground should sway.
 
 The Debug view's **Shadow cascades** shows the level each pixel reads, coloured in turn, and red where no page reaches.
 

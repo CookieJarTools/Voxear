@@ -86,6 +86,12 @@ const MOVED_KEPT: usize = 16;
 /// the land lies in levels.
 const LEVEL_RIVERS: f32 = 24.0;
 
+/// Where the land lies in levels, how wide and how deep a river is where a
+/// square kilometre drains into it, in metres: wide and deep enough that a
+/// player swims across all but the smallest.
+const LEVEL_RIVER_WIDTH: f32 = 24.0;
+const LEVEL_RIVER_DEPTH: f32 = 3.5;
+
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.
 pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_size: f32) -> Source<'a> {
@@ -281,10 +287,14 @@ fn detach(graph: &mut crate::generate::Graph) {
 
 /// The rivers `generate` runs down its ground. Land in levels lies on long
 /// even slopes, down which water runs side by side: fewer rivers, each from
-/// more ground, read better there.
+/// more ground, and wider, read better there.
 fn rivers_of(generate: &BlockGenerate) -> Rivers {
-    let source = if generate.levels.is_some() { LEVEL_RIVERS } else { Rivers::default().source };
-    Rivers { source, ..Rivers::default() }
+    match generate.levels {
+        Some(_) => {
+            Rivers { source: LEVEL_RIVERS, width: LEVEL_RIVER_WIDTH, depth: LEVEL_RIVER_DEPTH, ..Rivers::default() }
+        }
+        None => Rivers::default(),
+    }
 }
 
 /// The graph of `world`, the generator a world of blocks' ground is made

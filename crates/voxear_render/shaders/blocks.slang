@@ -24,6 +24,10 @@
 // How far a swaying corner moves at wind strength 1, as a share of a block, and the furthest it ever does.
 static const float BLOCK_SWAY = 0.07;
 static const float BLOCK_SWAY_MOST = 0.22;
+// How far a swaying corner is pushed aside by what passes through it at a push of 1, as a share of a block, and the
+// furthest the wind and a push together ever move it.
+static const float BLOCK_PUSH = 0.35;
+static const float BLOCK_MOVE_MOST = 0.45;
 
 // One of a world's tint points, its near ones' or after them `from` its far ones': its tint `kind` (1 grass, 2
 // foliage), each part out of 2.
@@ -126,28 +130,39 @@ float blockCornerPhase(int3 corner)
 
 // How far the wind moves a corner of a block that sways, as leaves do, at `time`: downwind as hard as the wind and
 // the gust over it blow, to and fro, across and up and down at a pace of the corner's own, so a crown of leaves
-// stirs all over while a gust still crosses it whole. Every face that meets at the corner moves it alike, and a
-// corner a still block touches does not sway (voxear_terrain::blocks::mesh), so nothing parts.
+// stirs all over while a gust still crosses it whole; and aside, away from what passes through it at its height, as
+// a bush parts round someone walking into it. Every face that meets at the corner moves it alike, and a corner a
+// still block touches does not move (voxear_terrain::blocks::mesh), so nothing parts. As far as the game's foliage
+// bends (Wind.bend).
 float3 blockSway(Frame* frame, BlockWorld world, BlockPoint b, float time)
 {
     Wind wind = frame->wind;
-    if (!b.sways || wind.strength <= 0.0)
+    if (!b.sways || wind.bend <= 0.0)
     {
         return 0.0;
     }
-    float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
-    float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
-    float push = max(windPush(wind, levelPosition(frame, b.world, 4096.0).xz, time), 0.0);
-    float phase = blockCornerPhase(b.corner) * 6.2831853;
-    float stir = 0.4 + 0.6 * saturate(wind.turbulence);
-    float to = sin(time * 2.1 + phase) * 0.6 + sin(time * 3.7 + phase * 1.7) * 0.4;
-    float side = sin(time * 2.9 + phase * 2.3);
-    float bob = sin(time * 3.3 + phase * 1.3);
     // A sheet of leaves reaches out past its block, and moves further.
-    float reach = min(BLOCK_SWAY * push, BLOCK_SWAY_MOST) * world.blockSize * b.reach;
-    float3 swayed = along * (0.5 + 0.5 * to * stir) + across * (side * 0.45 * stir);
-    swayed.y += bob * 0.3 * stir;
-    return swayed * reach;
+    float2 pushed = foliagePush(frame, b.world);
+    float3 moved = float3(pushed.x, 0.0, pushed.y) * (BLOCK_PUSH * world.blockSize * b.reach);
+    if (wind.strength > 0.0)
+    {
+        float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
+        float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
+        float push = max(windPush(wind, levelPosition(frame, b.world, 4096.0).xz, time), 0.0);
+        float phase = blockCornerPhase(b.corner) * 6.2831853;
+        float stir = 0.4 + 0.6 * saturate(wind.turbulence);
+        float to = sin(time * 2.1 + phase) * 0.6 + sin(time * 3.7 + phase * 1.7) * 0.4;
+        float side = sin(time * 2.9 + phase * 2.3);
+        float bob = sin(time * 3.3 + phase * 1.3);
+        float reach = min(BLOCK_SWAY * push, BLOCK_SWAY_MOST) * world.blockSize * b.reach;
+        float3 swayed = along * (0.5 + 0.5 * to * stir) + across * (side * 0.45 * stir);
+        swayed.y += bob * 0.3 * stir;
+        moved += swayed * reach;
+    }
+    moved *= wind.bend;
+    float most = BLOCK_MOVE_MOST * world.blockSize * b.reach;
+    float far = length(moved);
+    return far > most ? moved * (most / far) : moved;
 }
 
 [shader("vertex")]
@@ -194,7 +209,8 @@ VertexOut blockVertex(uint vertexId : SV_VertexID, uint runStart : SV_StartInsta
     }
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
-    // Bounced light is read where the block stands, and a moving part's pictures where it rests.
+    // Bounced light is read where the block stands, and a moving part's pictures where it rests; the sun's kept
+    // shadow pages hold it unswayed.
     o.moved = swayed + b.posedBy;
     o.hidden = 0.0;
     // A world lit by the light kept for its blocks carries each corner's sky light and block light in place of a
@@ -775,6 +791,8 @@ bool terrainShading(
     // Lit by the light kept for its blocks: its sky light and block light, smooth across it from its corners.
     terrainBlockLit = !smooth && (world.flags & BLOCKS_LIT) != 0;
     terrainBlockLight = saturate(input.lightmapUv);
+    // A moving part is drawn posed into the sun's shadow pages; what sways, unswayed.
+    terrainPosed = !smooth && !loose && ((uint(input.uv.y + 0.5) >> 20) & 1) != 0;
     terrainGlow = world.glow;
     if (world.surfaceCount == 0)
     {

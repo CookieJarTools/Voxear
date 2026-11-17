@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 92;
+pub(crate) const API_VERSION: u32 = 93;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -601,6 +601,10 @@ pub(crate) struct NativeApi {
     /// The dungeons of a world of blocks near a place, as JSON for `Dungeons`.
     pub dungeons_info:
         unsafe extern "C" fn(obj: u64, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
+    /// `Foliage`'s numbers: how plants move in the wind and when pushed, and the wind they feel now.
+    pub foliage_motion: unsafe extern "C" fn(which: i32) -> f32,
+    /// Sets one of `Foliage`'s numbers.
+    pub set_foliage_motion: unsafe extern "C" fn(which: i32, value: f32),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -658,6 +662,10 @@ pub enum ComponentKind {
     BakedLighting = 32,
     /// The model an Obj draws whole, and the colours it is tinted.
     ModelRenderer = 33,
+    /// What finds its Obj's way and walks it.
+    NavAgent = 34,
+    /// Ways over the ground, which no one Obj has.
+    Navigation = 35,
 }
 
 /// The most kinds `kind_value` answers.
@@ -2246,6 +2254,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         screen_hdr: crate::display::screen_hdr,
         block_floor: crate::blocks::block_floor,
         dungeons_info: crate::services::dungeons_info,
+        foliage_motion: crate::plants::foliage_motion,
+        set_foliage_motion: crate::plants::set_foliage_motion,
     }
 }
 

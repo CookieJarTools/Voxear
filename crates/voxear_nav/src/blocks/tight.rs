@@ -48,7 +48,18 @@ pub fn walk_line(
             gap if gap < 0.0 => (sx, 0),
             _ => (0, sz),
         };
-        at = step(nav, at, mx, mz, walker)?.0;
+        at = match (mx != 0, mz != 0) {
+            // Through a corner: both ways round it walkable, ending in one place, so no wall's corner is cut.
+            (true, true) => {
+                let by_x = step(nav, at, mx, 0, walker).and_then(|(on, _)| step(nav, on, 0, mz, walker));
+                let by_z = step(nav, at, 0, mz, walker).and_then(|(on, _)| step(nav, on, mx, 0, walker));
+                match (by_x, by_z) {
+                    (Some((a, _)), Some((b, _))) if a == b => a,
+                    _ => return None,
+                }
+            }
+            _ => step(nav, at, mx, mz, walker)?.0,
+        };
         if mx != 0 {
             next_x += across_x;
             cell[0] += mx;

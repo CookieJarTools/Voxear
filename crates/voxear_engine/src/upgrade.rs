@@ -11,6 +11,8 @@
 //! - writes `.voxear/Engine.props`, so the scripts build against this engine
 //! - adds what projects of this version have and older ones may lack: the
 //!   default build profiles
+//! - gives a starter plant written before plants bent in the wind, and not
+//!   changed since, its bend
 //! - gives assets without one a `.meta` file
 //!
 //! Later versions add their own conversions here, each saying what it
@@ -100,6 +102,14 @@ pub fn upgrade(folder: &Path, from: Option<&str>, report: &mut dyn FnMut(Event))
         )));
     }
 
+    report(Event::Step("Bending the starter plants in the wind".into()));
+    let bent = bend_starter_plants(&root)?;
+    match bent.len() {
+        0 => {}
+        1 => report(Event::Change(format!("{} now bends in the wind", bent[0]))),
+        _ => report(Event::Change(format!("{} now bend in the wind", bent.join(", ")))),
+    }
+
     report(Event::Step("Giving the assets their IDs".into()));
     let (_, scan) = voxear_assets::AssetDb::scan(&root).context("writing the assets' .meta files")?;
     match scan.created.len() {
@@ -108,6 +118,28 @@ pub fn upgrade(folder: &Path, from: Option<&str>, report: &mut dyn FnMut(Event))
         count => report(Event::Change(format!("Gave {count} assets their .meta files"))),
     }
     Ok(())
+}
+
+/// Gives each starter plant in the project's Plants folder that was
+/// written before plants bent in the wind its bend, where it is still as it
+/// was made: the same model, only without a bend. One sculpted since, or
+/// set to stand still, is left as it is. Gives the paths of those bent.
+fn bend_starter_plants(root: &Path) -> Result<Vec<String>> {
+    let mut bent = Vec::new();
+    for plant in voxear_render::StarterPlant::ALL {
+        let path = format!("Plants/{}.boxmodel", plant.name());
+        let file = root.join(&path);
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(model) = voxear_render::BoxModel::parse(&text) else { continue };
+        let made = plant.model();
+        let unbent = voxear_render::BoxModel { wind_bend: 0.0, ..made.clone() };
+        if made.wind_bend <= 0.0 || model.wind_bend > 0.0 || model.to_text() != unbent.to_text() {
+            continue;
+        }
+        std::fs::write(&file, made.to_text()).with_context(|| format!("writing {path}"))?;
+        bent.push(path);
+    }
+    Ok(bent)
 }
 
 /// Every level, scene and prefab in the project, with its extension.
@@ -167,6 +199,30 @@ mod tests {
         let mut again = Vec::new();
         upgrade(dir.path(), Some(engine_version()), &mut |event| again.push(event)).unwrap();
         assert_eq!(again.iter().filter(|e| matches!(e, Event::Change(_))).count(), 1, "{again:?}");
+    }
+
+    #[test]
+    fn starter_plants_written_before_they_bent_are_given_their_bend_unless_changed_since() {
+        use voxear_render::{BoxModel, StarterPlant};
+        let dir = project("engine = \"0.0.9\"\n");
+        let plants = dir.path().join("Plants");
+        std::fs::create_dir_all(&plants).unwrap();
+        let unbent = |plant: StarterPlant| BoxModel { wind_bend: 0.0, ..plant.model() };
+        std::fs::write(plants.join("Grass Tuft.boxmodel"), unbent(StarterPlant::Tuft).to_text()).unwrap();
+        let mut sculpted = unbent(StarterPlant::Flower);
+        sculpted.palette[0] = [1, 2, 3, 255];
+        std::fs::write(plants.join("Flower.boxmodel"), sculpted.to_text()).unwrap();
+        std::fs::write(plants.join("Rock.boxmodel"), StarterPlant::Rock.model().to_text()).unwrap();
+        let mut events = Vec::new();
+        upgrade(dir.path(), Some("0.0.9"), &mut |event| events.push(event)).unwrap();
+        assert!(
+            events.contains(&Event::Change("Plants/Grass Tuft.boxmodel now bends in the wind".into())),
+            "{events:?}"
+        );
+        let read = |name: &str| BoxModel::parse(&std::fs::read_to_string(plants.join(name)).unwrap()).unwrap();
+        assert_eq!(read("Grass Tuft.boxmodel").wind_bend, StarterPlant::Tuft.wind_bend());
+        assert_eq!(read("Flower.boxmodel").wind_bend, 0.0, "sculpted since, so left as it is");
+        assert_eq!(read("Rock.boxmodel").wind_bend, 0.0, "a rock stands still");
     }
 
     #[test]

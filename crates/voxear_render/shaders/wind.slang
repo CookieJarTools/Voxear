@@ -21,6 +21,18 @@
 // forth with its swell instead, slowly, less the deeper it stands, a ripple
 // running up it as the water's to and fro reaches its tip later than its
 // root; under a Pool's still water it drifts a little.
+//
+// A plant drawn in pixels, a box model's (MATERIAL_PIXELS), moves whole: as
+// far as its height says and no more, every one of its vertices as high up
+// it alike, and pushed by what is at its foot rather than at each vertex. A
+// layer of its cubes slides over the one under it, the faces of each staying
+// flat and square, and as its faces are never taller than a cube (see
+// box_model/voxels.rs) none parts from another as it bends.
+//
+// What pushes through plants bends those rooted about as high as it stands
+// (foliage_push.slang), as far up them as it reaches: a pole taller than
+// someone leans from where they push it, and a field under a bridge is left
+// alone by who crosses it.
 
 #pragma once
 
@@ -38,9 +50,18 @@ static const float WIND_BRANCH = 0.05;
 // How fast the air moves at strength 1, in metres a second.
 static const float WIND_SPEED = 5.0;
 
+// A number from 0 to 1 for the cell `p` lies in, from whole numbers alone: a sine's last bits are reckoned
+// differently from one use to the next on some GPUs, which cut its noise along the cells' edges.
 float windHash(float2 p)
 {
-    return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    int2 cell = int2(floor(p));
+    uint h = uint(cell.x) * 0x9E3779B1u ^ uint(cell.y) * 0x85EBCA77u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return float(h >> 8) / 16777216.0;
 }
 
 // Smooth noise from 0 to 1, varying over about one unit.
@@ -150,16 +171,18 @@ float plantHeight(Instance instance, Mesh mesh)
     return max((mesh.center.y + mesh.radius) * length(instance.model.c1.xyz), 0.05);
 }
 
-// The push through foliage at a point, from the grid round the camera,
-// blended between its four nearest cells; nothing beyond the grid.
-float2 foliagePush(Frame* frame, float3 world)
+// The push through foliage over `place`, from the grid round the camera, blended between its four nearest cells,
+// on what stands `high` in the world: each cell's push only within its reach above and below what made it, fading
+// out over half a metre past it; and in `reach`, the highest any of those pushers reaches. Nothing beyond the grid.
+float2 foliagePush(Frame* frame, float2 place, float high, out float reach)
 {
     Pushes pushes = frame->pushes;
-    float2 at = world.xz / pushes.cell - 0.5;
+    float2 at = place / pushes.cell - 0.5;
     int2 low = int2(floor(at));
     float2 within = at - float2(low);
-    float2* cells = buffers()->foliagePushes;
+    float4* cells = buffers()->foliagePushes;
     float2 total = 0.0;
+    reach = high;
     for (uint corner = 0; corner < 4; corner++)
     {
         int2 cell = low + int2(corner & 1, corner >> 1);
@@ -169,10 +192,23 @@ float2 foliagePush(Frame* frame, float3 world)
             continue;
         }
         int2 slot = (cell % int(PUSH_CELLS) + int(PUSH_CELLS)) % int(PUSH_CELLS);
+        float4 held = cells[slot.x + slot.y * PUSH_CELLS];
         float2 weights = lerp(1.0 - within, within, float2(corner & 1, corner >> 1));
-        total += cells[slot.x + slot.y * PUSH_CELLS] * weights.x * weights.y;
+        float near = saturate(1.0 - (abs(high - held.z) - held.w) * 2.0);
+        total += held.xy * (weights.x * weights.y * near);
+        if (near > 0.0 && dot(held.xy, held.xy) > 1e-8)
+        {
+            reach = max(reach, held.z + held.w);
+        }
     }
     return total;
+}
+
+// The push through foliage at `world`, on what stands as high as it.
+float2 foliagePush(Frame* frame, float3 world)
+{
+    float reach;
+    return foliagePush(frame, world.xz, world.y, reach);
 }
 
 // How far the wind, and what pushes through foliage, move a vertex at
@@ -180,20 +216,29 @@ float2 foliagePush(Frame* frame, float3 world)
 // `material`, its normal `normal` and its wind masks `masks`, at `time`.
 float3 windOffset(Frame* frame, Material material, float3 origin, float height, float3 world, float3 normal, uint masks, float time)
 {
-    if (material.windBend <= 0.0 && material.windFlutter <= 0.0)
+    // As far as the plant's own bend says, and as many times that as the game's foliage bends.
+    float windBend = material.windBend * frame->wind.bend;
+    float windFlutter = material.windFlutter * frame->wind.bend;
+    if (windBend <= 0.0 && windFlutter <= 0.0)
     {
         return 0.0;
     }
+    bool whole = (material.flags & MATERIAL_PIXELS) != 0;
     float up = saturate((world.y - origin.y) / height);
-    // Pushed aside by what passes through, bending from the ground as the wind bends it.
-    // Read where each blade is, so a patch of grass parts round what passes through it.
-    float2 pushed = foliagePush(frame, world);
-    float3 offset = float3(pushed.x, 0.0, pushed.y) * (material.windBend * up * up * height * PUSH_LEAN);
+    // Pushed aside by what passes through where it is rooted, bending from the ground as the wind bends it, as far up
+    // as the push reaches; above that it is carried along as it is there. A low plant is read where each blade is,
+    // so a patch of grass parts round what passes through it; a tall one, and a plant that moves whole, where it
+    // stands, so a crown over someone's head does not part round them.
+    float stem = whole ? 1.0 : saturate((height - 1.5) / 1.5);
+    float pushReach;
+    float2 pushed = foliagePush(frame, lerp(world.xz, origin.xz, stem), origin.y, pushReach);
+    float reached = saturate((min(world.y, pushReach) - origin.y) / height);
+    float3 offset = float3(pushed.x, 0.0, pushed.y) * (windBend * reached * reached * height * PUSH_LEAN);
     bool sea;
-    float below = material.windBend > 0.0 ? plantUnderwater(frame, origin, sea) : 0.0;
+    float below = windBend > 0.0 ? plantUnderwater(frame, origin, sea) : 0.0;
     if (below > 0.0)
     {
-        return bowed(offset + surgeOffset(frame, origin, height, below, sea, up, time) * material.windBend, height);
+        return bowed(offset + surgeOffset(frame, origin, height, below, sea, up, time) * windBend, height);
     }
     Wind wind = frame->wind;
     if (wind.strength <= 0.0)
@@ -212,22 +257,26 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     float rock = sin(time * 2.1 + phase * 2.3);
 
     // Bent from the ground up: nothing at the root, the most at the tip.
-    float lean = material.windBend * up * up * height * WIND_LEAN;
+    float lean = windBend * up * up * height * WIND_LEAN;
     offset += along * lean * max(push + wind.turbulence * wind.strength * sway * 0.5, 0.0);
     offset += across * lean * wind.turbulence * wind.strength * rock * 0.35;
     offset = bowed(offset, height);
+    if (whole)
+    {
+        return offset;
+    }
 
     float flutters = float(masks & 0xFF) / 255.0;
     float own = float((masks >> 8) & 0xFF) / 255.0 * 6.2831;
     float branch = float((masks >> 16) & 0xFF) / 255.0;
     // A branch sways at its own pace on top of the plant's lean, downwind and bobbing up and down.
     float swing = sin(time * 2.4 + phase + own) * 0.6 + sin(time * 3.9 + (phase + own) * 1.3) * 0.4;
-    float reach = branch * material.windBend * height * WIND_BRANCH * max(push, 0.0);
+    float reach = branch * windBend * height * WIND_BRANCH * max(push, 0.0);
     offset += (along * (0.6 + 0.4 * swing) + float3(0.0, 0.5 * swing, 0.0)) * reach;
 
     // Leaves flutter along their faces, quickly and a little, more out at the tips.
     float flicker = dot(levelPosition(frame, world, 1024.0), float3(3.1, 2.3, 4.7)) + own;
     float flutter = sin(time * 13.0 + flicker) * 0.6 + sin(time * 21.0 + flicker * 1.7) * 0.4;
-    offset += normal * flutter * flutters * material.windFlutter * WIND_FLUTTER * max(push, 0.0) * (0.3 + 0.7 * up);
+    offset += normal * flutter * flutters * windFlutter * WIND_FLUTTER * max(push, 0.0) * (0.3 + 0.7 * up);
     return offset;
 }

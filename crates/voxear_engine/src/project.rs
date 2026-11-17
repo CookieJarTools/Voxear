@@ -35,6 +35,19 @@ pub struct ProjectFile {
     /// What Portals may spend (see [`PortalSettings`]).
     #[serde(default)]
     pub portals: PortalSettings,
+    /// How plants move in the wind and when pushed (see
+    /// `voxear_render::FoliageMotion`).
+    ///
+    /// ```toml
+    /// [foliage]
+    /// wind = 0.5          # a fair day's wind where a level has no Wind Zone; rain and storms blow harder
+    /// bend = 1.0          # how far plants bend, times each plant's own Wind bend
+    /// interaction = true  # whether characters push plants aside
+    /// push = 1.0          # how hard they push, times each pusher's own strength
+    /// spring = 0.8        # seconds for a pushed plant to spring back to a third
+    /// ```
+    #[serde(default)]
+    pub foliage: voxear_render::FoliageMotion,
     /// How long the game's fixed steps and frames may be (see [`TimeSettings`]).
     #[serde(default)]
     pub time: TimeSettings,
@@ -63,6 +76,7 @@ impl ProjectFile {
             quality: QualitySettings::default(),
             world: voxear_terrain::WorldBudget::default(),
             portals: PortalSettings::default(),
+            foliage: voxear_render::FoliageMotion::default(),
             time: TimeSettings::default(),
             input: InputSettings::default(),
             modules: None,

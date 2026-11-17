@@ -867,12 +867,9 @@ impl BoxModel {
             roles: self.bones.iter().map(|bone| bone.role).collect(),
             source: None,
         };
-        let (mut data, far) = self.build(&self.rest_matrices());
+        let (data, far) = self.build(&self.rest_matrices());
         if data.indices.is_empty() {
             return model;
-        }
-        if self.wind_bend > 0.0 {
-            sway_masks(&mut data);
         }
         let mut lods = full_lod(&data);
         // From far off, layers lie flat: as far out as the tallest stands, which is how wrong that looks.
@@ -1007,20 +1004,6 @@ impl BoxModel {
             model.sheet.fill([left as u32 + 1, top as u32 + 1], [side - 2, side - 2], [light, light, light, 255]);
         }
         model
-    }
-}
-
-/// Wind masks for a plant of boxes (see `mesh::Vertex::wind`): nothing
-/// flutters, and what reaches out from over its foot sways on its own as a
-/// branch does, the more the further out, so a tree's crown stirs while
-/// its trunk only leans. A vertex's masks follow from where it is alone,
-/// so faces that meet stay met.
-fn sway_masks(data: &mut MeshData) {
-    let out = |vertex: &Vertex| Vec3::from(vertex.position).with_y(0.0).length();
-    let reach = data.vertices.iter().map(out).fold(1e-6_f32, f32::max);
-    for vertex in &mut data.vertices {
-        let share = (out(vertex) / reach).clamp(0.0, 1.0);
-        vertex.wind = [0, 0, (share * share * 255.0).round() as u8, vertex.wind[3]];
     }
 }
 

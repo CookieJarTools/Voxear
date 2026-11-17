@@ -433,6 +433,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.animator = instance.animator.clone().or(root.animator.clone());
     root.mob_motion = instance.mob_motion.clone().or(root.mob_motion.clone());
     root.block_mob = instance.block_mob.clone().or(root.block_mob.clone());
+    root.nav_agent = instance.nav_agent.clone().or(root.nav_agent.clone());
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
     root.first_person = instance.first_person.clone().or(root.first_person.clone());
@@ -532,6 +533,7 @@ pub struct TemplateObj {
     pub animator: Option<crate::animation::Animator>,
     pub mob_motion: Option<crate::animation::MobMotion>,
     pub block_mob: Option<crate::block_mob::BlockMob>,
+    pub nav_agent: Option<crate::nav_agent::NavAgent>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
     pub first_person: Option<crate::first_person::FirstPersonView>,
@@ -753,6 +755,9 @@ impl Template {
             }
             if let Some(mob) = obj.block_mob.clone() {
                 world.insert(entity, mob);
+            }
+            if let Some(agent) = obj.nav_agent.clone() {
+                world.insert(entity, agent);
             }
             if let Some(matcher) = obj.motion_matcher.clone() {
                 world.insert(entity, matcher);
@@ -1403,6 +1408,7 @@ pub(crate) fn resolve_obj(
         animator: data.animator.clone(),
         mob_motion: data.mob_motion.clone(),
         block_mob: data.block_mob.clone(),
+        nav_agent: data.nav_agent.clone(),
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
         first_person: data.first_person.clone(),

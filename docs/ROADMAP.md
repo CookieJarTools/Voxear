@@ -3734,7 +3734,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
     an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
     every Project Settings row and every component's fields reached. Manual: Areas and Costs.
-  - [ ] Nav Links; climbing vines, ropes and ladders; walkers two blocks wide; agent types in Project Settings
+  - [x] **Nav Links** (`navigation::NavLink`, Add Component ▸ Navigation ▸ Nav Link: End in the Obj's own space,
+    Kind Walk, Jump, Climb or Teleport, Both Ways, Cost): searches take each as one step, from the place nearest its
+    Obj to the place nearest its end, costing as far as it goes and its cost more, the coarse graph too
+    (`voxear_nav::Link`, `Joins`); its two ends are always corners of a way, marked by the link's kind
+    (`FoundPath::links`); agents cross it along its line, or an arc for a jump, at once for a teleport, whatever
+    way they move. Drawn as arrows by the Navigation gizmo. Tests: a way over a wall only by a link, one way only;
+    an agent climbing a ladder link onto a platform four blocks high, by its controller and along the nav;
+    every component's fields reached. Manual: Nav Links.
+  - [ ] climbing vines and ropes without a link; walkers two blocks wide; agent types in Project Settings; costs
+    per agent
   - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
     `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
     its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
@@ -3846,8 +3855,13 @@ Done:
   - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
     colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
     each place, live reload and options carried over; the editor's menu, page and calls.
-  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
-    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
+- **Block faces and leaves lit by a pack's programs** (stage 2, without water). `[surface] blocks` and `leaves`, each
+  `float3 run(BlockSurface surface, BlockLighting light)`: the face (colour, normals, corner shade, sky light and block
+  light, look, what it is) and the light it sees (sun, shadow, sky, the blocks' glow, occlusion, reflections, lamps,
+  and the engine's own terms and colour). Compiled into the engine's block shader, swapped in while worn. Evening's
+  `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun.
+  - Not yet: water's surface programs (stage 2's rest), its own tonemap and sky (3), shadows (4), and players' menu
+    and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

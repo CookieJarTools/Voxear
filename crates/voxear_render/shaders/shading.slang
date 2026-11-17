@@ -304,6 +304,8 @@ static bool terrainBlockLit = false;
 static bool terrainPosed = false;
 static float2 terrainBlockLight = float2(1.0, 0.0);
 static float4 terrainGlow = 0.0;
+// What a block's face is, for a shader pack's surface programs (PACK_BLOCK_LEAVES and the rest).
+static uint terrainKind = 0;
 #endif
 
 
@@ -1203,6 +1205,12 @@ FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
     return o;
 }
 
+#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+// A worn shader pack's surface programs for block faces, as src/shader_packs.rs's `wrapper` writes them: they define
+// packBlockColor, which lights a face in place of the engine.
+#include "project_pack_blocks.slang"
+#endif
+
 [shader("fragment")]
 FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
 {
@@ -1358,6 +1366,11 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         color += foliageLight(s, -frame->sunDirection, sunThrough, leafShadow);
     }
     color += shadowTint(frame, s, -frame->sunDirection, sunThrough, shadow);
+#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+    // The engine's terms, kept apart for a shader pack's surface program.
+    float3 packSun = color;
+    float3 packLamps = 0.0;
+#endif
     float viewDepth = dot(input.worldPosition - frame->cameraPosition, frame->cameraForward);
     uint cluster = clusterAt(frame, input.position.xy, viewDepth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);
@@ -1379,7 +1392,11 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
             color += customLight(input.material, lamp, surface);
             continue;
         }
-        color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition) * wet;
+        float3 lit = shadeLocalLight(s, buffers()->lights[light], input.worldPosition) * wet;
+        color += lit;
+#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+        packLamps += lit;
+#endif
     }
 
     // The bounced light where the mesh has the surface, as the rays that gather it see it: moved by its vertex
@@ -1398,8 +1415,12 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     }
 #endif
     // Lit by the light kept for blocks: as much of it as its sky light lets in, and its blocks' light over it.
+    float3 packSky = ambient * skyUnder;
+    float3 packGlow = 0.0;
     if (blockLitHere)
     {
+        packSky = ambient * blockSkyShare(blockLit.x, blockGlow.w) * skyUnder;
+        packGlow = blockGlow.rgb * blockGlowShare(blockLit.y) * skyUnder;
         ambient = ambient * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
     }
     ambient *= skyUnder;
@@ -1422,9 +1443,47 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         float3 round = reflected * blockSkyShare(blockLit.x, blockGlow.w) + blockGlow.rgb * blockGlowShare(blockLit.y);
         reflected = lerp(round, reflected, found);
     }
-    color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
+    float3 ambientTerm = ambient * s.diffuse * occlusion.diffuse;
+    float3 reflectionTerm = reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
+    color += ambientTerm + reflectionTerm;
 
     color += emission;
+#if defined(TERRAIN_SHADING) && defined(VOXEAR_PACK_BLOCKS)
+    // A worn shader pack's surface program lights the face, from what the engine has worked out of it.
+    {
+        BlockSurface packed;
+        packed.position = input.worldPosition;
+        packed.normal = s.normal;
+        packed.faceNormal = normalize(input.normal);
+        packed.view = s.view;
+        packed.color = base.rgb;
+        packed.alpha = base.a;
+        packed.roughness = roughness;
+        packed.metallic = metallic;
+        packed.emission = emission;
+        packed.shade = terrainOcclusion;
+        packed.skyLight = blockLit.x;
+        packed.blockLight = blockLit.y;
+        packed.look = input.lod & 0xFF;
+        packed.kind = terrainKind | (any(emission > 0.0) ? PACK_BLOCK_GLOWS : 0);
+        packed.pixel = input.position.xy;
+        BlockLighting packLight;
+        packLight.sunDirection = -frame->sunDirection;
+        packLight.sunLight = sunThrough;
+        packLight.shadow = shadow;
+        packLight.sky = packSky;
+        packLight.glow = packGlow;
+        packLight.occlusion = occlusion.diffuse;
+        packLight.reflection = reflected;
+        packLight.sunTerm = packSun;
+        packLight.ambientTerm = ambientTerm;
+        packLight.reflectionTerm = reflectionTerm;
+        packLight.lamps = packLamps;
+        packLight.emission = emission;
+        packLight.engine = color;
+        color = packBlockColor(packed, packLight);
+    }
+#endif
     if (atmosphere)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);

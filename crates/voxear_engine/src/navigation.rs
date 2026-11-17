@@ -212,3 +212,98 @@ pub fn area_boxes(
         })
         .collect()
 }
+
+/// How what walks a Nav Link crosses it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NavLinkKind {
+    /// Straight along it, as through a gap in a fence.
+    #[default]
+    Walk,
+    /// Over it in a leap, as across a gap too wide to walk.
+    Jump,
+    /// Up or down it slowly, as on a ladder or a rope.
+    Climb,
+    /// From one end to the other at once, as through a door that takes you elsewhere.
+    Teleport,
+}
+
+impl NavLinkKind {
+    pub const ALL: [Self; 4] = [Self::Walk, Self::Jump, Self::Climb, Self::Teleport];
+
+    pub fn number(self) -> u8 {
+        self as u8
+    }
+
+    pub fn of_number(number: u8) -> Self {
+        Self::ALL.get(usize::from(number)).copied().unwrap_or_default()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Walk => "Walk",
+            Self::Jump => "Jump",
+            Self::Climb => "Climb",
+            Self::Teleport => "Teleport",
+        }
+    }
+}
+
+/// A way a level's maker joins two places that walking does not: from its
+/// Obj to `end` (in the Obj's own space, so it moves and turns with it), by
+/// a ladder, a gap, a drop or a door that takes you elsewhere. A search may
+/// take it as one step, costing as far as it goes and `cost` more; what
+/// walks it crosses it as `kind` says. One way, unless `both_ways`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NavLink {
+    pub end: [f32; 3],
+    pub kind: NavLinkKind,
+    pub both_ways: bool,
+    pub cost: f32,
+}
+
+impl voxear_ecs::Component for NavLink {}
+
+impl Default for NavLink {
+    fn default() -> Self {
+        Self { end: [0.0, 0.0, 2.0], kind: NavLinkKind::Climb, both_ways: true, cost: 1.0 }
+    }
+}
+
+/// Every Nav Link's two ends in the world: from where, to where, and it.
+pub fn link_ends(world: &World, entity: Entity, link: &NavLink) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
+    let placed = match world.get::<voxear_scene::WorldTransform>(entity) {
+        Some(placed) => placed.0,
+        None => world.get::<voxear_scene::Transform>(entity)?.matrix(),
+    };
+    let end = voxear_core::math::Vec3::from_array(link.end);
+    Some((placed.w_axis.truncate(), placed.transform_point3(end)))
+}
+
+/// Every Nav Link of dimension `dimension`, in blocks from the corner of a
+/// world of blocks at `corner` whose blocks are `size` metres a side.
+pub fn links(
+    world: &World,
+    corner: voxear_core::math::Vec3,
+    size: f32,
+    dimension: voxear_scene::DimensionId,
+) -> Vec<voxear_nav::Link> {
+    let local = |at: voxear_core::math::Vec3| ((at - corner) / size.max(1e-3)).to_array();
+    world
+        .query_ref::<(Entity, &NavLink)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter(|(entity, _)| voxear_scene::dimension_of(world, *entity) == dimension)
+        .filter_map(|(entity, link)| {
+            let (from, to) = link_ends(world, entity, link)?;
+            Some(voxear_nav::Link {
+                from: local(from),
+                to: local(to),
+                both_ways: link.both_ways,
+                cost: link.cost.max(0.0) / size.max(1e-3),
+                kind: link.kind.number(),
+            })
+        })
+        .collect()
+}

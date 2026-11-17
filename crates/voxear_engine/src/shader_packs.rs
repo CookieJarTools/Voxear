@@ -524,11 +524,14 @@ pub fn worn_json(world: &World) -> serde_json::Value {
         .collect();
     let options: Vec<serde_json::Value> =
         options(world).iter().map(|(option, value)| option_json(option, *value)).collect();
+    let surfaces: serde_json::Map<String, serde_json::Value> =
+        manifest.surfaces.named().into_iter().map(|(key, program)| (key.to_string(), program.into())).collect();
     serde_json::json!({
         "reference": wearing.reference,
         "description": manifest.description,
         "standing": standing(world),
         "passes": passes,
+        "surfaces": surfaces,
         "options": options,
     })
 }

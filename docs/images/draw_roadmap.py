@@ -25,11 +25,11 @@ MILESTONES = [
     ("", "Gameplay kits", "Guns with procedural recoil, heat and cold, controllers, destruction", "now"),
     ("M7", "Materials and particles", "Custom shaders, VoxShade, material variants, GPU particles", "now"),
     ("M8", "Terrain", "Heightmaps, digging, block worlds, biomes, caves, dungeons, maps, texture packs", "now"),
-    ("M9", "Navigation, cameras, Timeline", "Pathfinding and avoidance, camera rigs, Timeline", "planned"),
+    ("M9", "Navigation, cameras, Timeline", "Ways over block worlds, agents and avoidance, camera rigs, Timeline", "now"),
     ("M10", "2D and networking", "Replication, RPCs and prediction, sprites and tilemaps", "now"),
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),
     ("M12", "Ship it", "Builds end to end, crash reports, store uploads", "planned"),
-    ("", "Shader packs", "Lighting and finishing passes a player picks, built on block light", "planned"),
+    ("", "Shader packs", "A player's own passes over the frame; lighting of blocks, sky and shadows next", "now"),
     ("M13", "Virtualised geometry", "Clusters of triangles, streamed and rasterised on the GPU", "planned"),
 ]
 

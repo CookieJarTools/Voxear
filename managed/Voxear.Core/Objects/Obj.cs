@@ -343,6 +343,19 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Camera(this);
 	}
 
+	/// <summary>The Obj's Model Renderer, which draws a model whole and tints it. Not valid when it has none.</summary>
+	public ModelRenderer Model => new ModelRenderer(this);
+
+	/// <summary>
+	/// Has the Obj draw a model whole, giving it a Model Renderer when it has none, and returns it. A model that
+	/// cannot be read is logged, and the Model Renderer returned is not valid.
+	/// </summary>
+	public ModelRenderer AddModel(ModelAsset model)
+	{
+		ModelRenderer.Draw(this, model);
+		return new ModelRenderer(this);
+	}
+
 	/// <summary>The bones of the model the Obj draws, posed as they are this frame. Not valid when it draws none with bones.</summary>
 	public Skeleton Skeleton => new Skeleton(this);
 

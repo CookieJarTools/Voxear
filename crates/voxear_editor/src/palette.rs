@@ -437,6 +437,7 @@ fn assets(game: &Game) -> Vec<Entry> {
             let (detail, icon) = match kind {
                 AssetKind::Level => ("Level", "level"),
                 AssetKind::Scene => ("Scene", "scene"),
+                AssetKind::Dimension => ("Dimension", "globe"),
                 AssetKind::Prefab => ("Prefab", "cube"),
                 AssetKind::Model => ("Model", "box"),
                 AssetKind::Material => ("Material", "material"),
@@ -467,6 +468,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::VoxModel => ("Block Model", "blocks"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
                 AssetKind::LookPack => ("Look pack", "eye"),
+                AssetKind::ShaderPack => ("Shader pack", "layers"),
                 AssetKind::TexturePack => ("Texture pack", "image"),
                 AssetKind::Data => ("Data asset", "file"),
             };

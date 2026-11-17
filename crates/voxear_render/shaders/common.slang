@@ -275,7 +275,8 @@ struct Material
     float groundBlend;
     // The acoustic preset sound rays hear it as, plus one; 0 to guess from its look (sound_rays.slang).
     uint acoustic;
-    uint pad;
+    // The picture saying which of an instance's tints fall where, plus one; 0 for none (instanceTint).
+    uint tintMask;
 };
 
 static const uint STANDARD_SHADER = 0;
@@ -307,7 +308,8 @@ struct Instance
     uint acoustic;
     // Its baked light in Buffers' bakedInstances, plus one; 0 for none (lightmaps.slang).
     uint baked;
-    uint3 pad;
+    // The tints its Obj lays over its model, each sRGB RGBA8 in its bits, 0 for none (instanceTint).
+    uint3 tints;
 };
 
 // Where an instance's vertices start in the vertex buffer: its posed ones
@@ -2338,6 +2340,49 @@ float2 baseColorUv(Material material, float2 uv)
 float4 sampleBaseColor(Material material, float2 uv)
 {
     return textures[NonUniformResourceIndex(material.baseColorTexture)].SampleGrad(
+        samplers[SAMPLER_LINEAR_REPEAT], baseColorUv(material, uv), ddx(uv), ddy(uv));
+}
+
+// One of an Obj's tints, linear: white for none.
+float3 unpackTint(uint packed)
+{
+    if (packed == 0)
+    {
+        return float3(1.0);
+    }
+    float3 srgb = float3(packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF) / 255.0;
+    return select(srgb <= 0.04045, srgb / 12.92, pow((srgb + 0.055) / 1.055, 2.4));
+}
+
+// What multiplies an instance's base colour for the tints its Obj lays over its model: the first tint over all of
+// it, or with its material's tint mask, each tint as much as the mask's red, green and blue say, and black keeping
+// its own colour. `mask` is the mask read where the base colour was.
+float3 instanceTint(Instance instance, Material material, float4 mask)
+{
+    float3 first = unpackTint(instance.tints.x);
+    if (material.tintMask == 0)
+    {
+        return first;
+    }
+    float3 shares = saturate(mask.rgb);
+    float rest = saturate(1.0 - shares.r - shares.g - shares.b);
+    return rest + first * shares.r + unpackTint(instance.tints.y) * shares.g + unpackTint(instance.tints.z) * shares.b;
+}
+
+// Whether an instance has any tint to lay over its model.
+bool tinted(Instance instance)
+{
+    return any(instance.tints != 0);
+}
+
+// A material's tint mask at `uv`, read as its base colour is; black without one.
+float4 sampleTintMask(Material material, float2 uv)
+{
+    if (material.tintMask == 0)
+    {
+        return float4(0.0);
+    }
+    return textures[NonUniformResourceIndex(material.tintMask - 1)].SampleGrad(
         samplers[SAMPLER_LINEAR_REPEAT], baseColorUv(material, uv), ddx(uv), ddy(uv));
 }
 

@@ -823,8 +823,15 @@ pub enum Prop {
     FoliageHealthy,
     FoliageDry,
     FoliageSpread,
-    /// A Model Renderer's model, its LOD bias, and how many parts it draws.
+    /// A Model Renderer's model, the colour it is tinted, its LOD bias, and
+    /// how many parts it draws.
     ModelAsset,
+    ModelTint,
+    ModelTint2,
+    ModelTint3,
+    ModelFollow,
+    /// A box model's picture in place of the sheet inside its file.
+    ModelSheet,
     ModelLodBias,
     ModelParts,
     FoliageFade,
@@ -1274,7 +1281,14 @@ impl Prop {
             | Prop::FoliageSpread
             | Prop::FoliageImpostors
             | Prop::FoliageImpostorDistance => Part::Foliage,
-            Prop::ModelAsset | Prop::ModelLodBias | Prop::ModelParts => Part::Model,
+            Prop::ModelAsset
+            | Prop::ModelTint
+            | Prop::ModelTint2
+            | Prop::ModelTint3
+            | Prop::ModelFollow
+            | Prop::ModelSheet
+            | Prop::ModelLodBias
+            | Prop::ModelParts => Part::Model,
             Prop::Sound
             | Prop::SoundVolume
             | Prop::Pitch
@@ -1681,6 +1695,11 @@ impl Prop {
             Prop::FoliageDry => "dry_color",
             Prop::FoliageSpread => "color_spread",
             Prop::ModelAsset => "model",
+            Prop::ModelTint => "tint",
+            Prop::ModelTint2 => "tint2",
+            Prop::ModelTint3 => "tint3",
+            Prop::ModelFollow => "follow_parent",
+            Prop::ModelSheet => "sheet",
             Prop::ModelLodBias => "lod_bias",
             Prop::ModelParts => "parts",
             Prop::FoliageFade => "fade_distance",
@@ -2418,7 +2437,19 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props.extend([Prop::FoliageHealthy, Prop::FoliageDry, Prop::FoliageSpread]);
             crate::plants_props::props(world, entity, props)
         }
-        Part::Model => vec![Prop::ModelAsset, Prop::ModelLodBias, Prop::ModelParts],
+        Part::Model => {
+            let mut props = vec![Prop::ModelAsset, Prop::ModelTint];
+            // A mask's other tints, where a part's material has one.
+            if world.get::<ModelRenderer>(entity).is_some_and(|drawn| drawn.masked) {
+                props.extend([Prop::ModelTint2, Prop::ModelTint3]);
+            }
+            // A box model's sheet, which a picture of its layout can take the place of.
+            if world.get::<ModelRenderer>(entity).is_some_and(|drawn| drawn.box_model) {
+                props.push(Prop::ModelSheet);
+            }
+            props.extend([Prop::ModelFollow, Prop::ModelLodBias, Prop::ModelParts]);
+            props
+        }
         Part::Audio => {
             let mut props =
                 vec![Prop::Sound, Prop::SoundVolume, Prop::Pitch, Prop::Loop, Prop::PlayOnStart, Prop::SoundBus];
@@ -2874,6 +2905,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::FoliageDry => "Dry colour",
         Prop::FoliageSpread => "Colour patches",
         Prop::ModelAsset => "Model",
+        Prop::ModelTint => "Tint",
+        Prop::ModelTint2 => "Tint 2",
+        Prop::ModelTint3 => "Tint 3",
+        Prop::ModelFollow => "Follow parent",
+        Prop::ModelSheet => "Sheet",
         Prop::ModelLodBias => "LOD bias",
         Prop::ModelParts => "Parts",
         Prop::FoliageFade => "Fade distance",
@@ -3568,6 +3604,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::LightCookie => Value::Asset(guid_label(game, light()?.cookie.and_then(|t| game.content.picture_guid(t)))),
         Prop::LightCookieSize => Value::Number(light()?.cookie_size),
         Prop::ModelAsset => Value::Asset(path_of(game, &world.get::<ModelSource>(entity)?.0.model)?),
+        Prop::ModelTint => Value::Color(model_tint(world, entity, 0)?.map(round3)),
+        Prop::ModelTint2 => Value::Color(model_tint(world, entity, 1)?.map(round3)),
+        Prop::ModelTint3 => Value::Color(model_tint(world, entity, 2)?.map(round3)),
+        Prop::ModelFollow => Value::Toggle(world.get::<ModelSource>(entity)?.0.follow_parent),
+        Prop::ModelSheet => {
+            let sheet = world.get::<ModelSource>(entity)?.0.sheet.clone();
+            Value::Asset(guid_label(game, sheet.and_then(|sheet| game.content.parse(&sheet).ok()?.guid())))
+        }
         Prop::ModelLodBias => Value::Number(world.get::<ModelRenderer>(entity)?.lod_bias),
         Prop::ModelParts => Value::Fixed(world.get::<ModelRenderer>(entity)?.parts.len().to_string()),
         Prop::LightSoftness => Value::Number(light()?.softness),
@@ -4143,6 +4187,7 @@ pub fn set(
             | Prop::Sound
             | Prop::LightCookie
             | Prop::LightProfile
+            | Prop::ModelSheet
             | Prop::UiPanelDocument
             | Prop::ScreenUiDocument
             | Prop::MapOpenAction
@@ -4265,11 +4310,32 @@ pub fn pick(
             match voxear_engine::prefab::model_renderer(&mut game.content, renderer, &data) {
                 Ok(drawn) => {
                     let world = &mut game.engine.world;
-                    let lod_bias = world.get::<ModelRenderer>(entity).map_or(0.0, |r| r.lod_bias);
-                    world.insert(entity, ModelRenderer { lod_bias, ..drawn });
+                    let kept = world.get::<ModelRenderer>(entity).map(|r| (r.lod_bias, r.tints));
+                    let (lod_bias, tints) = kept.unwrap_or((data.lod_bias, data.tints()));
+                    world.insert(entity, ModelRenderer { lod_bias, tints, ..drawn });
                     world.insert(entity, ModelSource(data));
                     true
                 }
+                Err(error) => {
+                    tracing::error!("{error:#}");
+                    false
+                }
+            }
+        }
+        (Prop::ModelSheet, Pick::Asset(path)) => {
+            let Some(renderer) = renderer else { return false };
+            let Some(source) = game.engine.world.get::<ModelSource>(entity).cloned() else { return false };
+            let sheet = match path {
+                Some(path) => match game.content.db().guid_of(path) {
+                    Some(guid) => Some(guid.to_string()),
+                    None => return false,
+                },
+                None => None,
+            };
+            let data = ModelData { sheet, ..source.0 };
+            let world = &mut game.engine.world;
+            match voxear_engine::model_renderers::redraw(world, &mut game.content, Some(renderer), entity, data) {
+                Ok(()) => true,
                 Err(error) => {
                     tracing::error!("{error:#}");
                     false
@@ -4729,6 +4795,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::LightCookie => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::LightProfile => return fields::assets_of(game, Some(AssetKind::LightProfile)),
         Prop::ModelAsset => return fields::assets_of(game, Some(AssetKind::Model)),
+        Prop::ModelSheet => return fields::assets_of(game, Some(AssetKind::Texture)),
         // A level shows Objs inside the group's Obj, at any depth: those not in it already, each in another
         // level saying which, as picking it moves it here.
         // A Portal leads to another: every other Obj with one. A camera follows any Obj.
@@ -4845,7 +4912,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Mesh | Prop::DryMesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
-        Prop::LightCookie => "Texture".into(),
+        Prop::LightCookie | Prop::ModelSheet => "Texture".into(),
         Prop::LightProfile => "IES profile".into(),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => "UI Document".into(),
         Prop::MapOpenAction => "Input Action".into(),
@@ -5141,6 +5208,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindFalloff, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.falloff = n.max(0.01)),
         (Prop::ModelLodBias, Value::Number(n)) => {
             with(world, entity, |model: &mut ModelRenderer| model.lod_bias = n.clamp(-4.0, 4.0))
+        }
+        (Prop::ModelTint, Value::Color(color)) => set_model_tint(world, entity, 0, color),
+        (Prop::ModelTint2, Value::Color(color)) => set_model_tint(world, entity, 1, color),
+        (Prop::ModelTint3, Value::Color(color)) => set_model_tint(world, entity, 2, color),
+        (Prop::ModelFollow, Value::Toggle(on)) => {
+            with(world, entity, |source: &mut ModelSource| source.0.follow_parent = on)
         }
         (Prop::FoliageHealthy, Value::Color(color)) => {
             with(world, entity, |f: &mut Foliage| f.healthy_color = color.map(|c| c.clamp(0.0, 1.0)))
@@ -5937,6 +6010,26 @@ fn with<T: voxear_ecs::Component>(world: &mut World, entity: Entity, change: imp
     let Some(component) = world.get_mut::<T>(entity) else { return false };
     change(component);
     true
+}
+
+/// One of the tints an Obj's model is drawn with: its Model Renderer's, or
+/// as its scene wrote it where nothing draws it.
+fn model_tint(world: &World, entity: Entity, slot: usize) -> Option<[f32; 3]> {
+    match world.get::<ModelRenderer>(entity) {
+        Some(drawn) => drawn.tints.get(slot).copied(),
+        None => world.get::<ModelSource>(entity)?.0.tints().get(slot).copied(),
+    }
+}
+
+fn set_model_tint(world: &mut World, entity: Entity, slot: usize, color: [f32; 3]) -> bool {
+    let color = color.map(|channel| channel.clamp(0.0, 1.0));
+    if let Some(drawn) = world.get_mut::<ModelRenderer>(entity) {
+        let Some(tint) = drawn.tints.get_mut(slot) else { return false };
+        *tint = color;
+        return true;
+    }
+    let Some(source) = world.get_mut::<ModelSource>(entity) else { return false };
+    source.0.set_tint(slot, color)
 }
 
 /// Every `.material` asset in the project, by path.

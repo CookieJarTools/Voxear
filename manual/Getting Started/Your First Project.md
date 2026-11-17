@@ -19,6 +19,8 @@ order: 2
 
 Double-click a project in the list, or select it and click **Open**. The editor opens on the project's first level.
 
+The first time a version of Voxear opens on your computer, it prepares its shaders for your graphics card, which can take a minute or two. The window shows how far it has got. It keeps what it prepared, so later starts take a few seconds. Opening the project again while it is still preparing only starts another editor.
+
 Each project shows the engine version it uses. If that version is not installed, the launcher offers to install it before opening the project.
 
 To open a project that is not in the list, such as one you cloned from git, click **Add** and pick its folder.

@@ -250,7 +250,8 @@ impl ReflectionProbes {
         (time, frame_index, slot): (f32, u64, usize),
     ) -> Result<Option<ProbeFrame>> {
         self.pending = None;
-        let switched = Switched::of(world);
+        // The probes of the dimension the game is seen from, which every view shades with.
+        let switched = Switched::in_dimension(world, voxear_scene::CurrentDimension::of(world));
         let query = world
             .query_ref::<(Entity, &ReflectionProbe, &Transform, Option<&WorldTransform>, Option<&ReflectionProbeBake>)>(
             )

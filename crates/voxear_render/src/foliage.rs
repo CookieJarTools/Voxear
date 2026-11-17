@@ -263,10 +263,17 @@ impl FoliageCache {
         let found = world
             .query_ref::<(Entity, &Foliage, &Plants, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>();
-        // A Foliage switched off grows nothing, and what it had built goes, as for one taken away.
+        // A Foliage switched off grows nothing, and what it had built goes, as for one taken away. One in another
+        // dimension than the view's is not drawn, but what it built is kept for the views of its own.
         let switched = voxear_scene::Switched::of(world);
         let on = |entity: Entity| switched.is_on(world, entity, voxear_scene::Switch::Foliage);
-        let found = found.into_iter().filter(|(entity, ..)| on(*entity));
+        let found: Vec<_> = found.into_iter().filter(|(entity, ..)| on(*entity)).collect();
+        for (entity, ..) in found.iter().filter(|(entity, ..)| !extracted.sees(*entity)) {
+            if let Some(built) = self.built.get_mut(entity) {
+                built.gathered = gather;
+            }
+        }
+        let found: Vec<_> = found.into_iter().filter(|(entity, ..)| extracted.sees(*entity)).collect();
         // Drawn as many times as far as the machine's plant detail says (see `WorldBudget::plants`).
         let budget = voxear_terrain::WorldBudget::of(world);
         for (entity, foliage, plants, transform, placed) in found {

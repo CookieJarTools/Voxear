@@ -377,6 +377,15 @@ Done so far:
 - **Themes in OKLCH:** every colour of the default theme made from a base, an accent and a contrast, as Linear makes
   its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
   Custom are picked in Preferences ▸ Appearance, a colour from its swatch.
+- **Starting in seconds, with a splash:**
+  - **What changed:** the renderer's 175 pipelines are compiled all at once on every thread. They are kept on disk
+    for each build and GPU, so a start no longer depends on the driver's shared cache, which other builds push out.
+  - **The splash:** until the first frame, the window shows the engine's name, what it is doing, and how many
+    pipelines are made.
+  - **Measured** on the RTX 3070 while other builds ran:
+    - one at a time with nothing kept, as before: 248 s;
+    - all at once: 51 s. The water pipelines, at 38 s each, are what it waits for;
+    - from what the first start kept: 2.8 s. The editor opened 8 s after starting.
 
 Next in M3:
 - UI core:
@@ -2058,7 +2067,7 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     an Obj, or wandering near where it began (`MobGoal`). Ways are found on the blocks
     (`voxear_terrain::blocks::path::find_path`: a block at a time, up one, down three, as many clear over the
     ground as it is tall, water waded a block deep and gone round deeper, a search that gives up after so many
-    places), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
+    places; since moved onto `voxear_nav`'s places, see M9), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
     step a block high; it turns to face its way, falls, and swims up in deep water. It runs before animation, so
     a Mob Motion on the same Obj walks the model. C#: `Obj.BlockMob`/`AddBlockMob` (`MoveTo`, `Follow`, `Wander`,
     `Stop`, `Arrived`, `Goal`, `Speed`, `TurnSpeed`, `Swims`) and `Obj.MobMotion`/`AddMobMotion` (`LookAt`,
@@ -2093,6 +2102,30 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     Manual: Box Models, Painting and Cutting Plants. Not done: `.vox` files brought in as boxes of cubes,
     tools that fill or carve many cubes at once, characters made from parts picked at random, plants and trees
     placed by a Block World's generator.
+  - ~~**Characters of parts:**~~ done, for a co-op game's character creation: grey parts tinted any colour, put
+    on and swapped from scripts in place of a copy of each part in each colour.
+    - A Model Renderer's **Tint** (`tint` under `[obj.model]`, `Obj.Model.Tint`) multiplies what one Obj draws,
+      keeping a box model's sharp pixels and cut-out near and far, and in bounced light. **Tint 2** and **Tint 3**
+      (`tint2`, `tint3`, `GetTint`/`SetTint` by `TintSlot`) fall where a box model's colours say (`[tints]`, the
+      Model window's Tint, Tint 2, Tint 3 or Own for the colour painted with) or a material's **Tint Mask** does.
+    - Scripts set an Obj's model (`Obj.Model.Model`, `Obj.AddModel`, by a `ModelAsset` field), keeping the pose
+      on the same bones; a part's material (`SetMaterial`, `PartName`); and a box model's sheet (`Sheet`, `sheet`
+      under `[obj.model]`, the Inspector's Sheet), a picture of its layout whose colours take the model's tints,
+      the box model's own file kept in its cooked model so builds draw it too. The sheet goes out to a picture and
+      back: the Model window's **Save Sheet**, a picture dropped on the sheet, `box_model.sheet_save` and
+      `box_model.sheet_load`.
+    - Bones are sized (`Bone.LocalScale`, `RestScale`) and hidden with their skin and its shadow (`Bone.Hidden`,
+      until shown again), and a clip played on another body of the same rig keeps its scale keys.
+    - A part's **Follow parent** (`follow_parent`, `ModelRenderer.Follows`) poses it by its parent's skeleton
+      every frame, bone by bone by name, with no script, and hides what the body hides from the cameras.
+    - `vox render --ui` draws the game's UI over the picture, so a menu is checked without a window.
+    - Tests: the tint, its slots and a hidden head in GPU pictures near, flat and far, looked at enlarged; a box
+      model drawn with a picture sheet; the tint file and mask, sheets as pictures, cooked sources, bone sizes,
+      following and scale keys; scripts tinting, swapping models, materials and sheets, sizing and hiding bones
+      and following; the sheet out and back through the editor. Manual: Tints and Parts, Box Models, Bones in
+      Scripts, Bone Attachments, Materials, Your First Menu, Driving the Editor from a Terminal.
+    - Not done: a sheet's tint mask painted pixel by pixel rather than by colour, glass tinted, and parts that
+      follow another skeleton by a rig's parts rather than by name.
 
 ## Gameplay kits: game-ready systems
 
@@ -2163,6 +2196,31 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
   part-way through, the server deciding and checking crossings, Portals to other levels.
+- **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
+  Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
+  dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a
+  `[dimension]` table (kind Overworld, Dungeon or Caves; sky, weather, clock, how long it stays made, one or one for
+  each place that opens it), made with `Game::make_dimension` and let go with `let_go_dimension`, and a change of
+  level lets them all go. The world's sky, sun, post and weather follow the camera from dimension to dimension. A
+  view draws only its own dimension's Objs, lights, worlds of blocks, terrains, plants, water, particles, smoke and
+  mist, and starts its shadow pages, sky tables and bounced light again when it comes to see another, the other
+  worlds' chunks kept on the GPU. Physics keeps dimensions apart in Jolt's object layers and asks rays in the current
+  one; each world without end is made round the places of its own dimension alone; sound, rain, the clock's sun,
+  water, falling trees, saplings, biomes, block mobs, dropped items and scripts' block calls keep to theirs. Tests:
+  two worlds without end at one place, each made round its own dimension, a walker moved into the other standing on
+  its ground under its dark and rays meeting only its blocks; letting a dimension go; bodies of two dimensions at
+  one place never meeting; a GPU picture from one place in each dimension showing only its own field and lamp, and
+  the first again with nothing of the other's shadows. Portals between dimensions: a Portal's `into` names one in a
+  `.dimension` file, which is made as a camera comes near and let go once unneeded for its Keep Loaded seconds; its
+  far side is drawn with that dimension's ground, sky, sun and weather, working out sky tables of its own; going
+  through puts the Obj and what is under it in the far dimension, its body or character still moving as it was; a
+  camera following looks through the opening, then goes after its subject. Tests: a walker coming near makes the
+  dimension and links the two Portals, walks through and stands on its rock under its dark, and walking away lets it
+  go; a thrown body keeps its speed; a camera following looks through the Gate from the level, then goes into the
+  caves; bodies and characters moved between dimensions keep moving; GPU pictures through a Portal into another
+  dimension and back out, each matching a camera standing there. Manual: Dimensions. To come: dungeons in a
+  dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
+  dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2802,6 +2860,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the biome's shore) and 6 m from rivers and lakes; a structure's new **By water** lets reeds and mangroves down.
     Tests: a cave cut open is a few large hollows (GPU render, and from inside); trees off the beach and river, and
     down to them by water.
+  - ~~**Nothing over a cave's opening:**~~ done: trees stood where the generator's height put them, and caves,
+    ravines and overhangs cut the ground away under them after, so trunks hung over the opening. Now a structure's
+    place is read through the Volume as its chunk makes it: a tree needs ground three blocks down its trunk, a
+    building and each town house under their middle and corners, else the place is left bare, near, far and on the
+    map alike. Tests: no trunk over air on hills opened by caves and on cliffs cut by overhangs, before 41 of 413
+    and 59 of 179; the map's and far view's trees are the chunks'.
   - ~~**Biomes, slabs and tints far off:**~~ done: an endless world's ground kept its block list only to its own
     top, under, base and sea blocks, so its biomes' blocks and slabs were lost; it keeps every block its ground is
     laid with now. Slabs are laid at every level, the far tiles too, and the far view takes a second, coarser
@@ -2877,6 +2941,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     there, and a biome's land rolls less over the lowland than over the uplands; its rivers start from 24 ha, as
     flat land gathers less water. In a real project's endless world, land under 100 m over the sea went from 7% to
     55% and nearly flat land from 14% to 31%. Generators' version raised, so kept far views are made again.
+  - ~~**Rivers to swim across:**~~ done: a world of levels' rivers are 24 m wide and 3.5 m deep where a square
+    kilometre drains into them, on the same courses: most are 12 to 50 m across, and deeper than a player stands
+    over most of their width.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the
@@ -3550,12 +3617,36 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 
-## M9 — Navigation, cameras and Timeline
+## M9 — Navigation, cameras and Timeline (in progress)
 
-- Navigation:
-  - grid, layered grid, recast and point graphs
-  - async paths, modifiers and runtime graph updates
-  - RVO avoidance
+- Navigation, for block worlds first, then mesh levels:
+  - [x] **Places in worlds of blocks** (`voxear_nav`, a crate of its own): where something can stand, made from
+    a world's blocks chunk by chunk through a walking table (five bytes a place: its height, the room over it,
+    its floor's top in sixteenths so slabs are stood on half a block down, its area, standing or wading; about
+    7 KB for a chunk of rolling land, 12 KB with caves), steps between them worked out as they are walked by the
+    walker's own height, step and drop, eight ways with no corner of a wall cut; regions of places a few to a
+    chunk for walkers one, two and three blocks tall, and a coarse graph of edges between them, each crossed
+    where its steps are; ways found over regions and then over places kept to them, leaning a little towards the
+    goal (`greed`, 1.25: some 2% dearer, a tenth of the places looked at), a long way found place by place only
+    for its first chunks (`Continues`), the nearest way where the goal cannot be reached (`Partial`), and the way
+    pulled tight into corners walked straight between; a world's places kept up with its blocks on navigation's
+    own threads (`threads`), only the chunks whose `Arc` changed made again, the rest shared, a small change
+    waited for the frame after it, ground streaming in taken when it is done. **Block Mob** walks on them:
+    searches in the background, taken the next frame, staggered by the mob's number, a way found again when a
+    chunk it goes through changes, straight corner to corner. Timings (test build, least of 20): a chunk's
+    places 0.2 ms (0.5 ms with caves), a 100-block way 0.5 ms, a 500-block way 0.6 ms. Tests: places on slabs,
+    in water and across chunks; regions, walls and drops; ways round walls, up steps, over fords, partial and
+    continuing; ways reaching wherever a search a block at a time reaches, the coarse graph keeping them within
+    5% of the cheapest; chunks edited, streaming out and back, a block numbered for the first time; the timings;
+    the Block Mob tests as they were.
+  - [ ] Nav Agents: the component (`Destination`, paths, corners, costs), searches queued with a budget,
+    steering, avoidance between agents on the workers, moving by the Character Controller or along the nav for
+    crowds, in the fixed step; Block Mob on a Nav Agent; the C# API
+  - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
+    block and by Nav Area boxes; Nav Links; walkers two blocks wide
+  - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
+  - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
+  - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 
@@ -3628,13 +3719,33 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   generator graph and the Model window by call rather than by file; pointer and key input; events pushed to
   tools.
 
-## Shader packs (planned)
+## Shader packs (in progress)
 
 Programs that replace how a game is lit and finished, chosen by whoever plays, as look and texture packs are: a
 pack's own full-screen passes over the engine's buffers first, then its lighting of block faces, leaves and water
 with their sky light and block light, its sky and final pass, and its shadows. The plan, the stages, what every
 program reads, how it fits the frame graph, live reload, builds and costs: [SHADER_PACKS.md](SHADER_PACKS.md).
-Nothing built yet.
+
+Done:
+- **A pack's own passes over the frame** (stage 1). A `Name.shaderpack` folder: `pack.toml` with options (numbers,
+  toggles, choices, each with a tooltip) and passes, and `.slang` programs that define `run`. Passes run at four
+  points: after the opaque surfaces and sky are lit, after the fog, after TAA, and over the finished picture. Each
+  reads what it lists (colour, depth, normals, motion, last frame's colour, the block light window, earlier passes'
+  targets) and writes the colour or a target of its own at full, half or quarter size, kept from frame to frame where
+  it asks. Packs come from the engine (`builtin:`), the project (a `ShaderPack` asset, shipped with its programs) and
+  a player's `ShaderPacks` folder (`file:`); compiled on threads with `slangc`, kept by a hash.
+  - **Evening**, built in: shafts of sun through leaves marched at half size, a golden haze towards the sun that the
+    sky light round the camera fades in caves, and a warm grade. About 0.8 ms at 1440p on an RTX 3070 looking into
+    the sun, the rays 0.5 ms of it (least of 60 frames).
+  - **Editor:** a Shader pack menu on the Lighting page, a pack's Inspector page (worn, compiled or Slang's message,
+    passes, options that change the picture at once), drawn again in a moment when a file is saved, and carried
+    into play. Calls `shader_pack.list`, `shader_pack.wear`, `shader_pack.options`; `vox render --shader-pack` and
+    `--shader-pack-option`.
+  - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
+    colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
+    each place, live reload and options carried over; the editor's menu, page and calls.
+  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
+    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

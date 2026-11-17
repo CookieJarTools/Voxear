@@ -453,6 +453,172 @@ impl Game {
         }
     }
 
+    /// The dimension `asset` makes as `key`, made now if it is not yet: its
+    /// file's Objs spawned in it, its sky, sun, post-processing and weather
+    /// kept for when the camera comes into it. `key` tells apart the
+    /// dimensions one asset makes for each place that opens it; 0 for one
+    /// alone.
+    pub fn make_dimension(
+        &mut self,
+        asset: voxear_assets::AssetGuid,
+        key: u64,
+        renderer: Option<&mut Renderer>,
+    ) -> Result<crate::dimensions::DimensionId> {
+        use crate::dimensions::{self, DimensionFile, Dimensions};
+        if let Some(made) = self.engine.world.resource::<Dimensions>().and_then(|made| made.find(asset, key)) {
+            return Ok(made);
+        }
+        let (text, path) = self.content.asset_text(asset, voxear_assets::AssetKind::Dimension)?;
+        let file = DimensionFile::parse(&text, &path)?;
+        let surroundings = self.dimension_surroundings(&file).with_context(|| format!("loading {path}"))?;
+        let world = &mut self.engine.world;
+        let id = dimensions::make_empty(world, file.settings.clone(), Some(surroundings), self.levels.current())
+            .with_context(|| format!("making {path}: there are as many dimensions as there can be"))?;
+        let objs = crate::scene_file::spawn_objs(
+            &mut self.engine,
+            &mut self.content,
+            renderer,
+            &file.scene,
+            &std::collections::HashSet::new(),
+        )
+        .with_context(|| format!("loading {path}"));
+        let objs = match objs {
+            Ok(objs) => objs,
+            Err(error) => {
+                dimensions::let_go(&mut self.engine.world, id);
+                return Err(error);
+            }
+        };
+        let world = &mut self.engine.world;
+        let roots: Vec<Entity> = objs
+            .iter()
+            .map(|(_, entity)| *entity)
+            .filter(|&entity| !world.has::<voxear_scene::Parent>(entity))
+            .collect();
+        // Its Objs are where it puts them from the level's real middle, as a scene's are, wherever the world's is.
+        let moved = voxear_scene::WorldOrigin::of(world).is_moved();
+        for &root in &roots {
+            dimensions::set_dimension(world, root, id);
+            if moved && let Some(file) = world.get::<voxear_scene::Transform>(root).map(|t| t.position) {
+                voxear_scene::place_at_level(world, root, file.as_dvec3());
+            }
+        }
+        dimensions::record_made(world, id, (Some(asset), key), objs);
+        Ok(id)
+    }
+
+    /// Links each Portal near enough to show its far side that leads into a
+    /// dimension's file, making that dimension first; and lets go each
+    /// dimension made so once nothing has needed it for its `keep_loaded`
+    /// seconds: no camera in it, and no Portal near enough to it to show
+    /// it. While the game plays.
+    fn link_dimensions(&mut self, delta: f32, mut renderer: Option<&mut Renderer>) {
+        use crate::dimensions::{self, Dimensions};
+        if self.engine.is_edit_mode() {
+            return;
+        }
+        for (portal, link) in crate::portals::link_wanted(&self.engine.world) {
+            let asset = self.content.parse(&link.dimension).ok().and_then(|parsed| parsed.guid());
+            let made = asset.map(|asset| {
+                let fresh = self.engine.world.resource::<Dimensions>().and_then(|made| made.find(asset, 0)).is_none();
+                let made = self.make_dimension(asset, 0, renderer.as_deref_mut());
+                if let (true, Ok(id)) = (fresh, &made) {
+                    dimensions::made_on_demand(&mut self.engine.world, *id);
+                }
+                made
+            });
+            let id = match made {
+                Some(Ok(id)) => id,
+                Some(Err(error)) => {
+                    tracing::warn!("a Portal leads into {} and it could not be made: {error:#}", link.dimension);
+                    self.engine.world.remove::<crate::portals::PortalInto>(portal);
+                    continue;
+                }
+                None => {
+                    tracing::warn!("a Portal leads into {}, which is no dimension of the project", link.dimension);
+                    self.engine.world.remove::<crate::portals::PortalInto>(portal);
+                    continue;
+                }
+            };
+            let world = &mut self.engine.world;
+            let path = link.portal.path().ok();
+            let far = path.and_then(|path| world.resource::<Dimensions>()?.obj_at(id, &path));
+            let Some(far) = far.filter(|far| world.has::<voxear_render::Portal>(*far)) else {
+                tracing::warn!("a Portal leads into Obj {:?} of {}, which is no Portal", link.portal, link.dimension);
+                world.remove::<crate::portals::PortalInto>(portal);
+                continue;
+            };
+            if let Some(near) = world.get_mut::<voxear_render::Portal>(portal) {
+                near.to = Some(far);
+            }
+            // The far one, leading nowhere, leads back.
+            if let Some(back) = world.get_mut::<voxear_render::Portal>(far).filter(|back| back.to.is_none()) {
+                back.to = Some(portal);
+            }
+        }
+        let needed: Vec<dimensions::DimensionId> =
+            crate::portals::exits(&self.engine.world).iter().map(|exit| exit.dimension).collect();
+        for id in dimensions::idle_ones(&mut self.engine.world, delta, &needed) {
+            self.let_go_dimension(id);
+        }
+    }
+
+    /// Lets a dimension go, destroying its Objs at the end of the frame:
+    /// persistent ones are moved to the level's. False where it was not made.
+    pub fn let_go_dimension(&mut self, id: crate::dimensions::DimensionId) -> bool {
+        match crate::dimensions::let_go(&mut self.engine.world, id) {
+            Some(doomed) => {
+                self.engine.destroy_objs(&doomed);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A dimension file's sky, sun, post-processing and weather: the level's,
+    /// with its own lighting, `[sky]` and `[post]` laid over them as a
+    /// scene's are; dark all round where it has no sky, and clear where it
+    /// has no weather.
+    fn dimension_surroundings(
+        &mut self,
+        file: &crate::dimensions::DimensionFile,
+    ) -> Result<crate::dimensions::Surroundings> {
+        use crate::dimensions::{DimensionId, Dimensions, Surroundings};
+        let world = &self.engine.world;
+        let level = match world.resource::<Dimensions>() {
+            Some(dimensions) => dimensions.surroundings(world, DimensionId::LEVEL),
+            None => Surroundings::copy(world),
+        };
+        let scene = &file.scene;
+        let own = match scene.lighting.is_some() || scene.sky.is_some() || scene.post.is_some() {
+            true => {
+                let before = Surroundings::copy(&self.engine.world);
+                level.put(&mut self.engine.world);
+                let lighting = match &scene.lighting {
+                    Some(reference) => {
+                        Some((reference.as_str(), self.content.lighting(&self.content.parse(reference)?)?))
+                    }
+                    None => None,
+                };
+                let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
+                let environment =
+                    crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref() };
+                let applied = crate::scene_file::apply_environment(&mut self.engine, environment);
+                let own = Surroundings::copy(&self.engine.world);
+                before.put(&mut self.engine.world);
+                applied?;
+                own
+            }
+            false => level,
+        };
+        let settings = &file.settings;
+        Ok(match (settings.sky(), settings.weather()) {
+            (false, _) => Surroundings::enclosed(own.post()),
+            (true, false) => own.cleared(),
+            (true, true) => own,
+        })
+    }
+
     /// Changes level now, then frees what the old one used and the new one
     /// does not.
     pub fn load_level(&mut self, level: &str, renderer: Option<&mut Renderer>) -> Result<()> {
@@ -891,6 +1057,16 @@ impl Game {
         }
         let mouse = self.input.devices().mouse().delta;
         self.engine.world.insert_resource(crate::first_person::MouseLook { delta: mouse.into() });
+        // The world's sky and weather are those of the dimension the camera is in, before anything reads them.
+        let doomed = crate::dimensions::update(&mut self.engine.world, self.levels.current());
+        if !doomed.is_empty() {
+            self.engine.destroy_objs(&doomed);
+        }
+        // Rays and overlaps ask in the dimension the game is seen from.
+        let current = crate::dimensions::current(&self.engine.world);
+        if let Some(physics) = self.engine.world.resource_mut::<crate::physics::PhysicsScene>() {
+            physics.world_mut().ask_in(current.0);
+        }
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
@@ -919,6 +1095,8 @@ impl Game {
         {
             profile_scope!("Portals");
             crate::portals::find_exits(&mut self.engine.world);
+            // A Portal into a dimension not made yet makes it once near enough, and its far side is found next tick.
+            self.link_dimensions(delta, renderer.as_deref_mut());
         }
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::block_tints::update(&mut self.engine.world, &mut self.content);
@@ -1536,6 +1714,23 @@ impl ScriptServices for GameServices<'_> {
 
     fn load_prefab(&mut self, reference: &str) -> Result<u32> {
         Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
+    }
+
+    fn set_model(&mut self, world: &mut World, entity: Entity, reference: &str) -> Result<()> {
+        crate::model_renderers::set_model(world, self.content, self.renderer.as_deref_mut(), entity, reference)
+    }
+
+    fn change_model(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        change: voxear_scripting::ModelChange<'_>,
+    ) -> Result<()> {
+        crate::model_renderers::change_model(world, self.content, self.renderer.as_deref_mut(), entity, change)
+    }
+
+    fn model_part_name(&mut self, world: &World, entity: Entity, part: usize) -> Option<String> {
+        crate::model_renderers::part_name(world, self.content, entity, part)
     }
 
     fn spawn_prefab(

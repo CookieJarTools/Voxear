@@ -358,7 +358,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         tools: settings.development,
         console: settings.development.then(|| data.to_path_buf()),
     };
-    let renderer = RendererSettings { renderdoc: false, capture_folder: None, hot_reload: false, software_rays: false };
+    let renderer = RendererSettings::default();
     let setup = Box::new(move |game: &mut Game, renderer: &mut Renderer| {
         game.start(Some(renderer))?;
         if let Some(start) = net {

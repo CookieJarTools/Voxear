@@ -70,6 +70,7 @@ mod erosion;
 pub use erosion::MOST_STEPS as MOST_EROSION_STEPS;
 mod tracks;
 mod payload;
+mod pipeline_cache;
 mod pipelines;
 pub mod portals;
 mod post;
@@ -80,10 +81,12 @@ mod previews;
 mod scene;
 pub mod sea;
 mod seasons;
+pub mod shader_packs;
 mod lamp_vsm;
 mod shadow_cache;
 mod shadows;
 mod sound_rays;
+mod splash;
 mod texture_codec;
 mod ui_pass;
 mod ui_panels;
@@ -131,7 +134,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
-pub use skinning::{HiddenBones, Pose};
+pub use skinning::{BonesOff, HiddenBones, Pose};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
@@ -161,7 +164,7 @@ pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, 
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
-pub use model_renderer::{ModelPart, ModelRenderer};
+pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS, TintSlot};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use effects::{
     BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, longest_life as particles_longest_life, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
@@ -182,8 +185,8 @@ pub use wind::{WindShape, WindZone, plants_wind};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
-    Camera, CloudKind, Clouds, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode,
-    ViewOptions,
+    Camera, CloudKind, Clouds, DimensionLook, DimensionLooks, Light, LightKind, MAX_TRANSITIONS, MeshRenderer,
+    RenderFeatures, Sky, SkyBody, SkyMode, ViewOptions,
     picture_sky_light, temperature_color,
 };
 pub use portals::{
@@ -310,7 +313,7 @@ impl RenderStats {
 }
 
 /// Options fixed when the renderer is created.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RendererSettings {
     /// Load RenderDoc (when installed) so frames can be captured.
     pub renderdoc: bool,
@@ -321,6 +324,22 @@ pub struct RendererSettings {
     /// Trace the GI's rays in a compute shader even where the GPU has ray
     /// tracing, as GPUs without it do: for testing that path.
     pub software_rays: bool,
+    /// Show a splash in the window while the renderer gets ready, until its
+    /// first frame: the engine's name, and how far making the pipelines has
+    /// got (see [`Renderer::show_splash`]). On unless `VOXEAR_SPLASH=0`.
+    pub splash: bool,
+}
+
+impl Default for RendererSettings {
+    fn default() -> Self {
+        Self {
+            renderdoc: false,
+            capture_folder: None,
+            hot_reload: false,
+            software_rays: false,
+            splash: std::env::var("VOXEAR_SPLASH").map_or(true, |set| set != "0"),
+        }
+    }
 }
 
 fn attach_renderdoc(settings: &RendererSettings) -> Option<RenderDoc> {
@@ -458,6 +477,9 @@ struct FrameBuffers {
     vsm: Option<VsmBuffers>,
     /// The same for the lamps' virtual shadow pages (see `lamp_vsm`).
     lamp_vsm: Option<VsmBuffers>,
+    /// The frame a worn shader pack's programs read, made the first time
+    /// one is worn (see `shader_packs`).
+    pack_frame: Option<Buffer>,
     /// What its buffers' names start with.
     prefix: String,
 }
@@ -514,6 +536,18 @@ impl FrameBuffers {
             self.lamp_vsm = Some(VsmBuffers::new(gpu, &format!("{}lamp vsm", self.prefix), slot, words)?);
         }
         Ok(self.lamp_vsm.as_mut().expect("made above"))
+    }
+
+    /// Makes the buffer a shader pack's frame is written to, the first time
+    /// one is worn.
+    fn fit_pack_frame(&mut self, gpu: &Gpu, slot: usize) -> Result<&Buffer> {
+        if self.pack_frame.is_none() {
+            let name = format!("{}shader pack frame {slot}", self.prefix);
+            let size = size_of::<shader_packs::GpuPackFrame>() as u64;
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
+            self.pack_frame = Some(gpu.create_buffer(&name, size, usage, MemoryLocation::CpuToGpu)?);
+        }
+        Ok(self.pack_frame.as_ref().expect("made above"))
     }
 
     /// Makes sure the blocks' indirect draws have room for `needed`, making
@@ -582,6 +616,10 @@ pub struct Renderer {
     /// What the game asks of the display: HDR or not, paper white and the peak.
     display: display::DisplaySettings,
     watcher: Option<ShaderWatcher>,
+    /// The pipelines of the shader pack the world wears, and the compile of
+    /// one whose pipelines could not be made, so it is not tried again.
+    shader_pack: Option<shader_packs::PackPipelines>,
+    shader_pack_failed: u64,
     /// The shaders the pipelines are made from, as built in or as hot
     /// reload compiled them, before a project's custom shaders.
     shaders: ShaderSet,
@@ -631,6 +669,10 @@ pub struct Renderer {
     bake_recorded: usize,
     /// The level's bake's lightmaps, on the GPU.
     baked_textures: lightmaps::BakedTextures,
+    /// Where the pipelines made are kept for the next start.
+    pipeline_cache: Option<pipeline_cache::PipelineCacheFile>,
+    /// What the window shows until the first frame.
+    splash: Option<splash::Splash>,
 }
 
 impl Renderer {
@@ -682,9 +724,24 @@ impl Renderer {
         Ok(renderer)
     }
 
-    fn build(gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
+    fn build(mut gpu: Gpu, target: Target, renderdoc: Option<RenderDoc>, settings: &RendererSettings) -> Result<Self> {
         let hot_reload = settings.hot_reload;
-        let frames = Frames::new(&gpu)?;
+        let shaders = ShaderSet::embedded();
+        // The pipelines an earlier start made with these shaders, so they need not be compiled again.
+        let mut pipeline_cache = pipeline_cache::PipelineCacheFile::open(&mut gpu, &shaders);
+        let mut frames = Frames::new(&gpu)?;
+        let mut splash = match &target {
+            Target::Window(_) if settings.splash => Some(splash::Splash::new()),
+            _ => None,
+        };
+        let mut show = |gpu: &Gpu, frames: &mut Frames, status: &str, count: Option<(usize, usize)>| {
+            if let (Some(splash), Target::Window(swapchain)) = (&mut splash, &target)
+                && let Err(error) = splash.show((gpu, frames, swapchain), status, count)
+            {
+                tracing::warn!("could not show the splash: {error:#}");
+            }
+        };
+        show(&gpu, &mut frames, "Starting", None);
         let mut bindless = Bindless::new(&gpu)?;
         let graph = RenderGraph::new(&gpu, FRAMES_IN_FLIGHT)?;
         // Without ray tracing, the GI's rays walk hierarchies of the meshes' triangles in a compute shader.
@@ -697,8 +754,13 @@ impl Renderer {
             Target::Offscreen { image, encoding, .. } => (image.desc.format, *encoding),
         };
         let output_format = if encoding.is_hdr() { display::DISPLAY_FORMAT } else { window_format };
-        let shaders = ShaderSet::embedded();
-        let pipelines = Pipelines::new(&gpu, &bindless, (output_format, window_format), &shaders)?;
+        let formats = (output_format, window_format);
+        let mut progress = |done, total| show(&gpu, &mut frames, "Preparing shaders", Some((done, total)));
+        let pipelines = Pipelines::new_showing(&gpu, &bindless, formats, &shaders, &mut progress)?;
+        if let Some(cache) = &mut pipeline_cache {
+            cache.save(&gpu);
+        }
+        show(&gpu, &mut frames, "Opening", None);
         let first = View::new(&gpu, 0)?;
         let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
         let main =
@@ -719,6 +781,8 @@ impl Renderer {
             window_format,
             display: display::DisplaySettings::default(),
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
+            shader_pack: None,
+            shader_pack_failed: 0,
             shaders,
             custom: CustomShaders::default(),
             views: vec![first],
@@ -747,7 +811,23 @@ impl Renderer {
             bake_pace_set: false,
             bake_recorded: 0,
             baked_textures: Default::default(),
+            pipeline_cache,
+            splash,
         })
+    }
+
+    /// Shows `status` on the window's splash, as what opens a project does
+    /// while it loads, until the first frame is drawn. Does nothing once a
+    /// frame has been, or with no splash.
+    pub fn show_splash(&mut self, status: &str) {
+        let (Some(splash), Some(Output { target: Target::Window(swapchain), .. })) =
+            (&mut self.splash, self.outputs.first())
+        else {
+            return;
+        };
+        if let Err(error) = splash.show((&self.gpu, &mut self.frames, swapchain), status, None) {
+            tracing::warn!("could not show the splash: {error:#}");
+        }
     }
 
     pub fn gpu(&self) -> &GpuInfo {
@@ -1207,6 +1287,14 @@ impl Renderer {
         gltf_import::upload(&self.gpu, &mut self.bindless, assets, model)
     }
 
+    /// Uploads a model's textures and materials alone, as a box model's look
+    /// with another sheet (see [`BoxModel::look`]), and gives back its
+    /// materials.
+    pub fn upload_look(&mut self, model: &PreparedModel) -> Result<Vec<MaterialHandle>> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        gltf_import::upload_look(&self.gpu, &mut self.bindless, assets, model)
+    }
+
     /// Puts a model prepared again, as after its import settings changed,
     /// behind the mesh and material handles `old` was given, so whatever
     /// draws it shows the change from the next frame. Fails, changing
@@ -1334,6 +1422,12 @@ impl Renderer {
 
     /// A mesh's box in its own space, min and max corners, for picking. The
     /// box of its bounding sphere for a mesh uploaded cooked.
+    /// Whether a material has a tint mask, so an Obj's second and third
+    /// tints show on it.
+    pub fn tint_masked(&self, material: MaterialHandle) -> bool {
+        self.assets.as_ref().is_some_and(|assets| assets.tint_masked(material))
+    }
+
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }
@@ -1478,6 +1572,37 @@ impl Renderer {
         self.clear = color;
     }
 
+    /// Makes the pipelines of the shader pack the world wears, when it has
+    /// put on another or compiled it again, and lets go of those of one it
+    /// has taken off. Pipelines that cannot be made are logged, and the frame
+    /// is drawn without the pack.
+    fn wear_shader_pack(&mut self, world: &World) {
+        let worn = world.resource::<shader_packs::WornShaderPack>();
+        let wanted = worn.map(|worn| worn.pack.generation);
+        let have = self.shader_pack.as_ref().map(|pack| pack.generation);
+        if wanted == have || (wanted.is_some() && wanted == Some(self.shader_pack_failed)) {
+            return;
+        }
+        if let Some(old) = self.shader_pack.take() {
+            self.gpu.wait_idle();
+            old.destroy(&self.gpu);
+        }
+        let Some(worn) = worn else { return };
+        match shader_packs::PackPipelines::new(&self.gpu, &self.bindless, &worn.pack) {
+            Ok(pipelines) => self.shader_pack = Some(pipelines),
+            Err(error) => {
+                tracing::error!("the shader pack cannot be drawn: {error:#}");
+                self.shader_pack_failed = worn.pack.generation;
+            }
+        }
+    }
+
+    /// The shader pack the frames are drawn with now, as the world wears it,
+    /// once its pipelines are made.
+    pub fn shader_pack_drawn(&self) -> Option<u64> {
+        self.shader_pack.as_ref().map(|pack| pack.generation)
+    }
+
     /// Swaps in recompiled shaders when the watcher saw a change.
     fn reload_shaders(&mut self) {
         let started = std::time::Instant::now();
@@ -1574,8 +1699,12 @@ impl Renderer {
 
     /// Draws the world's cameras, lights and mesh renderers, into each output.
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
+        if let Some(splash) = self.splash.take() {
+            splash.retire(&mut self.frames);
+        }
         self.reload_shaders();
         self.finish_custom_shaders();
+        self.wear_shader_pack(world);
         for output in &mut self.outputs {
             if let (Some((width, height)), Target::Window(swapchain)) = (output.pending_size.take(), &mut output.target)
             {
@@ -1685,6 +1814,7 @@ impl Renderer {
             baking,
             bake_pace,
             baked_textures,
+            shader_pack,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -1759,6 +1889,15 @@ impl Renderer {
                 (display_settings.peak_ratio(output.encoding()), display_image)
             })
             .collect();
+        // The shader pack the world wears, drawn by every camera's view once its pipelines are made.
+        let pack_draw = match (world.resource::<shader_packs::WornShaderPack>(), shader_pack.as_ref()) {
+            (Some(worn), Some(made)) if made.generation == worn.pack.generation => Some(shader_packs::PackDraw {
+                pack: worn.pack.clone(),
+                pipelines: made.pipelines.clone().into(),
+                worn: worn.clone(),
+            }),
+            _ => None,
+        };
         // The first view drawn into each output clears around itself, and keeps the view for its UI's backdrop.
         let mut backdrops = vec![None; outputs.len()];
         let mut cleared = vec![false; outputs.len()];
@@ -1796,6 +1935,7 @@ impl Renderer {
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
                 bake: bake.clone(),
+                pack: pack_draw.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
@@ -2085,12 +2225,22 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.gpu.wait_idle();
+        // With what was made since it started, as a project's own shaders' pipelines.
+        if let Some(cache) = &mut self.pipeline_cache {
+            cache.save(&self.gpu);
+        }
+        if let Some(splash) = self.splash.take() {
+            splash.retire(&mut self.frames);
+        }
         let gpu = &self.gpu;
         if let Some(baking) = self.baking.take() {
             baking.cancel(gpu);
         }
         self.baked_textures.destroy(gpu);
         self.pipelines.destroy(gpu);
+        if let Some(pack) = self.shader_pack.take() {
+            pack.destroy(gpu);
+        }
         self.reflection_probes.destroy(gpu);
         self.skinning.destroy(gpu);
         self.particle_sim.destroy(gpu);
@@ -2210,6 +2360,9 @@ struct View {
     vsm: vsm::VirtualShadows,
     /// The lamps' virtual shadow pages it keeps (see `lamp_vsm`).
     lamp_pages: lamp_vsm::LampPages,
+    /// The dimension it saw last frame: what it keeps of that one's shadows,
+    /// sky and bounced light is let go once it sees another.
+    dimension: voxear_scene::DimensionId,
 }
 
 /// A view through a Portal, kept by the view it is seen in for as long as
@@ -2238,6 +2391,9 @@ struct PortalPass {
     atmosphere: Option<atmosphere::Tables>,
     sky_light: u64,
     cloud_drift: [f64; 2],
+    /// The dimension that view sees: one into another works out a sky of
+    /// its own in place of reading that view's.
+    dimension: voxear_scene::DimensionId,
     /// The sun casts shadows on its side, and its worlds of blocks' water is drawn.
     shadows: bool,
     water: bool,
@@ -2272,6 +2428,7 @@ struct Sees {
     atmosphere: Option<atmosphere::Tables>,
     sky_light: u64,
     cloud_drift: [f64; 2],
+    dimension: voxear_scene::DimensionId,
     /// How many Portals deep it is itself: 0 for a camera's own view.
     level: u32,
     /// Its water's waves and caustics, for the views through its Portals to share.
@@ -2321,6 +2478,8 @@ struct ViewSetup {
     /// the first camera's own view records, until one has.
     baked: lightmaps::BakedFrame,
     bake: Option<lightmapper::BakeFrame>,
+    /// The shader pack the world wears, and its pipelines.
+    pack: Option<shader_packs::PackDraw>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2407,6 +2566,7 @@ impl View {
             fsr3_retired: Default::default(),
             vsm: vsm::VirtualShadows::default(),
             lamp_pages: lamp_vsm::LampPages::default(),
+            dimension: voxear_scene::DimensionId::LEVEL,
         })
     }
 
@@ -2471,9 +2631,10 @@ impl View {
                 vsm,
                 lamp_vsm,
                 block_draws,
+                pack_frame,
                 ..
             } = buffers;
-            for buffer in block_draws {
+            for buffer in block_draws.into_iter().chain(pack_frame) {
                 frames.retire(Retired::Buffer(buffer));
             }
             for buffer in vsm.into_iter().chain(lamp_vsm).flat_map(|vsm| [vsm.table, vsm.gpu_table, vsm.requests, vsm.readback]) {
@@ -2829,6 +2990,19 @@ impl View {
             &|mesh| assets.mesh_sphere(mesh),
             through.as_ref(),
         );
+        // Seeing another dimension, what it kept of the last one's shadows, sky and bounced light goes: they are
+        // another world's, which the shadows would otherwise go on showing for a while as their pages come again a
+        // few at a time. The picture's own history stays, as a camera walking through a Portal sees no cut.
+        if extracted.dimension != self.dimension {
+            self.dimension = extracted.dimension;
+            self.vsm = vsm::VirtualShadows::default();
+            self.lamp_pages = lamp_vsm::LampPages::default();
+            self.shadow_cache.forget();
+            self.atmosphere_tables = None;
+            self.cloud_history = None;
+            self.ddgi_history = None;
+            self.ddgi_lit_by = None;
+        }
         // What a view through a Portal goes without: what reads the screen, bounced light, and the sea.
         if portal.is_some() {
             let post = &mut extracted.post;
@@ -2859,10 +3033,15 @@ impl View {
         if extracted.ocean.is_some_and(|(_, level, _)| camera.y < level) {
             extracted.post.fog.enabled = false;
         }
+        // The terrains and worlds of blocks of the dimension the view sees, of all drawn this frame.
+        let (seen_terrains, seen_blocks) = (
+            terrain::in_dimension(&setup.terrains, extracted.dimension),
+            blocks::in_dimension(&setup.blocks, extracted.dimension),
+        );
         // Each terrain's meshes for rays, among the Objs the GI traces and the sea floor is drawn from.
         if portal.is_none() {
-            terrain::add_proxies(&setup.terrains, &mut extracted);
-            blocks::add_proxies(&setup.blocks, &mut extracted);
+            terrain::add_proxies(&seen_terrains, &mut extracted);
+            blocks::add_proxies(&seen_blocks, &mut extracted);
         }
         if features.vegetation {
             // The plants round the camera where the world has it, moved into the view's own space.
@@ -2944,8 +3123,8 @@ impl View {
         let virtual_sun = extracted.has_sun && portal.is_none() && extracted.sun_shadows == SunShadows::Virtual;
         if caching || virtual_sun || virtual_lamps {
             self.shadow_cache.mark_still(&mut extracted, opaque_count, assets);
-            self.shadow_cache.note_blocks(&setup.blocks);
-            self.shadow_cache.note_terrains(&setup.terrains);
+            self.shadow_cache.note_blocks(&seen_blocks);
+            self.shadow_cache.note_terrains(&seen_terrains);
         } else {
             self.shadow_cache.forget();
         }
@@ -3091,12 +3270,16 @@ impl View {
             }
             false => None,
         };
+        // A worn shader pack's frame is written for its passes, which no view through a Portal draws.
+        if setup.pack.is_some() && portal.is_none() {
+            self.buffers[slot].fit_pack_frame(gpu, slot)?;
+        }
         let gathers = profile_marker!("Gathers").scope();
         let buffers = &self.buffers[slot];
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
         let tracks_id = fg.import_buffer(&self.tracks);
         let no_terrains: &[terrain::Drawn] = &[];
-        let terrains = if portal.is_some() { no_terrains } else { &setup.terrains };
+        let terrains = if portal.is_some() { no_terrains } else { &seen_terrains };
         // Each level of the sun's virtual shadow maps with pages drawn this frame, and the planes round them.
         let sun_pages: Vec<(usize, [[f32; 4]; 6])> = virtual_shadows
             .as_ref()
@@ -3118,7 +3301,7 @@ impl View {
         .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let mut view_blocks = blocks::gather(
-            &setup.blocks,
+            &seen_blocks,
             &extracted,
             &buffers.blocks,
             (offset, Some(through.map_or(camera, |t| t.window)), sun_shadows && cascades, portal.is_none()),
@@ -3220,7 +3403,10 @@ impl View {
         }
         // The depth passes run for these, and write each pixel's normal and roughness beside the depth.
         // A view through a Portal draws its depth first too, so each pixel of its opening is shaded once.
-        let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
+        // A shader pack's pass that reads normals has them written too.
+        let pack_normals = portal.is_none() && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_normals);
+        let depth_first =
+            ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || pack_normals;
         let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
@@ -3475,10 +3661,12 @@ impl View {
         let current = (frame_data.lighting.sky == SKY_ATMOSPHERE).then_some(frame_data.lighting.atmosphere);
         let kept = self.atmosphere_tables.as_ref().map(bytemuck::bytes_of);
         let fresh = kept != current.as_ref().map(bytemuck::bytes_of);
-        // A view through a Portal reads the sky tables of the view it is seen in.
+        // A view through a Portal reads the sky tables of the view it is seen in, but for one into another dimension,
+        // whose sky is its own.
+        let own_sky = portal.is_none_or(|pass| pass.dimension != extracted.dimension);
         let atmosphere = match (current, portal) {
-            (Some(_), Some(pass)) => pass.atmosphere,
-            (Some(_), None) => {
+            (Some(_), Some(pass)) if !own_sky => pass.atmosphere,
+            (Some(_), _) => {
                 self.atmosphere_tables = current;
                 Some(atmosphere::Tables::new(fg, gpu, bindless, fresh)?)
             }
@@ -3595,8 +3783,8 @@ impl View {
                 tracks: self.tracks.address,
                 // Only under the atmosphere, which works it out.
                 sky_light: match (atmosphere, portal) {
-                    (Some(_), Some(pass)) => pass.sky_light,
-                    (Some(_), None) => buffers.sky_light.address,
+                    (Some(_), Some(pass)) if !own_sky => pass.sky_light,
+                    (Some(_), _) => buffers.sky_light.address,
                     (None, _) => 0,
                 },
                 material_properties: assets.material_properties.address,
@@ -3678,20 +3866,26 @@ impl View {
             Some(_) => Default::default(),
             None => {
                 let now = particles::time_of(world, setup.time);
-                particles::gather(world, camera, now, &extracted.water_bodies, drawing)
+                particles::gather(
+                    world,
+                    (camera, &|entity| extracted.sees(entity)),
+                    now,
+                    &extracted.water_bodies,
+                    drawing,
+                )
             }
         };
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = match portal {
             Some(_) => Default::default(),
-            None => smoke::gather(world, camera, setup.time),
+            None => smoke::gather(world, (camera, &|entity| extracted.sees(entity)), setup.time),
         };
         buffers.smokes.write(0, &smokes);
         buffers.smoke_cells.write(0, &smoke_cells);
         buffers.smoke_holes.write(0, &smoke_holes);
         let (mists, mist_points) = match portal {
             Some(_) => Default::default(),
-            None => mist::gather(world, camera, setup.time),
+            None => mist::gather(world, (camera, &|entity| extracted.sees(entity)), setup.time),
         };
         buffers.mists.write(0, &mists);
         buffers.mist_points.write(0, &mist_points);
@@ -3720,7 +3914,13 @@ impl View {
         };
         let unjittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
         let jittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.view_proj);
-        let sight = portals::in_sight(world, (camera, offset), unjittered, most, through.map(|through| through.out_of));
+        let sight = portals::in_sight(
+            world,
+            (camera, offset),
+            unjittered,
+            most,
+            (through.map(|through| through.out_of), extracted.dimension),
+        );
         let openings: Vec<portals::GpuPortalQuad> = sight
             .openings
             .iter()
@@ -3746,11 +3946,12 @@ impl View {
                 options: self.options,
                 atmosphere,
                 sky_light: match (atmosphere, portal) {
-                    (Some(_), Some(pass)) => pass.sky_light,
-                    (Some(_), None) => buffers.sky_light.address,
+                    (Some(_), Some(pass)) if !own_sky => pass.sky_light,
+                    (Some(_), _) => buffers.sky_light.address,
                     (None, _) => 0,
                 },
                 cloud_drift: self.cloud_drift,
+                dimension: extracted.dimension,
                 level,
                 waves: water.as_ref().map(water::Water::shared_waves),
             }
@@ -3780,6 +3981,48 @@ impl View {
                 table: table_copy(fg, buffers),
             }
         });
+        // A worn shader pack's images, and its frame, for its passes at each point of the frame.
+        let pack = match (&setup.pack, portal) {
+            (Some(draw), None) => {
+                let resolves = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
+                let resolved = if resolves { output_extent } else { extent };
+                let images = shader_packs::PackImages {
+                    depth,
+                    motion: velocity,
+                    surface,
+                    drawn: extent,
+                    resolved,
+                    shown: output_extent,
+                    frame_index: setup.frame_index,
+                };
+                let post = &extracted.post.exposure;
+                let ev = match post.auto {
+                    true => bytemuck::cast_slice::<u8, f32>(self.exposure.read()).first().copied().unwrap_or(0.0),
+                    false => post.compensation,
+                };
+                let sky_light = match atmosphere {
+                    Some(_) => buffers.sky_light.address,
+                    None => 0,
+                };
+                let [light_window, light_bytes] = blocks::light_volume_addresses(buffers.blocks.address);
+                let facts = shader_packs::FrameFacts {
+                    sun_own: extracted.sun_own,
+                    weather: world.resource::<weather::Weather>().copied(),
+                    exposure: frame_data.exposure * ev.exp2(),
+                    drawn: extent,
+                    shown: output_extent,
+                    addresses: [sky_light, light_window, light_bytes],
+                };
+                let mut pack_frame = shader_packs::GpuPackFrame::of(&frame_data, facts);
+                let mut recorder =
+                    shader_packs::PackRecorder::prepare(fg, (gpu, bindless), draw.clone(), &images, &mut pack_frame)?;
+                let written = buffers.pack_frame.as_ref().expect("made for the pack");
+                written.write(0, &[pack_frame]);
+                recorder.set_push(Push { frame: written.address, ..push });
+                Some(recorder)
+            }
+            _ => None,
+        };
         let targets = passes::Targets {
             hdr,
             velocity,
@@ -3894,6 +4137,7 @@ impl View {
             traced_reflections,
             portal_openings: openings.len() as u32,
             through: portal.is_some(),
+            own_sky,
             two_sided_casters,
             probe_job,
             sound_job,
@@ -3913,7 +4157,14 @@ impl View {
             let root = fg.prefix().to_string();
             failed = draw_portals(&mut children, fg, services, (world, setup, slot), (sees, &root), targets).err();
         };
-        let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws, &mut far_sides);
+        // The pack's passes once the opaque surfaces and the sky are lit.
+        let mut lit = |fg: &mut FrameGraph<'_>| {
+            if let Some(pack) = &pack {
+                pack.record(fg, shader_packs::PackPoint::AfterLighting, hdr);
+            }
+        };
+        let (under_water, particles, smoke) =
+            passes::record(fg, &frame_setup, &targets, &draws, (&mut lit, &mut far_sides));
         // The water and glass drawn since, where they stand in front of what the far sides' depth holds.
         if let (Some(seen), Some(kept)) = (seen_depth, kept_depth) {
             lay_nearer_depth(fg, (pipelines, push), depth, kept, seen);
@@ -3955,6 +4206,7 @@ impl View {
             particles,
             smoke,
             surface,
+            pack,
             fsr3: pipelines.fsr3.map(|fsr3| post_passes::Fsr3Input {
                 pipelines: fsr3,
                 state: self.fsr3.clone(),
@@ -4089,6 +4341,7 @@ fn draw_portals(
             atmosphere: sees.atmosphere,
             sky_light: sees.sky_light,
             cloud_drift: sees.cloud_drift,
+            dimension: sees.dimension,
             shadows: seen.distance < quality.shadow_distance,
             water: quality.water,
             rect: seen.rect,
@@ -4439,6 +4692,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         meshlet_capacity: MeshletCapacity { all: FIRST_MESHLET_CAPACITY, two_sided: 0 },
         vsm: None,
         lamp_vsm: None,
+        pack_frame: None,
         block_draws: None,
         prefix: prefix.to_string(),
     })

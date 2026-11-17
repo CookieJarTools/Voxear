@@ -1508,6 +1508,24 @@ pub struct ModelData {
     /// As a Mesh Renderer's, shifting which LOD each part draws.
     #[serde(default, skip_serializing_if = "is_no_bias")]
     pub lod_bias: f32,
+    /// The colour, in sRGB, that multiplies everything the model draws for
+    /// this Obj; white leaves it as made (see `ModelRenderer::tints`).
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub tint: [f32; 3],
+    /// The second and third tints, which show where a part's material has
+    /// a tint mask that says so.
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub tint2: [f32; 3],
+    #[serde(default = "white", skip_serializing_if = "is_white")]
+    pub tint3: [f32; 3],
+    /// Posed by the skeleton of the Obj it is under, bone by bone by name,
+    /// as a part worn on a body.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub follow_parent: bool,
+    /// For a box model, a picture, by GUID or project path, its pixels are
+    /// drawn from in place of the sheet inside its file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// The parts this Obj changes from the model, each by its node.
     #[serde(default, rename = "part", skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartData>,
@@ -1535,7 +1553,43 @@ pub struct PartData {
     pub apart: bool,
 }
 
+impl Default for ModelData {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            lod_bias: 0.0,
+            tint: white(),
+            tint2: white(),
+            tint3: white(),
+            follow_parent: false,
+            sheet: None,
+            parts: Vec::new(),
+        }
+    }
+}
+
 impl ModelData {
+    /// The model by GUID or project path, as it is made.
+    pub fn of(model: impl Into<String>) -> Self {
+        Self { model: model.into(), ..Self::default() }
+    }
+
+    /// The tints a Model Renderer draws it with.
+    pub fn tints(&self) -> [[f32; 3]; voxear_render::TINTS] {
+        [self.tint, self.tint2, self.tint3]
+    }
+
+    /// Sets one of its tints; false for one it has not.
+    pub fn set_tint(&mut self, slot: usize, color: [f32; 3]) -> bool {
+        match slot {
+            0 => self.tint = color,
+            1 => self.tint2 = color,
+            2 => self.tint3 = color,
+            _ => return false,
+        }
+        true
+    }
+
     /// What this Obj changes of the model's node `node`, if anything.
     pub fn part(&self, node: u32) -> Option<&PartData> {
         self.parts.iter().find(|part| part.node == node)
@@ -1789,6 +1843,18 @@ pub fn spawn(
     };
     let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
     apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref() })?;
+    spawn_objs(engine, content, renderer, scene, skip)
+}
+
+/// Spawns a scene's Objs, but for those at the paths in `skip`, leaving the
+/// world's sky and post-processing as they are.
+pub fn spawn_objs(
+    engine: &mut Engine,
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    scene: &SceneFile,
+    skip: &HashSet<ObjPath>,
+) -> Result<Vec<(ObjPath, Entity)>> {
     let objs = without(prefab::expand(content, &scene.objs)?, skip);
     let template = Template::resolve(content, renderer, &objs)?;
     let entities = engine.spawn_template(&template, None, None)?;
@@ -2767,10 +2833,14 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
     obj.cave_shape = world.get::<CaveShape>(entity).copied();
     obj.cave_exit = world.get::<CaveExit>(entity).copied();
-    obj.model = world.get::<ModelSource>(entity).map(|source| {
-        let lod_bias = world.get::<voxear_render::ModelRenderer>(entity).map_or(source.0.lod_bias, |drawn| drawn.lod_bias);
-        ModelData { lod_bias, ..source.0.clone() }
-    });
+    obj.model =
+        world.get::<ModelSource>(entity).map(|source| match world.get::<voxear_render::ModelRenderer>(entity) {
+            Some(drawn) => {
+                let [tint, tint2, tint3] = drawn.tints;
+                ModelData { lod_bias: drawn.lod_bias, tint, tint2, tint3, ..source.0.clone() }
+            }
+            None => source.0.clone(),
+        });
     obj.foliage = world.get::<FoliageSource>(entity).map(|source| {
         let mut data = source.0.clone();
         if let Some(foliage) = world.get::<Foliage>(entity) {
@@ -2803,7 +2873,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
     let portal = world.get::<voxear_render::Portal>(entity);
-    obj.portal = portal.map(|portal| crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e)));
+    obj.portal = portal.map(|portal| crate::portals::PortalData {
+        into: world.get::<crate::portals::PortalInto>(entity).map(|into| into.0.clone()),
+        ..crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e))
+    });
     let follows = world.get::<voxear_render::CameraFollows>(entity).and_then(|follows| file_path(world, ids, follows.0));
     obj.camera_follows = follows.map(|path| crate::lod_groups::FileRef::new(&path));
     obj.collider2d = world.get::<Collider2D>(entity).copied();
@@ -3409,6 +3482,24 @@ mod tests {
         let lit = Light { temperature: Some(1900.0), ..default_light(LightKind::Point) };
         let warm = lit.light_color();
         assert!(warm.x > warm.z * 3.0, "a candle lights orange: {warm}");
+    }
+
+    #[test]
+    fn a_models_tint_reads_and_writes_back_and_white_is_left_out() {
+        let tinted: ModelData =
+            toml::from_str("model = \"Characters/Hair.boxmodel\"\ntint = [0.5, 0.25, 0.125]\n").unwrap();
+        assert_eq!(tinted.tints()[0], [0.5, 0.25, 0.125]);
+        assert_eq!(toml::from_str::<ModelData>(&toml::to_string(&tinted).unwrap()).unwrap(), tinted);
+        let plain: ModelData = toml::from_str("model = \"Characters/Hair.boxmodel\"\n").unwrap();
+        assert_eq!(plain.tint, [1.0; 3]);
+        assert!(!toml::to_string(&plain).unwrap().contains("tint"));
+        assert!(!toml::to_string(&plain).unwrap().contains("follow_parent"));
+
+        let worn: ModelData =
+            toml::from_str("model = \"Parts/Coat.boxmodel\"\ntint2 = [0.2, 0.3, 0.4]\nfollow_parent = true\n").unwrap();
+        assert_eq!(worn.tints(), [[1.0; 3], [0.2, 0.3, 0.4], [1.0; 3]]);
+        assert!(worn.follow_parent);
+        assert_eq!(toml::from_str::<ModelData>(&toml::to_string(&worn).unwrap()).unwrap(), worn);
     }
 
     #[test]

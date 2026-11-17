@@ -188,6 +188,24 @@ pub trait ScriptServices {
         None
     }
 
+    /// Has an Obj draw the model a GUID or project path names, in place of
+    /// the one it draws, giving it a Model Renderer when it has none.
+    fn set_model(&mut self, _world: &mut World, _entity: Entity, reference: &str) -> Result<()> {
+        anyhow::bail!("{reference}: there are no models to load here")
+    }
+
+    /// Changes how an Obj draws its model: a part's material, or a box
+    /// model's sheet.
+    fn change_model(&mut self, _world: &mut World, _entity: Entity, _change: ModelChange<'_>) -> Result<()> {
+        anyhow::bail!("there are no models to change here")
+    }
+
+    /// The name the model gives one of the parts an Obj draws, by its place
+    /// among them.
+    fn model_part_name(&mut self, _world: &World, _entity: Entity, _part: usize) -> Option<String> {
+        None
+    }
+
     /// What a save calls an Obj, so that a later run finds it again: the
     /// GUID of the scene it was loaded from and its path there, as
     /// `guid:3/2`. An Obj a script made from a prefab is `spawned:` and its
@@ -702,6 +720,35 @@ pub fn ui_panel_document(world: &mut World, entity: Entity) -> Option<u32> {
 /// [`ui_panel_document`] gives a UI Panel's.
 pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
     with_services(|services| services.ui_screen_document(world, entity)).flatten()
+}
+
+/// Has an Obj draw another model through the lent services (see
+/// [`ScriptServices::set_model`]); none outside them.
+pub fn set_model(world: &mut World, entity: Entity, reference: &str) -> Option<Result<()>> {
+    with_services(|services| services.set_model(world, entity, reference))
+}
+
+/// A change a script makes to how an Obj draws its model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelChange<'a> {
+    /// A material for one part, by its place among those drawn, or for
+    /// every part: by GUID or project path, or `None` for the model's own.
+    Material { part: Option<usize>, material: Option<&'a str> },
+    /// A picture for a box model's sheet, by GUID or project path, or
+    /// `None` for the sheet inside its file.
+    Sheet(Option<&'a str>),
+}
+
+/// Changes how an Obj draws its model through the lent services (see
+/// [`ScriptServices::change_model`]); none outside them.
+pub fn change_model(world: &mut World, entity: Entity, change: ModelChange<'_>) -> Option<Result<()>> {
+    with_services(|services| services.change_model(world, entity, change))
+}
+
+/// A part's name through the lent services (see
+/// [`ScriptServices::model_part_name`]); none outside them.
+pub fn model_part_name(world: &World, entity: Entity, part: usize) -> Option<String> {
+    with_services(|services| services.model_part_name(world, entity, part)).flatten()
 }
 
 /// A data asset as JSON for `Definition.Load` (see

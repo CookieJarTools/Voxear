@@ -1,7 +1,7 @@
-use anyhow::Result;
-use voxear_rhi::{
-    Bindless, Blend, Gpu, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline, vk,
-};
+use std::{cell::RefCell, ffi::CStr};
+
+use anyhow::{Context, Result, ensure};
+use voxear_rhi::{Bindless, Blend, Gpu, GraphicsPipelineDesc, PipelineJob, ShaderModule, make_pipelines, vk};
 
 use crate::{atmosphere::TABLE_FORMAT, hot_reload::ShaderSet, volumetric::VOLUME_FORMAT};
 
@@ -326,11 +326,19 @@ pub struct Pipelines {
 impl Pipelines {
     /// Pipelines that draw the picture into `output_format`, and fit a
     /// display image to windows in `window_format` or an HDR format.
-    pub fn new(
+    pub fn new(gpu: &Gpu, bindless: &Bindless, formats: (vk::Format, vk::Format), shaders: &ShaderSet) -> Result<Self> {
+        Self::new_showing(gpu, bindless, formats, shaders, &mut |_, _| {})
+    }
+
+    /// As [`new`](Self::new), telling `progress` now and then how many of
+    /// the pipelines are made, of how many, while they are made: compiling
+    /// them all takes the driver a while the first time.
+    pub fn new_showing(
         gpu: &Gpu,
         bindless: &Bindless,
-        (output_format, window_format): (vk::Format, vk::Format),
+        formats: (vk::Format, vk::Format),
         shaders: &ShaderSet,
+        progress: &mut dyn FnMut(usize, usize),
     ) -> Result<Self> {
         let layout = bindless.pipeline_layout;
         let module = |name: &str| ShaderModule::new(gpu, &format!("{name}.slang"), shaders.get(name)?);
@@ -366,6 +374,73 @@ impl Pipelines {
             module("portal")?,
             module("probe_filter")?,
         ];
+        // Only a GPU with mesh shaders can load their modules.
+        let meshlets = match gpu.mesh_shader {
+            Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
+            None => None,
+        };
+        // Only a GPU with ray tracing can load ray queries.
+        let ddgi = match gpu.acceleration_structure {
+            Some(_) => Some(module("ddgi")?),
+            None => None,
+        };
+        let made = Self::make_all(gpu, layout, (&modules, &meshlets, &ddgi), formats, progress);
+        for module in modules.into_iter().chain(meshlets.into_iter().flatten()).chain(ddgi) {
+            module.destroy(gpu);
+        }
+        made
+    }
+
+    /// Every pipeline noted down first, then all of them made at once on as
+    /// many threads as there are, as each takes the driver a while to
+    /// compile, and then handed back in the order they were asked for.
+    fn make_all(
+        gpu: &Gpu,
+        layout: vk::PipelineLayout,
+        modules: Modules,
+        formats: (vk::Format, vk::Format),
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> Result<Self> {
+        let noting = Maker::Noting(layout, RefCell::new(Vec::new()));
+        Self::make(&noting, modules, formats)?;
+        let Maker::Noting(_, jobs) = noting else { unreachable!("made noting") };
+        let jobs = jobs.into_inner();
+        let threads = pipeline_threads();
+        let started = std::time::Instant::now();
+        let (made, fsr3) = std::thread::scope(|scope| {
+            let fsr3 = scope.spawn(|| match gpu.info.storage_without_format {
+                true => crate::fsr3::Fsr3Pipelines::new(gpu).map(Some),
+                false => Ok(None),
+            });
+            let made = make_pipelines(gpu, &jobs, threads, progress);
+            (made, fsr3.join().unwrap_or_else(|_| Err(anyhow::anyhow!("making FSR's pipelines panicked"))))
+        });
+        let (made, fsr3) = match (made, fsr3) {
+            (Ok(made), Ok(fsr3)) => (made, fsr3),
+            (made, fsr3) => {
+                made.iter().flatten().for_each(|&pipeline| unsafe { gpu.device.destroy_pipeline(pipeline, None) });
+                fsr3.iter().flatten().for_each(|fsr3| fsr3.destroy(gpu));
+                return Err(made.err().or(fsr3.err()).expect("one of them failed"));
+            }
+        };
+        let took = started.elapsed().as_secs_f32();
+        tracing::info!("made {} pipelines in {took:.1} s on {threads} threads", jobs.len());
+        let names = jobs.iter().map(|job| job.name().to_string());
+        let handing = Maker::Handing(RefCell::new(names.zip(made).collect::<Vec<_>>().into_iter()));
+        let mut pipelines = Self::make(&handing, modules, formats)?;
+        if let Maker::Handing(left) = &handing {
+            ensure!(left.borrow().len() == 0, "fewer pipelines were asked for than were made");
+        }
+        pipelines.fsr3 = fsr3;
+        Ok(pipelines)
+    }
+
+    /// The pipelines, each asked of `maker`.
+    fn make(
+        maker: &Maker,
+        (modules, meshlets, ddgi): Modules,
+        (output_format, window_format): (vk::Format, vk::Format),
+    ) -> Result<Self> {
         let [
             cull,
             pyramid,
@@ -397,19 +472,9 @@ impl Pipelines {
             map,
             portal,
             probe_filter,
-        ] = &modules;
-        // Only a GPU with mesh shaders can load their modules.
-        let meshlets = match gpu.mesh_shader {
-            Some(_) => Some([module("meshlet_task")?, module("meshlets")?, module("meshlet_shadow")?]),
-            None => None,
-        };
-        // Only a GPU with ray tracing can load ray queries.
-        let ddgi = match gpu.acceleration_structure {
-            Some(_) => Some(module("ddgi")?),
-            None => None,
-        };
+        ] = modules;
 
-        let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
+        let graphics = |desc: &GraphicsPipelineDesc| maker.graphics(desc);
         let fullscreen = |name, entry, formats, blend| {
             graphics(&GraphicsPipelineDesc {
                 color_formats: formats,
@@ -444,39 +509,39 @@ impl Pipelines {
         let bloom = &[BLOOM_FORMAT];
         let output = &[output_format];
 
-        let pipelines = Self {
-            clusters: create_compute_pipeline(gpu, layout, "Light clusters", clusters, c"clusterMain")?,
-            cull: create_compute_pipeline(gpu, layout, "Cull", cull, c"cullMain")?,
-            meshlet_cull: create_compute_pipeline(gpu, layout, "Meshlets", cull, c"meshletMain")?,
-            pyramid: create_compute_pipeline(gpu, layout, "Depth pyramid", pyramid, c"reduceMain")?,
-            nearest_pyramid: create_compute_pipeline(gpu, layout, "Nearest depth pyramid", pyramid, c"nearestMain")?,
-            probe_downsample: create_compute_pipeline(gpu, layout, "Reflection probe mips", probe_filter, c"probeDownsampleMain")?,
-            probe_filter: create_compute_pipeline(gpu, layout, "Reflection probe filter", probe_filter, c"probeFilterMain")?,
-            probe_capture_software: create_compute_pipeline(gpu, layout, "Reflection probe capture", ddgi_software, c"probeCaptureMain")?,
+        Ok(Self {
+            clusters: maker.compute("Light clusters", clusters, c"clusterMain")?,
+            cull: maker.compute("Cull", cull, c"cullMain")?,
+            meshlet_cull: maker.compute("Meshlets", cull, c"meshletMain")?,
+            pyramid: maker.compute("Depth pyramid", pyramid, c"reduceMain")?,
+            nearest_pyramid: maker.compute("Nearest depth pyramid", pyramid, c"nearestMain")?,
+            probe_downsample: maker.compute("Reflection probe mips", probe_filter, c"probeDownsampleMain")?,
+            probe_filter: maker.compute("Reflection probe filter", probe_filter, c"probeFilterMain")?,
+            probe_capture_software: maker.compute("Reflection probe capture", ddgi_software, c"probeCaptureMain")?,
             probe_capture: match &ddgi {
-                Some(module) => Some(create_compute_pipeline(gpu, layout, "Reflection probe capture", module, c"probeCaptureMain")?),
+                Some(module) => Some(maker.compute("Reflection probe capture", module, c"probeCaptureMain")?),
                 None => None,
             },
-            sound_occlusion_software: create_compute_pipeline(gpu, layout, "Sound occlusion", ddgi_software, c"soundOcclusionMain")?,
-            sound_reverb_software: create_compute_pipeline(gpu, layout, "Sound reverb", ddgi_software, c"soundReverbMain")?,
+            sound_occlusion_software: maker.compute("Sound occlusion", ddgi_software, c"soundOcclusionMain")?,
+            sound_reverb_software: maker.compute("Sound reverb", ddgi_software, c"soundReverbMain")?,
             sound_occlusion: match &ddgi {
-                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound occlusion", module, c"soundOcclusionMain")?),
+                Some(module) => Some(maker.compute("Sound occlusion", module, c"soundOcclusionMain")?),
                 None => None,
             },
             sound_reverb: match &ddgi {
-                Some(module) => Some(create_compute_pipeline(gpu, layout, "Sound reverb", module, c"soundReverbMain")?),
+                Some(module) => Some(maker.compute("Sound reverb", module, c"soundReverbMain")?),
                 None => None,
             },
             light_bake_software: [
-                create_compute_pipeline(gpu, layout, "Lightmap bake", ddgi_software, c"lightBakeTexelsMain")?,
-                create_compute_pipeline(gpu, layout, "Light probe bake", ddgi_software, c"lightBakeProbesMain")?,
-                create_compute_pipeline(gpu, layout, "Lightmap bake sky", ddgi_software, c"lightBakeSkyMain")?,
+                maker.compute("Lightmap bake", ddgi_software, c"lightBakeTexelsMain")?,
+                maker.compute("Light probe bake", ddgi_software, c"lightBakeProbesMain")?,
+                maker.compute("Lightmap bake sky", ddgi_software, c"lightBakeSkyMain")?,
             ],
             light_bake: match &ddgi {
                 Some(module) => Some([
-                    create_compute_pipeline(gpu, layout, "Lightmap bake", module, c"lightBakeTexelsMain")?,
-                    create_compute_pipeline(gpu, layout, "Light probe bake", module, c"lightBakeProbesMain")?,
-                    create_compute_pipeline(gpu, layout, "Lightmap bake sky", module, c"lightBakeSkyMain")?,
+                    maker.compute("Lightmap bake", module, c"lightBakeTexelsMain")?,
+                    maker.compute("Light probe bake", module, c"lightBakeProbesMain")?,
+                    maker.compute("Lightmap bake sky", module, c"lightBakeSkyMain")?,
                 ]),
                 None => None,
             },
@@ -508,8 +573,8 @@ impl Pipelines {
                 depth_bias: Some(SHADOW_BIAS),
                 ..GraphicsPipelineDesc::depth_only("Local shadows (two-sided)", shadow, c"shadowVertex", DEPTH_FORMAT)
             })?,
-            vsm_mark: create_compute_pipeline(gpu, layout, "Virtual shadow requests", shadow, c"markMain")?,
-            lamp_mark: create_compute_pipeline(gpu, layout, "Lamp shadow requests", shadow, c"markLampsMain")?,
+            vsm_mark: maker.compute("Virtual shadow requests", shadow, c"markMain")?,
+            lamp_mark: maker.compute("Lamp shadow requests", shadow, c"markLampsMain")?,
             kept_copy: graphics(&GraphicsPipelineDesc {
                 cull: vk::CullModeFlags::NONE,
                 depth_compare: vk::CompareOp::ALWAYS,
@@ -603,7 +668,7 @@ impl Pipelines {
             reflections: occlusion_pass("Reflections", c"reflectionsFragment", &[HDR_FORMAT])?,
             fog: fullscreen("Fog", c"fogFragment", hdr, Blend::Alpha)?,
             volume_scatter: volume("Fog volume", c"volumeScatterFragment")?,
-            volume_integrate: create_compute_pipeline(gpu, layout, "Fog integration", volumetric, c"volumeIntegrateMain")?,
+            volume_integrate: maker.compute("Fog integration", volumetric, c"volumeIntegrateMain")?,
             volumetric_fog: fullscreen("Volumetric fog", c"volumetricFogFragment", hdr, Blend::Premultiplied)?,
             taa: fullscreen("TAA", c"taaFragment", hdr, Blend::Opaque)?,
             taa_upscale: fullscreen("TAA upscale", c"taaUpscaleFragment", hdr, Blend::Opaque)?,
@@ -611,28 +676,28 @@ impl Pipelines {
             motion_blur: fullscreen("Motion blur", c"motionBlurFragment", hdr, Blend::Opaque)?,
             bloom_down: fullscreen("Bloom down", c"bloomDownFragment", bloom, Blend::Opaque)?,
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
-            exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
-            glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
-            glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
-            foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
-            tracks: create_compute_pipeline(gpu, layout, "Tracks", tracks, c"tracksMain")?,
-            particle_sim: create_compute_pipeline(gpu, layout, "Particle simulation", particle_sim, c"simulateMain")?,
-            erosion_flux: create_compute_pipeline(gpu, layout, "Erosion flow", erosion, c"erosionFlux")?,
-            erosion_water: create_compute_pipeline(gpu, layout, "Erosion water", erosion, c"erosionWater")?,
-            erosion_carve: create_compute_pipeline(gpu, layout, "Erosion carving", erosion, c"erosionCarve")?,
-            erosion_carry: create_compute_pipeline(gpu, layout, "Erosion carrying", erosion, c"erosionCarry")?,
-            erosion_slump: create_compute_pipeline(gpu, layout, "Erosion slumping", erosion, c"erosionSlump")?,
-            erosion_settle: create_compute_pipeline(gpu, layout, "Erosion settling", erosion, c"erosionSettle")?,
-            sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
-            ocean_rows: create_compute_pipeline(gpu, layout, "Ocean rows", water, c"oceanRowsMain")?,
-            ocean_columns: create_compute_pipeline(gpu, layout, "Ocean columns", water, c"oceanColumnsMain")?,
-            ocean_mip: create_compute_pipeline(gpu, layout, "Ocean mips", water, c"oceanMipMain")?,
-            ocean_foam: create_compute_pipeline(gpu, layout, "Ocean foam", water, c"oceanFoamMain")?,
-            ocean_mips: create_compute_pipeline(gpu, layout, "Ocean mips, four at once", water, c"oceanMipsMain")?,
-            caustics: create_compute_pipeline(gpu, layout, "Caustics", water, c"causticsMain")?,
-            floor_depth: create_compute_pipeline(gpu, layout, "Sea floor depth", water, c"floorDepthMain")?,
-            foam_pattern: create_compute_pipeline(gpu, layout, "Foam pattern", water, c"foamPatternMain")?,
-            water_depth_copy: create_compute_pipeline(gpu, layout, "Water depth copy", water, c"waterDepthCopyMain")?,
+            exposure: maker.compute("Exposure", exposure, c"exposureMain")?,
+            glass_copy: maker.compute("Glass copy", glass, c"glassCopyMain")?,
+            glass_shadow_mip: maker.compute("Glass shadow mips", glass, c"glassShadowMipMain")?,
+            foliage_push: maker.compute("Foliage pushes", foliage_push, c"pushMain")?,
+            tracks: maker.compute("Tracks", tracks, c"tracksMain")?,
+            particle_sim: maker.compute("Particle simulation", particle_sim, c"simulateMain")?,
+            erosion_flux: maker.compute("Erosion flow", erosion, c"erosionFlux")?,
+            erosion_water: maker.compute("Erosion water", erosion, c"erosionWater")?,
+            erosion_carve: maker.compute("Erosion carving", erosion, c"erosionCarve")?,
+            erosion_carry: maker.compute("Erosion carrying", erosion, c"erosionCarry")?,
+            erosion_slump: maker.compute("Erosion slumping", erosion, c"erosionSlump")?,
+            erosion_settle: maker.compute("Erosion settling", erosion, c"erosionSettle")?,
+            sky_light: maker.compute("Sky light", sky, c"skyLightMain")?,
+            ocean_rows: maker.compute("Ocean rows", water, c"oceanRowsMain")?,
+            ocean_columns: maker.compute("Ocean columns", water, c"oceanColumnsMain")?,
+            ocean_mip: maker.compute("Ocean mips", water, c"oceanMipMain")?,
+            ocean_foam: maker.compute("Ocean foam", water, c"oceanFoamMain")?,
+            ocean_mips: maker.compute("Ocean mips, four at once", water, c"oceanMipsMain")?,
+            caustics: maker.compute("Caustics", water, c"causticsMain")?,
+            floor_depth: maker.compute("Sea floor depth", water, c"floorDepthMain")?,
+            foam_pattern: maker.compute("Foam pattern", water, c"foamPatternMain")?,
+            water_depth_copy: maker.compute("Water depth copy", water, c"waterDepthCopyMain")?,
             water: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
@@ -752,7 +817,7 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Under water", water, c"underwaterVertex", c"underwaterFragment")
             })?,
-            lens_wetness: create_compute_pipeline(gpu, layout, "Lens wetness", water, c"lensWetnessMain")?,
+            lens_wetness: maker.compute("Lens wetness", water, c"lensWetnessMain")?,
             // Tested against the depth in its fragment shader, which reads it.
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -804,9 +869,9 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Smoke over the scene", smoke, c"smokeVertex", c"smokeCompositeFragment")
             })?,
-            dice_split: create_compute_pipeline(gpu, layout, "Dice (split)", dice, c"diceSplitMain")?,
-            skinning: create_compute_pipeline(gpu, layout, "Skinning", skinning, c"skinMain")?,
-            dice_patch: create_compute_pipeline(gpu, layout, "Dice (pieces)", dice, c"dicePatchMain")?,
+            dice_split: maker.compute("Dice (split)", dice, c"diceSplitMain")?,
+            skinning: maker.compute("Skinning", skinning, c"skinMain")?,
+            dice_patch: maker.compute("Dice (pieces)", dice, c"dicePatchMain")?,
             depth_diced: graphics(&GraphicsPipelineDesc {
                 color_formats: &[SURFACE_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
@@ -932,9 +997,9 @@ impl Pipelines {
                 fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Local shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
-            grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,
-            grass_scatter: create_compute_pipeline(gpu, layout, "Grass scatter", grass, c"grassScatter")?,
-            grass_clamp: create_compute_pipeline(gpu, layout, "Grass clamp", grass, c"grassClamp")?,
+            grass_reset: maker.compute("Grass reset", grass, c"grassReset")?,
+            grass_scatter: maker.compute("Grass scatter", grass, c"grassScatter")?,
+            grass_clamp: maker.compute("Grass clamp", grass, c"grassClamp")?,
             // Blades are thin cards and tufts, seen from both sides.
             grass_depth: graphics(&GraphicsPipelineDesc {
                 color_formats: &[SURFACE_FORMAT],
@@ -990,10 +1055,8 @@ impl Pipelines {
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
             finish: fullscreen("Finish", c"finishFragment", output, Blend::Opaque)?,
             frame_debug: fullscreen("Frame debugger view", c"frameDebugFragment", hdr, Blend::Opaque)?,
-            fsr3: match gpu.info.storage_without_format {
-                true => Some(crate::fsr3::Fsr3Pipelines::new(gpu)?),
-                false => None,
-            },
+            // Made on a thread of their own while the rest are made (see `new_showing`).
+            fsr3: None,
             fsr_exposure: fullscreen("FSR exposure", c"fsrExposureFragment", &[FSR_EXPOSURE_FORMAT], Blend::Opaque)?,
             fsr_copy: fullscreen("FSR opaque copy", c"fsrCopyFragment", hdr, Blend::Opaque)?,
             encode: {
@@ -1038,7 +1101,7 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("UI panel text", ui, c"uiPanelTextVertex", c"uiPanelTextFragment")
             })?,
-            ui_panel_mips: create_compute_pipeline(gpu, layout, "UI panel mips", ui, c"uiPanelMipMain")?,
+            ui_panel_mips: maker.compute("UI panel mips", ui, c"uiPanelMipMain")?,
             debug: graphics(&GraphicsPipelineDesc {
                 color_formats: output,
                 cull: vk::CullModeFlags::NONE,
@@ -1122,10 +1185,10 @@ impl Pipelines {
                     c"portalDepthNearerFragment",
                 )
             })?,
-            mesh: meshlets.as_ref().map(|modules| mesh_pipelines(gpu, layout, modules, scene_formats)).transpose()?,
+            mesh: meshlets.as_ref().map(|modules| mesh_pipelines(maker, modules, scene_formats)).transpose()?,
             ddgi_software: [
-                create_compute_pipeline(gpu, layout, "DDGI rays", ddgi_software, c"ddgiRaysMain")?,
-                create_compute_pipeline(gpu, layout, "DDGI update", ddgi_software, c"ddgiUpdateMain")?,
+                maker.compute("DDGI rays", ddgi_software, c"ddgiRaysMain")?,
+                maker.compute("DDGI update", ddgi_software, c"ddgiUpdateMain")?,
             ],
             ray_reflections: match &ddgi {
                 Some(module) => Some(graphics(&GraphicsPipelineDesc {
@@ -1137,16 +1200,12 @@ impl Pipelines {
             },
             ddgi: match &ddgi {
                 Some(module) => Some([
-                    create_compute_pipeline(gpu, layout, "DDGI rays", module, c"ddgiRaysMain")?,
-                    create_compute_pipeline(gpu, layout, "DDGI update", module, c"ddgiUpdateMain")?,
+                    maker.compute("DDGI rays", module, c"ddgiRaysMain")?,
+                    maker.compute("DDGI update", module, c"ddgiUpdateMain")?,
                 ]),
                 None => None,
             },
-        };
-        for module in modules.into_iter().chain(meshlets.into_iter().flatten()).chain(ddgi) {
-            module.destroy(gpu);
-        }
-        Ok(pipelines)
+        })
     }
 
     pub fn destroy(&self, gpu: &Gpu) {
@@ -1323,12 +1382,11 @@ impl Pipelines {
 /// makes them, with the task shader culling meshlets and mesh shaders
 /// making them in place of the vertex shaders.
 fn mesh_pipelines(
-    gpu: &Gpu,
-    layout: vk::PipelineLayout,
+    maker: &Maker,
     [task, forward, shadow]: &[ShaderModule; 3],
     scene_formats: &[vk::Format],
 ) -> Result<MeshPipelines> {
-    let graphics = |desc: &GraphicsPipelineDesc| create_graphics_pipeline(gpu, layout, desc);
+    let graphics = |desc: &GraphicsPipelineDesc| maker.graphics(desc);
     let task = (task, c"meshletTask");
     let forward = (forward, c"forwardMesh");
     Ok(MeshPipelines {
@@ -1413,4 +1471,53 @@ fn mesh_pipelines(
             ..GraphicsPipelineDesc::mesh("Edges", task, forward, Some(c"edgeFragment"))
         })?,
     })
+}
+
+/// The shader modules [`Pipelines::make`] makes pipelines of: every GPU's,
+/// the mesh shaders' where it has them, and ray queries' where it can trace.
+type Modules<'a> = (&'a [ShaderModule; 30], &'a Option<[ShaderModule; 3]>, &'a Option<ShaderModule>);
+
+/// What [`Pipelines::make`] asks for each pipeline: first noting each down,
+/// to make them all at once, then handing back what was made, in the order
+/// they were asked for.
+enum Maker {
+    Noting(vk::PipelineLayout, RefCell<Vec<PipelineJob>>),
+    Handing(RefCell<std::vec::IntoIter<(String, vk::Pipeline)>>),
+}
+
+impl Maker {
+    fn graphics(&self, desc: &GraphicsPipelineDesc) -> Result<vk::Pipeline> {
+        match self {
+            Self::Noting(layout, jobs) => {
+                jobs.borrow_mut().push(PipelineJob::graphics(*layout, desc));
+                Ok(vk::Pipeline::null())
+            }
+            Self::Handing(_) => self.hand(desc.name),
+        }
+    }
+
+    fn compute(&self, name: &str, module: &ShaderModule, entry: &CStr) -> Result<vk::Pipeline> {
+        match self {
+            Self::Noting(layout, jobs) => {
+                jobs.borrow_mut().push(PipelineJob::compute(*layout, name, module, entry));
+                Ok(vk::Pipeline::null())
+            }
+            Self::Handing(_) => self.hand(name),
+        }
+    }
+
+    /// The next pipeline made, which must be the one `name` asks for.
+    fn hand(&self, name: &str) -> Result<vk::Pipeline> {
+        let Self::Handing(made) = self else { unreachable!("only handing hands pipelines back") };
+        let (made_as, pipeline) = made.borrow_mut().next().context("more pipelines were asked for than were made")?;
+        ensure!(made_as == name, "pipelines were asked for in another order: {name} where {made_as} was made");
+        Ok(pipeline)
+    }
+}
+
+/// How many threads make pipelines at once: as many as the machine has, or
+/// `VOXEAR_PIPELINE_THREADS`, which 1 makes one at a time.
+fn pipeline_threads() -> usize {
+    let set = std::env::var("VOXEAR_PIPELINE_THREADS").ok().and_then(|threads| threads.parse().ok());
+    set.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |threads| threads.get())).max(1)
 }

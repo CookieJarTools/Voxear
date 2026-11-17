@@ -243,6 +243,9 @@ pub struct Frame {
     /// The view is one through a Portal: it draws over what the view it is
     /// seen in has drawn, and reads that view's sky tables.
     pub through: bool,
+    /// It works out its own sky tables: a camera's own view, or one through
+    /// a Portal into another dimension than the view it is seen in.
+    pub own_sky: bool,
     /// Something casting a shadow has a two-sided material, so the shadows'
     /// two-sided lists are drawn.
     pub two_sided_casters: bool,
@@ -265,7 +268,7 @@ pub fn record(
     frame: &Frame,
     targets: &Targets,
     draws: &Draws,
-    far_sides: &mut dyn FnMut(&mut FrameGraph<'_>),
+    (lit, far_sides): (&mut dyn FnMut(&mut FrameGraph<'_>), &mut dyn FnMut(&mut FrameGraph<'_>)),
 ) -> (Option<crate::water::UnderWater>, Option<crate::particles::Draw>, Option<crate::smoke::Draw>) {
     let culling = [
         (draws.count, BufferAccess::ComputeWrite),
@@ -587,10 +590,15 @@ pub fn record(
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
     let reflections = frame.reflections;
-    // Drawn as depth first, then shaded over it, for what reads the depth before shading.
+    // Drawn as depth first, then shaded over it, for what reads the depth before shading, and whenever each pixel's
+    // normal is wanted, as a shader pack's passes may want it.
     let through = frame.through;
-    let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || through;
-    if let Some(atmosphere) = frame.atmosphere.filter(|_| !frame.through) {
+    let depth_first = ambient_occlusion.is_some()
+        || contact_shadows.is_some()
+        || reflections.is_some()
+        || through
+        || frame.surface.is_some();
+    if let Some(atmosphere) = frame.atmosphere.filter(|_| frame.own_sky) {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
     // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry; and the
@@ -970,6 +978,8 @@ pub fn record(
         begin_rendering(ctx, extent, &color, Some(&depth));
         fullscreen(ctx, pipelines.sky, &push);
     });
+    // What a shader pack draws once the opaque surfaces and the sky are lit, before water and glass.
+    lit(fg);
 
     let mut under = None;
     // The images the sea's shading reads, which its spray reads too.

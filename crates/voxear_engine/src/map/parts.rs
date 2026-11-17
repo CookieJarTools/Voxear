@@ -50,7 +50,7 @@ pub struct Map {
     /// How many blocks a cell of the opened map is to begin with, how wide
     /// its ground is drawn as a share of the screen's height, how far over
     /// the ground it is seen from, in degrees, and whether the pointer
-    /// turns, moves and zooms it.
+    /// moves, turns and zooms it.
     pub map_zoom: u32,
     pub map_size: f32,
     pub map_tilt: f32,

@@ -33,6 +33,7 @@ mod inspectors;
 mod languages;
 mod lighting;
 mod lighting_calls;
+mod shader_pack_calls;
 mod level_edits;
 mod link_calls;
 mod material_drops;
@@ -1137,6 +1138,7 @@ impl Editor {
             if let Some(view) = self.inspector.asset_view() {
                 view.show_listening(&mut self.ui, listening.as_deref());
                 view.show_shader_state(&mut self.ui, renderer.custom_shaders());
+                view.show_shader_pack(&mut self.ui, &self.game);
             }
         }
         {
@@ -1423,6 +1425,7 @@ impl Editor {
         match action {
             AssetAction::Open(item) => self.open_item(&item, renderer),
             AssetAction::Lighting(action) => self.lighting_action(action, renderer),
+            AssetAction::ShaderPack(change) => self.shader_pack_change(change),
             AssetAction::SceneLighting(scene, action) => self.scene_lighting_action(&scene, action, renderer),
             AssetAction::SaveMaterial(path, data) => {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {
@@ -3029,23 +3032,43 @@ impl Editor {
     /// A viewport's rectangle in physical pixels, within `size`; a pixel
     /// in the corner when no view shows.
     /// Hands the game's UI what happens over the Game view while it plays,
-    /// in the view's own pixels: the pointer, and keys while one of its text
-    /// fields has them. Returns whether it took the event.
+    /// in the view's own pixels, as a built game hands it everything: the
+    /// pointer, its buttons and the wheel, the modifier keys, and keys while
+    /// one of its text fields has them. Returns whether it took the event.
     fn game_ui_takes(&mut self, event: &winit::event::WindowEvent) -> bool {
-        use winit::event::WindowEvent;
+        use winit::event::{ElementState, MouseButton, WindowEvent};
         if !self.is_playing() || !self.shown(self.nodes.game_viewport) || self.game.ui.is_empty() {
             return false;
         }
-        // The pointer is where the Game view is only in the window it is in.
-        let pointing = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. });
-        if pointing && self.ui.window_of(self.nodes.game_viewport) != self.ui.pointer_window() {
-            return false;
+        // A release is the game's UI's when it holds the press, wherever the pointer is now. Kept from it, a map
+        // dragged on went on dragging after the button was let go.
+        if let WindowEvent::MouseInput { state: ElementState::Released, button, .. } = event {
+            let ui = self.game.ui.ui();
+            let holds = match button {
+                MouseButton::Left => ui.holds_press(),
+                MouseButton::Right => ui.holds_other_press(false),
+                MouseButton::Middle => ui.holds_other_press(true),
+                _ => false,
+            };
+            let editor_holds = *button == MouseButton::Left && self.ui.holds_press();
+            if holds {
+                voxear_engine::ui_input::handle(ui, event);
+                // The editor's UI lets go of one it holds too: only one press can be held, so one of them is
+                // left over from a release the other was given.
+                return !editor_holds;
+            }
+            // A press the editor's UI holds, as a tab being dragged, lets go there even over the game's UI.
+            // Taken by the game's instead, a tab let go over the playing Game view stayed dragged for good.
+            if editor_holds {
+                return false;
+            }
         }
-        // A press the editor's UI holds, as a tab being dragged, lets go there even over the game's UI.
-        // Taken by the game's instead, a tab let go over the playing Game view stayed dragged for good.
-        if matches!(event, WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. })
-            && self.ui.holds_press()
-        {
+        // The pointer is where the Game view is only in the window it is in.
+        let pointing = matches!(
+            event,
+            WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
+        );
+        if pointing && self.ui.window_of(self.nodes.game_viewport) != self.ui.pointer_window() {
             return false;
         }
         let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);
@@ -3059,8 +3082,18 @@ impl Editor {
                 }
                 false
             }
-            WindowEvent::MouseInput { button: winit::event::MouseButton::Left, state, .. } => {
-                ui.pointer_button(*state == winit::event::ElementState::Pressed)
+            WindowEvent::CursorLeft { .. } => {
+                ui.pointer_leave();
+                false
+            }
+            // Its pointer is off it while the pointer is off the Game view, so the wheel goes on to the game there.
+            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => {
+                voxear_engine::ui_input::handle(ui, event)
+            }
+            // Shift and Control for it as for the editor.
+            WindowEvent::ModifiersChanged(_) => {
+                voxear_engine::ui_input::handle(ui, event);
+                false
             }
             WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) if ui.wants_keyboard() => {
                 voxear_engine::ui_input::handle(ui, event)
@@ -3131,6 +3164,14 @@ impl Editor {
             // Play button, a shot would stop the game.
             WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } if self.game_holds_mouse() => {
                 self.game.input.handle(event);
+                // A press the editor's UI had before the game took the mouse, as the click on the view that gave it
+                // the focus, is forgotten with no click. Kept, its release never came, and the editor's UI held
+                // every release after it, the game UI's among them.
+                if matches!(event, WindowEvent::MouseInput { state: ElementState::Released, .. })
+                    && self.ui.holds_press()
+                {
+                    self.ui.cancel_press();
+                }
                 true
             }
             WindowEvent::MouseInput { state, .. } => {

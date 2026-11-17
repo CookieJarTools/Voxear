@@ -137,7 +137,10 @@ pub struct GpuMaterial {
     /// The acoustic preset sound rays hear it as, plus one; 0 to guess from
     /// its look (see `sound_rays`).
     pub acoustic: u32,
-    pub _pad: u32,
+    /// The picture that says which of an instance's tints fall where, plus
+    /// one; 0 for none, when its first tint falls everywhere. Its red, green
+    /// and blue are how much of each tint a pixel takes; black takes none.
+    pub tint_mask: u32,
 }
 
 /// A material drawn with the standard shader, not a custom one.
@@ -183,7 +186,11 @@ pub struct GpuInstance {
     /// Its baked light in this frame's `GpuBakedInstance`s, plus one; 0 for
     /// none (see `lightmaps`).
     pub baked: u32,
-    pub _pad: [u32; 3],
+    /// The tints its Obj lays over the model it draws, each sRGB RGBA8 in
+    /// its bits, 0 for none: the first over everything, or with its
+    /// material's `tint_mask`, each where the mask says (see
+    /// `ModelRenderer::tints`).
+    pub tints: [u32; 3],
 }
 
 /// An instance whose place in the list another Obj held last frame, so the

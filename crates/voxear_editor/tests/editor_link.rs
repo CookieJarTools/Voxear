@@ -476,6 +476,33 @@ fn a_scene_a_tool_writes_is_read_again_unless_edits_wait() {
 }
 
 #[test]
+fn a_box_models_sheet_goes_out_as_a_picture_and_comes_back_painted() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let made = done(&mut editor, &mut renderer, "asset.create", json!({ "kind": "Box Model", "folder": "Mobs" }));
+    let model = made["asset"].clone();
+    let path = model["path"].as_str().unwrap().to_string();
+    let saved = done(&mut editor, &mut renderer, "box_model.sheet_save", json!({ "asset": model }))["picture"].clone();
+    let picture = saved["path"].as_str().unwrap().to_string();
+    assert_eq!(picture, path.replace(".boxmodel", " Sheet.png"), "beside the model, named after it");
+    let sheet = voxear_render::Sheet::from_picture(&std::fs::read(dir.path().join(&picture)).unwrap()).unwrap();
+    let starter = voxear_render::BoxModel::starter();
+    assert_eq!(sheet, starter.sheet, "the sheet's own pixels");
+
+    // Painted elsewhere, a pixel red, and brought back.
+    let mut painted = sheet.clone();
+    painted.set(3, 3, [255, 0, 0, 255]);
+    std::fs::write(dir.path().join(&picture), painted.to_png().unwrap()).unwrap();
+    done(&mut editor, &mut renderer, "files.look", json!({}));
+    let loaded = done(&mut editor, &mut renderer, "box_model.sheet_load", json!({ "asset": model, "picture": saved }));
+    assert_eq!(loaded["sheet"], json!([painted.width, painted.height]));
+    let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    assert_eq!(voxear_render::BoxModel::parse(&text).unwrap().sheet, painted, "saved with the picture's pixels");
+    let refused = ask(&mut editor, &mut renderer, "box_model.sheet_load", json!({ "asset": saved, "picture": saved }));
+    assert!(refused.is_err(), "a picture is no box model");
+}
+
+#[test]
 fn every_component_and_its_fields_are_reached() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

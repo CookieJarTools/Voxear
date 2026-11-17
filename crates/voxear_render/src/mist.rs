@@ -70,11 +70,17 @@ impl MistTrail {
 
 /// This frame's mists, the nearest `camera` first, and their trails' points
 /// (where, and how old in seconds), at `time`.
-pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuMist>, Vec<[f32; 4]>) {
-    let query = world.query_ref::<(&Mist, &MistTrail)>();
+pub(crate) fn gather(
+    world: &World,
+    (camera, sees): (Vec3, &dyn Fn(voxear_ecs::Entity) -> bool),
+    time: f32,
+) -> (Vec<GpuMist>, Vec<[f32; 4]>) {
+    let query = world.query_ref::<(voxear_ecs::Entity, &Mist, &MistTrail)>();
     let mut mists: Vec<(f32, &Mist, &MistTrail)> = query
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| sees(*entity))
+        .map(|(_, mist, trail)| (mist, trail))
         .filter(|(mist, trail)| trail.points.iter().any(|&(_, made)| time - made < mist.linger) && mist.density > 0.0)
         .map(|(mist, trail)| {
             let near = trail.points.iter().map(|(at, _)| at.distance_squared(camera)).fold(f32::MAX, f32::min);
@@ -133,8 +139,8 @@ mod tests {
         assert!(wide > narrow && thin < thick && thick == 1.0);
         let mut world = World::new();
         world.spawn((mist, trail.clone(), Transform::default()));
-        assert_eq!(gather(&world, Vec3::ZERO, 2.0).0.len(), 1);
-        assert_eq!(gather(&world, Vec3::ZERO, 2.0).1.len(), 2);
-        assert!(gather(&world, Vec3::ZERO, 3.0).0.is_empty(), "all of it gone");
+        assert_eq!(gather(&world, (Vec3::ZERO, &|_| true), 2.0).0.len(), 1);
+        assert_eq!(gather(&world, (Vec3::ZERO, &|_| true), 2.0).1.len(), 2);
+        assert!(gather(&world, (Vec3::ZERO, &|_| true), 3.0).0.is_empty(), "all of it gone");
     }
 }

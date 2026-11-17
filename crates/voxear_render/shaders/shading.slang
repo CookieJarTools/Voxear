@@ -1224,6 +1224,12 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     {
         base.rgb *= float3(tint & 0xFF, (tint >> 8) & 0xFF, (tint >> 16) & 0xFF) / 255.0;
     }
+    // The tints its Obj lays over the model it draws, after the cut-out, so its holes and sharp pixels stay.
+    Instance drawnAs = buffers()->instances[input.instance];
+    if (tinted(drawnAs))
+    {
+        base.rgb *= instanceTint(drawnAs, material, sampleTintMask(material, input.uv));
+    }
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;

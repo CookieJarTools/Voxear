@@ -173,6 +173,8 @@ unsafe extern "C" {
     pub fn vx_body_move_kinematic(world: *mut VxWorld, body: u32, position: *const f32, rotation: *const f32, dt: f32);
     pub fn vx_body_get_velocity(world: *mut VxWorld, body: u32, linear: *mut f32, angular: *mut f32);
     pub fn vx_body_set_velocity(world: *mut VxWorld, body: u32, linear: *const f32, angular: *const f32);
+    pub fn vx_body_set_layer(world: *mut VxWorld, body: u32, layer: u32);
+    pub fn vx_character_set_layer(world: *mut VxWorld, character: u32, layer: u32);
     pub fn vx_body_push(world: *mut VxWorld, body: u32, kind: u32, amount: *const f32, at: *const f32);
     pub fn vx_body_is_active(world: *mut VxWorld, body: u32) -> c_int;
     pub fn vx_body_set_active(world: *mut VxWorld, body: u32, active: c_int);

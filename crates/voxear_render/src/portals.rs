@@ -109,9 +109,10 @@ pub struct CameraFollows(pub Entity);
 impl Component for CameraFollows {}
 
 /// On a camera's Obj, set each frame by the engine: its view is carried
-/// through a Portal, so it looks from where this takes its Obj.
+/// through a Portal, so it looks from where this takes its Obj, into the
+/// dimension the Portal it looks out of is in.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ViewCarry(pub Carry);
+pub struct ViewCarry(pub Carry, pub voxear_scene::DimensionId);
 
 impl Component for ViewCarry {}
 
@@ -122,6 +123,15 @@ impl ViewCarry {
         match world.get::<ViewCarry>(camera) {
             Some(carry) => (carry.0.point(position), carry.0.turn(rotation)),
             None => (position, rotation),
+        }
+    }
+
+    /// The dimension a camera sees: the one a Portal carries its view into,
+    /// else its own.
+    pub fn dimension(world: &World, camera: Entity) -> voxear_scene::DimensionId {
+        match world.get::<ViewCarry>(camera) {
+            Some(carry) => carry.1,
+            None => voxear_scene::dimension_of(world, camera),
         }
     }
 }
@@ -274,6 +284,8 @@ pub struct PortalSeen {
     /// Its opening's rectangle in the view: its lowest and highest x and y,
     /// from -1 to 1.
     pub rect: [f32; 4],
+    /// The dimension the Portal it leads to is in, which its far side shows.
+    pub dimension: voxear_scene::DimensionId,
 }
 
 /// How far `point` is from the opening of the Portal at `pose`.
@@ -338,9 +350,10 @@ pub fn in_sight(
     (eye, offset): (Vec3, Vec3),
     view_proj: Mat4,
     most: usize,
-    skip: Option<Entity>,
+    (skip, dimension): (Option<Entity>, voxear_scene::DimensionId),
 ) -> PortalsInSight {
-    let switched = Switched::of(world);
+    // Only the Portals of the dimension the view sees.
+    let switched = Switched::in_dimension(world, dimension);
     let mut seen = Vec::new();
     let mut misted = Vec::new();
     let portals = world.query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
@@ -358,7 +371,10 @@ pub fn in_sight(
                 let cover = (rect[2] - rect[0]) * (rect[3] - rect[1]) * 0.25;
                 let carry = Carry::between(&near, &far);
                 let (size, mist) = (portal.size, portal.mist);
-                seen.push(PortalSeen { entity, to, near, far, size, carry, shown, mist, distance, cover, rect });
+                let dimension = voxear_scene::dimension_of(world, to);
+                let seen_now =
+                    PortalSeen { entity, to, near, far, size, carry, shown, mist, distance, cover, rect, dimension };
+                seen.push(seen_now);
             }
             None => misted.push((near, portal.size, portal.mist, 1.0)),
         }
@@ -417,6 +433,8 @@ pub struct Through {
     /// Where that Portal stands, in the view's own space: all the view
     /// sees, it sees through there.
     pub window: Vec3,
+    /// The dimension it sees: the far Portal's.
+    pub dimension: voxear_scene::DimensionId,
 }
 
 impl Through {
@@ -465,7 +483,7 @@ impl Through {
                 None => [0.0, 0.0, 0.0, 1.0],
             },
         ];
-        Self { position, rotation, offset, planes, cut, out_of: seen.to, window: on_plane }
+        Self { position, rotation, offset, planes, cut, out_of: seen.to, window: on_plane, dimension: seen.dimension }
     }
 }
 
@@ -633,6 +651,7 @@ mod tests {
             distance: 4.0,
             cover: 0.1,
             rect,
+            dimension: voxear_scene::DimensionId::LEVEL,
         };
         let through = Through::new(&seen, eye - near.position, turned, projection, None);
         assert_eq!(through.offset, Vec3::new(30_000.0, 12.0, -7_001.0));

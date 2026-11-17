@@ -63,6 +63,7 @@ pub(crate) fn prepare(path: &str, read: &mut ReadFile, settings: &ModelImport) -
         model: PreparedModel {
             animation: None,
             roles: Vec::new(),
+            source: None,
             path: path.to_string(),
             meshes: Vec::new(),
             textures: Vec::new(),
@@ -280,7 +281,16 @@ impl Preparer {
             ..MaterialDesc::default()
         };
         let metallic_roughness = None;
-        self.model.materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
+        let tint_mask = None;
+        self.model.materials.push(PreparedMaterial {
+            name,
+            desc,
+            base_color,
+            metallic_roughness,
+            normal,
+            emissive,
+            tint_mask,
+        });
         let index = self.model.materials.len() - 1;
         self.materials.insert(key, index);
         index

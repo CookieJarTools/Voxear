@@ -76,6 +76,10 @@ pub struct Gpu {
     /// Uploads and builds gathered while a batch is open, done together when
     /// it closes (see [`Gpu::begin_batch`]).
     pub(crate) batch: Mutex<crate::resources::Batch>,
+    /// What every pipeline is made through: the compiled pipelines, kept for
+    /// a renderer to save and give back on its next start (see
+    /// [`Gpu::load_pipeline_cache`]), so it finds them made.
+    pub pipeline_cache: vk::PipelineCache,
 }
 
 /// A window to present to.
@@ -184,6 +188,7 @@ impl Gpu {
         if ray_tracing {
             tracing::info!("ray tracing: on");
         }
+        let pipeline_cache = unsafe { device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None)? };
         let gpu = Self {
             debug_utils: debug_utils.then(|| ext::debug_utils::Device::new(&instance, &device)),
             decompression: decompress.then(|| nv::memory_decompression::Device::new(&instance, &device)),
@@ -203,6 +208,7 @@ impl Gpu {
             allocator: ManuallyDrop::new(Mutex::new(allocator)),
             messenger,
             batch: Mutex::default(),
+            pipeline_cache,
         };
         Ok((gpu, surface))
     }
@@ -263,6 +269,7 @@ impl Drop for Gpu {
         unsafe {
             self.wait_idle();
             ManuallyDrop::drop(&mut self.allocator);
+            self.device.destroy_pipeline_cache(self.pipeline_cache, None);
             self.device.destroy_device(None);
             if let Some((loader, messenger)) = self.messenger.take() {
                 loader.destroy_debug_utils_messenger(messenger, None);

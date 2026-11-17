@@ -1418,10 +1418,21 @@ mod tests {
             generate: Some(BlockGenerate {
                 position: [xs[at] - 24.0, zs[at] - 24.0],
                 bottom: -20,
+                slabs: true,
                 ..BlockGenerate::default()
             }),
             ..BlockFile::default()
         };
+        // Its top laid in half blocks, as a world given generated ground starts: the banks, a quarter of a block over
+        // the water, are then level with its top or half a block over it, never under it.
+        let (grass, dirt) = (file.ground.top, file.ground.under);
+        for block in [grass, dirt] {
+            let slab = BlockKind::slab_of(file.kind(block).unwrap());
+            file.blocks.push(slab);
+        }
+        let mut halves = vec![AIR; file.blocks.len() + 2];
+        (halves[usize::from(grass)], halves[usize::from(dirt)]) = (4, 5);
+        file.generate.as_mut().unwrap().halves = Some(std::sync::Arc::new(halves));
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
         let sea = file.blocks.len() as BlockId;
         file.generate.as_mut().unwrap().sea = sea;

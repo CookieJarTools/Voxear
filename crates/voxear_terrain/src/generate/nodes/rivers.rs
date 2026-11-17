@@ -22,8 +22,11 @@
 //! into it: Width and Depth are how wide and deep it is where a
 //! square kilometre does. Its water falls along every stretch, so it always
 //! runs downhill, and it winds as Meander says. The ground is cut away for
-//! its bed and slopes down to it over Valley metres either side; and where
-//! the ground by it is lower than its water, raised into banks, so its
+//! its bed, a bowl dropping steeply from its edge to a broad middle, and its
+//! banks rise from just over its water up its valley's sides, Valley metres
+//! either side: in some stretches at once, where it has cut into them as on
+//! the outside of a bend, elsewhere along a low shelving strip. Where the
+//! ground by it is lower than its water, a low rim holds it in, so its
 //! water never stands over the air beside it. Where a stretch drops more
 //! than Falls metres, the river runs nearly level to a cliff halfway along
 //! it and pours over into a pool at its foot. A hollow that as much as
@@ -237,14 +240,32 @@ const SPILL: usize = 2;
 /// the spacing.
 const JITTER: f32 = 0.7;
 
-/// How high banks stand over their river's water, in metres.
-const BANK: f32 = 1.25;
+/// How high a bank stands over its water at the water's edge, in metres: a
+/// quarter of a block of a metre, so in a world of blocks laid in half
+/// blocks the bank's top block is level with the water's top or half a
+/// block over it, and one walks straight out.
+const LIP: f32 = 0.25;
 
-/// How far past a river's edge its banks are raised where the ground is
-/// lower than they are, in metres: level for the first of them, then down
-/// to the ground over the rest.
-const BANK_TOP: f32 = 2.5;
-const LEVEE: f32 = 4.0;
+/// How far under its water a river's bed lies at its edge, in metres.
+const SHELF: f32 = 0.15;
+
+/// How far back from a river's edge the land rises to the valley's side
+/// where the river has cut into its bank, as on the outside of a bend, as a
+/// share of the valley's width: elsewhere the bank shelves over the whole
+/// valley, a low strip along the water. And how long a stretch of either
+/// kind runs, about, in metres.
+const CUT: f32 = 0.3;
+const BANK_STRETCH: f32 = 110.0;
+
+/// Where the ground beside a river, a pond or a lake lies lower than its
+/// water, how far past the water's edge the rim that holds it in stands at
+/// its lip, and over how many metres more it slopes down to the ground.
+const RIM: f32 = 1.5;
+const LEVEE: f32 = 7.0;
+
+/// How far round a pond dug into rising ground its sides slope up to the
+/// ground, in metres.
+const POOL_SIDE: f32 = 8.0;
 
 /// How far a lake reaches from its hollow's point, in spacings.
 const LAKE_REACH: f32 = 1.6;
@@ -760,6 +781,10 @@ impl Finder {
         if !near.point(cell).near {
             return made;
         }
+        // How much the river has cut into its banks here: in some stretches, as on the outside of a bend; elsewhere
+        // they shelve.
+        let (bx, bz) = (wx / BANK_STRETCH, wz / BANK_STRETCH);
+        let cut = smooth((gradient(bx, bz, self.seed.wrapping_add(13)) + 0.15) / 0.5);
         let mut nearest: Option<Reached> = None;
         let mut lakes: Vec<Point> = Vec::new();
         let mut pools: Vec<Point> = Vec::new();
@@ -775,7 +800,7 @@ impl Finder {
                 }
                 let Some([sx, sz]) = point.down.filter(|_| point.river) else { continue };
                 let to = near.point([from[0] + i32::from(sx), from[1] + i32::from(sz)]);
-                if let Some(river) = self.stretch(&point, &to, [wx, wz]) {
+                if let Some(river) = self.stretch(&point, &to, [wx, wz], cut) {
                     if nearest.is_none_or(|nearest| river.past < nearest.past) {
                         nearest = Some(river);
                     }
@@ -793,19 +818,24 @@ impl Finder {
         // river ends at the shore, and nothing is raised in the sea.
         if let Some(river) = nearest.filter(|_| ground >= self.sea - MOUTH_FLOOR) {
             // Its banks fall away as its water comes down to the sea at its mouth.
-            let top = river.level + BANK * smooth((river.level - self.sea) / MOUTH);
+            let lip = river.level + LIP * smooth((river.level - self.sea) / MOUTH);
+            let valley = self.valley.max(1.0);
             if river.past < 0.0 {
                 made.height = ground.min(river.bed);
                 (made.water, made.falls, made.banks) = (river.water, river.falls, 1.0);
-            } else if ground > top {
-                // The valley's sides slope down to the banks.
-                let valley = self.valley.max(1.0);
-                made.height = top + (ground - top) * smooth(river.past / valley);
+            } else if ground > lip {
+                // The bank rises from just over the water up the valley's side: at once where the river has cut into
+                // it, over a short steep slope; elsewhere along a low shelving strip, the valley's side rising
+                // beyond it.
+                let reach = valley + (valley * CUT - valley) * cut;
+                let t = (river.past / reach).min(1.0);
+                let rise = smooth(t) + (t * (2.0 - t) - smooth(t)) * cut;
+                made.height = lip + (ground - lip) * rise;
                 made.banks = 1.0 - smooth(river.past / (valley * 0.5));
             } else if ground >= self.sea && !in_lake {
-                // Banks raised where the ground is lower than the water, level for a few metres from its edge.
-                made.height = top + (ground - top) * smooth((river.past - BANK_TOP) / LEVEE);
-                made.banks = 1.0 - smooth(river.past / (self.valley.max(1.0) * 0.5));
+                // Where the ground is lower than the water, a low rim holds it in, sloping down to the ground.
+                made.height = lip + (ground - lip) * smooth((river.past - RIM) / LEVEE);
+                made.banks = 1.0 - smooth(river.past / (valley * 0.5));
             }
         }
         // A spring's pool at a river's head, and a pond where one ends: dug round its point, its water as high as
@@ -818,11 +848,14 @@ impl Finder {
                 made.height = made.height.min(pool.level - POOL_DEPTH * (1.0 - from * from));
                 made.water = made.water.max(pool.level);
                 made.banks = 1.0;
-            } else if made.water == NO_WATER && !in_lake && off < pool.pool + BANK_TOP + LEVEE {
-                // A rim where the ground falls away from it, so its water never stands over the air beside it.
-                let top = pool.level + BANK;
-                if made.height < top {
-                    made.height = top + (made.height - top) * smooth((off - pool.pool - BANK_TOP) / LEVEE);
+            } else if made.water == NO_WATER && !in_lake && off < pool.pool + POOL_SIDE.max(RIM + LEVEE) {
+                // A rim where the ground falls away from it, so its water never stands over the air beside it, and
+                // sides sloping up to the ground where it rises.
+                let lip = pool.level + LIP;
+                if made.height < lip {
+                    made.height = lip + (made.height - lip) * smooth((off - pool.pool - RIM) / LEVEE);
+                } else {
+                    made.height = lip + (made.height - lip) * smooth((off - pool.pool) / POOL_SIDE);
                 }
             }
         }
@@ -832,17 +865,20 @@ impl Finder {
             let reach = LAKE_REACH * self.spacing;
             if from < reach && made.height < lake.level {
                 made.water = made.water.max(lake.level);
-            } else if from < reach + BANK_TOP + LEVEE && made.water == NO_WATER && ground >= self.sea {
-                // A rim round it where the ground would let it out, but where a river runs in.
-                made.height = made.height.max(lake.level + BANK);
+            } else if from < reach + RIM + LEVEE && made.water == NO_WATER && ground >= self.sea {
+                // A rim round it where the ground would let it out, but where a river runs in, sloping down to the
+                // ground.
+                let lip = lake.level + LIP;
+                made.height = made.height.max(lip + (made.height - lip) * smooth((from - reach - RIM) / LEVEE));
             }
         }
         made
     }
 
     /// What the stretch of river from `from` down to `to` makes of place
-    /// `at`, where it is near enough to change it.
-    fn stretch(&self, from: &Point, to: &Point, at: [f32; 2]) -> Option<Reached> {
+    /// `at`, where it is near enough to change it, its banks as cut there as
+    /// `cut` says, from 0 for shelving to 1.
+    fn stretch(&self, from: &Point, to: &Point, at: [f32; 2], cut: f32) -> Option<Reached> {
         let (ax, az) = (to.at[0] - from.at[0], to.at[1] - from.at[1]);
         let long = (ax * ax + az * az).sqrt().max(1e-3);
         let (px, pz) = (at[0] - from.at[0], at[1] - from.at[1]);
@@ -867,14 +903,19 @@ impl Finder {
         let width = width * (1.0 + MOUTH_WIDENS * mouth);
         let floor = self.sea - MOUTH_FLOOR * mouth;
         let past = off - width * 0.5;
-        if past > self.valley.max(BANK_TOP + LEVEE) {
+        if past > self.valley.max(RIM + LEVEE) {
             return None;
         }
         let drop = upper - lower;
         let along = t * long;
         let across = (off / (width * 0.5).max(0.01)).min(1.0);
+        // A bowl: dropping steeply from just under its water at its edge, rounding into a broad bed along its middle,
+        // more steeply still where it has cut into its banks.
+        let across2 = across * across;
+        let edge = across2 + (across2 * across2 - across2) * cut;
+        let bowl = (1.0 - edge).max(0.0).sqrt();
         let bed = |level: f32, deeper: f32| {
-            let bed = level - (depth + deeper) * (1.0 - 0.6 * across * across);
+            let bed = level - SHELF - (depth + deeper - SHELF).max(0.0) * bowl;
             if mouth > 0.0 { bed.min(floor) } else { bed }
         };
         if drop <= self.falls {

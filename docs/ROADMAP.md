@@ -2911,6 +2911,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - ~~**Rivers to swim across:**~~ done: a world of levels' rivers are 24 m wide and 3.5 m deep where a square
     kilometre drains into them, on the same courses: most are 12 to 50 m across, and deeper than a player stands
     over most of their width.
+  - ~~**River banks level with the water:**~~ done: a river's bed is a bowl, dropping steeply from its edge to a
+    broad middle, and its banks stand a quarter of a block over its water, so in a world laid in half blocks one
+    walks straight out; in some stretches the land rises at once from the bank, as on the outside of a bend, in
+    others along a low strip. Where the land is lower than the water a low sloping rim holds it in, for ponds and
+    lakes too, in place of flat-topped walls. Rivers do not yet run on to the sea across wide lowland.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the

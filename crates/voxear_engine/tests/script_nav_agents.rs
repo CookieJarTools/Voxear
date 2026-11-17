@@ -42,6 +42,7 @@ public sealed class Shepherd : SystemBase
 			Log.Info($"reachable: {Navigation.IsReachable(new Vector3(2.5f, 6f, 2.5f), new Vector3(28.5f, 6f, 28.5f))}");
 			var wander = Navigation.RandomPlace(new Vector3(10.5f, 6f, 10.5f), 5f);
 			Log.Info($"wander: {wander.HasValue && Vector3.Distance(wander.Value, new Vector3(10.5f, 6f, 10.5f)) <= 5.5f}");
+			Log.Info($"area: {Navigation.AreaAt(new Vector3(5.5f, 6f, 5.5f))} {Navigation.AreaAt(new Vector3(20.5f, 6f, 20.5f))}");
 		}
 		if (frame == 30)
 		{
@@ -87,6 +88,9 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     let (map, faces) = (file.make_ground(None), file.faces().1);
     game.engine.world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::default()));
     let sheep = game.engine.world.spawn((Name("Sheep".into()), Transform::from_position(Vec3::new(2.5, 6.0, 2.5))));
+    // A road over one corner of the field.
+    let road = voxear_engine::navigation::NavArea { size: [4.0, 2.0, 4.0], area: voxear_terrain::blocks::block::BlockNavArea::Road };
+    game.engine.world.spawn((Transform::from_position(Vec3::new(20.5, 6.5, 20.5)), road));
     let lines =
         |log: &LogCapture| -> Vec<String> { log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect() };
 
@@ -98,6 +102,7 @@ fn a_script_sends_a_nav_agent_across_a_world_of_blocks_and_asks_navigation_for_w
     assert!(said.iter().any(|l| l == "nearest: <5.5, 6, 5.5>"), "{said:#?}");
     assert!(said.iter().any(|l| l == "reachable: True"), "{said:#?}");
     assert!(said.iter().any(|l| l == "wander: True"), "{said:#?}");
+    assert!(said.iter().any(|l| l == "area: Walkable Road"), "{said:#?}");
     let agent = game.engine.world.get::<NavAgent>(sheep).expect("the script gave it a Nav Agent");
     assert_eq!((agent.speed, agent.moves), (4.0, NavMoves::AlongTheNav));
     assert_eq!(agent.destination, Some(Vec3::new(20.5, 6.0, 4.5)));

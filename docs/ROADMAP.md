@@ -2195,7 +2195,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
-  part-way through, the server deciding and checking crossings, Portals to other levels.
+  part-way through, Portals to other levels.
 - **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
   Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
   dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a
@@ -2229,8 +2229,24 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
   dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
   others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
-  fire. To come: the editor's dimension view, the script API (dungeon stages and growth among it), saves per
-  dimension and the server making ground round every player.
+  fire. Networked: the server (or host) makes the ground of worlds of blocks round every player in their own
+  dimension, with no camera of its own, stands dungeons' gates round each, and opens one Portal into a loaded
+  dimension for each player, so a server with players in three dungeons has the three loaded; each player's machine
+  makes only the dimensions the server names to it (a `.dimension` asset and key, or a dungeon's gate, then a number
+  on that connection) and lets them go when told. Shared Objs carry their dimension, go to a player only while it
+  is one they have, their range measured within it; crossings are the server's, sent for the tick they happen, and
+  a player's machine that runs its own Objs has its crossings checked against a Portal by the Obj. As a dimension is
+  named to a player, the server sends its edits in pieces, nearest first, as saves pack them (`VXBLOCKS`, LZ4, with
+  the blocks numbered at run time), in half the connection's budget, and holds the player's Objs from crossing, and
+  their machine its Portal shut, till they are in; the level's edits go the same way as a player joins. An Obj a
+  scene placed that leaves a player's sight is let be on their machine and found again. Tests: two players in two
+  dimensions at the same numbers, each sent only their own's Objs, an Obj and a player crossing; 400 single-block
+  edits in 1.9 kB, nearest first, all in within 9 frames; a crossing by a Portal taken and one far from any put
+  back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
+  75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
+  player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the editor's dimension view, the script
+  API (dungeon stages and growth among it), saves per dimension, and terrains of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2954,6 +2970,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - ~~**Rivers to swim across:**~~ done: a world of levels' rivers are 24 m wide and 3.5 m deep where a square
     kilometre drains into them, on the same courses: most are 12 to 50 m across, and deeper than a player stands
     over most of their width.
+  - ~~**River banks level with the water:**~~ done: a river's bed is a bowl, dropping steeply from its edge to a
+    broad middle, and its banks stand a quarter of a block over its water, so in a world laid in half blocks one
+    walks straight out; in some stretches the land rises at once from the bank, as on the outside of a bend, in
+    others along a low strip. Where the land is lower than the water a low sloping rim holds it in, for ponds and
+    lakes too, in place of flat-topped walls. Rivers do not yet run on to the sea across wide lowland.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the
@@ -3687,8 +3708,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     C#: `NavAgent.OpensDoors`, `Jumps`. Tests: door places and swim places; a door gone through only by what
     opens doors; deep water swum only by what swims; gaps jumped only as wide as a walker jumps; an agent opening
     a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
-  - [ ] areas from a project list, picked per block and by Nav Area boxes; Nav Links; climbing vines, ropes and
-    ladders; walkers two blocks wide
+  - [x] **Areas and costs**: areas Walkable, Road (0.6), Water (3), Swim (4), Door (2), Not Walkable (never
+    crossed) and four of a project's own, named and costed in **Project Settings ▸ Navigation** (`[navigation]`,
+    carried into builds); a `.block` picks its **Nav Area** in a dropdown (`BlockNavArea`, saved as its word,
+    through `BlockFaces::nav_area` into the walking table); a **Nav Area** component (Add Component ▸
+    Navigation ▸ Nav Area: Size, Area) gives the places in its box an area, for searches (`AreaBox`); no corner
+    of ground that may not be crossed is cut, cornerwise or in a straight line; searches guess plain ground's cost
+    ahead, so roads cost no search more places where there are none. C#: `NavAreaType`, `Navigation.AreaAt`.
+    Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
+    an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
+    every Project Settings row and every component's fields reached. Manual: Areas and Costs.
+  - [ ] Nav Links; climbing vines, ropes and ladders; walkers two blocks wide; agent types in Project Settings
   - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
     `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
     its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
@@ -3710,6 +3740,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   with reliable and unreliable channels, and a simulator of bad networks.
 - [x] Networked play as a server, a host or a client, in ticks: Objs shared with every player, RPCs, movement
   predicted and corrected, lag compensation, and shared authority.
+- [x] Players in different dimensions at once: ground made round every player on the server, Objs sent by
+  dimension, crossings decided and checked by the server, a dimension's edits sent as a player comes into it and
+  the level's as they join (see Dimensions under M8).
 - [ ] Multi-instance play mode.
 
 ## M11 — Modding and platform services

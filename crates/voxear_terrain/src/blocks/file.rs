@@ -228,6 +228,10 @@ pub struct BlockKind {
     /// `block::BlockDef::light`). Never written.
     #[serde(skip)]
     pub light: u8,
+    /// What ground it makes for navigation, as its block says (see
+    /// `block::BlockNavArea::number`). Never written.
+    #[serde(skip)]
+    pub nav_area: u8,
 }
 
 /// Over a look's number, the look it is with another block's picture over
@@ -349,6 +353,7 @@ impl Default for BlockKind {
             tint: super::block::BlockTint::None,
             part: PartLook::default(),
             light: 0,
+            nav_area: 0,
         }
     }
 }
@@ -685,7 +690,8 @@ impl BlockFile {
             let drawn = BlockFaces::new(top, sides, bottom);
             let shown = BlockFaces { water: kind.water, see_through, sways, shape, color, ..drawn };
             let light = if kind.removed { 0 } else { kind.light.min(15) };
-            let joined = BlockFaces { connects, mixes, overlap, light, ..shown };
+            let nav_area = if kind.removed { 0 } else { kind.nav_area };
+            let joined = BlockFaces { connects, mixes, overlap, light, nav_area, ..shown };
             faces.push(self.part_faces(kind, shape, &mut motions, joined));
         }
         // What a block shows as while it is covered: another of its world's blocks, drawn in the same shape, and

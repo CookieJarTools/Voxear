@@ -54,6 +54,8 @@ pub struct PathAsk {
     /// and up or down.
     pub across: f32,
     pub reach: f32,
+    /// Boxes giving the places in them another area, as Nav Areas do.
+    pub boxes: Vec<crate::AreaBox>,
     /// How much a search over many regions leans towards the goal: 1 finds
     /// the cheapest way there is; more finds one sooner that may cost a
     /// little more, never more than this many times the cheapest.
@@ -71,6 +73,7 @@ impl PathAsk {
             most: 400_000,
             across: 3.0,
             reach: 4.0,
+            boxes: Vec::new(),
             greed: GREED,
         }
     }
@@ -179,7 +182,7 @@ pub fn find_path(nav: &BlockNav, ask: &PathAsk) -> FoundPath {
         (true, false, _) if goal.is_some() => PathStatus::Complete,
         _ => PathStatus::Partial,
     };
-    let kept = tight::pull(nav, &fine.places, walker, &ask.costs);
+    let kept = tight::pull(nav, &fine.places, walker, &|at| cost_of(nav, ask, at));
     let corners = kept.iter().filter_map(|&at| nav.point(fine.places[at])).collect();
     // A corner is jumped to where the place before it is more than a column away.
     let apart = |a: PlaceRef, b: PlaceRef| match (nav.cell(a), nav.cell(b)) {
@@ -539,15 +542,18 @@ fn fine(
         for (way, [dx, dz]) in super::regions::AXES.into_iter().enumerate() {
             let Some((to, to_place, to_cy)) = straight_step(nav, at, place, cy, dx, dz, walker) else { continue };
             let to_feet = to_place.feet(to_cy);
-            level[way] = to_feet == feet;
-            let cost = ask.costs.of(to_place.area) + (to_feet - feet).abs() as f32 / 16.0 * UPWARD;
+            let crossed = area_cost(nav, ask, to, to_place.area);
+            // Cornerwise past it only where it is level and may be crossed, so no corner of ground nothing walks
+            // on is cut.
+            level[way] = to_feet == feet && crossed.is_finite();
+            let cost = crossed + (to_feet - feet).abs() as f32 / 16.0 * UPWARD;
             scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
         }
         // Over gaps, for a walker that jumps.
         if walker.jump > 0 {
             for [dx, dz] in super::regions::AXES {
                 let Some((to, to_place, across)) = jump_step(nav, at, dx, dz, walker) else { continue };
-                let cost = ask.costs.of(to_place.area) * across as f32 + JUMPING;
+                let cost = area_cost(nav, ask, to, to_place.area) * across as f32 + JUMPING;
                 scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
             }
         }
@@ -559,7 +565,7 @@ fn fine(
             if to_place.feet(to_cy) != feet {
                 continue;
             }
-            let cost = DIAGONAL * ask.costs.of(to_place.area);
+            let cost = DIAGONAL * area_cost(nav, ask, to, to_place.area);
             scratch.reach(nav, class, corridor, index, node.g, to, cost, &ahead, &mut best);
         }
     }
@@ -573,6 +579,22 @@ fn fine(
     }
     places.reverse();
     Fine { cost: scratch.nodes[end as usize].g, places, reached: reached.is_some(), looked }
+}
+
+/// What a block of place `at`, of area `area`, costs as `ask` costs it: as
+/// its area, or the area of a box it is in.
+#[inline]
+fn area_cost(nav: &BlockNav, ask: &PathAsk, at: PlaceRef, area: u8) -> f32 {
+    if ask.boxes.is_empty() {
+        return ask.costs.of(area);
+    }
+    let boxed = nav.point(at).and_then(|point| ask.boxes.iter().rev().find(|area_box| area_box.holds(point)));
+    ask.costs.of(boxed.map_or(area, |area_box| area_box.area))
+}
+
+/// What a block of place `at` costs as `ask` costs it.
+fn cost_of(nav: &BlockNav, ask: &PathAsk, at: PlaceRef) -> f32 {
+    nav.place(at).map_or(1.0, |(place, _)| area_cost(nav, ask, at, place.area))
 }
 
 /// What a node is ordered by in the open list: its whole guessed cost, and

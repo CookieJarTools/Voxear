@@ -75,6 +75,9 @@ pub struct PlayerSettings {
     /// The project's `[portals]` settings.
     #[serde(default)]
     pub portals: crate::project::PortalSettings,
+    /// What each kind of ground costs things finding their way.
+    #[serde(default)]
+    pub navigation: crate::navigation::NavigationSettings,
     /// The project's `[foliage]` settings.
     #[serde(default)]
     pub foliage: voxear_render::FoliageMotion,
@@ -313,6 +316,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             foliage: settings.foliage,
             time: settings.time,
             input: crate::project::InputSettings { actions: settings.input_actions.clone() },
+            navigation: settings.navigation.clone(),
             modules: Some(settings.modules),
         },
     };

@@ -255,6 +255,9 @@ struct Walked {
     nav: Arc<BlockNav>,
     blocks: BlockWorld,
     dimension: DimensionId,
+    /// What each area costs, and the Nav Areas' boxes over it.
+    costs: voxear_nav::AreaCosts,
+    boxes: Vec<voxear_nav::AreaBox>,
 }
 
 impl Walked {
@@ -335,7 +338,12 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
+            {
+                let dimension = dimension_of(world, entity);
+                let (costs, boxes) =
+                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
+                Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes })
+            }
         })
         .collect();
 
@@ -531,6 +539,7 @@ fn plan(
         budget.asked -= 1;
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
+        (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
         let nav = walked.nav.clone();
         state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));
@@ -731,6 +740,8 @@ const NEAREST: i32 = 8;
 const NEAREST_FOUND: i32 = 9;
 const RANDOM: i32 = 11;
 const RANDOM_FOUND: i32 = 12;
+const AREA_AT: i32 = 13;
+const AREA_FOUND: i32 = 14;
 
 /// What a script last asked of navigation.
 #[derive(Default)]
@@ -741,6 +752,7 @@ struct ScriptAsked {
     corner: usize,
     nearest: Option<Vec3>,
     random: Option<Vec3>,
+    area: Option<u8>,
     seed: u32,
 }
 
@@ -895,7 +907,12 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
+            {
+                let dimension = dimension_of(world, entity);
+                let (costs, boxes) =
+                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
+                Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes })
+            }
         })
         .collect();
     // Scripts ask in the dimension the game is seen from.
@@ -912,7 +929,9 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
 pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathStatus, Vec<Vec3>, f32) {
     let found = walked_at(world, from, height).map(|walked| {
         let walker = walked.walker_of(&NavAgent::default(), height);
-        let found = find_path(&walked.nav, &PathAsk::new(walked.local(from), walked.local(to), walker));
+        let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
+        (ask.costs, ask.boxes) = (walked.costs, walked.boxes.clone());
+        let found = find_path(&walked.nav, &ask);
         (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
     });
     found.unwrap_or((PathStatus::None, Vec::new(), 0.0))
@@ -925,6 +944,17 @@ pub fn nearest_place(world: &mut World, at: Vec3, reach: f32) -> Option<Vec3> {
     let reach = (reach / walked.size).max(0.5);
     let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
     Some(walked.world(walked.nav.point(place)?))
+}
+
+/// The area of ground of the place to stand nearest `at`, no more than
+/// `reach` metres off: as its block or a Nav Area box marks it.
+pub fn area_at(world: &mut World, at: Vec3, reach: f32) -> Option<u8> {
+    let walked = walked_at(world, at, 1.8)?;
+    let reach = (reach / walked.size).max(0.5);
+    let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
+    let point = walked.nav.point(place)?;
+    let boxed = walked.boxes.iter().rev().find(|area_box| area_box.holds(point));
+    Some(boxed.map_or(walked.nav.place(place)?.0.area, |area_box| area_box.area))
 }
 
 fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
@@ -974,6 +1004,11 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
             asked(world).random = random;
         }
         (RANDOM_FOUND, None) => return found_point(asked(world).random),
+        (AREA_AT, Some([x, y, z, reach])) => asked(world).area = area_at(world, Vec3::new(x, y, z), reach),
+        (AREA_FOUND, None) => {
+            let area = asked(world).area;
+            return Some([f32::from(area.unwrap_or(0)), f32::from(u8::from(area.is_some())), 0.0, 0.0]);
+        }
         _ => return None,
     }
     Some([0.0; 4])

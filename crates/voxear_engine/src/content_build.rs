@@ -406,6 +406,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Lighting
         | AssetKind::LookPack
         | AssetKind::TexturePack
+        | AssetKind::ShaderPack
         | AssetKind::Shader
         | AssetKind::VoxShade
         | AssetKind::Font
@@ -518,6 +519,7 @@ fn usage_sets(
                         | AssetKind::Block
                         | AssetKind::LookPack
                         | AssetKind::TexturePack
+                        | AssetKind::ShaderPack
                 ),
                 Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable | AssetKind::Font),
             } || matches(&settings.include, &e.path);
@@ -715,6 +717,19 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
+        // A shader pack's programs, beside its manifest in its folder, compiled as the pack is worn.
+        AssetKind::ShaderPack => {
+            let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+            let mut programs = Vec::new();
+            for entry in std::fs::read_dir(db.file(folder))? {
+                let name = entry?.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".slang") {
+                    programs.push(format!("{folder}/{name}"));
+                }
+            }
+            programs.sort();
+            needs.companions = programs;
+        }
         // A world generator and a model of blocks name nothing else, nor does a look pack.
         AssetKind::Texture
         | AssetKind::LookPack

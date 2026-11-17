@@ -425,6 +425,7 @@ fn gather(
                 | AssetKind::LightProfile
                 | AssetKind::LookPack
                 | AssetKind::TexturePack
+                | AssetKind::ShaderPack
                 | AssetKind::Shader
                 | AssetKind::VoxShade
                 | AssetKind::Ui

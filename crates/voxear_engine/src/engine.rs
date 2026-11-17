@@ -560,6 +560,8 @@ impl Engine {
         crate::walkers::update(&mut self.world);
         // The look pack worn is laid over the level's lighting as it is now.
         crate::look_packs::update(&mut self.world);
+        // The shader pack worn is put on once compiled, compiled again as its files change, and given the clock.
+        crate::shader_packs::update(&mut self.world);
         // The level's clock turns while playing, and turns the sun where it says.
         crate::heat::turn_clock(&mut self.world, self.time.delta, !self.edit_mode);
         {

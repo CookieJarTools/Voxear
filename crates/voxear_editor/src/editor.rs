@@ -33,6 +33,7 @@ mod inspectors;
 mod languages;
 mod lighting;
 mod lighting_calls;
+mod shader_pack_calls;
 mod level_edits;
 mod link_calls;
 mod material_drops;
@@ -1137,6 +1138,7 @@ impl Editor {
             if let Some(view) = self.inspector.asset_view() {
                 view.show_listening(&mut self.ui, listening.as_deref());
                 view.show_shader_state(&mut self.ui, renderer.custom_shaders());
+                view.show_shader_pack(&mut self.ui, &self.game);
             }
         }
         {
@@ -1423,6 +1425,7 @@ impl Editor {
         match action {
             AssetAction::Open(item) => self.open_item(&item, renderer),
             AssetAction::Lighting(action) => self.lighting_action(action, renderer),
+            AssetAction::ShaderPack(change) => self.shader_pack_change(change),
             AssetAction::SceneLighting(scene, action) => self.scene_lighting_action(&scene, action, renderer),
             AssetAction::SaveMaterial(path, data) => {
                 if let Err(error) = self.game.content.save_material(renderer, &path, &data) {

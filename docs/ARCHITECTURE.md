@@ -1277,6 +1277,27 @@ pack's pictures laid over it. A material the pack names is uploaded with the pac
 every world resolves and looks again through the path a saved block already takes; `sync` frees what the last pack
 left on the GPU first. A game's pack names pictures that are assets; a player's reads files from its own folder only.
 
+**Shader packs** (`voxear_render::shader_packs`, `voxear_engine::shader_packs`) are programs of a pack's own run
+over the frame, the player's to choose as the other packs are; the plan and its stages are in
+[SHADER_PACKS.md](SHADER_PACKS.md), of which the first is built. A pack is a `Name.shaderpack` folder: its
+`pack.toml` (an asset of kind `ShaderPack`; its `.slang` programs ship beside it as companions) lists options and
+`[[pass]]`es, each at one of four points of a view's frame (after the opaque surfaces and the sky are lit, after the
+fog, after TAA, over the finished picture) reading the frame's images it lists and writing the colour or a target of
+its own. `PackManifest::parse` checks it; `compile` wraps each program in a file that defines what its pass reads
+(`#define PACK_READS_…`, so a function it does not list is not there), the pack's `Options` and targets, and the
+fragment shader that calls its `run`, against `shaders/shader_pack.slang`, which has nothing of the engine's own
+shaders; `slangc` compiles the passes on threads, and what was compiled before is kept by a hash of its sources. The
+engine's `Wearing` resource holds the pack worn, its options and its compile on a thread; `update` puts a compiled
+pack in the world as `WornShaderPack`, gives it the level's clock, and while its files are watched compiles it again
+as one is saved, a failure leaving the pack drawn before. The renderer makes a pipeline a pass when the pack's
+generation changes, and each camera's view (not one through a Portal) has a `PackRecorder` make every image the pack
+uses up front, write its `PackFrame` (camera, sun, clock, weather, last frame's exposure, options, image indices and
+the block light window's addresses) and add its passes to the frame graph at each point: in place in the scene's HDR
+image before TAA (copied first for the pass to read), into images of its own after TAA and over the finished
+picture, which the Finish pass then dithers. A pass that reads normals has the depth passes run; one that reads
+history has the colour after TAA copied each frame; a kept target is a pair of history images. With no pack worn
+none of this is recorded.
+
 **Faces that join** are a material's matter, as being cut out is: `MaterialData::connected` says its pictures are
 five tiles, `resolved` works out from a block's materials (or the pack worn) which of its faces join, the mesher keeps
 each such face apart with the faces round it that it joins, and the block shader picks each quarter of the face from

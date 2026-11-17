@@ -3,7 +3,8 @@
 A **shader pack** is a set of shader programs that replaces how a game is lit and finished: its light on block faces,
 leaves and water, its shadows, its sky, and passes over the whole picture, such as fog, rays through leaves, a
 coloured grade or a painted look. It is chosen by whoever plays, as a look pack or a texture pack is, and anything
-it leaves out is the engine's own. This page is the plan: nothing of it is built yet.
+it leaves out is the engine's own. This page is the plan. Its first stage, a pack's own passes over the frame, is
+built ([What stage 1 built](#what-stage-1-built)); the rest is not yet.
 
 ## What Voxear has today
 
@@ -140,7 +141,7 @@ pages, since a pass cannot read them as one picture); and the block light window
 
 ## In what order
 
-1. **A pack's own full-screen passes over the engine's buffers.** The smallest step that does something: the
+1. **A pack's own full-screen passes over the engine's buffers.** ✅ Built. The smallest step that does something: the
    manifest, the three places packs come from, compiling, the four points of the frame, `PackFrame`, depth, normals,
    colour, last frame's colour, motion and the block light window, live reload in the editor, and `vox render
    --shader-pack`. A built-in pack shows it: rays through leaves and a warm evening grade. Fog, outlines, a painted
@@ -153,6 +154,33 @@ pages, since a pass cannot read them as one picture); and the block light window
    own cascade pass.
 5. **Players' packs:** the `ShaderPacks` folder, a menu to pick one and set its options, the compile cache, and the
    surface id image for passes that want it.
+
+## What stage 1 built
+
+As planned, with these settled on the way:
+
+- **The final point runs over the finished picture**, after the engine's tonemap, grade and a look pack's shader, in
+  colours as shown from 0 to 1, before sharpening, the dither and the UI. Taking the tonemap's place, with the
+  exposure and the glow handed to the pack, is stage 3's, with the sky: a grade needs nothing more, and a pack that
+  tonemapped for itself would have to fit HDR displays as the engine's composite does.
+- **A pass reads only what its `reads` lists**: `color`, `depth`, `normals`, `motion`, `history`, `block_light` and
+  earlier passes' targets. Its program is wrapped in a file that defines the functions for those alone, so calling
+  another fails to compile, with a word on what to list. Normals have the depth passes run; history has the colour
+  after TAA copied each frame; so a pack pays for neither unless it reads them.
+- **Targets** are `rgba16f`, `rgba8`, `rg16f` or `r16f`, at 1, ½ or ¼ of the frame's size at the point that writes
+  them; each is written by one pass and read by later ones; `kept = true` makes it a pair kept from frame to frame,
+  read as last frame's with `.last(uv)`.
+- **Before TAA a pass writes the colour in place**, so water, glass, the fog and particles are drawn over it; the
+  colour is copied first for the pass to read. After TAA and at the final point it writes images of its own.
+- **`PackFrame`** has one light, the sun or the moon (`night`), since the engine lights a level by one directional
+  light, its own colour and strength and the light it gives; the sun's and sky's light through the atmosphere
+  (`sunLight()`, `skyAround()`); the day counted as the level's clock passes midnight.
+- **`[surface]` and `[engine]`** are refused, with a message, until stages 2 and 4 read them.
+- **Built games** ship a pack's programs beside its manifest and compile them the first time it is worn, with the
+  Slang compiler shipped beside the engine. Compiled passes are kept by a hash of their sources for as long as the
+  game runs; keeping them on disk, and compiling a game's packs when its content is built, are stage 5's.
+- **Not in stage 1:** reading the sun's shadow and the surface id image, and pictures of a pack's own (noise, a
+  grade's table).
 
 ## Questions to settle
 

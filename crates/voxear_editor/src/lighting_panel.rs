@@ -461,6 +461,9 @@ pub enum LightingAction {
     /// The scene is shown under a texture pack, as a player who picked it
     /// would see it, or under none. Nothing of it is saved.
     WearTextures(Option<String>),
+    /// The scene is shown under a shader pack, as a player who picked it
+    /// would see it, or under none. Nothing of it is saved.
+    WearShaders(Option<String>),
     /// The level's lighting is baked, or the bake under way given up.
     Bake,
 }
@@ -478,6 +481,7 @@ impl PartialEq for LightingAction {
             (Self::Copy, Self::Copy) | (Self::Bake, Self::Bake) => true,
             (Self::Wear(a), Self::Wear(b)) => a == b,
             (Self::WearTextures(a), Self::WearTextures(b)) => a == b,
+            (Self::WearShaders(a), Self::WearShaders(b)) => a == b,
             _ => false,
         }
     }
@@ -498,6 +502,10 @@ pub struct LightingPanel {
     /// menu's entries names.
     textures: NodeId,
     packs: Vec<Option<String>>,
+    /// The shader pack the scene is shown under, and what each of its
+    /// menu's entries names.
+    shader: NodeId,
+    shaders: Vec<Option<String>>,
     /// Bake Lighting, which gives up a bake under way, and what it says of
     /// the bake.
     bake: NodeId,
@@ -539,6 +547,15 @@ impl LightingPanel {
         ui.set_tooltip(label, tip, None);
         let textures = ui.dropdown(row, &["None"], 0);
         ui.add_class(textures, "value-choice");
+        let row = ui.panel(top, Style::default());
+        ui.add_class(row, "prop");
+        let label = ui.add_label(row, "Shader pack");
+        ui.add_class(label, "prop-label");
+        let tip = "Shows the scene and the game under a shader pack's passes, as a player who picked it would see \
+                   it, drawn again whenever one of its files is saved. It is not saved with the scene";
+        ui.set_tooltip(label, tip, None);
+        let shader = ui.dropdown(row, &["None"], 0);
+        ui.add_class(shader, "value-choice");
         let bake = ui.button(top, "Bake Lighting");
         ui.add_class(bake, "lighting-copy");
         let tip = "Bakes the level's lighting: lightmaps on its Objs with a Lightmap and light probes in its Light \
@@ -549,7 +566,23 @@ impl LightingPanel {
         let fields = LightingFields::new(ui, tab_bar, view);
         let packs = vec![None];
         let looks = vec![None];
-        Self { scene, choices: vec![None], note, copy, look, looks, textures, packs, bake, bake_note, fields, shown: None }
+        let shaders = vec![None];
+        Self {
+            scene,
+            choices: vec![None],
+            note,
+            copy,
+            look,
+            looks,
+            textures,
+            packs,
+            shader,
+            shaders,
+            bake,
+            bake_note,
+            fields,
+            shown: None,
+        }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -562,6 +595,32 @@ impl LightingPanel {
         self.show_scene(ui, game, current, own);
         self.show_looks(ui, game);
         self.show_textures(ui, game);
+        self.show_shader_packs(ui, game);
+    }
+
+    /// Lists the shader packs there are, the engine's and the project's,
+    /// with the one the scene is shown under picked.
+    fn show_shader_packs(&mut self, ui: &mut Ui, game: &mut Game) {
+        let worn = voxear_engine::shader_packs::worn(&game.engine.world).map(str::to_string);
+        let mut labels = vec!["None".to_string()];
+        let mut shaders = vec![None];
+        for pack in voxear_engine::shader_packs::list(&mut game.content, None) {
+            labels.push(pack.name);
+            shaders.push(Some(pack.reference));
+        }
+        let index = match shaders.iter().position(|pack| *pack == worn) {
+            Some(index) => index,
+            // One worn that is not listed, as a player's own folder a call wore.
+            None => {
+                labels.push(worn.clone().unwrap_or_default());
+                shaders.push(worn);
+                shaders.len() - 1
+            }
+        };
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        ui.set_options(self.shader, &labels);
+        ui.set_selected_option(self.shader, index);
+        self.shaders = shaders;
     }
 
     /// Lists the texture packs there are, the engine's and the project's,
@@ -689,6 +748,10 @@ impl LightingPanel {
             let chosen = self.packs.get(ui.selected_option(self.textures)).cloned().flatten();
             return Some(LightingAction::WearTextures(chosen));
         }
+        if ui.changed(self.shader) {
+            let chosen = self.shaders.get(ui.selected_option(self.shader)).cloned().flatten();
+            return Some(LightingAction::WearShaders(chosen));
+        }
         if ui.clicked(self.bake) {
             return Some(LightingAction::Bake);
         }
@@ -714,6 +777,11 @@ impl LightingPanel {
     /// The menu the look pack the scene is shown under is picked from.
     pub fn look_menu(&self) -> NodeId {
         self.look
+    }
+
+    /// The menu the shader pack the scene is shown under is picked from.
+    pub fn shader_menu(&self) -> NodeId {
+        self.shader
     }
 
     /// The colour setting whose swatch was clicked this frame.

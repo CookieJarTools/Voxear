@@ -80,6 +80,7 @@ mod previews;
 mod scene;
 pub mod sea;
 mod seasons;
+pub mod shader_packs;
 mod lamp_vsm;
 mod shadow_cache;
 mod shadows;
@@ -458,6 +459,9 @@ struct FrameBuffers {
     vsm: Option<VsmBuffers>,
     /// The same for the lamps' virtual shadow pages (see `lamp_vsm`).
     lamp_vsm: Option<VsmBuffers>,
+    /// The frame a worn shader pack's programs read, made the first time
+    /// one is worn (see `shader_packs`).
+    pack_frame: Option<Buffer>,
     /// What its buffers' names start with.
     prefix: String,
 }
@@ -514,6 +518,18 @@ impl FrameBuffers {
             self.lamp_vsm = Some(VsmBuffers::new(gpu, &format!("{}lamp vsm", self.prefix), slot, words)?);
         }
         Ok(self.lamp_vsm.as_mut().expect("made above"))
+    }
+
+    /// Makes the buffer a shader pack's frame is written to, the first time
+    /// one is worn.
+    fn fit_pack_frame(&mut self, gpu: &Gpu, slot: usize) -> Result<&Buffer> {
+        if self.pack_frame.is_none() {
+            let name = format!("{}shader pack frame {slot}", self.prefix);
+            let size = size_of::<shader_packs::GpuPackFrame>() as u64;
+            let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
+            self.pack_frame = Some(gpu.create_buffer(&name, size, usage, MemoryLocation::CpuToGpu)?);
+        }
+        Ok(self.pack_frame.as_ref().expect("made above"))
     }
 
     /// Makes sure the blocks' indirect draws have room for `needed`, making
@@ -582,6 +598,10 @@ pub struct Renderer {
     /// What the game asks of the display: HDR or not, paper white and the peak.
     display: display::DisplaySettings,
     watcher: Option<ShaderWatcher>,
+    /// The pipelines of the shader pack the world wears, and the compile of
+    /// one whose pipelines could not be made, so it is not tried again.
+    shader_pack: Option<shader_packs::PackPipelines>,
+    shader_pack_failed: u64,
     /// The shaders the pipelines are made from, as built in or as hot
     /// reload compiled them, before a project's custom shaders.
     shaders: ShaderSet,
@@ -719,6 +739,8 @@ impl Renderer {
             window_format,
             display: display::DisplaySettings::default(),
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
+            shader_pack: None,
+            shader_pack_failed: 0,
             shaders,
             custom: CustomShaders::default(),
             views: vec![first],
@@ -1478,6 +1500,37 @@ impl Renderer {
         self.clear = color;
     }
 
+    /// Makes the pipelines of the shader pack the world wears, when it has
+    /// put on another or compiled it again, and lets go of those of one it
+    /// has taken off. Pipelines that cannot be made are logged, and the frame
+    /// is drawn without the pack.
+    fn wear_shader_pack(&mut self, world: &World) {
+        let worn = world.resource::<shader_packs::WornShaderPack>();
+        let wanted = worn.map(|worn| worn.pack.generation);
+        let have = self.shader_pack.as_ref().map(|pack| pack.generation);
+        if wanted == have || (wanted.is_some() && wanted == Some(self.shader_pack_failed)) {
+            return;
+        }
+        if let Some(old) = self.shader_pack.take() {
+            self.gpu.wait_idle();
+            old.destroy(&self.gpu);
+        }
+        let Some(worn) = worn else { return };
+        match shader_packs::PackPipelines::new(&self.gpu, &self.bindless, &worn.pack) {
+            Ok(pipelines) => self.shader_pack = Some(pipelines),
+            Err(error) => {
+                tracing::error!("the shader pack cannot be drawn: {error:#}");
+                self.shader_pack_failed = worn.pack.generation;
+            }
+        }
+    }
+
+    /// The shader pack the frames are drawn with now, as the world wears it,
+    /// once its pipelines are made.
+    pub fn shader_pack_drawn(&self) -> Option<u64> {
+        self.shader_pack.as_ref().map(|pack| pack.generation)
+    }
+
     /// Swaps in recompiled shaders when the watcher saw a change.
     fn reload_shaders(&mut self) {
         let started = std::time::Instant::now();
@@ -1576,6 +1629,7 @@ impl Renderer {
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
         self.reload_shaders();
         self.finish_custom_shaders();
+        self.wear_shader_pack(world);
         for output in &mut self.outputs {
             if let (Some((width, height)), Target::Window(swapchain)) = (output.pending_size.take(), &mut output.target)
             {
@@ -1685,6 +1739,7 @@ impl Renderer {
             baking,
             bake_pace,
             baked_textures,
+            shader_pack,
             ..
         } = self;
         let assets = assets.as_ref().expect("assets live until drop");
@@ -1759,6 +1814,15 @@ impl Renderer {
                 (display_settings.peak_ratio(output.encoding()), display_image)
             })
             .collect();
+        // The shader pack the world wears, drawn by every camera's view once its pipelines are made.
+        let pack_draw = match (world.resource::<shader_packs::WornShaderPack>(), shader_pack.as_ref()) {
+            (Some(worn), Some(made)) if made.generation == worn.pack.generation => Some(shader_packs::PackDraw {
+                pack: worn.pack.clone(),
+                pipelines: made.pipelines.clone().into(),
+                worn: worn.clone(),
+            }),
+            _ => None,
+        };
         // The first view drawn into each output clears around itself, and keeps the view for its UI's backdrop.
         let mut backdrops = vec![None; outputs.len()];
         let mut cleared = vec![false; outputs.len()];
@@ -1796,6 +1860,7 @@ impl Renderer {
                 sound: sound.filter(|_| !sound_done),
                 baked: baked_frame.clone(),
                 bake: bake.clone(),
+                pack: pack_draw.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
@@ -2091,6 +2156,9 @@ impl Drop for Renderer {
         }
         self.baked_textures.destroy(gpu);
         self.pipelines.destroy(gpu);
+        if let Some(pack) = self.shader_pack.take() {
+            pack.destroy(gpu);
+        }
         self.reflection_probes.destroy(gpu);
         self.skinning.destroy(gpu);
         self.particle_sim.destroy(gpu);
@@ -2321,6 +2389,8 @@ struct ViewSetup {
     /// the first camera's own view records, until one has.
     baked: lightmaps::BakedFrame,
     bake: Option<lightmapper::BakeFrame>,
+    /// The shader pack the world wears, and its pipelines.
+    pack: Option<shader_packs::PackDraw>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -2470,9 +2540,10 @@ impl View {
                 vsm,
                 lamp_vsm,
                 block_draws,
+                pack_frame,
                 ..
             } = buffers;
-            for buffer in block_draws {
+            for buffer in block_draws.into_iter().chain(pack_frame) {
                 frames.retire(Retired::Buffer(buffer));
             }
             for buffer in vsm.into_iter().chain(lamp_vsm).flat_map(|vsm| [vsm.table, vsm.gpu_table, vsm.requests, vsm.readback]) {
@@ -3090,6 +3161,10 @@ impl View {
             }
             false => None,
         };
+        // A worn shader pack's frame is written for its passes, which no view through a Portal draws.
+        if setup.pack.is_some() && portal.is_none() {
+            self.buffers[slot].fit_pack_frame(gpu, slot)?;
+        }
         let gathers = profile_marker!("Gathers").scope();
         let buffers = &self.buffers[slot];
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
@@ -3219,7 +3294,10 @@ impl View {
         }
         // The depth passes run for these, and write each pixel's normal and roughness beside the depth.
         // A view through a Portal draws its depth first too, so each pixel of its opening is shaded once.
-        let depth_first = ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some();
+        // A shader pack's pass that reads normals has them written too.
+        let pack_normals = portal.is_none() && setup.pack.as_ref().is_some_and(shader_packs::PackDraw::reads_normals);
+        let depth_first =
+            ambient_occlusion.is_some() || contact_shadows.is_some() || reflections.is_some() || pack_normals;
         let surface = match depth_first || portal.is_some() {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
@@ -3779,6 +3857,48 @@ impl View {
                 table: table_copy(fg, buffers),
             }
         });
+        // A worn shader pack's images, and its frame, for its passes at each point of the frame.
+        let pack = match (&setup.pack, portal) {
+            (Some(draw), None) => {
+                let resolves = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
+                let resolved = if resolves { output_extent } else { extent };
+                let images = shader_packs::PackImages {
+                    depth,
+                    motion: velocity,
+                    surface,
+                    drawn: extent,
+                    resolved,
+                    shown: output_extent,
+                    frame_index: setup.frame_index,
+                };
+                let post = &extracted.post.exposure;
+                let ev = match post.auto {
+                    true => bytemuck::cast_slice::<u8, f32>(self.exposure.read()).first().copied().unwrap_or(0.0),
+                    false => post.compensation,
+                };
+                let sky_light = match atmosphere {
+                    Some(_) => buffers.sky_light.address,
+                    None => 0,
+                };
+                let [light_window, light_bytes] = blocks::light_volume_addresses(buffers.blocks.address);
+                let facts = shader_packs::FrameFacts {
+                    sun_own: extracted.sun_own,
+                    weather: world.resource::<weather::Weather>().copied(),
+                    exposure: frame_data.exposure * ev.exp2(),
+                    drawn: extent,
+                    shown: output_extent,
+                    addresses: [sky_light, light_window, light_bytes],
+                };
+                let mut pack_frame = shader_packs::GpuPackFrame::of(&frame_data, facts);
+                let mut recorder =
+                    shader_packs::PackRecorder::prepare(fg, (gpu, bindless), draw.clone(), &images, &mut pack_frame)?;
+                let written = buffers.pack_frame.as_ref().expect("made for the pack");
+                written.write(0, &[pack_frame]);
+                recorder.set_push(Push { frame: written.address, ..push });
+                Some(recorder)
+            }
+            _ => None,
+        };
         let targets = passes::Targets {
             hdr,
             velocity,
@@ -3912,7 +4032,14 @@ impl View {
             let root = fg.prefix().to_string();
             failed = draw_portals(&mut children, fg, services, (world, setup, slot), (sees, &root), targets).err();
         };
-        let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws, &mut far_sides);
+        // The pack's passes once the opaque surfaces and the sky are lit.
+        let mut lit = |fg: &mut FrameGraph<'_>| {
+            if let Some(pack) = &pack {
+                pack.record(fg, shader_packs::PackPoint::AfterLighting, hdr);
+            }
+        };
+        let (under_water, particles, smoke) =
+            passes::record(fg, &frame_setup, &targets, &draws, (&mut lit, &mut far_sides));
         // The water and glass drawn since, where they stand in front of what the far sides' depth holds.
         if let (Some(seen), Some(kept)) = (seen_depth, kept_depth) {
             lay_nearer_depth(fg, (pipelines, push), depth, kept, seen);
@@ -3954,6 +4081,7 @@ impl View {
             particles,
             smoke,
             surface,
+            pack,
             fsr3: pipelines.fsr3.map(|fsr3| post_passes::Fsr3Input {
                 pipelines: fsr3,
                 state: self.fsr3.clone(),
@@ -4438,6 +4566,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         meshlet_capacity: MeshletCapacity { all: FIRST_MESHLET_CAPACITY, two_sided: 0 },
         vsm: None,
         lamp_vsm: None,
+        pack_frame: None,
         block_draws: None,
         prefix: prefix.to_string(),
     })

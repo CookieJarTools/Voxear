@@ -13,7 +13,9 @@
 //! ([`threads`]) and handed over whole, so a search always sees one world
 //! and never half of an edit.
 
+pub mod avoid;
 pub mod blocks;
+pub mod steer;
 pub mod threads;
 
 pub use blocks::{

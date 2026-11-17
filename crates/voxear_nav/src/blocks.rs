@@ -10,6 +10,7 @@
 //! changes nothing here.
 
 pub mod build;
+pub mod moving;
 pub mod places;
 pub mod regions;
 pub mod search;

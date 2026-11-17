@@ -3607,7 +3607,8 @@ Done:
   it asks. Packs come from the engine (`builtin:`), the project (a `ShaderPack` asset, shipped with its programs) and
   a player's `ShaderPacks` folder (`file:`); compiled on threads with `slangc`, kept by a hash.
   - **Evening**, built in: shafts of sun through leaves marched at half size, a golden haze towards the sun that the
-    sky light round the camera fades in caves, and a warm grade.
+    sky light round the camera fades in caves, and a warm grade. About 0.8 ms at 1440p on an RTX 3070 looking into
+    the sun, the rays 0.5 ms of it (least of 60 frames).
   - **Editor:** a Shader pack menu on the Lighting page, a pack's Inspector page (worn, compiled or Slang's message,
     passes, options that change the picture at once), drawn again in a moment when a file is saved, and carried
     into play. Calls `shader_pack.list`, `shader_pack.wear`, `shader_pack.options`; `vox render --shader-pack` and

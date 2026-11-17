@@ -130,6 +130,11 @@ pages, since a pass cannot read them as one picture); and the block light window
 
 ## What it costs
 
+Measured for stage 1: Evening at 1440p on an RTX 3070, looking into a low sun through trees in a world of blocks,
+each pass the least of 60 frames, twice: rays at half size 0.48–0.50 ms, the colour copy before a pass that writes
+it in place 0.07 ms, the light laid over the scene 0.21 ms, the grade 0.07 ms; about 0.83 ms in all. The engine's own
+passes took the same with and without it. The plan's estimates, before it was built:
+
 - **Each full-screen pass** at 1440p: about 0.1 ms for a grade, 0.5 to 1 ms for rays or fog marched at half size, on
   a GPU like an RTX 3070.
 - **A surface program** costs what its own maths costs, per pixel of the surfaces it lights: the engine's lighting is

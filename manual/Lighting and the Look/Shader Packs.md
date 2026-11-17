@@ -17,7 +17,7 @@ A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds pa
 | **Haze** | How much warm haze the air holds, most towards the sun, 0 to 2 |
 | **Warmth** | How far the grade warms the picture, 0 to 1 |
 
-The rays show when the camera looks towards the sun. They are worked out at half size, a few dozen steps a pixel, and cost about half a millisecond a frame at 1440p on a card like an RTX 3070.
+The rays show when the camera looks towards the sun. They are worked out at half size, forty steps a pixel, and cost about half a millisecond a frame at 1440p on an RTX 3070; the whole pack, looking into the sun, about 0.8 ms. Facing away from the sun the rays cost nothing.
 
 ## Seeing a level under a pack
 

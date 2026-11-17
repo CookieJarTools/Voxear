@@ -3446,21 +3446,42 @@ float seaRough(Frame* frame, float2 xz)
     return rough;
 }
 
-// How much of a world of blocks' sea is frozen over at `xz`, from 0 to 1, blended between the lying grid's cells.
+// Over how many of its last cells the lying grid's ice is blended into the far ice's (weather_maps::ICE_BLEND_CELLS).
+static const float SEA_ICE_BLEND_CELLS = 2.0;
+
+// How much of a world of blocks' sea is frozen over at `xz`, from 0 to 1 (WeatherMaps::ice_at): the lying grid's,
+// blended between its cells, and past it the far ice's, past whose own edge as at its edge. The lying grid's is blended
+// into the far ice's over its last cells, so a frozen sea goes on frozen with no line where the lying grid ends.
 float seaIceAmount(float2 xz)
 {
     uint side;
     float cell;
     float2 corner;
     uint start;
+    uint* maps = buffers()->weatherMaps;
+    float far = -1.0;
+    if (weatherGrid(3, side, cell, corner, start))
+    {
+        float2 at = (xz - corner) / cell;
+        float2 low = floor(at - 0.5);
+        float2 part = at - 0.5 - low;
+        float ice[4];
+        for (uint n = 0; n < 4; n++)
+        {
+            // Kept within the grid, so past its edge it is as at its edge.
+            int2 c = clamp(int2(low) + int2(n & 1, n >> 1), 0, int(side) - 1);
+            ice[n] = asfloat(maps[start + uint(c.y) * side + uint(c.x)]);
+        }
+        far = saturate(lerp(lerp(ice[0], ice[1], part.x), lerp(ice[2], ice[3], part.x), part.y));
+    }
     if (!weatherGrid(0, side, cell, corner, start))
     {
-        return 0.0;
+        return max(far, 0.0);
     }
     float2 at = (xz - corner) / cell;
     if (any(at < 0.0) || any(at >= float(side)))
     {
-        return 0.0;
+        return max(far, 0.0);
     }
     float2 low = floor(at - 0.5);
     float2 part = at - 0.5 - low;
@@ -3468,9 +3489,15 @@ float seaIceAmount(float2 xz)
     for (uint n = 0; n < 4; n++)
     {
         int2 c = clamp(int2(low) + int2(n & 1, n >> 1), 0, int(side) - 1);
-        ice[n] = float(buffers()->weatherMaps[start + (uint(c.y) * side + uint(c.x)) * 3] >> 24) / 255.0;
+        ice[n] = float(maps[start + (uint(c.y) * side + uint(c.x)) * 3] >> 24) / 255.0;
     }
-    return lerp(lerp(ice[0], ice[1], part.x), lerp(ice[2], ice[3], part.x), part.y);
+    float near = lerp(lerp(ice[0], ice[1], part.x), lerp(ice[2], ice[3], part.x), part.y);
+    if (far < 0.0)
+    {
+        return near;
+    }
+    float inside = saturate(min(min(at.x, at.y), min(float(side) - at.x, float(side) - at.y)) / SEA_ICE_BLEND_CELLS);
+    return lerp(far, near, inside);
 }
 
 // Whether the block of sea at `xz` is frozen over: where the sea is part frozen, floes a block or a few across, more

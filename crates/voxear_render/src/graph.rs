@@ -527,9 +527,12 @@ impl<'a> FrameGraph<'a> {
     pub fn execute(mut self, gpu: &Gpu, cmd: vk::CommandBuffer, bindless: &Bindless) {
         let resolved = self.resolve();
         let passes = std::mem::take(&mut self.passes);
+        // While frames are sampled, each pass's recording is a sample of its own, by the pass's name.
+        let sampled = voxear_core::profiling::active();
         for pass in passes {
             self.barriers(gpu, cmd, &pass, &resolved);
             let Some(record) = pass.record else { continue };
+            let _sample = sampled.then(|| voxear_core::profiling::Marker::new(&pass.name).scope());
             gpu.begin_label(cmd, &pass.name, [0.55, 0.36, 0.96, 1.0]);
             let scope = self.graph.timer.begin(gpu, cmd, self.slot, &pass.name);
             record(&PassContext { gpu, cmd, bindless, images: &resolved });

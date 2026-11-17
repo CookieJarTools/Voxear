@@ -256,8 +256,9 @@ Done so far:
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
-- **Settings:** the Scene view's and play mode's settings in the rail's Settings drawer, a tab per group with a
-  search over all of them, and in the palette, kept per project with the palette's recent items.
+- **Preferences:** the editor's own settings (Scene view, Play mode, Console, appearance, external tools, keys,
+  tools) in the rail's drawer, laid out as Project Settings is, and in the palette, kept per project with the palette's
+  recent items.
 - **Hierarchy order:** scene headers, Objs in their scene's order (saved as shown), dragging before, after or into a
   row or onto a scene, undo putting Objs back at their places, `IInstance` badges and tinted prefab instances.
 - **The Console, after Sifter:** one line per row in columns, categories nobody declared (a `[Tag]`, the scripts'
@@ -279,7 +280,8 @@ Done so far:
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
   checked to have left memory. `vox run`'s window reloads them too. A build that hangs is stopped.
 - **Windows, drawers and workspaces:** a context menu on panel tabs (Close, Close Other Tabs, Reset Layout), a
-  Window button listing every panel, the rail opening Levels and Settings as a drawer, the World and Profiling
+  Window button listing every panel, the rail opening Levels, Lighting, Project Settings and Preferences as a
+  drawer, the World and Profiling
   workspaces each keeping its layout, and dropdowns as wide as their options and kept on screen.
 - **The Scene view's header:** Lit, Unlit and Wireframe shading, gizmos for lights and cameras with the selected
   one's reach or frustum, and full screen.
@@ -373,7 +375,7 @@ Done so far:
   its last line.
 - **Themes in OKLCH:** every colour of the default theme made from a base, an accent and a contrast, as Linear makes
   its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
-  Custom are picked in the Settings drawer's Appearance group, a colour from its swatch.
+  Custom are picked in Preferences ▸ Appearance, a colour from its swatch.
 
 Next in M3:
 - UI core:
@@ -391,9 +393,17 @@ Next in M3:
     and `BindRow`, rows filled in the frame they show in, and the selection
   - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
     organised, so a game can be tuned for each platform and quality level without touching code:
-    - a Project Settings window with a category list down its side, a search across every setting, values changed
-      from the default marked, reset per value or per category, a tooltip and a manual link on each, and changes
-      shown live in the editor
+    - [x] Project Settings and Preferences in the side bar's drawer, laid out alike: the categories down the side,
+      titled sections with rarely wanted settings folded under Advanced, a search across every category that matches
+      names, sections and the words of tooltips, a tooltip on every setting with its default, values changed from
+      the default marked, reset per value or per category, a manual page per category, and changes shown live;
+      every setting listed with its category, tooltip, type and range, and set by key, through `vox editor call`
+      (`project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show`)
+    - [x] exposed there: audio, network, content, Portals, languages, the product name, start level and C#
+      project, Tags and Layers and the collision matrix, and new engine settings: gravity in 3D and 2D, the
+      fixed step, the longest frame and fixed steps a frame (`[time]`), and which input actions the game plays
+      with (`[input]`); Preferences gains the Console's rows, gizmos, networked Play's test players and network,
+      and a list of every shortcut
     - one `.toml` file per category in `ProjectSettings/`, written only where it differs from the default, so they
       read well in version control; build profiles change them key by key, as they do now
     - per-platform overrides (Linux and Windows now, more as platforms come), as Unity's platform tabs, and
@@ -1305,7 +1315,9 @@ Done:
     above 0.5 °C; frozen from the start where it is that cold as the level loads. Part frozen, floes a block or a
     few across; frozen hard, ice all over, cracked along some blocks' edges and white under snow
     (`blockIceLit`), still in any storm, and bearing weight: slabs of ice with box colliders under the cells
-    round the viewer and every character.
+    round the viewer and every character. Out to the far view: past the lying grid, 1 km across, the far ice's
+    512 m cells keep the sea frozen where the air over it says, the lying grid's ice blended into them over its
+    last two cells, so a frozen sea no longer ends at a straight line half a kilometre out.
   - **Over the network:** the server sends its storms' bytes (`Message::Storms`) to each player as they join,
     whenever its made storms or whirlpools change and every five seconds for the clock; a client takes them in,
     its clock moved on by half the round trip.
@@ -1333,7 +1345,9 @@ Done:
     snow by height in a cell; a roof keeping the rain off what is under it and the yard beside it wet; a storm
     wetting only the ground under it, which dries after; a frozen sea still in a storm and bearing a crate, and a
     warm one open; the swell in two metres of water calmer than in deep water and never down to the floor; a
-    rolling grid keeping its cells; the grids' layout for the shaders; the server's storms reaching a player as
+    rolling grid keeping its cells; the grids' layout for the shaders; a sea under freezing air frozen kilometres
+    out, and the lying grid's ice blending into the far ice's with no step; a GPU picture of a frozen sea going on
+    frozen past the lying grid; the server's storms reaching a player as
     they join, as they change and with its clock, and a player joining later; the weather's sounds made without a
     seam, as loud as the weather, muffled under a roof, thunder after lightning, and silent at **Sounds** 0; a C# system turning
     the sounds down and reading what a storm left on the ground; GPU pictures of breakers running in to a beach,

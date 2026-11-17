@@ -151,8 +151,9 @@ float3 blockSway(Frame* frame, BlockWorld world, BlockPoint b, float time)
 }
 
 [shader("vertex")]
-VertexOut blockVertex(uint vertexId : SV_VertexID)
+VertexOut blockVertex(uint vertexId : SV_VertexID, uint runStart : SV_StartInstanceLocation)
 {
+    blockRunStart = runStart;
     Frame* frame = push.frame;
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
@@ -956,8 +957,9 @@ struct BlockShadowOut
 // A vertex in a sun cascade's view (push.list), placed as the camera's view places it; or in the view of a local
 // light's list that push.source names.
 [shader("vertex")]
-BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
+BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID, uint runStart : SV_StartInstanceLocation)
 {
+    blockRunStart = runStart;
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
     // Its picture stays on its face as the face sways, and on a moving part where it rests.

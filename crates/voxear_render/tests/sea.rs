@@ -11,7 +11,9 @@ use voxear_render::{
     Sky, SurfaceLook,
     sea::{RoughSea, SeaLook, Whirlpool},
     weather::{Weather, WeatherKind, WeatherPlace, WeatherPlaces},
-    weather_maps::{COVER_CELL, COVER_SIDE, FLOOR_CELL, FLOOR_REACH, FLOOR_SIDE, Grid, LYING_CELL, Lying, WeatherMaps},
+    weather_maps::{
+        COVER_CELL, COVER_SIDE, FLOOR_CELL, FLOOR_REACH, FLOOR_SIDE, Grid, ICE_CELL, LYING_CELL, Lying, WeatherMaps,
+    },
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::{
@@ -571,6 +573,60 @@ fn a_frozen_sea_is_ice_still_in_a_storm_with_floes_where_it_is_part_frozen() {
     let brightness = |c: [i32; 3]| c.iter().sum::<i32>() / 3;
     assert!(brightness(ice) > brightness(sea) + 40, "ice {ice:?}, sea {sea:?}");
     assert!(ice[2] - ice[0] < sea[2] - sea[0], "the ice less blue than the sea: {ice:?}, {sea:?}");
+}
+
+#[test]
+fn a_frozen_sea_goes_on_frozen_past_the_lying_grid_where_the_far_ice_says() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    world.insert_resource(RoughSea {
+        look: SeaLook::SmallCubes,
+        everywhere: 1.0,
+        heading: 0.6,
+        time: 20.0,
+        ..RoughSea::default()
+    });
+    // The lying grid over the sea's east half alone, all of it frozen: its west half lies past the grid.
+    let lying = grid(Vec2::new(middle, -16.0), LYING_CELL, 6, |_, _| Lying {
+        ice: 1.0,
+        celsius: -6.0,
+        height: top,
+        ..Lying::default()
+    });
+    let camera = (Vec3::new(middle, top + 40.0, middle + 45.0), Vec3::new(middle, top, middle - 10.0));
+    world.insert_resource(WeatherMaps { lying: Some(lying.clone()), ..WeatherMaps::default() });
+    let near = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea frozen near.png", &near);
+    // And the far ice, frozen all round, kilometres across.
+    let far = grid(Vec2::new(-1024.0, -1024.0), ICE_CELL, 4, |_, _| 1.0f32);
+    world.insert_resource(WeatherMaps { lying: Some(lying), ice: Some(far), ..WeatherMaps::default() });
+    let pixels = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sea frozen far.png", &pixels);
+    // East, on the left as the camera looks north, and west, on the right.
+    let colour = |pixels: &[u8], x0: u32, x1: u32| {
+        let mut sum = [0i64; 3];
+        let rows = HEIGHT / 4..HEIGHT / 2;
+        let count = (rows.len() as u32 * (x1 - x0)) as i64;
+        for y in rows {
+            for x in x0..x1 {
+                let i = ((y * WIDTH + x) * 4) as usize;
+                for c in 0..3 {
+                    sum[c] += i64::from(pixels[i + c]);
+                }
+            }
+        }
+        sum.map(|s| (s / count) as i32)
+    };
+    let brightness = |c: [i32; 3]| c.iter().sum::<i32>() / 3;
+    let (east, west) = ((20, WIDTH / 5), (WIDTH * 4 / 5, WIDTH - 20));
+    let (open, ice) = (colour(&near, west.0, west.1), colour(&pixels, west.0, west.1));
+    // With the lying grid alone, the sea past it is open water; with the far ice, it is ice as the east half is.
+    assert!(brightness(ice) > brightness(open) + 40, "west: ice {ice:?}, open water {open:?}");
+    let (before, frozen) = (colour(&near, east.0, east.1), colour(&pixels, east.0, east.1));
+    let near_alike = (0..3).all(|c| (before[c] - frozen[c]).abs() <= 4);
+    assert!(near_alike, "the east half's ice as it was with the far ice: {before:?}, {frozen:?}");
+    assert!((brightness(ice) - brightness(frozen)).abs() < 25, "west {ice:?} as icy as east {frozen:?}");
 }
 
 #[test]

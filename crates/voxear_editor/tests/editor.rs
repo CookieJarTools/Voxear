@@ -1594,12 +1594,12 @@ fn settings_and_recent_palette_items_are_kept_per_project() {
     let stats = editor.ui.find(root, "scene-stats").expect("the stats chip");
     assert!(!editor.settings().show_stats && !editor.ui.is_visible(stats), "the stats chip goes");
 
-    // A number opens the Settings panel at it, to type.
+    // A number opens Preferences at it, to type.
     editor.ui.focus(field);
     editor.ui.text_input("fly speed");
     frame(&mut editor, &mut renderer);
     editor.palette_key(voxear_editor::PaletteKey::Enter);
-    // A frame to bring the Settings tab to the front, and one to show the setting in it.
+    // A frame to bring Preferences to the front, and one to show the setting in it.
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let speed = editor.ui.focused().expect("the Fly speed field has focus");
@@ -2112,74 +2112,154 @@ fn panels_close_from_their_tabs_and_open_from_the_window_menu() {
     assert!(!editor.ui.dock_panel_floating(dock, "inspector"));
 }
 
-/// The settings rows on screen, by their labels.
-fn shown_settings(ui: &Ui) -> Vec<String> {
+/// The rows of a settings window on screen, by their labels: `window` is
+/// `project-settings` or `preferences`.
+fn shown_settings(ui: &Ui, window: &str) -> Vec<String> {
     let mut rows = Vec::new();
-    with_class(ui, ui.find(ui.root(), "drawer-settings").unwrap(), "setting", &mut rows);
-    rows.into_iter().filter(|&row| ui.is_visible(row)).map(|row| ui.text(ui.children(row)[0])).collect()
+    with_class(ui, ui.find(ui.root(), &format!("{window}-panel")).unwrap(), "setting", &mut rows);
+    rows.into_iter().filter(|&row| shown(ui, row)).map(|row| ui.text(ui.children(row)[0])).collect()
+}
+
+/// A settings window's categories, as its list shows them.
+fn setting_categories(ui: &Ui, window: &str) -> Vec<NodeId> {
+    let mut labels = Vec::new();
+    with_class(ui, ui.find(ui.root(), &format!("{window}-panel")).unwrap(), "settings-category", &mut labels);
+    labels.into_iter().filter(|&label| shown(ui, label) && !ui.text(label).is_empty()).collect()
+}
+
+/// Shows a category of a settings window, as a click on it in the list does.
+fn pick_category(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, window: &str, name: &str) {
+    let labels = setting_categories(&editor.ui, window);
+    let names: Vec<String> = labels.iter().map(|&label| editor.ui.text(label)).collect();
+    let search = editor.ui.find(editor.ui.root(), &format!("{window}-search")).unwrap();
+    let searching = editor.ui.text(search);
+    let found = labels.into_iter().find(|&label| editor.ui.text(label) == name);
+    let label = found.unwrap_or_else(|| panic!("no {name} among {names:?}, searching for {searching:?}"));
+    click(&mut editor.ui, label);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// The row of a setting, by its key, and its control.
+fn setting_row(ui: &Ui, key: &str) -> NodeId {
+    ui.find(ui.root(), &format!("setting-{key}")).unwrap_or_else(|| panic!("a row for {key}"))
+}
+
+fn setting_control(ui: &Ui, key: &str) -> NodeId {
+    ui.children(setting_row(ui, key))[1]
+}
+
+/// A number field of a setting's row: its first, or a vector's at `at`.
+fn setting_field(ui: &Ui, key: &str, at: usize) -> NodeId {
+    let mut fields = Vec::new();
+    with_class(ui, setting_row(ui, key), "number-input", &mut fields);
+    fields[at]
+}
+
+/// Types into a settings window's search.
+fn search_settings(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, window: &str, words: &str) {
+    let search = editor.ui.find(editor.ui.root(), &format!("{window}-search")).unwrap();
+    type_into(&mut editor.ui, search, words);
+    if words.is_empty() {
+        editor.ui.key_down(Key::Backspace);
+    }
+    frame(editor, renderer);
+    frame(editor, renderer);
 }
 
 #[test]
-fn settings_open_in_the_drawer_with_a_tab_for_each_group() {
+fn preferences_open_from_the_rail_with_categories_a_search_and_tooltips() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let rail = editor.ui.find(editor.ui.root(), "rail-settings").unwrap();
+    assert_eq!(editor.ui.tooltip(rail), Some("Preferences"));
     click(&mut editor.ui, rail);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
-    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Settings));
-    let mut tabs = Vec::new();
-    with_class(&editor.ui, editor.ui.find(editor.ui.root(), "settings-tabs").unwrap(), "settings-tab", &mut tabs);
-    let names: Vec<String> = tabs.iter().map(|&t| editor.ui.text(t)).collect();
-    assert_eq!(names, ["Scene view", "Play mode", "Console", "Appearance", "Project panel", "Tools"]);
-    assert!(shown_settings(&editor.ui).contains(&"Snap distance".to_string()), "the first group shows");
-    assert!(!shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "and only it");
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Preferences), "Preferences opens in the side bar's drawer");
+    let panel = editor.ui.find(editor.ui.root(), "preferences-panel").unwrap();
+    assert!(shown(&editor.ui, panel) && editor.ui.rect(panel)[2] > 600.0, "wide enough for its categories beside it");
+    let names: Vec<String> =
+        setting_categories(&editor.ui, "preferences").into_iter().map(|label| editor.ui.text(label)).collect();
+    let expected = ["General", "Appearance", "Console", "External Tools", "Keys", "Play Mode", "Scene View", "Tools"];
+    assert_eq!(names, expected);
+    assert_eq!(shown_settings(&editor.ui, "preferences"), ["Open out prefabs"], "the first category shows");
 
-    click(&mut editor.ui, tabs[1]);
+    pick_category(&mut editor, &mut renderer, "preferences", "Play Mode");
+    let play_mode = shown_settings(&editor.ui, "preferences");
+    assert!(play_mode.contains(&"Pause on error".to_string()) && play_mode.contains(&"Play as".to_string()));
+    assert!(!play_mode.contains(&"Snap".to_string()), "and only it");
+    let title = editor.ui.find(editor.ui.root(), "preferences-title").unwrap();
+    assert_eq!(editor.ui.text(title), "Play Mode");
+    // Every label says what its setting does, and its default.
+    let label = editor.ui.children(setting_row(&editor.ui, "error_pause"))[0];
+    let tip = editor.ui.tooltip(label).unwrap_or_default().to_string();
+    assert!(tip.contains("when an error is logged") && tip.ends_with("Default: Off"), "{tip}");
+
+    // Changed in place, kept, and marked as changed from its default.
+    let pause = setting_control(&editor.ui, "error_pause");
+    click(&mut editor.ui, pause);
     frame(&mut editor, &mut renderer);
-    assert!(shown_settings(&editor.ui).contains(&"Pause on error".to_string()), "a tab shows its group");
-    assert!(editor.ui.is_checked(tabs[1]) && !editor.ui.is_checked(tabs[0]), "and is the tab marked");
+    frame(&mut editor, &mut renderer);
+    assert!(editor.settings().error_pause);
+    assert!(editor.ui.has_class(setting_row(&editor.ui, "error_pause"), "changed"));
+    let players = setting_field(&editor.ui, "test_players", 0);
+    type_into(&mut editor.ui, players, "3");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.settings().test_players, 3, "networked Play's test players, here too");
     for _ in 0..10 {
         frame(&mut editor, &mut renderer);
     }
-    shot(&mut renderer, "settings.png");
+    shot(&mut renderer, "preferences.png");
 
-    let filter = editor.ui.find(editor.ui.root(), "settings-filter").unwrap();
-    editor.ui.focus(filter);
-    editor.ui.text_input("collapse");
-    frame(&mut editor, &mut renderer);
-    assert_eq!(shown_settings(&editor.ui), ["Collapse identical lines"], "a search reaches every group");
+    // A search reaches every category, under its category and section.
+    search_settings(&mut editor, &mut renderer, "preferences", "collapse");
+    assert_eq!(shown_settings(&editor.ui, "preferences"), ["Collapse identical lines"]);
+    assert!(label_starting(&editor.ui, panel, "Console ▸ Rows").is_some_and(|heading| shown(&editor.ui, heading)));
+    assert_eq!(editor.ui.text(title), "Search");
+    // The words of a tooltip count too.
+    search_settings(&mut editor, &mut renderer, "preferences", "jitter");
+    assert_eq!(shown_settings(&editor.ui, "preferences"), ["Test network"]);
+    let listed: Vec<String> =
+        setting_categories(&editor.ui, "preferences").into_iter().map(|label| editor.ui.text(label)).collect();
+    assert_eq!(listed, ["Play Mode"], "the list keeps the categories with any found");
+    search_settings(&mut editor, &mut renderer, "preferences", "nothing has these words");
+    let nothing = first_with(&editor.ui, panel, "settings-nothing").unwrap();
+    assert!(shown(&editor.ui, nothing) && shown_settings(&editor.ui, "preferences").is_empty());
+
+    // Keys lists each command's shortcut.
+    search_settings(&mut editor, &mut renderer, "preferences", "");
+    pick_category(&mut editor, &mut renderer, "preferences", "Keys");
+    let keys = editor.ui.find(editor.ui.root(), "preferences-keys").expect("the shortcuts");
+    let mut rows = Vec::new();
+    with_class(&editor.ui, keys, "settings-key-row", &mut rows);
+    let saved = rows.iter().any(|&row| {
+        let texts: Vec<String> = editor.ui.children(row).into_iter().map(|part| editor.ui.text(part)).collect();
+        texts.contains(&"Save".to_string()) && texts.contains(&"Ctrl+S".to_string())
+    });
+    assert!(saved, "Save is Ctrl+S");
 
     click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.drawer(), None, "the same button closes it");
 }
 
-/// The Settings panel's row for `title`: its control.
-fn setting_control(ui: &Ui, title: &str) -> NodeId {
-    let mut rows = Vec::new();
-    with_class(ui, ui.find(ui.root(), "drawer-settings").unwrap(), "setting", &mut rows);
-    let row = rows.into_iter().find(|&row| ui.text(ui.children(row)[0]) == title).unwrap();
-    ui.children(row)[1]
-}
-
 #[test]
-fn the_theme_is_chosen_in_settings_and_colours_the_editor() {
+fn the_theme_is_chosen_in_preferences_and_colours_the_editor() {
     let Some((mut renderer, mut editor)) = open() else { return };
     let rail = editor.ui.find(editor.ui.root(), "rail-settings").unwrap();
     click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
-    let mut tabs = Vec::new();
-    with_class(&editor.ui, editor.ui.find(editor.ui.root(), "settings-tabs").unwrap(), "settings-tab", &mut tabs);
-    let appearance = tabs.into_iter().find(|&t| editor.ui.text(t) == "Appearance").unwrap();
-    click(&mut editor.ui, appearance);
     frame(&mut editor, &mut renderer);
-    assert_eq!(shown_settings(&editor.ui), ["Theme", "Base colour", "Accent colour", "Contrast"]);
+    pick_category(&mut editor, &mut renderer, "preferences", "Appearance");
+    assert_eq!(shown_settings(&editor.ui, "preferences"), ["Theme", "Base colour", "Accent colour", "Contrast"]);
     let mut areas = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "dock-area", &mut areas);
     let panel = |editor: &voxear_editor::Editor| editor.ui.style(areas[0]).unwrap().background.unwrap();
     assert_eq!(panel(&editor), voxear_ui::Color::hex(0x191a1c), "the default theme's panels");
 
-    let theme = setting_control(&editor.ui, "Theme");
+    let theme = setting_control(&editor.ui, "theme");
     choose(&mut editor, &mut renderer, theme, 1);
     assert_eq!(editor.settings().theme(), voxear_ui::Theme::LIGHT);
     for _ in 0..12 {
@@ -2192,12 +2272,11 @@ fn the_theme_is_chosen_in_settings_and_colours_the_editor() {
     assert!(pixels[at] > 200, "the window's ground is light too");
     shot(&mut renderer, "theme-light.png");
 
-    let accent = setting_control(&editor.ui, "Accent colour");
+    let accent = setting_control(&editor.ui, "theme_accent");
     click(&mut editor.ui, accent);
     frame(&mut editor, &mut renderer);
     assert!(editor.color_picker_open(), "an accent's swatch opens the colour picker");
 
-    click(&mut editor.ui, rail);
     editor.select(obj(&editor, "Sun"));
     for _ in 0..12 {
         frame(&mut editor, &mut renderer);
@@ -3116,11 +3195,14 @@ fn the_inspector_puts_objs_on_the_layers_the_project_names() {
     let layer = editor.ui.find(editor.ui.root(), "obj-layer").unwrap();
     assert_eq!(editor.ui.selected_option(layer), 0);
 
-    // Add Layer…, after the layers, shows the project's in the Inspector.
+    // Add Layer…, after the layers, shows the project's in Project Settings ▸ Tags and Layers.
     choose(&mut editor, &mut renderer, layer, 3);
     frame(&mut editor, &mut renderer);
-    assert_eq!(editor.selected(), None);
-    let name = editor.ui.find(editor.ui.root(), "layer-name-4").expect("the Layers view");
+    frame(&mut editor, &mut renderer);
+    let title = editor.ui.find(editor.ui.root(), "project-settings-title").unwrap();
+    assert_eq!(editor.ui.text(title), "Tags and Layers");
+    let name = editor.ui.find(editor.ui.root(), "settings-layer-name-4").expect("the layers' names");
+    assert!(shown(&editor.ui, name));
     // A layer named and let go of is written to voxear.toml, and is in the matrix.
     type_into(&mut editor.ui, name, "Ghost");
     frame(&mut editor, &mut renderer);
@@ -3131,25 +3213,29 @@ fn the_inspector_puts_objs_on_the_layers_the_project_names() {
     assert!(written.starts_with("[project]"), "the rest of the file kept: {written}");
     let layers = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<voxear_scene::Layers>().cloned();
     assert_eq!(layers(&editor).unwrap().find("Ghost"), Some(4));
-    // A tick taken off keeps Enemy and Ghost apart.
-    let tick = editor.ui.find(editor.ui.root(), "layer-collide-3-4").expect("a tick for Enemy and Ghost");
-    let inspector = first_with(&editor.ui, editor.ui.root(), "inspector").unwrap();
-    let [_, top, ..] = editor.ui.rect(inspector);
-    let [_, at, ..] = editor.ui.rect(tick);
-    editor.ui.set_scroll(inspector, [0.0, at - top - 120.0]);
+    // A tick taken off, under Physics, keeps Enemy and Ghost apart.
+    editor.show_project_settings("Physics");
     frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let tick = editor.ui.find(editor.ui.root(), "layer-collide-3-4").expect("a tick for Enemy and Ghost");
+    assert!(shown(&editor.ui, tick));
     click(&mut editor.ui, tick);
     frame(&mut editor, &mut renderer);
     let written = std::fs::read_to_string(&project_file).unwrap();
     assert!(written.contains("ignore = [[\"Enemy\", \"Ghost\"]]"), "{written}");
     assert!(!layers(&editor).unwrap().collide(3, 4) && layers(&editor).unwrap().collide(4, 4));
     // A name another layer has is refused.
-    let name = editor.ui.find(editor.ui.root(), "layer-name-5").unwrap();
+    editor.show_project_settings("Tags and Layers");
+    frame(&mut editor, &mut renderer);
+    let name = editor.ui.find(editor.ui.root(), "settings-layer-name-5").unwrap();
     type_into(&mut editor.ui, name, "Enemy");
     frame(&mut editor, &mut renderer);
     editor.ui.blur();
     frame(&mut editor, &mut renderer);
     assert_eq!((layers(&editor).unwrap().name(5), editor.ui.text(name).as_str()), ("", ""));
+    editor.show_project_settings("Physics");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
     let [x, y, w, h] = editor.ui.rect(tick);
     editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
     frame(&mut editor, &mut renderer);
@@ -7708,14 +7794,14 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
     editor.select(Some(selected));
     frame(&mut editor, &mut renderer);
 
-    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    editor.show_project_settings("Modules");
     frame(&mut editor, &mut renderer);
-    let mut rows = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "module-row", &mut rows);
-    let water = rows.iter().copied().find(|&row| label_starting(&editor.ui, row, "Water").is_some()).unwrap();
-    let mut toggles = Vec::new();
-    with_class(&editor.ui, water, "checkbox", &mut toggles);
-    click(&mut editor.ui, toggles[0]);
+    frame(&mut editor, &mut renderer);
+    let shown = shown_settings(&editor.ui, "project-settings");
+    assert_eq!(shown.len(), Module::ALL.len(), "a toggle for each module: {shown:?}");
+    let water = setting_control(&editor.ui, "modules.water");
+    assert!(editor.ui.is_checked(water));
+    click(&mut editor.ui, water);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "project-settings.png");
@@ -7821,7 +7907,7 @@ fn a_particle_effect_opens_as_an_obj_an_emitter_and_saves_back_as_an_effect() {
 }
 
 #[test]
-fn project_settings_quality_tab_sets_the_particle_budget_in_the_project_file() {
+fn project_settings_quality_sets_the_particle_budget_in_the_project_file() {
     use voxear_render::{DEFAULT_PARTICLE_BUDGET, ParticleBudget};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         return eprintln!("skipping: no usable GPU");
@@ -7831,19 +7917,16 @@ fn project_settings_quality_tab_sets_the_particle_budget_in_the_project_file() {
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     let budget = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<ParticleBudget>().map(|b| b.0);
     assert_eq!(budget(&editor), Some(DEFAULT_PARTICLE_BUDGET), "a million until the project says otherwise");
-    editor.open_drawer(Some(voxear_editor::Drawer::Project));
     frame(&mut editor, &mut renderer);
-    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
-    let quality = label_starting(&editor.ui, tabs, "Quality").expect("a Quality tab");
-    click(&mut editor.ui, quality);
+    let rail = editor.ui.find(editor.ui.root(), "rail-project").unwrap();
+    click(&mut editor.ui, rail);
     frame(&mut editor, &mut renderer);
-    let label = label_starting(&editor.ui, editor.ui.root(), "Budget").expect("the budget's row");
-    let row = editor.ui.parent(label).unwrap();
-    assert!(editor.ui.is_visible(editor.ui.parent(row).unwrap()), "the Quality tab shows it");
-    let mut fields = Vec::new();
-    with_class(&editor.ui, row, "number-input", &mut fields);
-    assert_eq!(editor.ui.text(fields[0]), "1000000");
-    type_into(&mut editor.ui, fields[0], "250,000");
+    frame(&mut editor, &mut renderer);
+    pick_category(&mut editor, &mut renderer, "project-settings", "Quality");
+    assert!(shown(&editor.ui, setting_row(&editor.ui, "quality.particles")), "the Quality category shows it");
+    let field = setting_field(&editor.ui, "quality.particles", 0);
+    assert_eq!(editor.ui.text(field), "1000000");
+    type_into(&mut editor.ui, field, "250,000");
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -7856,7 +7939,7 @@ fn project_settings_quality_tab_sets_the_particle_budget_in_the_project_file() {
 }
 
 #[test]
-fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_file() {
+fn project_settings_world_switches_the_floating_origin_on_in_the_project_file() {
     use voxear_engine::origin::{OriginMode, OriginSettings};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         return eprintln!("skipping: no usable GPU");
@@ -7865,26 +7948,24 @@ fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_fil
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     assert_eq!(editor.game.project.file.floating_origin.mode, OriginMode::Off, "off until switched on");
-    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    editor.show_project_settings("World");
     frame(&mut editor, &mut renderer);
-    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
-    let world = label_starting(&editor.ui, tabs, "World").expect("a World tab");
-    click(&mut editor.ui, world);
     frame(&mut editor, &mut renderer);
-    let heading = label_starting(&editor.ui, editor.ui.root(), "Floating Origin").expect("its section");
-    let body = editor.ui.parent(heading).unwrap();
-    assert!(editor.ui.is_visible(body), "the World tab shows the floating origin");
-    let mut rows = Vec::new();
-    with_class(&editor.ui, editor.ui.root(), "module-row", &mut rows);
-    let modules = editor.ui.parent(rows[0]).unwrap();
-    assert!(!editor.ui.is_visible(modules), "in place of the modules");
-
-    let mut choices = Vec::new();
-    with_class(&editor.ui, body, "value-choice", &mut choices);
-    choose(&mut editor, &mut renderer, choices[0], 1);
-    let mut fields = Vec::new();
-    with_class(&editor.ui, body, "number-input", &mut fields);
-    type_into(&mut editor.ui, fields[1], "512");
+    assert_eq!(shown_settings(&editor.ui, "project-settings"), ["Mode", "Distance"], "Step is folded under Advanced");
+    let mode = setting_control(&editor.ui, "floating_origin.mode");
+    choose(&mut editor, &mut renderer, mode, 1);
+    let mut foldouts = Vec::new();
+    with_class(
+        &editor.ui,
+        editor.ui.parent(editor.ui.parent(setting_row(&editor.ui, "floating_origin.distance")).unwrap()).unwrap(),
+        "settings-advanced",
+        &mut foldouts,
+    );
+    let header = editor.ui.foldout_header(foldouts[0]).unwrap();
+    click(&mut editor.ui, header);
+    frame(&mut editor, &mut renderer);
+    let step = setting_field(&editor.ui, "floating_origin.step", 0);
+    type_into(&mut editor.ui, step, "512");
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -7895,7 +7976,7 @@ fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_fil
 }
 
 #[test]
-fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_number() {
+fn project_settings_quality_sets_the_block_worlds_budget_by_preset_or_by_number() {
     use voxear_terrain::{WorldBudget, WorldQuality};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         return eprintln!("skipping: no usable GPU");
@@ -7905,38 +7986,36 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     let budget = |editor: &voxear_editor::Editor| WorldBudget::of(&editor.game.engine.world);
     assert_eq!(budget(&editor), WorldBudget::default(), "High until the project says otherwise");
-    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    editor.show_project_settings("Quality");
     frame(&mut editor, &mut renderer);
-    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
-    let world = label_starting(&editor.ui, tabs, "World").expect("a World tab");
-    click(&mut editor.ui, world);
     frame(&mut editor, &mut renderer);
-    let heading = label_starting(&editor.ui, editor.ui.root(), "Block Worlds").expect("its section");
-    let body = editor.ui.parent(heading).unwrap();
-    assert!(editor.ui.is_visible(body), "on the World tab");
     // Low: every number its own, in the file and in the world at once.
-    let mut choices = Vec::new();
-    with_class(&editor.ui, body, "value-choice", &mut choices);
-    choose(&mut editor, &mut renderer, choices[1], 0);
+    let quality = setting_control(&editor.ui, "world.quality");
+    choose(&mut editor, &mut renderer, quality, 0);
     frame(&mut editor, &mut renderer);
     let low = WorldQuality::Low.budget().unwrap();
     assert_eq!(Project::open(dir.path()).unwrap().file.world, low, "voxear.toml has it");
     assert_eq!(budget(&editor), low, "and worlds take it up from now on");
-    let mut fields = Vec::new();
-    with_class(&editor.ui, body, "number-input", &mut fields);
-    // After the floating origin's distance and step: threads, columns, upload, view and far distance, and the
-    // near, far and plant details.
-    let shown: Vec<String> = fields[2..].iter().map(|&field| editor.ui.text(field)).collect();
-    assert_eq!(shown, ["2", "2", "4", "64", "1024", "0.5", "0.5", "0.5"]);
+    let keys =
+        ["threads", "columns", "upload", "view_distance", "far_distance", "near_detail", "far_detail", "plant_detail"];
+    let numbers: Vec<String> =
+        keys.iter().map(|key| editor.ui.text(setting_field(&editor.ui, &format!("world.{key}"), 0))).collect();
+    assert_eq!(numbers, ["2", "2", "4", "64", "1024", "0.5", "0.5", "0.5"]);
     // A number typed makes it Custom, the rest kept.
-    type_into(&mut editor.ui, fields[3], "6");
+    editor.show_setting("world.columns");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let columns = setting_field(&editor.ui, "world.columns", 0);
+    assert!(shown(&editor.ui, columns), "shown under Advanced");
+    type_into(&mut editor.ui, columns, "6");
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let custom = WorldBudget { quality: WorldQuality::Custom, columns: 6, ..low };
     assert_eq!(Project::open(dir.path()).unwrap().file.world, custom);
     assert_eq!(budget(&editor), custom);
-    assert_eq!(editor.ui.selected_option(choices[1]), 4, "Custom shows");
+    assert_eq!(editor.ui.selected_option(quality), 4, "Custom shows");
+    assert!(editor.ui.has_class(setting_row(&editor.ui, "world.columns"), "changed"), "changed from High's");
     shot(&mut renderer, "project-settings-block-worlds.png");
     // High again, the file says nothing of it.
     editor.set_world_budget(&WorldBudget::default());
@@ -7947,12 +8026,12 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     let saves = tempfile::tempdir().unwrap();
     let file = saves.path().join(voxear_terrain::budget::MACHINE_FILE);
     voxear_terrain::MachineBudget::open(&mut editor.game.engine.world, WorldBudget::default(), Some(file.clone()));
-    let mut toggles = Vec::new();
-    with_class(&editor.ui, body, "checkbox", &mut toggles);
-    click(&mut editor.ui, toggles[0]);
+    let machine = setting_control(&editor.ui, "world.machine");
+    click(&mut editor.ui, machine);
     frame(&mut editor, &mut renderer);
     assert!(file.is_file() && voxear_terrain::MachineBudget::of(&editor.game.engine.world).kept);
-    type_into(&mut editor.ui, fields[9], "2");
+    let plants = setting_field(&editor.ui, "world.plant_detail", 0);
+    type_into(&mut editor.ui, plants, "2");
     editor.ui.key_down(Key::Enter);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
@@ -7961,12 +8040,154 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
     assert!(!text.contains("[world]"), "the project's as it was: {text}");
     // Off again: the machine's forgotten, the project's back.
-    click(&mut editor.ui, toggles[0]);
+    click(&mut editor.ui, machine);
     frame(&mut editor, &mut renderer);
     assert!(!file.exists());
     assert_eq!(budget(&editor), WorldBudget::default());
 }
 
+#[test]
+fn project_settings_lists_every_category_with_tooltips_and_finds_settings_by_their_words() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let rail = editor.ui.find(editor.ui.root(), "rail-project").unwrap();
+    assert_eq!(editor.ui.tooltip(rail), Some("Project Settings"));
+    click(&mut editor.ui, rail);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.drawer(), Some(voxear_editor::Drawer::Project), "in the side bar's drawer");
+    let names: Vec<String> =
+        setting_categories(&editor.ui, "project-settings").into_iter().map(|label| editor.ui.text(label)).collect();
+    let expected: Vec<&str> = voxear_editor::project_settings::CATEGORIES.iter().map(|c| c.name).collect();
+    assert_eq!(names, expected);
+    assert!(names.starts_with(&["Audio".into(), "Content".into(), "Graphics".into()]), "in order, as a list of names");
+    // Every row of every category says what it does.
+    for name in &expected {
+        pick_category(&mut editor, &mut renderer, "project-settings", name);
+        let panel = editor.ui.find(editor.ui.root(), "project-settings-panel").unwrap();
+        let mut rows = Vec::new();
+        with_class(&editor.ui, panel, "setting", &mut rows);
+        let rows: Vec<NodeId> = rows.into_iter().filter(|&row| shown(&editor.ui, row)).collect();
+        assert!(!rows.is_empty() || ["Tags and Layers", "Localization"].contains(name), "{name} shows settings");
+        for row in rows {
+            let label = editor.ui.children(row)[0];
+            let named = editor.ui.text(label);
+            // A part of its own, as the layers' names, has its tooltip on its section's title.
+            let part = editor.ui.parent(row).is_some_and(|parent| editor.ui.has_class(parent, "setting-part"));
+            assert!(
+                part || editor.ui.tooltip(label).is_some_and(|tip| tip.len() > 20),
+                "{name} ▸ {named} has a tooltip"
+            );
+        }
+        if ["Audio", "Physics", "Network", "Time"].contains(name) {
+            for _ in 0..6 {
+                frame(&mut editor, &mut renderer);
+            }
+            shot(&mut renderer, &format!("project-settings-{}.png", name.to_lowercase()));
+        }
+    }
+    let title = editor.ui.find(editor.ui.root(), "project-settings-title").unwrap();
+    assert_eq!(editor.ui.text(title), "World");
+
+    // Gravity is in Physics and in Physics 2D: both found, under their categories.
+    search_settings(&mut editor, &mut renderer, "project-settings", "gravity");
+    assert_eq!(shown_settings(&editor.ui, "project-settings"), ["Gravity", "Gravity"]);
+    let listed: Vec<String> =
+        setting_categories(&editor.ui, "project-settings").into_iter().map(|label| editor.ui.text(label)).collect();
+    assert_eq!(listed, ["Physics", "Physics 2D"]);
+    // An advanced setting found shows, its foldout opened, and folds away again after.
+    search_settings(&mut editor, &mut renderer, "project-settings", "upload a frame");
+    let upload = setting_row(&editor.ui, "world.upload");
+    assert!(shown(&editor.ui, upload), "found under Advanced");
+    shot(&mut renderer, "project-settings-search.png");
+    search_settings(&mut editor, &mut renderer, "project-settings", "");
+    pick_category(&mut editor, &mut renderer, "project-settings", "Quality");
+    assert!(!shown(&editor.ui, upload), "folded away again");
+}
+
+#[test]
+fn a_project_setting_changed_in_the_window_is_written_marked_and_set_back() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let file = || std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    editor.show_project_settings("Audio");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // A toggle: written into voxear.toml, marked as changed, and heard at once.
+    let reverb = setting_control(&editor.ui, "audio.reverb");
+    click(&mut editor.ui, reverb);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(file().contains("[audio]\nreverb = true"), "{}", file());
+    assert!(editor.game.audio.reverb, "rooms ring from now on");
+    assert!(editor.ui.has_class(setting_row(&editor.ui, "audio.reverb"), "changed"));
+    let mode = setting_control(&editor.ui, "audio.reverb_mode");
+    choose(&mut editor, &mut renderer, mode, 1);
+    assert!(file().contains("reverb_mode = \"convolution\""), "a choice by the word the file writes: {}", file());
+
+    // A number, kept within its range.
+    editor.show_project_settings("Network");
+    frame(&mut editor, &mut renderer);
+    let ticks = setting_field(&editor.ui, "network.tick_rate", 0);
+    type_into(&mut editor.ui, ticks, "1000");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(Project::open(dir.path()).unwrap().file.network.tick_rate, 240, "the most it may be");
+
+    // A vector, and the steps of time, new settings of the engine's.
+    editor.show_project_settings("Physics");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let down = setting_field(&editor.ui, "physics.gravity", 1);
+    type_into(&mut editor.ui, down, "-3.7");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(Project::open(dir.path()).unwrap().file.physics.gravity, [0.0, -3.7, 0.0]);
+    let gravity = editor.game.engine.world.resource::<voxear_engine::StartingGravity>().copied().unwrap();
+    assert_eq!(gravity.three, Vec3::new(0.0, -3.7, 0.0), "worlds start with it");
+    shot(&mut renderer, "project-settings-gravity.png");
+    editor.show_project_settings("Time");
+    frame(&mut editor, &mut renderer);
+    let step = setting_field(&editor.ui, "time.fixed_step", 0);
+    type_into(&mut editor.ui, step, "0.01");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(file().contains("[time]\nfixed_step = 0.01"), "{}", file());
+
+    // A row's menu sets it back, and the category's menu all of it.
+    editor.show_project_settings("Audio");
+    frame(&mut editor, &mut renderer);
+    let row = setting_row(&editor.ui, "audio.reverb");
+    context_click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    let reset = menu_item(&editor.ui, "Reset to Default").expect("a row's menu");
+    click(&mut editor.ui, reset);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!file().contains("reverb = true") && file().contains("reverb_mode"), "{}", file());
+    assert!(!editor.ui.has_class(setting_row(&editor.ui, "audio.reverb"), "changed"));
+    let panel = editor.ui.find(editor.ui.root(), "project-settings-panel").unwrap();
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, panel, "icon-button", &mut buttons);
+    let more = buttons
+        .into_iter()
+        .find(|&b| editor.ui.tooltip(b).is_some_and(|t| t.starts_with("Reset this category")))
+        .unwrap();
+    click(&mut editor.ui, more);
+    frame(&mut editor, &mut renderer);
+    let all = menu_item(&editor.ui, "Reset Category").expect("the category's menu");
+    click(&mut editor.ui, all);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!file().contains("[audio]"), "Audio as it was: {}", file());
+    assert!(file().contains("[physics]"), "the other categories kept: {}", file());
+}
 
 /// A model file with two clips, Walk and Sneak, on a two-bone skeleton, its
 /// data beside it.

@@ -20,7 +20,7 @@ Select an instance, and the Inspector shows a **Prefab** row with the prefab's n
 
 ## Seeing what is inside a prefab
 
-Select a prefab in the Project panel to see the Objs it holds in the Inspector. To see them in the Project panel itself, as Unity shows a prefab's contents, open **Settings**, from the strip on the far left, and turn on **Open out prefabs to their Objs** under **Project panel**. Prefabs then get an arrow that opens them out, as models do.
+Select a prefab in the Project panel to see the Objs it holds in the Inspector. To see them in the Project panel itself, open **Preferences**, from the strip on the far left, and turn on **Open out prefabs** under **General**. Prefabs then get an arrow that opens them out, as models do.
 
 ## Changing a prefab
 

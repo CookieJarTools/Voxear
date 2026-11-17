@@ -15,10 +15,20 @@ static const uint3 BLOCK_AXES[6] = {
     uint3(0, 1, 2), uint3(0, 2, 1), uint3(1, 2, 0), uint3(1, 0, 2), uint3(2, 0, 1), uint3(2, 1, 0)
 };
 
-// A quad's corners in the order its triangles take them: split from its first corner to its third, or from its
-// second to its fourth.
+// A quad's corners in the order its two triangles take them, six vertices to a quad, as its water is drawn. Its ground
+// is drawn four vertices to a quad, which an index buffer takes in this order (src/blocks.rs, `quad_indices`).
 static const uint BLOCK_CORNERS[6] = { 0, 1, 2, 0, 2, 3 };
-static const uint BLOCK_FLIPPED[6] = { 1, 2, 3, 1, 3, 0 };
+
+// Where in the world's pool the run of quads a draw draws starts, past `push.output`: a list of runs drawn as one
+// indirect draw gives each run's first quad as its first instance (src/blocks.rs, `ViewBlocks::write_draws`), which
+// the vertex shader sets this to; a run drawn alone gives it in `push.output`.
+static uint blockRunStart = 0;
+
+// The first quad, or smooth corner's first word, of the run being drawn.
+uint blockRun()
+{
+    return push.output + blockRunStart;
+}
 
 float3 blockAxis(uint axis)
 {
@@ -131,7 +141,7 @@ float2 blockSheetSize(uint loose, uint sheet)
 // chunk: a sheet of a bushy block's leaves, crossed through the block's middle and reaching out past it, or a
 // sheet of a vine. Seen from both sides: its corners are taken the other way round where `eye` is behind it, so
 // it is never turned away. It shrinks to nothing over the last quarter of the way to where loose quads end.
-BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
+BlockPoint loosePoint(BlockWorld world, uint2 quad, uint taken, float3 eye)
 {
     uint first = quad.x;
     uint3 at = uint3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
@@ -181,11 +191,11 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
     // Shrunk away before the distance loose quads stop at.
     float away = length(centre - eye) / (BLOCK_LOOSE_REACH * blockSize);
     float shown = kind == BLOCK_TUFT ? 1.0 - smoothstep(0.75, 1.0, away) : 1.0;
-    // Its corners in order, or the other way round seen from behind.
-    static const uint ORDER[6] = { 0, 1, 2, 0, 2, 3 };
-    static const uint TURNED[6] = { 0, 2, 1, 0, 3, 2 };
+    // Its corners as its triangles take them, or seen from behind mirrored across it, which takes each triangle's
+    // corners the other way round.
+    static const uint MIRRORED[4] = { 0, 3, 2, 1 };
     bool behind = dot(eye - centre, facing) < 0.0;
-    uint corner = behind ? TURNED[vertex] : ORDER[vertex];
+    uint corner = behind ? MIRRORED[taken] : taken;
     float2 sign = float2(corner == 1 || corner == 2 ? 1.0 : -1.0, corner >= 2 ? 1.0 : -1.0);
     float3 offset = (across * sign.x + up * sign.y) * shown;
     BlockPoint b;
@@ -216,11 +226,11 @@ BlockPoint loosePoint(BlockWorld world, uint2 quad, uint vertex, float3 eye)
     return b;
 }
 
-// Vertex `vertexId` of a world drawn smooth: its corners one after another in the world's pool from `push.output` on,
+// Vertex `vertexId` of a world drawn smooth: its corners one after another in the world's pool from the run's start on,
 // two pairs of words each. Its surface is its block's top, sides and bottom, a byte each.
 BlockPoint smoothPoint(BlockWorld world, uint vertexId)
 {
-    uint at = push.output + vertexId * 2;
+    uint at = blockRun() + vertexId * 2;
     uint2 first = world.quads[at];
     uint2 second = world.quads[at + 1];
     // In 1024ths of a block from two blocks before its chunk's corner.
@@ -255,19 +265,27 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     return b;
 }
 
-// The surfaces of corner `corner` of a world drawn smooth, counted from `push.output` on: its ground's top, sides and
+// The surfaces of corner `corner` of a world drawn smooth, counted from the run's start on: its ground's top, sides and
 // bottom, a byte each.
 uint smoothSurfaces(BlockWorld world, uint corner)
 {
-    uint2 second = world.quads[push.output + corner * 2 + 1];
+    uint2 second = world.quads[blockRun() + corner * 2 + 1];
     return (second.y & 0xFFFF) | ((second.x >> 24) << 16);
 }
 
-// Vertex `vertexId` of a quad of `world`: six to a quad, its quads one after another in the world's pool from
-// `push.output` on.
+// Vertex `vertexId` of a quad of `world`, six to a quad, its quads one after another in the world's pool from the
+// run's start on, as its water is drawn.
 BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
 {
-    uint2 quad = world.quads[push.output + vertexId / 6];
+    return cubeCorner(world, vertexId / 6, BLOCK_CORNERS[vertexId % 6], loose);
+}
+
+// Corner `taken` of quad `index` of the run of `world`'s quads being drawn, as its triangles take them (0, 1, 2 and
+// 0, 2, 3): split from its first corner to its third, or, where its shading runs the other way, from its second to
+// its fourth.
+BlockPoint cubeCorner(BlockWorld world, uint index, uint taken, bool loose)
+{
+    uint2 quad = world.quads[blockRun() + index];
     uint first = quad.x;
     uint3 at = uint3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
     float2 size = float2(((first >> 15) & 31) + 1, ((first >> 20) & 31) + 1);
@@ -294,16 +312,15 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
     }
     uint facing = (first >> 25) & 7;
     // A face of a box of a block of parts, two quads' words, and the second of them, which draws nothing.
-    uint index = push.output + vertexId / 6;
     if (facing == BLOCK_VINE && (first & BLOCK_PART_HEAD) != 0)
     {
-        BlockPoint part = partPoint(world, quad, world.quads[push.output + vertexId / 6 + 1], vertexId % 6);
-        part.lit = blockCornerLight(world, index, 0);
+        BlockPoint part = partPoint(world, quad, world.quads[blockRun() + index + 1], taken);
+        part.lit = blockCornerLight(world, blockRun() + index, 0);
         return part;
     }
     if (facing == BLOCK_VINE && (first & BLOCK_PART_TAIL) != 0)
     {
-        BlockPoint none = partPoint(world, world.quads[push.output + vertexId / 6 - 1], quad, 0);
+        BlockPoint none = partPoint(world, world.quads[blockRun() + index - 1], quad, 0);
         return none;
     }
     if (facing >= BLOCK_TUFT && loose)
@@ -311,8 +328,8 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
         // A lamp's shadow is kept from frame to frame, so its sheets are as its lamp sees them, wherever the camera is.
         bool lamp = push.list >= LIST_LOCAL_SHADOW && push.list < LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
         float3 eye = lamp ? push.frame->localShadows.casters[push.list - LIST_LOCAL_SHADOW].xyz : push.frame->cameraPosition;
-        BlockPoint sheet = loosePoint(world, quad, vertexId % 6, eye);
-        sheet.lit = blockCornerLight(world, index, 0);
+        BlockPoint sheet = loosePoint(world, quad, taken, eye);
+        sheet.lit = blockCornerLight(world, blockRun() + index, 0);
         return sheet;
     }
     uint4 shades = (uint4(quad.y) >> uint4(8, 10, 12, 14)) & 3;
@@ -325,12 +342,12 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId, bool loose = false)
         float4 bright;
         for (uint c = 0; c < 4; c++)
         {
-            lights[c] = blockCornerLight(world, index, c);
+            lights[c] = blockCornerLight(world, blockRun() + index, c);
             bright[c] = (float(shades[c]) + 1.0) * (0.1 + max(lights[c].x, lights[c].y));
         }
         flip = bright.x + bright.z < bright.y + bright.w;
     }
-    uint corner = flip ? BLOCK_FLIPPED[vertexId % 6] : BLOCK_CORNERS[vertexId % 6];
+    uint corner = flip ? (taken + 1) & 3 : taken;
     uint3 axes = BLOCK_AXES[facing];
     bool out = (facing & 1) == 0;
     // Its face is on the block's far side along a facing it faces along, on its near side against one.
@@ -468,9 +485,10 @@ float3 hangSwing(Frame* frame, float3 anchor, int3 holder, float swing, float ti
     return normalize(cross(float3(0.0, -1.0, 0.0), way)) * (min(amount, 1.0) * swing);
 }
 
-// Corner `vertex` of a face of a box of a block of parts (voxear_terrain::blocks::mesh::PartQuad), from its two
-// quads' words: posed by its block's motion where it moves, swung where its block hangs. Where it rests unmoved and
-// how its motion has carried it are kept for its pictures, which stay on it as it moves.
+// Corner `vertex` (as its triangles take them) of a face of a box of a block of parts
+// (voxear_terrain::blocks::mesh::PartQuad), from its two quads' words: posed by its block's motion where it moves,
+// swung where its block hangs. Where it rests unmoved and how its motion has carried it are kept for its pictures,
+// which stay on it as it moves.
 BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
 {
     Frame* frame = push.frame;
@@ -485,7 +503,7 @@ BlockPoint partPoint(BlockWorld world, uint2 head, uint2 tail, uint vertex)
     bool open = ((tail.x >> 16) & 1) != 0;
     float3 axis = blockFacingWay((tail.x >> 17) & 7);
     float3 pivot = float3(tail.y & 31, (tail.y >> 5) & 31, (tail.y >> 10) & 31) * 0.5;
-    uint corner = BLOCK_CORNERS[vertex];
+    uint corner = vertex;
     uint3 axes = BLOCK_AXES[facing];
     bool out = (facing & 1) == 0;
     // In sixteenths of its block, from its corner.
@@ -592,6 +610,7 @@ BlockPoint blockPoint(uint vertexId)
     {
         return smoothPoint(world, vertexId);
     }
-    BlockPoint b = cubePoint(world, vertexId, true);
+    // Four vertices a quad, which the index buffer takes as its two triangles.
+    BlockPoint b = cubeCorner(world, vertexId / 4, vertexId % 4, true);
     return (world.flags & BLOCKS_TURNED) != 0 ? turnedPoint(world, b) : b;
 }

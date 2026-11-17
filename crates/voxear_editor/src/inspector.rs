@@ -56,7 +56,6 @@ use crate::{
     field_drawers::{DrawerUi, FieldDrawers, ToOpen},
     fields::{self, Pick, Step},
     history::{Edit, ObjState},
-    layers_view::{LayersEdit, LayersView},
     lod_inspector::{GroupLods, LodEdge, LodEye, MeshLods},
     object_picker::{Choice, Chosen},
     part_inspector::{PartAction, PartView},
@@ -342,8 +341,6 @@ pub struct Inspector {
     data: Option<(ProjectItem, Entity)>,
     /// A part of a model an Obj draws whole, when that is what it shows.
     part: Option<PartView>,
-    /// The project's layers, when that is what it shows.
-    layers: Option<LayersView>,
     /// A node of a World Generator's graph, when that is what it shows.
     node: Option<crate::world_gen_inspector::NodeView>,
     /// A bone or box of the box model open in the Model window, when that is what it shows.
@@ -465,7 +462,6 @@ impl Inspector {
             asset: None,
             data: None,
             part: None,
-            layers: None,
             node: None,
             box_part: None,
             wants_layers: false,
@@ -922,7 +918,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.layers, self.node, self.box_part) = (None, None, None);
+        (self.node, self.box_part) = (None, None);
         self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
     }
 
@@ -938,7 +934,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.asset, self.layers, self.node, self.box_part) = (None, None, None, None);
+        (self.asset, self.node, self.box_part) = (None, None, None);
         self.part = Some(view);
     }
 
@@ -950,21 +946,6 @@ impl Inspector {
     /// What the model's part shown asks of the editor this frame.
     pub fn update_part(&mut self, ui: &mut Ui) -> Option<PartAction> {
         self.part.as_mut()?.update(ui)
-    }
-
-    /// Shows the project's layers, and which collide, in place of an Obj,
-    /// as Unity's Tags and Layers does (see `layers_view`).
-    pub fn show_layers(&mut self, ui: &mut Ui, layers: &Layers) {
-        self.shown = None;
-        (self.part, self.data) = (None, None);
-        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
-        self.headers.clear();
-        self.rows.clear();
-        (self.asset, self.node, self.box_part) = (None, None, None);
-        for child in ui.children(self.root) {
-            ui.remove(child);
-        }
-        self.layers = Some(LayersView::build(ui, self.root, layers));
     }
 
     /// Shows node `node` of the graph of `world`, the World Generator at `path`, in place of an
@@ -982,7 +963,7 @@ impl Inspector {
             return false;
         };
         self.shown = None;
-        (self.part, self.data, self.asset, self.layers, self.box_part) = (None, None, None, None, None);
+        (self.part, self.data, self.asset, self.box_part) = (None, None, None, None);
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -1003,7 +984,7 @@ impl Inspector {
             return false;
         };
         self.shown = None;
-        (self.part, self.data, self.asset, self.layers, self.node) = (None, None, None, None, None);
+        (self.part, self.data, self.asset, self.node) = (None, None, None, None);
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -1034,16 +1015,6 @@ impl Inspector {
     /// Where its rows are built, which takes its presses.
     pub fn root(&self) -> NodeId {
         self.root
-    }
-
-    /// The change made to the project's layers this frame, when it shows them.
-    pub fn update_layers(&mut self, ui: &mut Ui) -> Option<LayersEdit> {
-        self.layers.as_mut()?.update(ui)
-    }
-
-    /// The project's layers shown, when they are.
-    pub fn layers_view(&mut self) -> Option<&mut LayersView> {
-        self.layers.as_mut()
     }
 
     /// Whether Add Layer… was picked from the Layer menu since the last call.
@@ -1093,7 +1064,6 @@ impl Inspector {
 
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         self.asset = None;
-        self.layers = None;
         self.node = None;
         self.box_part = None;
         self.part = None;

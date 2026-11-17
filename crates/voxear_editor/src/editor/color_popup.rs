@@ -15,7 +15,7 @@ use crate::{
     asset_inspector::MaterialColor,
     history::{Edit, ObjState},
     props::{self, Prop, Value},
-    settings::{self, SettingValue},
+    settings,
 };
 
 /// How far the picker keeps from the window's edges.
@@ -95,13 +95,6 @@ impl Editor {
             let target = Target::PageMaterial(which, place);
             return self.open_color(target, swatch, title, (color, which == MaterialColor::Emission));
         }
-        if let Some((key, swatch)) = self.settings_panel.color_clicked(&self.ui)
-            && let Some(SettingValue::Color(hex)) = self.memory.settings.get(key)
-        {
-            let title = settings::info(key).map_or(key, |info| info.title);
-            let srgb = [hex >> 16, hex >> 8, hex].map(|c| (c & 0xff) as f32 / 255.0);
-            return self.open_color(Target::Setting(key), swatch, title, (PickedColor::srgb(srgb), false));
-        }
         let lighting = self.lighting_panel.color_clicked(&self.ui);
         let clicked = lighting.or_else(|| self.inspector.asset_view().and_then(|view| view.lighting_color_clicked(&self.ui)));
         if let Some(clicked) = clicked {
@@ -149,10 +142,22 @@ impl Editor {
             }
             Some((Target::Setting(key), _)) => {
                 let [r, g, b] = color.srgb.map(|c| (c * 255.0).round() as u32);
-                self.memory.settings.set(key, SettingValue::Color(r << 16 | g << 8 | b));
+                let hex = serde_json::Value::from(format!("#{:06x}", r << 16 | g << 8 | b));
+                self.memory.settings.set_value(key, &hex);
             }
             None => {}
         }
+    }
+
+    /// Opens the picker under a colour setting's swatch in Preferences.
+    pub(super) fn open_setting_color(&mut self, key: &'static str, swatch: NodeId) {
+        let hex = self.memory.settings.value(key).and_then(|value| {
+            value.as_str().and_then(|text| text.strip_prefix('#')).and_then(|hex| u32::from_str_radix(hex, 16).ok())
+        });
+        let Some(hex) = hex else { return };
+        let title = settings::info(key).map_or(key, |info| info.label);
+        let srgb = [hex >> 16, hex >> 8, hex].map(|c| (c & 0xff) as f32 / 255.0);
+        self.open_color(Target::Setting(key), swatch, title, (PickedColor::srgb(srgb), false));
     }
 
     /// Closes the picker. What it changed on an Obj is one step to undo, and

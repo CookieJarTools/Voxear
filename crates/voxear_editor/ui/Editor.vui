@@ -115,7 +115,7 @@
         </Panel>
         <!-- Debug draw's texts, at the points in the 3D view they name. Under the drawer and menus. -->
         <Panel name="debug-texts" class="debug-texts" />
-        <!-- Opens from the rail over the dock's left side: Levels, Lighting, Project Settings, or Settings. -->
+        <!-- Opens from the rail over the dock's left side: Levels, Lighting, Project Settings or Preferences. -->
         <Panel name="drawer" class="drawer">
             <Panel class="drawer-header">
                 <Label name="drawer-title" class="drawer-title">Levels</Label>
@@ -143,25 +143,12 @@
                     </Panel>
                 </Panel>
             </Panel>
+            <!-- Built in code (see `settings_window`), wider than the other pages. -->
             <Panel name="drawer-project" class="fill drawer-page">
-                <Panel class="fill settings-root">
-                    <Panel name="project-tabs" class="settings-tabs" />
-                    <Panel class="settings-main">
-                        <ScrollView name="project-settings" class="fill settings" />
-                    </Panel>
-                </Panel>
+                <Panel name="project-settings-panel" class="fill" />
             </Panel>
-            <Panel name="drawer-settings" class="fill drawer-page">
-                <Panel class="fill settings-root">
-                    <Panel name="settings-tabs" class="settings-tabs" />
-                    <Panel class="settings-main">
-                        <Panel class="search">
-                            <Icon icon="search" class="search-icon" />
-                            <TextField name="settings-filter" class="search-field" placeholder="Search settings" />
-                        </Panel>
-                        <ScrollView name="settings" class="fill settings" />
-                    </Panel>
-                </Panel>
+            <Panel name="drawer-preferences" class="fill drawer-page">
+                <Panel name="preferences-panel" class="fill" />
             </Panel>
         </Panel>
         <!-- The colour picker, under the swatch it opened from; the picker itself is built in code. -->

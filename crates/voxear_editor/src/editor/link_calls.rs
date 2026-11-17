@@ -30,9 +30,11 @@ use crate::{
     objs::{self, Destination, NEW_OBJS},
     palette,
     project_files::{self, NewFile},
+    project_settings,
     project_view::ProjectEvent,
     props::{self, Part, Value},
-    settings::{self, SettingKind, SettingValue},
+    setting_info,
+    settings::{self, Settings},
 };
 
 /// How often an editor waiting for the link asks for it again.
@@ -478,8 +480,18 @@ impl Editor {
             }
             "lighting.get" => self.lighting_get(renderer),
             "lighting.set" => self.lighting_set(args, renderer),
-            "settings.get" => done(self.settings_json()),
+            "settings.get" => done(self.settings_json(args)),
             "settings.set" => self.settings_set(args),
+            "settings.show" => {
+                let key = need_text(args, "key")?;
+                if !self.show_setting(key) {
+                    return Err(bad(format!(
+                        "no setting has the key `{key}`; `settings.get` and `project_settings.get` list them"
+                    )));
+                }
+                done(json!({}))
+            }
+            "project_settings.get" => done(self.project_settings_json(args)),
             "project.get" => {
                 let text = std::fs::read_to_string(self.game.project.root.join(voxear_engine::PROJECT_FILE))
                     .map_err(|error| refuse(ErrorKind::Failed, format!("reading voxear.toml: {error}")))?;
@@ -490,6 +502,13 @@ impl Editor {
             "project.set" => self.project_set(args),
             "docs.search" => done(self.docs_search(args)),
             "docs.read" => self.docs_read(need_text(args, "reference")?),
+            "layout.use" => {
+                let name = need_text(args, "name")?;
+                match self.use_layout(name) {
+                    true => done(json!({ "layout": self.layout_name() })),
+                    false => Err(bad(format!("no layout is called `{name}`; the Layout menu lists them"))),
+                }
+            }
             "editor.wait" => {
                 let frames = args.get("frames").and_then(Json::as_u64).unwrap_or(1).clamp(1, 600) as u32;
                 Ok(Outcome::Later(Waiting::Frames(frames)))
@@ -1684,110 +1703,61 @@ impl Editor {
         done(self.world_quality_json())
     }
 
-    fn settings_json(&self) -> Json {
-        let settings = &self.memory.settings;
-        let listed: Vec<Json> = settings::SETTINGS
-            .iter()
-            .map(|info| {
-                let (kind, value, options) = match (settings.get(info.key), info.kind) {
-                    (Some(SettingValue::Toggle(on)), _) => ("toggle", json!(on), None),
-                    (Some(SettingValue::Choice(at)), SettingKind::Choice(options)) => {
-                        ("choice", json!(options.get(at)), Some(options))
-                    }
-                    (Some(SettingValue::Number(number)), _) => ("number", json!(number), None),
-                    (Some(SettingValue::Color(color)), _) => ("color", json!(format!("#{color:06x}")), None),
-                    (None, SettingKind::Folder) => {
-                        ("folder", json!(settings.folder(info.key).map(|folder| folder.display().to_string())), None)
-                    }
-                    _ => ("none", Json::Null, None),
-                };
-                let mut shown =
-                    json!({ "key": info.key, "title": info.title, "group": info.group, "type": kind, "value": value });
-                if let Some(options) = options {
-                    shown["options"] = json!(options);
-                }
-                shown
-            })
-            .collect();
-        json!({ "settings": listed })
+    /// Preferences' settings, as `settings.get` lists them: every one, or
+    /// a category's, or those a search finds.
+    fn settings_json(&self, args: &Json) -> Json {
+        let (settings, defaults) = (&self.memory.settings, Settings::default());
+        let value = |key: &str| (settings.value(key).unwrap_or(Json::Null), defaults.value(key).unwrap_or(Json::Null));
+        listed_settings(settings::PREFERENCES, settings::CATEGORIES, args, &value)
+    }
+
+    /// Project Settings' settings, as `project_settings.get` lists them.
+    fn project_settings_json(&self, args: &Json) -> Json {
+        let values = project_settings::values(&self.game);
+        let value = |key: &str| values.get(key).cloned().unwrap_or((Json::Null, Json::Null));
+        listed_settings(project_settings::settings(), project_settings::CATEGORIES, args, &value)
     }
 
     fn settings_set(&mut self, args: &Json) -> Called {
         let key = need_text(args, "key")?;
         let info = settings::info(key)
             .ok_or_else(|| bad(format!("no setting has the key `{key}`; `settings.get` lists them")))?;
-        // A folder's value may be null, for none.
-        let value = match info.kind {
-            SettingKind::Folder => args.get("value").unwrap_or(&Json::Null),
-            _ => need(args, "value")?,
+        // Null sets it back to its default, or for a folder, to none.
+        let value = args.get("value").unwrap_or(&Json::Null);
+        if value.is_null() && !info.settable() {
+            return Err(refuse(ErrorKind::WrongValue, format!("{} is not changed by a value", info.label)));
+        }
+        let checked = if value.is_null() {
+            Json::Null
+        } else {
+            setting_info::check(info, value).map_err(|why| refuse(ErrorKind::WrongValue, why))?
         };
-        let wrong = || refuse(ErrorKind::WrongValue, format!("{value} is not a value for {}", info.title));
-        let setting = match info.kind {
-            SettingKind::Toggle => SettingValue::Toggle(value.as_bool().ok_or_else(wrong)?),
-            SettingKind::Choice(options) => {
-                let word = value.as_str().ok_or_else(wrong)?;
-                SettingValue::Choice(options.iter().position(|o| o.eq_ignore_ascii_case(word)).ok_or_else(wrong)?)
-            }
-            SettingKind::Number { .. } => SettingValue::Number(value.as_f64().ok_or_else(wrong)? as f32),
-            SettingKind::Color => {
-                let hex = value.as_str().and_then(|text| text.strip_prefix('#')).ok_or_else(wrong)?;
-                SettingValue::Color(u32::from_str_radix(hex, 16).map_err(|_| wrong())?)
-            }
-            // A folder is its path, which must be there, or null for none.
-            SettingKind::Folder => {
-                let folder = match value {
-                    Json::Null => None,
-                    _ => Some(PathBuf::from(value.as_str().ok_or_else(wrong)?)).filter(|folder| folder.is_dir()),
-                };
-                if folder.is_none() && !value.is_null() {
-                    return Err(refuse(ErrorKind::WrongValue, format!("no folder at {value}")));
-                }
-                if self.memory.settings.set_folder(key, folder) {
-                    self.memory.save();
-                }
-                tracing::info!("[Tools] settings.set {key}");
-                return done(json!({ "value": self.memory.settings.describe(info) }));
-            }
-        };
-        // Tools may let themselves read only, but not give themselves leave to change.
-        if key == "tools_may_change" && setting == SettingValue::Toggle(true) && !self.memory.settings.tools_may_change
+        if info.kind == setting_info::Kind::Folder
+            && let Some(folder) = checked.as_str()
+            && !std::path::Path::new(folder).is_dir()
         {
+            return Err(refuse(ErrorKind::WrongValue, format!("no folder at {folder}")));
+        }
+        // Tools may let themselves read only, but not give themselves leave to change, by its default either.
+        let wanted =
+            if checked.is_null() { Settings::default().value(key).unwrap_or(Json::Null) } else { checked.clone() };
+        if key == "tools_may_change" && wanted == Json::Bool(true) && !self.memory.settings.tools_may_change {
             return Err(refuse(ErrorKind::NotAllowed, "only the person at the editor lets tools change the project"));
         }
-        if self.memory.settings.set(key, setting) {
-            self.memory.save();
-            self.apply_settings();
-        }
+        self.set_preference(info.key, &checked);
         tracing::info!("[Tools] settings.set {key}");
-        let now = self.memory.settings.describe(info);
-        done(json!({ "value": now }))
+        done(json!({ "value": self.memory.settings.value(key).unwrap_or(Json::Null) }))
     }
 
-    /// Changes one of the project's settings `link::PROJECT_KEYS` names, as
-    /// Project Settings does.
+    /// Changes one of Project Settings' settings by its key, as the window
+    /// does, and puts it into effect.
     fn project_set(&mut self, args: &Json) -> Called {
         let key = need_text(args, "key")?;
-        let value = need(args, "value")?;
-        let number = value.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n as f32);
-        let number =
-            number.ok_or_else(|| refuse(ErrorKind::WrongValue, format!("{value} is not a value for {key}")))?;
-        let now = match key {
-            "portals.view_distance" => {
-                self.set_portal_view_distance(number);
-                json!(self.game.project.file.portals.view_distance)
-            }
-            "quality.particles" => {
-                let most = voxear_render::MAX_PARTICLE_BUDGET;
-                self.set_quality(&voxear_engine::QualitySettings { particles: (number.round() as u32).min(most) });
-                json!(self.game.project.file.quality.particles)
-            }
-            other => {
-                return Err(bad(format!(
-                    "no project setting has the key `{other}`; it is one of {:?}",
-                    link::PROJECT_KEYS
-                )));
-            }
-        };
+        if project_settings::find(key).is_none() {
+            return Err(bad(format!("no project setting has the key `{key}`; `project_settings.get` lists them")));
+        }
+        let value = args.get("value").unwrap_or(&Json::Null);
+        let now = self.set_project_setting(key, value).map_err(|why| refuse(ErrorKind::WrongValue, why))?;
         done(json!({ "value": now }))
     }
 
@@ -1936,19 +1906,18 @@ impl Editor {
         match voxear_engine::Project::open(&self.game.project.root) {
             Ok(project) => {
                 self.game.project = project;
-                let modules = self.game.project.modules();
                 let file = &self.game.project.file;
-                self.project_settings.show(&mut self.ui, &modules);
-                self.project_settings.show_origin(&mut self.ui, &file.floating_origin);
-                self.project_settings.show_quality(&mut self.ui, &file.quality);
-                self.project_settings.show_portals(&mut self.ui, &file.portals);
                 file.portals.put(&mut self.game.engine.world);
+                file.quality.put(&mut self.game.engine.world);
+                file.physics.put(&mut self.game.engine.world);
+                voxear_engine::modules::put(&mut self.game.engine.world, self.game.project.modules());
                 // The project's world quality, unless this machine keeps its own.
                 let machine = voxear_terrain::MachineBudget::of(&self.game.engine.world);
                 if !machine.kept {
                     voxear_terrain::MachineBudget::open(&mut self.game.engine.world, file.world, machine.file);
                 }
-                self.show_world_budget();
+                let layers = self.game.project.layers();
+                self.settings_layers.show(&mut self.ui, &layers);
                 // Languages and their fonts may have changed too.
                 self.game.load_strings();
                 self.show_language_fonts();
@@ -2059,4 +2028,32 @@ fn new_files() -> Vec<NewFile> {
 fn new_file_name(new: NewFile) -> &'static str {
     let label = new.label();
     label.strip_prefix("New ").unwrap_or(label)
+}
+
+/// Settings as `settings.get` and `project_settings.get` list them: the
+/// categories, and every setting with where it shows, what it is called and
+/// does, what it holds and may be, its value and its default; only a
+/// `category`'s, or those `search` finds, where asked.
+fn listed_settings(
+    settings: &'static [setting_info::Setting],
+    categories: &[setting_info::Category],
+    args: &Json,
+    value: &dyn Fn(&str) -> (Json, Json),
+) -> Json {
+    let category = opt_text(args, "category");
+    let found: Vec<&setting_info::Setting> = match opt_text(args, "search").filter(|query| !query.trim().is_empty()) {
+        Some(query) => setting_info::search(settings, query),
+        None => settings.iter().collect(),
+    };
+    let listed: Vec<Json> = found
+        .into_iter()
+        .filter(|setting| category.is_none_or(|category| setting.category.eq_ignore_ascii_case(category)))
+        .map(|setting| {
+            let (now, default) = value(setting.key);
+            setting_info::listed(setting, &now, &default)
+        })
+        .collect();
+    let categories: Vec<Json> =
+        categories.iter().map(|c| json!({ "name": c.name, "about": c.about, "manual": c.manual })).collect();
+    json!({ "categories": categories, "settings": listed })
 }

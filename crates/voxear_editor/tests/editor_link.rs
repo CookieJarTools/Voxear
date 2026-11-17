@@ -309,7 +309,97 @@ fn a_folder_setting_is_set_by_its_path_and_listed_with_it() {
     let missing = json!({ "key": "fab_downloads", "value": dir.path().join("Nowhere").display().to_string() });
     assert_eq!(ask(&mut editor, &mut renderer, "settings.set", missing).unwrap_err().kind, ErrorKind::WrongValue);
     let cleared = done(&mut editor, &mut renderer, "settings.set", json!({ "key": "fab_downloads", "value": null }));
-    assert_eq!(cleared["value"], "None", "null watches nothing");
+    assert_eq!(cleared["value"], Value::Null, "null watches nothing");
+}
+
+#[test]
+fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_key() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // Project Settings: every category, and each setting where it shows, what it does and what it may be.
+    let listed = done(&mut editor, &mut renderer, "project_settings.get", json!({}));
+    let categories: Vec<&str> =
+        listed["categories"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert!(categories.contains(&"Physics") && categories.contains(&"Time"), "{categories:?}");
+    let settings = listed["settings"].as_array().unwrap();
+    assert!(settings.len() > 60, "{} settings", settings.len());
+    for setting in settings {
+        assert!(setting["tooltip"].as_str().is_some_and(|tip| tip.len() > 20), "{setting}");
+        assert!(setting["category"].is_string() && setting["section"].is_string() && setting["label"].is_string());
+    }
+    let ticks = settings.iter().find(|s| s["key"] == "network.tick_rate").unwrap();
+    assert_eq!(
+        (
+            ticks["type"].as_str(),
+            ticks["value"].as_f64(),
+            ticks["min"].as_f64(),
+            ticks["max"].as_f64(),
+            ticks["whole"].as_bool()
+        ),
+        (Some("number"), Some(60.0), Some(10.0), Some(240.0), Some(true)),
+        "{ticks}"
+    );
+    let mode = settings.iter().find(|s| s["key"] == "audio.reverb_mode").unwrap();
+    assert_eq!((mode["value"].as_str(), mode["options"][1].as_str()), (Some("Parametric"), Some("Convolution")));
+    // Only a category's, or those a search finds.
+    let time = done(&mut editor, &mut renderer, "project_settings.get", json!({ "category": "time" }));
+    let keys: Vec<&str> = time["settings"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["time.fixed_step", "time.max_step", "time.max_fixed_steps"]);
+    let found = done(&mut editor, &mut renderer, "project_settings.get", json!({ "search": "gravity" }));
+    assert_eq!(found["settings"].as_array().unwrap().len(), 2);
+
+    // Any of them set by key: a choice by its label or word, a vector, an asset by its path, null for the default.
+    let set = |editor: &mut Editor, renderer: &mut Renderer, key: &str, value: Value| {
+        done(editor, renderer, "project.set", json!({ "key": key, "value": value }))["value"].clone()
+    };
+    assert_eq!(set(&mut editor, &mut renderer, "audio.reverb_mode", json!("convolution")), "Convolution");
+    assert_eq!(set(&mut editor, &mut renderer, "physics.gravity", json!([0.0, -1.62, 0.0])), json!([0.0, -1.62, 0.0]));
+    assert_eq!(set(&mut editor, &mut renderer, "network.authority", json!("Shared")), "Shared");
+    assert_eq!(set(&mut editor, &mut renderer, "time.fixed_step", json!(0.01)), json!(0.01));
+    assert_eq!(set(&mut editor, &mut renderer, "world.quality", json!("Low")), "Low");
+    assert_eq!(
+        set(&mut editor, &mut renderer, "localization.languages", json!(["en", "French"])),
+        json!(["English", "French"])
+    );
+    let file = Project::open(dir.path()).unwrap().file;
+    assert_eq!((file.physics.gravity, file.time.fixed_step), ([0.0, -1.62, 0.0], 0.01));
+    assert_eq!(file.localization.languages, ["en", "fr"], "kept by their codes");
+    assert_eq!(file.network.authority, voxear_engine::net::NetAuthority::Shared);
+    let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(text.contains("reverb_mode = \"convolution\"") && text.contains("gravity = [0.0, -1.62, 0.0]"), "{text}");
+    assert_eq!(set(&mut editor, &mut renderer, "audio.reverb_mode", Value::Null), "Parametric", "null: the default");
+    let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(!text.contains("reverb_mode"), "and the file says nothing of it: {text}");
+    let wrong = |key: &str, value: Value| json!({ "key": key, "value": value });
+    let refused = ask(&mut editor, &mut renderer, "project.set", wrong("network.tick_rate", json!(5000))).unwrap_err();
+    assert!(refused.kind == ErrorKind::WrongValue && refused.message.contains("from 10 to 240"), "{}", refused.message);
+    let refused =
+        ask(&mut editor, &mut renderer, "project.set", wrong("audio.reverb_mode", json!("Echo"))).unwrap_err();
+    assert!(refused.message.contains("Parametric, Convolution"), "says what it may be: {}", refused.message);
+    assert_eq!(
+        ask(&mut editor, &mut renderer, "project.set", wrong("audio.nonsense", json!(1))).unwrap_err().kind,
+        ErrorKind::BadArguments
+    );
+
+    // Preferences, alike.
+    let listed = done(&mut editor, &mut renderer, "settings.get", json!({ "category": "Play Mode" }));
+    let play = listed["settings"].as_array().unwrap();
+    let players = play.iter().find(|s| s["key"] == "test_players").unwrap();
+    assert_eq!((players["section"].as_str(), players["max"].as_f64()), (Some("Networked Play"), Some(7.0)));
+    assert!(players["tooltip"].as_str().unwrap().contains("networked Play"));
+    let network = done(&mut editor, &mut renderer, "settings.set", json!({ "key": "test_network", "value": "bad" }));
+    assert_eq!(network["value"], "Bad");
+    assert_eq!(editor.settings().test_network, voxear_editor::TestNetwork::Bad);
+
+    // Shown in its window, scrolled to.
+    done(&mut editor, &mut renderer, "settings.show", json!({ "key": "physics.gravity" }));
+    frames(&mut editor, &mut renderer, 3);
+    let title = editor.ui.find(editor.ui.root(), "project-settings-title").unwrap();
+    assert_eq!(editor.ui.text(title), "Physics");
+    assert_eq!(
+        ask(&mut editor, &mut renderer, "settings.show", json!({ "key": "nothing" })).unwrap_err().kind,
+        ErrorKind::BadArguments
+    );
 }
 
 #[test]

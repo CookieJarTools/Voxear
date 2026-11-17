@@ -568,7 +568,7 @@ impl Console {
 
     /// Shows the settings in the Console's place, with the categories seen
     /// so far to colour.
-    fn open_settings(&mut self, ui: &mut Ui, settings: &Settings) {
+    pub fn open_settings(&mut self, ui: &mut Ui, settings: &Settings) {
         let colours = self.category_colours();
         let view = SettingsView::new(ui, self.root, &self.project, settings, &colours);
         ui.set_visible(self.split, false);

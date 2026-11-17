@@ -30,7 +30,7 @@ A camera within a Portal's view distance sees its far side. Further off, the Por
 
 Coming back within the view distance, the mist clears over a moment into the live far side, so it never appears all at once. Once it has cleared, the far side stays until the camera is a little past the view distance, a tenth of it, between 2 and 16 metres. A camera that wanders back and forth over the edge does not make it flicker.
 
-Every Portal starts with the project's view distance, 96 m, set in **Project Settings ▸ Quality ▸ Portals**. Give one Portal its own by setting its **View Distance** to **Own**: a town gate seen from across the square, say, or a small one in a cave that only needs to show up close. To change a game's every Portal at run time, as from its options, set `Portal.DefaultViewDistance`:
+Every Portal starts with the project's view distance, 96 m, set in **Project Settings ▸ Graphics ▸ Portals**. Give one Portal its own by setting its **View Distance** to **Own**: a town gate seen from across the square, say, or a small one in a cave that only needs to show up close. To change a game's every Portal at run time, as from its options, set `Portal.DefaultViewDistance`:
 
 ```csharp
 Portal.DefaultViewDistance = lowQuality ? 48f : 96f;
@@ -110,7 +110,7 @@ How much Portals may spend is the project's, in `voxear.toml`:
 | Far Side Distance | How far round a far side a world without end makes its own blocks, in metres: 96 |
 | Water | Whether the water of a far side's Block Worlds is drawn |
 | Draw Distance | How far ahead a far side is drawn, in metres, with the sky past it; 0 draws it as far as the world: 0 |
-| View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Quality ▸ Portals |
+| View Distance | How far from the opening a camera sees the far side of a Portal without its own, in metres: 96. Also in Project Settings ▸ Graphics ▸ Portals |
 
 ```toml
 [portals]

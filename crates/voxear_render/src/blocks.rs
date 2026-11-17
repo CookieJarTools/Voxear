@@ -518,6 +518,84 @@ pub const LOOSE_REACH: f32 = 160.0;
 /// any turn, so never turned away.
 const EVERY_WAY: [f32; 4] = [0.0, 1.0, 0.0, 2.0];
 
+/// How many columns of chunks a side a group has (see [`ChunkGroup`]), as a
+/// power of two.
+const GROUP_SHIFT: i32 = 2;
+
+/// Neighbouring chunks of a world, of one level and in a square of
+/// columns [`GROUP_SHIFT`] across, as a view looks at them first: where
+/// they are in the world's list of chunks, the box all their faces lie in
+/// and the one their cubes fill. A view passes over a group out of sight
+/// whole, and takes a group wholly in sight without looking at each chunk.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ChunkGroup {
+    pub chunks: std::ops::Range<u32>,
+    pub bounds: [Vec3; 2],
+    pub cube: [Vec3; 2],
+}
+
+/// The group a chunk is in, by its level and its column's square, as one
+/// number to sort by.
+fn group_of([level, x, _, z]: [i32; 4]) -> u64 {
+    let square = |v: i32| u64::from((v >> GROUP_SHIFT) as u32 & 0xFF_FFFF);
+    (u64::from(level as u32 & 0xFFFF) << 48) | (square(x) << 24) | square(z)
+}
+
+/// The groups of `chunks`, which are in order by their groups.
+fn groups(chunks: &[ChunkDraw]) -> Vec<ChunkGroup> {
+    let mut groups: Vec<ChunkGroup> = Vec::new();
+    let mut last = None;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let key = group_of(chunk.key);
+        match groups.last_mut() {
+            Some(group) if last == Some(key) => {
+                group.chunks.end = index as u32 + 1;
+                group.bounds = [group.bounds[0].min(chunk.bounds[0]), group.bounds[1].max(chunk.bounds[1])];
+                group.cube = [group.cube[0].min(chunk.cube[0]), group.cube[1].max(chunk.cube[1])];
+            }
+            _ => groups.push(ChunkGroup {
+                chunks: index as u32..index as u32 + 1,
+                bounds: chunk.bounds,
+                cube: chunk.cube,
+            }),
+        }
+        last = Some(key);
+    }
+    groups
+}
+
+/// `chunks` as one group, for picking from a list of them made in passing.
+fn one_group(chunks: &[ChunkDraw]) -> [ChunkGroup; 1] {
+    let union = |of: fn(&ChunkDraw) -> [Vec3; 2]| {
+        chunks.iter().map(of).reduce(|[low, high], [from, to]| [low.min(from), high.max(to)]).unwrap_or([Vec3::ZERO; 2])
+    };
+    [ChunkGroup { chunks: 0..chunks.len() as u32, bounds: union(|c| c.bounds), cube: union(|c| c.cube) }]
+}
+
+/// How much of a box is within `planes`, inward.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InSight {
+    Outside,
+    Partly,
+    Wholly,
+}
+
+/// How much of the box from `low` to `high` is within `planes`: none of it
+/// where its corner furthest along a plane's way in is behind it, all of it
+/// where its nearest is in front of every one.
+fn in_sight(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> InSight {
+    let mut wholly = true;
+    for &[x, y, z, d] in planes {
+        let pick = |way: f32, low: f32, high: f32| if way >= 0.0 { (high, low) } else { (low, high) };
+        let ((fx, nx), (fy, ny), (fz, nz)) = (pick(x, low.x, high.x), pick(y, low.y, high.y), pick(z, low.z, high.z));
+        if x * fx + y * fy + z * fz + d < 0.0 {
+            return InSight::Outside;
+        }
+        wholly &= x * nx + y * ny + z * nz + d >= 0.0;
+    }
+    if wholly { InSight::Wholly } else { InSight::Partly }
+}
+
 /// Whether the box from `low` to `high` is within `planes`, inward.
 fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
     planes.iter().all(|&[x, y, z, d]| {
@@ -595,11 +673,8 @@ impl Detail {
     }
 }
 
-/// What a view draws of a world's chunks: those within `planes` (inward,
-/// in the world's space) and, where `seen` says which of its own chunks the
-/// camera can see into, those; and of each, the faces `facing` picks, and of
-/// a smooth one the level `detail` picks; as first quads and counts, those
-/// that follow on in the pool drawn as one.
+/// [`pick_grouped`] from a list of chunks as one group, all its quads.
+#[cfg(test)]
 pub(crate) fn pick(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
@@ -609,6 +684,9 @@ pub(crate) fn pick(
 ) -> Vec<[u32; 2]> {
     pick_parts(chunks, planes, (facing, detail), (seen, shown), Parts::With, None)
 }
+
+/// A world's chunks, in order by their groups, and the groups.
+type Grouped<'a> = (&'a [ChunkDraw], &'a [ChunkGroup]);
 
 /// Which of a chunk's quads a list draws: all, all but its blocks of
 /// parts, or those alone, as a lamp's kept shadow draws the rest once and
@@ -620,13 +698,34 @@ pub(crate) enum Parts {
     Only,
 }
 
-/// As [`pick`], with only the quads `parts` says; where `near_first`, the
-/// camera, the chunks nearest it first, so the depth pass draws what is in
-/// front before what it hides, and the GPU throws away hidden pixels before
-/// working out their surface. A chunk's own runs stay in the pool's order,
-/// so a quad laid over another of its chunk is still drawn after it.
+/// [`pick_grouped`] from a list of chunks as one group.
+#[cfg(test)]
 fn pick_parts(
     chunks: &[ChunkDraw],
+    planes: &[[f32; 4]],
+    facing: (Facing, Option<Detail>),
+    sights: (Option<&CoordSet<[i32; 3]>>, Option<&CoordSet<[i32; 3]>>),
+    parts: Parts,
+    near_first: Option<Vec3>,
+) -> Vec<[u32; 2]> {
+    pick_grouped((chunks, &one_group(chunks)), planes, facing, sights, parts, near_first)
+}
+
+/// What a view draws of a world's chunks: those within `planes` (inward,
+/// in the world's space) and, where `seen` says which of its own chunks the
+/// camera can see into, those; and of each, the faces `facing` picks, and of
+/// a smooth one the level `detail` picks, with only the quads `parts` says;
+/// as first quads and counts, those that follow on in the pool drawn as one.
+/// A group out of sight is passed over whole, and the chunks of one wholly
+/// in sight are not each looked at again.
+///
+/// Where `near_first`, the camera, the chunks nearest it come first, so the
+/// depth pass draws what is in front before what it hides, and the GPU
+/// throws away hidden pixels before working out their surface. A chunk's
+/// own runs stay in the pool's order, so a quad laid over another of its
+/// chunk is still drawn after it.
+fn pick_grouped(
+    (chunks, groups): Grouped,
     planes: &[[f32; 4]],
     (facing, detail): (Facing, Option<Detail>),
     (seen, shown): (Option<&CoordSet<[i32; 3]>>, Option<&CoordSet<[i32; 3]>>),
@@ -638,7 +737,7 @@ fn pick_parts(
         Facing::Light(way) => [way.x <= 0.0, way.x >= 0.0, way.y <= 0.0, way.y >= 0.0, way.z <= 0.0, way.z >= 0.0],
         _ => [true; FACINGS],
     };
-    let take = |chunk: &ChunkDraw, out: &mut Vec<[u32; 2]>| {
+    let take = |chunk: &ChunkDraw, whole: bool, out: &mut Vec<[u32; 2]>| {
         let [level, x, y, z] = chunk.key;
         // Only the columns shown from the place the view looks from, where the world says which.
         if shown.is_some_and(|shown| !shown.contains(&[level, x, z])) {
@@ -647,7 +746,7 @@ fn pick_parts(
         if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
             return;
         }
-        if !within(planes, chunk.bounds) || detail.is_some_and(|detail| detail.past_its_ring(chunk)) {
+        if !(whole || within(planes, chunk.bounds)) || detail.is_some_and(|detail| detail.past_its_ring(chunk)) {
             return;
         }
         let [low, high] = chunk.bounds;
@@ -692,23 +791,34 @@ fn pick_parts(
             out.push(chunk.loose);
         }
     };
+    // Nearest first, each chunk drawn is put in order by how far it is, its own runs together: only those drawn.
+    let away = |chunk: &ChunkDraw, camera: Vec3| ((chunk.bounds[0] + chunk.bounds[1]) * 0.5).distance_squared(camera);
     let mut picked: Vec<[u32; 2]> = Vec::new();
-    let Some(camera) = near_first else {
-        for chunk in chunks {
-            take(chunk, &mut picked);
+    let mut order: Vec<(f32, u32, u32)> = Vec::new();
+    for group in groups {
+        let sight = in_sight(planes, group.bounds);
+        if sight == InSight::Outside {
+            continue;
         }
-        return merged(picked);
-    };
-    let away = |chunk: &ChunkDraw| ((chunk.bounds[0] + chunk.bounds[1]) * 0.5).distance_squared(camera);
-    let mut order: Vec<(f32, &ChunkDraw)> = chunks.iter().map(|chunk| (away(chunk), chunk)).collect();
-    order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-    let mut own = Vec::new();
-    for (_, chunk) in order {
-        take(chunk, &mut own);
-        own.sort_unstable();
-        picked.append(&mut own);
+        let whole = sight == InSight::Wholly;
+        for chunk in &chunks[group.chunks.start as usize..group.chunks.end as usize] {
+            let start = picked.len();
+            take(chunk, whole, &mut picked);
+            if let Some(camera) = near_first.filter(|_| picked.len() > start) {
+                picked[start..].sort_unstable();
+                order.push((away(chunk, camera), start as u32, picked.len() as u32));
+            }
+        }
     }
-    joined(picked)
+    if near_first.is_none() {
+        return merged(picked);
+    }
+    order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut nearest_first = Vec::with_capacity(picked.len());
+    for (_, start, end) in order {
+        nearest_first.extend_from_slice(&picked[start as usize..end as usize]);
+    }
+    joined(nearest_first)
 }
 
 /// Whether every triangle facing within `cone` (its axis and the sine of
@@ -730,21 +840,45 @@ fn turned_away([x, y, z, spread]: [f32; 4], [low, high]: [Vec3; 2], facing: Faci
     }
 }
 
-/// The water a view draws of a world's chunks: every face of the water of
-/// the chunks it sees, as [`pick`] picks them.
+/// [`pick_water_grouped`] from a list of chunks as one group, all kept.
+#[cfg(test)]
 pub(crate) fn pick_water(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
     seen: Option<&CoordSet<[i32; 3]>>,
     shown: Option<&CoordSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
-    let picked = chunks.iter().filter(|chunk| chunk.water[1] > 0).filter(|chunk| {
-        let [level, x, y, z] = chunk.key;
-        shown.is_none_or(|shown| shown.contains(&[level, x, z]))
-            && (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z])))
-            && within(planes, chunk.cube)
-    });
-    merged(picked.map(|chunk| chunk.water).collect())
+    pick_water_grouped((chunks, &one_group(chunks)), planes, (seen, shown), |_| true)
+}
+
+/// The water a view draws of a world's chunks in their groups: every face
+/// of the water of the chunks it sees, as [`pick_grouped`] picks them, of
+/// those `kept` keeps.
+fn pick_water_grouped(
+    (chunks, groups): Grouped,
+    planes: &[[f32; 4]],
+    (seen, shown): (Option<&CoordSet<[i32; 3]>>, Option<&CoordSet<[i32; 3]>>),
+    kept: impl Fn(&ChunkDraw) -> bool,
+) -> Vec<[u32; 2]> {
+    let mut picked = Vec::new();
+    for group in groups {
+        let sight = in_sight(planes, group.cube);
+        if sight == InSight::Outside {
+            continue;
+        }
+        for chunk in &chunks[group.chunks.start as usize..group.chunks.end as usize] {
+            let [level, x, y, z] = chunk.key;
+            if chunk.water[1] > 0
+                && shown.is_none_or(|shown| shown.contains(&[level, x, z]))
+                && (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z])))
+                && (sight == InSight::Wholly || within(planes, chunk.cube))
+                && kept(chunk)
+            {
+                picked.push(chunk.water);
+            }
+        }
+    }
+    merged(picked)
 }
 
 /// The runs of `chunks`' quads cut out from their pictures, in the order
@@ -860,7 +994,8 @@ struct Pool {
     room_at: u64,
     block_size: f32,
     smooth: bool,
-    draws: Option<Arc<[ChunkDraw]>>,
+    /// Its chunks to draw, in their groups, made again when it changes.
+    draws: Option<(Arc<[ChunkDraw]>, Arc<[ChunkGroup]>)>,
     /// Which of each of its own chunks' sides see each other, made again
     /// with its draws.
     sights: Option<Arc<HashMap<[i32; 3], u16>>>,
@@ -1124,8 +1259,9 @@ impl Pool {
         self.sights.clone().expect("made above")
     }
 
-    /// Each chunk to draw, made again only when the pool changed.
-    fn draws(&mut self) -> Arc<[ChunkDraw]> {
+    /// Each chunk to draw, in order by its group, and the groups, made again
+    /// only when the pool changed.
+    fn draws(&mut self) -> (Arc<[ChunkDraw]>, Arc<[ChunkGroup]>) {
         if self.draws.is_none() {
             let draws = self.held.iter().map(|(key, held)| {
                 let buckets = held.mesh.buckets;
@@ -1151,7 +1287,10 @@ impl Pool {
                     mesh,
                 }
             });
-            self.draws = Some(draws.collect());
+            let mut draws: Vec<ChunkDraw> = draws.collect();
+            draws.sort_by_cached_key(|chunk| group_of(chunk.key));
+            let groups = groups(&draws);
+            self.draws = Some((draws.into(), groups.into()));
         }
         self.draws.clone().expect("made above")
     }
@@ -1175,6 +1314,8 @@ pub(crate) struct DrawnBlocks {
     pub address: u64,
     pub light: u64,
     pub chunks: Arc<[ChunkDraw]>,
+    /// Its chunks in groups of neighbours, as `chunks` holds them in order.
+    pub groups: Arc<[ChunkGroup]>,
     /// For a world of cubes, its blocks and which of each chunk's sides see
     /// each other, for each view to pass over the chunks it cannot see into.
     pub sights: Option<(Arc<voxear_terrain::blocks::BlockMap>, Arc<HashMap<[i32; 3], u16>>)>,
@@ -1207,6 +1348,8 @@ pub(crate) struct DrawnBlocks {
     /// Lit by the light kept for its blocks, that light round the camera:
     /// from which block, and each block's (see [`GpuLightVolume`]).
     pub volume: Option<([i32; 3], Arc<[u8]>)>,
+    /// The index buffer a world of cubes is drawn with (see [`quad_indices`]).
+    pub indices: vk::Buffer,
 }
 
 /// A copy into a world's pool: from where in the staging buffer, into
@@ -1235,6 +1378,21 @@ pub(crate) struct BlockWorlds {
     /// Whether it has said that the GI's rays are left without some chunks,
     /// once.
     warned_full: bool,
+    /// Every world of cubes' quads as their triangles take their corners
+    /// (see [`quad_indices`]), made the first time one is drawn.
+    indices: Option<Buffer>,
+}
+
+/// The most quads one indexed draw of a world of cubes takes, as many as
+/// [`quad_indices`] has: a longer run is drawn in several.
+const QUADS_A_DRAW: u32 = 1 << 16;
+
+/// The index buffer every world of cubes is drawn with: four vertices a
+/// quad, its corners (`cubeCorner` in `shaders/block_quads.slang`), taken
+/// 0, 1, 2 and 0, 2, 3 as its two triangles, so each corner is worked out
+/// once and not for both triangles it is in.
+fn quad_indices() -> Vec<u32> {
+    (0..QUADS_A_DRAW).flat_map(|quad| [0, 1, 2, 0, 2, 3].map(|corner| quad * 4 + corner)).collect()
 }
 
 /// The axis `normal` lies most along: 0 for x, 1 for y, 2 for z.
@@ -1419,6 +1577,17 @@ impl BlockWorlds {
             found
         } else {
             Vec::new()
+        };
+        let indices = match &self.indices {
+            Some(indices) => indices.handle,
+            None => {
+                let indices = quad_indices();
+                let size = (indices.len() * size_of::<u32>()) as u64;
+                let usage = vk::BufferUsageFlags::INDEX_BUFFER;
+                let buffer = gpu.create_buffer("block quad indices", size, usage, MemoryLocation::CpuToGpu)?;
+                buffer.write(0, &indices);
+                self.indices.insert(buffer).handle
+            }
         };
         let mut staged: Vec<u8> = Vec::new();
         let mut proxies_left = PROXIES_A_FRAME;
@@ -1655,6 +1824,7 @@ impl BlockWorlds {
                 })
                 .clone();
             drop(placing);
+            let (chunks, groups) = pool.draws();
             let drawn = DrawnBlocks {
                 entity,
                 corner,
@@ -1664,7 +1834,8 @@ impl BlockWorlds {
                 smooth: blocks.smooth,
                 address: pool.buffer.address,
                 light: pool.buffer.address + pool.light_at(),
-                chunks: pool.draws(),
+                chunks,
+                groups,
                 sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 places: blocks.places.clone(),
                 fades: blocks.fades.clone(),
@@ -1686,6 +1857,7 @@ impl BlockWorlds {
                 covered: world.get::<BlockTints>(entity).map_or([0; 8], |tints| tints.covered),
                 id: None,
                 volume,
+                indices,
             };
             if whole && let Some(old) = self.leaving.remove(&entity) {
                 retire(old, assets, frames, frame_index);
@@ -1780,6 +1952,9 @@ impl BlockWorlds {
         if let Some(staging) = self.staging.take() {
             gpu.destroy_buffer(staging);
         }
+        if let Some(indices) = self.indices.take() {
+            gpu.destroy_buffer(indices);
+        }
         for mut kept in self.rays.drain(..) {
             for buffer in kept.take_buffers() {
                 gpu.destroy_buffer(buffer);
@@ -1837,16 +2012,94 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
 /// the view, whether it is drawn smooth, and the quads (or corners' words)
 /// each list draws; for each world with water in view, its number, whether
 /// it is drawn smooth and its water's quads (or corners' words); their pools
-/// to wait on; and whether any casts the sun's shadows.
+/// to wait on; and whether any casts the sun's shadows. Every pass that
+/// draws them holds a copy, its lists shared.
 #[derive(Clone)]
 pub(crate) struct ViewBlocks {
-    pub runs: Vec<(u32, bool, Vec<Vec<[u32; 2]>>)>,
-    pub water: Vec<(u32, bool, Vec<[u32; 2]>)>,
+    pub runs: Arc<[(u32, bool, Vec<Vec<[u32; 2]>>)]>,
+    pub water: Arc<[(u32, bool, Vec<[u32; 2]>)]>,
     pub pools: Vec<BufferId>,
     pub shadows: bool,
+    /// The index buffer worlds of cubes are drawn with (see [`quad_indices`]).
+    indices: vk::Buffer,
+    /// The lists' runs as indirect draws, once written (see
+    /// [`write_draws`](Self::write_draws)): the buffer, and for each world's
+    /// lists, a world's [`LISTS`] after another's, its first draw in it and
+    /// how many.
+    draws: Option<(vk::Buffer, Arc<[[u32; 2]]>)>,
+}
+
+/// An indirect draw's words: as an indexed draw of a world of cubes, its
+/// indices, one instance, from the first index and vertex; drawn smooth,
+/// its vertices, one instance and from the first vertex; and the run's
+/// first quad as its first instance, which the shaders read as where the
+/// run starts (`blockRunStart`).
+pub(crate) type BlockDraw = [u32; 5];
+
+/// The most indirect draws one call draws: as many as every GPU draws at
+/// least.
+const DRAWS_A_CALL: u32 = 65_535;
+
+/// Run `[first, count]` of a world as indirect draws: one drawn smooth, as
+/// many as its quads take of [`QUADS_A_DRAW`] for a world of cubes.
+fn run_draws(smooth: bool, [first, count]: [u32; 2], draws: &mut Vec<BlockDraw>) {
+    if smooth {
+        draws.push([count / 2, 1, 0, first, 0]);
+        return;
+    }
+    for from in (0..count).step_by(QUADS_A_DRAW as usize) {
+        draws.push([(count - from).min(QUADS_A_DRAW) * 6, 1, 0, 0, first + from]);
+    }
 }
 
 impl ViewBlocks {
+    /// Writes every list's runs as indirect draws into the buffer `fit`
+    /// gives with room for as many as they take, so a pass draws a world's
+    /// list with one call however many runs it has.
+    pub fn write_draws<'a>(&mut self, fit: impl FnOnce(usize) -> Result<&'a Buffer>) -> Result<()> {
+        let mut draws: Vec<BlockDraw> = Vec::new();
+        let mut spans = Vec::with_capacity(self.runs.len() * LISTS);
+        for (_, smooth, lists) in self.runs.iter() {
+            for list in lists {
+                let first = draws.len() as u32;
+                for &run in list {
+                    run_draws(*smooth, run, &mut draws);
+                }
+                spans.push([first, draws.len() as u32 - first]);
+            }
+        }
+        let buffer = fit(draws.len())?;
+        if !draws.is_empty() {
+            buffer.write(0, &draws);
+        }
+        self.draws = Some((buffer.handle, spans.into()));
+        Ok(())
+    }
+
+    /// Draws list `stored` of the view's world `world` (its place in
+    /// [`runs`](Self::runs)), with the push constants already given, as
+    /// indirect draws, once written.
+    fn draw_list(&self, ctx: &PassContext, push: &Push, world: usize, stored: u32) {
+        let Some((buffer, spans)) = &self.draws else { return };
+        let [first, count] = spans[world * LISTS + stored as usize];
+        if count == 0 {
+            return;
+        }
+        let smooth = self.runs[world].1;
+        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { output: 0, ..*push });
+        let stride = size_of::<BlockDraw>() as u32;
+        if !smooth {
+            unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, self.indices, 0, vk::IndexType::UINT32) };
+        }
+        for from in (0..count).step_by(DRAWS_A_CALL as usize) {
+            let (offset, count) = (u64::from(first + from) * u64::from(stride), (count - from).min(DRAWS_A_CALL));
+            match smooth {
+                true => unsafe { ctx.gpu.device.cmd_draw_indirect(ctx.cmd, *buffer, offset, count, stride) },
+                false => unsafe { ctx.gpu.device.cmd_draw_indexed_indirect(ctx.cmd, *buffer, offset, count, stride) },
+            }
+        }
+    }
+
     /// Whether any world's water is in view.
     pub fn has_water(&self) -> bool {
         !self.water.is_empty()
@@ -1856,7 +2109,7 @@ impl ViewBlocks {
     /// sun's cascades.
     pub fn counts(&self) -> BlockCounts {
         let mut counts = BlockCounts::default();
-        for (_, smooth, lists) in &self.runs {
+        for (_, smooth, lists) in self.runs.iter() {
             // A quad is two triangles; drawn smooth, a triangle is three corners of two pairs of words.
             let triangles = |runs: &[[u32; 2]]| -> u64 {
                 runs.iter().map(|&[_, count]| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 }).sum()
@@ -1868,7 +2121,7 @@ impl ViewBlocks {
                 counts.shadow_triangles += triangles(&lists[list]);
             }
         }
-        for (_, smooth, runs) in &self.water {
+        for (_, smooth, runs) in self.water.iter() {
             counts.draws += runs.len() as u32;
             let triangles = |count: u32| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 };
             counts.water_triangles += runs.iter().map(|&[_, count]| triangles(count)).sum::<u64>();
@@ -2052,14 +2305,17 @@ pub(crate) fn gather(
                 [low, low + Vec3::splat(side)]
             };
             let ours = |key: [i32; 3]| shown.is_none_or(|shown| shown.contains(&[0, key[0], key[2]]));
+            let _walk = voxear_core::profile_marker!("Sight Walk").scope();
             voxear_terrain::blocks::sight::seen(map, sights, from, |key| ours(key) && within(&planes, bounds(key)))
         });
         // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
         let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
         let ring = fading.then_some((fades.at, fades.reach, fades.coarsest as i32));
         let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size, rings: ring });
-        lists[LIST_EARLY as usize] = pick_parts(
-            &blocks.chunks,
+        let grouped = (&blocks.chunks[..], &blocks.groups[..]);
+        let camera_chunks = voxear_core::profile_marker!("Camera Chunks").scope();
+        lists[LIST_EARLY as usize] = pick_grouped(
+            grouped,
             &planes,
             (Facing::Camera(local), detail),
             (seen.as_ref(), shown),
@@ -2068,18 +2324,12 @@ pub(crate) fn gather(
         );
         // A coarse column's water is left out where the finer columns over it are made, theirs drawn whole in its
         // place, as water shows no ring's fade.
-        let wet = match fading {
-            true => {
-                let covered = |chunk: &&ChunkDraw| {
-                    let [level, x, _, z] = chunk.key;
-                    level > 0 && fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX)
-                };
-                let water: Vec<ChunkDraw> =
-                    blocks.chunks.iter().filter(|chunk| chunk.water[1] > 0 && !covered(chunk)).copied().collect();
-                pick_water(&water, &planes, seen.as_ref(), shown)
-            }
-            false => pick_water(&blocks.chunks, &planes, seen.as_ref(), shown),
+        let covered = |chunk: &ChunkDraw| {
+            let [level, x, _, z] = chunk.key;
+            fading && level > 0 && fades.covered.get(&[level, x, z]).is_some_and(|&since| since != f32::MAX)
         };
+        let wet = pick_water_grouped(grouped, &planes, (seen.as_ref(), shown), |chunk| !covered(chunk));
+        drop(camera_chunks);
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
@@ -2101,8 +2351,10 @@ pub(crate) fn gather(
             let casting: Vec<ChunkDraw> =
                 blocks.chunks.iter().filter(ours).filter(|chunk| within(&around, chunk.bounds)).copied().collect();
             let cut = cut_runs(&casting);
+            let casting_group = one_group(&casting);
             for (cascade, planes) in cascades.iter().enumerate() {
-                let picked = pick(&casting, planes, (sunlit, detail), None, None);
+                let picked =
+                    pick_grouped((&casting, &casting_group), planes, (sunlit, detail), (None, None), Parts::With, None);
                 // In the last cascade a picture's pixel is about one of the cascade's: leaves cast as solid there.
                 (lists[LIST_SHADOW as usize + cascade], lists[SHADOW_CUT as usize + cascade]) = match cascade {
                     SOLID_CASCADE.. => (picked, Vec::new()),
@@ -2111,11 +2363,14 @@ pub(crate) fn gather(
             }
         }
         // The faces turned towards the sun within each level of its virtual shadow maps drawn this frame.
+        let sun_chunks = voxear_core::profile_marker!("Sun Page Chunks").scope();
         for (level, planes) in sun_pages.iter().filter(|_| blocks.cast_shadows) {
             let sunlit = Facing::Light(back * Vec3::from(frame.sun_direction));
             let planes = turned_planes(planes, corner, back);
-            lists[VSM_LIST as usize + level] = pick(&blocks.chunks, &planes, (sunlit, detail), None, shown);
+            lists[VSM_LIST as usize + level] =
+                pick_grouped(grouped, &planes, (sunlit, detail), (None, shown), Parts::With, None);
         }
+        drop(sun_chunks);
         let lit = lamps.slots.iter().enumerate().filter_map(|(slot, lamp)| Some((slot, (*lamp)?)));
         for (slot, (at, reach)) in lit.filter(|_| blocks.cast_shadows) {
             let planes = turned_planes(&crate::shadow_cache::reach_planes(at, reach), corner, back);
@@ -2127,7 +2382,7 @@ pub(crate) fn gather(
             let shown =
                 blocks.places.iter().min_by(|a, b| nearest(a).total_cmp(&nearest(b))).map(|place| &place.columns);
             let picked =
-                |parts| pick_parts(&blocks.chunks, &planes, (Facing::Camera(from), None), (None, shown), parts, None);
+                |parts| pick_grouped(grouped, &planes, (Facing::Camera(from), None), (None, shown), parts, None);
             let list = LIST_LOCAL_SHADOW as usize + slot;
             // A lamp drawing its virtual shadow pages takes what stands still into them, kept or not yet.
             if blocks.turn.is_none() && (lamps.is_cached(slot) || lamps.redraws(slot)) {
@@ -2146,7 +2401,8 @@ pub(crate) fn gather(
     let cascades = (0..CASCADES).flat_map(|c| [LIST_SHADOW as usize + c, SHADOW_CUT as usize + c]).collect::<Vec<_>>();
     let shadows = runs.iter().any(|(_, _, lists)| cascades.iter().any(|&list| !lists[list].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
-    Some(ViewBlocks { runs, water, pools, shadows })
+    let indices = drawn[0].indices;
+    Some(ViewBlocks { runs: runs.into(), water: water.into(), pools, shadows, indices, draws: None })
 }
 
 /// Where a world's lists of what a lamp keeps of it start, beyond the lists
@@ -2192,16 +2448,8 @@ impl ViewBlocks {
 /// into page `view` (`VSM_PAGE_VIEW` on), as `draw_runs` draws a list.
 pub(crate) fn draw_sun_page(ctx: &PassContext, view: &ViewBlocks, push: &Push, level: usize, page: u32) {
     let list = VSM_LIST + level as u32;
-    for (number, smooth, lists) in &view.runs {
-        for &[first, count] in &lists[list as usize] {
-            ctx.bindless.push(
-                ctx.gpu,
-                ctx.cmd,
-                &Push { list, level: number + 1, output: first, source: page, ..*push },
-            );
-            let vertices = if *smooth { count / 2 } else { count * 6 };
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
-        }
+    for (world, (number, _, _)) in view.runs.iter().enumerate() {
+        view.draw_list(ctx, &Push { list, level: number + 1, source: page, ..*push }, world, list);
     }
 }
 
@@ -2211,12 +2459,8 @@ pub(crate) fn draw_sun_page(ctx: &PassContext, view: &ViewBlocks, push: &Push, l
 pub(crate) fn draw_lamp_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, slot: u32, kept: bool, at: u32) {
     let stored = if kept { LAMP_KEPT + slot } else { LIST_LOCAL_SHADOW + slot };
     let list = LIST_LOCAL_SHADOW + slot;
-    for (number, smooth, lists) in &view.runs {
-        for &[first, count] in &lists[stored as usize] {
-            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, source: at, ..*push });
-            let vertices = if *smooth { count / 2 } else { count * 6 };
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
-        }
+    for (world, (number, _, _)) in view.runs.iter().enumerate() {
+        view.draw_list(ctx, &Push { list, level: number + 1, source: at, ..*push }, world, stored);
     }
 }
 
@@ -2231,12 +2475,8 @@ fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
 /// As [`draw_runs`], each world's runs of its list `from`, drawn as list
 /// `list` is.
 fn draw_runs_from(ctx: &PassContext, view: &ViewBlocks, push: &Push, (from, list): (u32, u32)) {
-    for (number, smooth, lists) in &view.runs {
-        for &[first, count] in &lists[from as usize] {
-            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
-            let vertices = if *smooth { count / 2 } else { count * 6 };
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
-        }
+    for (world, (number, _, _)) in view.runs.iter().enumerate() {
+        view.draw_list(ctx, &Push { list, level: number + 1, ..*push }, world, from);
     }
 }
 
@@ -2248,7 +2488,7 @@ pub(crate) fn draw_water(ctx: &PassContext, view: &ViewBlocks, push: &Push, pipe
         return;
     }
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
-    for (number, smooth, runs) in &view.water {
+    for (number, smooth, runs) in view.water.iter() {
         for &[first, count] in runs {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: number + 1, output: first, ..*push });
             let vertices = if *smooth { count / 2 } else { count * 6 };

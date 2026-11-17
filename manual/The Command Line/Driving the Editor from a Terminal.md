@@ -156,6 +156,8 @@ A headless editor saves nothing unless a call saves. So for more than one call, 
 
 `vox editor serve --project MyGame` keeps a headless editor open, answering calls until one closes it with `editor.quit`. If you open the editor while one is serving, the editor you open takes over: the headless one saves and closes.
 
+A headless editor draws at 1600×900, 30 frames a second. `--width` and `--height` draw it at your screen's size, and `--rate 0` draws each frame as soon as the last is done, so `profiler.frames` shows what a frame costs there.
+
 Only one editor on a project answers calls. An editor opened while another is still open, or still closing, waits, and answers once the other has closed.
 
 ## Exit codes
@@ -185,10 +187,12 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `view.get`, `view.set` | Read and set where the Scene view's camera is and which way it looks |
 | `blocks.get`, `blocks.set`, `blocks.fill` | Read and change a Block World's blocks, at points in the world |
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
+| `dungeon.starter`, `dungeon.layouts` | Make the starter temple dungeon for a Block World, and read the dungeons its generator lays out near a point |
 | `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |
 | `reflection_probe.capture`, `reflection_probes.bake` | Capture a Reflection Probe again, and bake the open level's probes beside it |
 | `reverb_probes.bake` | Bake the open level's Reverb Probes beside it |
 | `audio.rays` | Read ray-traced audio in the running game, or set it there: on, quality and budget |
+| `lighting.get`, `lighting.set` | Read the open scene's lighting as the Lighting page shows it, and change one of its settings |
 | `lighting.bake`, `lighting.bake_status`, `lighting.bake_cancel`, `lighting.probe_light` | Bake the open level's lightmaps and light probes beside it, see how a bake goes or give it up, and read the baked probes' light at a point |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
@@ -198,8 +202,11 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `profiler.frames` | Read the Profiler's latest frames, each sample's time and each drawing pass's, from where the last read stopped |
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
-| `settings.get`, `settings.set`, `project.get` | The editor's settings, and the project's |
+| `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
+| `project.get` | The project's `voxear.toml`, as JSON |
+| `world_quality.get`, `world_quality.set` | What making block worlds spends: its preset or each number, and whether this machine keeps its own |
 | `docs.search`, `docs.read` | Find and read pages of this manual and your own |
+| `layout.use` | Show a layout of the panels, as the Layout menu does |
 | `editor.wait`, `editor.quit` | Wait a few frames, and close the editor |
 
 ## Files changed outside the editor
@@ -217,7 +224,7 @@ The editor looks at the open scenes and `voxear.toml` twice a second. `files.loo
 
 ## Letting tools only read
 
-In **Settings**, under **Tools**, turn off **Let tools change the project**. Tools can still read anything, but every call that would change something is refused with exit code 4. A tool can turn the setting off for itself, but only you can turn it back on.
+In **Preferences**, under **Tools**, turn off **Let tools change the project**. Tools can still read anything, but every call that would change something is refused with exit code 4. A tool can turn the setting off for itself, but only you can turn it back on.
 
 Each change a tool makes writes a line to the Console, starting `[Tools]`, so you can see what was done and when.
 

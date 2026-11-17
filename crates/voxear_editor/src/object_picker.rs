@@ -128,6 +128,8 @@ pub enum PickFor {
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.
     InputPromptIcons,
+    /// A setting of Project Settings that holds an asset, by its key.
+    ProjectSetting(&'static str),
     /// A font of a language's, in place of the one at `at`, or added.
     LanguageFont { language: String, at: Option<usize> },
     /// The graph open in the Generator panel, for a node to add to it.

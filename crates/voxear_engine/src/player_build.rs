@@ -247,6 +247,10 @@ pub fn build(
         ray_quality: project.file.audio.ray_quality,
         ray_budget: project.file.audio.ray_budget,
         modules: project.modules(),
+        time: project.file.time,
+        gravity: project.file.physics.gravity,
+        gravity_2d: project.file.physics.gravity_2d,
+        input_actions: project.file.input.actions.clone(),
     };
     settings.write(&data)?;
     timed("player", stage);

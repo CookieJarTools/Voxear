@@ -25,7 +25,7 @@ use voxear_ui::{ItemFns, NodeId, Ui};
 use crate::{
     editor::{Command, Editor},
     objs::NEW_OBJS,
-    settings::{SETTINGS, Settings},
+    settings::{PREFERENCES, Settings},
 };
 
 /// The most results shown at once; more narrow down as letters are typed.
@@ -55,7 +55,7 @@ const PANELS: [(&str, &str); 18] = [
     ("Model", "model"),
     ("Inspector", "inspector"),
     ("Project Settings", "project-settings"),
-    ("Settings", "settings"),
+    ("Preferences", "preferences"),
 ];
 
 /// A command for the palette from code built on the editor: what it is
@@ -359,12 +359,20 @@ fn gather(sources: &Sources) -> Vec<Entry> {
         key: added.key.clone(),
         command: true,
     }));
-    every.extend(SETTINGS.iter().map(|info| Entry {
-        title: info.title.to_string(),
-        detail: format!("Setting · {}", sources.settings.describe(info)),
+    every.extend(PREFERENCES.iter().filter(|info| info.settable()).map(|info| Entry {
+        title: info.label.to_string(),
+        detail: format!("Preferences · {} · {}", info.category, sources.settings.describe(info)),
         icon: "settings",
         action: PaletteAction::Setting(info.key),
         key: format!("setting:{}", info.key),
+        command: false,
+    }));
+    every.extend(crate::project_settings::settings().iter().filter(|info| info.settable()).map(|info| Entry {
+        title: info.label.to_string(),
+        detail: format!("Project Settings · {} ▸ {}", info.category, info.section),
+        icon: "modules",
+        action: PaletteAction::Setting(info.key),
+        key: format!("project-setting:{}", info.key),
         command: false,
     }));
     every.extend(objs(sources.game));

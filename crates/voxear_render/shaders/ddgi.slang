@@ -245,6 +245,13 @@ HitSurface hitSurface(Frame* frame, uint id, uint primitive, float2 barycentrics
     float2 uv = a.uv * weights.x + b.uv * weights.y + c.uv * weights.z;
     float4 base = material.baseColor
         * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip);
+    // Tinted as its Obj tints it, so a dyed coat bounces its dye.
+    if (tinted(instance))
+    {
+        float4 mask = material.tintMask == 0 ? float4(0.0)
+            : textures[NonUniformResourceIndex(material.tintMask - 1)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip);
+        base.rgb *= instanceTint(instance, material, mask);
+    }
     // Metalness as shading has it: the material's factor times its texture's blue, which glTF factors leave at 1.
     float metal = material.metallic
         * textures[NonUniformResourceIndex(material.metallicRoughnessTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip).b;

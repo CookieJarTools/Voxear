@@ -1,0 +1,12 @@
+[package]
+name = "voxear_nav"
+description = "Navigation: places to walk in worlds of blocks, ways found over them, and what walks them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+voxear_core.workspace = true
+voxear_terrain.workspace = true

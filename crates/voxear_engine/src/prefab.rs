@@ -1209,15 +1209,25 @@ pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &Mod
     let nodes = content.model(renderer, guid)?.to_vec();
     let parts = model_parts(content, renderer, &nodes, data)?;
     let animation = content.model_animation(guid);
-    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, ..ModelRenderer::new(parts) })
+    let masked = parts.iter().any(|part| renderer.tint_masked(part.material));
+    let box_model = content.db().get(guid).is_some_and(|entry| voxear_render::is_box_model(&entry.path));
+    let drawn = ModelRenderer {
+        lod_bias: data.lod_bias,
+        animation,
+        tints: data.tints(),
+        masked,
+        box_model,
+        ..ModelRenderer::new(parts)
+    };
+    Ok(drawn)
 }
 
 /// A Model Renderer with no parts to draw but the model's skeleton and
 /// clips, read without the GPU: `None` for a model without any.
-fn animated(content: &mut Content, data: &ModelData) -> Option<ModelRenderer> {
+pub(crate) fn animated(content: &mut Content, data: &ModelData) -> Option<ModelRenderer> {
     let guid = content.parse(&data.model).ok()?.guid()?;
     let animation = content.clip_file(guid)?;
-    Some(ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) })
+    Some(ModelRenderer { animation: Some(animation), tints: data.tints(), ..ModelRenderer::new(Vec::new()) })
 }
 
 /// A loaded model's parts as a Model Renderer draws them, as `data`
@@ -1230,6 +1240,15 @@ pub fn model_parts(
     data: &ModelData,
 ) -> Result<Vec<ModelPart>> {
     let mut parts = Vec::with_capacity(nodes.len());
+    // A box model's own material, drawn with another picture for its sheet.
+    let sheet = match &data.sheet {
+        Some(picture) => {
+            let model = content.parse(&data.model)?.guid().with_context(|| format!("{} is not a model", data.model))?;
+            let picture = content.parse(picture)?.guid().with_context(|| format!("{picture} is not a picture"))?;
+            Some(content.box_sheet(renderer, model, picture)?)
+        }
+        None => None,
+    };
     for (node, part) in (0u32..).zip(nodes) {
         let changed = data.part(node);
         if changed.is_some_and(|changed| changed.apart) {
@@ -1239,7 +1258,7 @@ pub fn model_parts(
         let (position, rotation, scale) = changed.map_or(placed, |changed| changed.transform(placed));
         let material = match changed.and_then(|changed| changed.material.as_deref()) {
             Some(reference) => content.material(renderer, &MaterialSource::Asset(content.parse(reference)?))?,
-            None => part.material,
+            None => sheet.unwrap_or(part.material),
         };
         let transform = voxear_core::math::Mat4::from_scale_rotation_translation(scale, rotation, position);
         let skin = part.skin.map(|skin| skin as u32);

@@ -160,6 +160,8 @@ Press on the model to paint the pixel under the pointer, and drag to paint along
 
 The large square beside the tools is the colour you paint with. Click it to open the colour picker, and click it again to put the picker away. The small squares after it are the colours the sheet already uses, most used first. Click one to paint with it again.
 
+**Tint**, **Tint 2**, **Tint 3** and **Own** say which of an Obj's tints the colour painted with takes, for every pixel and cube of that colour. Every colour takes the first until told otherwise; **Own** keeps it as painted, as a buckle on a coat dyed any colour. See [[Tints and Parts]]. Sculpting has the same choice for the cubes' colours.
+
 **Symmetry** makes a stroke on the model paint the other side of the body as well, so a face or a pattern stays even.
 
 **Lay Out** gives every box room of its own on the sheet and moves its pixels with it. Use it after you have made boxes bigger or added boxes where the sheet was full, when two boxes show the same pixels by mistake. Boxes that share their pixels on purpose, such as a mirrored arm, still share them. The sheet doubles in size when it is too small.
@@ -215,6 +217,16 @@ Only the bones that move need keys. A bone with none stays at rest.
 A box model's clips are clips like any model's (see [[Animation Clips]]). Open the model out in the Project panel to see them, and give one to an [[Animator]] to play it in your level.
 
 Going back to **Shape** puts the model at rest. Renaming a bone keeps its keys.
+
+### The sheet as a picture
+
+To paint a sheet in another program, click **Save Sheet** in the Paint bar. The sheet is written beside the model as a picture, `Fox Sheet.png` for `Fox.boxmodel`, in place of one saved before, and shows in the Project panel. It has the sheet's own pixels, holes see-through, laid out as the faces are.
+
+To bring a picture back, drag it from the Project panel onto the flat sheet. The sheet takes its pixels, one step to undo. A picture of another size makes the sheet that size, every face where it was on it, so a picture twice as large leaves the faces in its upper left quarter.
+
+Tools reach both through `vox editor call box_model.sheet_save` and `box_model.sheet_load` (see [[Driving the Editor from a Terminal]]).
+
+A picture of the sheet's layout can also stand in for the sheet on one Obj, so one model wears many faces or patterns. See [[Tints and Parts#Another sheet or material]].
 
 ### Undo and saving
 
@@ -361,6 +373,7 @@ voxels = "…"
 | Setting | What it does |
 | --- | --- |
 | `palette` | The colours of the model's cubes, each as `rrggbb`, up to 255. Change one here and every cube of that colour changes |
+| `tints` | Which tint each colour of the model's pixels and cubes takes, where it is not the first: `"second"`, `"third"`, or `"none"` to keep its own colour (see [[Tints and Parts]]) |
 | `voxels` | The box's cubes, one for each pixel of its `size`, packed as text. Each side is from 1 to 64 |
 
 ### Clips
@@ -391,6 +404,10 @@ rotation = [[0.0, 0.0, 0.0], [0.0, 0.0, -120.0]]
 | `scale` | For each key, how large the bone is. Left out when every key leaves it at 1 |
 | `ease` | For each key, how the bone goes on to the next: `linear`, `smooth` or `step`. Left out when every key is `linear` |
 
+## Colours for each Obj
+
+Every Obj drawing a box model can tint it a colour of its own, which multiplies its pixels and its cubes alike and keeps them sharp, near and far. Build a part grey, and one model does for every skin, hair or dye colour. See [[Tints and Parts]].
+
 ## Bones and animation
 
 A box model's bones are a skeleton like any animated model's, and every box moves whole with its bone. So what works on a model's bones works here: [[Bone Attachments]] for things held or worn, scripts that read and turn bones (see [[Bones in Scripts]]), and an [[Animator]] playing the model's own clips.
@@ -399,7 +416,7 @@ To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block M
 
 ## Not done yet
 
-- A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
+- A brush wider than one pixel.
 - Sculpting: bringing in a `.vox` file as a box of cubes, filling or carving more than one cube at a time, and making a character from parts picked at random.
 - Plants and trees placed by a Block World's generator, by surface and climate. They are placed by hand or painted for now.
 - On the timeline: zooming in on a long clip, copying keys, and moving several keys at once.

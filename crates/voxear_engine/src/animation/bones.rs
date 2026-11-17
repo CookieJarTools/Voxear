@@ -6,7 +6,7 @@
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
-use voxear_render::{ModelRenderer, Pose, Skeleton};
+use voxear_render::{BonesOff, ModelRenderer, Pose, Skeleton};
 use voxear_scene::world_matrix;
 use voxear_scripting::ComponentKind;
 
@@ -22,6 +22,9 @@ const POSITION: i32 = 4;
 const ROTATION: i32 = 5;
 const REST_POSITION: i32 = 6;
 const REST_ROTATION: i32 = 7;
+const LOCAL_SCALE: i32 = 8;
+const REST_SCALE: i32 = 9;
+const HIDDEN: i32 = 10;
 
 // What `texts` answers. CLIP_NAME is a bone of a clip's own skeleton, by the clip's reference, as `ClipFrame` in
 // Voxear.Core reads one, with no Obj.
@@ -45,9 +48,12 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         return Some([skeleton.bones.len() as f32, 0.0, 0.0, 0.0]);
     }
     let rest = skeleton.bones.get(bone)?.rest;
+    if value == HIDDEN {
+        return hide(world, entity, skeleton, bone, written);
+    }
     let matrices = posed(world, entity, skeleton);
     let Some(written) = written else {
-        return read(world, entity, skeleton, &matrices, bone, value, (rest.translation, rest.rotation));
+        return read(world, entity, skeleton, &matrices, bone, value, rest);
     };
     let mut edit = PoseEdit::new(skeleton, &matrices);
     let model = world_matrix(world, entity);
@@ -60,6 +66,12 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         LOCAL_POSITION => edit.local[bone].translation = point,
         LOCAL_ROTATION => edit.local[bone].rotation = Quat::from_array(written).normalize(),
         POSITION => edit.local[bone].translation = into_parent(&edit).transform_point3(point),
+        // Never quite nothing, so the bones under it can still be told where they are; hiding takes it away.
+        LOCAL_SCALE if point.is_finite() => {
+            edit.local[bone].scale = point
+                .map(|side| side.signum() * side.abs().clamp(1e-3, 1e3))
+                .map(|side| if side == 0.0 { 1e-3 } else { side })
+        }
         ROTATION => {
             let turn = model.to_scale_rotation_translation().1.inverse() * Quat::from_array(written);
             edit.set_rotation(bone, turn.normalize());
@@ -78,7 +90,7 @@ fn read(
     matrices: &[Mat4],
     bone: usize,
     value: i32,
-    (rest_at, rest_turn): (Vec3, Quat),
+    rest: voxear_render::BonePose,
 ) -> Option<[f32; 4]> {
     let point = |p: Vec3| [p.x, p.y, p.z, 0.0];
     let in_world = || world_matrix(world, entity) * matrices[bone];
@@ -86,12 +98,40 @@ fn read(
         PARENT => [skeleton.bones[bone].parent.map_or(-1.0, |parent| parent as f32), 0.0, 0.0, 0.0],
         LOCAL_POSITION => point(PoseEdit::new(skeleton, matrices).local[bone].translation),
         LOCAL_ROTATION => PoseEdit::new(skeleton, matrices).local[bone].rotation.to_array(),
+        LOCAL_SCALE => point(PoseEdit::new(skeleton, matrices).local[bone].scale),
         POSITION => point(in_world().w_axis.truncate()),
         ROTATION => in_world().to_scale_rotation_translation().1.to_array(),
-        REST_POSITION => point(rest_at),
-        REST_ROTATION => rest_turn.to_array(),
+        REST_POSITION => point(rest.translation),
+        REST_ROTATION => rest.rotation.to_array(),
+        REST_SCALE => point(rest.scale),
         _ => return None,
     })
+}
+
+/// Reads whether a bone is switched off, or switches it off or on. A model
+/// no animation poses is posed at rest, so its skin is drawn by its bones.
+fn hide(
+    world: &mut World,
+    entity: Entity,
+    skeleton: &Skeleton,
+    bone: usize,
+    written: Option<[f32; 4]>,
+) -> Option<[f32; 4]> {
+    let off =
+        |world: &World| world.get::<BonesOff>(entity).is_some_and(|off| off.off.get(bone).copied().unwrap_or(false));
+    let Some([on, ..]) = written else { return Some([f32::from(u8::from(off(world))), 0.0, 0.0, 0.0]) };
+    let mut bones = world.get::<BonesOff>(entity).cloned().unwrap_or_default();
+    bones.off.resize(skeleton.bones.len(), false);
+    bones.off[bone] = on != 0.0;
+    if bones.off.iter().any(|off| *off) {
+        world.insert(entity, bones);
+    } else {
+        world.remove::<BonesOff>(entity);
+    }
+    if !world.has::<Pose>(entity) {
+        world.insert(entity, Pose { bones: skeleton.model_matrices(&skeleton.rest()).into() });
+    }
+    Some([f32::from(u8::from(on != 0.0)), 0.0, 0.0, 0.0])
 }
 
 fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
@@ -175,6 +215,33 @@ mod tests {
         let local = at(&mut world, arm, 1, LOCAL_POSITION);
         assert!((Vec3::new(local[0], local[1], local[2]) - Vec3::new(0.5, 0.0, 0.0)).length() < 1e-5, "{local:?}");
         assert!(values(&mut world, arm, 7 << 8 | POSITION, None).is_none(), "no such bone");
+    }
+
+    #[test]
+    fn a_bone_is_sized_and_hidden_with_those_under_it() {
+        let (mut world, arm) = arm();
+        assert_eq!(at(&mut world, arm, 1, LOCAL_SCALE), [1.0, 1.0, 1.0, 0.0]);
+        // The shoulder made twice as large: the elbow stands twice as far out.
+        values(&mut world, arm, LOCAL_SCALE, Some([2.0, 2.0, 2.0, 0.0]));
+        let scale = at(&mut world, arm, 0, LOCAL_SCALE);
+        assert!((Vec3::new(scale[0], scale[1], scale[2]) - Vec3::splat(2.0)).length() < 1e-5, "{scale:?}");
+        let elbow = at(&mut world, arm, 1, POSITION);
+        assert!((Vec3::new(elbow[0], elbow[1], elbow[2]) - Vec3::new(0.6, 1.0, 0.0)).length() < 1e-5, "{elbow:?}");
+        assert_eq!(at(&mut world, arm, 0, REST_SCALE), [1.0, 1.0, 1.0, 0.0], "its rest stays as made");
+        // Never quite nothing, so the elbow can still be told where it is.
+        values(&mut world, arm, LOCAL_SCALE, Some([0.0; 4]));
+        assert!(at(&mut world, arm, 1, LOCAL_POSITION).iter().all(|n| n.is_finite()));
+
+        // Hiding the elbow keeps it switched off until shown, and a model nothing posed is posed at rest.
+        let (mut world, arm) = self::arm();
+        assert_eq!(at(&mut world, arm, 1, HIDDEN)[0], 0.0);
+        values(&mut world, arm, 1 << 8 | HIDDEN, Some([1.0, 0.0, 0.0, 0.0]));
+        assert_eq!(at(&mut world, arm, 1, HIDDEN)[0], 1.0);
+        assert_eq!(at(&mut world, arm, 0, HIDDEN)[0], 0.0, "the shoulder is not");
+        assert_eq!(world.get::<BonesOff>(arm).unwrap().off, vec![false, true]);
+        assert!(world.get::<Pose>(arm).is_some(), "posed at rest, so its skin goes by its bones");
+        values(&mut world, arm, 1 << 8 | HIDDEN, Some([0.0; 4]));
+        assert!(world.get::<BonesOff>(arm).is_none(), "every bone shown again");
     }
 
     #[test]

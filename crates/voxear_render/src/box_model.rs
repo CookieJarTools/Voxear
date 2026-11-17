@@ -38,11 +38,14 @@
 //! The pixels are kept small: the sheet's colours as a palette and a byte a
 //! pixel where it has 256 or fewer, compressed, as text (see [`Sheet`]).
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Mat4, Quat, Vec3};
 
 use crate::{
+    TintSlot,
     assets::MaterialDesc,
     gltf_import::{PreparedMaterial, PreparedModel, PreparedNode, PreparedTexture, TextureFormat},
     lod::full_lod,
@@ -369,6 +372,33 @@ impl Sheet {
         base64::encode(lz4_flex::compress_prepend_size(&body))
     }
 
+    /// The pixels as a PNG picture, to paint in another program.
+    pub fn to_png(&self) -> Result<Vec<u8>> {
+        let picture = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
+            .context("a sheet's pixels do not fill it")?;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        picture.write_to(&mut bytes, image::ImageFormat::Png).context("writing the sheet as a picture")?;
+        Ok(bytes.into_inner())
+    }
+
+    /// A sheet from a picture file, a PNG or any other the engine reads,
+    /// pixel for pixel.
+    pub fn from_picture(bytes: &[u8]) -> Result<Self> {
+        let picture = image::load_from_memory(bytes).context("reading the picture")?.to_rgba8();
+        let (width, height) = picture.dimensions();
+        Self::from_rgba(width, height, picture.into_raw())
+    }
+
+    /// A sheet from pixels already read: four bytes a pixel, row by row.
+    pub fn from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self> {
+        ensure!(
+            (1..=LARGEST_SHEET).contains(&width) && (1..=LARGEST_SHEET).contains(&height),
+            "a picture of {width} × {height} pixels; a sheet is {LARGEST_SHEET} a side at most"
+        );
+        ensure!(rgba.len() == (width * height * 4) as usize, "{} bytes for {width} × {height} pixels", rgba.len());
+        Ok(Self { width, height, rgba })
+    }
+
     /// A sheet of `width` × `height` pixels from [`to_text`](Self::to_text)'s text.
     pub fn from_text(width: u32, height: u32, text: &str) -> Result<Self> {
         let packed = base64::decode(text.trim()).context("the pixels are not base64")?;
@@ -412,6 +442,10 @@ pub struct BoxModel {
     /// from its foot up, as a plant does (see `shaders/wind.slang`): 1 for
     /// grass, less for a tree, 0 for anything that is not a plant.
     pub wind_bend: f32,
+    /// Which of an Obj's tints each colour of its pixels and cubes takes,
+    /// by its red, green and blue, where it is not the first: another, or
+    /// none, keeping its own colour, as a belt's buckle does on a dyed coat.
+    pub tints: BTreeMap<[u8; 3], Option<TintSlot>>,
 }
 
 impl Default for BoxModel {
@@ -423,6 +457,7 @@ impl Default for BoxModel {
             clips: Vec::new(),
             palette: Vec::new(),
             wind_bend: 0.0,
+            tints: BTreeMap::new(),
         }
     }
 }
@@ -442,10 +477,42 @@ struct FileModel {
     pixels: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     palette: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    tints: BTreeMap<String, FileTint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bones: Vec<FileBone>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     clips: Vec<clips::FileClip>,
+}
+
+/// Which tint a colour takes, as the file names it.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum FileTint {
+    First,
+    Second,
+    Third,
+    None,
+}
+
+impl FileTint {
+    fn slot(self) -> Option<TintSlot> {
+        match self {
+            Self::First => Some(TintSlot::First),
+            Self::Second => Some(TintSlot::Second),
+            Self::Third => Some(TintSlot::Third),
+            Self::None => None,
+        }
+    }
+
+    fn of(slot: Option<TintSlot>) -> Self {
+        match slot {
+            Some(TintSlot::First) => Self::First,
+            Some(TintSlot::Second) => Self::Second,
+            Some(TintSlot::Third) => Self::Third,
+            None => Self::None,
+        }
+    }
 }
 
 fn no_bend(value: &f32) -> bool {
@@ -580,8 +647,16 @@ impl BoxModel {
             });
         }
         let wind_bend = if file.wind_bend.is_finite() { file.wind_bend.clamp(0.0, MOST_WIND_BEND) } else { 0.0 };
+        let mut tints = BTreeMap::new();
+        for (color, tint) in file.tints {
+            let [r, g, b, _] = voxels::text_color(&color).with_context(|| format!("the tint of {color}"))?;
+            if tint.slot() != Some(TintSlot::First) {
+                tints.insert([r, g, b], tint.slot());
+            }
+        }
+        let clips = Vec::new();
         let mut model =
-            Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new(), palette, wind_bend };
+            Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips, palette, wind_bend, tints };
         model.clips = clips::read(file.clips, &model).context("reading its clips")?;
         Ok(model)
     }
@@ -594,6 +669,11 @@ impl BoxModel {
             sheet: [self.sheet.width, self.sheet.height],
             pixels: self.sheet.to_text(),
             palette: self.palette.iter().map(|color| voxels::color_text(*color)).collect(),
+            tints: self
+                .tints
+                .iter()
+                .map(|(&[r, g, b], &tint)| (voxels::color_text([r, g, b, 255]), FileTint::of(tint)))
+                .collect(),
             bones: self
                 .bones
                 .iter()
@@ -785,6 +865,7 @@ impl BoxModel {
                 clips: self.clips.iter().map(|clip| self.baked(clip)).collect(),
             }),
             roles: self.bones.iter().map(|bone| bone.role).collect(),
+            source: None,
         };
         let (mut data, far) = self.build(&self.rest_matrices());
         if data.indices.is_empty() {
@@ -801,6 +882,43 @@ impl BoxModel {
             lods.push(crate::lod::Lod::new(&far, tallest * self.pixel_size(), &data.vertices));
         }
         model.meshes.push((data, lods));
+        self.add_look(&mut model);
+        let name = std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned());
+        model.nodes.push(PreparedNode {
+            name: name.unwrap_or_default(),
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            mesh: 0,
+            material: Some(0),
+            mesh_part: "mesh0.0".to_string(),
+            material_part: Some("material0".to_string()),
+            skin: Some(0),
+        });
+        model
+    }
+
+    /// The model's look alone, ready to upload: its sheet, its tint mask and
+    /// its material, which another sheet of the same layout draws it with,
+    /// with none of its boxes.
+    pub fn look(&self, path: &str) -> PreparedModel {
+        let mut model = PreparedModel {
+            path: path.to_string(),
+            meshes: Vec::new(),
+            textures: Vec::new(),
+            materials: Vec::new(),
+            nodes: Vec::new(),
+            animation: None,
+            roles: Vec::new(),
+            source: None,
+        };
+        self.add_look(&mut model);
+        model
+    }
+
+    /// Its texture, its tint mask where it has one, and the material drawn
+    /// with them, as the model's first.
+    fn add_look(&self, model: &mut PreparedModel) {
         let texture = self.texture();
         model.textures.push(PreparedTexture {
             name: SHEET.to_string(),
@@ -820,6 +938,20 @@ impl BoxModel {
             wind_bend: self.wind_bend.max(0.0),
             ..MaterialDesc::default()
         };
+        // Which of an Obj's tints each pixel takes, where any colour takes another than the first.
+        let tint_mask = self.tint_mask().map(|mask| {
+            model.textures.push(PreparedTexture {
+                name: TINT_MASK.to_string(),
+                width: mask.width,
+                height: mask.height,
+                srgb: false,
+                format: TextureFormat::Rgba8,
+                mips: vec![mask.rgba],
+                compress: false,
+                source: None,
+            });
+            model.textures.len() - 1
+        });
         model.materials.push(PreparedMaterial {
             name: SHEET.to_string(),
             desc,
@@ -827,20 +959,37 @@ impl BoxModel {
             metallic_roughness: None,
             normal: None,
             emissive: None,
+            tint_mask,
         });
-        let name = std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned());
-        model.nodes.push(PreparedNode {
-            name: name.unwrap_or_default(),
-            position: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-            mesh: 0,
-            material: Some(0),
-            mesh_part: "mesh0.0".to_string(),
-            material_part: Some("material0".to_string()),
-            skin: Some(0),
-        });
-        model
+    }
+
+    /// Which of an Obj's tints a colour takes: the first unless the model
+    /// says another, or none.
+    pub fn tint_of(&self, [r, g, b, _]: [u8; 4]) -> Option<TintSlot> {
+        self.tints.get(&[r, g, b]).copied().unwrap_or(Some(TintSlot::First))
+    }
+
+    /// Has a colour take a tint, or none.
+    pub fn set_tint_of(&mut self, [r, g, b, _]: [u8; 4], tint: Option<TintSlot>) {
+        match tint {
+            Some(TintSlot::First) => drop(self.tints.remove(&[r, g, b])),
+            other => drop(self.tints.insert([r, g, b], other)),
+        }
+    }
+
+    /// The texture's tint mask: red, green or blue where a pixel takes the
+    /// first, second or third tint, black where it keeps its own colour;
+    /// `None` where every colour takes the first, which needs no mask.
+    pub fn tint_mask(&self) -> Option<Sheet> {
+        if self.tints.values().all(|tint| *tint == Some(TintSlot::First)) {
+            return None;
+        }
+        let mut mask = self.texture();
+        for pixel in mask.rgba.chunks_exact_mut(4) {
+            let color = [pixel[0], pixel[1], pixel[2], pixel[3]];
+            pixel.copy_from_slice(&TintSlot::mask_color(self.tint_of(color)));
+        }
+        Some(mask)
     }
 
     /// A model to start from: one bone holding a block-sized box standing
@@ -880,6 +1029,9 @@ const HEADING: &str = "# Voxear box model: boxes under bones, measured in the pi
 
 /// What the model's one texture and material are called.
 const SHEET: &str = "Sheet";
+
+/// The name of a box model's texture that says which tint each pixel takes.
+const TINT_MASK: &str = "Tint Mask";
 
 /// Degrees about X, Y and Z as a rotation, turned as an Obj's are.
 pub(crate) fn turned(degrees: Vec3) -> Quat {
@@ -972,7 +1124,10 @@ fn write_box(model_box: &ModelBox) -> FileBox {
 pub(crate) fn prepare(path: &str, read: &mut crate::gltf_import::ReadFile) -> Result<PreparedModel> {
     let bytes = read(path)?;
     let text = std::str::from_utf8(&bytes).context("the file is not text")?;
-    Ok(BoxModel::parse(text)?.prepared(path))
+    let mut model = BoxModel::parse(text)?.prepared(path);
+    // Kept, so a build can draw the model with another sheet as the editor does.
+    model.source = Some(text.to_string());
+    Ok(model)
 }
 
 #[cfg(test)]
@@ -1032,6 +1187,64 @@ mod tests {
         let text = model.to_text();
         assert_eq!(BoxModel::parse(&text).unwrap(), model, "{text}");
         assert!(text.contains("parent = \"Body\""), "a parent is named, not numbered: {text}");
+    }
+
+    #[test]
+    fn a_colours_tint_is_kept_in_the_file_and_makes_the_models_tint_mask() {
+        let mut model = figure();
+        assert!(model.tint_mask().is_none(), "every colour takes the first: no mask");
+        let (belt, trim) = ([120, 80, 40, 255], [90, 90, 90, 255]);
+        model.sheet.fill([0, 0], [4, 4], belt);
+        model.palette = vec![trim];
+        model.set_tint_of(belt, None);
+        model.set_tint_of(trim, Some(TintSlot::Second));
+        let text = model.to_text();
+        assert!(text.contains("[tints]") && text.contains("785028 = \"none\""), "{text}");
+        let read = BoxModel::parse(&text).unwrap();
+        assert_eq!(read.tints, model.tints);
+        assert_eq!(
+            (read.tint_of(belt), read.tint_of(trim), read.tint_of([255; 4])),
+            (None, Some(TintSlot::Second), Some(TintSlot::First))
+        );
+
+        let mask = read.tint_mask().expect("colours take other tints");
+        assert_eq!(mask.get(0, 0), [0, 0, 0, 255], "the belt keeps its colour");
+        assert_eq!(mask.get(63, 63), [255, 0, 0, 255], "the rest takes the first");
+        assert_eq!(mask.get(0, read.sheet.height), [0, 255, 0, 255], "the cubes' colour, under the sheet, the second");
+        let prepared = read.prepared("Figure.boxmodel");
+        assert_eq!(prepared.materials[0].tint_mask, Some(1), "drawn with its mask");
+
+        model.set_tint_of(belt, Some(TintSlot::First));
+        model.set_tint_of(trim, Some(TintSlot::First));
+        assert!(model.tints.is_empty() && model.tint_mask().is_none(), "back to the first, as if never set");
+    }
+
+    #[test]
+    fn a_sheet_goes_out_as_a_picture_and_comes_back_pixel_for_pixel() {
+        let mut sheet = Sheet::filled(8, 4, [0; 4]);
+        sheet.set(1, 2, [200, 40, 40, 255]);
+        sheet.set(7, 3, [10, 20, 30, 128]);
+        let png = sheet.to_png().unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        assert_eq!(Sheet::from_picture(&png).unwrap(), sheet, "holes and half-solid pixels kept");
+        assert!(Sheet::from_rgba(2, 2, vec![0; 15]).is_err(), "too few bytes");
+        assert!(Sheet::from_rgba(2048, 1, vec![0; 2048 * 4]).is_err(), "too wide");
+    }
+
+    #[test]
+    fn a_models_look_alone_is_its_sheet_and_material_and_its_file_is_kept_cooked() {
+        let model = figure();
+        let look = model.look("Figure.boxmodel");
+        assert!(look.meshes.is_empty() && look.nodes.is_empty());
+        assert_eq!((look.textures.len(), look.materials.len()), (1, 1));
+        let desc = look.materials[0].desc;
+        assert!(desc.pixels && desc.alpha_cutoff == Some(0.5) && look.materials[0].base_color == Some(0), "as its own");
+
+        let text = model.to_text();
+        let prepared = prepare("Figure.boxmodel", &mut |_| Ok(text.clone().into_bytes())).unwrap();
+        assert_eq!(prepared.box_source(), Some(text.as_str()), "kept for drawing it with another sheet");
+        let cooked = crate::CookedModel::from_bytes("Figure.boxmodel", &prepared.cook().unwrap().to_bytes()).unwrap();
+        assert_eq!(cooked.box_source(), Some(text.as_str()), "and in a build");
     }
 
     #[test]

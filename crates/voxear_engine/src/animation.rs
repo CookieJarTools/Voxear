@@ -12,6 +12,7 @@ mod bone_attachment;
 pub(crate) mod bones;
 pub mod boxes;
 mod clips;
+pub mod follow;
 pub mod grip;
 pub mod ik;
 pub(crate) mod pose_ops;
@@ -36,6 +37,7 @@ pub use actions::{ActionCommand, MotionMarks, take_marks};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub(crate) use bone_attachment::{hide, hide_only, show_all};
 pub use clips::{CLIP_PART, ClipSource, Clips, clips_found_for_scripts, give_clips};
+pub use follow::{FollowSkeleton, follow_skeletons, followed};
 pub use mob_motion::{
     MobBones, MobMotion, MobMotionState, MobPoser, MotionInput, animate_mobs, give_mob_bones,
     register as register_mob_motion,

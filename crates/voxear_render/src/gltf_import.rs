@@ -83,6 +83,9 @@ pub struct PreparedModel {
     pub(crate) animation: Option<ModelAnimation>,
     /// What part of a body each bone moves (see [`ImportedModel::roles`]).
     pub(crate) roles: Vec<crate::BoneRole>,
+    /// A box model's own file, kept so it can be drawn with another sheet
+    /// wherever it is read from, as cooked into a build.
+    pub(crate) source: Option<String>,
 }
 
 pub(crate) struct PreparedTexture {
@@ -157,6 +160,8 @@ pub(crate) struct PreparedMaterial {
     pub metallic_roughness: Option<usize>,
     pub normal: Option<usize>,
     pub emissive: Option<usize>,
+    /// Which of an Obj's tints fall where (see `MaterialDesc::tint_mask`).
+    pub tint_mask: Option<usize>,
 }
 
 impl PreparedMaterial {
@@ -165,7 +170,15 @@ impl PreparedMaterial {
     /// still work and taking the materials back needs no new ones.
     pub(crate) fn plain(name: &str) -> Self {
         let desc = MaterialDesc::default();
-        Self { name: name.to_string(), desc, base_color: None, metallic_roughness: None, normal: None, emissive: None }
+        Self {
+            name: name.to_string(),
+            desc,
+            base_color: None,
+            metallic_roughness: None,
+            normal: None,
+            emissive: None,
+            tint_mask: None,
+        }
     }
 }
 
@@ -222,6 +235,11 @@ pub struct PartPlace<'a> {
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// A box model's own file, as it was read.
+    pub fn box_source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     /// Its skeleton, skins and clips, for a model made to animate.
@@ -318,6 +336,7 @@ impl PreparedModel {
         self.textures.clear();
         for material in &mut self.materials {
             (material.base_color, material.metallic_roughness, material.normal, material.emissive) = (None, None, None, None);
+            material.tint_mask = None;
         }
     }
 
@@ -400,6 +419,7 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
             nodes: Vec::new(),
             animation: None,
             roles: Vec::new(),
+            source: None,
         },
         meshes: HashMap::new(),
         textures: HashMap::new(),
@@ -531,6 +551,18 @@ fn add_materials(
     materials.iter().map(|material| assets.add_material(gpu, &material_desc(material, textures))).collect()
 }
 
+/// Uploads a model's textures and materials alone, as a box model's look
+/// drawn with another sheet: its materials, in its order.
+pub fn upload_look(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    assets: &mut Assets,
+    model: &PreparedModel,
+) -> Result<Vec<MaterialHandle>> {
+    let textures = upload_textures(gpu, bindless, assets, model)?;
+    add_materials(gpu, assets, &model.materials, &textures)
+}
+
 /// A material's values, with its textures as uploaded.
 fn material_desc(material: &PreparedMaterial, textures: &[TextureId]) -> MaterialDesc {
     let texture = |index: Option<usize>| index.map(|i| textures[i]);
@@ -539,6 +571,7 @@ fn material_desc(material: &PreparedMaterial, textures: &[TextureId]) -> Materia
         metallic_roughness_texture: texture(material.metallic_roughness),
         normal_texture: texture(material.normal),
         emissive_texture: texture(material.emissive),
+        tint_mask: texture(material.tint_mask),
         ..material.desc
     }
 }
@@ -719,7 +752,16 @@ impl Preparer {
             ..MaterialDesc::default()
         };
         let name = name.to_string();
-        self.model.materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
+        let tint_mask = None;
+        self.model.materials.push(PreparedMaterial {
+            name,
+            desc,
+            base_color,
+            metallic_roughness,
+            normal,
+            emissive,
+            tint_mask,
+        });
         let index = self.model.materials.len() - 1;
         self.materials.insert(key, index);
         Ok(Some(index))

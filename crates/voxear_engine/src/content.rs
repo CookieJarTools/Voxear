@@ -60,6 +60,11 @@ pub struct MaterialData {
     /// `displacement` moves it out by.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height_map: Option<AssetGuid>,
+    /// Which of an Obj's tints fall where on it: red, green and blue for
+    /// the first, second and third, and black for none, where the surface
+    /// keeps its own colour. Without one the first tint falls everywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint_mask: Option<AssetGuid>,
     /// How far the height map moves the surface, in metres, from its lowest
     /// to its highest; 0 for none. The surface is diced finely enough to
     /// show it near the camera, and the mesh stays its middle.
@@ -164,6 +169,7 @@ impl Default for MaterialData {
             normal_map: None,
             emissive_map: None,
             height_map: None,
+            tint_mask: None,
             displacement: 0.0,
             detail: default_detail(),
             foliage: false,
@@ -194,10 +200,12 @@ pub enum MaterialMap {
     Normal,
     Emissive,
     Height,
+    TintMask,
 }
 
 impl MaterialMap {
-    pub const ALL: [Self; 5] = [Self::Color, Self::Metallic, Self::Normal, Self::Emissive, Self::Height];
+    pub const ALL: [Self; 6] =
+        [Self::Color, Self::Metallic, Self::Normal, Self::Emissive, Self::Height, Self::TintMask];
 
     /// Whether its picture holds colours, read as sRGB, rather than values.
     pub fn srgb(self) -> bool {
@@ -212,6 +220,7 @@ impl MaterialMap {
             Self::Normal => "normal_map",
             Self::Emissive => "emissive_map",
             Self::Height => "height_map",
+            Self::TintMask => "tint_mask",
         }
     }
 }
@@ -273,6 +282,7 @@ impl MaterialData {
             MaterialMap::Normal => self.normal_map,
             MaterialMap::Emissive => self.emissive_map,
             MaterialMap::Height => self.height_map,
+            MaterialMap::TintMask => self.tint_mask,
         }
     }
 
@@ -283,11 +293,12 @@ impl MaterialData {
             MaterialMap::Normal => &mut self.normal_map,
             MaterialMap::Emissive => &mut self.emissive_map,
             MaterialMap::Height => &mut self.height_map,
+            MaterialMap::TintMask => &mut self.tint_mask,
         } = picture;
     }
 
     /// The GPU's material, its maps' textures in [`MaterialMap::ALL`]'s order.
-    fn desc(&self, [color, metallic, normal, emissive, height]: [Option<TextureId>; 5]) -> MaterialDesc {
+    fn desc(&self, [color, metallic, normal, emissive, height, tint_mask]: [Option<TextureId>; 6]) -> MaterialDesc {
         let [r, g, b] = linear(self.color);
         MaterialDesc {
             base_color: [r, g, b, 1.0],
@@ -316,6 +327,7 @@ impl MaterialData {
             connected: self.connected,
             ground_blend: self.ground_blend.max(0.0),
             acoustic: self.acoustic.map_or(0, |acoustic| acoustic_code(acoustic)),
+            tint_mask,
             ..MaterialDesc::default()
         }
     }
@@ -372,7 +384,7 @@ impl MaterialData {
     }
 }
 
-type MaterialKey = ([u32; 15], [Option<AssetGuid>; 5], String);
+type MaterialKey = ([u32; 15], [Option<AssetGuid>; 6], String);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -538,6 +550,9 @@ pub struct Content {
     picture_sizes: HashMap<(AssetGuid, bool), [u32; 2]>,
     /// Pictures for UI, their colours multiplied by their alpha, with their sizes.
     ui_pictures: HashMap<AssetGuid, (TextureId, [u32; 2])>,
+    /// Box models' looks drawn with another picture for their sheet, by the
+    /// model and the picture.
+    box_sheets: HashMap<(AssetGuid, AssetGuid), MaterialHandle>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
     /// The project's custom shaders, read when the assets are scanned.
@@ -723,6 +738,7 @@ impl Content {
             pictures: HashMap::new(),
             picture_sizes: HashMap::new(),
             ui_pictures: HashMap::new(),
+            box_sheets: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
@@ -858,6 +874,7 @@ impl Content {
     pub fn forget(&mut self, path: &str) {
         let Some(guid) = self.db.guid_of(path) else { return };
         self.texts.remove(&guid);
+        self.box_sheets.retain(|&(model, picture), _| model != guid && picture != guid);
         self.prefabs.files.remove(&guid);
         if let Some(&id) = self.prefabs.ids.get(&guid)
             && let Some(template) = self.prefabs.templates.get_mut(id.0 as usize)
@@ -1992,6 +2009,7 @@ impl Content {
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
         self.forget_clips(guid);
+        self.box_sheets.retain(|&(model, _), _| model != guid);
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         // Its colliders take the new triangles, under new keys, so their bodies are made again.
         self.triangles.retain(|reference, _| !matches!(reference, AssetRef::Asset { guid: of, .. } if *of == guid));
@@ -2114,7 +2132,7 @@ impl Content {
 
     /// What the GPU draws a material with, its maps' pictures loaded.
     pub(crate) fn look(&mut self, renderer: &mut Renderer, data: &MaterialData) -> Result<MaterialDesc> {
-        let mut textures = [None; 5];
+        let mut textures = [None; 6];
         for (texture, map) in textures.iter_mut().zip(MaterialMap::ALL) {
             if let Some(picture) = data.map(map) {
                 *texture = Some(self.picture(renderer, picture, map.srgb())?);
@@ -2190,6 +2208,67 @@ impl Content {
         let texture = renderer.add_texture(&TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb: true })?;
         self.ui_pictures.insert(guid, (texture, [width, height]));
         Ok((texture, [width, height]))
+    }
+
+    /// A box model's material drawn with another picture for its sheet,
+    /// made on first use: the picture is the size of the model's sheet and
+    /// laid out as it is, its colours take the tints the model gives them,
+    /// and the model's cubes keep their palette.
+    pub fn box_sheet(
+        &mut self,
+        renderer: &mut Renderer,
+        model: AssetGuid,
+        picture: AssetGuid,
+    ) -> Result<MaterialHandle> {
+        if let Some(&found) = self.box_sheets.get(&(model, picture)) {
+            return Ok(found);
+        }
+        let entry = self.db.get(model).with_context(|| format!("no asset with GUID {model}"))?;
+        let path = entry.path.clone();
+        ensure!(voxear_render::is_box_model(&path), "{path} is not a box model, so it has no sheet");
+        let text = match self.cooked.contains(&model) {
+            true => {
+                let cooked = CookedModel::from_bytes(&path, &self.read(&path)?)?;
+                cooked.box_source().with_context(|| format!("{path} was built without its box model"))?.to_string()
+            }
+            false => self.read_text(&path)?,
+        };
+        let mut boxes = voxear_render::BoxModel::parse(&text).with_context(|| format!("reading {path}"))?;
+        let (sheet, named) = self.sheet_picture(picture)?;
+        let [width, height] = [boxes.sheet.width, boxes.sheet.height];
+        ensure!(
+            [sheet.width, sheet.height] == [width, height],
+            "{named} is {} × {} pixels, but {path}'s sheet is {width} × {height}",
+            sheet.width,
+            sheet.height
+        );
+        boxes.sheet = sheet;
+        let materials = renderer.upload_look(&boxes.look(&path))?;
+        let material = *materials.first().with_context(|| format!("{path} has no material"))?;
+        self.box_sheets.insert((model, picture), material);
+        Ok(material)
+    }
+
+    /// A picture's pixels as they are, for a box model's sheet, and its
+    /// path: as a build cooked it, which keeps them as they are where its
+    /// compression is off.
+    fn sheet_picture(&mut self, guid: AssetGuid) -> Result<(voxear_render::Sheet, String)> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
+        let path = entry.path.clone();
+        let bytes = self.read(&path)?;
+        let sheet = match CookedPicture::is_cooked(&bytes) {
+            true => {
+                let cooked = CookedPicture::from_bytes(&bytes, &path)?;
+                let rgba = cooked.rgba().with_context(|| {
+                    format!("{path} was built compressed; turn Compress in builds off for a box model's sheet")
+                })?;
+                let (width, height) = cooked.size();
+                voxear_render::Sheet::from_rgba(width, height, rgba.to_vec())?
+            }
+            false => voxear_render::Sheet::from_picture(&bytes).with_context(|| format!("reading {path}"))?,
+        };
+        Ok((sheet, path))
     }
 
     /// A picture asset as a light's cookie, in its colours as they look.
@@ -2821,13 +2900,13 @@ mod tests {
         assert!(!plain.contains("height") && !plain.contains("displacement") && !plain.contains("detail"), "{plain}");
         // Without a height map, nothing moves it.
         let unmapped = MaterialData { height_map: None, ..data };
-        assert_eq!(unmapped.desc([None; 5]).displacement, 0.0);
+        assert_eq!(unmapped.desc([None; 6]).displacement, 0.0);
     }
 
     #[test]
     fn a_two_sided_material_reads_and_writes_back_and_draws_apart_from_a_one_sided_one() {
         let data: MaterialData = toml::from_str("two_sided = true\n").unwrap();
-        assert!(data.two_sided && data.desc([None; 5]).two_sided, "the GPU's material is drawn from both sides");
+        assert!(data.two_sided && data.desc([None; 6]).two_sided, "the GPU's material is drawn from both sides");
         assert_eq!(toml::from_str::<MaterialData>(&toml::to_string(&data).unwrap()).unwrap(), data);
         assert!(!toml::to_string(&MaterialData::default()).unwrap().contains("two_sided"), "left out when one-sided");
         let one_sided = MaterialData { two_sided: false, ..data.clone() };

@@ -4,6 +4,7 @@
 //! behaviours attach to it and are driven by the [`Lifecycle`], which
 //! guarantees Awake → OnEnable → Start ordering.
 
+mod dimensions;
 mod hierarchy;
 mod layers;
 mod lifecycle;
@@ -13,6 +14,9 @@ mod path;
 pub mod plants;
 mod switches;
 
+pub use dimensions::{
+    CurrentDimension, DimensionId, Dimensioned, InDimension, dimension_of, put_in_dimension, set_dimension,
+};
 pub use hierarchy::{Parent, WorldTransform, propagate_transforms, world_matrix};
 pub use layers::{LAYER_COUNT, Layer, Layers};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};

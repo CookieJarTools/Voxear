@@ -1,0 +1,30 @@
+format = 1
+description = "Long warm evenings: shafts of sun through the leaves, a golden haze towards the sun, and a warm grade."
+
+[options]
+rays = { kind = "toggle", default = true, label = "Rays", about = "Shafts of sunlight where it breaks through leaves and between blocks" }
+ray_strength = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Ray strength", about = "How bright the rays are" }
+haze = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Haze", about = "How much warm haze the air holds, most towards the sun" }
+warmth = { kind = "number", range = [0.0, 1.0], default = 0.7, label = "Warmth", about = "How far the grade warms the picture: golden light, cool shade" }
+
+# The sky round the sun, marched towards it from each pixel at half size: what stands in the way casts the shafts.
+[[pass]]
+name = "Rays"
+program = "rays.slang"
+at = "after_fog"
+reads = ["color", "depth"]
+writes = { target = "rays", format = "rgba16f", scale = 0.5 }
+
+# The rays and the haze laid over the scene, before TAA, which smooths the rays' noise.
+[[pass]]
+name = "Evening light"
+program = "light.slang"
+at = "after_fog"
+reads = ["color", "depth", "rays", "block_light"]
+
+# Warm light and cool shade over the finished picture.
+[[pass]]
+name = "Evening grade"
+program = "grade.slang"
+at = "final"
+reads = ["color"]

@@ -71,6 +71,18 @@ public sealed class Dresser : SystemBase
 				follower.Follows = Obj.None;
 				Log.Info($"let go: {follower.Follows.IsValid}");
 				break;
+			case 4:
+				var dressed = Obj.Find("Wearer").Model;
+				dressed.SetMaterial(MaterialAsset.Load("Materials/Gold.material"));
+				dressed.Sheet = Texture.Load("Characters/Striped.png");
+				Log.Info($"dressed: {dressed.PartCount} {dressed.PartName(0)} {dressed.GetMaterial(0).IsSet} {dressed.Sheet.IsSet}");
+				dressed.Sheet = Texture.Load("Characters/Small.png");
+				dressed.SetMaterial(0, MaterialAsset.Load("Characters/Small.png"));
+				Log.Info($"kept: {dressed.Sheet.IsSet} {dressed.GetMaterial(0).IsSet}");
+				dressed.SetMaterial(MaterialAsset.None);
+				dressed.Sheet = Texture.None;
+				Log.Info($"own: {dressed.GetMaterial(0).IsSet} {dressed.Sheet.IsSet}");
+				break;
 		}
 	}
 }
@@ -103,6 +115,13 @@ fn game(log: &LogCapture) -> Option<(tempfile::TempDir, Game)> {
     for (name, hair, tail) in [("Long", 8, false), ("Short", 6, false), ("Tail", 8, true)] {
         std::fs::write(dir.path().join(format!("Characters/{name}.boxmodel")), character(hair, tail)).unwrap();
     }
+    // A sheet of the models' size, one too small, and a material.
+    let striped = voxear_render::Sheet::filled(64, 64, [200, 30, 30, 255]).to_png().unwrap();
+    std::fs::write(dir.path().join("Characters/Striped.png"), striped).unwrap();
+    let small = voxear_render::Sheet::filled(8, 8, [200, 30, 30, 255]).to_png().unwrap();
+    std::fs::write(dir.path().join("Characters/Small.png"), small).unwrap();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Gold.material"), "color = [1.0, 0.8, 0.2]\n").unwrap();
     let project = Project::open(dir.path()).unwrap();
     if let Err(error) = scripts::build(&project) {
         let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
@@ -159,7 +178,7 @@ fn a_script_tints_an_objs_model_and_puts_another_in_its_place() {
         assert_eq!(drawn.gpu_tints()[0], 0xc0 | 0x80 << 8 | 0x40 << 16 | 0xff << 24);
     }
 
-    for _ in 0..3 {
+    for _ in 0..4 {
         game.tick(1.0 / 60.0, renderer.as_mut());
     }
     let lines = lines(&log);
@@ -177,6 +196,14 @@ fn a_script_tints_an_objs_model_and_puts_another_in_its_place() {
     has("follows: True False");
     has("followed: True");
     has("let go: False");
+    // A part's material and a box model's sheet are drawn where there is a renderer to draw them.
+    if renderer.is_some() {
+        has("dressed: 1 Tail True True");
+        assert!(lines.iter().any(|l| l.contains("Characters/Small.png is 8 × 8 pixels")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("Characters/Small.png is not a material")), "{lines:#?}");
+        has("kept: True True");
+        has("own: False False");
+    }
     let world = &game.engine.world;
     let tail = game.content.db().guid_of("Characters/Tail.boxmodel").unwrap();
     assert_eq!(world.get::<ModelSource>(entity).unwrap().0.model, tail.to_string(), "kept by its GUID");

@@ -82,6 +82,10 @@ In a [[Block Worlds|Block World]] without end, ground is only made near the came
 
 Until that ground is made and solid, the Portal shows its mist and lets nothing through, then clears over a moment. `portal.IsReady` says whether it has cleared.
 
+## Into another dimension
+
+A Portal can lead into another [[Dimensions|dimension]], a world of its own: its far side shows that dimension's ground under its own sky, and what goes through comes out there. See [[Dimensions#Portals into a dimension]].
+
 ## Making Portals from scripts
 
 `Portal.CreatePair` makes two Portals that lead to each other, at two places:
@@ -146,7 +150,7 @@ name = "Main Camera"
 camera_follows = 12       # the Obj its camera films
 ```
 
-A Portal that leads to an Obj outside the file, as in another scene, is saved leading nowhere.
+A Portal that leads to an Obj outside the file, as in another scene, is saved leading nowhere. One that leads into a [[Dimensions|dimension]] names that dimension's file and its Portal there instead, as `into = { dimension = "Dimensions/Caves.dimension", portal = 2 }`.
 
 ## In a networked game
 
@@ -159,5 +163,5 @@ Each machine decides for itself what goes through, as it moves its own Objs, and
 - A body resting part-way through, such as a crate left in the opening, collides only on the side its middle is on.
 - Particles, smoke, glass, grass on a Terrain and the sea are not drawn on a far side. The water of Block Worlds is.
 - The far side is lit by the sky's light, not by bounced light.
-- A Portal leads within the world it is in. Portals to another level are not done yet.
+- A Portal leads within the level and its [[Dimensions|dimensions]]. Portals to another level are not done yet.
 - The server does not yet decide crossings for every player and check them, as it does for movement.

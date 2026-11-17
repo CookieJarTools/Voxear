@@ -42,6 +42,9 @@ pub struct ModelRenderer {
     /// Whether any part's material has a tint mask, so its second and
     /// third tints show where the mask says.
     pub masked: bool,
+    /// Whether it draws a box model, whose sheet a picture can take the
+    /// place of.
+    pub box_model: bool,
 }
 
 /// Which of a Model Renderer's tints: without a tint mask the first tints
@@ -83,7 +86,14 @@ impl Component for ModelRenderer {}
 
 impl ModelRenderer {
     pub fn new(parts: Vec<ModelPart>) -> Self {
-        Self { parts: parts.into(), lod_bias: 0.0, animation: None, tints: [NO_TINT; TINTS], masked: false }
+        Self {
+            parts: parts.into(),
+            lod_bias: 0.0,
+            animation: None,
+            tints: [NO_TINT; TINTS],
+            masked: false,
+            box_model: false,
+        }
     }
 
     /// Its tints as an instance carries them: each sRGB RGBA8 in its bits,

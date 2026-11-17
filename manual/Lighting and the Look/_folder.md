@@ -20,3 +20,5 @@ How a level looks comes from these:
 [[Look Packs]] are a few of those settings laid over any level's lighting, which whoever plays the game picks: Voxear's own, yours, and any a player adds.
 
 [[Texture Packs]] are the pictures blocks and materials are drawn with, which whoever plays the game picks too: yours, any a player adds, and a grain Voxear makes of each block's colour.
+
+[[Shader Packs]] are programs of their own that run over the picture as each frame is drawn: rays through leaves, fog, outlines, a painted look, a grade. Voxear comes with one, and you or a player can write more.

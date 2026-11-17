@@ -194,9 +194,11 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `audio.rays` | Read ray-traced audio in the running game, or set it there: on, quality and budget |
 | `lighting.get`, `lighting.set` | Read the open scene's lighting as the Lighting page shows it, and change one of its settings |
 | `lighting.bake`, `lighting.bake_status`, `lighting.bake_cancel`, `lighting.probe_light` | Bake the open level's lightmaps and light probes beside it, see how a bake goes or give it up, and read the baked probes' light at a point |
+| `shader_pack.list`, `shader_pack.wear`, `shader_pack.options` | List the shader packs there are, wear one in the Scene view and the game, and read or set the worn pack's options |
 | `commands`, `command.run` | Run anything the command palette runs, by its id |
 | `save`, `level.open`, `scene.open_alongside`, `scene.reload`, `files.look` | Save, open levels and scenes, and read files changed outside the editor |
 | `assets.list`, `asset.get`, `asset.create`, `asset.rename`, `asset.move`, `asset.duplicate`, `asset.delete` | Work with the project's files, as the Project panel does |
+| `box_model.sheet_save`, `box_model.sheet_load` | Write a box model's sheet beside it as a picture, and paint its sheet from a picture, as the Model window's **Save Sheet** and a picture dropped on its sheet do |
 | `play`, `pause`, `step`, `stop`, `game.console` | Run the game, and type into its console |
 | `console.read` | Read the Console's lines, from where the last read stopped |
 | `profiler.frames` | Read the Profiler's latest frames, each sample's time and each drawing pass's, from where the last read stopped |

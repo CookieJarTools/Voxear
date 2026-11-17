@@ -10,4 +10,4 @@ Everything in a Voxear game is built from the same few pieces:
 - A **level** is a list of scenes that load together. The game loads levels.
 - A **prefab** is an Obj saved as a file of its own, to use again and again.
 
-Read [[Objs and Components]] first, then [[Scenes and Levels]] and [[Prefabs]]. [[Portals]] join two places of a world, to look and walk through.
+Read [[Objs and Components]] first, then [[Scenes and Levels]] and [[Prefabs]]. [[Portals]] join two places of a world, to look and walk through, and lead into [[Dimensions]], worlds of their own beside the level's.

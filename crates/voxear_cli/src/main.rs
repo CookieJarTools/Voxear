@@ -446,6 +446,13 @@ enum Commands {
         /// the frames at once, the ground coming in as they go.
         #[arg(long, value_name = "SECONDS", default_value_t = 120.0)]
         wait: f32,
+        /// Draw the frames under a shader pack: `builtin:evening`, one of the project's by its `pack.toml`'s path or
+        /// GUID, or `file:` and the path of a pack's folder.
+        #[arg(long, value_name = "PACK")]
+        shader_pack: Option<String>,
+        /// Set one of the shader pack's options, as `rays=false`, `strength=1.5` or `quality=High`; again for each.
+        #[arg(long = "shader-pack-option", value_name = "NAME=VALUE", requires = "shader_pack")]
+        shader_pack_options: Vec<String>,
     },
 }
 
@@ -611,6 +618,8 @@ fn main() -> Result<()> {
             fly,
             world_quality,
             wait,
+            shader_pack,
+            shader_pack_options,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -677,6 +686,7 @@ fn main() -> Result<()> {
                     WorldQuality::ALL.into_iter().find(|preset| preset.label().eq_ignore_ascii_case(&quality))
                 }),
                 wait: std::time::Duration::from_secs_f32(wait.max(0.0)),
+                shader_pack: shader_pack.map(|pack| (pack, shader_pack_options)),
             };
             render(&project, shot, prepare, renderdoc)
         }
@@ -818,6 +828,8 @@ struct Shot {
     quality: Option<voxear_terrain::WorldQuality>,
     /// How long to wait at most for the ground round the camera before the frames.
     wait: std::time::Duration,
+    /// The shader pack to draw the frames under, and its options set, each `name=value`.
+    shader_pack: Option<(String, Vec<String>)>,
 }
 
 /// How many of a render's last frames its timings are averaged over.
@@ -1058,6 +1070,7 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         real_time,
         quality,
         wait,
+        shader_pack,
     } = shot;
     let mut project = Project::open(path)?;
     let project_name = project.name().to_string();
@@ -1100,6 +1113,14 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
             frame["loading"] = true.into();
             saved.push(frame);
         }
+    }
+    if let Some((pack, settings)) = &shader_pack {
+        let world = &mut game.engine.world;
+        voxear_engine::shader_packs::wear(world, &mut game.content, pack)?;
+        for setting in settings {
+            set_pack_option(world, setting)?;
+        }
+        println!("drawn under the shader pack {pack}");
     }
     let mut looking_through = None;
     if let Some(name) = &camera {
@@ -1287,6 +1308,28 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     if stats.average_luminance > 0.0 {
         println!("exposure: {:+.2} EV for an average luminance of {:.3}", stats.exposure_ev, stats.average_luminance);
     }
+    Ok(())
+}
+
+/// Sets one of the worn shader pack's options from `name=value`: a number,
+/// `true` or `false`, or a choice's name.
+fn set_pack_option(world: &mut voxear_ecs::World, setting: &str) -> Result<()> {
+    use voxear_engine::shader_packs;
+    let (key, value) = setting.split_once('=').with_context(|| format!("`{setting}` is not name=value"))?;
+    let (key, value) = (key.trim(), value.trim());
+    let options = shader_packs::options(world);
+    let option = options.iter().find(|(option, _)| option.key == key).map(|(option, _)| option);
+    let number = match value {
+        "true" | "on" => Some(1.0),
+        "false" | "off" => Some(0.0),
+        _ => value.parse::<f32>().ok(),
+    };
+    let chosen = option.and_then(|option| shader_packs::choice_value(option, value));
+    let Some(number) = chosen.or(number) else {
+        anyhow::bail!("`{value}` is not a number, true or false, or one of `{key}`'s choices");
+    };
+    let set = shader_packs::set_option(world, key, number)?;
+    println!("  {key} = {set}");
     Ok(())
 }
 
@@ -1633,8 +1676,10 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::AssetTable => "assets",
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",
+            AssetKind::Dimension => "dimension",
             AssetKind::LookPack => "look pack",
             AssetKind::TexturePack => "texture pack",
+            AssetKind::ShaderPack => "shader pack",
             AssetKind::Shader => "shader",
             AssetKind::VoxShade => "voxshade",
             AssetKind::MotionSet => "motion set",

@@ -148,6 +148,7 @@ struct Walked {
     corner: Vec3,
     size: f32,
     nav: std::sync::Arc<BlockNav>,
+    dimension: voxear_scene::DimensionId,
 }
 
 impl Walked {
@@ -200,7 +201,8 @@ pub fn set_destinations(world: &mut World, delta: f32) {
     let walked: Vec<Walked> = worlds
         .into_iter()
         .filter_map(|(entity, corner, size)| {
-            Some(Walked { corner, size, nav: crate::navigation::nav_of(world, entity)? })
+            let dimension = voxear_scene::dimension_of(world, entity);
+            Some(Walked { corner, size, nav: crate::navigation::nav_of(world, entity)?, dimension })
         })
         .collect();
     for (entity, mut mob, controller) in mobs {
@@ -217,11 +219,14 @@ pub fn set_destinations(world: &mut World, delta: f32) {
         }
         let walker_in =
             |walked: &Walked| Walker::blocks((controller.height / walked.size).ceil().clamp(1.0, 64.0) as u16);
-        let place = walked
+        // The world of blocks it is in: of its own dimension, the one it can stand in, or else the first there is.
+        let here = voxear_scene::dimension_of(world, entity);
+        let ours: Vec<&Walked> = walked.iter().filter(|walked| walked.dimension == here).collect();
+        let place = ours
             .iter()
             .position(|walked| walked.standing(at + Vec3::Y * 0.1, walker_in(walked), 2.0).is_some())
             .unwrap_or(0);
-        let destination = walked.get(place).and_then(|walked| {
+        let destination = ours.get(place).and_then(|walked| {
             let walker = walker_in(walked);
             let standing = walked.standing(at + Vec3::Y * 0.1, walker, 2.0).and_then(|place| walked.nav.cell(place));
             state.home = state.home.or(standing);

@@ -209,8 +209,11 @@ fn depth_under(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Ve
 /// The water at `at` as if there were no Dry Areas: what a hull, which is
 /// one, floats on. The sea's waves die away where it is shallow.
 fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option<WaterPoint> {
-    let pools = world.query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>();
-    let pool = pools.into_iter().find_map(|(pool, t, w)| {
+    // The water of the dimension the game is seen from.
+    let current = crate::dimensions::current(world);
+    let here = |entity: Entity| voxear_scene::dimension_of(world, entity) == current;
+    let pools = world.query_ref::<(Entity, &Pool, &Transform, Option<&WorldTransform>)>();
+    let pool = pools.into_iter().filter(|(entity, ..)| here(*entity)).find_map(|(_, pool, t, w)| {
         let (position, rotation) = placed(t, w);
         Some((pool.surface_over(position, rotation, at)?, pool.liquid))
     });
@@ -219,20 +222,22 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     }
     // In a world of blocks' water, or over it: the top of its column, flowing as its blocks do.
     let blocks = world.query_ref::<(
+        Entity,
         &voxear_terrain::blocks::BlockWorld,
         &Transform,
         Option<&WorldTransform>,
         Option<&voxear_render::sea::SeaLevel>,
     )>();
-    let block_water = blocks.into_iter().find_map(|(blocks, local, placed, sea)| {
-        let corner = voxear_terrain::corner(local, placed);
-        let inside = (at - corner).to_array();
-        let top = blocks.water_over(inside, OVER_BLOCK_WATER)?;
-        let flow = Vec3::from(blocks.water_flow(inside, OVER_BLOCK_WATER).unwrap_or([0.0; 3]));
-        // Its sea, where it has a level, is the water that stands as high: ponds and rivers are no sea.
-        let is_sea = sea.is_none_or(|sea| (top - sea.0).abs() < 0.02 * blocks.block_size.max(0.01));
-        Some((corner.y + top, flow, is_sea))
-    });
+    let block_water =
+        blocks.into_iter().filter(|(entity, ..)| here(*entity)).find_map(|(_, blocks, local, placed, sea)| {
+            let corner = voxear_terrain::corner(local, placed);
+            let inside = (at - corner).to_array();
+            let top = blocks.water_over(inside, OVER_BLOCK_WATER)?;
+            let flow = Vec3::from(blocks.water_flow(inside, OVER_BLOCK_WATER).unwrap_or([0.0; 3]));
+            // Its sea, where it has a level, is the water that stands as high: ponds and rivers are no sea.
+            let is_sea = sea.is_none_or(|sea| (top - sea.0).abs() < 0.02 * blocks.block_size.max(0.01));
+            Some((corner.y + top, flow, is_sea))
+        });
     if let Some((height, flow, is_sea)) = block_water {
         // In rough weather the sea stands as far under its top as its swell has sunk it, and moves with it.
         if let Some(sea) = world.resource::<crate::storms::SeaNow>().filter(|_| is_sea) {

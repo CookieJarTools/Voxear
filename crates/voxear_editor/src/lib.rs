@@ -49,6 +49,7 @@
 //! - **Settings**, kept per project with what the palette ran recently
 
 mod asset_inspector;
+mod shader_pack_inspector;
 mod attributes;
 pub mod audio_panel;
 mod build_window;

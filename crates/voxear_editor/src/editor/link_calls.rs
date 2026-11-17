@@ -439,6 +439,7 @@ impl Editor {
             "asset.get" => self.asset_get(args),
             "asset.create" => self.asset_create(args, renderer),
             "asset.rename" | "asset.move" | "asset.duplicate" | "asset.delete" => self.asset_file(call, args, renderer),
+            "box_model.sheet_save" | "box_model.sheet_load" => self.box_model_sheet(call, args, renderer),
             "play" => {
                 if self.is_playing() {
                     return done(json!({ "playing": true }));
@@ -480,6 +481,9 @@ impl Editor {
             }
             "lighting.get" => self.lighting_get(renderer),
             "lighting.set" => self.lighting_set(args, renderer),
+            "shader_pack.list" => self.shader_pack_list(),
+            "shader_pack.wear" => self.shader_pack_wear(args),
+            "shader_pack.options" => self.shader_pack_options(args),
             "settings.get" => done(self.settings_json(args)),
             "settings.set" => self.settings_set(args),
             "settings.show" => {
@@ -1283,6 +1287,27 @@ impl Editor {
         let made = project_files::create(&root, &folder, new, &namespace).map_err(failed)?;
         self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
         done(json!({ "asset": link::asset_ref(&self.game, &made) }))
+    }
+
+    /// A box model's sheet written out as a picture, or painted from one.
+    fn box_model_sheet(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {
+        let (_, path, _) = link::resolve_project_asset(&self.game, need(args, "asset")?)?;
+        if !voxear_render::is_box_model(&path) {
+            return Err(bad(format!("{path} is not a box model")));
+        }
+        let text = std::fs::read_to_string(self.game.project.root.join(&path)).map_err(|error| failed(error.into()))?;
+        let mut model = voxear_render::BoxModel::parse(&text).map_err(failed)?;
+        if call == "box_model.sheet_save" {
+            let saved = self.save_box_sheet(&path, &model.sheet, renderer).map_err(failed)?;
+            return done(json!({ "picture": link::asset_ref(&self.game, &saved) }));
+        }
+        let (_, picture, _) = link::resolve_project_asset(&self.game, need(args, "picture")?)?;
+        model.sheet = self.read_sheet_picture(&picture).map_err(failed)?;
+        let size = [model.sheet.width, model.sheet.height];
+        self.save_box_model(&path, &model, renderer);
+        // The Model window, open on it, shows it as saved.
+        self.model_file_changed(&path);
+        done(json!({ "asset": link::asset_ref(&self.game, &path), "sheet": size }))
     }
 
     fn asset_file(&mut self, call: &str, args: &Json, renderer: &mut Renderer) -> Called {

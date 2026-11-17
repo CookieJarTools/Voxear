@@ -218,6 +218,16 @@ A box model's clips are clips like any model's (see [[Animation Clips]]). Open t
 
 Going back to **Shape** puts the model at rest. Renaming a bone keeps its keys.
 
+### The sheet as a picture
+
+To paint a sheet in another program, click **Save Sheet** in the Paint bar. The sheet is written beside the model as a picture, `Fox Sheet.png` for `Fox.boxmodel`, in place of one saved before, and shows in the Project panel. It has the sheet's own pixels, holes see-through, laid out as the faces are.
+
+To bring a picture back, drag it from the Project panel onto the flat sheet. The sheet takes its pixels, one step to undo. A picture of another size makes the sheet that size, every face where it was on it, so a picture twice as large leaves the faces in its upper left quarter.
+
+Tools reach both through `vox editor call box_model.sheet_save` and `box_model.sheet_load` (see [[Driving the Editor from a Terminal]]).
+
+A picture of the sheet's layout can also stand in for the sheet on one Obj, so one model wears many faces or patterns. See [[Tints and Parts#Another sheet or material]].
+
 ### Undo and saving
 
 **Ctrl+Z** and **Ctrl+Y** undo and redo changes to the model while the Model window is the one you last clicked in. One drag is one step.
@@ -406,7 +416,7 @@ To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block M
 
 ## Not done yet
 
-- A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
+- A brush wider than one pixel.
 - Sculpting: bringing in a `.vox` file as a box of cubes, filling or carving more than one cube at a time, and making a character from parts picked at random.
 - Plants and trees placed by a Block World's generator, by surface and climate. They are placed by hand or painted for now.
 - On the timeline: zooming in on a long clip, copying keys, and moving several keys at once.

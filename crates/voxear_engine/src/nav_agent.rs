@@ -28,7 +28,7 @@ use voxear_nav::{
     threads::Job,
 };
 use voxear_physics::Ground;
-use voxear_scene::{Destroying, Transform, WorldTransform};
+use voxear_scene::{Destroying, DimensionId, Transform, WorldTransform, dimension_of};
 use voxear_terrain::blocks::BlockWorld;
 
 use crate::{
@@ -222,6 +222,7 @@ struct Walked {
     size: f32,
     nav: Arc<BlockNav>,
     blocks: BlockWorld,
+    dimension: DimensionId,
 }
 
 impl Walked {
@@ -248,6 +249,7 @@ struct Stepping {
     agent: NavAgent,
     state: NavAgentState,
     at: Vec3,
+    dimension: DimensionId,
     walked: Option<usize>,
     controller: Option<CharacterController>,
 }
@@ -294,7 +296,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks })
+            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
         })
         .collect();
 
@@ -310,21 +312,24 @@ pub fn step_agents(world: &mut World, delta: f32) {
         let controller = world.get::<CharacterController>(entity).copied();
         let height = controller.map_or(agent.height, |controller| controller.height);
         // The world it walks: the one it stands in, or else the first there is.
+        // The world it walks: of its own dimension, the one it stands in, or else the first there is.
+        let dimension = dimension_of(world, entity);
+        let ours = |walked: &&Walked| walked.dimension == dimension;
         let index = walked
             .iter()
-            .position(|walked| walked.standing(at, walked.walker(height), 2.0).is_some())
-            .or((!walked.is_empty()).then_some(0));
+            .position(|walked| ours(&walked) && walked.standing(at, walked.walker(height), 2.0).is_some())
+            .or_else(|| walked.iter().position(|walked| ours(&walked)));
         state.world = index.map(|index| walked[index].entity);
         if let Some(walked) = index.map(|index| &walked[index]) {
             plan(world, &agent, &mut state, walked, at, height, delta, &mut budget);
         } else {
             state.wanted = Vec3::ZERO;
         }
-        steps.push(Stepping { entity, agent, state, at, walked: index, controller });
+        steps.push(Stepping { entity, agent, state, at, dimension, walked: index, controller });
     }
 
-    // All of them together: each velocity chosen avoiding the rest, and every other character.
-    let others: Vec<Mover> = world
+    // All of them together: each velocity chosen avoiding the rest, and every other character, of its own dimension.
+    let others: Vec<(DimensionId, Mover)> = world
         .query_ref::<(Entity, &CharacterController)>()
         .without::<NavAgent>()
         .without::<BlockMob>()
@@ -335,7 +340,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
                 .resource::<PhysicsScene>()
                 .and_then(|physics| physics.character_state(entity))
                 .map_or(Vec3::ZERO, |state| state.velocity);
-            Some(Mover {
+            let mover = Mover {
                 position: steer::flat(at),
                 velocity: steer::flat(moved),
                 wanted: steer::flat(moved),
@@ -343,10 +348,11 @@ pub fn step_agents(world: &mut World, delta: f32) {
                 speed: steer::flat(moved).length(),
                 priority: 1.0,
                 avoids: false,
-            })
+            };
+            Some((dimension_of(world, entity), mover))
         })
         .collect();
-    let mut movers: Vec<Mover> = steps
+    let movers: Vec<Mover> = steps
         .iter()
         .map(|step| {
             let radius =
@@ -362,12 +368,22 @@ pub fn step_agents(world: &mut World, delta: f32) {
             }
         })
         .collect();
-    let agents_count = movers.len();
-    movers.extend(others);
     let heeding = steps.iter().map(|step| step.agent.avoidance).max_by_key(|quality| *quality as u8);
     let avoidance =
         Avoidance { neighbours: if heeding == Some(NavAvoidance::Low) { 4 } else { 10 }, ..Avoidance::default() };
-    let chosen = avoid(&movers, &avoidance, delta);
+    let mut chosen = vec![Vec2::ZERO; movers.len()];
+    let mut dimensions: Vec<DimensionId> = steps.iter().map(|step| step.dimension).collect();
+    dimensions.sort_unstable();
+    dimensions.dedup();
+    for dimension in dimensions {
+        let agents: Vec<usize> = (0..steps.len()).filter(|at| steps[*at].dimension == dimension).collect();
+        let mut here: Vec<Mover> = agents.iter().map(|at| movers[*at]).collect();
+        here.extend(others.iter().filter(|(of, _)| *of == dimension).map(|(_, mover)| *mover));
+        for (at, velocity) in agents.into_iter().zip(avoid(&here, &avoidance, delta)) {
+            chosen[at] = velocity;
+        }
+    }
+    let agents_count = chosen.len();
 
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else {
         // With no physics there is nothing to stand on or fall on: only those moving along the nav move.
@@ -777,9 +793,12 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks })
+            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
         })
         .collect();
+    // Scripts ask in the dimension the game is seen from.
+    let current = voxear_scene::CurrentDimension::of(world);
+    let walked: Vec<Walked> = walked.into_iter().filter(|walked| walked.dimension == current).collect();
     let index = walked.iter().position(|walked| walked.standing(at, walked.walker(height), 4.0).is_some()).unwrap_or(0);
     walked.into_iter().nth(index)
 }

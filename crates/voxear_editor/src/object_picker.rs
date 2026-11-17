@@ -554,6 +554,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
     let icon = match kind {
         Some(AssetKind::Level) => "level",
         Some(AssetKind::Scene) => "scene",
+        Some(AssetKind::Dimension) => "globe",
         Some(AssetKind::Prefab) => "cube",
         Some(AssetKind::Model) => "box",
         Some(AssetKind::Material) => "material",
@@ -583,6 +584,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::VoxModel) => "blocks",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::LookPack) => "eye",
+        Some(AssetKind::ShaderPack) => "layers",
         Some(AssetKind::TexturePack) => "image",
         Some(AssetKind::Data) => "file",
         None => "obj",

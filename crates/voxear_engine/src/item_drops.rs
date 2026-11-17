@@ -99,7 +99,11 @@ pub fn rolled(drops: &[BlockDrop], share: f32, seed: u32) -> Vec<(String, u32)> 
 /// Obj it lies on.
 pub fn drop_item(world: &mut World, item: &str, count: u32, at: Vec3, velocity: Vec3) -> Entity {
     let drop = ItemDrop { item: item.to_string(), count: count.max(1), velocity, resting: false, age: 0.0 };
-    world.spawn((Transform::new(at, Quat::IDENTITY, Vec3::splat(SIZE)), drop, EditorOnly))
+    let obj = world.spawn((Transform::new(at, Quat::IDENTITY, Vec3::splat(SIZE)), drop, EditorOnly));
+    // In the dimension the game is seen from, where it was let go.
+    let dimension = crate::dimensions::current(world);
+    voxear_scene::set_dimension(world, obj, dimension);
+    obj
 }
 
 /// Every drop lying within `radius` metres of `at` that can be taken up,
@@ -154,15 +158,23 @@ pub fn update(world: &mut World, content: &mut Content, renderer: Option<&mut Re
     if drops.is_empty() {
         return;
     }
-    let worlds: Vec<(Vec3, BlockWorld)> = world
-        .query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>)>()
+    let worlds: Vec<(Vec3, BlockWorld, voxear_scene::DimensionId)> = world
+        .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(blocks, local, placed)| (voxear_terrain::corner(local, placed), blocks.clone()))
+        .map(|(entity, blocks, local, placed)| {
+            (voxear_terrain::corner(local, placed), blocks.clone(), voxear_scene::dimension_of(world, entity))
+        })
         .collect();
-    let worlds: Vec<(Vec3, &BlockWorld)> = worlds.iter().map(|(corner, blocks)| (*corner, blocks)).collect();
     let mut moved = Vec::with_capacity(drops.len());
     for (entity, mut drop, mut transform) in drops {
+        // It falls onto the ground of its own dimension.
+        let here = voxear_scene::dimension_of(world, entity);
+        let worlds: Vec<(Vec3, &BlockWorld)> = worlds
+            .iter()
+            .filter(|(.., dimension)| *dimension == here)
+            .map(|(corner, blocks, _)| (*corner, blocks))
+            .collect();
         drop.age += delta;
         if drop.age >= LASTS {
             world.insert(entity, Destroying);

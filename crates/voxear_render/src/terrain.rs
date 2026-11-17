@@ -285,9 +285,23 @@ struct Resident {
 }
 
 /// A terrain to draw this frame, as every view draws it.
+/// The terrains a view in `dimension` draws, of every terrain drawn this
+/// frame.
+pub(crate) fn in_dimension(
+    drawn: &std::sync::Arc<[Drawn]>,
+    dimension: voxear_scene::DimensionId,
+) -> std::sync::Arc<[Drawn]> {
+    match drawn.iter().all(|terrain| terrain.dimension == dimension) {
+        true => drawn.clone(),
+        false => drawn.iter().filter(|terrain| terrain.dimension == dimension).cloned().collect(),
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Drawn {
     pub entity: Entity,
+    /// The dimension it is in: only views of that dimension draw it.
+    pub dimension: voxear_scene::DimensionId,
     pub corner: Vec3,
     pub tiles: [u32; 2],
     pub spacing: f32,
@@ -572,6 +586,7 @@ impl Terrains {
             let ranges = LodRanges::new(terrain.detail_distance, tree.leaf_size(), tree.levels());
             self.drawn.push(Drawn {
                 entity,
+                dimension: voxear_scene::dimension_of(world, entity),
                 corner,
                 tiles: resident.tiles,
                 spacing: resident.spacing,

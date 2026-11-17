@@ -29,6 +29,8 @@ Every structure has a placement. The world is cut into squares **Spacing** apart
 
 Spacing, Chance and Apart together keep a world from being crowded: a large town with a spacing of 2 km, a chance of 0.5 and Apart of 600 m comes rarely and alone, while a well with a spacing of 200 m is common.
 
+Nothing stands over a cave, a ravine or ground an overhang cuts back: a place is left bare where the ground under it is opened. A tree needs ground under its trunk three blocks down, as deep as its roots go; a building, a town's middle and each of its houses need it under their middle and corners. Near and far alike, so a tree seen in the distance is still there when you walk up to it.
+
 Structures are built in the order the world lists them. One listed later keeps clear of what earlier ones built: its trunk off their streets, its crown off their houses. So list towns first, then lone buildings, then woods.
 
 ## Trees of blocks

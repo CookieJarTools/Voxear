@@ -227,6 +227,9 @@ pub fn fell(
     if let Some(look) = look {
         world.insert(obj, look);
     }
+    // It falls in the dimension of the world it grew in.
+    let dimension = voxear_scene::dimension_of(world, entity);
+    voxear_scene::set_dimension(world, obj, dimension);
     Some(obj)
 }
 
@@ -344,13 +347,15 @@ fn break_up(world: &mut World, content: &mut Content, tree: &FallingTree) -> Fel
     Felled { world: tree.from, cut, away: tree.away, landed: middle / count, drops }
 }
 
-/// The first world of blocks with a block at `at`, a point in metres, and
-/// where that block is in it.
+/// The first world of blocks with a block at `at`, a point in metres, of
+/// the dimension the game is seen from, and where that block is in it.
 pub fn block_at(world: &World, at: Vec3) -> Option<(Entity, [i32; 3])> {
+    let current = crate::dimensions::current(world);
     world
         .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == current)
         .find_map(|(entity, blocks, local, placed)| {
             let corner = voxear_terrain::corner(local, placed);
             let (place, block) = blocks.block_at((at - corner).to_array());

@@ -1,0 +1,212 @@
+//! A shader pack's page in the Inspector: what it is, whether the Scene
+//! view wears it and how its last compile went, its passes, and its
+//! options, which change the pack worn at once.
+
+use voxear_engine::{
+    Game,
+    shader_packs::{self, Standing},
+};
+use voxear_render::shader_packs::{OptionKind, PackManifest, PassWrites, TargetScale};
+use voxear_ui::{NodeId, Style, Ui};
+
+use crate::{asset_inspector::part, inspector::prop};
+
+/// One option's control.
+enum OptionControl {
+    /// A slider and the field beside it that says its value and takes one
+    /// typed.
+    Number(NodeId, NodeId),
+    Toggle(NodeId),
+    Choice(NodeId),
+}
+
+/// What was changed on the page.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackChange {
+    /// Wear the pack in the Scene view, or take it off.
+    Wear(String, bool),
+    /// An option of the pack worn, by its name, and its value.
+    Option(String, f32),
+}
+
+/// The page's controls, and what they show now.
+pub struct ShaderPackFields {
+    /// What names the pack, as `shader_packs::wear` takes it.
+    reference: String,
+    worn: NodeId,
+    standing: NodeId,
+    shown: Option<(bool, Option<Standing>)>,
+    options: Vec<(String, OptionControl)>,
+    values: Vec<f32>,
+}
+
+/// The rows of the pack whose manifest is `file`, named by `reference`.
+pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) -> Option<ShaderPackFields> {
+    let rows = part(ui, root, "Shader Pack", "layers");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let manifest = match PackManifest::parse(&text) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let row = prop(ui, rows, "Not read");
+            let value = ui.add_label(row, &format!("{error:#}"));
+            ui.add_class(value, "value");
+            ui.add_class(value, "shader-error");
+            return None;
+        }
+    };
+    let row = prop(ui, rows, "Description");
+    let value = ui.add_label(row, if manifest.description.is_empty() { "None" } else { &manifest.description });
+    ui.add_class(value, "value");
+
+    let row = prop(ui, rows, "Worn");
+    tip(
+        ui,
+        row,
+        "Draws the Scene view and the game under the pack, and draws it again whenever one of its files is saved",
+    );
+    let worn = ui.toggle(row, "", false);
+    ui.add_class(worn, "checkbox");
+    let row = prop(ui, rows, "Compiled");
+    tip(ui, row, "How the pack's programs compiled: Slang's message, with the file and line, where they did not");
+    let standing = ui.add_label(row, "Not worn");
+    ui.add_class(standing, "value");
+
+    let passes = part(ui, root, "Passes", "layers");
+    for pass in &manifest.passes {
+        let row = prop(ui, passes, &pass.name);
+        let writes = match pass.writes {
+            PassWrites::Color => "the colour".to_string(),
+            PassWrites::Target(target) => {
+                let target = &manifest.targets[target];
+                let size = match target.scale {
+                    TargetScale::Full => "",
+                    TargetScale::Half => ", half size",
+                    TargetScale::Quarter => ", quarter size",
+                };
+                let kept = if target.kept { ", kept" } else { "" };
+                format!("{}{size}{kept}", target.name)
+            }
+        };
+        let reads = pass.reads.names(&manifest);
+        let reads = if reads.is_empty() { "nothing".to_string() } else { reads.join(", ") };
+        let text = format!("{} · {} → {writes}", pass.point.title(), reads);
+        let value = ui.add_label(row, &text);
+        ui.add_class(value, "value");
+        tip(ui, row, &format!("{}, at {}: reads {reads}, writes {writes}", pass.program, pass.point.key()));
+    }
+
+    let mut options = Vec::new();
+    if !manifest.options.is_empty() {
+        let rows = part(ui, root, "Options", "settings");
+        for option in &manifest.options {
+            let row = prop(ui, rows, &option.label);
+            if !option.about.is_empty() {
+                tip(ui, row, &option.about);
+            }
+            let control = match &option.kind {
+                OptionKind::Number { low, high, default } => {
+                    let holder = ui.panel(row, Style::row());
+                    ui.add_class(holder, "attr-range");
+                    let slider = ui.slider(holder, *low, *high, *default);
+                    ui.add_class(slider, "attr-slider");
+                    let field = ui.text_field(holder, &crate::inspector::number(*default));
+                    ui.add_class(field, "value-input");
+                    ui.add_class(field, "number-input");
+                    ui.add_class(field, "attr-range-input");
+                    OptionControl::Number(slider, field)
+                }
+                OptionKind::Toggle { default } => {
+                    let toggle = ui.toggle(row, "", *default);
+                    ui.add_class(toggle, "checkbox");
+                    OptionControl::Toggle(toggle)
+                }
+                OptionKind::Choice { choices, default } => {
+                    let labels: Vec<&str> = choices.iter().map(String::as_str).collect();
+                    let dropdown = ui.dropdown(row, &labels, *default);
+                    ui.add_class(dropdown, "value-choice");
+                    OptionControl::Choice(dropdown)
+                }
+            };
+            options.push((option.key.clone(), control));
+        }
+    }
+    let values = manifest.options.iter().map(|option| option.default_value()).collect();
+    Some(ShaderPackFields { reference: reference.to_string(), worn, standing, shown: None, options, values })
+}
+
+/// A tooltip on a row's label.
+fn tip(ui: &mut Ui, row: NodeId, text: &str) {
+    if let Some(&label) = ui.children(row).first() {
+        ui.set_tooltip(label, text, None);
+    }
+}
+
+impl ShaderPackFields {
+    /// What was changed on the page since the last frame.
+    pub fn update(&mut self, ui: &mut Ui) -> Option<PackChange> {
+        if ui.changed(self.worn) {
+            return Some(PackChange::Wear(self.reference.clone(), ui.is_checked(self.worn)));
+        }
+        for (at, (key, control)) in self.options.iter().enumerate() {
+            let value = match control {
+                OptionControl::Number(slider, _) if ui.changed(*slider) => ui.slider_value(*slider),
+                OptionControl::Number(_, field) if ui.changed(*field) => match ui.text(*field).trim().parse() {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                },
+                OptionControl::Toggle(toggle) if ui.changed(*toggle) => f32::from(u8::from(ui.is_checked(*toggle))),
+                OptionControl::Choice(dropdown) if ui.changed(*dropdown) => ui.selected_option(*dropdown) as f32,
+                _ => continue,
+            };
+            self.values[at] = value;
+            return Some(PackChange::Option(key.clone(), value));
+        }
+        None
+    }
+
+    /// Shows whether the pack is worn, how its compile went, and its
+    /// options' values as worn.
+    pub fn show(&mut self, ui: &mut Ui, game: &Game) {
+        let world = &game.engine.world;
+        let worn = shader_packs::worn(world) == Some(self.reference.as_str());
+        let standing = worn.then(|| shader_packs::standing(world)).flatten();
+        let now = (worn, standing);
+        if self.shown.as_ref() == Some(&now) && !worn {
+            return;
+        }
+        if self.shown.as_ref() != Some(&now) {
+            ui.set_checked(self.worn, worn);
+            let text = match &now.1 {
+                None => "Not worn".to_string(),
+                Some(Standing::Compiling) => "Compiling…".to_string(),
+                Some(Standing::Drawn) => "Compiled".to_string(),
+                Some(Standing::Failed(error)) => {
+                    let lines: Vec<&str> = error.lines().filter(|line| !line.trim().is_empty()).take(8).collect();
+                    lines.join("\n")
+                }
+            };
+            ui.set_text(self.standing, &text);
+            ui.set_class(self.standing, "shader-error", matches!(now.1, Some(Standing::Failed(_))));
+            self.shown = Some(now);
+        }
+        if !worn {
+            return;
+        }
+        // The options as the pack worn has them, as a call may have set them.
+        for (option, value) in shader_packs::options(world) {
+            let Some(at) = self.options.iter().position(|(key, _)| *key == option.key) else { continue };
+            if (self.values[at] - value).abs() <= f32::EPSILON {
+                continue;
+            }
+            self.values[at] = value;
+            match self.options[at].1 {
+                OptionControl::Number(slider, field) => {
+                    ui.set_slider_value(slider, value);
+                    ui.set_text(field, &crate::inspector::number(value));
+                }
+                OptionControl::Toggle(toggle) => ui.set_checked(toggle, value >= 0.5),
+                OptionControl::Choice(dropdown) => ui.set_selected_option(dropdown, value as usize),
+            }
+        }
+    }
+}

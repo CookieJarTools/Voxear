@@ -97,28 +97,64 @@ pub fn prepare(world: &mut World, content: &mut Content) {
 }
 
 /// Turns the level's clock on by `delta` seconds while `playing`, and the
-/// sun with it where its Climate says.
+/// sun with it where its Climate says: the sun of the level's dimension and
+/// of every dimension on the level's clock. A dimension with a clock of its
+/// own turns its first Climate, and its sun with it, the same way.
 pub fn turn_clock(world: &mut World, delta: f32, playing: bool) {
+    use crate::dimensions::{DimensionClock, DimensionId, Dimensions};
+    let dimensioned = voxear_scene::Dimensioned::of(world);
     let mut found: Vec<Entity> =
         world.query_ref::<(Entity, &Climate)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
     found.sort_by_key(|entity| entity.to_bits());
-    let Some(climate) = found.first().and_then(|&entity| world.get_mut::<Climate>(entity)) else { return };
-    if playing && climate.day_length > 0.0 {
-        climate.time_of_day = (climate.time_of_day + delta * 24.0 / (climate.day_length * 60.0)).rem_euclid(24.0);
+    let clock_of = |id: DimensionId| match id.is_level() {
+        true => DimensionClock::Level,
+        false => world.resource::<Dimensions>().map_or(DimensionClock::None, |made| made.settings(id).clock()),
+    };
+    // The level's clock is its first Climate's in its own dimension, or failing that the first anywhere.
+    let level = found.iter().copied().find(|&e| dimensioned.of_obj(e).is_level()).or(found.first().copied());
+    // Each clock kept, and the dimensions whose sun it turns.
+    let mut clocks: Vec<(Entity, Vec<DimensionId>)> = Vec::new();
+    if let Some(level) = level {
+        let mut on_it: Vec<DimensionId> = vec![DimensionId::LEVEL];
+        if let Some(made) = world.resource::<Dimensions>() {
+            on_it.extend(made.made().map(|made| made.id).filter(|id| clock_of(*id) == DimensionClock::Level));
+        }
+        clocks.push((level, on_it));
     }
-    if !climate.turns_sun {
-        return;
+    let own: Vec<DimensionId> = world
+        .resource::<Dimensions>()
+        .map(|made| made.made().map(|made| made.id).filter(|id| clock_of(*id) == DimensionClock::Own).collect())
+        .unwrap_or_default();
+    for id in own {
+        if let Some(first) = found.iter().copied().find(|&e| dimensioned.of_obj(e) == id) {
+            clocks.push((first, vec![id]));
+        }
     }
-    let rotation = sun_rotation(climate.time_of_day);
-    let sun = world
-        .query::<(&Light, &mut Transform)>()
-        .without::<Destroying>()
-        .into_iter()
-        .find(|(light, _)| light.kind == LightKind::Directional);
-    if let Some((_, transform)) = sun
-        && transform.rotation.dot(rotation).abs() < 0.999_999
-    {
-        transform.rotation = rotation;
+    for (entity, turned) in clocks {
+        let Some(climate) = world.get_mut::<Climate>(entity) else { continue };
+        if playing && climate.day_length > 0.0 {
+            climate.time_of_day = (climate.time_of_day + delta * 24.0 / (climate.day_length * 60.0)).rem_euclid(24.0);
+        }
+        if !climate.turns_sun {
+            continue;
+        }
+        let rotation = sun_rotation(climate.time_of_day);
+        // The first sun of each dimension the clock turns.
+        let suns: Vec<Entity> = world
+            .query_ref::<(Entity, &Light)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(_, light)| light.kind == LightKind::Directional)
+            .map(|(entity, _)| entity)
+            .collect();
+        for dimension in turned {
+            let Some(sun) = suns.iter().copied().find(|&sun| dimensioned.of_obj(sun) == dimension) else { continue };
+            if let Some(transform) = world.get_mut::<Transform>(sun)
+                && transform.rotation.dot(rotation).abs() < 0.999_999
+            {
+                transform.rotation = rotation;
+            }
+        }
     }
 }
 

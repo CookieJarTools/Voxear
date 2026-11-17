@@ -728,6 +728,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     theme: dungeon.theme,
                     size: dungeon.size,
                     floors: dungeon.floors,
+                    place: dungeon.place,
+                    dimension: dungeon.dimension.clone(),
                     entrances: dungeon.entrances.clone(),
                     cover: dungeon.cover,
                     caves: dungeon.caves,
@@ -1272,7 +1274,9 @@ struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blo
 
 /// Brings each world of blocks without end's chunks round where it is seen
 /// from: the editor's view where there is one (`terrain::TerrainViewer`), or
-/// else the game's camera. Without a camera or a generator, left as it is.
+/// else the game's camera; and on a server or a host, round every player in
+/// their own dimension, near ground alone, for them to stand and move on.
+/// Without any of those or a generator, left as it is.
 pub fn stream(world: &mut World, content: &mut Content) {
     use voxear_scene::{Transform, WorldTransform};
     use voxear_terrain::blocks::stream::StreamFrom;
@@ -1290,17 +1294,21 @@ pub fn stream(world: &mut World, content: &mut Content) {
         world.remove_resource::<voxear_render::FarHaze>();
         return;
     }
-    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let viewer = crate::terrain::viewer(world);
+    let players = crate::net::player_places(world);
+    if viewer.is_none() && players.is_empty() {
+        return;
+    }
     let budget = voxear_terrain::WorldBudget::of(world);
-    // Each world is made round the places in its own dimension: the viewer where it is in it.
-    let seen = crate::dimensions::seen_from(world);
+    // Each world is made round the places in its own dimension: the viewer where it is in it, and each player.
+    let seen = viewer.map(|_| crate::dimensions::seen_from(world));
     let dimension_of = |entity: voxear_ecs::Entity| voxear_scene::dimension_of(world, entity);
     let dimensions: std::collections::HashMap<voxear_ecs::Entity, voxear_scene::DimensionId> =
         endless.iter().map(|(entity, ..)| (*entity, dimension_of(*entity))).collect();
     // The haze closes in where the furthest far view of the dimension seen ends, so its last land fades into the sky.
     let furthest = endless
         .iter()
-        .filter(|(entity, ..)| dimensions[entity] == seen)
+        .filter(|(entity, ..)| Some(dimensions[entity]) == seen)
         .filter_map(|(_, asset, _)| asset.file.generate.as_ref()?.endless)
         .map(|far| budget.far(far.far, budget.near(far.distance)))
         .fold(0.0f32, f32::max);
@@ -1324,7 +1332,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // neither is left as it is, its streamer kept for when it is seen again.
         let here = dimensions[&entity];
         let exits_here: Vec<&crate::portals::PortalExit> = exits.iter().filter(|exit| exit.dimension == here).collect();
-        if here != seen && exits_here.is_empty() {
+        let players_here: Vec<voxear_core::math::Vec3> =
+            players.iter().filter(|(_, _, dimension)| *dimension == here).map(|(_, at, _)| *at).collect();
+        if Some(here) != seen && exits_here.is_empty() && players_here.is_empty() {
             continue;
         }
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
@@ -1336,7 +1346,6 @@ pub fn stream(world: &mut World, content: &mut Content) {
         making.far_built = crate::grown_plants::far_built(world, content, entity);
         drop(wooded);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
-        let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();
         // As many columns at once as the game's budget lets it, and as many times as far as the world says as
         // its details, within its limits. Every ring is as many columns of its own across as the near ones, so
@@ -1351,8 +1360,17 @@ pub fn stream(world: &mut World, content: &mut Content) {
             false => budget.far_pushed_for(near, asset.file.block_size, fov),
         };
         let mut from = Vec::new();
-        if here == seen {
+        let viewer = viewer.filter(|_| Some(here) == seen);
+        if let Some(viewer) = viewer {
+            let camera = [viewer.x - corner.x, viewer.z - corner.z];
             from.push(StreamFrom { at: camera, distance: distances.0, far: distances.1, pushed });
+        }
+        // Each player's near ground, but where the camera is with them already; with no camera, nothing far.
+        for at in
+            players_here.iter().filter(|at| viewer.is_none_or(|viewer| viewer.distance(**at) > PLAYER_WITH_CAMERA))
+        {
+            let far = if from.is_empty() { distances.0 } else { distances.1 };
+            from.push(StreamFrom { at: [at.x - corner.x, at.z - corner.z], distance: distances.0, far, pushed: 1.0 });
         }
         from.extend(exits_here.iter().map(|exit| StreamFrom {
             at: [exit.at.x - corner.x, exit.at.z - corner.z],
@@ -1367,6 +1385,39 @@ pub fn stream(world: &mut World, content: &mut Content) {
     }
     world.insert_resource(streams);
 }
+
+/// Makes changes that came from elsewhere, as a server's edits to a player
+/// joining, to the world of blocks on `entity`: each block as they say, and
+/// their links. In a world without end, those of columns not made now are
+/// kept with its other changes for chunks not made, put in as they come.
+pub fn take_in(world: &mut World, entity: voxear_ecs::Entity, edits: &BlockEdits) {
+    let endless = world
+        .get::<BlockWorldAsset>(entity)
+        .is_some_and(|asset| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()));
+    let streamer = world.resource::<Streams>().and_then(|streams| streams.0.get(&entity));
+    let (mut now, mut later) = (BlockEdits::default(), BlockEdits::default());
+    for (key, change) in &edits.chunks {
+        let made = !endless || streamer.is_some_and(|streamer| streamer.holds([key[0], key[2]]));
+        match made {
+            true => now.chunks.insert(*key, change.clone()),
+            false => later.chunks.insert(*key, change.clone()),
+        };
+    }
+    if !later.chunks.is_empty()
+        && let Some(asset) = world.get_mut::<BlockWorldAsset>(entity)
+    {
+        Arc::make_mut(&mut asset.pending).chunks.extend(later.chunks);
+    }
+    let Some(blocks) = world.get_mut::<BlockWorld>(entity) else { return };
+    blocks.set_cells(now.cells());
+    for &(from, to) in &edits.links {
+        blocks.link(from, to);
+    }
+}
+
+/// How near the camera a player may be for the ground made round the camera
+/// to be theirs too, in metres.
+const PLAYER_WITH_CAMERA: f32 = 8.0;
 
 /// Whether every world of blocks without end has made its own blocks, with
 /// their faces, within `radius` metres of `at`: there is ground to see

@@ -512,6 +512,13 @@ impl BlockStreamer {
             && self.making_now.load(Ordering::Acquire) == 0
     }
 
+    /// Whether a near column's blocks are made now, by its place in chunks
+    /// along x and z: changes for one that is not go with those kept for
+    /// chunks not made.
+    pub fn holds(&self, column: [i32; 2]) -> bool {
+        self.near.contains(&column)
+    }
+
     /// Whether every near column within `radius` metres of `at`, in metres
     /// from the world's corner along x and z, is made and drawn: there is
     /// ground to see there, and to stand on once physics has taken it up.

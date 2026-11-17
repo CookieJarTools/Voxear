@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine, with Portals between them; dungeons in their own, the editor, scripts, saves and networking planned)*
+### Dimensions *(in the engine, with Portals between them, dungeons in their own and networked play; the editor, scripts and saves planned)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -521,10 +521,58 @@ dimension to another.
   every dimension but the current one, from their `Surroundings`) and no storms; where it is another dimension than
   the view it is seen in, it works out sky tables and sky light of its own (`PortalPass::dimension`,
   `Frame::own_sky`) in place of reading that view's. In a file a Portal names one in a dimension's file with
-  `into = { dimension, portal }` (`DimensionLink`, kept on the Obj as `PortalInto`); `find_exits` notes such Portals
-  near enough to show their far side, and `Game::link_dimensions` makes the dimension (`make_dimension`, marked on
-  demand), links the two (the far one leading back where it led nowhere), and lets a dimension made so go once nothing
-  has needed it for its `keep_loaded` seconds: not current, and no far side being made into it.
+  `into = { dimension, portal }` (`DimensionLink`, kept on the Obj as `PortalInto`). Of the Portals into a dimension
+  loaded for them (a `PortalInto` or a dungeon's gate), only the nearest a camera or a camera's subject of its own
+  dimension within `PortalQuality::dimension_distance` (24 m, `[portals] dimension_distance`) is open, a little longer
+  once open (`DIMENSION_KEPT_PAST`); `find_exits` notes it (`active_into`) and makes far sides of no other such Portal.
+  `Game::link_dimensions` first lets go every dimension made on demand but the open Portal's and the current one, so
+  no more than one is ever loaded, then makes the open Portal's (`make_dimension`, or `make_dungeon_dimension`),
+  links the two (the far one leading back where it led nowhere), and lets a dimension made so go once nothing has
+  needed it for its `keep_loaded` seconds: not current, and no far side being made into it.
+- **Dungeons in dimensions of their own.** A `[dungeon]`'s `place` is `own_dimension` (the default) or `in_the_land`.
+  Own dimension, `plan` lays out its gate alone (a floor graph of the landing): the entrance sited from the land, a
+  grand stair down and the landing, built into the land as before, its reach shrunk to the gate's
+  (`Dungeon::reach`). `dungeons::stand_gates` stands an engine-made Portal (`DungeonGate`: the world, the structure,
+  the site) in the middle of each gate's landing within 160 m of where the game is seen from, its sill half a block
+  under the floor so whole and half floors cross it, and takes away those well past. Its dimension is made when it is
+  the open Portal (`Game::make_dungeon_dimension`): `voxear_terrain::blocks::dungeon::in_rock` plans the dungeon on
+  flat rock (`Ground::flat`, no sea, rivers or caves; `plan_in_rock`, a sinkhole at the top, `floors_at` the site's
+  floors and up to `MOST_FLOORS`), fills whole chunks of rock round it, cuts a hall under a rock roof over the
+  sinkhole, builds the dungeon into it a tile of columns at a time with the same builder, drops chunks carved all to
+  air (the renderer's sight walk takes a kept chunk without faces for solid), and lights two fires by the Portal back
+  out. The engine puts that map in a Block World of its own (the land's file and numbering, no generator, its look
+  copied; `DungeonInside` keeps the layout) in a dimension of kind Dungeon, or one made from the dungeon's
+  `dimension` file, keyed by the world, structure and site, with a Portal back out (`DungeonWayOut`). An enclosed
+  dimension's post-processing has its height fog off: it thickens with depth under the level's ground and fills a
+  deep dungeon. Edits read from a `.blocks` file of a version before 4 (`edits::VERSION`) lose the changes in the
+  spaces and ways of a dungeon that was under the land (`dungeons::drop_old_dungeon_edits`, the dungeons planned in
+  the land again to find them; `BlockEdits::retain_blocks`).
+- **Networked** (`net::dimensions`, the game's part in `game::net_dimensions`). A server or host has a place for
+  each player, their first owned Obj in its dimension (`net::player_places`): every world of blocks without end
+  streams round each player in its own dimension (near ground alone where no camera is, so a dedicated server needs
+  none), dungeons' gates stand round each, and `find_exits` opens one Portal into a dimension loaded for it for each
+  player (`PortalExits::for_players`, `portals::open_for`) beside the one for where the game is seen from, so the
+  one-dimension limit is each player's; `link_dimensions` keeps what `net::dimensions_needed` says. Each player has
+  the level's dimension, their own Obj's and the far dimension of the Portal open for them or of any other open
+  Portal near them into one already made; the game describes each made dimension every frame (`net::describe`,
+  `DimensionWhat`: a `.dimension` asset's GUID and key, or a dungeon's gate, from `DungeonFrom` on its rock world),
+  and each one new to a player is named to them once (`Message::Dimension`) as a number on that connection, 0 being
+  the level's, and let go when no longer theirs (`LetGo`). Shared Objs keep their dimension (`Tracked::dimension`):
+  `Spawn` carries its number, an Obj goes to a player only in a dimension they have, its range within it, and one
+  gone into another dimension is `Crossed` for the tick, put on as that tick is shown (`settle_client`); a player
+  without that dimension gets `Despawn { gone: false }`, which leaves a placed Obj be, unbound. Players' machines
+  carry through Portals only what they run or predict (`net::moves_here`); with shared authority they send
+  `Crossed` for their own, which `check_crossings` takes where an open Portal into that dimension stands within 8 m
+  of the Obj, and else answers with where it is. As a dimension is named, the game is asked for its edits
+  (`take_edits_wanted`): every world of blocks of the dimension in an order both ends agree on (the level's by
+  their scenes' places, a file's by its paths, a dungeon's rock last), its changes as saves keep them (`all_changes`
+  for a world without end, else from `BuiltBlocks` or its base), cut into pieces of about 16 kB before packing,
+  nearest the place the player comes in first, each `VXBLOCKS` with the blocks numbered at run time
+  (`Message::Edits`), sent within half the connection's budget, then `EditsDone`. The machine finds or makes the
+  dimension (`dimensions_to_make`, `make_named`), renumbers and makes each piece (`blocks::take_in`: columns made
+  now take the blocks, the rest go with the world's pending changes), and answers `Ready`; until then its Portals
+  into the dimension stay shut (`edits_in`) and the server takes none of that player's Objs through
+  (`may_cross`). The level's edits go the same way once a player has an Obj of their own.
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes
@@ -4211,7 +4259,9 @@ built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statu
 reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
 any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
 among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
-`vox editor call dungeon.layouts`.
+`vox editor call dungeon.layouts`. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
+default) is only its gate in the land, and the rest is built in a world of rock of its own (see
+[Dimensions](#dimensions)).
 
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
@@ -4406,15 +4456,20 @@ engine's glue is `voxear_engine::navigation`.
 - **Places** (`blocks::places`). A place is a block whose feet are in it: the block under it can be stood on (not
   a fence or a wall), nothing of ground is in it, and the block over it is not water. A place keeps five bytes:
   its height in its chunk, the clear blocks over its floor (up to 31), its floor's top in sixteenths (a slab lying
-  low is 8), its area and its kind (standing or wading). A chunk keeps its places column by column, about 5 KB
+  low is 8), its area and its kind: standing, wading, swimming (the top of water too deep to stand in) or in a
+  shut door (its room counting the door open). A chunk keeps its places column by column, about 5 KB
   for a chunk of surface. Places are made from a chunk's blocks, the top layer of the chunk under it and the chunk
   over it, through a world's **walking table** (`blocks::walking`: what each block number is to something
   walking, made once from the world's `BlockFaces`), its palette read once a chunk.
 - **Steps are not stored.** A step from a place to the column beside it is worked out as it is walked, by the
-  walker's own rules (`Walker`: height, step and drop in sixteenths of a block): the highest place there whose
-  feet are within a step up and a drop down, with room for the walker over the higher floor in both columns.
-  Cornerwise steps are on the level only, with both columns beside on the level too. So one set of places
-  serves every walker, whatever its size.
+  walker's own rules (`Walker`: height, step and drop in sixteenths of a block, and whether it swims, opens
+  doors and jumps): the highest place there whose feet are within a step up and a drop down, with room for the
+  walker over the higher floor in both columns, of a kind it may be in. Cornerwise steps are on the level only,
+  with both columns beside on the level too. A jump (`jump_step`) crosses a gap of a block or two to a place near
+  the walker's height. So one set of places serves every walker, whatever its size and whatever it does.
+- **Regions are kept for the walker of each height that does everything** (`Walker::class`): a coarse way
+  never misses one it could take. A walker that does less and finds no way inside the regions a coarse way went
+  through looks again over every place, as far as it may.
 - **Regions and the coarse graph** (`blocks::regions`). Each chunk's places are gathered, for each walker kept
   (one, two and three blocks tall), into regions joined by steps that go both ways inside the chunk. A step one
   way only (a drop) makes an edge between regions of a chunk; a step out of a chunk makes one to a region of the
@@ -4437,17 +4492,36 @@ engine's glue is `voxear_engine::navigation`.
   and taken the next: done by then on a thread, or done there and then by the mob if no thread had begun it, so a
   way asked for is always there a frame later.
 
+### Nav Agents *(implemented)*
+
+- **The component** (`voxear_engine::nav_agent::NavAgent`): its settings (speed, acceleration, turn speed,
+  stopping distance, auto brake, radius, height, avoidance, priority, how it moves, swimming) are saved; its
+  destination is a game's to set and is not. What it is doing is `NavAgentState`: its corners, the next of them,
+  its status and cost, its velocity and the one it wants, the way asked for.
+- **A step** (`step_agents`, in the fixed step after FixedUpdate, before physics, only where the Obj has
+  authority): each agent takes the way it asked for last step, asks again where its destination is another
+  place, a chunk on its way changed (`FoundPath::is_stale`), or a way found part of the way nears its end, and
+  steers (`voxear_nav::steer`). Then every agent's velocity is chosen at once by avoidance (`voxear_nav::avoid`:
+  reciprocal velocity obstacles, neighbours from a grid of cells, the agents shared over the terrain's threads,
+  each working from where every agent was at the start of the step). Other Character Controllers, the player
+  among them, are gone round but do not go round. Then each moves: by its Character Controller, along the nav
+  (`blocks::moving::slide`, sliding along what it cannot step into), or not at all.
+- **Block Mob** sets a destination by its goal (`block_mob::set_destinations`, just before the agents step) and
+  walks as an agent made of its own settings, or by the Obj's own Nav Agent where it has one.
+- **Scripts** reach agents through `ComponentKind::NavAgent` and ways through `ComponentKind::Navigation`, four
+  numbers at a time: a way's corners are read one by one after it is found, so nothing crosses as text.
+
 ### Planned
 
-- **Nav Agents**: a component with the easy way (`agent.Destination = point;`) and the full one (paths, corners,
-  costs, areas), searches in a queue on the threads with a budget, steering, avoidance between agents by
-  reciprocal velocity obstacles on the workers, and ways of moving (by the Character Controller, along the nav for
-  crowds, or by a script from the desired velocity), in the fixed step.
-- **Moving in block worlds**: jumps, falls, swimming, climbing, doors; areas from a project list (blocks pick one,
-  Nav Area boxes mark one); Nav Links; wider walkers.
+- **Moving in block worlds**: climbing without links; wider walkers. (Nav Links are done: `navigation::NavLink`,
+  given to each search as `voxear_nav::Link`, one step each in both the coarse and the place-by-place search,
+  crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
+  a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
+  to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level
   (`.nav`), with run-time cutting for Nav Obstacles.
-- **The editor and tools**: a Navigation overlay, Project Settings ▸ Navigation, and `navigation.*` calls.
+- **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
+  `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
 - **Co-op and dimensions**: agents only where they have authority; Portals as links, within a dimension and
   between dimensions.
 
@@ -4490,6 +4564,10 @@ The model is server-authoritative and ECS-native.
 - Prediction with rollback for owned entities, and interpolation for the rest.
 - Lag compensation.
 - Custom serialisers, with bit-packed delta compression against acknowledged snapshots.
+
+**Dimensions.** Players may be in different dimensions at once; the server makes ground round each, sends each
+only the Objs of the dimensions they have, decides crossings and sends a dimension's edits as a player comes into
+it. See *Dimensions*, "Networked".
 
 **Transport and testing.**
 - Transport is UDP plus QUIC (quinn), with relay and session/lobby interfaces.
@@ -5119,6 +5197,10 @@ through a small contract.
 - Releases are published with a **release manifest**: version, channel (stable, beta or nightly), downloads per
   platform, sizes, SHA-256 hashes and a signature.
 - Several versions install side by side. `vox` finds its own files through its install folder (`VOXEAR_HOME`).
+- The launcher lists the official releases, and beside them any **custom engine releases** a user adds, such as a
+  fork's: a manifest of the same shape, published the same way, signed with the fork's own key. An install and a
+  project's pin are a version, so a fork's builds are best given versions of their own with build metadata
+  (`0.2.0+lumen`); a project pinned to one installs from the list that publishes it.
 
 **Projects pin a version.**
 - `voxear.toml` records the engine version a project uses.

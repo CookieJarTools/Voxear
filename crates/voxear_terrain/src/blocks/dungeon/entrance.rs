@@ -4,7 +4,7 @@
 //! wall. Each has a terrace or a rim, braziers, and something standing
 //! tall enough to be seen from far off.
 
-use super::EntranceKind;
+use super::{DungeonLayout, EntranceKind};
 use super::build::{Grid, Kit, Tag};
 use super::noise;
 use super::pieces::{self, Frame};
@@ -236,6 +236,21 @@ fn cliff(kit: &Kit, grid: &mut Grid, frame: Frame) {
     }
 }
 
+/// How wide a sinkhole's shaft is, from its middle, in blocks.
+pub(crate) const SINKHOLE_RADIUS: f32 = 9.0;
+
+/// Which way from the middle of a sinkhole's shaft the head of the stair
+/// winding down its wall lies, as an angle about +y from +x: where one
+/// standing at its rim starts down.
+pub(crate) fn sinkhole_stair_head(layout: &DungeonLayout) -> f32 {
+    let middle = SINKHOLE_RADIUS - 2.0;
+    let top_s = (layout.entrance.at[1] + 1) * 2;
+    let bottom_s = (layout.shaft_floor + 1) * 2;
+    let into = layout.entrance.into;
+    let end_angle = (into[1] as f32).atan2(into[0] as f32);
+    end_angle - (top_s - bottom_s) as f32 / middle
+}
+
 /// A stair round the wall of a round shaft open to the sky, down to the
 /// first floor's landing: a kerb round its rim, broken columns standing
 /// round it, braziers.
@@ -243,15 +258,12 @@ fn sinkhole(kit: &Kit, grid: &mut Grid, frame: Frame) {
     let b = &kit.blocks;
     let centre = frame.foot;
     let floor = kit.layout.shaft_floor;
-    let radius = 9.0f32;
+    let radius = SINKHOLE_RADIUS;
     let middle = radius - 2.0;
     let top_s = (centre[1] + 1) * 2;
     let bottom_s = (floor + 1) * 2;
     // Ends facing the way into the land, where the grand stair goes on.
-    let into = kit.layout.entrance.into;
-    let end_angle = (into[1] as f32).atan2(into[0] as f32);
-    let length = (top_s - bottom_s) as f32;
-    let start = end_angle - length / middle;
+    let start = sinkhole_stair_head(kit.layout);
     let (lo, hi) = grid.columns();
     let seed = centre[0] as u32 ^ (centre[2] as u32).rotate_left(7);
     for z in (centre[2] - 14).max(lo[1])..=(centre[2] + 14).min(hi[1]) {

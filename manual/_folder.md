@@ -23,6 +23,7 @@ Then read [[Objs and Components]] and [[Your First Script]].
 - **[[Sound]]**: sound effects, ambience and music, in 2D and placed in the world.
 - **[[Physics]]**: things that fall, tumble and bump into each other, and characters that walk.
 - **[[Water]]**: the sea, lakes, rivers and lava, and things that float on them.
+- **[[Navigation]]**: characters and creatures that find their own way, and go round each other.
 - **[[Languages]]**: your game's text in each language you translate it into.
 - **[[Content and Builds]]**: what goes into a build, and how the game loads things and lets them go.
 - **[[Networking]]**: hosting and joining games, players' input over the network, and dedicated servers.

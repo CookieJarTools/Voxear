@@ -123,6 +123,9 @@ pub struct BlockFaces {
     pub press: u16,
     /// How much light it gives, from 0 for none to 15 (see [`light`]).
     pub light: u8,
+    /// What ground it makes for navigation: 0 as it is, or an area's number
+    /// one more (see `block::BlockNavArea::number`).
+    pub nav_area: u8,
 }
 
 /// A block drawn as parts, a few boxes, in place of a cube.
@@ -168,6 +171,7 @@ impl BlockFaces {
             travel,
             press,
             light: 0,
+            nav_area: 0,
         }
     }
 

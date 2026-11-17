@@ -36,9 +36,24 @@ pub enum Message {
     /// arrives, so the client can run a little faster or slower to keep it
     /// a tick or two ahead.
     Sync { tick: u64, ahead: i16 },
-    /// An Obj to make, its state on a tick.
-    Spawn { id: NetId, owner: Option<PlayerId>, origin: Origin, tick: u64, state: ObjState, fields: Fields },
-    Despawn(NetId),
+    /// An Obj to make, its state on a tick, in a dimension by its number on
+    /// this connection (0 the level's).
+    Spawn {
+        id: NetId,
+        owner: Option<PlayerId>,
+        origin: Origin,
+        dimension: u16,
+        tick: u64,
+        state: ObjState,
+        fields: Fields,
+    },
+    /// An Obj taken away: `gone` where it is no more on the server, else no
+    /// longer the player's to see, as it went out of range or into a
+    /// dimension they are not in.
+    Despawn {
+        id: NetId,
+        gone: bool,
+    },
     /// Objs' states on a server tick: each Obj's parts that changed, as a
     /// mask, over a state with the rest left as they were.
     Snapshot { tick: u64, entries: Vec<(NetId, u8, ObjState, Option<Fields>)> },
@@ -56,6 +71,50 @@ pub enum Message {
     /// The server's storms: their clock, those scripts made and the
     /// whirlpools, as `storms::StormsSaved::to_bytes` gives them.
     Storms(Vec<u8>),
+    /// To a client: the dimension a number stands for on this connection,
+    /// for it to make and keep until told to let it go. Its edits follow.
+    Dimension {
+        number: u16,
+        what: DimensionWhat,
+    },
+    /// To a client: a dimension it may let go, as its own rules say.
+    LetGo(u16),
+    /// An Obj went into another dimension on a tick: from the server, where
+    /// it decided so; from a player whose machine runs its own Objs, for the
+    /// server to check.
+    Crossed {
+        id: NetId,
+        dimension: u16,
+        tick: u64,
+    },
+    /// To a client: some of a dimension's edits, those nearest where the
+    /// player comes into it first, for one of its worlds of blocks, by its
+    /// place among them (see `dimensions`). `numbered` are the blocks the
+    /// server's game numbered as it ran, each by its number, its GUID and
+    /// its state; `bytes` the changes as saves write them (`VXBLOCKS`).
+    Edits {
+        dimension: u16,
+        world: u16,
+        numbered: Vec<(u16, String, u8)>,
+        bytes: Vec<u8>,
+    },
+    /// To a client: every edit of a dimension has been sent.
+    EditsDone(u16),
+    /// To the server: a dimension's edits are in, so the player may go in.
+    Ready(u16),
+}
+
+/// What a dimension a server names to a client is, for the client to find
+/// or make its own.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DimensionWhat {
+    /// Made from a `.dimension` asset, by its GUID, as `key` (0 where it
+    /// makes one).
+    Asset { guid: String, key: u64 },
+    /// A dungeon's own, made from its gate: the world of blocks the gate is
+    /// in, by its scene's GUID and its path there, which of that world's
+    /// structures the dungeon is, its site and the site's seed.
+    Dungeon { scene: String, path: String, structure: u16, site: [f32; 2], seed: u32 },
 }
 
 /// The most bytes an RPC's arguments take.
@@ -84,10 +143,18 @@ const FIELDS_MESSAGE: u32 = 10;
 const CLAIM: u32 = 11;
 const OWNER: u32 = 12;
 const STORMS: u32 = 13;
+const DIMENSION: u32 = 14;
+const LET_GO: u32 = 15;
+const CROSSED: u32 = 16;
+const EDITS: u32 = 17;
+const EDITS_DONE: u32 = 18;
+const READY: u32 = 19;
+/// The most bytes one message of a dimension's edits takes.
+pub const MOST_EDIT_BYTES: usize = 65536;
 /// The most bytes a message of storms takes.
 pub const MOST_STORM_BYTES: usize = 65536;
 /// Bits a message's kind takes.
-pub const KIND_BITS: u32 = 4;
+pub const KIND_BITS: u32 = 5;
 
 impl Message {
     /// The message as bytes, from a machine whose world's middle is
@@ -135,7 +202,7 @@ impl Message {
                 w.write_varint(*tick);
                 w.write_bits(*ahead as u16 as u32, 16);
             }
-            Message::Spawn { id, owner, origin, tick, state, fields } => {
+            Message::Spawn { id, owner, origin, dimension, tick, state, fields } => {
                 w.write_bits(SPAWN, KIND_BITS);
                 w.write_varint(u64::from(id.0));
                 w.write_bool(owner.is_some());
@@ -151,13 +218,66 @@ impl Message {
                         write_text(&mut w, prefab);
                     }
                 }
+                w.write_varint(u64::from(*dimension));
                 w.write_varint(*tick);
                 write_state(&mut w, state, super::replication::ALL, world_origin);
                 write_fields(&mut w, fields);
             }
-            Message::Despawn(id) => {
+            Message::Despawn { id, gone } => {
                 w.write_bits(DESPAWN, KIND_BITS);
                 w.write_varint(u64::from(id.0));
+                w.write_bool(*gone);
+            }
+            Message::Dimension { number, what } => {
+                w.write_bits(DIMENSION, KIND_BITS);
+                w.write_varint(u64::from(*number));
+                match what {
+                    DimensionWhat::Asset { guid, key } => {
+                        w.write_bool(false);
+                        write_text(&mut w, guid);
+                        w.write_varint(*key);
+                    }
+                    DimensionWhat::Dungeon { scene, path, structure, site, seed } => {
+                        w.write_bool(true);
+                        write_text(&mut w, scene);
+                        write_text(&mut w, path);
+                        w.write_varint(u64::from(*structure));
+                        w.write_f32(site[0]);
+                        w.write_f32(site[1]);
+                        w.write_bits(*seed, 32);
+                    }
+                }
+            }
+            Message::LetGo(number) => {
+                w.write_bits(LET_GO, KIND_BITS);
+                w.write_varint(u64::from(*number));
+            }
+            Message::Crossed { id, dimension, tick } => {
+                w.write_bits(CROSSED, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                w.write_varint(u64::from(*dimension));
+                w.write_varint(*tick);
+            }
+            Message::Edits { dimension, world, numbered, bytes } => {
+                w.write_bits(EDITS, KIND_BITS);
+                w.write_varint(u64::from(*dimension));
+                w.write_varint(u64::from(*world));
+                w.write_varint(numbered.len() as u64);
+                for (number, guid, state) in numbered {
+                    w.write_varint(u64::from(*number));
+                    write_text(&mut w, guid);
+                    w.write_bits(u32::from(*state), 8);
+                }
+                w.write_varint(bytes.len() as u64);
+                w.write_bytes(bytes);
+            }
+            Message::EditsDone(number) => {
+                w.write_bits(EDITS_DONE, KIND_BITS);
+                w.write_varint(u64::from(*number));
+            }
+            Message::Ready(number) => {
+                w.write_bits(READY, KIND_BITS);
+                w.write_varint(u64::from(*number));
             }
             Message::Snapshot { tick, entries } => {
                 w.write_bits(SNAPSHOT, KIND_BITS);
@@ -254,13 +374,53 @@ impl Message {
                     true => Origin::Placed { scene: read_text(&mut r)?, path: read_text(&mut r)? },
                     false => Origin::Prefab(read_text(&mut r)?),
                 };
+                let dimension = read_number(&mut r)?;
                 let tick = r.read_varint()?;
                 let mut state = BLANK;
                 read_state(&mut r, &mut state, world_origin)?;
                 let fields = read_fields(&mut r)?;
-                Message::Spawn { id, owner: has_owner.then_some(owner), origin, tick, state, fields }
+                Message::Spawn { id, owner: has_owner.then_some(owner), origin, dimension, tick, state, fields }
             }
-            DESPAWN => Message::Despawn(NetId(r.read_varint()? as u32)),
+            DESPAWN => Message::Despawn { id: NetId(r.read_varint()? as u32), gone: r.read_bool()? },
+            DIMENSION => {
+                let number = read_number(&mut r)?;
+                let what = match r.read_bool()? {
+                    false => DimensionWhat::Asset { guid: read_text(&mut r)?, key: r.read_varint()? },
+                    true => DimensionWhat::Dungeon {
+                        scene: read_text(&mut r)?,
+                        path: read_text(&mut r)?,
+                        structure: u16::try_from(r.read_varint()?).ok()?,
+                        site: [r.read_f32()?, r.read_f32()?],
+                        seed: r.read_bits(32)?,
+                    },
+                };
+                Message::Dimension { number, what }
+            }
+            LET_GO => Message::LetGo(read_number(&mut r)?),
+            CROSSED => Message::Crossed {
+                id: NetId(r.read_varint()? as u32),
+                dimension: read_number(&mut r)?,
+                tick: r.read_varint()?,
+            },
+            EDITS => {
+                let (dimension, world) = (read_number(&mut r)?, read_number(&mut r)?);
+                let count = r.read_varint()? as usize;
+                if count > 4096 {
+                    return None;
+                }
+                let numbered = (0..count)
+                    .map(|_| Some((read_number(&mut r)?, read_text(&mut r)?, r.read_bits(8)? as u8)))
+                    .collect::<Option<Vec<_>>>()?;
+                let length = r.read_varint()? as usize;
+                if length > MOST_EDIT_BYTES {
+                    return None;
+                }
+                let mut bytes = vec![0u8; length];
+                r.read_bytes(&mut bytes)?;
+                Message::Edits { dimension, world, numbered, bytes }
+            }
+            EDITS_DONE => Message::EditsDone(read_number(&mut r)?),
+            READY => Message::Ready(read_number(&mut r)?),
             SNAPSHOT => {
                 let tick = r.read_varint()?;
                 let mut entries = Vec::new();
@@ -288,6 +448,11 @@ impl Message {
             _ => return None,
         })
     }
+}
+
+/// A number of 16 bits written as a varint, as a dimension's is.
+fn read_number(r: &mut BitReader) -> Option<u16> {
+    u16::try_from(r.read_varint()?).ok()
 }
 
 fn write_text(w: &mut BitWriter, text: &str) {
@@ -358,6 +523,23 @@ mod tests {
             Message::Sync { tick: 5, ahead: -3 },
             Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
             Message::Storms(b"STM1 and the rest".to_vec()),
+            Message::Despawn { id: NetId(8), gone: false },
+            Message::Dimension { number: 3, what: DimensionWhat::Asset { guid: "0123456789abcdef".into(), key: 9 } },
+            Message::Dimension {
+                number: 4,
+                what: DimensionWhat::Dungeon {
+                    scene: "fedcba9876543210".into(),
+                    path: "2/7".into(),
+                    structure: 1,
+                    site: [1200.5, -77.25],
+                    seed: 0xfeed_beef,
+                },
+            },
+            Message::LetGo(3),
+            Message::Crossed { id: NetId(12), dimension: 4, tick: 901 },
+            Message::Edits { dimension: 4, world: 0, numbered: vec![(40, "abc".into(), 2)], bytes: vec![9; 300] },
+            Message::EditsDone(4),
+            Message::Ready(4),
         ];
         for message in messages {
             let sent = message.encode(I64Vec3::ZERO);

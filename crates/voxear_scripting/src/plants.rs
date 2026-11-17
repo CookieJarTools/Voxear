@@ -118,3 +118,34 @@ pub(crate) unsafe extern "C" fn plants_near(
     }
     found.len() as i32
 }
+
+/// What reads and sets `Foliage`'s numbers for scripts, as the engine
+/// answers them: given a value, it sets the number first. Numbered as C#
+/// numbers them: 0 a fair day's wind, 1 how far plants bend, 2 whether what
+/// walks through them pushes them (1 or 0), 3 how hard, 4 how long they
+/// take to spring back; and, read only, the wind plants feel now, 5 and 6
+/// which way it blows along x and z and 7 how hard. None for a number there
+/// is not.
+pub type FoliageCall = fn(&mut World, i32, Option<f32>) -> Option<f32>;
+
+static FOLIAGE: std::sync::OnceLock<FoliageCall> = std::sync::OnceLock::new();
+
+/// Sets what answers `Foliage` in scripts; the first set is kept.
+pub fn set_foliage_call(call: FoliageCall) {
+    let _ = FOLIAGE.set(call);
+}
+
+/// One of `Foliage`'s numbers; NaN without a world, without the engine's
+/// answer, or for a number there is not.
+pub(crate) unsafe extern "C" fn foliage_motion(which: i32) -> f32 {
+    let Some(call) = FOLIAGE.get() else { return f32::NAN };
+    with_world(|world| call(world, which, None)).unwrap_or(f32::NAN)
+}
+
+/// Sets one of `Foliage`'s numbers, taken up from the next frame.
+pub(crate) unsafe extern "C" fn set_foliage_motion(which: i32, value: f32) {
+    let Some(call) = FOLIAGE.get() else { return };
+    if value.is_finite() {
+        with_world(|world| call(world, which, Some(value)));
+    }
+}

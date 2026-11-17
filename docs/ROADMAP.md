@@ -1615,8 +1615,9 @@ Done:
     masks for Mixed lights, terrain and worlds of blocks taking lightmaps.
 
 Later, after M5:
-- Plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages' copies at their size,
-  rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
+- Plants' shadows on the ground swaying in the sun's virtual shadows (a plant's own shadow on itself moves with it
+  now); what moves by a lamp drawn into its pages' copies at their size, rather than into the atlas; shading lamps'
+  pages for less, nearer the atlas's cost.
 - NVIDIA DLSS and Intel XeSS, which wait on their SDKs.
 - The look: bounced light, exposure and contrast kept matched to the reference scenes as the worlds grow.
 - The smaller "Later" notes under each part above.
@@ -1818,8 +1819,40 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   - Tests: the mesher's free and held corners; GPU pictures of a pine leaning in a wind, a tuft pushed over by a
     walker, a rock that does neither, and a tree of blocks whose leaves stir while its trunk and ground stay
     still; a ray meeting a rock's box, turned and sized; the Model window's Wind bend typed, saved and undone.
-  - Later: a breeze on a clear day with no Wind Zone, block leaves pushed aside, a collider of a plant's own
-    cubes rather than a box, plants of an earlier project given their bend by `vox upgrade`.
+  - Later: a collider of a plant's own cubes rather than a box.
+- ~~**Foliage moving in worlds of blocks:**~~ done: grass, flowers, bushes and leaves sway on a fair day and part
+  round whoever walks through them, with nothing set up.
+  - **How plants move, the game over** (`voxear_render::FoliageMotion`, `[foliage]` in `voxear.toml`, Project
+    Settings ▸ Foliage with tooltips, `project.set key=foliage.*` for `vox editor call` and `vox mcp`): a fair day's
+    `wind` (0.5, a light breeze, where a level has no Wind Zone; the weather blows harder on top, so a storm tosses
+    them), `bend` (× every plant's own), `interaction`, and under Advanced `push` (×) and `spring` (seconds). C#:
+    `Foliage.Wind`, `Foliage.Bend`, `Foliage.Interaction`, `Foliage.Motion` (a `FoliageMotion` at once) and
+    `Foliage.Blowing`, the wind plants feel now (API 93). The editor's Play, builds and `vox render` take it.
+    `wind::plants_wind` works out the frame's wind; the sea keeps the Wind Zone's or the weather's.
+  - **Pushes keep their height:** each cell of the push grid holds the pusher's height and reach (16 bytes a cell).
+    A plant takes a push where it is rooted within the pusher's radius and a metre and a half above or below it,
+    bends as far up as the push reaches and is carried along above (`foliagePush`'s `reach`); a plant over 1.5 m
+    reads it at its stem, not at each vertex, so a crown over a walker no longer parts round them, and a field
+    under a bridge is left alone.
+  - **Leaf blocks are pushed** (`blockSway`): a swaying corner moves away from what stands at its height, a third
+    of a block at a push of 1, wind and push together at most under half a block, × the bend.
+  - **Plants of cubes bend whole** (`MATERIAL_PIXELS`): every vertex as far as its height says, pushed by what is
+    at the plant's foot, with no branch masks; a box model that bends is meshed with no face taller than a cube
+    (`voxels::build`), so its layers slide over each other and nothing parts (`COOKED_VERSION` 16).
+  - **Shadows:** a swaying plant reads the sun's virtual shadow pages, which hold it at rest, where it stands
+    (`VertexOut::moved` now carries the sway, read for the GI's light too), so its shadow on itself moves with it;
+    cascades draw it swayed. A float3 more to interpolate cost the block pass 0.3–0.4 ms, so none was added.
+  - **Cost**, CubeGame's spawn meadow at 1920×1080 on the RTX 3070, least of 60 frames a pass: the passes add up
+    to 10.38 ms on master, 10.43 with plants' motion off and 10.48 on: the meshes' pass +0.10 ms (0.04 of it a
+    bending plant's faces a cube tall, 0.06 the wind and pushes), their depth +0.02, the blocks' passes no
+    change, Foliage pushes 0.004 ms. Two runs of master's whole frame differ by 0.5 ms on the shared GPU.
+  - The wind's hash is whole-number (`windHash`), not a sine's, which cut gusts along cell borders on some GPUs.
+  - `vox upgrade` gives a starter plant written before plants bent its bend, where it is unchanged since.
+  - Tests: the fair day's breeze rising through rain to a storm, a Wind Zone in its place, pushes off and harder,
+    the bounds, scripts' numbers, `vox upgrade`'s bend, starter plants' faces no taller than a cube; GPU pictures of
+    a tuft stirred by a fair day's wind, held by bend 0 and moving further at bend 2, a tuft left alone by someone
+    on a bridge over it and by someone beside it with interaction off, and a bush of leaf blocks parting round
+    someone standing in it while a crown over them stays still.
 - ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
   (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `snow`), `variation`,
   `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
@@ -2177,7 +2210,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   its view distance short of the camera it shows its mist and the frame costs what it would without it. Far sides share the camera's waves, walk their sights from the far Portal, draw the sun's
   shadows to 48 m in a quarter-size atlas and their clouds at a quarter of the picture's size. Still to come:
   bringing a far side in an endless world under +1.5 ms, light, shadows and sound through Portals, bodies resting
-  part-way through, the server deciding and checking crossings, Portals to other levels.
+  part-way through, Portals to other levels.
 - **Dimensions (in progress).** Built, in the engine: worlds of their own in the one game, each with its own Block
   Worlds, sky, sun, post-processing and weather, at coordinates that may be another's. An Obj is in its root's
   dimension (`InDimension`), the level's with none; a `.dimension` asset is a scene's Objs and lighting under a
@@ -2200,9 +2233,35 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   dimension and links the two Portals, walks through and stands on its rock under its dark, and walking away lets it
   go; a thrown body keeps its speed; a camera following looks through the Gate from the level, then goes into the
   caves; bodies and characters moved between dimensions keep moving; GPU pictures through a Portal into another
-  dimension and back out, each matching a camera standing there. Manual: Dimensions. To come: dungeons in a
-  dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
-  dimension and the server making ground round every player.
+  dimension and back out, each matching a camera standing there. Manual: Dimensions. Dungeons in a dimension each
+  (`place = "own_dimension"`, the default; `in_the_land` as before): the land holds only the gate, a grand stair and a
+  landing with a Portal in it; inside, a world of rock with the dungeon planned on flat rock under a sinkhole, as
+  deep as its floors go, a hall with two fires round the Portal back out, its own dimension for each site, dark but
+  for its fires, or started from the dungeon's `dimension` file. Only the nearest Portal into such a dimension
+  within the project's Dimension distance (24 m) is open, so one at most is loaded besides the level's. Changes saved
+  in a dungeon that was under the land are left out as an old world loads. The template's dungeon moved to the
+  current settings. Tests: the gate alone in the land; six floors in rock, every space reached, the Portal's place
+  clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
+  dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
+  others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
+  fire. Networked: the server (or host) makes the ground of worlds of blocks round every player in their own
+  dimension, with no camera of its own, stands dungeons' gates round each, and opens one Portal into a loaded
+  dimension for each player, so a server with players in three dungeons has the three loaded; each player's machine
+  makes only the dimensions the server names to it (a `.dimension` asset and key, or a dungeon's gate, then a number
+  on that connection) and lets them go when told. Shared Objs carry their dimension, go to a player only while it
+  is one they have, their range measured within it; crossings are the server's, sent for the tick they happen, and
+  a player's machine that runs its own Objs has its crossings checked against a Portal by the Obj. As a dimension is
+  named to a player, the server sends its edits in pieces, nearest first, as saves pack them (`VXBLOCKS`, LZ4, with
+  the blocks numbered at run time), in half the connection's budget, and holds the player's Objs from crossing, and
+  their machine its Portal shut, till they are in; the level's edits go the same way as a player joins. An Obj a
+  scene placed that leaves a player's sight is let be on their machine and found again. Tests: two players in two
+  dimensions at the same numbers, each sent only their own's Objs, an Obj and a player crossing; 400 single-block
+  edits in 1.9 kB, nearest first, all in within 9 frames; a crossing by a Portal taken and one far from any put
+  back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
+  75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
+  player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the editor's dimension view, the script
+  API (dungeon stages and growth among it), saves per dimension, and terrains of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -2923,6 +2982,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     there, and a biome's land rolls less over the lowland than over the uplands; its rivers start from 24 ha, as
     flat land gathers less water. In a real project's endless world, land under 100 m over the sea went from 7% to
     55% and nearly flat land from 14% to 31%. Generators' version raised, so kept far views are made again.
+  - ~~**Rivers to swim across:**~~ done: a world of levels' rivers are 24 m wide and 3.5 m deep where a square
+    kilometre drains into them, on the same courses: most are 12 to 50 m across, and deeper than a player stands
+    over most of their width.
+  - ~~**River banks level with the water:**~~ done: a river's bed is a bowl, dropping steeply from its edge to a
+    broad middle, and its banks stand a quarter of a block over its water, so in a world laid in half blocks one
+    walks straight out; in some stretches the land rises at once from the bank, as on the outside of a bend, in
+    others along a low strip. Where the land is lower than the water a low sloping rim holds it in, for ponds and
+    lakes too, in place of flat-topped walls. Rivers do not yet run on to the sea across wide lowland.
   - ~~**A floor under the world:**~~ done: a generated world's lowest blocks are a floor (`BlockFloor`: on, two
     deep of the base block unless its file says otherwise; Floor, Floor block and Floor depth in the Inspector and
     `vox editor call`; `Blocks.FloorHeight` in C#, script API 89) that no change reaches, laid last over the
@@ -3618,12 +3685,73 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     continuing; ways reaching wherever a search a block at a time reaches, the coarse graph keeping them within
     5% of the cheapest; chunks edited, streaming out and back, a block numbered for the first time; the timings;
     the Block Mob tests as they were.
-  - [ ] Nav Agents: the component (`Destination`, paths, corners, costs), searches queued with a budget,
-    steering, avoidance between agents on the workers, moving by the Character Controller or along the nav for
-    crowds, in the fixed step; Block Mob on a Nav Agent; the C# API
-  - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
-    block and by Nav Area boxes; Nav Links; walkers two blocks wide
-  - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
+  - [x] **Nav Agents** (`voxear_engine::nav_agent`, `[obj.nav_agent]`, Add Component ▸ Navigation ▸ Nav Agent,
+    every row with a tooltip): the easy way a destination, the full way its path, corners, status, cost,
+    remaining distance, velocity and the velocity it wants. Agents step in the fixed step, before physics, and
+    only where their Obj has authority: each takes the way it asked for the step before (a `threads::Job`, done
+    there and then if no thread had begun it) and asks again when its destination moves to another place, a
+    chunk on its way changes, or a way found part of the way nears its end; it steers corner to corner
+    (`voxear_nav::steer`: past each corner as it is reached or overshot, slowing to stop by its end, its speed
+    changing no faster than it may); then all of them choose their velocities together, each going round the
+    others and every other Character Controller by reciprocal velocity obstacles on the terrain's threads
+    (`voxear_nav::avoid`: neighbours from a grid, a half-plane for each, a small linear program on the ground
+    plane, its share of the turning by priority). It moves by its **Character Controller** (falling, swimming
+    up in deep water, stepping a block), **Along the Nav** (`blocks::moving::slide`: kept on the places,
+    sliding along what is in its way, falling where they drop away; no physics, for crowds), or **Not at All**
+    (a script or the motion matcher moves it by its desired velocity). **Block Mob** now sets where to go by
+    its goal (`set_destinations`) and walks as an agent made of its settings, or by the Obj's own Nav Agent, so
+    mobs go round each other too. C#: `Obj.NavAgent`/`AddNavAgent` (`Destination`, `Stop`, `Resume`, `Warp`,
+    `Arrived`, `HasPath`, `PathPending`, `PathStatus`, `RemainingDistance`, `Velocity`, `DesiredVelocity`,
+    `NextCorner`, `Path`, every setting), `NavPath`, `NavPathStatus`, `NavMoves`, `NavAvoidance`, and
+    `Navigation.FindPath`, `IsReachable`, `Nearest`, `RandomPlace`, through `ComponentKind::NavAgent` and
+    `Navigation` with no JSON. Timings (test build, least of 60 steps): 500 agents along the nav crossing a
+    square both ways, a step in about 1 ms. Tests: an agent round a wall by its controller and along the nav; two
+    passing in a corridor three blocks wide; twenty through a doorway two blocks wide, none left stuck; the 500;
+    a C# script sending an agent and asking Navigation for ways; the Block Mob tests, as they were, on agents.
+    Manual: Navigation (Nav Agents, Finding Ways from Scripts).
+  - [x] **Doors, swimming and jumps in block worlds**: places of two more kinds, on the top of water too deep
+    to stand in (swum, area Swim) and in a shut door (opened, area Door; a door is no floor, and its room counts
+    the door open); a `Walker` that swims, opens doors and jumps gaps of up to two blocks (`jump_step`: every
+    column between dropping away more than a step, with room for the arc, the far side no more than a block lower
+    or half a block higher); regions kept for the walker of each height that does everything, so a coarse way
+    never misses one, and a search kept to them looking again without them where a walker that does less finds
+    no way; ways saying which corners are jumped to and which doors they go through; straight lines through a
+    block's corner on sloping ground where both ways round it are walkable (a 500-block way 5 corners, not 45).
+    Nav Agents (**Opens Doors**, **Jumps**, and **Swims** now crossing deep water) open each door on their way as
+    they come within two blocks of it (`DoorsToOpen`, opened by the game with its content) and jump: up by their
+    Character Controller at the edge, or along an arc along the nav. Block Mobs jump and swim, and open no doors.
+    C#: `NavAgent.OpensDoors`, `Jumps`. Tests: door places and swim places; a door gone through only by what
+    opens doors; deep water swum only by what swims; gaps jumped only as wide as a walker jumps; an agent opening
+    a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
+  - [x] **Areas and costs**: areas Walkable, Road (0.6), Water (3), Swim (4), Door (2), Not Walkable (never
+    crossed) and four of a project's own, named and costed in **Project Settings ▸ Navigation** (`[navigation]`,
+    carried into builds); a `.block` picks its **Nav Area** in a dropdown (`BlockNavArea`, saved as its word,
+    through `BlockFaces::nav_area` into the walking table); a **Nav Area** component (Add Component ▸
+    Navigation ▸ Nav Area: Size, Area) gives the places in its box an area, for searches (`AreaBox`); no corner
+    of ground that may not be crossed is cut, cornerwise or in a straight line; searches guess plain ground's cost
+    ahead, so roads cost no search more places where there are none. C#: `NavAreaType`, `Navigation.AreaAt`.
+    Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
+    an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
+    every Project Settings row and every component's fields reached. Manual: Areas and Costs.
+  - [x] **Nav Links** (`navigation::NavLink`, Add Component ▸ Navigation ▸ Nav Link: End in the Obj's own space,
+    Kind Walk, Jump, Climb or Teleport, Both Ways, Cost): searches take each as one step, from the place nearest its
+    Obj to the place nearest its end, costing as far as it goes and its cost more, the coarse graph too
+    (`voxear_nav::Link`, `Joins`); its two ends are always corners of a way, marked by the link's kind
+    (`FoundPath::links`); agents cross it along its line, or an arc for a jump, at once for a teleport, whatever
+    way they move. Drawn as arrows by the Navigation gizmo. Tests: a way over a wall only by a link, one way only;
+    an agent climbing a ladder link onto a platform four blocks high, by its controller and along the nav;
+    every component's fields reached. Manual: Nav Links.
+  - [ ] climbing vines and ropes without a link; walkers two blocks wide; agent types in Project Settings; costs
+    per agent
+  - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
+    `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
+    its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
+    (`editor/nav_view.rs`). `navigation.status`, `navigation.path`, `navigation.nearest`, `navigation.agents`
+    and `nav_agent.set_destination`, through `nav_agent::{find_way, nearest_place}`, which scripts' `Navigation`
+    uses too; `vox mcp` reaches them as it reaches every call. Tests: a tool finding a way over a Block World,
+    reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
+    ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
+  - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
   - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
@@ -3636,6 +3764,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   with reliable and unreliable channels, and a simulator of bad networks.
 - [x] Networked play as a server, a host or a client, in ticks: Objs shared with every player, RPCs, movement
   predicted and corrected, lag compensation, and shared authority.
+- [x] Players in different dimensions at once: ground made round every player on the server, Objs sent by
+  dimension, crossings decided and checked by the server, a dimension's edits sent as a player comes into it and
+  the level's as they join (see Dimensions under M8).
 - [ ] Multi-instance play mode.
 
 ## M11 — Modding and platform services
@@ -3744,6 +3875,9 @@ The launcher, the equivalent of Unity Hub, lives in its own repository. It cover
 - updating itself
 - the project list
 - the new-project flow with templates and default setups
+- **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine
+  releases, such as a fork's, listed beside them with their own key and their name on each version; a project
+  pinned to a fork's version installs from the fork. The old single release setting moves over as custom releases.
 
 It relies on the engine contract described under "Versions, installs and the launcher" in
 [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -562,6 +562,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new MobMotion(this);
 	}
 
+	/// <summary>The Obj's Nav Agent, which finds its way to where it is sent and walks it. Not valid when it has none.</summary>
+	public NavAgent NavAgent => new NavAgent(this);
+
+	/// <summary>Gives the Obj a Nav Agent, unless it has one, and returns it.</summary>
+	public NavAgent AddNavAgent()
+	{
+		NativeComponent.Set(NativeComponent.NavAgent, this, NativeComponent.Add, Vector4.Zero);
+		return new NavAgent(this);
+	}
+
 	/// <summary>The Obj's Block Mob, which walks it through a Block World. Not valid when it has none.</summary>
 	public BlockMob BlockMob => new BlockMob(this);
 

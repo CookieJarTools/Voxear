@@ -235,6 +235,8 @@ impl Editor {
             "quality" => file.quality.put(world),
             "portals" => file.portals.put(world),
             "water_trails" => file.water_trails.put(world),
+            "navigation" => file.navigation.put(world),
+            "foliage" => world.insert_resource(file.foliage.bounded()),
             "physics" => file.physics.put(world),
             "audio" => {
                 let audio = &mut self.game.audio;

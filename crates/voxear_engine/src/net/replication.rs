@@ -17,6 +17,10 @@
 //! it away as it reads, so a player far out, whose middle follows their
 //! camera, and the server, whose middle stays put, agree on where everything
 //! is. A child's position is its parent's, as it is.
+//!
+//! Each Obj is in a dimension (see `voxear_scene::dimensions`), and goes to
+//! a player only while it is in one they are in or see into through a
+//! Portal, its range measured within that dimension: see `dimensions`.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -252,6 +256,9 @@ pub(super) struct Tracked {
     pub owner: Option<PlayerId>,
     pub object: NetObject,
     pub state: ObjState,
+    /// The dimension it is in, and whether it came into it this tick.
+    pub dimension: voxear_scene::DimensionId,
+    pub crossed: bool,
     /// What changed this tick.
     pub changed: u8,
     /// Its scripts wrote new values for its fields since the last tick.
@@ -304,6 +311,8 @@ pub(super) struct Viewer {
     /// What each snapshot not yet heard of carried.
     pub carried: HashMap<u32, Vec<(NetId, u8)>>,
     pub next_tag: u32,
+    /// The dimensions they have, and what the server knows of them.
+    pub dimensions: super::dimensions::Seen,
 }
 
 /// A networked Obj on a player's machine.
@@ -311,6 +320,13 @@ pub(super) struct Remote {
     pub entity: Option<Entity>,
     /// Its states by tick, the oldest first.
     pub samples: VecDeque<(u64, ObjState)>,
+    /// Placed by a scene or a dimension's file, so found again rather than
+    /// made when it comes back into sight.
+    pub placed: bool,
+    /// The dimension it is in on the server, by its number, as last heard,
+    /// and those it goes into on ticks still to be shown.
+    pub dimension: u16,
+    pub crossings: VecDeque<(u64, u16)>,
 }
 
 /// An Obj the server told this player to make.
@@ -320,6 +336,14 @@ pub struct SpawnRequest {
     pub origin: Origin,
     pub owner: Option<PlayerId>,
     pub state: ObjState,
+    /// The dimension it is in, as this machine numbers them.
+    pub dimension: voxear_scene::DimensionId,
+}
+
+impl Remote {
+    fn new() -> Self {
+        Remote { entity: None, samples: VecDeque::new(), placed: false, dimension: 0, crossings: VecDeque::new() }
+    }
 }
 
 /// The server's and the players' replication.
@@ -331,6 +355,9 @@ pub(super) struct Replication {
     pub remote: HashMap<NetId, Remote>,
     pub spawns: Vec<SpawnRequest>,
     pub despawns: Vec<Entity>,
+    /// Objs placed by a scene that went out of sight, kept but no longer
+    /// moved by the server.
+    pub unbinds: Vec<Entity>,
     /// The server's tick a player's machine shows, a little in the past,
     /// in ticks.
     pub shown: f64,
@@ -358,6 +385,7 @@ impl Replication {
     /// and given back so players are told.
     pub fn capture(&mut self, world: &World) -> Vec<NetId> {
         let mut gone = Vec::new();
+        let dimensions = voxear_scene::Dimensioned::of(world);
         for (id, tracked) in &mut self.objects {
             let alive = world.is_alive(tracked.entity) && !world.has::<voxear_scene::Destroying>(tracked.entity);
             match ObjState::of(world, tracked.entity).filter(|_| alive) {
@@ -365,6 +393,9 @@ impl Replication {
                     tracked.changed = state.changed(&tracked.state) | if tracked.fields_changed { FIELDS } else { 0 };
                     tracked.fields_changed = false;
                     tracked.state = state;
+                    let dimension = dimensions.of_obj(tracked.entity);
+                    tracked.crossed = dimension != tracked.dimension;
+                    tracked.dimension = dimension;
                     if let Some(object) = world.get::<NetObject>(tracked.entity) {
                         tracked.object = *object;
                     }
@@ -378,9 +409,15 @@ impl Replication {
         gone
     }
 
-    /// Where a player is, for range and priority: their first owned Obj.
-    pub fn viewpoint(&self, player: PlayerId) -> Option<Vec3> {
-        self.objects.values().find(|t| t.owner == Some(player)).map(|t| t.state.position)
+    /// Where a player is, for range and priority, and in which dimension:
+    /// their first owned Obj.
+    pub fn viewpoint(&self, player: PlayerId) -> Option<(Vec3, voxear_scene::DimensionId)> {
+        self.objects.values().find(|t| t.owner == Some(player)).map(|t| (t.state.position, t.dimension))
+    }
+
+    /// The Obj a player is: their first owned.
+    pub fn player_obj(&self, player: PlayerId) -> Option<Entity> {
+        self.objects.values().find(|t| t.owner == Some(player)).map(|t| t.entity)
     }
 
     /// The samples' state shown at server tick `at`, between the two either
@@ -406,7 +443,7 @@ impl Replication {
 
     /// Notes a state for a remote Obj on tick `tick`.
     pub fn note(&mut self, id: NetId, tick: u64, state: ObjState) {
-        let remote = self.remote.entry(id).or_insert_with(|| Remote { entity: None, samples: VecDeque::new() });
+        let remote = self.remote.entry(id).or_insert_with(Remote::new);
         if remote.samples.back().is_some_and(|(newest, _)| *newest >= tick) {
             // An older snapshot overtaken by a newer: its news is already out of date.
             return;

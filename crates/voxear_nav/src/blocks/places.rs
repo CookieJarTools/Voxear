@@ -31,6 +31,10 @@ pub enum PlaceKind {
     Stand = 0,
     /// Standing in water a block deep.
     Wade = 1,
+    /// On the top of water too deep to stand in, for what swims.
+    Swim = 2,
+    /// In a shut door, for what opens doors.
+    Door = 3,
 }
 
 /// A place to stand, in its chunk.
@@ -214,6 +218,8 @@ impl<'a> ColumnBuilder<'a> {
         // A column's blocks: the top of the chunk under, its own, the chunk over.
         let mut column = [Walking::default(); 2 * CHUNK as usize + 1];
         let mut clear = [0u8; 2 * CHUNK as usize + 2];
+        // How many are clear counting shut doors as open: the room in a doorway.
+        let mut open = [0u8; 2 * CHUNK as usize + 2];
         for z in 0..CHUNK {
             for x in 0..CHUNK {
                 column[0] = under.at(x, CHUNK - 1, z);
@@ -222,23 +228,27 @@ impl<'a> ColumnBuilder<'a> {
                     column[1 + side + y as usize] = over.at(x, y, z);
                 }
                 // How many blocks are clear from each up, counted down from the top.
-                clear[column.len()] = 0;
+                (clear[column.len()], open[column.len()]) = (0, 0);
                 for at in (0..column.len()).rev() {
-                    clear[at] = if column[at].is_ground() { 0 } else { clear[at + 1].saturating_add(1) };
+                    let ground = column[at].is_ground();
+                    clear[at] = if ground { 0 } else { clear[at + 1].saturating_add(1) };
+                    open[at] = if ground && !column[at].is_door() { 0 } else { open[at + 1].saturating_add(1) };
                 }
                 for y in 0..side {
                     let (floor, feet, head) = (column[y], column[y + 1], column[y + 2]);
-                    if !floor.stands() || feet.is_ground() || head.is_wet() {
+                    if head.is_wet() {
                         continue;
                     }
-                    let wades = feet.is_wet();
-                    places.push(Place {
-                        y: y as u8,
-                        room: clear[y + 1].min(ROOM_MOST),
-                        floor: floor.floor,
-                        area: if wades { feet.area } else { floor.area },
-                        kind: if wades { PlaceKind::Wade } else { PlaceKind::Stand },
-                    });
+                    let (kind, room, area, top) =
+                        match (floor.stands(), feet.is_door(), feet.is_ground(), feet.is_wet()) {
+                            (true, true, ..) => (PlaceKind::Door, open[y + 1], crate::DOOR, floor.floor),
+                            (_, _, true, _) => continue,
+                            (true, _, _, true) => (PlaceKind::Wade, clear[y + 1], feet.area, floor.floor),
+                            (true, _, _, false) => (PlaceKind::Stand, clear[y + 1], floor.area, floor.floor),
+                            (false, _, _, true) if floor.is_wet() => (PlaceKind::Swim, clear[y + 1], crate::SWIM, 16),
+                            _ => continue,
+                        };
+                    places.push(Place { y: y as u8, room: room.min(ROOM_MOST), floor: top, area, kind });
                 }
                 starts[(z * CHUNK + x) as usize + 1] = places.len() as u16;
             }
@@ -281,7 +291,9 @@ mod tests {
         let chunk = ColumnBuilder::new(&blocks, &table).build([0, 0, 0]);
         assert_eq!(chunk.column(4, 4)[0].kind, PlaceKind::Wade);
         assert_eq!(chunk.column(4, 4)[0].area, crate::WATER);
-        assert!(chunk.column(6, 6).is_empty(), "two blocks deep, stood in nowhere");
+        let kinds: Vec<PlaceKind> = chunk.column(6, 6).iter().map(|place| place.kind).collect();
+        assert_eq!(kinds, vec![PlaceKind::Swim], "two blocks deep: swum on its top, stood in nowhere");
+        assert_eq!(chunk.column(6, 6)[0].area, crate::SWIM);
     }
 
     #[test]

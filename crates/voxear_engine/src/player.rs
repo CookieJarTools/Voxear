@@ -78,6 +78,12 @@ pub struct PlayerSettings {
     /// The project's `[water_trails]` settings.
     #[serde(default)]
     pub water_trails: crate::project::WaterTrailSettings,
+    /// What each kind of ground costs things finding their way.
+    #[serde(default)]
+    pub navigation: crate::navigation::NavigationSettings,
+    /// The project's `[foliage]` settings.
+    #[serde(default)]
+    pub foliage: voxear_render::FoliageMotion,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -311,8 +317,10 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
             world: settings.world,
             portals: settings.portals,
             water_trails: settings.water_trails,
+            foliage: settings.foliage,
             time: settings.time,
             input: crate::project::InputSettings { actions: settings.input_actions.clone() },
+            navigation: settings.navigation.clone(),
             modules: Some(settings.modules),
         },
     };

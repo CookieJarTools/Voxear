@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use voxear_terrain::blocks::chunk::CHUNK;
 
-use super::{BlockNav, NavChunk, OneChunk, PlaceRef, around_index, step, walking::Walker};
+use super::{BlockNav, NavChunk, OneChunk, PlaceRef, around_index, jump_step, step, walking::Walker};
 
 /// A place a walker does not fit in: in no region of its.
 pub const NO_REGION: u16 = u16::MAX;
@@ -170,9 +170,15 @@ impl Regions {
                         }
                         gathered.places = gathered.places.saturating_add(1);
                         gathered.areas |= 1 << (chunk.place(at.index).area & 31);
-                        for [dx, dz] in AXES {
-                            let Some((to, _)) = step(&ground, at, dx, dz, walker) else { continue };
-                            let back = step(&ground, to, -dx, -dz, walker).map(|(back, _)| back);
+                        for (jumps, [dx, dz]) in
+                            AXES.into_iter().map(|way| (false, way)).chain(AXES.map(|way| (true, way)))
+                        {
+                            let moved = |from, dx, dz| match jumps {
+                                false => step(&ground, from, dx, dz, walker).map(|(to, _)| to),
+                                true => jump_step(&ground, from, dx, dz, walker).map(|(to, ..)| to),
+                            };
+                            let Some(to) = moved(at, dx, dz) else { continue };
+                            let back = moved(to, -dx, -dz);
                             if back != Some(at) {
                                 one_way.push((at, to));
                                 continue;
@@ -217,7 +223,9 @@ pub fn outer_edges(nav: &BlockNav, slot: u32, class: usize) -> Edges {
     let mut steps = Vec::new();
     for z in 0..CHUNK {
         for x in 0..CHUNK {
-            let side = x == 0 || z == 0 || x == CHUNK - 1 || z == CHUNK - 1;
+            // Near enough a side to step, or jump, out of the chunk.
+            let margin = 1 + u32::from(walker.jump);
+            let side = x < margin || z < margin || x >= CHUNK - margin || z >= CHUNK - margin;
             let first = chunk.first_of(x, z);
             for (n, place) in chunk.column(x, z).iter().enumerate() {
                 let index = first + n as u16;
@@ -227,8 +235,10 @@ pub fn outer_edges(nav: &BlockNav, slot: u32, class: usize) -> Edges {
                     continue;
                 }
                 let at = PlaceRef { slot, index, x: x as u8, z: z as u8 };
-                for [dx, dz] in AXES {
-                    let Some((to, _)) = step(nav, at, dx, dz, walker) else { continue };
+                let walked = AXES.into_iter().filter_map(|[dx, dz]| step(nav, at, dx, dz, walker).map(|(to, _)| to));
+                let jumped =
+                    AXES.into_iter().filter_map(|[dx, dz]| jump_step(nav, at, dx, dz, walker).map(|(to, ..)| to));
+                for to in walked.chain(jumped) {
                     if to.slot == slot {
                         continue;
                     }

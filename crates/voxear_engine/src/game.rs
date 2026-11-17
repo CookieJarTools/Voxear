@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+mod net_dimensions;
+
 use anyhow::{Context, Result};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_core::{
@@ -172,6 +174,8 @@ impl Game {
         voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
         game.project.file.water_trails.put(&mut game.engine.world);
+        game.project.file.navigation.put(&mut game.engine.world);
+        game.engine.world.insert_resource(game.project.file.foliage.bounded());
         game.project.file.physics.put(&mut game.engine.world);
         game.project.file.time.put(&mut game.engine);
         game
@@ -517,6 +521,27 @@ impl Game {
         if self.engine.is_edit_mode() {
             return;
         }
+        // One dimension loaded for a Portal at a time: the open Portal's, or on a server the one open for each
+        // player. While one is open, any other loaded so goes at once, before the open one's is made; the one a
+        // camera is in stays, as do those networked play needs: those players are in, or the server has kept.
+        let world = &self.engine.world;
+        let open = crate::portals::open_into(world);
+        if !open.is_empty() {
+            let mut keep: Vec<dimensions::DimensionId> = open
+                .iter()
+                .filter_map(|portal| world.get::<voxear_render::Portal>(*portal)?.to.filter(|to| world.is_alive(*to)))
+                .map(|to| dimensions::dimension_of(world, to))
+                .collect();
+            keep.extend(crate::net::dimensions_needed(world));
+            let current = dimensions::current(world);
+            let going: Vec<dimensions::DimensionId> = world
+                .resource::<Dimensions>()
+                .map(|made| made.on_demand().filter(|id| !keep.contains(id) && *id != current).collect())
+                .unwrap_or_default();
+            for id in going {
+                self.let_go_dimension(id);
+            }
+        }
         for (portal, link) in crate::portals::link_wanted(&self.engine.world) {
             let asset = self.content.parse(&link.dimension).ok().and_then(|parsed| parsed.guid());
             let made = asset.map(|asset| {
@@ -556,11 +581,123 @@ impl Game {
                 back.to = Some(portal);
             }
         }
-        let needed: Vec<dimensions::DimensionId> =
+        for (portal, gate) in crate::portals::gates_wanted(&self.engine.world) {
+            match self.make_dungeon_dimension(gate, renderer.as_deref_mut()) {
+                Ok((_, back)) => {
+                    let world = &mut self.engine.world;
+                    if let Some(near) = world.get_mut::<voxear_render::Portal>(portal) {
+                        near.to = Some(back);
+                    }
+                    if let Some(far) = world.get_mut::<voxear_render::Portal>(back) {
+                        far.to = Some(portal);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!("a dungeon's dimension could not be made: {error:#}");
+                    self.engine.world.remove::<crate::dungeons::DungeonGate>(portal);
+                }
+            }
+        }
+        let mut needed: Vec<dimensions::DimensionId> =
             crate::portals::exits(&self.engine.world).iter().map(|exit| exit.dimension).collect();
+        needed.extend(crate::net::dimensions_needed(&self.engine.world));
         for id in dimensions::idle_ones(&mut self.engine.world, delta, &needed) {
             self.let_go_dimension(id);
         }
+    }
+
+    /// The dimension of the dungeon whose gate `gate` stands in, made now if
+    /// it is not yet, and the Portal in it that leads back out: the dungeon
+    /// built in a world of rock all round, its own (see
+    /// `voxear_terrain::blocks::dungeon::in_rock`), dark unless the dungeon
+    /// names a `.dimension` to start from, which brings its lighting and its
+    /// Objs.
+    pub fn make_dungeon_dimension(
+        &mut self,
+        gate: crate::dungeons::DungeonGate,
+        renderer: Option<&mut Renderer>,
+    ) -> Result<(crate::dimensions::DimensionId, Entity)> {
+        use crate::dimensions::{self, DimensionKind, DimensionSettings, Dimensions};
+        use voxear_terrain::blocks::structure::StructureBlocks;
+        let world = &self.engine.world;
+        let asset =
+            world.get::<crate::blocks::BlockWorldAsset>(gate.world).cloned().context("its world of blocks is gone")?;
+        let key = gate.key(asset.guid);
+        let made = world.resource::<Dimensions>().and_then(|made| made.find_by_key(key));
+        if let Some(id) = made {
+            let back = world
+                .query_ref::<(Entity, &voxear_render::Portal, &crate::dungeons::DungeonWayOut)>()
+                .into_iter()
+                .find(|(entity, ..)| dimensions::dimension_of(world, *entity) == id)
+                .map(|(entity, ..)| entity)
+                .context("the dungeon's dimension has no way out")?;
+            return Ok((id, back));
+        }
+        let file = asset.file.clone();
+        let size = file.block_size;
+        let generate = file.generate.as_ref().context("its world of blocks is not generated")?;
+        let built = generate.built.clone().context("its world of blocks builds no structures")?;
+        let StructureBlocks::Dungeon(dungeon) = &built.list.get(gate.structure).context("no such structure")?.blocks
+        else {
+            anyhow::bail!("its structure is no dungeon");
+        };
+        let landed = crate::blocks::generator(&mut self.content, &file).context("its generator could not be read")?;
+        let rock = match dungeon.blocks.stone {
+            voxear_terrain::blocks::chunk::AIR => file.ground.bottom,
+            stone => stone,
+        };
+        let turn = |placed, turns| built.turned_block(placed, turns, false);
+        let floors = dungeon.floors_at(gate.seed);
+        let started = std::time::Instant::now();
+        let inside = voxear_terrain::blocks::dungeon::in_rock(
+            dungeon,
+            &landed,
+            file.block_size,
+            (gate.seed, floors),
+            rock,
+            &turn,
+        )
+        .context("it could not be planned in rock")?;
+        tracing::debug!(floors, took = ?started.elapsed(), "a dungeon's dimension built");
+        // From the dimension its file names, or one of the engine's own, dark and still.
+        let template = dungeon.dimension.as_deref().and_then(|named| self.content.parse(named).ok()?.guid());
+        let id = match template {
+            Some(template) => self.make_dimension(template, key, renderer)?,
+            None => {
+                let settings = DimensionSettings::of(DimensionKind::Dungeon);
+                let level = self.levels.current();
+                dimensions::make_empty(&mut self.engine.world, settings, None, level)
+                    .context("there are as many dimensions as there can be")?
+            }
+        };
+        dimensions::made_on_demand(&mut self.engine.world, id);
+        dimensions::note_key(&mut self.engine.world, id, key);
+        let world = &mut self.engine.world;
+        // Its world: the overworld's blocks, numbered as there, laid as the dungeon was built.
+        let ground_file = voxear_terrain::blocks::file::BlockFile { generate: None, ..file };
+        let layout = crate::dungeons::DungeonInside(inside.layout.clone());
+        let base = std::sync::Arc::new(inside.blocks);
+        let blocks = crate::blocks::make(&asset.drawn, &base, None);
+        let owned = crate::blocks::BlockWorldAsset { file: ground_file, base, pending: Default::default(), ..asset };
+        let look = world.get::<voxear_render::BlockLook>(gate.world).cloned();
+        let rock_world =
+            world.spawn((voxear_scene::Name("Dungeon".into()), voxear_scene::Transform::default(), blocks, owned));
+        if let Some(look) = look {
+            world.insert(rock_world, look);
+        }
+        world.insert(rock_world, layout);
+        world.insert(rock_world, crate::dungeons::DungeonFrom(gate));
+        dimensions::set_dimension(world, rock_world, id);
+        // And the Portal back out, by the head of the stair.
+        let [x, y, z] = inside.arrival;
+        let at = voxear_core::math::Vec3::new(x as f32 + 0.5, y as f32, z as f32 + 0.5) * size;
+        let turn = voxear_core::math::Quat::from_rotation_y(inside.facing[0].atan2(inside.facing[1]));
+        let portal = voxear_render::Portal { size: [3.0, 4.0].into(), ..voxear_render::Portal::default() };
+        let name = voxear_scene::Name("Way Out".into());
+        let placed = voxear_scene::Transform::new(at, turn, voxear_core::math::Vec3::ONE);
+        let back = world.spawn((name, placed, portal, crate::dungeons::DungeonWayOut));
+        dimensions::set_dimension(world, back, id);
+        Ok((id, back))
     }
 
     /// Lets a dimension go, destroying its Objs at the end of the frame:
@@ -1068,6 +1205,8 @@ impl Game {
             physics.world_mut().ask_in(current.0);
         }
         self.net_begin(delta, renderer.as_deref_mut());
+        // A player's machine makes the dimensions its server names, and takes in their edits.
+        self.join_dimensions(renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             profile_scope!("Collider Meshes");
@@ -1094,6 +1233,10 @@ impl Game {
         // once its own is.
         {
             profile_scope!("Portals");
+            // A Portal in the gate of each dungeon in a dimension of its own near where the game is seen from.
+            if !self.engine.is_edit_mode() {
+                crate::dungeons::stand_gates(&mut self.engine.world, &mut self.content);
+            }
             crate::portals::find_exits(&mut self.engine.world);
             // A Portal into a dimension not made yet makes it once near enough, and its far side is found next tick.
             self.link_dimensions(delta, renderer.as_deref_mut());
@@ -1111,6 +1254,8 @@ impl Game {
         {
             profile_scope!("Block Tick");
             crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
+            // Doors agents are about to go through, opened as a player would.
+            crate::nav_agent::open_doors(&mut self.engine.world, &mut self.content);
         }
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // Trees coming down, and what they broke into, while the game plays.
@@ -1287,6 +1432,7 @@ impl Game {
         // frame left to send goes.
         crate::net::set_level(&mut self.engine.world, self.levels.current());
         self.share_net_objects();
+        self.serve_dimensions();
         crate::net::frame_end(&mut self.engine.world);
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
@@ -1361,9 +1507,22 @@ impl Game {
             .map(|(entity, _)| entity)
             .collect();
         for entity in new {
+            // Placed by a dimension's file, it is found by that file's GUID and its path there.
+            let in_dimension = || {
+                let dimensions = world.resource::<crate::dimensions::Dimensions>()?;
+                dimensions.made().find_map(|made| {
+                    let (path, _) = made.objs.iter().find(|(_, placed)| *placed == entity)?;
+                    Some(Origin::Placed { scene: made.asset?.to_string(), path: path.to_string() })
+                })
+            };
             let origin = match self.levels.place_of(entity) {
                 Some((scene, path)) => Some(Origin::Placed { scene: scene.to_string(), path: path.to_string() }),
-                None => world.get::<Spawned>(entity).filter(|s| s.root == entity).map(|s| Origin::Prefab(s.prefab.to_string())),
+                None => in_dimension().or_else(|| {
+                    world
+                        .get::<Spawned>(entity)
+                        .filter(|s| s.root == entity)
+                        .map(|s| Origin::Prefab(s.prefab.to_string()))
+                }),
             };
             match origin {
                 Some(origin) => drop(crate::net::track(world, entity, origin)),
@@ -1384,7 +1543,14 @@ impl Game {
             let entity = match &request.origin {
                 Origin::Placed { scene, path } => {
                     let place = scene.parse().ok().zip(ObjPath::parse(path).ok());
-                    place.and_then(|(scene, path)| self.levels.entity_at(scene, &path))
+                    place.and_then(|(scene, path)| {
+                        // In the level's scenes, or in the file of the dimension the server has it in.
+                        self.levels.entity_at(scene, &path).or_else(|| {
+                            let dimensions = self.engine.world.resource::<crate::dimensions::Dimensions>()?;
+                            let made = dimensions.get(request.dimension).filter(|made| made.asset == Some(scene))?;
+                            dimensions.obj_at(made.id, &path)
+                        })
+                    })
                 }
                 Origin::Prefab(prefab) => {
                     let placement = Placement { position: request.state.position, rotation: request.state.rotation };
@@ -1393,7 +1559,14 @@ impl Game {
                 }
             };
             match entity {
-                Some(entity) => crate::net::bind(&mut self.engine.world, &request, entity),
+                Some(entity) => {
+                    // In the dimension the server has it in.
+                    let world = &mut self.engine.world;
+                    if crate::dimensions::dimension_of(world, entity) != request.dimension {
+                        voxear_scene::put_in_dimension(world, entity, request.dimension);
+                    }
+                    crate::net::bind(world, &request, entity);
+                }
                 None => tracing::warn!("the server shared {:?}, which is not here", request.origin),
             }
         }

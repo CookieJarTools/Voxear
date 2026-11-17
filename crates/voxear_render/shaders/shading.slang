@@ -35,7 +35,9 @@ struct VertexOut
     nointerpolation uint cluster : CLUSTER;
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
-    // How far a custom shader's vertex function moved it from where the mesh has it.
+    // How far a custom shader's vertex function, the wind and what pushes through plants moved it from where the mesh
+    // has it: where the GI's rays see it, and where a plant stands in the sun's virtual shadow pages, which are kept
+    // from frame to frame with plants drawn unswayed (wind.slang).
     float3 moved : MOVED;
     // How much of it is bound to hidden bones (skinning.slang): what is mostly hidden is left out.
     float hidden : HIDDEN;
@@ -77,7 +79,8 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);
     float height = plantHeight(instance, mesh);
     Frame* frame = push.frame;
-    world.xyz += windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, v.wind, frame->time);
+    float3 swayed = windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, v.wind, frame->time);
+    world.xyz += swayed;
     float earlier = frame->time - frame->deltaTime;
     previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, v.wind, earlier);
     // A custom shader's vertex function, now and a frame ago.
@@ -107,7 +110,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.cluster = cluster;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, previous);
-    o.moved = moved;
+    o.moved = moved + swayed;
     o.hidden = float(v.wind >> 24) / 255.0;
     // A rigid mesh's own lightmap UVs, beside its vertices.
     o.lightmapUv = instance.baked != 0 && instance.posed == 0 ? buffers()->lightmapUvs[mesh.vertexOffset + vertexIndex] : 0.0;
@@ -297,6 +300,8 @@ static float terrainOcclusion = 1.0;
 // and block light, each from 0 to 1, and the colour of its blocks' light, linear and as bright as it is, over how
 // much of the sky's light a face with no sky light takes (terrainShading in blocks.slang).
 static bool terrainBlockLit = false;
+// Whether a block's face is a moving part's, posed in the sun's shadow pages as it is drawn, not swayed.
+static bool terrainPosed = false;
 static float2 terrainBlockLight = float2(1.0, 0.0);
 static float4 terrainGlow = 0.0;
 #endif
@@ -1287,7 +1292,15 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
     // custom shader's own light may light it through, as the back of a wave is, so its shape's facing decides.
     float3 facing = customLit ? normalize(input.normal) : s.normal;
     bool facingSun = dot(facing, -frame->sunDirection) > 0.0;
-    float shadow = facingSun ? min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
+    // A swaying plant is in the sun's virtual shadow pages where it stands, so its shadow on itself is read from there
+    // and moves with it, never swimming over it; the cascades are drawn swayed each frame.
+#ifdef TERRAIN_SHADING
+    float3 swayed = terrainPosed ? 0.0 : input.moved;
+#else
+    float3 swayed = material.windBend > 0.0 ? input.moved : 0.0;
+#endif
+    float3 shadowAt = input.worldPosition - (frame->vsm.pool != NO_TEXTURE ? swayed : 0.0);
+    float shadow = facingSun ? min(sunShadow(frame, shadowAt, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
 #ifdef TERRAIN_SHADING
     // Past where the sun's shadows reach, a face of leaves takes a crown's share of the sun; within them, its shadow
     // says how much, as the leaves of a crown shade each other in them.
@@ -1341,7 +1354,7 @@ FragmentOut fragmentMain(VertexOut input, bool frontFacing : SV_IsFrontFace)
         // the leaf's own shadow on itself.
         static const float LEAF_DEPTH = 0.15;
         // Light through a leaf is soft already, so its shadow need not be: the hard one costs one look, not 28.
-        float leafShadow = sunShadowHard(frame, input.worldPosition - frame->sunDirection * LEAF_DEPTH, -frame->sunDirection);
+        float leafShadow = sunShadowHard(frame, shadowAt - frame->sunDirection * LEAF_DEPTH, -frame->sunDirection);
         color += foliageLight(s, -frame->sunDirection, sunThrough, leafShadow);
     }
     color += shadowTint(frame, s, -frame->sunDirection, sunThrough, shadow);

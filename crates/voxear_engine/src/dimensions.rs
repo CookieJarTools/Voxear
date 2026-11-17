@@ -225,8 +225,12 @@ impl Surroundings {
     }
 
     /// The surroundings of a dimension with no sky: dark all round, no sun,
-    /// clear, its post-processing `post`.
+    /// clear, its post-processing `post` but for its fog, which thickens with
+    /// depth under the level's ground and would fill a deep dungeon.
     pub fn enclosed(post: Option<PostProcess>) -> Self {
+        let mut post = post.unwrap_or_default();
+        post.fog.enabled = false;
+        let post = Some(post);
         let sky = Sky {
             zenith: voxear_core::math::Vec3::ZERO,
             horizon: voxear_core::math::Vec3::ZERO,
@@ -315,6 +319,16 @@ impl Dimensions {
     /// The dimension made from `asset` as `key`, if there is one.
     pub fn find(&self, asset: AssetGuid, key: u64) -> Option<DimensionId> {
         self.made.iter().find(|made| made.asset == Some(asset) && made.key == key).map(|made| made.id)
+    }
+
+    /// The dimensions made on demand, as for a Portal into one.
+    pub fn on_demand(&self) -> impl Iterator<Item = DimensionId> + '_ {
+        self.made.iter().filter(|made| made.on_demand).map(|made| made.id)
+    }
+
+    /// The dimension made for `key`, whatever it was made from.
+    pub fn find_by_key(&self, key: u64) -> Option<DimensionId> {
+        self.made.iter().find(|made| made.key == key && key != 0).map(|made| made.id)
     }
 
     /// The Obj a dimension's file placed at `path`.
@@ -420,6 +434,15 @@ pub fn record_made(
     let dimensions = world.resource_mut::<Dimensions>();
     if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
         (made.asset, made.key, made.roots, made.objs) = (asset, key, roots, objs);
+    }
+}
+
+/// Notes which of its asset's dimensions a dimension is, for one made by
+/// code (see [`Dimensions::find_by_key`]).
+pub fn note_key(world: &mut World, id: DimensionId, key: u64) {
+    let dimensions = world.resource_mut::<Dimensions>();
+    if let Some(made) = dimensions.and_then(|dimensions| dimensions.made.iter_mut().find(|made| made.id == id)) {
+        made.key = key;
     }
 }
 

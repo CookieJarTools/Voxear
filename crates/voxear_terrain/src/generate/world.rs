@@ -791,7 +791,7 @@ mod tests {
     }
 
     /// The hash of the Alpine preset's generator, which has no Volume.
-    const ALPINE_HASH: u64 = 0x1eab_ff5c_9a5d_403c;
+    const ALPINE_HASH: u64 = 0xc9fc_b974_0484_2c70;
 
     /// Hills of noise shaped by a curve, raised by a constant: a graph of every plain kind of node.
     fn hills() -> WorldGen {

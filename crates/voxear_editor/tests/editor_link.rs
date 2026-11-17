@@ -503,6 +503,57 @@ fn a_box_models_sheet_goes_out_as_a_picture_and_comes_back_painted() {
 }
 
 #[test]
+fn a_tool_finds_ways_over_a_block_world_and_sends_a_nav_agent() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let world = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Blocks", "position": [0, 0, 0] }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": world, "component": "block_world" }));
+    frames(&mut editor, &mut renderer, 5);
+
+    // The ground's top, found from high over it.
+    let floor = |editor: &mut Editor, renderer: &mut Renderer, x: f32, z: f32| {
+        let found = done(editor, renderer, "navigation.nearest", json!({ "at": [x, 40.0, z], "reach": 60.0 }));
+        let place = found["place"].as_array().unwrap_or_else(|| panic!("no place under {x}, {z}: {found}"));
+        [place[0].as_f64().unwrap(), place[1].as_f64().unwrap(), place[2].as_f64().unwrap()]
+    };
+    let (from, to) = (floor(&mut editor, &mut renderer, 2.5, 2.5), floor(&mut editor, &mut renderer, 20.5, 6.5));
+    assert_eq!((from[0], from[2]), (2.5, 2.5), "the middle of a block, on its floor");
+    let way = done(&mut editor, &mut renderer, "navigation.path", json!({ "from": from, "to": to }));
+    assert_eq!(way["status"], "Complete", "{way}");
+    let corners = way["corners"].as_array().unwrap();
+    assert_eq!(corners.len(), 2, "straight over flat ground: {way}");
+    assert!((way["length"].as_f64().unwrap() - 18.44).abs() < 0.05, "{way}");
+
+    let status = done(&mut editor, &mut renderer, "navigation.status", json!({}));
+    let kept = &status["worlds"][0];
+    assert!(kept["chunks"].as_u64().unwrap() > 0 && kept["places"].as_u64().unwrap() > 0, "{status}");
+
+    // An agent sent somewhere: listed with where it is going.
+    let walker = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": "Walker", "position": from }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": walker, "component": "nav_agent" }));
+    done(&mut editor, &mut renderer, "nav_agent.set_destination", json!({ "obj": walker, "to": to }));
+    let agents = done(&mut editor, &mut renderer, "navigation.agents", json!({}));
+    let listed = agents["agents"].as_array().unwrap().iter().find(|agent| agent["obj"] == walker).expect("the agent");
+    assert_eq!(listed["destination"], json!(to), "{agents}");
+    assert_eq!(done(&mut editor, &mut renderer, "navigation.status", json!({}))["agents"], 1);
+
+    // The Navigation gizmo: a square on each place's floor round the camera, none with it off.
+    done(&mut editor, &mut renderer, "view.set", json!({ "position": [10.0, from[1] + 12.0, -2.0], "look_at": [10.0, from[1], 8.0] }));
+    let picture = |editor: &mut Editor, renderer: &mut Renderer, name: &str| {
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+        frames(editor, renderer, 3);
+        done(editor, renderer, "capture", json!({ "view": "scene", "path": path.display().to_string() }));
+        frames(editor, renderer, 3);
+        image::open(&path).unwrap().to_rgba8()
+    };
+    let off = picture(&mut editor, &mut renderer, "navigation-gizmo-off.png");
+    done(&mut editor, &mut renderer, "settings.set", json!({ "key": "nav_gizmos", "value": true }));
+    let on = picture(&mut editor, &mut renderer, "navigation-gizmo-on.png");
+    let tinted = off.pixels().zip(on.pixels()).filter(|(a, b)| (0..3).any(|c| a.0[c].abs_diff(b.0[c]) > 24)).count();
+    assert!(tinted > (on.width() * on.height()) as usize / 4, "the ground under the camera is tinted: {tinted} pixels");
+}
+
+#[test]
 fn every_component_and_its_fields_are_reached() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

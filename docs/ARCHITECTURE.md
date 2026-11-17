@@ -4465,11 +4465,13 @@ engine's glue is `voxear_engine::navigation`.
 
 ### Planned
 
-- **Moving in block worlds**: jumps, falls, swimming, climbing, doors; areas from a project list (blocks pick one,
-  Nav Area boxes mark one); Nav Links; wider walkers.
+- **Moving in block worlds**: climbing; Nav Links; wider walkers. (Jumps, swimming and doors are done, and areas:
+  a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
+  to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
 - **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level
   (`.nav`), with run-time cutting for Nav Obstacles.
-- **The editor and tools**: a Navigation overlay, Project Settings ▸ Navigation, and `navigation.*` calls.
+- **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
+  `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
 - **Co-op and dimensions**: agents only where they have authority; Portals as links, within a dimension and
   between dimensions.
 

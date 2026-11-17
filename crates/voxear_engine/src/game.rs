@@ -173,6 +173,7 @@ impl Game {
         game.project.file.quality.put(&mut game.engine.world);
         voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
+        game.project.file.navigation.put(&mut game.engine.world);
         game.engine.world.insert_resource(game.project.file.foliage.bounded());
         game.project.file.physics.put(&mut game.engine.world);
         game.project.file.time.put(&mut game.engine);

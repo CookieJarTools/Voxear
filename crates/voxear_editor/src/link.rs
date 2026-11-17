@@ -476,6 +476,51 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ dungeons: [{ world, structure, floors, entrance, spaces, ways, lights }] }",
     },
     CallInfo {
+        name: "navigation.status",
+        about: "The navigation kept for each Block World something walks in: how many chunks have places to stand, how many places, how much it keeps, how often it has been made again from the world's blocks and how long that took, and whether it is up to date with them; and how many Nav Agents and Block Mobs there are.",
+        args: &[],
+        changes: false,
+        returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
+    },
+    CallInfo {
+        name: "navigation.path",
+        about: "Finds the way from one place to another over the Block World the first stands in, as a Nav Agent finds it, for something as tall as `height` that swims, opens doors and jumps: its corners in metres, whether it reaches (Complete, Partial as near as it can get, Continues for the first part of a long way, None), what it costs, how long it is, and how long finding it took.",
+        args: &[
+            arg("from", ArgKind::Vector, "Where the way begins, in metres."),
+            arg("to", ArgKind::Vector, "Where it goes, in metres."),
+            maybe("height", ArgKind::Number, "How tall the walker is, in metres: 1.8 when left out."),
+        ],
+        changes: false,
+        returns: "{ status, corners, cost, length, ms }",
+    },
+    CallInfo {
+        name: "navigation.nearest",
+        about: "The place to stand nearest a point, on its floor, in metres: where a Nav Agent sent there would end. Null where there is none within reach.",
+        args: &[
+            arg("at", ArgKind::Vector, "The point, in metres."),
+            maybe("reach", ArgKind::Number, "How far off a place may be, in metres: 4 when left out."),
+        ],
+        changes: false,
+        returns: "{ place }",
+    },
+    CallInfo {
+        name: "navigation.agents",
+        about: "Every Nav Agent and Block Mob in the level: its Obj, where it is, where it is going, whether it has arrived, how its way ends, how far it has to go, its velocity, and the corners of its way.",
+        args: &[],
+        changes: false,
+        returns: "{ agents: [{ obj, at, destination, arrived, status, remaining, velocity, corners }] }",
+    },
+    CallInfo {
+        name: "nav_agent.set_destination",
+        about: "Sends an Obj's Nav Agent somewhere, as setting its Destination from a script does, or stops it with no `to`. Agents walk only while playing.",
+        args: &[
+            arg("obj", ArgKind::Obj, "The Obj with the Nav Agent."),
+            maybe("to", ArgKind::Vector, "Where to go, in metres; it stands where it is when left out."),
+        ],
+        changes: true,
+        returns: "{}",
+    },
+    CallInfo {
         name: "reflection_probe.capture",
         about: "Captures a Reflection Probe again, as its Capture button does: what it shows then stays until it is captured again or baked.",
         args: &[arg("obj", ArgKind::Obj, "An Obj with a Reflection Probe.")],
@@ -1106,6 +1151,7 @@ pub fn every_part() -> Vec<(Part, &'static str)> {
             | Part::MobMotion
             | Part::BlockMob
             | Part::NavAgent
+            | Part::NavArea
             | Part::MotionMatcher
             | Part::BoneAttachment
             | Part::FirstPersonView

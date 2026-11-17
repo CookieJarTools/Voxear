@@ -57,6 +57,11 @@ pub const CATEGORIES: &[Category] = &[
         about: "Gravity, and which layers collide",
         manual: "Physics/Colliders and Rigidbodies",
     },
+    Category {
+        name: "Navigation",
+        about: "What each kind of ground costs things finding their way",
+        manual: "Navigation/Areas and Costs",
+    },
     Category { name: "Physics 2D", about: "Gravity for 2D physics", manual: "Physics/2D Physics" },
     Category {
         name: "Player",
@@ -629,6 +634,90 @@ const FIXED: &[Setting] = &[
         "How far the middle moves each time, in whole metres. The default is a whole number of terrain tiles and block chunks; others may show seams.",
     )
     .advanced(),
+    Setting::new(
+        ("Navigation", "Costs"),
+        "navigation.road_cost",
+        "Road",
+        number(0.05, 1000.0, ""),
+        "Ground marked as a road, by its block's Nav Area or a Nav Area box, a block of it at a time. Under 1 is sought out: at 0.6 a way along a road goes nearly twice as far to stay on it.",
+    ),
+    Setting::new(
+        ("Navigation", "Costs"),
+        "navigation.water_cost",
+        "Water",
+        number(0.05, 1000.0, ""),
+        "Water a block deep, waded, a block of it at a time. Over 1 is kept off where there is another way; plain ground costs 1.",
+    ),
+    Setting::new(
+        ("Navigation", "Costs"),
+        "navigation.swim_cost",
+        "Swim",
+        number(0.05, 1000.0, ""),
+        "Water too deep to stand in, swum by what swims, a block of it at a time. Over 1 is kept off where there is another way.",
+    ),
+    Setting::new(
+        ("Navigation", "Costs"),
+        "navigation.door_cost",
+        "Door",
+        number(0.05, 1000.0, ""),
+        "A shut door, opened to go through by what opens doors. Over 1 goes round by another way where it is not much longer.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_1_name",
+        "Area 1 name",
+        Kind::Text,
+        "What the project calls its own area 1, as blocks' Nav Area and Nav Area boxes offer it as Custom 1.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_1_cost",
+        "Area 1 cost",
+        number(0.05, 1000.0, ""),
+        "What a block of area 1 costs to cross: plain ground costs 1, under 1 is sought out, over 1 kept off.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_2_name",
+        "Area 2 name",
+        Kind::Text,
+        "What the project calls its own area 2, as blocks' Nav Area and Nav Area boxes offer it as Custom 2.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_2_cost",
+        "Area 2 cost",
+        number(0.05, 1000.0, ""),
+        "What a block of area 2 costs to cross: plain ground costs 1, under 1 is sought out, over 1 kept off.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_3_name",
+        "Area 3 name",
+        Kind::Text,
+        "What the project calls its own area 3, as blocks' Nav Area and Nav Area boxes offer it as Custom 3.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_3_cost",
+        "Area 3 cost",
+        number(0.05, 1000.0, ""),
+        "What a block of area 3 costs to cross: plain ground costs 1, under 1 is sought out, over 1 kept off.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_4_name",
+        "Area 4 name",
+        Kind::Text,
+        "What the project calls its own area 4, as blocks' Nav Area and Nav Area boxes offer it as Custom 4.",
+    ),
+    Setting::new(
+        ("Navigation", "Your Own Areas"),
+        "navigation.custom_4_cost",
+        "Area 4 cost",
+        number(0.05, 1000.0, ""),
+        "What a block of area 4 costs to cross: plain ground costs 1, under 1 is sought out, over 1 kept off.",
+    ),
 ];
 
 static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| {

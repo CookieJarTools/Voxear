@@ -3703,9 +3703,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     C#: `NavAgent.OpensDoors`, `Jumps`. Tests: door places and swim places; a door gone through only by what
     opens doors; deep water swum only by what swims; gaps jumped only as wide as a walker jumps; an agent opening
     a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
-  - [ ] areas from a project list, picked per block and by Nav Area boxes; Nav Links; climbing vines, ropes and
-    ladders; walkers two blocks wide
-  - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
+  - [x] **Areas and costs**: areas Walkable, Road (0.6), Water (3), Swim (4), Door (2), Not Walkable (never
+    crossed) and four of a project's own, named and costed in **Project Settings ▸ Navigation** (`[navigation]`,
+    carried into builds); a `.block` picks its **Nav Area** in a dropdown (`BlockNavArea`, saved as its word,
+    through `BlockFaces::nav_area` into the walking table); a **Nav Area** component (Add Component ▸
+    Navigation ▸ Nav Area: Size, Area) gives the places in its box an area, for searches (`AreaBox`); no corner
+    of ground that may not be crossed is cut, cornerwise or in a straight line; searches guess plain ground's cost
+    ahead, so roads cost no search more places where there are none. C#: `NavAreaType`, `Navigation.AreaAt`.
+    Tests: a road walked at its cost, ground nothing walks on gone round through its gap, a box closing the gap;
+    an agent going round a Nav Area nothing walks on; a script reading the area of plain ground and of a road box;
+    every Project Settings row and every component's fields reached. Manual: Areas and Costs.
+  - [ ] Nav Links; climbing vines, ropes and ladders; walkers two blocks wide; agent types in Project Settings
+  - [x] **The Navigation gizmo and the calls**: Gizmos ▸ Navigation (Preferences ▸ Scene View ▸ Gizmos,
+    `nav_gizmos`) draws a square on the floor of each place within 40 m of the Scene view's camera, coloured by
+    its kind, the nearest 8000, and each agent's way corner to corner, while editing and playing
+    (`editor/nav_view.rs`). `navigation.status`, `navigation.path`, `navigation.nearest`, `navigation.agents`
+    and `nav_agent.set_destination`, through `nav_agent::{find_way, nearest_place}`, which scripts' `Navigation`
+    uses too; `vox mcp` reaches them as it reaches every call. Tests: a tool finding a way over a Block World,
+    reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
+    ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
+  - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
   - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.

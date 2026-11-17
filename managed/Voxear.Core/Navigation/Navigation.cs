@@ -26,6 +26,8 @@ public static class Navigation
 	private const int NearestFoundValue = 9;
 	private const int RandomValue = 11;
 	private const int RandomFoundValue = 12;
+	private const int AreaAtValue = 13;
+	private const int AreaFoundValue = 14;
 
 	/// <summary>
 	/// The way from <paramref name="from"/> to <paramref name="to"/> for something <paramref name="height"/> metres
@@ -70,6 +72,17 @@ public static class Navigation
 		NativeComponent.Set(NativeComponent.Navigation, Obj.None, NearestValue, new Vector4(point, reach));
 		var found = NativeComponent.Get(NativeComponent.Navigation, Obj.None, NearestFoundValue, out var place);
 		return found && place.W != 0f ? new Vector3(place.X, place.Y, place.Z) : null;
+	}
+
+	/// <summary>
+	/// The area of ground of the place to stand nearest <paramref name="point"/>, no more than
+	/// <paramref name="reach"/> metres off: as its block or a Nav Area box marks it. Null where there is none.
+	/// </summary>
+	public static NavAreaType? AreaAt(Vector3 point, float reach = 4f)
+	{
+		NativeComponent.Set(NativeComponent.Navigation, Obj.None, AreaAtValue, new Vector4(point, reach));
+		var found = NativeComponent.Get(NativeComponent.Navigation, Obj.None, AreaFoundValue, out var area);
+		return found && area.Y != 0f ? (NavAreaType)(int)area.X : null;
 	}
 
 	/// <summary>

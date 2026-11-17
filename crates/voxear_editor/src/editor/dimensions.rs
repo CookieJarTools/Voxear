@@ -279,6 +279,51 @@ impl Editor {
         self.seen_from_scene_view();
     }
 
+    /// Opens the object picker under `anchor` for the kind of a new
+    /// dimension in `folder`.
+    pub(super) fn browse_dimension_kinds(&mut self, folder: String, anchor: voxear_ui::NodeId) {
+        use crate::object_picker::{Choice, Chosen, PickFor};
+        use voxear_engine::dimensions::DimensionKind;
+        let kinds = [
+            (DimensionKind::Overworld, "Overworld", "Open land under a sky of its own, with weather", "globe"),
+            (DimensionKind::Dungeon, "Dungeon", "Enclosed and dark, one for each place that opens it", "map-dungeon"),
+            (DimensionKind::Caves, "Caves", "Enclosed and dark, only one", "mountain"),
+        ];
+        let choices = kinds
+            .into_iter()
+            .map(|(kind, label, detail, icon)| Choice {
+                label: label.to_string(),
+                detail: detail.to_string(),
+                icon,
+                pick: Chosen::Dimension(kind),
+                preview: None,
+                folder: String::new(),
+            })
+            .collect();
+        self.picker.open(&mut self.ui, (PickFor::NewDimension { folder }, anchor), "New Dimension", choices, "");
+    }
+
+    /// Makes a new `.dimension` of `kind` in `folder`, and selects it, ready
+    /// to rename.
+    pub(super) fn make_dimension_file(
+        &mut self,
+        folder: &str,
+        kind: voxear_engine::dimensions::DimensionKind,
+        renderer: &mut Renderer,
+    ) {
+        let made = crate::project_files::place(self.game.content.db().mounts(), folder).and_then(|at| {
+            let new = crate::project_files::NewFile::Dimension(kind);
+            crate::project_files::create(&at.root, &at.path, new, "").map(|made| at.back(&made))
+        });
+        match made {
+            Ok(made) => self.project_event(
+                crate::project_view::ProjectEvent::Changed { select: Some(made), rename: true },
+                renderer,
+            ),
+            Err(error) => self.notify(&format!("{error:#}")),
+        }
+    }
+
     /// Writes a `.dimension` file's settings, the rest of the file as it is
     /// on disk; where it is open, its dimension takes them at once and its
     /// next save keeps them.

@@ -74,6 +74,8 @@ pub enum Chosen {
     Effect(voxear_render::Starter),
     /// The Definition a new data asset holds, by its full name.
     Definition(String),
+    /// The kind of a new dimension.
+    Dimension(voxear_engine::dimensions::DimensionKind),
     /// A node to add to the graph in the Generator panel, by its place among
     /// the kinds of node there are.
     GraphNode(usize),
@@ -110,6 +112,8 @@ pub enum PickFor {
     NewShader { folder: String },
     /// The starter a new particle effect in this folder is a copy of.
     NewEffect { folder: String },
+    /// The kind of a new dimension, in this folder.
+    NewDimension { folder: String },
     /// The Definition a new data asset in this folder holds.
     NewDataAsset { folder: String },
     /// The control of the binding picked in the Input Actions window.

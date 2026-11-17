@@ -1332,6 +1332,7 @@ impl Editor {
             ProjectEvent::Import { folder } => self.choose_imports(folder),
             ProjectEvent::NewShader { folder, anchor } => self.browse_shader_starts(folder, anchor),
             ProjectEvent::NewEffect { folder, anchor } => self.browse_effect_starters(folder, anchor),
+            ProjectEvent::NewDimension { folder, anchor } => self.browse_dimension_kinds(folder, anchor),
             ProjectEvent::NewDataAsset { folder, anchor } => self.browse_definitions(folder, anchor),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
@@ -3009,6 +3010,9 @@ impl Editor {
                 }
                 (PickFor::NewShader { folder }, Chosen::Shader(start)) => self.make_shader(&folder, start, renderer),
                 (PickFor::NewEffect { folder }, Chosen::Effect(starter)) => self.make_effect(&folder, starter, renderer),
+                (PickFor::NewDimension { folder }, Chosen::Dimension(kind)) => {
+                    self.make_dimension_file(&folder, kind, renderer);
+                }
                 (PickFor::NewDataAsset { folder }, Chosen::Definition(definition)) => {
                     self.make_data_asset(&folder, &definition, renderer);
                 }

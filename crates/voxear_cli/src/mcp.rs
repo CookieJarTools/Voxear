@@ -248,7 +248,7 @@ pub fn tools() -> Vec<Value> {
     tools.push(json!({
         "name": "vox",
         "description": "Runs the Voxear command line on the project's files and gives back what it printed: \
-`render --out frame.png` renders the start level offscreen, `run --headless --frames 60` runs it without a window, \
+`render --out frame.png` renders the start level offscreen, with `--ui` the game's menus over it, `run --headless --frames 60` runs it without a window, \
 `build`, `assets`, `content build`, `package list`, `loc export`, and `console \"line\"` for a game running from `vox run`. \
 The project is given for you.",
         "inputSchema": {

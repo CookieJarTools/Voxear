@@ -2229,8 +2229,20 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
   dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
   others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
-  fire. To come: the editor's dimension view, the script API (dungeon stages and growth among it), saves per
-  dimension and the server making ground round every player.
+  fire. In the editor: a `.dimension` file opens beside the level as a scene does, its Objs under a header of their
+  own in the Hierarchy, edited, undone and saved into its file with its `[dimension]` table; its settings in the
+  Inspector with tooltips; Project ▸ + ▸ New Dimension of a kind. Each Scene view shows one dimension, picked from
+  its Dimension menu, keeping a camera place in each, and selecting an Obj of another shows that one; gizmos and
+  clicks keep to the view's dimension. A Portal's Leads To picks a Portal of any dimension's file (`into`), its gizmo
+  names the far dimension, and Go Through shows the far Portal; a dungeon's gate stands in the editor, a click
+  selects it, and Open Dungeon makes its dimension to look round, listed as not saved. `vox editor call` and `vox
+  mcp`: `dimension.list`, `dimension.show`, `dimension.create`, `dimension.make`, `dimension.let_go`,
+  `obj.move_to_dimension`, `dungeon.open`, and `dungeon.layouts` with each dungeon's site, dimension and stage.
+  Tests: a dimension made, shown, given a new Obj and saved with its settings, a Portal in the level picked into
+  its Way Back and gone through, an Obj moved into it, let go with `discard`; a dungeon opened from its gate and
+  left again by its way out, nothing of it saved; GPU pictures of a Scene view showing a dark grotto alone under its
+  header, the grotto taking a sky as its settings change, and the level's sky coming back. To come: the script API
+  (dungeon stages and growth among it), saves per dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,

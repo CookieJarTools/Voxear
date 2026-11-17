@@ -195,6 +195,12 @@ pub enum RowAction {
     ApplyAll,
     /// Turn the model a Model Renderer draws whole into an Obj for each part.
     UnpackModel,
+    /// Show the Portal this one leads to in the Scene view, in its own
+    /// dimension.
+    GoThrough,
+    /// Make the dimension of the dungeon whose gate this Portal stands in,
+    /// and show it in the Scene view.
+    OpenDungeon,
     /// Copy a component's values, or paste those copied over it or onto
     /// the Obj as a new component.
     CopyComponent(Part),
@@ -424,6 +430,9 @@ pub struct Inspector {
     block_panel: Option<crate::block_panel::BlockPanel>,
     /// A Foliage's tools (see `plants_panel`).
     plants_panel: Option<crate::plants_panel::PlantsPanel>,
+    /// A Portal's Go Through, where it leads into another dimension, and a
+    /// dungeon gate's Open Dungeon.
+    portal_buttons: (Option<NodeId>, Option<NodeId>),
     /// A Post Volume's settings (see `volume_panel`), and the tab it showed.
     volume_panel: Option<crate::volume_panel::VolumePanel>,
     volume_group: Option<&'static str>,
@@ -498,6 +507,7 @@ impl Inspector {
             terrain_panel: None,
             block_panel: None,
             plants_panel: None,
+            portal_buttons: (None, None),
             volume_panel: None,
             volume_group: None,
             lod_eye: None,
@@ -1107,6 +1117,7 @@ impl Inspector {
             self.volume_group = Some(panel.group());
         }
         self.block_panel = None;
+        self.portal_buttons = (None, None);
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -1237,6 +1248,10 @@ impl Inspector {
             }
             if *part == Part::Foliage {
                 self.plants_panel = Some(crate::plants_panel::PlantsPanel::new(ui, rows, world));
+            }
+            // A Portal into another dimension goes through to it, and a dungeon's gate opens its dungeon.
+            if *part == Part::Portal {
+                self.portal_buttons = portal_buttons(ui, rows, game, entity);
             }
             // A LOD Group's bar of its levels comes first, as in Unity, and only the selected level's settings show.
             if *part == Part::LodGroup
@@ -2090,6 +2105,12 @@ impl Inspector {
         if self.terrain_panel.as_ref().is_some_and(|panel| panel.water_clicked(ui)) {
             return Some(RowAction::AddRiverWater);
         }
+        if self.portal_buttons.0.is_some_and(|button| ui.clicked(button)) {
+            return Some(RowAction::GoThrough);
+        }
+        if self.portal_buttons.1.is_some_and(|button| ui.clicked(button)) {
+            return Some(RowAction::OpenDungeon);
+        }
         let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];
@@ -2917,6 +2938,27 @@ fn header(
         PrefabButtons { open, select, overrides, path }
     });
     ((top, name, active), persistent, (layer, numbers), buttons)
+}
+
+/// A Portal's buttons: Go Through where it leads into another dimension,
+/// and on a dungeon's gate, Open Dungeon.
+fn portal_buttons(ui: &mut Ui, rows: NodeId, game: &Game, entity: Entity) -> (Option<NodeId>, Option<NodeId>) {
+    let gate = game.engine.world.has::<voxear_engine::dungeons::DungeonGate>(entity);
+    let elsewhere = crate::dimension_views::leads_elsewhere(game, entity);
+    if !gate && !elsewhere {
+        return (None, None);
+    }
+    let holder = ui.panel(rows, Style::row());
+    ui.add_class(holder, "portal-buttons");
+    let mut button = |label: &str, tooltip: &str| {
+        let button = ui.button(holder, label);
+        ui.add_class(button, "portal-button");
+        ui.set_tooltip(button, tooltip, None);
+        button
+    };
+    let open = gate.then(|| button("Open Dungeon", "Makes this dungeon's dimension and shows it, to look round."));
+    let through = elsewhere.then(|| button("Go Through", "Shows the Portal this one leads to, in its dimension."));
+    (through, open)
 }
 
 /// What `header` makes: the top row, the name field and the Obj's tick, the

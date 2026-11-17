@@ -39,6 +39,42 @@ pub fn dungeons_json(world: &World, content: &mut Content, obj: u64, at: [f32; 4
     Ok(json!({ "dungeons": dungeons }).to_string())
 }
 
+/// The gate of the dungeon in a dimension of its own whose site is nearest
+/// `site` (in metres in the generator's world, as `dungeon.layouts` gives
+/// it), within 32 m, of the world of blocks on `obj` (0 for any of the
+/// level's); for opening that dungeon without a Portal standing in its gate.
+pub fn gate_at(world: &World, content: &mut Content, obj: u64, site: [f32; 2]) -> Option<DungeonGate> {
+    use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+    let worlds: Vec<Entity> = match obj {
+        0 => world.query_ref::<(Entity, &BlockWorld)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect(),
+        obj => vec![Entity::from_bits(obj)],
+    };
+    let mut best: Option<(f32, DungeonGate)> = None;
+    for entity in worlds {
+        let Some(asset) = world.get::<BlockWorldAsset>(entity) else { continue };
+        let file = asset.file.clone();
+        let Some(generate) = file.generate.as_ref() else { continue };
+        let Some(built) = generate.built.as_deref() else { continue };
+        let Some(landed) = crate::blocks::generator(content, &file) else { continue };
+        let size = file.block_size.max(0.01);
+        let generator = voxear_terrain::blocks::generate::ground_generator(generate, &landed, size);
+        let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
+        let halved = voxear_terrain::blocks::generate::halved(generate) && !file.smooth;
+        let laid = (file.block_size, generate.position, generate.lowest_open(), halved);
+        for (which, found, _) in dungeons_near(built, &generator, biomes, laid, site, 32.0) {
+            let own = matches!(
+                &built.list[which].blocks,
+                StructureBlocks::Dungeon(dungeon) if dungeon.place == DungeonPlace::OwnDimension
+            );
+            let away = (found.at[0] - site[0]).hypot(found.at[1] - site[1]);
+            if own && best.as_ref().is_none_or(|(nearest, _)| away < *nearest) {
+                best = Some((away, DungeonGate { world: entity, structure: which, site: found.at, seed: found.seed }));
+            }
+        }
+    }
+    best.map(|(_, gate)| gate)
+}
+
 fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) -> Result<Vec<Value>> {
     let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Ok(Vec::new()) };
     let file = asset.file.clone();
@@ -59,9 +95,26 @@ fn of_world(world: &World, content: &mut Content, entity: Entity, at: [f32; 4]) 
     let found = dungeons_near(built, &generator, biomes, laid, near, at[3].max(0.0));
     let metres = |block: [f32; 3]| (corner + Vec3::new(block[0], block[1], block[2]) * size).to_array();
     let centre = |block: [i32; 3]| metres([block[0] as f32 + 0.5, block[1] as f32 + 1.0, block[2] as f32 + 0.5]);
+    let made = world.resource::<crate::dimensions::Dimensions>();
     Ok(found
         .into_iter()
-        .map(|(which, _, layout)| layout_json(&layout, which, entity, &metres, &centre, size))
+        .map(|(which, site, layout)| {
+            let mut json = layout_json(&layout, which, entity, &metres, &centre, size);
+            // A dungeon in a dimension of its own: its site, which opens it, its dimension where it is made, and
+            // its stage, how far it has grown.
+            use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+            let own = matches!(
+                &built.list[which].blocks,
+                StructureBlocks::Dungeon(dungeon) if dungeon.place == DungeonPlace::OwnDimension
+            );
+            let gate = DungeonGate { world: entity, structure: which, site: site.at, seed: site.seed };
+            let dimension = made.and_then(|made| made.find_by_key(gate.key(asset.guid)));
+            json["site"] = json!(site.at);
+            json["place"] = json!(if own { "own_dimension" } else { "in_the_land" });
+            json["dimension"] = dimension.map_or(Value::Null, |id| json!(id.0));
+            json["stage"] = json!(0);
+            json
+        })
         .collect())
 }
 
@@ -208,8 +261,8 @@ struct GatesLooked {
 
 /// Stands a Portal in the middle of the landing of the gate of each dungeon in a dimension
 /// of its own within reach of where the game is seen from, in the worlds of
-/// blocks of the dimension seen, and takes away those well past it. While
-/// the game plays.
+/// blocks of the dimension seen, and takes away those well past it. In the
+/// editor too, where a gate is selected to open its dungeon.
 pub fn stand_gates(world: &mut World, content: &mut Content) {
     let Some(viewer) = crate::terrain::viewer(world) else { return };
     let mut looked = world.remove_resource::<GatesLooked>().unwrap_or_default();
@@ -238,10 +291,12 @@ pub fn stand_gates(world: &mut World, content: &mut Content) {
         })
         .map(|(entity, ..)| entity)
         .collect();
+    // Gates of another dimension stay: one seen from inside its dungeon is the way back out.
     let standing: Vec<(Entity, DungeonGate, Vec3)> = world
         .query_ref::<(Entity, &DungeonGate, &Transform)>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == seen)
         .map(|(entity, gate, transform)| (entity, *gate, transform.position))
         .collect();
     let mut wanted: Vec<DungeonGate> = Vec::new();

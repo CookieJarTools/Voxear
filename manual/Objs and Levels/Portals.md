@@ -12,7 +12,7 @@ The quickest way is the Hierarchy's **+ ▸ Portals**. It makes two Portals that
 
 To make one by hand, add **Add Component ▸ Physics ▸ Portal** to an Obj, then pick another Portal in its **Leads To** field. When the Portal you pick leads nowhere yet, it is set to lead back, so one pick joins the two both ways.
 
-A Portal's opening stands on its Obj's position, on its sill, as wide as its Size's first number and as high as its second. It faces the way its Obj faces (its forward, the blue arrow). The Scene view draws it as an outline with an arrow out of its front and a line to the Portal it leads to.
+A Portal's opening stands on its Obj's position, on its sill, as wide as its Size's first number and as high as its second. It faces the way its Obj faces (its forward, the blue arrow). The Scene view draws it as an outline with an arrow out of its front and a line to the Portal it leads to. A click in its opening selects it.
 
 ## Portal settings
 
@@ -84,7 +84,9 @@ Until that ground is made and solid, the Portal shows its mist and lets nothing 
 
 ## Into another dimension
 
-A Portal can lead into another [[Dimensions|dimension]], a world of its own: its far side shows that dimension's ground under its own sky, and what goes through comes out there. See [[Dimensions#Portals into a dimension]].
+A Portal can lead into another [[Dimensions|dimension]], a world of its own: its far side shows that dimension's ground under its own sky, and what goes through comes out there. Its **Leads To** lists the Portals of every `.dimension` file in the project after those of its own dimension, each with its dimension's name, as **Way Back · Caves**. See [[Dimensions#Portals into a dimension]].
+
+Selected, a Portal into another dimension shows that dimension's name over its opening in the Scene view, and its Inspector has **Go Through**. It shows the Portal it leads to, in its own dimension, and selects it; a dimension's file not open yet opens first. Go Through on that Portal comes back.
 
 ## Making Portals from scripts
 

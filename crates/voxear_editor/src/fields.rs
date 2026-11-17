@@ -41,6 +41,9 @@ pub enum Pick {
     Asset(Option<String>),
     /// A key into the project's string tables.
     Key(Option<String>),
+    /// A Portal in a `.dimension` file, which a Portal's Leads To leads
+    /// into.
+    Portal(crate::dimension_views::FilePortal),
 }
 
 /// The key a `Bone` field names its bone by, beside its Obj: `{ obj = 3,
@@ -379,6 +382,8 @@ pub fn pick(
         Pick::Asset(Some(asset)) | Pick::Key(Some(asset)) => toml::Value::String(asset.clone()),
         Pick::Asset(None) | Pick::Key(None) if path.len() == 1 => return reset(world, entity, behaviour, path),
         Pick::Asset(None) | Pick::Key(None) => toml::Value::String(String::new()),
+        // Only a Portal's Leads To takes a Portal of a dimension's file.
+        Pick::Portal(_) => return false,
     };
     change(world, types, entity, behaviour, path, |slot| *slot = new)
 }

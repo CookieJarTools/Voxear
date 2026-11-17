@@ -104,6 +104,8 @@ pub struct ObjState {
     pub block_world: Option<Box<BlockWorldState>>,
     pub joint: Option<Box<Joint>>,
     pub portal: Option<Box<voxear_render::Portal>>,
+    /// The Portal it leads to in a dimension's file.
+    pub portal_into: Option<Box<voxear_engine::portals::PortalInto>>,
     pub post_volume: Option<Box<voxear_render::PostVolume>>,
     pub camera_follows: Option<voxear_render::CameraFollows>,
     pub collider2d: Option<Box<Collider2D>>,
@@ -230,6 +232,7 @@ impl ObjState {
             block_world: BlockWorldState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             portal: world.get::<voxear_render::Portal>(entity).copied().map(Box::new),
+            portal_into: world.get::<voxear_engine::portals::PortalInto>(entity).cloned().map(Box::new),
             post_volume: world.get::<voxear_render::PostVolume>(entity).cloned().map(Box::new),
             camera_follows: world.get::<voxear_render::CameraFollows>(entity).copied(),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
@@ -333,6 +336,7 @@ impl ObjState {
         put(world, entity, blocks.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.portal.as_deref().copied());
+        put(world, entity, self.portal_into.as_deref().cloned());
         put(world, entity, self.post_volume.as_deref().cloned());
         put(world, entity, self.camera_follows);
         put(world, entity, self.collider2d.as_deref().copied());

@@ -73,6 +73,8 @@ pub enum AssetAction {
     /// settings it names, a setting of theirs, or a copy of them.
     SceneLighting(String, LightingAction),
     SaveMaterial(String, MaterialData),
+    /// Write these settings into the `.dimension` file at this path.
+    SaveDimension(String, voxear_engine::dimensions::DimensionSettings),
     /// Change the scenes of the level at this path.
     EditLevel(String, LevelEdit),
     /// Write these import settings for the asset at this path, and import
@@ -312,6 +314,7 @@ pub struct AssetView {
     block: Option<crate::block_inspector::BlockFields>,
     biome: Option<crate::biome_inspector::BiomeFields>,
     plant: Option<crate::plant_inspector::PlantFields>,
+    dimension: Option<crate::dimension_inspector::DimensionFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -511,6 +514,7 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            dimension: None,
             prompt_icons: None,
             preview,
             listen: None,
@@ -575,6 +579,13 @@ impl AssetView {
                     Some(db.get(guid)?.path.clone())
                 };
                 view.plant = Some(crate::plant_inspector::PlantFields::new(ui, root, plant, &path_of));
+            }
+            ItemKind::Asset(AssetKind::Dimension) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let read = voxear_engine::dimensions::DimensionFile::parse(&text, &item.path);
+                let settings = read.map(|file| file.settings).unwrap_or_default();
+                view.dimension = Some(crate::dimension_inspector::DimensionFields::new(ui, root, settings));
+                objs(ui, root, "Objs", &file);
             }
             ItemKind::Asset(AssetKind::Particles) => particle_effect(ui, root, &file),
             ItemKind::Asset(AssetKind::PromptIcons) => {
@@ -698,7 +709,12 @@ impl AssetView {
             item.kind,
             ItemKind::Script
                 | ItemKind::Asset(
-                    AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions | AssetKind::VoxShade
+                    AssetKind::Level
+                        | AssetKind::Scene
+                        | AssetKind::Dimension
+                        | AssetKind::Prefab
+                        | AssetKind::InputActions
+                        | AssetKind::VoxShade
                 )
         );
         if opens {
@@ -732,6 +748,7 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            dimension: None,
             prompt_icons: None,
             preview: None,
             listen: None,
@@ -845,6 +862,11 @@ impl AssetView {
                 BlockChange::Ping(path) => AssetAction::Ping(path),
                 BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
             });
+        }
+        if let Some(fields) = self.dimension.as_mut()
+            && fields.update(ui)
+        {
+            return Some(AssetAction::SaveDimension(self.item.path.clone(), fields.settings.clone()));
         }
         if let Some(fields) = self.plant.as_mut()
             && let Some(change) = fields.update(ui)

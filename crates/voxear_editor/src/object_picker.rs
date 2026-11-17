@@ -479,6 +479,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Key(Some(key)) if game.input.action(key).is_some() => ("gamepad", action_controls(game, key)),
                 Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
+                Pick::Portal(portal) => ("globe", portal.file.clone()),
                 Pick::Asset(Some(reference)) if builtin_material(reference) => ("material", "Built in".into()),
                 Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => {
                     ("shader", "Built in".into())

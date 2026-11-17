@@ -9,6 +9,7 @@ mod component_clipboard;
 mod blocks;
 mod data_assets;
 mod debug_texts;
+mod dimensions;
 mod desktop_windows;
 mod docs_capture;
 mod docs_links;
@@ -1028,6 +1029,7 @@ impl Editor {
         // Before the Inspector, so what is picked shows in this frame.
         self.update_picker(renderer);
         self.update_color_popup(renderer);
+        self.update_dimensions();
         {
             profile_scope!("Hierarchy");
             self.update_hierarchies(renderer, delta);
@@ -1401,6 +1403,13 @@ impl Editor {
         match item.kind {
             ItemKind::Asset(AssetKind::Level) => self.level_action(LevelAction::Open(item.path.clone()), renderer),
             ItemKind::Asset(AssetKind::Scene) => self.level_action(LevelAction::OpenScene(item.path.clone()), renderer),
+            // A dimension opens alongside the level, its Objs in a dimension of their own.
+            ItemKind::Asset(AssetKind::Dimension) => {
+                let Some(file) = self.game.content.db().guid_of(&item.path) else { return };
+                if let Err(error) = self.open_dimension(file, renderer) {
+                    self.notify(&format!("Could not open the dimension: {error}"));
+                }
+            }
             ItemKind::Asset(AssetKind::Prefab | AssetKind::Particles) => self.open_prefab(&item.path.clone(), renderer),
             ItemKind::Script => {
                 let file = self.game.content.db().file(&item.path);
@@ -1457,6 +1466,11 @@ impl Editor {
             AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
             AssetAction::SaveBiome { path, biome, rebuild } => self.save_biome(&path, &biome, rebuild),
             AssetAction::SavePlant { path, plant, rebuild } => self.save_plant(&path, &plant, rebuild),
+            AssetAction::SaveDimension(path, settings) => {
+                if let Err(error) = self.save_dimension_settings(&path, settings) {
+                    self.notify(&format!("Could not save {path}: {error}"));
+                }
+            }
             AssetAction::BrowsePlantRef { plant, field, anchor } => self.browse_plant_ref(&plant, field, anchor),
             AssetAction::DropPlantRef { plant, field, source } => self.drop_plant_ref(&plant, field, &source),
             AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
@@ -2072,15 +2086,18 @@ impl Editor {
             }
             _ => self.new_obj_position(),
         };
+        let new_scene = self.scene_for_new_objs();
         let game = &mut self.game;
         let (edit, selected) = match action {
             ObjAction::Create { kind, parent, scene } => {
+                let scene = scene.or(new_scene);
                 match objs::create(game, Some(renderer), kind, parent, scene, position) {
                     Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
                     Err(error) => return tracing::error!("could not make the Obj: {error:#}"),
                 }
             }
             ObjAction::CreateFrom { entry, parent, scene } => {
+                let scene = scene.or(new_scene);
                 let Some(made) = self.inspector.types().create_objects.get(entry) else { return };
                 let path = made.prefab_path(game.content.db());
                 match objs::create_from_prefab(game, Some(renderer), &path, parent, scene, position) {
@@ -2194,6 +2211,20 @@ impl Editor {
             RowAction::RevertAll => return self.revert_instance(entity, renderer),
             RowAction::CopyComponent(part) => return self.copy_component(entity, part),
             RowAction::UnpackModel => return self.unpack_model(entity, renderer),
+            RowAction::GoThrough => {
+                if let Err(error) = self.go_through(entity, renderer) {
+                    self.notify(&format!("Could not go through: {error}"));
+                }
+                return;
+            }
+            RowAction::OpenDungeon => {
+                let gate = self.game.engine.world.get::<voxear_engine::dungeons::DungeonGate>(entity).copied();
+                let opened = gate.ok_or_else(|| "it is no dungeon's gate".to_string());
+                if let Err(error) = opened.and_then(|gate| self.open_dungeon(gate, renderer)) {
+                    self.notify(&format!("Could not open the dungeon: {error}"));
+                }
+                return;
+            }
             _ => {}
         }
         if let RowAction::Keep(field) = action {
@@ -2246,7 +2277,11 @@ impl Editor {
             RowAction::ShowToDesigners(prop, shown) => {
                 props::show_to_designers(&mut self.game.engine.world, entity, &prop, shown);
             }
-            RowAction::ViewLod(_) | RowAction::BrowseComponents(_) | RowAction::UnpackModel => {}
+            RowAction::ViewLod(_)
+            | RowAction::BrowseComponents(_)
+            | RowAction::UnpackModel
+            | RowAction::GoThrough
+            | RowAction::OpenDungeon => {}
             RowAction::ForceLod(lod) => {
                 props::set_forced_lod(&mut self.game.engine.world, entity, lod);
             }

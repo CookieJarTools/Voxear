@@ -39,6 +39,16 @@ size = [3.0, 4.0]
 | **Keep loaded** | How many seconds it stays loaded after nothing needs it any more: 30 |
 | **Instances** | **One**, or **Each site**: one for each place that opens it, as each dungeon is its own |
 
+## In the editor
+
+**Project ▸ + ▸ New Dimension** makes a `.dimension` file of a kind: Overworld, Dungeon or Caves. It holds one Portal, **Way Back**, for a Portal in the level to lead into. Selected in the Project, its Inspector shows its settings, each with what it does and what it is by default; a change is written into the file at once. **Kind** puts the others back to what the kind gives.
+
+**Open** opens the dimension beside the level, as a scene opens alongside it. Its Objs are listed under a header of their own in the Hierarchy, marked **Dimension**. They edit, undo and save as a scene's, into the dimension's file. New Objs made while the Scene view shows it go into it too. Close it from its header's menu.
+
+The Scene view shows one dimension at a time. Pick which in its **Dimension** menu, beside its shading, which shows once more than the level's is open. Each Scene view keeps where its camera was in each dimension, so going back to one is going back to where you looked from. Selecting an Obj of another dimension, in the Hierarchy or anywhere else, shows that dimension. The sky, sun and weather are those of the dimension shown.
+
+A [[Structures#Dungeons|dungeon]] in a dimension of its own has a Portal standing in its gate in the editor too, as in the game. Click its opening to select it. Its Inspector has **Open Dungeon**, which makes the dungeon's dimension, as the game makes it, and shows its way out. The Hierarchy lists the dungeon under a header of its own, marked **Not saved**: it is made from its structure each time. **Go Through** on its way out comes back to the gate.
+
 ## Portals into a dimension
 
 A Portal in the level leads into a dimension when its **Leads To** is a Portal in that dimension's file. In the scene file that is `into`, the `.dimension` and the Portal's Obj in it:
@@ -77,6 +87,7 @@ Once nothing has needed a dimension for its **Keep loaded** seconds, the game le
 ## Not done yet
 
 - Changes to a dimension's blocks are not kept once it is let go, and saves do not keep them.
-- The editor does not show or edit a dimension yet. Write its file by hand, or copy a scene's Objs into it.
+- A dungeon opened in the editor is shown at its first stage: dungeons do not grow yet.
+- In play mode, a Scene view starts in the level's dimension, whichever it showed while editing.
 - Scripts cannot load a dimension or move an Obj into one yet, except by sending it through a Portal.
 - A networked game sends no dimensions to the players who join.

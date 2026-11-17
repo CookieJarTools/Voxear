@@ -102,6 +102,8 @@ pub(super) enum Waiting {
     ReverbBake,
     /// The open level's lighting baking.
     LightingBake,
+    /// The open level's nav mesh baking.
+    NavBake,
 }
 
 /// A call done, or one that answers later.
@@ -350,6 +352,17 @@ impl Editor {
                 let probe = probe.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Reflection Probe"))?;
                 probe.capture();
                 done(json!({}))
+            }
+            "navigation.bake" => {
+                self.refuse_while_playing("bake the navigation")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                self.game.engine.world.remove_resource::<voxear_engine::navigation::LevelNav>();
+                if !self.is_baking_nav() {
+                    self.bake_nav();
+                }
+                Ok(Outcome::Later(Waiting::NavBake))
             }
             "lighting.bake" => {
                 self.refuse_while_playing("bake the lighting")?;
@@ -608,6 +621,17 @@ impl Editor {
                 (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
                 (true, _) => Ok(Outcome::Later(Waiting::ReverbBake)),
             },
+            Waiting::NavBake if self.is_baking_nav() => Ok(Outcome::Later(Waiting::NavBake)),
+            Waiting::NavBake => {
+                let level = self.game.levels.current().unwrap_or_default().to_string();
+                match self.game.engine.world.resource::<voxear_engine::navigation::LevelNav>() {
+                    Some(nav) => done(json!({
+                        "path": voxear_engine::navigation::nav_file(&level),
+                        "polygons": nav.0.counts().0,
+                    })),
+                    None => Err(refuse(ErrorKind::Failed, "the level has no still colliders to bake navigation from")),
+                }
+            }
             Waiting::LightingBake => match (self.baking_lighting(), self.lighting_bake_end()) {
                 (false, Some(Ok(baked))) => done(json!({
                     "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
@@ -1244,7 +1268,7 @@ impl Editor {
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
                 "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
-                | "reflection_probes.bake" | "reverb_probes.bake" | "lighting.bake" => {
+                | "reflection_probes.bake" | "reverb_probes.bake" | "lighting.bake" | "navigation.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),

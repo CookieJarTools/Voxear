@@ -3765,7 +3765,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
     ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
   - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
-  - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
+  - [x] **Baked nav meshes for levels of models** (`voxear_nav::mesh`): every still collider's triangles
+    (`navigation::bake_triangles`, from the level's real middle) laid into a grid of columns 0.3 m across, each
+    triangle clipped to each column so walls count as well as floors; a span's top walkable where its triangles
+    are no steeper than 45° and the span over it leaves 1.8 m; cells joined to those beside within a step of
+    0.45 m, those nearer than 0.35 m to an edge let go; the rest gathered into rectangles following the floor's
+    height at their corners, joined along the edges they share. Searches are an A* over the rectangles, each
+    entered at the middle of its edge, then the funnel through the edges crossed. Kept beside the level as a
+    `.nav` file (`VXNV`, LZ4), read as the level opens (`LevelNav`), shipped with it. Agents with no world of
+    blocks under them walk it (searches at once: a 279 m way 0.04 ms), by their Character Controller or along the
+    mesh; `navigation.path` and scripts' `Navigation` find ways over it. The editor bakes it on a thread from a
+    level's Inspector (**Bake Navigation**), the palette and `navigation.bake`; the Navigation gizmo draws its
+    rectangles. Timings (test build): a level 200 m square with 144 blocks on it bakes in 2.4 s. Tests: a box gone
+    round off its sides; a ramp joining two floors and one too steep not; a floor over a floor kept apart; a
+    corner turned on its inside; the file read back the same; the timings; agents walking round a wall on a baked
+    mesh by both ways of moving; a tool baking a level and finding a way over it, and the gizmo's picture.
+    Manual: Levels of Models.
+  - [ ] cutting nav meshes at run time for Nav Obstacles; bake settings per agent type
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.

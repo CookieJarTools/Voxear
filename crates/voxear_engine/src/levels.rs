@@ -337,6 +337,7 @@ impl Levels {
         self.scenes.push(loaded);
         crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
         crate::light_bakes::put_on_level(self, &mut engine.world, content);
+        crate::navigation::put_level_nav(self, &mut engine.world, content);
         // Loading a scene puts its own sky up; the active scene's goes back.
         self.apply_environment(engine)?;
         Ok(true)
@@ -542,6 +543,7 @@ impl Levels {
         self.current = Some(level_path);
         crate::reflection_bakes::put_on_level(self, &mut engine.world, content);
         crate::light_bakes::put_on_level(self, &mut engine.world, content);
+        crate::navigation::put_level_nav(self, &mut engine.world, content);
         Ok(change)
     }
 

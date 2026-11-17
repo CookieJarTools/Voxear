@@ -545,6 +545,13 @@ pub const CALLS: &[CallInfo] = &[
         returns: "{ worlds: [{ world, chunks, places, kilobytes, version, made, build_ms, settled }], agents, mobs }",
     },
     CallInfo {
+        name: "navigation.bake",
+        about: "Bakes the open level's nav mesh from its still colliders, as its Inspector's Bake Navigation does, for agents on levels of models; written beside the level as its `.nav` file. Answers once the bake is done.",
+        args: &[],
+        changes: true,
+        returns: "{ path, polygons }",
+    },
+    CallInfo {
         name: "navigation.path",
         about: "Finds the way from one place to another over the Block World the first stands in, as a Nav Agent finds it, for something as tall as `height` that swims, opens doors and jumps: its corners in metres, whether it reaches (Complete, Partial as near as it can get, Continues for the first part of a long way, None), what it costs, how long it is, and how long finding it took.",
         args: &[

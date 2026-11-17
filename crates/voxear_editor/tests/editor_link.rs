@@ -554,6 +554,44 @@ fn a_tool_finds_ways_over_a_block_world_and_sends_a_nav_agent() {
 }
 
 #[test]
+fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // A floor 40 metres square and a wall across it, its gap at one end.
+    for (name, position, size) in [("Floor", [0.0, -0.5, 0.0], [40.0, 1.0, 40.0]), ("Wall", [0.0, 1.5, -3.0], [1.0, 3.0, 34.0])] {
+        let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": name, "position": position }));
+        let obj = made["obj"].clone();
+        done(&mut editor, &mut renderer, "component.add", json!({ "obj": obj, "component": "collider" }));
+        done(&mut editor, &mut renderer, "field.set", json!({ "obj": obj, "component": "collider", "field": "size", "value": size }));
+    }
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let baked = done(&mut editor, &mut renderer, "navigation.bake", json!({}));
+    assert!(baked["polygons"].as_u64().unwrap() > 0, "{baked}");
+    let file = dir.path().join(baked["path"].as_str().unwrap());
+    assert!(file.is_file(), "written beside the level: {}", file.display());
+    let way = done(&mut editor, &mut renderer, "navigation.path", json!({ "from": [-8.0, 0.0, 5.0], "to": [8.0, 0.0, 5.0] }));
+    assert_eq!(way["status"], "Complete", "{way}");
+    let corners = way["corners"].as_array().unwrap();
+    assert!(corners.len() > 2, "round the wall's end: {way}");
+    assert!(corners.iter().any(|corner| corner[2].as_f64().unwrap() > 13.0), "through the gap: {way}");
+
+    // The gizmo shows the mesh: its polygons over the floor, none on the wall's top.
+    done(&mut editor, &mut renderer, "view.set", json!({ "position": [-6.0, 14.0, -14.0], "look_at": [0.0, 0.0, 0.0] }));
+    let picture = |editor: &mut Editor, renderer: &mut Renderer, name: &str| {
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+        frames(editor, renderer, 3);
+        done(editor, renderer, "capture", json!({ "view": "scene", "path": path.display().to_string() }));
+        frames(editor, renderer, 3);
+        image::open(&path).unwrap().to_rgba8()
+    };
+    let off = picture(&mut editor, &mut renderer, "nav-mesh-gizmo-off.png");
+    done(&mut editor, &mut renderer, "settings.set", json!({ "key": "nav_gizmos", "value": true }));
+    let on = picture(&mut editor, &mut renderer, "nav-mesh-gizmo-on.png");
+    let tinted = off.pixels().zip(on.pixels()).filter(|(a, b)| (0..3).any(|c| a.0[c].abs_diff(b.0[c]) > 24)).count();
+    assert!(tinted > (on.width() * on.height()) as usize / 10, "the floor is tinted: {tinted} pixels");
+}
+
+#[test]
 fn every_component_and_its_fields_are_reached() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

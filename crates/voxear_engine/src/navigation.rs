@@ -307,3 +307,49 @@ pub fn links(
         })
         .collect()
 }
+
+/// Where a level's baked nav mesh is kept: beside it, named as it is, as
+/// `Levels/Main.level`'s in `Levels/Main.nav`.
+pub fn nav_file(level: &str) -> String {
+    let stem = level.strip_suffix(".level").unwrap_or(level);
+    format!("{stem}.nav")
+}
+
+/// The open level's baked nav mesh, for what walks its models rather than
+/// blocks, in metres from the level's real middle (see `crate::origin`).
+#[derive(Clone, Debug)]
+pub struct LevelNav(pub Arc<voxear_nav::mesh::NavMesh>);
+
+/// Opens the current level's nav mesh, if it has one baked, in place of
+/// any before.
+pub fn put_level_nav(levels: &crate::levels::Levels, world: &mut World, content: &mut crate::Content) {
+    world.remove_resource::<LevelNav>();
+    let Some(level) = levels.current() else { return };
+    let path = nav_file(level);
+    let Ok(bytes) = content.read(&path) else { return };
+    match voxear_nav::mesh::NavMesh::from_bytes(&bytes) {
+        Some(mesh) => world.insert_resource(LevelNav(Arc::new(mesh))),
+        None => tracing::warn!("{path} is not a nav mesh this engine reads; bake it again"),
+    }
+}
+
+/// The triangles a level's nav mesh is baked from: every still collider's
+/// (neither a trigger nor moved by physics), in metres from the level's
+/// real middle.
+pub fn bake_triangles(world: &World) -> Vec<[voxear_core::math::Vec3; 3]> {
+    let mut triangles = Vec::new();
+    for wall in crate::acoustics::walls(world) {
+        for [a, b, c] in &wall.triangles {
+            let corner = |at: &u32| wall.vertices[*at as usize];
+            triangles.push([corner(a), corner(b), corner(c)]);
+        }
+    }
+    triangles
+}
+
+/// The level's nav mesh and how far the world's origin is from the level's
+/// real middle: a point in the world is the mesh's less that.
+pub fn level_nav(world: &World) -> Option<(Arc<voxear_nav::mesh::NavMesh>, voxear_core::math::Vec3)> {
+    let mesh = world.resource::<LevelNav>()?.0.clone();
+    Some((mesh, voxear_scene::WorldOrigin::of(world).0.as_vec3()))
+}

@@ -236,6 +236,8 @@ pub enum AssetAction {
     BakePaths(String),
     /// Bake the reflection probes of the level at this path.
     BakeProbes(String),
+    /// Bake the nav mesh of the level at this path.
+    BakeNav(String),
     /// Bake the reverb probes of the level at this path.
     BakeReverb(String),
     /// Show where the asset at this path is in the Project panel.
@@ -326,6 +328,7 @@ pub struct AssetView {
     bake: Option<NodeId>,
     /// A level's Bake Probes button.
     bake_probes: Option<NodeId>,
+    bake_nav: Option<NodeId>,
     /// A level's Bake Reverb button.
     bake_reverb: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
@@ -521,6 +524,7 @@ impl AssetView {
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_nav: None,
             bake_reverb: None,
             lighting: None,
             scene_lighting: None,
@@ -676,6 +680,7 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Level) => {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
+                view.bake_nav = Some(navigation_bake(ui, root, &item.path, game));
                 view.bake_probes = Some(reflection_probes(ui, root, &item.path, game));
                 view.bake_reverb = Some(reverb_probes(ui, root, &item.path, game));
             }
@@ -755,6 +760,7 @@ impl AssetView {
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_nav: None,
             bake_reverb: None,
             lighting: None,
             scene_lighting: None,
@@ -790,6 +796,9 @@ impl AssetView {
         }
         if self.bake.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakePaths(self.item.path.clone()));
+        }
+        if self.bake_nav.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::BakeNav(self.item.path.clone()));
         }
         if self.bake_probes.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakeProbes(self.item.path.clone()));
@@ -1341,6 +1350,26 @@ fn sound_paths(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
     );
     let button = ui.button(rows, "Bake Paths");
     ui.add_class(button, "add-component");
+    button
+}
+
+/// Whether a level's nav mesh is baked, and the button that bakes it,
+/// which this returns.
+fn navigation_bake(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
+    let rows = part(ui, root, "Navigation", "map-arrow");
+    let file = game.project.root.join(voxear_engine::navigation::nav_file(level));
+    let baked = std::fs::metadata(file).map(|meta| meta.len()).ok();
+    text_row(
+        ui,
+        rows,
+        "Nav Mesh",
+        &baked.map_or_else(|| "Not baked".to_string(), |bytes| format!("Baked · {}", size(bytes))),
+    );
+    let button = ui.button(rows, "Bake Navigation");
+    ui.add_class(button, "add-component");
+    let tip = "Bakes where things can walk on the level's still colliders (neither triggers nor moved by physics), \
+               for Nav Agents and Block Mobs on levels of models. Worlds of blocks need no bake";
+    ui.set_tooltip(button, tip, None);
     button
 }
 

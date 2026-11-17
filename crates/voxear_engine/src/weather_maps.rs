@@ -20,6 +20,9 @@
 //!   end on it, and what is under it stays dry.
 //! - **Sea floor:** how deep a world of blocks' sea is, from its top down
 //!   to its highest ground block, every few metres round the viewer.
+//! - **Far ice:** how much of the sea is frozen over far off, past the
+//!   lying grid out to the far view, in cells hundreds of metres across, by
+//!   the air over it as a lying cell's sea is.
 //!
 //! Nothing here is saved or sent: every machine works it out for itself.
 
@@ -29,8 +32,8 @@ use voxear_core::math::{DVec2, DVec3, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::sea::SeaLevel;
 pub use voxear_render::weather_maps::{
-    COVER_CELL, COVER_SIDE, FLOOR_CELL, FLOOR_REACH, FLOOR_SIDE, Grid, LYING_CELL, LYING_SIDE, Lying, OPEN,
-    WeatherMaps, lasting_snow,
+    COVER_CELL, COVER_SIDE, FLOOR_CELL, FLOOR_REACH, FLOOR_SIDE, Grid, ICE_CELL, ICE_SIDE, LYING_CELL, LYING_SIDE,
+    Lying, OPEN, WeatherMaps, lasting_snow,
 };
 use voxear_scene::{Destroying, Transform, WorldOrigin, WorldTransform};
 use voxear_terrain::blocks::{BlockWorld, chunk::CHUNK, is_ground};
@@ -42,12 +45,15 @@ use crate::storms::{SeaNow, Storms, WeatherAt, weather_at};
 const LYING_EACH_FRAME: usize = 64;
 const COVER_EACH_FRAME: usize = 1024;
 const FLOOR_EACH_FRAME: usize = 256;
+const ICE_EACH_FRAME: usize = 32;
 /// About how often each cell of a grid already known is worked out again,
 /// in seconds, the rest in turn: what lies changes over tens of seconds,
-/// and cover and the sea floor only where blocks or colliders do.
+/// and cover and the sea floor only where blocks or colliders do; the sea
+/// freezes and thaws over minutes.
 const LYING_AGAIN: f32 = 2.0;
 const COVER_AGAIN: f32 = 1.0;
 const FLOOR_AGAIN: f32 = 2.0;
+const ICE_AGAIN: f32 = 8.0;
 /// The shortest frame the grids are paced by, in seconds, so a paused game
 /// still sees what changes.
 const SHORTEST_FRAME: f32 = 1.0 / 144.0;
@@ -194,6 +200,14 @@ struct Kept {
     at: f64,
 }
 
+/// A far ice cell as kept: how much of its sea is frozen over, and when it
+/// was last moved on, on the maps' own clock.
+#[derive(Clone, Copy, Default)]
+struct KeptIce {
+    ice: f32,
+    at: f64,
+}
+
 /// Each chunk's columns' highest ground block, a chunk of a world of blocks
 /// at a time, kept while the chunk is the same: from 1 for its lowest
 /// block, 0 for a column of none.
@@ -270,6 +284,7 @@ struct MapsKept {
     lying: Rolling<Kept>,
     cover: Rolling<f32>,
     floor: Rolling<f32>,
+    ice: Rolling<KeptIce>,
     tops: Tops,
     clock: f64,
     slabs: HashMap<[i64; 2], Entity>,
@@ -281,6 +296,7 @@ impl Default for MapsKept {
             lying: Rolling::new(LYING_SIDE, LYING_CELL),
             cover: Rolling::new(COVER_SIDE, COVER_CELL),
             floor: Rolling::new(FLOOR_SIDE, FLOOR_CELL),
+            ice: Rolling::new(ICE_SIDE, ICE_CELL),
             tops: Tops::default(),
             clock: 0.0,
             slabs: HashMap::new(),
@@ -431,6 +447,23 @@ fn bear_on_ice(world: &mut World, kept: &mut MapsKept, sea: Option<f32>, viewer:
     }
 }
 
+/// How much of a sea whose ice was `was` is frozen over `delta` seconds on,
+/// where the air over it is `sea` warm: frozen over in minutes under air
+/// below [`SEA_FREEZES`], thawed in minutes over [`SEA_THAWS`], and between
+/// them as it was. A sea not yet known is as that air would have left it.
+fn freeze(was: Option<f32>, sea: f32, delta: f32) -> f32 {
+    let wanted = match sea {
+        sea if sea <= SEA_FREEZES => 1.0,
+        sea if sea >= SEA_THAWS => 0.0,
+        _ => was.unwrap_or(0.0),
+    };
+    match was {
+        None => wanted,
+        Some(was) if wanted > was => (was + delta / FREEZE).min(wanted),
+        Some(was) => (was - delta / THAW).max(wanted),
+    }
+}
+
 /// A lying cell `delta` seconds on, under the weather `at` gives, where
 /// the air over the sea is `sea` warm; or, for a cell not yet known, as
 /// that weather would have left it.
@@ -441,24 +474,12 @@ fn lie(was: Option<Lying>, at: &WeatherAt, sea: Option<f32>, height: f32, delta:
     let snow_wanted = if rain > 0.0 && celsius > MELTS_ABOVE { 0.0 } else { (snowing * 1.25).min(1.0) }.max(lasting);
     let wet_wanted = if rain > 0.0 { (0.5 + rain).min(1.0) } else { 0.0 };
     let fallen_wanted = rain.max(snowing);
-    let ice_wanted = sea.map(|sea| {
-        if sea <= SEA_FREEZES {
-            1.0
-        } else if sea >= SEA_THAWS {
-            0.0
-        } else {
-            was.map_or(0.0, |was| was.ice)
-        }
-    });
+    let ice = match sea {
+        Some(sea) => freeze(was.map(|was| was.ice), sea, delta),
+        None => was.map_or(0.0, |was| was.ice),
+    };
     let Some(was) = was else {
-        return Lying {
-            wet: wet_wanted,
-            snow: snow_wanted,
-            fallen: fallen_wanted,
-            ice: ice_wanted.unwrap_or(0.0),
-            celsius,
-            height,
-        };
+        return Lying { wet: wet_wanted, snow: snow_wanted, fallen: fallen_wanted, ice, celsius, height };
     };
     let towards = |now: f32, wanted: f32, up: f32, down: f32| match wanted > now {
         true => (now + delta / up.max(1e-3)).min(wanted),
@@ -480,7 +501,7 @@ fn lie(was: Option<Lying>, at: &WeatherAt, sea: Option<f32>, height: f32, delta:
         wet: towards(was.wet, wet_wanted, SOAK, dries),
         snow,
         fallen: towards(was.fallen, fallen_wanted, SETTLE, FORGET),
-        ice: ice_wanted.map_or(was.ice, |wanted| towards(was.ice, wanted, FREEZE, THAW)),
+        ice,
         celsius,
         height,
     }
@@ -528,7 +549,8 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
     }
 
     // The sea's floor, every few metres, where the viewer is near a sea's top.
-    let sea = worlds.iter().find_map(|blocks| blocks.sea).filter(|sea| (viewer.y - sea).abs() < FLOOR_FROM);
+    let sea_top = worlds.iter().find_map(|blocks| blocks.sea);
+    let sea = sea_top.filter(|sea| (viewer.y - sea).abs() < FLOOR_FROM);
     if let Some(top) = sea {
         kept.floor.follow(around);
         let tops = &mut kept.tops;
@@ -554,9 +576,23 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
             let ground = Vec3::new(xz.x, viewer.y, xz.y);
             let height = ground_top(tops, &worlds, ground, GROUND_REACH, GROUND_REACH).unwrap_or(viewer.y);
             let at = weather_at(world, Vec3::new(xz.x, height, xz.y));
-            let sea = sea.map(|top| crate::heat::open_air(world, Vec3::new(xz.x, top, xz.y)).0);
+            let sea = sea_top.map(|top| crate::heat::open_air(world, Vec3::new(xz.x, top, xz.y)).0);
             let delta = was.map_or(0.0, |was| (clock - was.at).clamp(0.0, f64::from(LONGEST_STEP)) as f32);
             Kept { lying: lie(was.map(|was| was.lying), &at, sea, height, delta), at: clock }
+        });
+    }
+
+    // The sea's ice far off, by the air over it, as each lying cell's.
+    let far_ice = has_weather.then_some(sea_top).flatten();
+    if let Some(top) = far_ice {
+        kept.ice.follow(around);
+        let clock = kept.clock;
+        let again = kept.ice.again(delta, ICE_AGAIN);
+        kept.ice.refresh((ICE_EACH_FRAME, again), |middle, was| {
+            let xz = to_world(middle);
+            let sea = crate::heat::open_air(world, Vec3::new(xz.x, top, xz.y)).0;
+            let delta = was.map_or(0.0, |was| (clock - was.at).clamp(0.0, f64::from(LONGEST_STEP)) as f32);
+            KeptIce { ice: freeze(was.map(|was| was.ice), sea, delta), at: clock }
         });
     }
 
@@ -566,6 +602,7 @@ pub fn update(world: &mut World, delta: f32, playing: bool) {
         lying: has_weather.then(|| kept.lying.grid(origin.0.as_dvec3(), |kept| kept.lying)),
         cover: covered.then(|| kept.cover.grid(origin.0.as_dvec3(), |height| height)),
         floor: sea.is_some().then(|| kept.floor.grid(origin.0.as_dvec3(), |depth| depth)),
+        ice: far_ice.is_some().then(|| kept.ice.grid(origin.0.as_dvec3(), |kept| kept.ice)),
     };
     if let Some(SeaNow(sampler)) = world.remove_resource::<SeaNow>() {
         world.insert_resource(SeaNow(sampler.with_maps(maps.clone())));
@@ -598,14 +635,19 @@ pub struct GroundAt {
 }
 
 /// What the weather has left on the ground at `at`, in the world: by place
-/// within the lying grid, else the level's own weather's; dry and clear of
-/// snow under a roof.
+/// within the lying grid, else the level's own weather's, and the sea's ice
+/// out to the far view; dry and clear of snow under a roof.
 pub fn ground_at(world: &World, at: Vec3) -> GroundAt {
     let sheltered = covered(world, at);
-    let (wet, snow, ice) = lying_at(world, at).unwrap_or_else(|| {
-        let ground = world.resource::<crate::weather::Weather>().map(|weather| weather.ground()).unwrap_or_default();
-        (ground.wet, ground.snow, 0.0)
-    });
+    let (wet, snow) = lying_at(world, at).map_or_else(
+        || {
+            let ground =
+                world.resource::<crate::weather::Weather>().map(|weather| weather.ground()).unwrap_or_default();
+            (ground.wet, ground.snow)
+        },
+        |(wet, snow, _)| (wet, snow),
+    );
+    let ice = world.resource::<WeatherMaps>().map_or(0.0, |maps| maps.ice_at(at.x, at.z));
     match sheltered {
         true => GroundAt { ice, sheltered, ..GroundAt::default() },
         false => GroundAt { wet, snow, ice, sheltered },
@@ -620,7 +662,8 @@ pub fn settled(world: &World) -> bool {
         let lying = maps.is_none_or(|maps| maps.lying.is_none()) || kept.lying.all_known();
         let cover = maps.is_none_or(|maps| maps.cover.is_none()) || kept.cover.all_known();
         let floor = maps.is_none_or(|maps| maps.floor.is_none()) || kept.floor.all_known();
-        lying && cover && floor
+        let ice = maps.is_none_or(|maps| maps.ice.is_none()) || kept.ice.all_known();
+        lying && cover && floor && ice
     })
 }
 
@@ -773,6 +816,38 @@ pub(crate) mod tests {
         settle(&mut world);
         assert!(ground_at(&world, Vec3::new(15.2, 1.0, 5.2)).snow > 0.8);
         assert_eq!(ground_at(&world, Vec3::new(5.2, 1.0, 5.2)).snow, 0.0);
+    }
+
+    #[test]
+    fn a_sea_under_freezing_air_is_frozen_out_to_the_far_view_and_seen_from_high_over_it() {
+        // A sea at half a metre, the air over it as warm as `celsius`, looked at from `high` metres up.
+        let freezing = |celsius: f32, high: f32| {
+            let mut world = roofed_yard();
+            let blocks = world.query_ref::<(Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+            world.insert(blocks, SeaLevel(0.5));
+            let camera = world.query_ref::<(Entity, &voxear_render::Camera)>().into_iter().next().unwrap().0;
+            world.get_mut::<Transform>(camera).unwrap().position.y = high;
+            world.spawn(crate::heat::Climate { celsius, day_swing: 0.0, ..Default::default() });
+            world.insert_resource(crate::weather::Weather::default());
+            settle(&mut world);
+            world
+        };
+        let world = freezing(-14.0, 2.0);
+        let maps = world.resource::<WeatherMaps>().unwrap();
+        // Round the viewer, and far past the lying grid, a kilometre across, in every way out to the far view.
+        let far = LYING_SIDE as f32 * LYING_CELL;
+        for (x, z) in [(0.0, 0.0), (far * 0.45, 0.0), (far, 0.0), (0.0, -3.0 * far), (-6000.0, 5000.0)] {
+            assert_eq!(maps.ice_at(x, z), 1.0, "frozen at {x}, {z}");
+        }
+        assert_eq!(ground_at(&world, Vec3::new(3.0 * far, 0.5, 0.0)).ice, 1.0, "as scripts read it");
+        // From a mountain's top, far higher than the sea floor is looked for from, it is frozen as much.
+        let world = freezing(-14.0, 400.0);
+        let maps = world.resource::<WeatherMaps>().unwrap();
+        assert_eq!((maps.ice_at(0.0, 0.0), maps.ice_at(3.0 * far, 0.0)), (1.0, 1.0), "seen from high over it");
+        // Where the air is mild, open water near and far.
+        let world = freezing(12.0, 2.0);
+        let maps = world.resource::<WeatherMaps>().unwrap();
+        assert_eq!((maps.ice_at(0.0, 0.0), maps.ice_at(3.0 * far, 0.0)), (0.0, 0.0));
     }
 
     #[test]

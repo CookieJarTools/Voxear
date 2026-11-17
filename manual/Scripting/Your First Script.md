@@ -15,7 +15,7 @@ Keep your scripts in the `Scripts` folder, or in folders inside it. Scripts anyw
 
 ### Your code editor
 
-Scripts open in **Whisk** unless you pick another code editor in **Settings › Code editor**. Whisk opens the whole project with the script, at the line you asked for, so its suggestions and go to definition know every script in it. Install Whisk from the launcher's **Settings** (see [[Installing Voxear]]). If Whisk is picked but not installed, the script opens as your desktop opens text files, and the editor says how to get Whisk.
+Scripts open in **Whisk** unless you pick another code editor in **Preferences ▸ External Tools ▸ Code editor**. Whisk opens the whole project with the script, at the line you asked for, so its suggestions and go to definition know every script in it. Install Whisk from the launcher's **Settings** (see [[Installing Voxear]]). If Whisk is picked but not installed, the script opens as your desktop opens text files, and the editor says how to get Whisk.
 
 **Open Project in Code Editor**, in the command palette, opens the project folder on its own.
 

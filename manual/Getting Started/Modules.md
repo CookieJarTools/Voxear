@@ -6,7 +6,7 @@ Some of Voxear's systems only some games need, such as networking or water. Thes
 
 ## Choosing modules
 
-Open **Project Settings** from the side bar, the button above Settings. The **Modules** section has a toggle for each:
+Open **Project Settings** from the side bar, the button above Preferences, and pick **Modules**. It has a toggle for each:
 
 - **Networking**: hosting, joining and dedicated servers. See [[Playing over the Network]].
 - **Guns**: procedural holding, aiming, recoil and reloads.

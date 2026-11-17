@@ -1216,22 +1216,25 @@ and the wet lens start where the swell's water does, not at the faces. `sea::Sea
 the same function on the CPU with a sine made of sums and products, and `water::sample` takes its `sunk`, slope
 and flow for a point in the sea, so Buoyancy and scripts follow what is drawn.
 
-**What the weather leaves, by place.** `weather_maps::update`, after the weather's, keeps three grids round the
+**What the weather leaves, by place.** `weather_maps::update`, after the weather's, keeps four grids round the
 viewer, each held to whole cells of the level so a cell keeps what it holds as the viewer moves, and works out a
-share of their cells each frame, those not yet known first (`Rolling`). The lying grid's 32 m cells each run
-`lie` on the weather `weather_at` gives at the cell's ground height and the open air over the sea: wet, snow,
-what has fallen lately, sea ice, and the temperature at that height. The cover grid's half-metre cells hold the
-highest of every world of blocks' ground there, read a chunk at a time from each chunk's column tops (kept while
-the chunk's `Arc` is the same), and what a ray down meets of colliders that do not move. The sea floor's 4 m cells
-hold how deep a block sea is, from its top to its highest ground block. The renderer's `WeatherMaps` takes them,
-corners in the world's space, and writes them each frame into one buffer the shaders read through
-`Buffers::weatherMaps` (`lyingAt`, `coverAt`, `seaFloorDepth`, `seaIceAmount` in `common.slang` and `water.slang`):
-`weatherSurface` blends the lying cells' wet and snow at the surface's own height over the level's own, and skips a
-surface under cover read a little out along its normal; a particle of a system with `PARTICLES_SHELTERED` is not
-drawn under cover; `seaSunk` stills the swell by the ice, calms it by depth and adds `seaBreakers`, lines of white
-water whose phase is the distance from the shore (depth over the floor's slope) plus the longest wave's beat; and
-`blockWaterFragment` draws a frozen block of sea as ice (`blockIceLit`), floes by a noise against the ice amount.
-`SeaSampler::with_maps` gives the CPU sea the same depth and ice. Frozen cells near the viewer and every
+share of their cells each frame, those not yet known first (`Rolling`). The lying grid's 32 m cells each run `lie`
+on the weather `weather_at` gives at the cell's ground height and the open air over the sea: wet, snow, what has
+fallen lately, sea ice, and the temperature at that height. The cover grid's half-metre cells hold the highest of
+every world of blocks' ground there, read a chunk at a time from each chunk's column tops (kept while the chunk's
+`Arc` is the same), and what a ray down meets of colliders that do not move. The sea floor's 4 m cells hold how deep
+a block sea is, from its top to its highest ground block. The far ice's 512 m cells, 16 km across, hold how much of
+the sea is frozen out to the far view, by `freeze` on the open air over the sea as each lying cell's ice is. The
+renderer's `WeatherMaps` takes them, corners in the world's space, and writes them each frame into one buffer the
+shaders read through `Buffers::weatherMaps` (`lyingAt`, `coverAt`, `seaFloorDepth`, `seaIceAmount` in `common.slang`
+and `water.slang`): `weatherSurface` blends the lying cells' wet and snow at the surface's own height over the
+level's own, and skips a surface under cover read a little out along its normal; a particle of a system with
+`PARTICLES_SHELTERED` is not drawn under cover; `seaSunk` stills the swell by the ice, calms it by depth and adds
+`seaBreakers`, lines of white water whose phase is the distance from the shore (depth over the floor's slope) plus
+the longest wave's beat; and `blockWaterFragment` draws a frozen block of sea as ice (`blockIceLit`), floes by a
+noise against the ice amount. `seaIceAmount` (and `WeatherMaps::ice_at`) reads the lying grid's ice, blended into
+the far ice's over its last two cells, and the far ice's past it, so a frozen sea shows no line where the lying grid
+ends. `SeaSampler::with_maps` gives the CPU sea the same depth and ice. Frozen cells near the viewer and every
 character get a slab of ice, an Obj of the engine's own with a box collider, so physics bears what stands on them.
 
 **Storms over the network.** `net::storms` sends `Message::Storms`, the `StormsSaved` bytes, reliably: to each

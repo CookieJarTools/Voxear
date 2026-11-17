@@ -124,8 +124,9 @@ mod terrain_tools;
 pub mod scene_tools;
 mod script_handles;
 mod settings;
-mod project_settings;
-mod settings_panel;
+pub mod project_settings;
+pub mod setting_info;
+pub mod settings_window;
 mod shader_fields;
 mod motion_set_inspector;
 mod prompt_icons_inspector;
@@ -151,17 +152,24 @@ pub use hierarchy::EditorOnly;
 pub use palette::{PaletteCommand, PaletteKey};
 pub use profiler::{Profiler, Sample};
 pub use project_view::{ItemKind, ProjectItem};
-pub use settings::{PlayAs, SETTINGS, SettingInfo, SettingKind, SettingValue, Settings, TestNetwork};
+pub use settings::{PREFERENCES, PlayAs, Settings, TestNetwork};
 pub use window::run_editor;
 
 /// Runs the editor without a window, answering tools over its link, as
 /// `vox editor serve` does, until one asks it to close with `editor.quit`.
 /// It draws offscreen at `size`, so captures work as in a window.
-pub fn serve(project: Project, settings: &RendererSettings, log: LogCapture, (width, height): (u32, u32)) -> Result<()> {
+pub fn serve(
+    project: Project,
+    settings: &RendererSettings,
+    log: LogCapture,
+    (width, height): (u32, u32),
+    rate: f32,
+) -> Result<()> {
     let mut renderer = Renderer::new_offscreen(width, height, settings)?;
     let mut editor = Editor::open_without_memory(project, &mut renderer, log)?;
     editor.serve_link(true)?;
-    let frame = std::time::Duration::from_secs_f32(1.0 / 30.0);
+    // At most `rate` frames a second; none at all draws each frame as soon as the last is done.
+    let frame = std::time::Duration::from_secs_f32(if rate > 0.0 { 1.0 / rate } else { 0.0 });
     let mut last = std::time::Instant::now();
     while !editor.wants_to_quit() {
         let started = std::time::Instant::now();

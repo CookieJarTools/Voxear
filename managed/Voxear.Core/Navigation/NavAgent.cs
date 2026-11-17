@@ -49,6 +49,8 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 	private const int CostValue = 29;
 	private const int CornerAtValue = 30;
 	private const int CornerValue = 31;
+	private const int OpensDoorsValue = 33;
+	private const int JumpsValue = 34;
 
 	public static readonly NavAgent None = default;
 
@@ -147,11 +149,25 @@ public readonly struct NavAgent : IEquatable<NavAgent>, IObjComponent
 		set { Write(MovesValue, new Vector4((int)value, 0f, 0f, 0f)); }
 	}
 
-	/// <summary>Whether it swims up in water too deep to stand in, or sinks.</summary>
+	/// <summary>Whether it swims across water too deep to stand in, and swims up in it, or goes round it and sinks.</summary>
 	public bool Swims
 	{
 		get { return Number(SwimsValue) != 0f; }
 		set { Write(SwimsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>Whether it opens shut doors on its way and walks through, or goes round them.</summary>
+	public bool OpensDoors
+	{
+		get { return Number(OpensDoorsValue) != 0f; }
+		set { Write(OpensDoorsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
+	/// <summary>Whether it jumps gaps one or two blocks across on its way, or goes round them.</summary>
+	public bool Jumps
+	{
+		get { return Number(JumpsValue) != 0f; }
+		set { Write(JumpsValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
 	}
 
 	/// <summary>Whether it has a way to walk.</summary>

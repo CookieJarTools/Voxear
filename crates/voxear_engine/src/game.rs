@@ -1110,6 +1110,8 @@ impl Game {
         {
             profile_scope!("Block Tick");
             crate::blocks::tick(&mut self.engine.world, &mut self.content, delta);
+            // Doors agents are about to go through, opened as a player would.
+            crate::nav_agent::open_doors(&mut self.engine.world, &mut self.content);
         }
         crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // Trees coming down, and what they broke into, while the game plays.

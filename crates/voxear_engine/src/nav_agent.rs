@@ -38,6 +38,10 @@ use crate::{
 
 /// How many chunks of a long way an agent has found place by place at once.
 const REFINED: u32 = 6;
+/// How high a jump goes over the ground it leaves, in blocks.
+const JUMP_HEIGHT: f32 = 1.3;
+/// How near a shut door on its way an agent is when it opens it, in blocks.
+const DOOR_REACH: f32 = 1.8;
 /// How many places one search may look at.
 const MOST_LOOKED_AT: usize = 60_000;
 /// How often an agent going after a point that moves looks again, in
@@ -104,8 +108,13 @@ pub struct NavAgent {
     /// goes round them.
     pub priority: f32,
     pub moves: NavMoves,
-    /// Whether it swims up in water too deep to stand in, or sinks.
+    /// Whether it swims up in water too deep to stand in, or sinks; and
+    /// whether its ways cross such water.
     pub swims: bool,
+    /// Whether it opens shut doors on its way, or goes round them.
+    pub opens_doors: bool,
+    /// Whether it jumps gaps of a block or two on its way.
+    pub jumps: bool,
     /// Where it is to go, for a game to set; `None` to stand.
     #[serde(skip)]
     pub destination: Option<Vec3>,
@@ -130,6 +139,8 @@ impl Default for NavAgent {
             priority: 0.5,
             moves: NavMoves::CharacterController,
             swims: true,
+            opens_doors: true,
+            jumps: true,
             destination: None,
             stopped: false,
         }
@@ -171,9 +182,30 @@ pub struct NavAgentState {
     search_in: f32,
     /// How fast it falls, in metres a second.
     fall: f32,
+    /// For each corner, whether it is jumped to; and the shut doors on the
+    /// way, by their blocks in its world, not yet opened.
+    jumps: Vec<bool>,
+    doors: Vec<[i32; 3]>,
+    /// A jump along the nav under way: from where, to where, how far into
+    /// it, how long it lasts, and how high it goes.
+    jumping: Option<(Vec3, Vec3, f32, f32, f32)>,
 }
 
 impl Component for NavAgentState {}
+
+/// Doors agents are about to go through, by the world of blocks each is in
+/// and its block, for the game to open: opening one numbers its state
+/// among the world's blocks, which needs the game's content.
+#[derive(Default)]
+pub struct DoorsToOpen(pub Vec<(Entity, [i32; 3])>);
+
+/// Opens the doors agents asked for this frame.
+pub fn open_doors(world: &mut World, content: &mut crate::Content) {
+    let Some(doors) = world.remove_resource::<DoorsToOpen>() else { return };
+    for (blocks, at) in doors.0 {
+        crate::blocks::set_moved(world, content, blocks, at, true, true);
+    }
+}
 
 impl NavAgentState {
     /// Whether a way is being looked for.
@@ -236,6 +268,13 @@ impl Walked {
 
     fn walker(&self, height: f32) -> Walker {
         Walker::blocks((height / self.size).ceil().clamp(1.0, 64.0) as u16)
+    }
+
+    /// The walker `agent` is, `height` metres tall: swimming, opening doors
+    /// and jumping as it does.
+    fn walker_of(&self, agent: &NavAgent, height: f32) -> Walker {
+        let jump = if agent.jumps { voxear_nav::blocks::walking::MOST_JUMP } else { 0 };
+        self.walker(height).with(agent.swims, agent.opens_doors, jump)
     }
 
     fn standing(&self, at: Vec3, walker: Walker, reach: f32) -> Option<PlaceRef> {
@@ -302,7 +341,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
 
     // Each agent: its way taken or asked for, and the velocity it wants.
     let mut steps: Vec<Stepping> = Vec::with_capacity(agents.len());
-    let mut budget = Budget { asked: MOST_ASKED, taken_here: MOST_TAKEN_HERE };
+    let mut budget = Budget { asked: MOST_ASKED, taken_here: MOST_TAKEN_HERE, doors: Vec::new() };
     for (entity, agent) in agents {
         let Some(at) = position(world, entity) else { continue };
         let mut state = world.get::<NavAgentState>(entity).cloned().unwrap_or_else(|| NavAgentState {
@@ -328,6 +367,13 @@ pub fn step_agents(world: &mut World, delta: f32) {
         steps.push(Stepping { entity, agent, state, at, dimension, walked: index, controller });
     }
 
+    // The doors they are about to go through, for the game to open.
+    if !budget.doors.is_empty() {
+        if world.resource::<DoorsToOpen>().is_none() {
+            world.insert_resource(DoorsToOpen::default());
+        }
+        world.resource_mut::<DoorsToOpen>().expect("put in above").0.append(&mut budget.doors);
+    }
     // All of them together: each velocity chosen avoiding the rest, and every other character, of its own dimension.
     let others: Vec<(DimensionId, Mover)> = world
         .query_ref::<(Entity, &CharacterController)>()
@@ -406,10 +452,23 @@ fn position(world: &World, entity: Entity) -> Option<Vec3> {
         .or_else(|| world.get::<Transform>(entity).map(|transform| transform.position))
 }
 
-/// How many searches agents may still begin and do themselves this step.
+/// How many searches agents may still begin and do themselves this step,
+/// and the doors they are about to go through.
 struct Budget {
     asked: usize,
     taken_here: usize,
+    doors: Vec<(Entity, [i32; 3])>,
+}
+
+/// Whether an agent at `at` has just reached the edge it jumps from: the
+/// corner before the one it heads for, which is jumped to.
+fn takes_off(state: &NavAgentState, at: Vec3, size: f32) -> bool {
+    state.next > 0
+        && state.jumps.get(state.next) == Some(&true)
+        && state
+            .corners
+            .get(state.next - 1)
+            .is_some_and(|edge| (steer::flat(*edge) - steer::flat(at)).length() < 0.6 * size)
 }
 
 /// Takes the way asked for last step, asks for one afresh where it is
@@ -425,7 +484,7 @@ fn plan(
     delta: f32,
     budget: &mut Budget,
 ) {
-    let walker = walked.walker(height);
+    let walker = walked.walker_of(agent, height);
     // The way asked for: done by now on a thread, or done here while few are waiting on the threads.
     let taken = state.asked.take().and_then(|Asked(job, waited)| {
         let here = !job.is_done() && !job.is_begun() && budget.taken_here > 0;
@@ -446,6 +505,7 @@ fn plan(
         state.next = 1.min(state.corners.len().saturating_sub(1));
         (state.status, state.cost) = (found.status, found.cost);
         state.found = Some(Found { version: found.version, chunks: found.chunks });
+        (state.jumps, state.doors) = (found.jumps, found.doors);
     }
     state.place = walked.standing(at, walker, 2.0);
     state.planned_for = agent.destination.filter(|_| !agent.stopped);
@@ -498,6 +558,14 @@ fn plan(
     state.next = steer::next_corner(at, &corners, state.next.max(1).min(corners.len() - 1), &steering);
     let wanted = steer::wanted(at, &corners, state.next, &steering);
     state.wanted = Vec3::new(wanted.x, 0.0, wanted.y);
+    // Doors on the way, opened as it comes near them.
+    let reach = DOOR_REACH * walked.size;
+    let near = |cell: &[i32; 3]| {
+        let middle = walked.world([cell[0] as f32 + 0.5, cell[1] as f32, cell[2] as f32 + 0.5]);
+        (steer::flat(middle) - steer::flat(at)).length() <= reach
+    };
+    budget.doors.extend(state.doors.iter().filter(|cell| near(cell)).map(|cell| (walked.entity, *cell)));
+    state.doors.retain(|cell| !near(cell));
     let left = steer::remaining(at, &corners, state.next);
     state.arrived = left <= agent.stopping_distance + 0.15 * walked.size.max(1.0)
         && matches!(state.status, PathStatus::Complete | PathStatus::None)
@@ -524,10 +592,17 @@ fn finish(
     let facing = Vec3::new(flat.x, 0.0, flat.y);
     match (agent.moves, physics, step.controller) {
         (NavMoves::CharacterController, Some(physics), Some(controller)) => {
+            // Off the edge it was to jump from: up, as high as a jump goes.
+            let gravity = physics.gravity().length();
+            if let Some(walked) = walked
+                && state.fall <= 2.0
+                && takes_off(state, step.at, walked.size)
+            {
+                state.fall = -(2.0 * gravity * JUMP_HEIGHT * walked.size).sqrt();
+            }
             let deep = walked
                 .and_then(|walked| walked.blocks.water_depth((step.at - walked.corner).to_array(), 4.0))
                 .is_some_and(|depth| depth > controller.height * 0.55);
-            let gravity = physics.gravity().length();
             let (pace, rise) = match (deep, agent.swims) {
                 (true, true) => {
                     state.fall = 0.0;
@@ -552,8 +627,29 @@ fn finish(
         // Along the nav: kept on its places, falling where they drop away.
         (_, physics, _) => {
             state.velocity = facing;
-            if let (Some(walked), Some(place)) = (walked, state.place) {
-                let walker = walked.walker(agent.height);
+            // A jump: over the gap to where it lands, along an arc.
+            if let Some(walked) = walked
+                && state.jumping.is_none()
+                && takes_off(state, step.at, walked.size)
+            {
+                let to = state.corners[state.next];
+                let along = (steer::flat(to) - steer::flat(step.at)).length();
+                let lasts = (along / agent.speed.max(0.5)).max(0.3);
+                state.jumping = Some((step.at, to, 0.0, lasts, JUMP_HEIGHT * walked.size));
+            }
+            if let Some((from, to, into, lasts, high)) = state.jumping {
+                let into = (into + delta).min(lasts);
+                let share = into / lasts;
+                let next = from.lerp(to, share) + Vec3::Y * (4.0 * high * share * (1.0 - share));
+                if let Some(transform) = world.get_mut::<Transform>(step.entity) {
+                    transform.position += next - step.at;
+                }
+                state.jumping = (into < lasts).then_some((from, to, into, lasts, high));
+                if state.jumping.is_none() {
+                    state.place = walked.and_then(|walked| walked.standing(to, walked.walker(agent.height), 1.0));
+                }
+            } else if let (Some(walked), Some(place)) = (walked, state.place) {
+                let walker = walked.walker_of(agent, agent.height);
                 let at = walked.local(step.at);
                 let by = [facing.x * delta / walked.size, facing.z * delta / walked.size];
                 let (place, moved) = slide(&walked.nav, place, at, by, walker, agent.radius / walked.size);
@@ -609,6 +705,8 @@ const AVOIDANCE: i32 = 15;
 const PRIORITY: i32 = 16;
 const MOVES: i32 = 17;
 const SWIMS: i32 = 18;
+const OPENS_DOORS: i32 = 33;
+const JUMPS: i32 = 34;
 const HAS_PATH: i32 = 20;
 const PATH_PENDING: i32 = 21;
 const ARRIVED: i32 = 22;
@@ -772,6 +870,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (MOVES, None) => return number(agent.moves as u8 as f32),
         (SWIMS, Some([on, ..])) => agent.swims = on != 0.0,
         (SWIMS, None) => return toggle(agent.swims),
+        (OPENS_DOORS, Some([on, ..])) => agent.opens_doors = on != 0.0,
+        (OPENS_DOORS, None) => return toggle(agent.opens_doors),
+        (JUMPS, Some([on, ..])) => agent.jumps = on != 0.0,
+        (JUMPS, None) => return toggle(agent.jumps),
         _ => return None,
     }
     Some([0.0; 4])

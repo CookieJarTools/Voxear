@@ -28,7 +28,7 @@ public sealed class Hunter : Behaviour
 
 | Call | What it gives |
 | --- | --- |
-| `Navigation.FindPath(from, to, height)` | The way from one place to another for something that tall: its corners, its length, what it costs, and whether it reaches |
+| `Navigation.FindPath(from, to, height)` | The way from one place to another for something that tall, that swims, opens doors and jumps: its corners, its length, what it costs, and whether it reaches |
 | `Navigation.IsReachable(from, to, height)` | Whether there is a way there at all |
 | `Navigation.Nearest(point, reach)` | The nearest place to stand, on its floor, or null |
 | `Navigation.RandomPlace(near, radius)` | Somewhere that can be walked to within that far on foot: for wandering |
@@ -38,7 +38,9 @@ public sealed class Hunter : Behaviour
 - Something walks a block at a time, forwards, back, sideways or cornerwise, and never cuts the corner of a wall.
 - It climbs a step **one block** high, and up slabs and stairs. It drops down up to **three blocks**.
 - It needs as many clear blocks over the ground as it is tall.
-- It wades water one block deep, though it costs more than dry ground, and goes round deeper water.
+- It wades water one block deep, though it costs more than dry ground. Deeper water is swum across by what swims, at a higher cost still, and gone round by the rest.
+- It jumps a gap one or two blocks across, if it jumps, where the far side is no more than a block lower or half a block higher.
+- A shut door is walked through by what opens doors, and opened as it comes near. To the rest it is a wall.
 - A way is pulled tight into a few corners to walk straight between, across open ground at any angle.
 - In a world without end, ways reach as far as the ground has been made. A goal further off gives a `Partial` way, as near as the made ground goes.
 

@@ -43,7 +43,9 @@ Press Play. The guard walks to its post, round anything in the way. Add a [[Mob 
 | Avoidance | How carefully it goes round others: High, Low or None. Others still go round one set to None |
 | Priority | From 0 to 1. Others go round an agent with a higher priority more than it goes round them |
 | Moves | How it moves along its way (below) |
-| Swims | On, it swims up in water too deep to stand in. Off, it sinks and walks the bottom |
+| Swims | On, its ways cross water too deep to stand in, and it swims across. Off, it goes round deep water, and sinks if it falls in |
+| Opens Doors | On, it opens a shut door on its way and walks through. Off, a shut door is a wall to it |
+| Jumps | On, it jumps a gap one or two blocks across rather than going round. Off, it goes round |
 
 Hover over a setting in the Inspector to see what it does and its default.
 

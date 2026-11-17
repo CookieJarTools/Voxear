@@ -32,6 +32,10 @@ pub const AREAS: usize = 32;
 pub const WALKABLE: u8 = 0;
 /// The area of a place in water shallow enough to wade.
 pub const WATER: u8 = 2;
+/// The area of a place on the top of water too deep to stand in: swum.
+pub const SWIM: u8 = 3;
+/// The area of a place in a shut door, which is opened to go through.
+pub const DOOR: u8 = 4;
 
 /// What each area costs to cross, a block of it at a time: 1 for plain
 /// ground, more for what is avoided, less for what is sought out, as a road
@@ -43,6 +47,8 @@ impl Default for AreaCosts {
     fn default() -> Self {
         let mut costs = [1.0; AREAS];
         costs[usize::from(WATER)] = 3.0;
+        costs[usize::from(SWIM)] = 4.0;
+        costs[usize::from(DOOR)] = 2.0;
         Self(costs)
     }
 }

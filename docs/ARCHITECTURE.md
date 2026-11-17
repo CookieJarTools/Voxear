@@ -4358,15 +4358,20 @@ engine's glue is `voxear_engine::navigation`.
 - **Places** (`blocks::places`). A place is a block whose feet are in it: the block under it can be stood on (not
   a fence or a wall), nothing of ground is in it, and the block over it is not water. A place keeps five bytes:
   its height in its chunk, the clear blocks over its floor (up to 31), its floor's top in sixteenths (a slab lying
-  low is 8), its area and its kind (standing or wading). A chunk keeps its places column by column, about 5 KB
+  low is 8), its area and its kind: standing, wading, swimming (the top of water too deep to stand in) or in a
+  shut door (its room counting the door open). A chunk keeps its places column by column, about 5 KB
   for a chunk of surface. Places are made from a chunk's blocks, the top layer of the chunk under it and the chunk
   over it, through a world's **walking table** (`blocks::walking`: what each block number is to something
   walking, made once from the world's `BlockFaces`), its palette read once a chunk.
 - **Steps are not stored.** A step from a place to the column beside it is worked out as it is walked, by the
-  walker's own rules (`Walker`: height, step and drop in sixteenths of a block): the highest place there whose
-  feet are within a step up and a drop down, with room for the walker over the higher floor in both columns.
-  Cornerwise steps are on the level only, with both columns beside on the level too. So one set of places
-  serves every walker, whatever its size.
+  walker's own rules (`Walker`: height, step and drop in sixteenths of a block, and whether it swims, opens
+  doors and jumps): the highest place there whose feet are within a step up and a drop down, with room for the
+  walker over the higher floor in both columns, of a kind it may be in. Cornerwise steps are on the level only,
+  with both columns beside on the level too. A jump (`jump_step`) crosses a gap of a block or two to a place near
+  the walker's height. So one set of places serves every walker, whatever its size and whatever it does.
+- **Regions are kept for the walker of each height that does everything** (`Walker::class`): a coarse way
+  never misses one it could take. A walker that does less and finds no way inside the regions a coarse way went
+  through looks again over every place, as far as it may.
 - **Regions and the coarse graph** (`blocks::regions`). Each chunk's places are gathered, for each walker kept
   (one, two and three blocks tall), into regions joined by steps that go both ways inside the chunk. A step one
   way only (a drop) makes an edge between regions of a chunk; a step out of a chunk makes one to a region of the

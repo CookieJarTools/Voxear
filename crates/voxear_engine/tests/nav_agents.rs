@@ -1,8 +1,9 @@
 //! Nav Agents in a level with a world of blocks: one walks to where it is
 //! sent round a wall, by its Character Controller and along the nav; two
 //! walking at each other down a corridor pass; a crowd goes through a
-//! doorway; and five hundred cross a square both ways within the frame's
-//! time (headless: no GPU, no scripts).
+//! doorway; one opens a shut door and one jumps a trench; and five hundred
+//! cross a square both ways within the frame's time (headless: no GPU, no
+//! scripts).
 
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,7 @@ fn game(size: u32) -> (tempfile::TempDir, Game, Entity) {
         ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".to_string()),
         ("Scenes/Field.scene", scene.to_string()),
         ("Blocks/Field.blockworld", file.to_text()),
+        ("Blocks/Door.block", "color = [0.5, 0.35, 0.2]\nshape = \"door\"\n".to_string()),
     ];
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -218,4 +220,89 @@ fn five_hundred_agents_crossing_a_square_both_ways_take_little_of_the_frame() {
         })
         .count();
     assert!(moving > agents.len() / 2, "most of them on their way: {moving}");
+}
+
+/// Puts a door, shut, at `at`, with its upper block over it, in a wall along z: walked through along x.
+fn door(game: &mut Game, field: Entity, at: [i32; 3]) {
+    use voxear_engine::blocks::{block_number_state, with_door_halves};
+    use voxear_terrain::blocks::shape::{BlockFacing, BlockState};
+    let state = BlockState { facing: BlockFacing::East, ..BlockState::default() }.to_byte();
+    let number =
+        block_number_state(&mut game.engine.world, &mut game.content, field, "Blocks/Door.block", state, true).unwrap();
+    let changes = with_door_halves(&mut game.engine.world, &mut game.content, field, vec![(at, number)]);
+    game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(changes);
+}
+
+/// Sends `walker` to `to` and ticks until it is there, or `most` frames have gone: how many went.
+fn walk(game: &mut Game, walker: Entity, to: Vec3, most: usize) -> usize {
+    for _ in 0..10 {
+        game.tick(FRAME, None);
+    }
+    game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+    let mut frames = 0;
+    while frames < most && !(frames > 10 && arrived(game, walker)) {
+        game.tick(FRAME, None);
+        frames += 1;
+    }
+    frames
+}
+
+#[test]
+fn an_agent_opens_a_shut_door_on_its_way_and_one_that_opens_none_stops_at_the_wall() {
+    for opens in [true, false] {
+        let (_dir, mut game, field) = game(32);
+        // A wall across the field, its only way through a shut door.
+        wall(&mut game, field, [16, 0], [16, 7]);
+        wall(&mut game, field, [16, 9], [16, 31]);
+        door(&mut game, field, [16, 6, 8]);
+        game.tick(FRAME, None);
+        let walker = agent(&mut game, 6.5, 8.5, NavMoves::CharacterController);
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().opens_doors = opens;
+        let to = Vec3::new(26.5, 6.0, 8.5);
+        let frames = walk(&mut game, walker, to, 1200);
+        let now = at(&game, walker);
+        let state = game.engine.world.get::<NavAgentState>(walker).unwrap().status;
+        if opens {
+            assert!(frames < 1200 && (now - to).length() < 0.5, "it went through the door: {now} after {frames}");
+            assert_eq!(state, PathStatus::Complete);
+            let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+            let open = voxear_terrain::blocks::shape::BlockState::from_byte(
+                blocks.faces[usize::from(blocks.blocks.get([16, 6, 8]))].state,
+            )
+            .open;
+            assert!(open, "and the door stands open");
+        } else {
+            assert!(now.x < 16.0, "it never got past the wall: {now}");
+            assert_eq!(state, PathStatus::Partial, "as near as it could get");
+        }
+    }
+}
+
+#[test]
+fn an_agent_jumps_a_trench_by_its_controller_and_along_the_nav() {
+    for moves in [NavMoves::CharacterController, NavMoves::AlongTheNav] {
+        let (_dir, mut game, field) = game(32);
+        // A trench across the field, a block wide and four deep.
+        let mut dug = Vec::new();
+        for z in 0..32 {
+            for y in 2..6 {
+                dug.push(([16, y, z], 0));
+            }
+        }
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(dug);
+        game.tick(FRAME, None);
+        let walker = agent(&mut game, 8.5, 8.5, moves);
+        let to = Vec3::new(24.5, 6.0, 8.5);
+        let mut lowest = f32::INFINITY;
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let mut frames = 0;
+        while frames < 900 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+            lowest = lowest.min(at(&game, walker).y);
+        }
+        let now = at(&game, walker);
+        assert!(frames < 900 && (now - to).length() < 0.5, "{moves:?}: across the trench: {now} after {frames}");
+        assert!(lowest > 5.5, "{moves:?}: over it, never down in it: {lowest}");
+    }
 }

@@ -137,6 +137,9 @@ impl BlockMob {
             priority: 0.5,
             moves: NavMoves::CharacterController,
             swims: self.swims,
+            // Animals and monsters jump gaps, but open no doors: a game gives one a Nav Agent of its own for that.
+            opens_doors: false,
+            jumps: true,
             destination,
             stopped: false,
         }

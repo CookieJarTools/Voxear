@@ -14,6 +14,6 @@ Every part of it is under **Add Component ▸ Navigation**.
 ## Not done yet
 
 - Levels made of models rather than blocks. Their navigation will be baked in the editor and saved beside the level.
-- Jumping gaps, climbing ladders and vines, swimming across deep water and opening doors.
+- Climbing ladders, vines and ropes.
 - Ground that costs more or less to cross, such as roads a villager keeps to.
 - Seeing the navigation in the Scene view, and Project Settings for it.

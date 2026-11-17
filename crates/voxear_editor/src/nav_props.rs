@@ -24,11 +24,13 @@ pub enum NavField {
     Priority,
     Moves,
     Swims,
+    OpensDoors,
+    Jumps,
 }
 
 use NavField as F;
 
-const ALL: [NavField; 11] = [
+const ALL: [NavField; 13] = [
     F::Speed,
     F::Acceleration,
     F::TurnSpeed,
@@ -40,6 +42,8 @@ const ALL: [NavField; 11] = [
     F::Priority,
     F::Moves,
     F::Swims,
+    F::OpensDoors,
+    F::Jumps,
 ];
 
 const MOVES: [NavMoves; 3] = [NavMoves::CharacterController, NavMoves::AlongTheNav, NavMoves::NotAtAll];
@@ -64,6 +68,8 @@ pub fn label(field: NavField) -> String {
         F::Priority => "Priority",
         F::Moves => "Moves",
         F::Swims => "Swims",
+        F::OpensDoors => "Opens Doors",
+        F::Jumps => "Jumps",
     };
     label.into()
 }
@@ -96,7 +102,12 @@ pub fn tooltip(field: NavField) -> &'static str {
              less, for crowds; Not at All leaves its Desired Velocity for a script to move it by. Default: Character \
              Controller."
         }
-        F::Swims => "Whether it swims up in water too deep to stand in, or sinks and walks the bottom. Default: on.",
+        F::Swims => {
+            "Whether it swims across water too deep to stand in, and swims up in it, or goes round it and sinks if it \
+             falls in. Default: on."
+        }
+        F::OpensDoors => "Whether it opens shut doors on its way and walks through, or goes round them. Default: on.",
+        F::Jumps => "Whether it jumps gaps one or two blocks across on its way, or goes round them. Default: on.",
     }
 }
 
@@ -114,6 +125,8 @@ pub fn key(field: NavField) -> &'static str {
         F::Priority => "priority",
         F::Moves => "moves",
         F::Swims => "swims",
+        F::OpensDoors => "opens_doors",
+        F::Jumps => "jumps",
     }
 }
 
@@ -177,6 +190,8 @@ pub fn get(game: &Game, entity: Entity, field: NavField) -> Option<Value> {
             MOVES.iter().map(|moves| moves_name(*moves).to_string()).collect(),
         ),
         F::Swims => Value::Toggle(agent.swims),
+        F::OpensDoors => Value::Toggle(agent.opens_doors),
+        F::Jumps => Value::Toggle(agent.jumps),
     })
 }
 
@@ -190,6 +205,8 @@ pub fn set(game: &mut Game, entity: Entity, field: NavField, value: Value) -> bo
     match (field, &value) {
         (F::AutoBrake, Value::Toggle(on)) => agent.auto_brake = *on,
         (F::Swims, Value::Toggle(on)) => agent.swims = *on,
+        (F::OpensDoors, Value::Toggle(on)) => agent.opens_doors = *on,
+        (F::Jumps, Value::Toggle(on)) => agent.jumps = *on,
         (F::Moves, Value::Choice(at, _)) => agent.moves = MOVES.get(*at).copied().unwrap_or_default(),
         (F::Avoidance, Value::Choice(at, _)) => agent.avoidance = AVOIDANCE.get(*at).copied().unwrap_or_default(),
         (F::Speed, _) => agent.speed = number.unwrap_or(agent.speed).clamp(0.0, 100.0),

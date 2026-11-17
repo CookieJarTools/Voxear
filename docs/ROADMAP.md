@@ -3630,8 +3630,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     passing in a corridor three blocks wide; twenty through a doorway two blocks wide, none left stuck; the 500;
     a C# script sending an agent and asking Navigation for ways; the Block Mob tests, as they were, on agents.
     Manual: Navigation (Nav Agents, Finding Ways from Scripts).
-  - [ ] moving in block worlds: jumps, falls, swimming, climbing, doors; areas from a project list, picked per
-    block and by Nav Area boxes; Nav Links; walkers two blocks wide
+  - [x] **Doors, swimming and jumps in block worlds**: places of two more kinds, on the top of water too deep
+    to stand in (swum, area Swim) and in a shut door (opened, area Door; a door is no floor, and its room counts
+    the door open); a `Walker` that swims, opens doors and jumps gaps of up to two blocks (`jump_step`: every
+    column between dropping away more than a step, with room for the arc, the far side no more than a block lower
+    or half a block higher); regions kept for the walker of each height that does everything, so a coarse way
+    never misses one, and a search kept to them looking again without them where a walker that does less finds
+    no way; ways saying which corners are jumped to and which doors they go through; straight lines through a
+    block's corner on sloping ground where both ways round it are walkable (a 500-block way 5 corners, not 45).
+    Nav Agents (**Opens Doors**, **Jumps**, and **Swims** now crossing deep water) open each door on their way as
+    they come within two blocks of it (`DoorsToOpen`, opened by the game with its content) and jump: up by their
+    Character Controller at the edge, or along an arc along the nav. Block Mobs jump and swim, and open no doors.
+    C#: `NavAgent.OpensDoors`, `Jumps`. Tests: door places and swim places; a door gone through only by what
+    opens doors; deep water swum only by what swims; gaps jumped only as wide as a walker jumps; an agent opening
+    a shut door in a wall and one that opens none stopping at it; agents jumping a trench by both ways of moving.
+  - [ ] areas from a project list, picked per block and by Nav Area boxes; Nav Links; climbing vines, ropes and
+    ladders; walkers two blocks wide
   - [ ] the editor and tools: a Navigation overlay, Project Settings ▸ Navigation, `navigation.*` calls
   - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions

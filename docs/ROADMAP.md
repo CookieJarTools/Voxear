@@ -1615,8 +1615,9 @@ Done:
     masks for Mixed lights, terrain and worlds of blocks taking lightmaps.
 
 Later, after M5:
-- Plants swaying in the sun's virtual shadows; what moves by a lamp drawn into its pages' copies at their size,
-  rather than into the atlas; shading lamps' pages for less, nearer the atlas's cost.
+- Plants' shadows on the ground swaying in the sun's virtual shadows (a plant's own shadow on itself moves with it
+  now); what moves by a lamp drawn into its pages' copies at their size, rather than into the atlas; shading lamps'
+  pages for less, nearer the atlas's cost.
 - NVIDIA DLSS and Intel XeSS, which wait on their SDKs.
 - The look: bounced light, exposure and contrast kept matched to the reference scenes as the worlds grow.
 - The smaller "Later" notes under each part above.
@@ -1818,8 +1819,40 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   - Tests: the mesher's free and held corners; GPU pictures of a pine leaning in a wind, a tuft pushed over by a
     walker, a rock that does neither, and a tree of blocks whose leaves stir while its trunk and ground stay
     still; a ray meeting a rock's box, turned and sized; the Model window's Wind bend typed, saved and undone.
-  - Later: a breeze on a clear day with no Wind Zone, block leaves pushed aside, a collider of a plant's own
-    cubes rather than a box, plants of an earlier project given their bend by `vox upgrade`.
+  - Later: a collider of a plant's own cubes rather than a box.
+- ~~**Foliage moving in worlds of blocks:**~~ done: grass, flowers, bushes and leaves sway on a fair day and part
+  round whoever walks through them, with nothing set up.
+  - **How plants move, the game over** (`voxear_render::FoliageMotion`, `[foliage]` in `voxear.toml`, Project
+    Settings ▸ Foliage with tooltips, `project.set key=foliage.*` for `vox editor call` and `vox mcp`): a fair day's
+    `wind` (0.5, a light breeze, where a level has no Wind Zone; the weather blows harder on top, so a storm tosses
+    them), `bend` (× every plant's own), `interaction`, and under Advanced `push` (×) and `spring` (seconds). C#:
+    `Foliage.Wind`, `Foliage.Bend`, `Foliage.Interaction`, `Foliage.Motion` (a `FoliageMotion` at once) and
+    `Foliage.Blowing`, the wind plants feel now (API 93). The editor's Play, builds and `vox render` take it.
+    `wind::plants_wind` works out the frame's wind; the sea keeps the Wind Zone's or the weather's.
+  - **Pushes keep their height:** each cell of the push grid holds the pusher's height and reach (16 bytes a cell).
+    A plant takes a push where it is rooted within the pusher's radius and a metre and a half above or below it,
+    bends as far up as the push reaches and is carried along above (`foliagePush`'s `reach`); a plant over 1.5 m
+    reads it at its stem, not at each vertex, so a crown over a walker no longer parts round them, and a field
+    under a bridge is left alone.
+  - **Leaf blocks are pushed** (`blockSway`): a swaying corner moves away from what stands at its height, a third
+    of a block at a push of 1, wind and push together at most under half a block, × the bend.
+  - **Plants of cubes bend whole** (`MATERIAL_PIXELS`): every vertex as far as its height says, pushed by what is
+    at the plant's foot, with no branch masks; a box model that bends is meshed with no face taller than a cube
+    (`voxels::build`), so its layers slide over each other and nothing parts (`COOKED_VERSION` 16).
+  - **Shadows:** a swaying plant reads the sun's virtual shadow pages, which hold it at rest, where it stands
+    (`VertexOut::moved` now carries the sway, read for the GI's light too), so its shadow on itself moves with it;
+    cascades draw it swayed. A float3 more to interpolate cost the block pass 0.3–0.4 ms, so none was added.
+  - **Cost**, CubeGame's spawn meadow at 1920×1080 on the RTX 3070, least of 60 frames a pass: the passes add up
+    to 10.38 ms on master, 10.43 with plants' motion off and 10.48 on: the meshes' pass +0.10 ms (0.04 of it a
+    bending plant's faces a cube tall, 0.06 the wind and pushes), their depth +0.02, the blocks' passes no
+    change, Foliage pushes 0.004 ms. Two runs of master's whole frame differ by 0.5 ms on the shared GPU.
+  - The wind's hash is whole-number (`windHash`), not a sine's, which cut gusts along cell borders on some GPUs.
+  - `vox upgrade` gives a starter plant written before plants bent its bend, where it is unchanged since.
+  - Tests: the fair day's breeze rising through rain to a storm, a Wind Zone in its place, pushes off and harder,
+    the bounds, scripts' numbers, `vox upgrade`'s bend, starter plants' faces no taller than a cube; GPU pictures of
+    a tuft stirred by a fair day's wind, held by bend 0 and moving further at bend 2, a tuft left alone by someone
+    on a bridge over it and by someone beside it with interaction off, and a bush of leaf blocks parting round
+    someone standing in it while a crown over them stays still.
 - ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
   (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `snow`), `variation`,
   `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.
@@ -2185,8 +2218,18 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   dimension and links the two Portals, walks through and stands on its rock under its dark, and walking away lets it
   go; a thrown body keeps its speed; a camera following looks through the Gate from the level, then goes into the
   caves; bodies and characters moved between dimensions keep moving; GPU pictures through a Portal into another
-  dimension and back out, each matching a camera standing there. Manual: Dimensions. To come: dungeons in a
-  dimension each, entered by a Portal in their gate; the editor's dimension view, the script API, saves per
+  dimension and back out, each matching a camera standing there. Manual: Dimensions. Dungeons in a dimension each
+  (`place = "own_dimension"`, the default; `in_the_land` as before): the land holds only the gate, a grand stair and a
+  landing with a Portal in it; inside, a world of rock with the dungeon planned on flat rock under a sinkhole, as
+  deep as its floors go, a hall with two fires round the Portal back out, its own dimension for each site, dark but
+  for its fires, or started from the dungeon's `dimension` file. Only the nearest Portal into such a dimension
+  within the project's Dimension distance (24 m) is open, so one at most is loaded besides the level's. Changes saved
+  in a dungeon that was under the land are left out as an old world loads. The template's dungeon moved to the
+  current settings. Tests: the gate alone in the land; six floors in rock, every space reached, the Portal's place
+  clear; a walker comes close, the dungeon's dimension loads and it walks through and stands by the way out in the
+  dark; the nearest of two Portals open, never two dimensions loaded; old changes in a former dungeon dropped and
+  others kept; GPU pictures of the gate showing the hall through it, the hall and a room two floors down lit by its
+  fire. To come: the editor's dimension view, the script API (dungeon stages and growth among it), saves per
   dimension and the server making ground round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
@@ -3775,6 +3818,9 @@ The launcher, the equivalent of Unity Hub, lives in its own repository. It cover
 - updating itself
 - the project list
 - the new-project flow with templates and default setups
+- **release lists:** the official engine releases with nothing to set up, nightlies when turned on, and custom engine
+  releases, such as a fork's, listed beside them with their own key and their name on each version; a project
+  pinned to a fork's version installs from the fork. The old single release setting moves over as custom releases.
 
 It relies on the engine contract described under "Versions, installs and the launcher" in
 [ARCHITECTURE.md](ARCHITECTURE.md).

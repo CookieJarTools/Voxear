@@ -140,3 +140,242 @@ fn space_name(kind: SpaceKind) -> &'static str {
         SpaceKind::Shrine => "Shrine",
     }
 }
+
+/// On a Portal the engine stands in the gate of a dungeon that is in a
+/// dimension of its own: which dungeon it leads into. The Portal leads
+/// nowhere until the game makes that dimension, as a camera comes near
+/// enough to see through it (`Game::link_dimensions`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DungeonGate {
+    /// The world of blocks the gate is built in.
+    pub world: Entity,
+    /// Which of that world's structures the dungeon is.
+    pub structure: usize,
+    /// Its site, in metres in the generator's world, and the site's seed.
+    pub site: [f32; 2],
+    pub seed: u32,
+}
+
+impl voxear_ecs::Component for DungeonGate {}
+
+impl DungeonGate {
+    /// What tells this dungeon's dimension from every other's: the world it
+    /// stands in, which dungeon of it, and its site.
+    pub fn key(&self, world_asset: voxear_assets::AssetGuid) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        world_asset.hash(&mut hasher);
+        self.structure.hash(&mut hasher);
+        self.site.map(f32::to_bits).hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// On the world of blocks of a dungeon's own dimension: the dungeon as it
+/// was laid out there, in that world's blocks.
+#[derive(Clone, Debug)]
+pub struct DungeonInside(pub std::sync::Arc<DungeonLayout>);
+
+impl voxear_ecs::Component for DungeonInside {}
+
+/// On the Portal in a dungeon's own dimension that leads back out through
+/// its gate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DungeonWayOut;
+
+impl voxear_ecs::Component for DungeonWayOut {}
+
+/// How far from where the game is seen from a dungeon's gate has its Portal
+/// stood in it, in metres; and how much further it is kept, so walking back
+/// and forth at the edge makes nothing twice.
+const GATES_WITHIN: f32 = 160.0;
+const GATES_KEPT_PAST: f32 = 64.0;
+
+/// How far the viewer moves before the gates round it are looked for again,
+/// in metres, and how many ticks go by at most.
+const GATES_LOOKED_EVERY: f32 = 16.0;
+const GATES_TICKS: u32 = 60;
+
+/// How large a gate's Portal is, in metres: its width and height.
+const GATE_PORTAL: [f32; 2] = [3.0, 4.0];
+
+/// When the gates were last looked for, and from where.
+#[derive(Default)]
+struct GatesLooked {
+    from: Option<Vec3>,
+    ticks: u32,
+}
+
+/// Stands a Portal in the middle of the landing of the gate of each dungeon in a dimension
+/// of its own within reach of where the game is seen from, in the worlds of
+/// blocks of the dimension seen, and takes away those well past it. While
+/// the game plays.
+pub fn stand_gates(world: &mut World, content: &mut Content) {
+    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let mut looked = world.remove_resource::<GatesLooked>().unwrap_or_default();
+    looked.ticks += 1;
+    let moved = looked.from.is_none_or(|from| from.distance(viewer) > GATES_LOOKED_EVERY);
+    if !moved && looked.ticks < GATES_TICKS {
+        world.insert_resource(looked);
+        return;
+    }
+    (looked.from, looked.ticks) = (Some(viewer), 0);
+    world.insert_resource(looked);
+    let seen = crate::dimensions::seen_from(world);
+    let worlds: Vec<Entity> = world
+        .query_ref::<(Entity, &BlockWorld, &BlockWorldAsset)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == seen)
+        .filter(|(_, _, asset)| {
+            let built = asset.file.generate.as_ref().and_then(|generate| generate.built.as_deref());
+            built.is_some_and(|built| {
+                built.list.iter().any(|structure| {
+                    matches!(&structure.blocks, voxear_terrain::blocks::structure::StructureBlocks::Dungeon(dungeon)
+                        if dungeon.place == voxear_terrain::blocks::structure::DungeonPlace::OwnDimension)
+                })
+            })
+        })
+        .map(|(entity, ..)| entity)
+        .collect();
+    let standing: Vec<(Entity, DungeonGate, Vec3)> = world
+        .query_ref::<(Entity, &DungeonGate, &Transform)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, gate, transform)| (entity, *gate, transform.position))
+        .collect();
+    let mut wanted: Vec<DungeonGate> = Vec::new();
+    for entity in worlds {
+        for (gate, pose) in gates_of(world, content, entity, viewer) {
+            wanted.push(gate);
+            if standing.iter().any(|(_, kept, _)| *kept == gate) {
+                continue;
+            }
+            let portal = voxear_render::Portal { size: GATE_PORTAL.into(), ..voxear_render::Portal::default() };
+            let name = voxear_scene::Name("Dungeon Gate".into());
+            let transform = Transform::new(pose.0, pose.1, Vec3::ONE);
+            let made = world.spawn((name, transform, portal, gate, voxear_scene::EditorOnly));
+            voxear_scene::set_dimension(world, made, seen);
+        }
+    }
+    // Those not wanted now and well past where they are stood go.
+    for (entity, gate, at) in standing {
+        if !wanted.contains(&gate) && at.distance(viewer) > GATES_WITHIN + GATES_KEPT_PAST {
+            world.insert(entity, Destroying);
+        }
+    }
+}
+
+/// The gates of the dungeons in dimensions of their own of the world of
+/// blocks on `entity` within reach of `viewer`, and where each one's Portal
+/// stands, in the world: in the middle of its landing, facing the stair down.
+fn gates_of(
+    world: &World,
+    content: &mut Content,
+    entity: Entity,
+    viewer: Vec3,
+) -> Vec<(DungeonGate, (Vec3, voxear_core::math::Quat))> {
+    use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+    let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Vec::new() };
+    let file = asset.file.clone();
+    let Some(generate) = file.generate.as_ref() else { return Vec::new() };
+    let Some(built) = generate.built.as_deref() else { return Vec::new() };
+    let Some(landed) = crate::blocks::generator(content, &file) else { return Vec::new() };
+    let generator = voxear_terrain::blocks::generate::ground_generator(generate, &landed, file.block_size.max(0.01));
+    let Some(transform) = world.get::<Transform>(entity) else { return Vec::new() };
+    let corner = voxear_terrain::corner(transform, world.get::<WorldTransform>(entity));
+    let size = file.block_size;
+    let [px, pz] = generate.position;
+    let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
+    let halved = voxear_terrain::blocks::generate::halved(generate) && !file.smooth;
+    let laid = (size, generate.position, generate.lowest_open(), halved);
+    let near = [viewer.x - corner.x + px, viewer.z - corner.z + pz];
+    let found = dungeons_near(built, &generator, biomes, laid, near, GATES_WITHIN);
+    found
+        .into_iter()
+        .filter(|(which, ..)| {
+            matches!(&built.list[*which].blocks, StructureBlocks::Dungeon(dungeon) if dungeon.place == DungeonPlace::OwnDimension)
+        })
+        .filter_map(|(which, site, layout)| {
+            let landing = layout.spaces.first()?;
+            let into = layout.entrance.into;
+            // In the middle of the landing, clear of its columns, facing back up the stair: its sill half a block
+            // under the landing's floor, so one crosses it whether the floor there is laid whole or in half steps.
+            let along = Vec3::new(into[0] as f32, 0.0, into[1] as f32).normalize_or_zero();
+            let foot = Vec3::new(landing.at[0] as f32 + 0.5, landing.at[1] as f32 + 0.5, landing.at[2] as f32 + 0.5);
+            let at = corner + foot * size;
+            let facing = -along;
+            let turn = voxear_core::math::Quat::from_rotation_y(facing.x.atan2(facing.z));
+            let gate = DungeonGate { world: entity, structure: which, site: site.at, seed: site.seed };
+            Some((gate, (at, turn)))
+        })
+        .collect()
+}
+
+/// Takes away the changes of `edits`, of a world of blocks made from `file`
+/// and written before dungeons went into dimensions of their own, that lie in
+/// the spaces and ways of a dungeon that was under its land then and is in a
+/// dimension of its own now: rock there now, which they would leave holes
+/// and lamps in. Returns how many blocks' changes went.
+pub fn drop_old_dungeon_edits(
+    content: &mut Content,
+    file: &voxear_terrain::blocks::file::BlockFile,
+    edits: &mut voxear_terrain::blocks::edits::BlockEdits,
+) -> usize {
+    use voxear_terrain::blocks::structure::{DungeonPlace, StructureBlocks};
+    let Some(generate) = file.generate.as_ref() else { return 0 };
+    let Some(built) = generate.built.as_deref() else { return 0 };
+    let moved = |blocks: &StructureBlocks| matches!(blocks, StructureBlocks::Dungeon(d) if d.place == DungeonPlace::OwnDimension);
+    if edits.chunks.is_empty() || !built.list.iter().any(|structure| moved(&structure.blocks)) {
+        return 0;
+    }
+    let Some(landed) = crate::blocks::generator(content, file) else { return 0 };
+    let generator = voxear_terrain::blocks::generate::ground_generator(generate, &landed, file.block_size.max(0.01));
+    // The dungeons as they were: under the land.
+    let mut before = built.clone();
+    for structure in &mut before.list {
+        if let StructureBlocks::Dungeon(dungeon) = &mut structure.blocks
+            && dungeon.place == DungeonPlace::OwnDimension
+        {
+            dungeon.place = DungeonPlace::InTheLand;
+        }
+    }
+    let size = file.block_size.max(0.01);
+    let biomes = generate.placed.as_deref().filter(|placed| !placed.biomes.is_empty());
+    let halved = voxear_terrain::blocks::generate::halved(generate) && !file.smooth;
+    let laid = (size, generate.position, generate.lowest_open(), halved);
+    // Every space and way, in blocks, of each dungeon that reaches a chunk column changed.
+    let side = voxear_terrain::blocks::chunk::CHUNK as i32;
+    let mut columns: Vec<[i32; 2]> = edits.chunks.keys().map(|key| [key[0], key[2]]).collect();
+    columns.sort_unstable();
+    columns.dedup();
+    let mut boxes: Vec<([i32; 3], [i32; 3])> = Vec::new();
+    let mut seen: Vec<(usize, [u32; 2])> = Vec::new();
+    for column in columns {
+        let middle = [(column[0] * side + side / 2) as f32 * size, (column[1] * side + side / 2) as f32 * size];
+        let near = [middle[0] + generate.position[0], middle[1] + generate.position[1]];
+        for (which, site, layout) in dungeons_near(&before, &generator, biomes, laid, near, side as f32 * size) {
+            if !moved(&built.list[which].blocks) || seen.contains(&(which, site.at.map(f32::to_bits))) {
+                continue;
+            }
+            seen.push((which, site.at.map(f32::to_bits)));
+            for space in layout.spaces.iter().filter(|space| space.height >= 0) {
+                let (low, high) = (space.low(), space.high());
+                boxes.push(([low[0] - 1, space.bottom() - 1, low[1] - 1], [high[0] + 1, space.top() + 1, high[1] + 1]));
+            }
+            for way in &layout.ways {
+                let ys = way.line.iter().map(|point| (point[2] / 2.0) as i32);
+                let (bottom, top) = (ys.clone().min().unwrap_or(0), ys.max().unwrap_or(0));
+                boxes.push((
+                    [way.low[0] - 1, bottom - 2, way.low[1] - 1],
+                    [way.high[0] + 1, top + way.height + 2, way.high[1] + 1],
+                ));
+            }
+        }
+    }
+    if boxes.is_empty() {
+        return 0;
+    }
+    let inside = |at: [i32; 3]| boxes.iter().any(|(low, high)| (0..3).all(|i| at[i] >= low[i] && at[i] <= high[i]));
+    edits.retain_blocks(|at| !inside(at))
+}

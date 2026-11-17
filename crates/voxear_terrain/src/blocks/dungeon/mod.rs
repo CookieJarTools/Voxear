@@ -29,13 +29,15 @@ mod carve;
 mod entrance;
 mod land;
 mod noise;
+mod own;
 mod pieces;
 mod plan;
 mod rooms;
 
 pub(crate) use build::build;
 pub use land::Entrance;
-pub use plan::{DungeonLayout, LightKind, LightSpot, Space, SpaceKind, Way, WayCell, WayKind};
+pub use own::{InRock, ROCK_TOP, in_rock};
+pub use plan::{DungeonLayout, LightKind, LightSpot, MOST_FLOORS, Space, SpaceKind, Way, WayCell, WayKind};
 pub(crate) use plan::{cached_layout, layout_key, plan};
 
 #[cfg(test)]
@@ -94,6 +96,14 @@ pub struct DungeonDef {
     pub theme: DungeonTheme,
     pub size: DungeonSize,
     pub floors: [u32; 2],
+    /// Where it is: in a dimension of its own, its gate in the land with a
+    /// Portal in it, or under the land as dungeons were before dimensions.
+    pub place: DungeonPlace,
+    /// The `.dimension` each of its own dimensions starts from, as files
+    /// name an asset: its lighting, its sounds, its Objs. None for one made
+    /// by the engine alone, dark and still.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub entrances: Vec<EntranceKind>,
     pub cover: u32,
@@ -150,6 +160,8 @@ impl Default for DungeonDef {
             theme: DungeonTheme::Temple,
             size: DungeonSize::Medium,
             floors: [1, 2],
+            place: DungeonPlace::OwnDimension,
+            dimension: None,
             entrances: Vec::new(),
             cover: 8,
             caves: 48,
@@ -451,6 +463,20 @@ impl DungeonBlocks {
     }
 }
 
+/// Where a dungeon is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DungeonPlace {
+    /// In a dimension of its own, one for each site: only its gate stands in
+    /// the land, a Portal in it leading in. Its floors go as deep as they
+    /// will, with no land over them to keep under.
+    #[default]
+    OwnDimension,
+    /// Under the land it is sited in, carved into its ground, as dungeons
+    /// were before dimensions.
+    InTheLand,
+}
+
 /// A dungeon as a world builds it: its settings as its file has them, its
 /// blocks and pieces by the world's numbers.
 #[derive(Clone, Debug, PartialEq)]
@@ -458,6 +484,10 @@ pub struct Dungeon {
     pub theme: DungeonTheme,
     pub size: DungeonSize,
     pub floors: [u32; 2],
+    pub place: DungeonPlace,
+    /// The `.dimension` each of its own dimensions starts from, as its file
+    /// names it.
+    pub dimension: Option<String>,
     pub entrances: Vec<EntranceKind>,
     pub cover: u32,
     pub caves: u32,
@@ -476,6 +506,8 @@ impl Default for Dungeon {
             theme: def.theme,
             size: def.size,
             floors: def.floors,
+            place: def.place,
+            dimension: def.dimension,
             entrances: def.entrances,
             cover: def.cover,
             caves: def.caves,
@@ -493,6 +525,13 @@ impl Default for Dungeon {
 pub(crate) const ENTRANCE_SEARCH: f32 = 48.0;
 
 impl Dungeon {
+    /// How many floors it goes down at a site of seed `seed`, before it has
+    /// grown: within its file's range, picked by the seed.
+    pub fn floors_at(&self, seed: u32) -> u32 {
+        let [fewest, most] = [self.floors[0].min(self.floors[1]).max(1), self.floors[0].max(self.floors[1]).max(1)];
+        fewest + noise::hash(seed as i32, 0, 3, seed) % (most - fewest + 1)
+    }
+
     /// How wide its grand stair is, in blocks.
     pub(crate) fn sizes_stair(&self) -> i32 {
         plan::Sizes::of(self).stair
@@ -511,8 +550,14 @@ impl Dungeon {
 
     /// How far from its site it reaches under the ground, in blocks, at the
     /// most: its floors laid out as far as they can go, a grand stair from
-    /// the entrance before them, and a way broken through to a cave.
+    /// the entrance before them, and a way broken through to a cave. For one
+    /// in a dimension of its own, its gate alone: the entrance, a short stair
+    /// down and the landing at its foot.
     pub(crate) fn reach(&self) -> f32 {
+        if self.place == DungeonPlace::OwnDimension {
+            let sizes = plan::Sizes::of(self);
+            return ENTRANCE_SEARCH + 40.0 + sizes.room[0] as f32;
+        }
         let floor = plan::Sizes::of(self).floor_reach();
         let floors = self.floors[0].max(self.floors[1]).clamp(1, 4) as f32;
         // Each floor below turns back under the one over it as often as it runs on, so floors reach half again.
@@ -532,7 +577,7 @@ pub fn layout_at(
     (size, position, bottom, halved): (f32, [f32; 2], i32, bool),
     site: &crate::generate::structures::Site,
 ) -> Option<std::sync::Arc<DungeonLayout>> {
-    let ground = super::structure::Ground { world, size, position, biomes: None, halved };
+    let ground = super::structure::Ground { world, size, position, biomes: None, halved, flat: None };
     let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
     let key = layout_key(dungeon, &ground, block, bottom);
     cached_layout(key, || plan(dungeon, &ground, block, site.seed, bottom))

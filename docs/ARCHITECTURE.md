@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine, with Portals between them; dungeons in their own, the editor, scripts, saves and networking planned)*
+### Dimensions *(in the engine, with Portals between them and dungeons in their own; the editor, scripts, saves and networking planned)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -521,10 +521,32 @@ dimension to another.
   every dimension but the current one, from their `Surroundings`) and no storms; where it is another dimension than
   the view it is seen in, it works out sky tables and sky light of its own (`PortalPass::dimension`,
   `Frame::own_sky`) in place of reading that view's. In a file a Portal names one in a dimension's file with
-  `into = { dimension, portal }` (`DimensionLink`, kept on the Obj as `PortalInto`); `find_exits` notes such Portals
-  near enough to show their far side, and `Game::link_dimensions` makes the dimension (`make_dimension`, marked on
-  demand), links the two (the far one leading back where it led nowhere), and lets a dimension made so go once nothing
-  has needed it for its `keep_loaded` seconds: not current, and no far side being made into it.
+  `into = { dimension, portal }` (`DimensionLink`, kept on the Obj as `PortalInto`). Of the Portals into a dimension
+  loaded for them (a `PortalInto` or a dungeon's gate), only the nearest a camera or a camera's subject of its own
+  dimension within `PortalQuality::dimension_distance` (24 m, `[portals] dimension_distance`) is open, a little longer
+  once open (`DIMENSION_KEPT_PAST`); `find_exits` notes it (`active_into`) and makes far sides of no other such Portal.
+  `Game::link_dimensions` first lets go every dimension made on demand but the open Portal's and the current one, so
+  no more than one is ever loaded, then makes the open Portal's (`make_dimension`, or `make_dungeon_dimension`),
+  links the two (the far one leading back where it led nowhere), and lets a dimension made so go once nothing has
+  needed it for its `keep_loaded` seconds: not current, and no far side being made into it.
+- **Dungeons in dimensions of their own.** A `[dungeon]`'s `place` is `own_dimension` (the default) or `in_the_land`.
+  Own dimension, `plan` lays out its gate alone (a floor graph of the landing): the entrance sited from the land, a
+  grand stair down and the landing, built into the land as before, its reach shrunk to the gate's
+  (`Dungeon::reach`). `dungeons::stand_gates` stands an engine-made Portal (`DungeonGate`: the world, the structure,
+  the site) in the middle of each gate's landing within 160 m of where the game is seen from, its sill half a block
+  under the floor so whole and half floors cross it, and takes away those well past. Its dimension is made when it is
+  the open Portal (`Game::make_dungeon_dimension`): `voxear_terrain::blocks::dungeon::in_rock` plans the dungeon on
+  flat rock (`Ground::flat`, no sea, rivers or caves; `plan_in_rock`, a sinkhole at the top, `floors_at` the site's
+  floors and up to `MOST_FLOORS`), fills whole chunks of rock round it, cuts a hall under a rock roof over the
+  sinkhole, builds the dungeon into it a tile of columns at a time with the same builder, drops chunks carved all to
+  air (the renderer's sight walk takes a kept chunk without faces for solid), and lights two fires by the Portal back
+  out. The engine puts that map in a Block World of its own (the land's file and numbering, no generator, its look
+  copied; `DungeonInside` keeps the layout) in a dimension of kind Dungeon, or one made from the dungeon's
+  `dimension` file, keyed by the world, structure and site, with a Portal back out (`DungeonWayOut`). An enclosed
+  dimension's post-processing has its height fog off: it thickens with depth under the level's ground and fills a
+  deep dungeon. Edits read from a `.blocks` file of a version before 4 (`edits::VERSION`) lose the changes in the
+  spaces and ways of a dungeon that was under the land (`dungeons::drop_old_dungeon_edits`, the dungeons planned in
+  the land again to find them; `BlockEdits::retain_blocks`).
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes
@@ -4163,7 +4185,9 @@ built stone (`rooms`, from `pieces`: columns, pointed arches, balustrades, statu
 reliefs), the ways' floors and ribs, the entrance, then wear (ruin, cracked, mossy, vines) read off the grid before
 any of it changes, and lights. Every step reads only a block's neighbours, so a column built alone is what it is
 among its neighbours. Scripts read the layouts as JSON (`engine::dungeons`, `Dungeons` in C#), as does
-`vox editor call dungeon.layouts`.
+`vox editor call dungeon.layouts`. A dungeon placed in a dimension of its own (`DungeonPlace::OwnDimension`, the
+default) is only its gate in the land, and the rest is built in a world of rock of its own (see
+[Dimensions](#dimensions)).
 
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
@@ -5092,6 +5116,10 @@ through a small contract.
 - Releases are published with a **release manifest**: version, channel (stable, beta or nightly), downloads per
   platform, sizes, SHA-256 hashes and a signature.
 - Several versions install side by side. `vox` finds its own files through its install folder (`VOXEAR_HOME`).
+- The launcher lists the official releases, and beside them any **custom engine releases** a user adds, such as a
+  fork's: a manifest of the same shape, published the same way, signed with the fork's own key. An install and a
+  project's pin are a version, so a fork's builds are best given versions of their own with build metadata
+  (`0.2.0+lumen`); a project pinned to one installs from the list that publishes it.
 
 **Projects pin a version.**
 - `voxear.toml` records the engine version a project uses.

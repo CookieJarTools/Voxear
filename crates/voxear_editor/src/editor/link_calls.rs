@@ -2032,6 +2032,7 @@ impl Editor {
                 self.game.project = project;
                 let file = &self.game.project.file;
                 file.portals.put(&mut self.game.engine.world);
+                self.game.engine.world.insert_resource(file.foliage.bounded());
                 file.quality.put(&mut self.game.engine.world);
                 file.physics.put(&mut self.game.engine.world);
                 voxear_engine::modules::put(&mut self.game.engine.world, self.game.project.modules());

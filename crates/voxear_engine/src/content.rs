@@ -1591,7 +1591,19 @@ impl Content {
             let changes = voxear_terrain::blocks::edits::blocks_file(&path);
             let edits = match self.read(&changes) {
                 Ok(bytes) => {
-                    Some(voxear_terrain::blocks::edits::BlockEdits::from_bytes(&bytes).with_context(|| changes)?)
+                    let mut edits =
+                        voxear_terrain::blocks::edits::BlockEdits::from_bytes(&bytes).with_context(|| changes.clone())?;
+                    // Written while dungeons were under the land: what was changed in one that is rock now goes.
+                    if voxear_terrain::blocks::edits::version_of(&bytes).is_some_and(|version| version < 4) {
+                        let gone = crate::dungeons::drop_old_dungeon_edits(self, &file, &mut edits);
+                        if gone > 0 {
+                            tracing::info!(
+                                "{gone} blocks changed in {changes} lay in dungeons that are in dimensions of their own \
+                                 now, rock where they were; their changes are left out"
+                            );
+                        }
+                    }
+                    Some(edits)
                 }
                 Err(_) => None,
             };

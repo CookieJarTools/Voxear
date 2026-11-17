@@ -32,7 +32,16 @@ use super::{
 };
 
 const MAGIC: &[u8; 8] = b"VXBLOCKS";
-const VERSION: u32 = 3;
+/// The format this version writes. 4 is 3's, written once dungeons went into
+/// dimensions of their own: changes of an older file may lie in a dungeon
+/// that was under the land and is rock now.
+pub const VERSION: u32 = 4;
+
+/// The version of the changes `bytes` hold, where they are changes.
+pub fn version_of(bytes: &[u8]) -> Option<u32> {
+    (bytes.len() >= 12 && &bytes[..8] == MAGIC)
+        .then(|| u32::from_le_bytes(bytes[8..12].try_into().expect("four bytes")))
+}
 
 /// How one chunk changed.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +62,43 @@ pub enum ChunkChange {
 pub struct BlockEdits {
     pub chunks: BTreeMap<[i32; 3], ChunkChange>,
     pub links: Vec<([i32; 3], [i32; 3])>,
+}
+
+impl BlockEdits {
+    /// Takes away the changes to the blocks `keep` does not keep, by their
+    /// places in the world's blocks; a chunk kept whole goes whole where its
+    /// middle is not kept. Returns how many blocks' changes went.
+    pub fn retain_blocks(&mut self, keep: impl Fn([i32; 3]) -> bool) -> usize {
+        let side = CHUNK as i32;
+        let mut gone = 0;
+        let at = |key: [i32; 3], index: u16| {
+            let [x, y, z] = place(usize::from(index));
+            [key[0] * side + x as i32, key[1] * side + y as i32, key[2] * side + z as i32]
+        };
+        self.chunks.retain(|key, change| match change {
+            ChunkChange::Blocks(blocks) => {
+                let before = blocks.len();
+                blocks.retain(|(index, _)| keep(at(*key, *index)));
+                gone += before - blocks.len();
+                !blocks.is_empty()
+            }
+            ChunkChange::Cells(cells) => {
+                let before = cells.len();
+                cells.retain(|(index, ..)| keep(at(*key, *index)));
+                gone += before - cells.len();
+                !cells.is_empty()
+            }
+            ChunkChange::Whole(_) => {
+                let middle = [key[0] * side + side / 2, key[1] * side + side / 2, key[2] * side + side / 2];
+                let kept = keep(middle);
+                if !kept {
+                    gone += CHUNK_LEN;
+                }
+                kept
+            }
+        });
+        gone
+    }
 }
 
 /// Block `index` of a chunk, as `(x, y, z)`.

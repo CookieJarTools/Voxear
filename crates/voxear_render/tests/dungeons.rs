@@ -99,6 +99,8 @@ fn temple(first: u16, entrances: Vec<EntranceKind>) -> Dungeon {
         },
         floors: [2, 2],
         entrances,
+        // Under the land, as these pictures show it.
+        place: voxear_terrain::blocks::structure::DungeonPlace::InTheLand,
         ..Dungeon::default()
     }
 }

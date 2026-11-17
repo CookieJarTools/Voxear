@@ -19,6 +19,7 @@ pub mod first_person;
 mod dev_console;
 mod engine;
 mod fly_camera;
+mod foliage_scripts;
 mod game;
 pub mod grown_plants;
 pub mod guns;

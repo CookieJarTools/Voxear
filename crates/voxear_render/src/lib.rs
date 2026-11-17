@@ -160,7 +160,7 @@ pub use lightmaps::{
     BAND_SHARES, BakedAtlas, BakedLighting, BakedProbes, LightBakeState, LightMode, LightProbeGroup, Lightmap, LightmapBake,
     LightmapPlace, MOST_FILLED_PROBES, ProbeFill, ProbeLight, harmonics,
 };
-pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
+pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
@@ -181,7 +181,7 @@ pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, 
 pub use grass::GrassLook;
 pub use blocks::{BlockCounts, BlockLight, BlockLook, BlockTints, BlockVoxels, GpuBlockMotion, GpuMotionKey, GpuMovingBlock, MAX_MOTIONS, MAX_MOVING};
 pub use terrain::{SurfaceLook, TerrainLook};
-pub use wind::{WindShape, WindZone};
+pub use wind::{WindShape, WindZone, plants_wind};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
@@ -2512,7 +2512,8 @@ impl View {
             gpu.create_buffer(&named("visibility"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
         let lod_state =
             gpu.create_buffer(&named("lod state"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
-        let cells = u64::from(gpu::PUSH_CELLS * gpu::PUSH_CELLS) * 8;
+        // Each cell's push along x and z, and how high what made it stood and how far up and down it reaches.
+        let cells = u64::from(gpu::PUSH_CELLS * gpu::PUSH_CELLS) * 16;
         let foliage_pushes = gpu.create_buffer(&named("foliage pushes"), cells, persistent, MemoryLocation::GpuOnly)?;
         let texels = u64::from(tracks::TRACK_TEXELS * tracks::TRACK_TEXELS) * 8;
         let tracks = gpu.create_buffer(&named("tracks"), texels, persistent, MemoryLocation::GpuOnly)?;

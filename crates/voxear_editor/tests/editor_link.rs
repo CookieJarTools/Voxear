@@ -361,8 +361,14 @@ fn a_tool_lists_every_setting_with_its_tooltip_type_and_range_and_sets_any_by_ke
         set(&mut editor, &mut renderer, "localization.languages", json!(["en", "French"])),
         json!(["English", "French"])
     );
+    // How plants move, put into effect at once.
+    assert_eq!(set(&mut editor, &mut renderer, "foliage.wind", json!(1.5)), json!(1.5));
+    assert_eq!(set(&mut editor, &mut renderer, "foliage.interaction", json!(false)), json!(false));
+    let motion = editor.game.engine.world.resource::<voxear_render::FoliageMotion>().copied().unwrap();
+    assert_eq!((motion.wind, motion.interaction), (1.5, false));
     let file = Project::open(dir.path()).unwrap().file;
     assert_eq!((file.physics.gravity, file.time.fixed_step), ([0.0, -1.62, 0.0], 0.01));
+    assert_eq!((file.foliage.wind, file.foliage.bend), (1.5, 1.0));
     assert_eq!(file.localization.languages, ["en", "fr"], "kept by their codes");
     assert_eq!(file.network.authority, voxear_engine::net::NetAuthority::Shared);
     let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();

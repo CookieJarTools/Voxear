@@ -120,7 +120,11 @@ With **Roads** on, a town is joined to the towns of its kind next to it. A road 
 
 ## Dungeons
 
-A dungeon is a set of great spaces carved into the rock under the land: a gate in the land, a grand stair going down, and floors of halls, rooms, gorges and chasms below, the boss at the bottom. Only its entrance comes up to the surface. Every space keeps rock over and round it, whatever the land does over it, so no room ever comes out through a slope, an escarpment's wall or a lake's bed.
+A dungeon is a set of great spaces carved into rock: a gate in the land, a grand stair going down, and floors of halls, rooms, gorges and chasms below, the boss at the bottom.
+
+Each dungeon is a [[Dimensions|dimension]] of its own. Only its gate stands in the land: the entrance, a short grand stair down, and a landing at its foot with a [[Portals|Portal]] standing in the middle. Through it is the dungeon, in a world of rock all round. A dungeon's floors go as deep as they will there, with no land over them to keep under. Each dungeon also has coordinates of its own, starting by the Portal you come out of.
+
+Set its **Place** to **In the land** to have it under the land instead, as dungeons were before dimensions. Every space then keeps rock over and round it, whatever the land does over it, so no room ever comes out through a slope, an escarpment's wall or a lake's bed.
 
 The quickest way to have one is **Add Temple Dungeon** on a generated Block World (or `vox editor call dungeon.starter`). It makes the temple's blocks, with their pictures, in a Dungeon folder beside the world's Blocks, and writes `Structures/Temple Dungeon.structure`, listed under the world's generator.
 
@@ -137,6 +141,14 @@ Each dungeon looks round its place, up to 48 m, for where the land offers an ent
 The dungeon is then laid out into the land behind its entrance, under the high side. Where the land round a place offers none of the kinds the dungeon may use, or no room under it for even one floor over the world's lowest block, no dungeon is built there.
 
 A grand stair runs down from the entrance to the first floor's landing: a block down for every two along, half steps of slabs, a landing every ten blocks down, pillars and pointed arches over it.
+
+### Its own dimension
+
+A dungeon's dimension is loaded as a player comes close to the Portal in its gate, within the project's **Dimension distance** (24 m; see [[Dimensions]]). Until then the Portal shows its mist. Only the nearest such Portal is open at a time, so one dungeon at most is loaded. Coming out of the Portal inside, a player stands in a hall cut out under a roof of rock. Fires burn either side of the Portal, and a sinkhole in the middle of the hall has the grand stair winding down its wall to the first floor.
+
+The dungeon is dark but for its own fires, braziers and crystal: it has no sky, sun or weather. To give one more, name a `.dimension` in its **Dimension** setting. Each of its dimensions then starts from that file: its lighting, its sounds and its Objs, with the dungeon's world added.
+
+A world made before dimensions may have changes saved in its dungeons, such as a lamp on a room's floor or a tunnel dug off a hall. Those places are rock now, so such changes are left out as the world loads. Changes anywhere else stay as they were.
 
 ### Floors and spaces
 
@@ -185,6 +197,8 @@ floors = [1, 3]
 | Theme | The look and the set pieces. Temple: an old temple carved into natural rock |
 | Size | Small (a threshold, a hall, a gorge and the end, about 120 m across), Medium (about 200 m) or Large (a second hall and more loot, about 260 m) |
 | Floors | How many floors, one under the next, from and to |
+| Place | **Own dimension**: a dimension of its own, its gate alone in the land. **In the land**: carved under the land, as dungeons were before dimensions |
+| Dimension | With Own dimension, the `.dimension` each of its dimensions starts from: its lighting and its Objs. None for the dark of rock alone |
 | Entrances | The kinds of entrance it may use: Cliff, Temple, Sinkhole. None for any the land offers |
 | Cover | The least rock over and round every space, in blocks. 8 by default |
 | Caves | How far a space breaks through to a cave of the world's, in blocks. 48 by default; 0 for never |
@@ -231,7 +245,7 @@ foreach (var room in dungeon.SpacesOf(DungeonSpaceKind.Room))
 }
 ```
 
-`vox editor call dungeon.layouts` gives the same, as JSON in the level's metres, and `vox editor call dungeon.starter` makes the starter dungeon. A dungeon's settings are its file's, read and changed with `asset.get` and `asset.set`.
+`vox editor call dungeon.layouts` gives the same, as JSON in the level's metres, and `vox editor call dungeon.starter` makes the starter dungeon. A dungeon's settings are its file's, read and changed with `asset.get` and `asset.set`. For a dungeon in a dimension of its own, the land holds its gate alone, so `Dungeons` lists its entrance and the landing where its Portal stands.
 
 A dungeon in a world with [[Caves|caves]] breaks into them: the space nearest a cave room, within **Caves** blocks of it, has a rough passage cut to that room's floor. So a dungeon can be found from a cave, and a cave from a dungeon.
 
@@ -258,6 +272,8 @@ A structure placed turned, as a town turns each house to face its street, turns 
 ## Not yet
 
 - A structure's levers and buttons are not linked to its doors. Link them from a script once it stands.
+
+- A dungeon in its own dimension keeps no changes once its dimension is let go: dig in it, walk away, and it is whole again. It does not grow deeper yet, and does not break into caves.
 
 - Structures are built near the camera only. Far off, past a world's own chunks, they do not show.
 - Structures and towns are made by writing their files. The editor has no tools for them yet, but for a plant's own settings in the Inspector and Add Temple Dungeon.

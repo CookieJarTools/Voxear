@@ -444,7 +444,9 @@ struct Floor {
 
 /// Plans a dungeon at block `site`, its entrance round it: none where the
 /// land offers no entrance, or no room under it for even one floor over the
-/// world's lowest block, `bottom`.
+/// world's lowest block, `bottom`. One in a dimension of its own is planned
+/// as its gate alone: the entrance, the grand stair and the landing at its
+/// foot, where its Portal stands.
 pub(crate) fn plan(
     dungeon: &Dungeon,
     ground: &Ground,
@@ -452,6 +454,15 @@ pub(crate) fn plan(
     seed: u32,
     bottom: i32,
 ) -> Option<DungeonLayout> {
+    if dungeon.place == super::DungeonPlace::OwnDimension {
+        // No floors past the landing: no caves to break into, and no hall for daylight to fall into.
+        let gate = Dungeon { caves: 0, shafts: false, ..dungeon.clone() };
+        let sizes = Sizes::of(&gate);
+        let land = Land::new(ground);
+        let entrance = land.entrance(site, &gate.entrances, super::ENTRANCE_SEARCH, seed)?;
+        let cover = gate.cover.max(3) as i32;
+        return plan_floors(&gate, &sizes, &land, entrance, (1, true), cover, seed, bottom);
+    }
     let sizes = Sizes::of(dungeon);
     let land = Land::new(ground);
     let entrance = land.entrance(site, &dungeon.entrances, super::ENTRANCE_SEARCH, seed)?;
@@ -460,11 +471,30 @@ pub(crate) fn plan(
         [dungeon.floors[0].min(dungeon.floors[1]).max(1), dungeon.floors[0].max(dungeon.floors[1]).max(1)];
     let wanted = fewest + noise::hash(site[0], site[1], 3, seed) % (most - fewest + 1);
     for floors in (1..=wanted.min(4)).rev() {
-        if let Some(layout) = plan_floors(dungeon, &sizes, &land, entrance, floors, cover, seed, bottom) {
+        if let Some(layout) = plan_floors(dungeon, &sizes, &land, entrance, (floors, false), cover, seed, bottom) {
             return Some(layout);
         }
     }
     None
+}
+
+/// The most floors a dungeon in a dimension of its own goes down.
+pub const MOST_FLOORS: u32 = 12;
+
+/// Plans a dungeon in a dimension of its own, `floors` deep, on `ground`'s
+/// flat rock: a sinkhole at the top with the grand stair winding down it,
+/// the floors under it. No caves to break into, no daylight; and as the rock
+/// goes down as far as it is wanted, nothing is too deep.
+pub(crate) fn plan_in_rock(dungeon: &Dungeon, ground: &Ground, seed: u32, floors: u32) -> Option<DungeonLayout> {
+    let rock = Dungeon { caves: 0, shafts: false, entrances: vec![EntranceKind::Sinkhole], ..dungeon.clone() };
+    let sizes = Sizes::of(&rock);
+    let land = Land::new(ground);
+    let entrance = land.entrance([0, 0], &rock.entrances, super::ENTRANCE_SEARCH, seed)?;
+    let cover = rock.cover.max(3) as i32;
+    let bottom = i32::MIN / 4;
+    (1..=floors.clamp(1, MOST_FLOORS))
+        .rev()
+        .find_map(|floors| plan_floors(&rock, &sizes, &land, entrance, (floors, false), cover, seed, bottom))
 }
 
 /// The heights each floor's levels are at, relative to the first floor's
@@ -474,13 +504,14 @@ fn levels(sizes: &Sizes, floor: u32) -> [i32; 2] {
     [upper, upper - sizes.drop()]
 }
 
+/// Plans `floors` floors under `entrance`, or the landing alone where `gate`.
 #[allow(clippy::too_many_arguments)]
 fn plan_floors(
     dungeon: &Dungeon,
     sizes: &Sizes,
     land: &Land,
     entrance: Entrance,
-    floors: u32,
+    (floors, gate): (u32, bool),
     cover: i32,
     seed: u32,
     bottom: i32,
@@ -500,7 +531,7 @@ fn plan_floors(
             let along = (entrance.mouth() + 2) as f32 + grand_length(fall) + (sizes.room[0] / 2 - 1) as f32;
             [entrance.at[0] as f32 + into[0] * along, entrance.at[2] as f32 + into[1] * along]
         };
-        let laid = lay_floors(dungeon, sizes, land, start, into, floors, cover, seed)?;
+        let laid = lay_floors(dungeon, sizes, land, (start, into), (floors, gate), cover, seed)?;
         // The first floor's upper level as high as every space lets it be, and no higher than the stair's fall.
         let mut level = entrance.at[1] - fall;
         for floor in &laid {
@@ -547,9 +578,8 @@ fn lay_floors(
     dungeon: &Dungeon,
     sizes: &Sizes,
     land: &Land,
-    start: [f32; 2],
-    into: [f32; 2],
-    floors: u32,
+    (start, into): ([f32; 2], [f32; 2]),
+    (floors, gate): (u32, bool),
     cover: i32,
     seed: u32,
 ) -> Option<Vec<Floor>> {
@@ -557,7 +587,21 @@ fn lay_floors(
     let mut origin = start;
     for floor in 0..floors {
         let last = floor + 1 == floors;
-        let (nodes, joins) = graph(dungeon.size, last, floor, seed);
+        let (nodes, joins) = match gate {
+            // A gate's floor is its landing alone.
+            true => (
+                vec![Node {
+                    kind: SpaceKind::Landing,
+                    place: [0.0, 0.0],
+                    level: 0,
+                    main: true,
+                    optional: false,
+                    progress: 0.0,
+                }],
+                Vec::new(),
+            ),
+            false => graph(dungeon.size, last, floor, seed),
+        };
         // The first floor runs on from the grand stair, turned a little at most; a later one any way round.
         let base = into[1].atan2(into[0]);
         let quarter = std::f32::consts::FRAC_PI_4;
@@ -1435,8 +1479,10 @@ pub(crate) fn layout_key(dungeon: &Dungeon, ground: &Ground, site: [i32; 2], bot
     ground.halved.hash(&mut hasher);
     site.hash(&mut hasher);
     bottom.hash(&mut hasher);
+    ground.flat.hash(&mut hasher);
     (dungeon.theme, dungeon.size, dungeon.floors, &dungeon.entrances, dungeon.cover, dungeon.caves, dungeon.shafts)
         .hash(&mut hasher);
+    dungeon.place.hash(&mut hasher);
     dungeon.blocks.hash(&mut hasher);
     for value in [dungeon.passes.ruin, dungeon.passes.wear, dungeon.passes.overgrowth, dungeon.passes.lights] {
         value.to_bits().hash(&mut hasher);

@@ -154,6 +154,7 @@ impl Default for QualitySettings {
 /// water = true            # whether the water of a far side's worlds of blocks is drawn
 /// draw_distance = 0.0     # how far ahead a far side is drawn; 0 for as far as the world is
 /// view_distance = 96.0    # how far off a Portal without its own still shows its far side
+/// dimension_distance = 24.0  # how near a Portal into a dimension loaded for it the dimension is loaded
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -165,6 +166,7 @@ pub struct PortalSettings {
     pub water: bool,
     pub draw_distance: f32,
     pub view_distance: f32,
+    pub dimension_distance: f32,
 }
 
 impl Default for PortalSettings {
@@ -178,6 +180,7 @@ impl Default for PortalSettings {
             water: quality.water,
             draw_distance: quality.draw_distance,
             view_distance: quality.view_distance,
+            dimension_distance: quality.dimension_distance,
         }
     }
 }
@@ -193,6 +196,7 @@ impl PortalSettings {
             water: self.water,
             draw_distance: self.draw_distance.max(0.0),
             view_distance: self.view_distance.max(0.0),
+            dimension_distance: self.dimension_distance.clamp(2.0, 1000.0),
         });
     }
 }

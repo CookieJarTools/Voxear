@@ -2069,6 +2069,30 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     Manual: Box Models, Painting and Cutting Plants. Not done: `.vox` files brought in as boxes of cubes,
     tools that fill or carve many cubes at once, characters made from parts picked at random, plants and trees
     placed by a Block World's generator.
+  - ~~**Characters of parts:**~~ done, for a co-op game's character creation: grey parts tinted any colour, put
+    on and swapped from scripts in place of a copy of each part in each colour.
+    - A Model Renderer's **Tint** (`tint` under `[obj.model]`, `Obj.Model.Tint`) multiplies what one Obj draws,
+      keeping a box model's sharp pixels and cut-out near and far, and in bounced light. **Tint 2** and **Tint 3**
+      (`tint2`, `tint3`, `GetTint`/`SetTint` by `TintSlot`) fall where a box model's colours say (`[tints]`, the
+      Model window's Tint, Tint 2, Tint 3 or Own for the colour painted with) or a material's **Tint Mask** does.
+    - Scripts set an Obj's model (`Obj.Model.Model`, `Obj.AddModel`, by a `ModelAsset` field), keeping the pose
+      on the same bones; a part's material (`SetMaterial`, `PartName`); and a box model's sheet (`Sheet`, `sheet`
+      under `[obj.model]`, the Inspector's Sheet), a picture of its layout whose colours take the model's tints,
+      the box model's own file kept in its cooked model so builds draw it too. The sheet goes out to a picture and
+      back: the Model window's **Save Sheet**, a picture dropped on the sheet, `box_model.sheet_save` and
+      `box_model.sheet_load`.
+    - Bones are sized (`Bone.LocalScale`, `RestScale`) and hidden with their skin and its shadow (`Bone.Hidden`,
+      until shown again), and a clip played on another body of the same rig keeps its scale keys.
+    - A part's **Follow parent** (`follow_parent`, `ModelRenderer.Follows`) poses it by its parent's skeleton
+      every frame, bone by bone by name, with no script, and hides what the body hides from the cameras.
+    - `vox render --ui` draws the game's UI over the picture, so a menu is checked without a window.
+    - Tests: the tint, its slots and a hidden head in GPU pictures near, flat and far, looked at enlarged; a box
+      model drawn with a picture sheet; the tint file and mask, sheets as pictures, cooked sources, bone sizes,
+      following and scale keys; scripts tinting, swapping models, materials and sheets, sizing and hiding bones
+      and following; the sheet out and back through the editor. Manual: Tints and Parts, Box Models, Bones in
+      Scripts, Bone Attachments, Materials, Your First Menu, Driving the Editor from a Terminal.
+    - Not done: a sheet's tint mask painted pixel by pixel rather than by colour, glass tinted, and parts that
+      follow another skeleton by a rig's parts rather than by name.
 
 ## Gameplay kits: game-ready systems
 

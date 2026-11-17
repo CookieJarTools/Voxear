@@ -622,6 +622,10 @@ pub struct Renderer {
     /// one whose pipelines could not be made, so it is not tried again.
     shader_pack: Option<shader_packs::PackPipelines>,
     shader_pack_failed: u64,
+    /// The engine's modules a worn pack's surface programs are compiled
+    /// into, drawn in place of its own, and the compile they are of.
+    pack_modules: Vec<(String, Vec<u8>)>,
+    pack_modules_of: u64,
     /// The shaders the pipelines are made from, as built in or as hot
     /// reload compiled them, before a project's custom shaders.
     shaders: ShaderSet,
@@ -785,6 +789,8 @@ impl Renderer {
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
             shader_pack: None,
             shader_pack_failed: 0,
+            pack_modules: Vec::new(),
+            pack_modules_of: 0,
             shaders,
             custom: CustomShaders::default(),
             views: vec![first],
@@ -1056,7 +1062,8 @@ impl Renderer {
             return Ok(());
         }
         self.gpu.wait_idle();
-        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (wanted, self.window_format), &self.shaders)?;
+        let shaders = self.shaders.replaced(&self.pack_modules);
+        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (wanted, self.window_format), &shaders)?;
         self.pipelines.destroy(&self.gpu);
         self.pipelines = pipelines;
         self.output_format = wanted;
@@ -1579,6 +1586,7 @@ impl Renderer {
     /// has taken off. Pipelines that cannot be made are logged, and the frame
     /// is drawn without the pack.
     fn wear_shader_pack(&mut self, world: &World) {
+        self.wear_pack_modules(world);
         let worn = world.resource::<shader_packs::WornShaderPack>();
         let wanted = worn.map(|worn| worn.pack.generation);
         let have = self.shader_pack.as_ref().map(|pack| pack.generation);
@@ -1599,6 +1607,39 @@ impl Renderer {
         }
     }
 
+    /// Draws block faces with the worn pack's surface programs, the engine's
+    /// modules they are compiled into in place of its own, or again with its
+    /// own once a pack without them is worn or none.
+    fn wear_pack_modules(&mut self, world: &World) {
+        let worn = world.resource::<shader_packs::WornShaderPack>();
+        let generation = worn.map_or(0, |worn| worn.pack.generation);
+        if generation == self.pack_modules_of {
+            return;
+        }
+        self.pack_modules_of = generation;
+        let wanted: Vec<(String, Vec<u8>)> = worn
+            .map(|worn| worn.pack.modules.iter().map(|(name, spirv)| (name.clone(), spirv.to_vec())).collect())
+            .unwrap_or_default();
+        if wanted.is_empty() && self.pack_modules.is_empty() {
+            return;
+        }
+        let shaders = self.shaders.replaced(&wanted);
+        self.gpu.wait_idle();
+        match Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders) {
+            Ok(pipelines) => {
+                self.pipelines.destroy(&self.gpu);
+                self.pipelines = pipelines;
+                self.pack_modules = wanted;
+            }
+            Err(error) => tracing::error!("the shader pack's surface programs cannot be drawn: {error:#}"),
+        }
+    }
+
+    /// Whether block faces are drawn with a worn pack's surface programs.
+    pub fn pack_surfaces_drawn(&self) -> bool {
+        !self.pack_modules.is_empty()
+    }
+
     /// The shader pack the frames are drawn with now, as the world wears it,
     /// once its pipelines are made.
     pub fn shader_pack_drawn(&self) -> Option<u64> {
@@ -1609,6 +1650,14 @@ impl Renderer {
     fn reload_shaders(&mut self) {
         let started = std::time::Instant::now();
         let Some(result) = self.watcher.as_mut().and_then(ShaderWatcher::poll) else { return };
+        // A worn pack's surface programs were compiled into the shaders as they were: drawn without them until it is
+        // compiled again.
+        if !self.pack_modules.is_empty() {
+            tracing::warn!(
+                "the engine's shaders changed: the shader pack's surface programs are drawn once it compiles again"
+            );
+            self.pack_modules.clear();
+        }
         let reloaded = result.and_then(|shaders| {
             self.gpu.wait_idle();
             let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?;
@@ -1656,9 +1705,12 @@ impl Renderer {
     pub fn use_custom_modules(&mut self, modules: &[(String, Vec<u8>)]) -> Result<()> {
         let shaders = self.shaders.replaced(modules);
         self.gpu.wait_idle();
-        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?;
+        let drawn = shaders.replaced(&self.pack_modules);
+        let pipelines = Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &drawn)?;
         self.pipelines.destroy(&self.gpu);
         self.pipelines = pipelines;
+        // Kept, so pipelines made again, as for a shader pack, are made with them.
+        self.shaders = shaders;
         self.custom.state = CustomShaderState::Ready;
         Ok(())
     }
@@ -1678,7 +1730,8 @@ impl Renderer {
         let made = compiled.and_then(|modules| {
             let shaders = self.shaders.replaced(&modules);
             self.gpu.wait_idle();
-            Ok((Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &shaders)?, shaders))
+            let drawn = shaders.replaced(&self.pack_modules);
+            Ok((Pipelines::new(&self.gpu, &self.bindless, (self.output_format, self.window_format), &drawn)?, shaders))
         });
         match made {
             Ok((pipelines, shaders)) => {
@@ -3286,8 +3339,9 @@ impl View {
             }
             false => None,
         };
-        // A worn shader pack's frame is written for its passes, which no view through a Portal draws.
-        if setup.pack.is_some() && portal.is_none() {
+        // A worn shader pack's frame is written for its passes, which no view through a Portal draws, and for its
+        // surface programs, which every view's block faces run.
+        if setup.pack.is_some() {
             self.buffers[slot].fit_pack_frame(gpu, slot)?;
         }
         let gathers = profile_marker!("Gathers").scope();
@@ -3862,6 +3916,11 @@ impl View {
                 bake_job: bake.map_or(0, |(bake, _)| bake.jobs),
                 block_light: blocks::light_volume_addresses(buffers.blocks.address)[0],
                 block_light_bytes: blocks::light_volume_addresses(buffers.blocks.address)[1],
+                pack_frame: buffers
+                    .pack_frame
+                    .as_ref()
+                    .filter(|_| setup.pack.is_some())
+                    .map_or(0, |frame| frame.address),
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -4012,8 +4071,23 @@ impl View {
                 table: table_copy(fg, buffers),
             }
         });
-        // A worn shader pack's images, and its frame, for its passes at each point of the frame.
+        // A worn shader pack's images, and its frame, for its passes at each point of the frame; through a Portal, its
+        // frame alone, for its surface programs.
         let pack = match (&setup.pack, portal) {
+            (Some(draw), Some(_)) => {
+                let post = &extracted.post.exposure;
+                let facts = shader_packs::FrameFacts {
+                    sun_own: extracted.sun_own,
+                    weather: world.resource::<weather::Weather>().copied(),
+                    exposure: frame_data.exposure * if post.auto { 1.0 } else { post.compensation.exp2() },
+                    drawn: extent,
+                    shown: output_extent,
+                    addresses: [0, 0, 0],
+                };
+                let pack_frame = shader_packs::GpuPackFrame::worn(&frame_data, facts, &draw.worn);
+                buffers.pack_frame.as_ref().expect("made for the pack").write(0, &[pack_frame]);
+                None
+            }
             (Some(draw), None) => {
                 let resolves = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
                 let resolved = if resolves { output_extent } else { extent };

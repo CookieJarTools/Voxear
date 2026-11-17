@@ -70,14 +70,14 @@ fn frame(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
     editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
 }
 
-/// Frames until `done`, for ten seconds at most.
+/// Frames until `done`, for a minute at most: a pack with surface programs compiles the engine's block shader.
 fn frames_until(
     editor: &mut voxear_editor::Editor,
     renderer: &mut Renderer,
     done: impl Fn(&voxear_editor::Editor) -> bool,
 ) -> bool {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(10) {
+    while started.elapsed() < Duration::from_secs(60) {
         frame(editor, renderer);
         if done(editor) {
             return true;

@@ -95,6 +95,23 @@ pub fn rows(ui: &mut Ui, root: NodeId, reference: &str, file: &std::path::Path) 
         tip(ui, row, &format!("{}, at {}: reads {reads}, writes {writes}", pass.program, pass.point.key()));
     }
 
+    let named = manifest.surfaces.named();
+    if !named.is_empty() {
+        let rows = part(ui, root, "Surfaces", "blocks");
+        for (key, program) in named {
+            let (label, tip_text) = match key {
+                "blocks" => {
+                    ("Blocks", "Lights every block's faces, and leaves where the pack has no program of their own")
+                }
+                _ => ("Leaves", "Lights faces of leaves, and sheets of leaves and of vines"),
+            };
+            let row = prop(ui, rows, label);
+            let value = ui.add_label(row, program);
+            ui.add_class(value, "value");
+            tip(ui, row, tip_text);
+        }
+    }
+
     let mut options = Vec::new();
     if !manifest.options.is_empty() {
         let rows = part(ui, root, "Options", "settings");

@@ -189,6 +189,7 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `block_world.write_land` | Write the land a Block World lays into its generator into the generator's graph |
 | `dungeon.starter`, `dungeon.layouts` | Make the starter temple dungeon for a Block World, and read the dungeons its generator lays out near a point |
 | `navigation.status`, `navigation.agents` | Read the navigation kept for each Block World, and what every Nav Agent and Block Mob is doing |
+| `navigation.bake` | Bake the open level's nav mesh from its still colliders, for agents on levels of models |
 | `navigation.path`, `navigation.nearest` | Find the way from one place to another as a Nav Agent would, and the nearest place to stand to a point |
 | `nav_agent.set_destination` | Send an Obj's Nav Agent somewhere, or stop it |
 | `graph.comments`, `graph.comment.add`, `graph.comment.set`, `graph.comment.remove` | Read and change the comments of a generator's graph or a VoxShade shader |

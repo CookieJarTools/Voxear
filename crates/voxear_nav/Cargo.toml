@@ -10,3 +10,4 @@ publish.workspace = true
 [dependencies]
 voxear_core.workspace = true
 voxear_terrain.workspace = true
+lz4_flex.workspace = true

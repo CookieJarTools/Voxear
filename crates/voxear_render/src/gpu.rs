@@ -1281,6 +1281,9 @@ pub struct GpuBuffers {
     /// light, a byte each (see `blocks::GpuLightVolume`).
     pub block_light: u64,
     pub block_light_bytes: u64,
+    /// The frame a worn shader pack's surface programs read
+    /// (`shader_packs::GpuPackFrame`); 0 with none worn.
+    pub pack_frame: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1721,7 +1724,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 74 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 75 * 8);
         assert_eq!(size_of::<GpuBakedInstance>(), 32 + 16 * 7);
         assert_eq!(size_of::<GpuBakeJob>(), 6 * 8 + 32);
         assert_eq!(size_of::<GpuReflectionProbe>(), 96);

@@ -666,9 +666,12 @@ pub enum ComponentKind {
     NavAgent = 34,
     /// Ways over the ground, which no one Obj has.
     Navigation = 35,
+    /// The dimensions the game has made, which no one Obj has, and which
+    /// one each Obj is in.
+    Dimension = 36,
     /// How an Obj stirs the water it moves through: its wake's size, how
     /// hard it stirs and how much foam it leaves.
-    WaterWake = 36,
+    WaterWake = 37,
 }
 
 /// The most kinds `kind_value` answers.
@@ -1916,6 +1919,15 @@ pub(crate) unsafe fn instantiate(
             return -1;
         }
     };
+    // Made at the top of the hierarchy, it is in the dimension the game is seen from, as `Dimension.Current` says;
+    // under a parent, in its parent's.
+    if parent.is_none() {
+        with_world(|world| {
+            let current = voxear_scene::CurrentDimension::of(world);
+            voxear_scene::set_dimension(world, root, current);
+            Some(())
+        });
+    }
     // Behaviours are created only now, outside the world borrow, because
     // creating one runs managed code that may call back into the world.
     let handles: Vec<u32> = objs.iter().flat_map(|(entity, specs)| attach(*entity, specs)).collect();

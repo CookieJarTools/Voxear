@@ -8,6 +8,7 @@ Navigation is how characters and creatures find their own way about a level: rou
 2. [[Finding Ways from Scripts]]: whether a place can be reached, how far it is on foot, somewhere to wander to
 3. [[Areas and Costs]]: roads that are kept to, ground that is kept off, and ground nothing walks on
 4. [[Nav Links]]: ladders, gaps, drops and doors that take you elsewhere, joining places walking does not
+5. [[Levels of Models]]: baking the navigation of a level built from models and colliders
 
 In a [[Block Worlds|Block World]] the places to walk are worked out from the blocks themselves, chunk by chunk, as the world streams in and as blocks are placed and dug. There is nothing to bake. [[Block Mobs]] walk on the same places.
 
@@ -23,7 +24,6 @@ Choose **Gizmos ▸ Navigation** in the Scene view's header. Every place somethi
 
 ## Not done yet
 
-- Levels made of models rather than blocks. Their navigation will be baked in the editor and saved beside the level.
 - Climbing vines and ropes without a Nav Link.
 - Ground that costs more or less to cross, such as roads a villager keeps to.
 - Agent sizes in Project Settings, and costs of ground set per agent.

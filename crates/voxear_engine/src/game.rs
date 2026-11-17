@@ -508,6 +508,8 @@ impl Game {
             }
         }
         dimensions::record_made(world, id, (Some(asset), key), objs);
+        // The changes made in it before it was last let go, or a save put back.
+        crate::dimension_saves::put_back(&mut self.engine.world, &mut self.content, id, self.levels.current());
         Ok(id)
     }
 
@@ -647,7 +649,9 @@ impl Game {
             stone => stone,
         };
         let turn = |placed, turns| built.turned_block(placed, turns, false);
-        let floors = dungeon.floors_at(gate.seed);
+        // As many floors as its site gives it and its stage has grown it by.
+        let stage = crate::dungeons::DungeonStages::of(world, gate.site()).stage;
+        let floors = crate::dungeons::floors_at_stage(dungeon, gate.seed, stage);
         let started = std::time::Instant::now();
         let inside = voxear_terrain::blocks::dungeon::in_rock(
             dungeon,
@@ -672,6 +676,7 @@ impl Game {
         };
         dimensions::made_on_demand(&mut self.engine.world, id);
         dimensions::note_key(&mut self.engine.world, id, key);
+        dimensions::note_dungeon(&mut self.engine.world, id, gate);
         let world = &mut self.engine.world;
         // Its world: the overworld's blocks, numbered as there, laid as the dungeon was built.
         let ground_file = voxear_terrain::blocks::file::BlockFile { generate: None, ..file };
@@ -697,12 +702,16 @@ impl Game {
         let placed = voxear_scene::Transform::new(at, turn, voxear_core::math::Vec3::ONE);
         let back = world.spawn((name, placed, portal, crate::dungeons::DungeonWayOut));
         dimensions::set_dimension(world, back, id);
+        // The changes made in it before it was last let go, or a save put back.
+        crate::dimension_saves::put_back(&mut self.engine.world, &mut self.content, id, self.levels.current());
         Ok((id, back))
     }
 
     /// Lets a dimension go, destroying its Objs at the end of the frame:
     /// persistent ones are moved to the level's. False where it was not made.
+    /// What was changed in it is kept, and put back when it is made again.
     pub fn let_go_dimension(&mut self, id: crate::dimensions::DimensionId) -> bool {
+        crate::dimension_saves::keep(&mut self.engine.world, &mut self.content, id, self.levels.current());
         match crate::dimensions::let_go(&mut self.engine.world, id) {
             Some(doomed) => {
                 self.engine.destroy_objs(&doomed);
@@ -1305,6 +1314,8 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // What scripts asked of dimensions, made or let go before the frame is drawn.
+        self.serve_dimension_asks(renderer.as_deref_mut());
         // Before the frame is drawn: what went through a Portal did not cross the world in a frame.
         {
             profile_scope!("Portals");
@@ -1664,6 +1675,27 @@ impl ScriptServices for GameServices<'_> {
 
     fn dungeons_json(&mut self, world: &World, obj: u64, at: [f32; 4]) -> Result<String> {
         crate::dungeons::dungeons_json(world, self.content, obj, at)
+    }
+
+    fn endless_changes(&mut self, world: &World, entity: Entity) -> Option<voxear_terrain::blocks::edits::BlockEdits> {
+        crate::blocks::endless_changes(world, entity)
+    }
+
+    fn put_endless_changes(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        edits: &voxear_terrain::blocks::edits::BlockEdits,
+    ) -> bool {
+        crate::blocks::put_endless_changes(world, entity, edits)
+    }
+
+    fn dimension_edits(&mut self, world: &mut World) -> Option<Vec<u8>> {
+        Some(crate::dimension_saves::capture_all(world, self.content, self.levels.current()))
+    }
+
+    fn apply_dimension_edits(&mut self, world: &mut World, bytes: &[u8]) -> Result<i32> {
+        crate::dimension_saves::apply_all(world, self.content, self.levels.current(), bytes)
     }
 
     fn block_guid(&mut self, world: &World, entity: Entity, block: u16) -> Option<String> {

@@ -2262,8 +2262,24 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
   75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
   player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
-  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the editor's dimension view, the script
-  API (dungeon stages and growth among it), saves per dimension, and terrains of height round every player.
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs.
+  Scripts and saves: `Ref<Dimension>` fields picked in the Inspector, `Dimension.Current`, `obj.Dimension`,
+  `obj.MoveTo(dimension, position)` (made first, awaited until its ground stands), `Dimension.Entered` and `Left`,
+  `Portal.CreatePair` across two dimensions and `PortalPassage` saying both; Objs scripts make at the top of the
+  hierarchy go into the current dimension; the full way `Dimensions.Make(dimension, key)`, `Dimensions.Made`, and a
+  `DimensionInstance` with `KeepLoaded`, `LetGo()`, `WhenReady`, its own `Blocks`, `Physics`, `Weather`, `Sky` and
+  `Clock`, and `Use()` to ask every call of it. Dungeons grow: `dungeon.Stage`, `Grow()` (only while nobody is in its
+  dimension), `IsCleared`, `Dimension`, `Portal` and `MakeDimension()`; a stage adds a floor under the last, every
+  space of the floors above where it stood (the last floor's end is laid as an arena would be, then made its way
+  down). A dimension let go keeps its changes and gets them back when made again; a save of the scene keeps each
+  dimension's apart (a `VXDM` entry, none for one never changed: 99 bytes for three blocks, put back in under a
+  millisecond), which dimension each Obj is in, and the dungeons' stages beside their sites. Fixed in passing: an
+  endless world's script save left out changes to chunks streamed away. Tests: a dimension's changes kept through
+  streaming out, let go and made again, and a save; a dungeon grown with nobody in it, made a floor deeper with
+  its first floor and a tower kept, refused while somebody is in it; a grown plan keeping its floors in three
+  seeds; a C# script making a dimension, asking its blocks from the level, moving itself and the camera in,
+  hearing it, making Portals across, and a save putting them back. To come: the editor's dimension view, and terrains
+  of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,
@@ -3754,7 +3770,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     reading what is kept and sending an agent, and a picture of the Scene view with the gizmo off and on (the
     ground under the camera tinted); every component's fields reached, the Nav Agent's among them.
   - [ ] Project Settings ▸ Navigation: agent types, areas and their costs, budgets
-  - [ ] baked nav meshes for mesh levels, saved beside the level; cutting them at run time for Nav Obstacles
+  - [x] **Baked nav meshes for levels of models** (`voxear_nav::mesh`): every still collider's triangles
+    (`navigation::bake_triangles`, from the level's real middle) laid into a grid of columns 0.3 m across, each
+    triangle clipped to each column so walls count as well as floors; a span's top walkable where its triangles
+    are no steeper than 45° and the span over it leaves 1.8 m; cells joined to those beside within a step of
+    0.45 m, those nearer than 0.35 m to an edge let go; the rest gathered into rectangles following the floor's
+    height at their corners, joined along the edges they share. Searches are an A* over the rectangles, each
+    entered at the middle of its edge, then the funnel through the edges crossed. Kept beside the level as a
+    `.nav` file (`VXNV`, LZ4), read as the level opens (`LevelNav`), shipped with it. Agents with no world of
+    blocks under them walk it (searches at once: a 279 m way 0.04 ms), by their Character Controller or along the
+    mesh; `navigation.path` and scripts' `Navigation` find ways over it. The editor bakes it on a thread from a
+    level's Inspector (**Bake Navigation**), the palette and `navigation.bake`; the Navigation gizmo draws its
+    rectangles. Timings (test build): a level 200 m square with 144 blocks on it bakes in 2.4 s. Tests: a box gone
+    round off its sides; a ramp joining two floors and one too steep not; a floor over a floor kept apart; a
+    corner turned on its inside; the file read back the same; the timings; agents walking round a wall on a baked
+    mesh by both ways of moving; a tool baking a level and finding a way over it, and the gizmo's picture.
+    Manual: Levels of Models.
+  - [ ] cutting nav meshes at run time for Nav Obstacles; bake settings per agent type
   - [ ] co-op and dimensions: agents where they have authority, Portals as links within and between dimensions
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
@@ -3856,8 +3888,13 @@ Done:
   - **Tests:** a GPU picture for a pass at each point, targets at half size, kept targets, normals, last frame's
     colour, taking a pack off, compiling again and what a mistake says; Evening over a world of blocks; wearing from
     each place, live reload and options carried over; the editor's menu, page and calls.
-  - Not yet: a pack's surface programs for block faces, leaves and water (stage 2), its own tonemap and sky (3),
-    shadows (4), and players' menu and C# (5); pictures of a pack's own (noise, a grade's table).
+- **Block faces and leaves lit by a pack's programs** (stage 2, without water). `[surface] blocks` and `leaves`, each
+  `float3 run(BlockSurface surface, BlockLighting light)`: the face (colour, normals, corner shade, sky light and block
+  light, look, what it is) and the light it sees (sun, shadow, sky, the blocks' glow, occlusion, reflections, lamps,
+  and the engine's own terms and colour). Compiled into the engine's block shader, swapped in while worn. Evening's
+  `faces.slang`: warm sun, cool shade, warm torchlight, leaves glowing against a low sun.
+  - Not yet: water's surface programs (stage 2's rest), its own tonemap and sky (3), shadows (4), and players' menu
+    and C# (5); pictures of a pack's own (noise, a grade's table).
 
 ## M13 — Virtualised geometry (Nanite-style)
 

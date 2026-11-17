@@ -342,13 +342,13 @@ fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it()
     };
     let (before, at) = (shown(&game).camera, looks_at(&game));
 
-    // A drag turns and tilts it.
+    // A drag with the right button turns and tilts it.
     game.ui.ui().pointer_move(640.0, 360.0);
-    game.ui.ui().pointer_button(true);
+    game.ui.ui().pointer_secondary(true);
     frame(&mut game);
     game.ui.ui().pointer_move(700.0, 330.0);
     frame(&mut game);
-    game.ui.ui().pointer_button(false);
+    game.ui.ui().pointer_secondary(false);
     frame(&mut game);
     let turned = shown(&game).camera;
     assert!(
@@ -360,17 +360,29 @@ fn its_action_opens_and_shuts_the_map_and_the_pointer_turns_moves_and_zooms_it()
     assert!(turned.tilt < before.tilt - 0.1, "thirty pixels up tilts it lower: {} to {}", before.tilt, turned.tilt);
     assert_eq!(looks_at(&game), at, "turning does not move it");
 
-    // A drag with the middle button moves it over the ground, the way the pointer goes.
+    // A drag moves it over the ground, the way the pointer goes, and it stops when the button is let go.
+    game.ui.ui().pointer_button(true);
+    frame(&mut game);
+    game.ui.ui().pointer_move(600.0, 330.0);
+    frame(&mut game);
+    game.ui.ui().pointer_button(false);
+    frame(&mut game);
+    let moved = looks_at(&game);
+    let by = ((moved[0] - at[0]).powi(2) + (moved[1] - at[1]).powi(2)).sqrt();
+    assert!(by > 5.0, "a hundred pixels moves it some cells: {at:?} to {moved:?}");
+    assert_eq!(shown(&game).camera.turn, turned.turn, "moving does not turn it");
+    game.ui.ui().pointer_move(640.0, 360.0);
+    frame(&mut game);
+    assert_eq!(looks_at(&game), moved, "let go, the pointer moving moves it no more");
+
+    // A drag with the middle button moves it too.
     game.ui.ui().pointer_middle(true);
     frame(&mut game);
     game.ui.ui().pointer_move(600.0, 330.0);
     frame(&mut game);
     game.ui.ui().pointer_middle(false);
     frame(&mut game);
-    let moved = looks_at(&game);
-    let by = ((moved[0] - at[0]).powi(2) + (moved[1] - at[1]).powi(2)).sqrt();
-    assert!(by > 5.0, "a hundred pixels moves it some cells: {at:?} to {moved:?}");
-    assert_eq!(shown(&game).camera.turn, turned.turn, "moving does not turn it");
+    assert_ne!(looks_at(&game), moved, "the middle button moves it as well");
 
     // The wheel turned away zooms in: each notch shows a little less ground, the slab as large on the screen as
     // it was, and past a point its cells are half the size, 1:4 becoming 1:2, with no jump in what is shown.

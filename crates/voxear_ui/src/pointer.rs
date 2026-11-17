@@ -230,6 +230,22 @@ impl Ui {
         self.pointer.middle_pressed.iter().any(|&target| self.is_within(NodeId(target), node))
     }
 
+    /// Whether the secondary button is held down on `node`, or on anything
+    /// in it, as for dragging on a map to turn it.
+    pub fn is_secondary_pressed(&self, node: NodeId) -> bool {
+        self.pointer.context_pressed.iter().any(|&target| self.is_within(NodeId(target), node))
+    }
+
+    /// Whether a press of the secondary button, or of the middle one, is
+    /// held on one of this UI's elements: its release is this UI's, wherever
+    /// the pointer is.
+    pub fn holds_other_press(&self, middle: bool) -> bool {
+        match middle {
+            true => !self.pointer.middle_pressed.is_empty(),
+            false => !self.pointer.context_pressed.is_empty(),
+        }
+    }
+
     /// Whether `node`, or anything in it, was context clicked since the last
     /// frame.
     pub fn context_clicked(&self, node: NodeId) -> bool {

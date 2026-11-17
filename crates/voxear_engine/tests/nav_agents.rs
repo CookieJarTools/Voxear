@@ -306,3 +306,30 @@ fn an_agent_jumps_a_trench_by_its_controller_and_along_the_nav() {
         assert!(lowest > 5.5, "{moves:?}: over it, never down in it: {lowest}");
     }
 }
+
+#[test]
+fn an_agent_goes_round_a_nav_area_nothing_walks_on() {
+    use voxear_engine::navigation::NavArea;
+    use voxear_terrain::blocks::block::BlockNavArea;
+    let (_dir, mut game, _) = game(32);
+    // A box nothing walks on across the field, its far end open.
+    let middle = Transform::from_position(Vec3::new(16.0, 6.5, 11.0));
+    game.engine.world.spawn((middle, NavArea { size: [4.0, 3.0, 22.0], area: BlockNavArea::NotWalkable }));
+    let walker = agent(&mut game, 6.5, 8.5, NavMoves::AlongTheNav);
+    let to = Vec3::new(26.5, 6.0, 8.5);
+    for _ in 0..10 {
+        game.tick(FRAME, None);
+    }
+    game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+    let mut frames = 0;
+    let mut inside = false;
+    while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+        game.tick(FRAME, None);
+        frames += 1;
+        let now = at(&game, walker);
+        inside |= (14.0..18.0).contains(&now.x) && now.z < 22.0;
+    }
+    let now = at(&game, walker);
+    assert!(frames < 1800 && (now - to).length() < 0.5, "it got there: {now} after {frames}");
+    assert!(!inside, "never through the box");
+}

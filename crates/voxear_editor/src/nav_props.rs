@@ -238,3 +238,89 @@ pub fn parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
         parts.push(Part::NavAgent);
     }
 }
+
+/// A value the Nav Area component shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NavAreaField {
+    Size,
+    Area,
+}
+
+use voxear_engine::navigation::NavArea;
+use voxear_terrain::blocks::block::BlockNavArea;
+
+/// The areas a Nav Area may give, as its dropdown shows them: every one
+/// but As It Is, which a box has no use for.
+fn areas() -> &'static [BlockNavArea] {
+    &BlockNavArea::ALL[1..]
+}
+
+pub fn area_props() -> Vec<Prop> {
+    vec![Prop::NavArea(NavAreaField::Size), Prop::NavArea(NavAreaField::Area)]
+}
+
+pub fn area_label(field: NavAreaField) -> String {
+    match field {
+        NavAreaField::Size => "Size",
+        NavAreaField::Area => "Area",
+    }
+    .into()
+}
+
+pub fn area_tooltip(field: NavAreaField) -> &'static str {
+    match field {
+        NavAreaField::Size => {
+            "How wide, high and long the box is, in metres, centred on the Obj and square to the world. Every place \
+             whose feet are in it is of its area. Default: 4, 2, 4."
+        }
+        NavAreaField::Area => {
+            "The ground it makes, whatever is under it: a Road is sought out, Not Walkable is never stood on, and \
+             the project's own areas cost what Project Settings ▸ Navigation says. Default: Road."
+        }
+    }
+}
+
+pub fn area_key(field: NavAreaField) -> &'static str {
+    match field {
+        NavAreaField::Size => "size",
+        NavAreaField::Area => "area",
+    }
+}
+
+pub fn area_get(game: &Game, entity: Entity, field: NavAreaField) -> Option<Value> {
+    let area = game.engine.world.get::<NavArea>(entity)?;
+    Some(match field {
+        NavAreaField::Size => Value::Vector(area.size.to_vec()),
+        NavAreaField::Area => Value::Choice(
+            areas().iter().position(|kept| *kept == area.area).unwrap_or(0),
+            areas().iter().map(|area| area.name().to_string()).collect(),
+        ),
+    })
+}
+
+pub fn area_set(game: &mut Game, entity: Entity, field: NavAreaField, value: Value) -> bool {
+    let Some(area) = game.engine.world.get_mut::<NavArea>(entity) else { return false };
+    match (field, value) {
+        (NavAreaField::Size, Value::Vector(size)) if size.len() == 3 => {
+            area.size = [0, 1, 2].map(|axis| size[axis].clamp(0.0, 10_000.0));
+        }
+        (NavAreaField::Area, Value::Choice(at, _)) => area.area = areas().get(at).copied().unwrap_or_default(),
+        _ => return false,
+    }
+    true
+}
+
+pub fn area_add(world: &mut World, entity: Entity) {
+    world.insert(entity, NavArea::default());
+}
+
+pub fn area_remove(world: &mut World, entity: Entity) {
+    world.remove::<NavArea>(entity);
+}
+
+/// Adds the Nav Area part where `entity` has the component.
+pub fn area_parts(world: &World, entity: Entity, parts: &mut Vec<Part>) {
+    if world.has::<NavArea>(entity) {
+        parts.push(Part::NavArea);
+    }
+}

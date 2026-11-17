@@ -4197,7 +4197,8 @@ as a minimap on the HUD or a map opened over the game.
   play stops in the editor (`Game::reset_ui`), the maps let go of everything they had on the one before
   (`Maps::leave_ui`): each Map's document, the input maps and the pointer an open map held, and its views' windows
   in the renderer. A Map whose minimap is no longer on the UI it is asked to show on is given a new one. A map opened large hears the pointer: a
-  drag turns and tilts, the middle button moves, the wheel zooms, a level at a time past a factor of two. A view
+  drag moves it over the ground, as the middle button does, a drag with the secondary button turns and tilts, the
+  wheel zooms, a level at a time past a factor of two. A view
   looks at the ground under what it follows (`ShownMap::ground`), not at how high that is, so the ground is where
   the arrow is though the camera flies. A view its ground covers (`cover`, a minimap) draws all its window's
   ground, 110 cells to each side, and shows the middle 46 of it at its fill: the rest is there for the corners of

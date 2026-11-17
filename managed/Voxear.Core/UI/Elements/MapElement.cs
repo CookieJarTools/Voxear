@@ -114,7 +114,7 @@ public abstract class MapElement : UiElement
 		}
 	}
 
-	/// <summary>Whether the pointer turns, moves and zooms it: a drag, a drag with the middle button, and the wheel.</summary>
+	/// <summary>Whether the pointer moves, turns and zooms it: a drag, a drag with the right button, and the wheel.</summary>
 	public bool PointerControl
 	{
 		get { return pointerControl; }

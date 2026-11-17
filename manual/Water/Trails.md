@@ -52,6 +52,6 @@ Trails are worked out on the GPU over a square of water round the camera, and on
 | Area | How far across the square round the camera is, in metres. Larger keeps wakes further off, with coarser ripples at the same Quality |
 | Look | Match the Water, Smooth or Blocky. Blocky stands the water in small squares a quarter of a block across, each flat, stepping up and down with the ripples, its foam laid square by square. Match the Water is blocky on worlds of blocks and smooth on the sea, Pools and Streams |
 
-On a 1920×1080 frame, Medium costs about 0.05 ms of GPU time each frame there is something to stir, and nothing once the water has been still for twenty seconds.
+Working them out costs about 0.02 ms of GPU time a frame at Medium and 0.06 ms at High on a mid-range GPU, whatever the screen's size; the water reading them costs too little to tell from one frame to the next. Once the water has been still for twenty seconds they cost nothing.
 
 From the command line, `vox editor call project.set key=water_trails.quality value=High` changes it in a running editor, as Project Settings does, and the editor's tools for AI reach the same settings and every Water Wake's.

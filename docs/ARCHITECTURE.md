@@ -940,6 +940,30 @@ decompression, background loading, unloading)*.
   with mailbox where it can.
 - Resources are fully bindless through descriptor indexing and buffer device address.
 
+**Pipelines at start** *(implemented)*.
+- **Made at once.** `Pipelines::new` asks for every pipeline twice, through a `Maker`:
+  - The first time it only notes each down (`PipelineJob`, which keeps its own names and formats).
+  - `make_pipelines` then compiles them all at once, one job per thread on as many threads as the machine has
+    (`VOXEAR_PIPELINE_THREADS`), while FSR's are made on a thread of their own.
+  - The second time hands each back in the order asked for, checking its name.
+- **Kept on disk.** Every pipeline goes through the device's pipeline cache (`Gpu::pipeline_cache`).
+  - The renderer fills it at start from a file named by its shaders' fingerprint, the GPU and its driver
+    (`pipeline_cache`). It writes the file again when it holds more: once the pipelines are made, and when the
+    renderer drops.
+  - An installed engine keeps the files in the user's cache folder (`~/.cache/voxear/pipelines`,
+    `%LOCALAPPDATA%\Voxear\Pipelines`). A build from source keeps its own beside its build, so engine builds made
+    while working never push out an installed one's.
+  - A folder keeps the four files used last, and none unused for a month. `VOXEAR_PIPELINE_CACHE` turns it off
+    (`0`) or names the folder.
+  - The driver's own cache is shared with every program and build, which fill it and push out what it held. When
+    it was all there was, every start of an engine whose pipelines had been pushed out compiled them all again,
+    one at a time, for a minute and more.
+- **The splash.** Until its first frame, a window shows a splash drawn on the CPU and copied into the swapchain
+  image (`splash`): the engine's name, what it is doing, and how many of the pipelines are made.
+  - Its text comes from `voxear_ui::TextRaster`, the UI's fonts laid out and rasterised without a GPU.
+  - The editor and the player add what they open (`Renderer::show_splash`).
+  - `RendererSettings::splash`, or `VOXEAR_SPLASH=0`, leaves it out.
+
 **Geometry.** GPU-driven, with occlusion culling and LOD built in. See
 [Geometry: GPU culling and LOD](#geometry-gpu-culling-and-lod) below.
 

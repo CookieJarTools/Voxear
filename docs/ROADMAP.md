@@ -377,6 +377,15 @@ Done so far:
 - **Themes in OKLCH:** every colour of the default theme made from a base, an accent and a contrast, as Linear makes
   its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
   Custom are picked in Preferences ▸ Appearance, a colour from its swatch.
+- **Starting in seconds, with a splash:**
+  - **What changed:** the renderer's 175 pipelines are compiled all at once on every thread. They are kept on disk
+    for each build and GPU, so a start no longer depends on the driver's shared cache, which other builds push out.
+  - **The splash:** until the first frame, the window shows the engine's name, what it is doing, and how many
+    pipelines are made.
+  - **Measured** on the RTX 3070 while other builds ran:
+    - one at a time with nothing kept, as before: 248 s;
+    - all at once: 51 s. The water pipelines, at 38 s each, are what it waits for;
+    - from what the first start kept: 2.8 s. The editor opened 8 s after starting.
 
 Next in M3:
 - UI core:

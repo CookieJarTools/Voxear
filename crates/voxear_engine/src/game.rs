@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+mod net_dimensions;
+
 use anyhow::{Context, Result};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_core::{
@@ -518,19 +520,22 @@ impl Game {
         if self.engine.is_edit_mode() {
             return;
         }
-        // One dimension loaded for a Portal at a time: the open Portal's. While one is open, any other loaded so goes
-        // at once, before the open one's is made; the one a camera is in stays.
+        // One dimension loaded for a Portal at a time: the open Portal's, or on a server the one open for each
+        // player. While one is open, any other loaded so goes at once, before the open one's is made; the one a
+        // camera is in stays, as do those networked play needs: those players are in, or the server has kept.
         let world = &self.engine.world;
-        if let Some(active) = crate::portals::active_into(world) {
-            let to = world
-                .get::<voxear_render::Portal>(active)
-                .and_then(|portal| portal.to)
-                .filter(|to| world.is_alive(*to));
-            let keep = to.map(|to| dimensions::dimension_of(world, to));
+        let open = crate::portals::open_into(world);
+        if !open.is_empty() {
+            let mut keep: Vec<dimensions::DimensionId> = open
+                .iter()
+                .filter_map(|portal| world.get::<voxear_render::Portal>(*portal)?.to.filter(|to| world.is_alive(*to)))
+                .map(|to| dimensions::dimension_of(world, to))
+                .collect();
+            keep.extend(crate::net::dimensions_needed(world));
             let current = dimensions::current(world);
             let going: Vec<dimensions::DimensionId> = world
                 .resource::<Dimensions>()
-                .map(|made| made.on_demand().filter(|id| Some(*id) != keep && *id != current).collect())
+                .map(|made| made.on_demand().filter(|id| !keep.contains(id) && *id != current).collect())
                 .unwrap_or_default();
             for id in going {
                 self.let_go_dimension(id);
@@ -592,8 +597,9 @@ impl Game {
                 }
             }
         }
-        let needed: Vec<dimensions::DimensionId> =
+        let mut needed: Vec<dimensions::DimensionId> =
             crate::portals::exits(&self.engine.world).iter().map(|exit| exit.dimension).collect();
+        needed.extend(crate::net::dimensions_needed(&self.engine.world));
         for id in dimensions::idle_ones(&mut self.engine.world, delta, &needed) {
             self.let_go_dimension(id);
         }
@@ -679,6 +685,7 @@ impl Game {
             world.insert(rock_world, look);
         }
         world.insert(rock_world, layout);
+        world.insert(rock_world, crate::dungeons::DungeonFrom(gate));
         dimensions::set_dimension(world, rock_world, id);
         // And the Portal back out, by the head of the stair.
         let [x, y, z] = inside.arrival;
@@ -1197,6 +1204,8 @@ impl Game {
             physics.world_mut().ask_in(current.0);
         }
         self.net_begin(delta, renderer.as_deref_mut());
+        // A player's machine makes the dimensions its server names, and takes in their edits.
+        self.join_dimensions(renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         {
             profile_scope!("Collider Meshes");
@@ -1422,6 +1431,7 @@ impl Game {
         // frame left to send goes.
         crate::net::set_level(&mut self.engine.world, self.levels.current());
         self.share_net_objects();
+        self.serve_dimensions();
         crate::net::frame_end(&mut self.engine.world);
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
@@ -1496,9 +1506,22 @@ impl Game {
             .map(|(entity, _)| entity)
             .collect();
         for entity in new {
+            // Placed by a dimension's file, it is found by that file's GUID and its path there.
+            let in_dimension = || {
+                let dimensions = world.resource::<crate::dimensions::Dimensions>()?;
+                dimensions.made().find_map(|made| {
+                    let (path, _) = made.objs.iter().find(|(_, placed)| *placed == entity)?;
+                    Some(Origin::Placed { scene: made.asset?.to_string(), path: path.to_string() })
+                })
+            };
             let origin = match self.levels.place_of(entity) {
                 Some((scene, path)) => Some(Origin::Placed { scene: scene.to_string(), path: path.to_string() }),
-                None => world.get::<Spawned>(entity).filter(|s| s.root == entity).map(|s| Origin::Prefab(s.prefab.to_string())),
+                None => in_dimension().or_else(|| {
+                    world
+                        .get::<Spawned>(entity)
+                        .filter(|s| s.root == entity)
+                        .map(|s| Origin::Prefab(s.prefab.to_string()))
+                }),
             };
             match origin {
                 Some(origin) => drop(crate::net::track(world, entity, origin)),
@@ -1519,7 +1542,14 @@ impl Game {
             let entity = match &request.origin {
                 Origin::Placed { scene, path } => {
                     let place = scene.parse().ok().zip(ObjPath::parse(path).ok());
-                    place.and_then(|(scene, path)| self.levels.entity_at(scene, &path))
+                    place.and_then(|(scene, path)| {
+                        // In the level's scenes, or in the file of the dimension the server has it in.
+                        self.levels.entity_at(scene, &path).or_else(|| {
+                            let dimensions = self.engine.world.resource::<crate::dimensions::Dimensions>()?;
+                            let made = dimensions.get(request.dimension).filter(|made| made.asset == Some(scene))?;
+                            dimensions.obj_at(made.id, &path)
+                        })
+                    })
                 }
                 Origin::Prefab(prefab) => {
                     let placement = Placement { position: request.state.position, rotation: request.state.rotation };
@@ -1528,7 +1558,14 @@ impl Game {
                 }
             };
             match entity {
-                Some(entity) => crate::net::bind(&mut self.engine.world, &request, entity),
+                Some(entity) => {
+                    // In the dimension the server has it in.
+                    let world = &mut self.engine.world;
+                    if crate::dimensions::dimension_of(world, entity) != request.dimension {
+                        voxear_scene::put_in_dimension(world, entity, request.dimension);
+                    }
+                    crate::net::bind(world, &request, entity);
+                }
                 None => tracing::warn!("the server shared {:?}, which is not here", request.origin),
             }
         }

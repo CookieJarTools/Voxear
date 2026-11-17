@@ -71,6 +71,12 @@ Mouse movement is better sent as where it ended up than as an action: a lost tic
 
 While networked, the game moves in **ticks**: its fixed steps, 60 a second unless the project says otherwise. Each tick, every client sends what its player did, with the last few ticks again in case one is lost. The server runs each player's input for that tick. A client keeps a tick or two ahead of the server, so its input arrives in time, by running a little faster or slower when it drifts. `Net.Tick` is the tick now, and `Net.RoundTrip` how long a message takes a client to the server and back.
 
+## The world round each player
+
+The server makes the ground round every player, as each player's own machine does round its camera: each world of blocks without end is made round the player's first Obj, in the dimension that Obj is in, out to the world's near distance, so what the server moves stands and walks on it however far apart the players are. A dedicated server needs no camera of its own for this. Dungeons' gates stand round every player too, and each player has a Portal of their own open into a dungeon or another dimension (see [[Dimensions]]).
+
+A player's machine makes the ground from the same files and seed as the server, so the ground itself is never sent. What is sent is what was changed: as a player joins, the server sends every change made to the level's worlds of blocks since they were made, the nearest to the player first, in the same packed form a save keeps them in. Changes made while they play go as your game's own RPCs.
+
 ## Network settings
 
 `[network]` in `voxear.toml` sets the tick rate, the port, how many may play, how much each end sends, and who decides what players' own Objs do ([[Shared Authority|server or shared]]):

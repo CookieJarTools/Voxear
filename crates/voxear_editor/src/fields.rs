@@ -782,6 +782,7 @@ fn component_check(name: &str) -> Option<fn(&World, Entity) -> bool> {
         "AudioSource" => |world, entity| world.has::<AudioSource>(entity),
         "BlockMob" => |world, entity| world.has::<voxear_engine::block_mob::BlockMob>(entity),
         "NavAgent" => |world, entity| world.has::<voxear_engine::nav_agent::NavAgent>(entity),
+        "NavArea" => |world, entity| world.has::<voxear_engine::navigation::NavArea>(entity),
         "BoneAttachment" => |world, entity| world.has::<animation::BoneAttachment>(entity),
         "Buoyancy" => |world, entity| world.has::<voxear_engine::water::Buoyancy>(entity),
         "Camera" => |world, entity| world.has::<voxear_render::Camera>(entity),

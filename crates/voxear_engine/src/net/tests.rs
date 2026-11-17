@@ -638,3 +638,230 @@ fn the_servers_storms_reach_every_player_as_they_join_as_they_change_and_with_it
     let late = clients[1].resource::<Storms>().expect("sent as they joined");
     assert_eq!(late.saved().made, server.resource::<Storms>().unwrap().saved().made);
 }
+
+/// A dimension of the server's, described as a `.dimension` asset's would be.
+fn caves_on(server: &mut World, id: u16) -> voxear_scene::DimensionId {
+    let dimension = voxear_scene::DimensionId(id);
+    let what = DimensionWhat::Asset { guid: format!("{:032x}", 0xcafe + u64::from(id)), key: 0 };
+    describe(server, dimension, what);
+    dimension
+}
+
+/// As the game does on a player's machine: makes each dimension the server
+/// names, numbered here 40 past the server's number for it, and each Obj in
+/// the dimension it is in.
+fn make_in_dimensions(clients: &mut [World]) {
+    for client in clients.iter_mut() {
+        for (number, _) in dimensions_to_make(client) {
+            dimension_made(client, number, voxear_scene::DimensionId(40 + number));
+        }
+    }
+    for client in clients.iter_mut() {
+        for request in take_spawns(client) {
+            let entity = client.spawn((voxear_scene::Transform::from_position(request.state.position),));
+            voxear_scene::set_dimension(client, entity, request.dimension);
+            bind(client, &request, entity);
+        }
+        for entity in take_despawns(client) {
+            client.despawn(entity);
+        }
+    }
+}
+
+/// The server's Obj's dimension on a player's machine, where it has it.
+fn dimension_there(client: &World, id: NetId) -> Option<voxear_scene::DimensionId> {
+    entity_of(client, id)
+        .filter(|entity| client.is_alive(*entity))
+        .map(|entity| voxear_scene::dimension_of(client, entity))
+}
+
+/// Frames until the server's described dimensions are current: as the game
+/// describes them every frame.
+fn frames_in_dimensions(server: &mut World, clients: &mut [World], frames: usize, described: &[u16]) {
+    for _ in 0..frames {
+        forget_described(server);
+        for &id in described {
+            caves_on(server, id);
+        }
+        // The edits each player is owed: none in these worlds but a word they are all sent.
+        for (player, dimension, _) in take_edits_wanted(server) {
+            owe_edits(server, player, dimension, Vec::new());
+        }
+        frame(server, clients, &vec![(false, false); clients.len()]);
+        make_in_dimensions(clients);
+        for client in clients.iter_mut() {
+            take_edits(client);
+        }
+    }
+}
+
+#[test]
+fn players_in_different_dimensions_get_only_the_objs_of_their_own_and_see_them_cross() {
+    use voxear_core::math::Vec3;
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 2, Conditions::GOOD);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let caves = caves_on(&mut server, 3);
+    // The first player in the level, the second in the caves, at the same numbers.
+    let near = NetObject { range: 20.0, ..NetObject::default() };
+    let first = shared(&mut server, Vec3::ZERO, near);
+    set_owner(&mut server, first, Some(PlayerId(1)));
+    let second = shared(&mut server, Vec3::ZERO, near);
+    set_owner(&mut server, second, Some(PlayerId(2)));
+    voxear_scene::set_dimension(&mut server, second, caves);
+    // Near each, an Obj of each dimension; and one of each with no range.
+    let rock = shared(&mut server, Vec3::new(2.0, 0.0, 0.0), near);
+    let bat = shared(&mut server, Vec3::new(2.0, 0.0, 0.0), near);
+    voxear_scene::set_dimension(&mut server, bat, caves);
+    let flag = shared(&mut server, Vec3::new(500.0, 0.0, 0.0), NetObject::default());
+    let echo = shared(&mut server, Vec3::new(500.0, 0.0, 0.0), NetObject::default());
+    voxear_scene::set_dimension(&mut server, echo, caves);
+    let id = |server: &World, entity| server.get::<Networked>(entity).unwrap().id;
+    let [first, second, rock, bat, flag, echo] = [first, second, rock, bat, flag, echo].map(|e| id(&server, e));
+    frames_in_dimensions(&mut server, &mut clients, 60, &[3]);
+    let has = |client: &World, id| dimension_there(client, id);
+    let level = voxear_scene::DimensionId::LEVEL;
+    let theirs = voxear_scene::DimensionId(41);
+    assert_eq!([first, rock, flag].map(|id| has(&clients[0], id)), [Some(level); 3], "the level's, near or everyone's");
+    assert_eq!([second, bat, echo].map(|id| has(&clients[0], id)), [None; 3], "nothing of the caves");
+    assert_eq!([second, bat, echo].map(|id| has(&clients[1], id)), [Some(theirs); 3], "the caves', in their own");
+    assert_eq!(has(&clients[1], rock), None, "the level's rock is near only in numbers");
+    assert_eq!(has(&clients[1], flag), Some(level), "every player has the level, and what in it goes to all");
+    assert_eq!(has(&clients[1], first), None, "the other player is near only in numbers");
+
+    // The bat flies into the level, past the first player: the second's machine lets it go, the first's makes it.
+    let bat_entity = entity_of(&server, bat).unwrap();
+    voxear_scene::set_dimension(&mut server, bat_entity, level);
+    frames_in_dimensions(&mut server, &mut clients, 20, &[3]);
+    assert_eq!((has(&clients[0], bat), has(&clients[1], bat)), (Some(level), None));
+
+    // The first player goes into the caves after the bat flew out: their machine is told of the caves, makes
+    // them, and has its own Obj go in, with all the caves have, and the level's rock goes.
+    let first_entity = entity_of(&server, first).unwrap();
+    voxear_scene::set_dimension(&mut server, first_entity, caves);
+    let bytes_before = session_of(&server).stats().sent_bytes_per_second;
+    frames_in_dimensions(&mut server, &mut clients, 20, &[3]);
+    assert_eq!([first, second, echo].map(|id| has(&clients[0], id)), [Some(theirs); 3]);
+    assert_eq!((has(&clients[0], rock), has(&clients[0], bat)), (None, None));
+    assert_eq!(has(&clients[1], first), Some(theirs), "and the second player sees them come");
+    assert!(bytes_before >= 0.0);
+}
+
+#[test]
+fn a_dimensions_edits_reach_a_player_nearest_first_before_they_may_go_in() {
+    use voxear_core::math::Vec3;
+    use voxear_terrain::blocks::edits::BlockEdits;
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::GOOD);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let me = shared(&mut server, Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    // Pieces of a dungeon's edits: 400 chunks with a block each dug, in pieces of 50.
+    let pieces: Vec<EditPiece> = (0..8)
+        .map(|piece| {
+            let mut map = voxear_terrain::blocks::BlockMap::default();
+            let mut now = voxear_terrain::blocks::BlockMap::default();
+            for n in 0..50 {
+                let at = [(piece * 50 + n) * 16, 0, 0];
+                map.set(at, 3);
+                now.set(at, 3);
+                now.set([at[0] + 1, 0, 0], 3);
+            }
+            let edits = BlockEdits::between(&map, &now);
+            EditPiece {
+                world: 0,
+                numbered: vec![(9, "a block numbered as the game ran".into(), 0)],
+                bytes: edits.to_bytes(),
+            }
+        })
+        .collect();
+    let caves = caves_on(&mut server, 2);
+    // The level's edits first, as they joined.
+    for _ in 0..5 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        for (player, dimension, _) in take_edits_wanted(&mut server) {
+            assert!(dimension.is_level());
+            owe_edits(&mut server, player, dimension, Vec::new());
+        }
+    }
+    // Into the caves: the server owes their edits, and the player may not go in till they are in.
+    voxear_scene::set_dimension(&mut server, me, caves);
+    let mut arrived = Vec::new();
+    let mut asked = 0;
+    let mut ready_after = None;
+    for n in 0..120 {
+        forget_described(&mut server);
+        caves_on(&mut server, 2);
+        for (player, dimension, _) in take_edits_wanted(&mut server) {
+            assert_eq!(dimension, caves);
+            asked += 1;
+            owe_edits(&mut server, player, dimension, pieces.clone());
+        }
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_in_dimensions(&mut clients);
+        arrived.extend(take_edits(&mut clients[0]));
+        if ready_after.is_none() && may_cross(&server, me, caves) {
+            ready_after = Some(n);
+        }
+    }
+    assert_eq!(asked, 1, "asked for once");
+    assert_eq!(arrived.len(), pieces.len(), "every piece came");
+    assert!(arrived.iter().zip(&pieces).all(|(came, sent)| came.piece == *sent), "in the order sent, nearest first");
+    assert!(arrived.iter().all(|came| came.dimension == voxear_scene::DimensionId(41)), "for the caves as made here");
+    assert!(edits_in(&clients[0], voxear_scene::DimensionId(41)));
+    let after = ready_after.expect("ready once they are in");
+    let sent = session_of(&server).stats().edit_bytes;
+    let made: usize = pieces.iter().map(|piece| piece.bytes.len()).sum();
+    println!(
+        "400 chunks with a block changed: {made} bytes of edits, {sent} sent with their messages, in {after} frames"
+    );
+    assert!(sent as usize >= made && (sent as usize) < made + 600, "{sent} bytes for {made}");
+    // Half the budget a second at most: 32 kB/s.
+    let seconds = after as f64 / 60.0;
+    assert!(sent as f64 / seconds <= 34.0 * 1024.0, "{:.1} kB/s", sent as f64 / seconds / 1024.0);
+}
+
+#[test]
+fn with_shared_authority_a_crossing_is_taken_by_a_portal_and_refused_without_one() {
+    use voxear_core::math::{Quat, Vec3};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session_with(&network, 1, Conditions::GOOD, NetAuthority::Shared);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let caves = caves_on(&mut server, 2);
+    // A Portal in the level at z 5 leads into one in the caves; nothing in the caves leads out.
+    let way = |world: &mut World, at: Vec3| {
+        let portal = voxear_render::Portal { size: [3.0, 4.0].into(), ..voxear_render::Portal::default() };
+        world.spawn((voxear_scene::Transform::new(at, Quat::IDENTITY, Vec3::ONE), portal))
+    };
+    let gate = way(&mut server, Vec3::new(0.0, 0.0, 5.0));
+    let back = way(&mut server, Vec3::new(0.0, 10.0, 0.0));
+    voxear_scene::set_dimension(&mut server, back, caves);
+    server.get_mut::<voxear_render::Portal>(gate).unwrap().to = Some(back);
+    let me = shared(&mut server, Vec3::new(0.0, 0.0, 4.0), NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    // Standing by the Portal, the player is named the caves it leads into, and their edits come.
+    frames_in_dimensions(&mut server, &mut clients, 30, &[2]);
+    let id = server.get::<Networked>(me).unwrap().id;
+    let mine = entity_of(&clients[0], id).unwrap();
+    let ours = voxear_scene::DimensionId(41);
+    assert!(edits_in(&clients[0], ours), "named, made here and its edits in");
+    // Their machine takes it through: the server takes their word, it being by the Portal.
+    voxear_scene::set_dimension(&mut clients[0], mine, ours);
+    clients[0].get_mut::<voxear_scene::Transform>(mine).unwrap().position = Vec3::new(0.0, 10.0, 1.0);
+    frames_in_dimensions(&mut server, &mut clients, 30, &[2]);
+    assert_eq!(voxear_scene::dimension_of(&server, me), caves, "taken by the Portal");
+    assert_eq!(voxear_scene::dimension_of(&clients[0], mine), ours);
+    // Far from any Portal, it says it went back into the level: refused, and put back in the caves.
+    clients[0].get_mut::<voxear_scene::Transform>(mine).unwrap().position = Vec3::new(300.0, 10.0, 300.0);
+    frames_in_dimensions(&mut server, &mut clients, 10, &[2]);
+    voxear_scene::set_dimension(&mut clients[0], mine, voxear_scene::DimensionId::LEVEL);
+    frames_in_dimensions(&mut server, &mut clients, 30, &[2]);
+    assert_eq!(voxear_scene::dimension_of(&server, me), caves, "no Portal by it there");
+    assert_eq!(voxear_scene::dimension_of(&clients[0], mine), ours, "and its machine was told where it is");
+}

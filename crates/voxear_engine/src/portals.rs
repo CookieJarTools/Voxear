@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use voxear_core::math::{Mat4, Vec3};
+use voxear_core::math::{Mat4, Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::scene::{CharacterController, PhysicsScene, Rigidbody};
 use voxear_render::{
@@ -189,6 +189,9 @@ struct PortalExits {
     unlinked: Vec<Entity>,
     /// That Portal, linked or not.
     active: Option<Entity>,
+    /// On a server, the one open for each player, as for where the game is
+    /// seen from: one such dimension at most loaded for each.
+    for_players: HashMap<crate::net::PlayerId, Entity>,
 }
 
 /// How much further than the dimension distance the Portal open into a
@@ -200,6 +203,23 @@ const DIMENSION_KEPT_PAST: f32 = 6.0;
 /// (see [`find_exits`]).
 pub fn active_into(world: &World) -> Option<Entity> {
     world.resource::<PortalExits>()?.active
+}
+
+/// Every Portal into a dimension loaded for it that is open now: the one
+/// for where the game is seen from, and on a server the one for each
+/// player.
+pub fn open_into(world: &World) -> Vec<Entity> {
+    let Some(exits) = world.resource::<PortalExits>() else { return Vec::new() };
+    let mut open: Vec<Entity> = exits.active.into_iter().chain(exits.for_players.values().copied()).collect();
+    open.sort_by_key(|entity| entity.to_bits());
+    open.dedup();
+    open
+}
+
+/// The Portal into a dimension loaded for it that is open for a player, on
+/// a server.
+pub(crate) fn open_for(world: &World, player: crate::net::PlayerId) -> Option<Entity> {
+    world.resource::<PortalExits>()?.for_players.get(&player).copied()
 }
 
 /// Whether a Portal leads into a dimension loaded for it, only while it is
@@ -255,50 +275,74 @@ const CLEARS_IN: f32 = 0.4;
 /// brought round where it is seen from, which takes them in.
 pub(crate) fn find_exits(world: &mut World) {
     let was = world.remove_resource::<PortalExits>().unwrap_or_default();
-    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let players = crate::net::player_places(world);
+    let viewer = crate::terrain::viewer(world);
+    if viewer.is_none() && players.is_empty() {
+        return;
+    }
     // Where the world is seen from, and what each camera films, each in its dimension: through a Portal ahead of
     // its camera, it stands by one whose far side is the place the camera is still in.
-    let mut near = vec![(viewer, crate::dimensions::seen_from(world))];
-    let cameras: Vec<Entity> =
-        world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
-    near.extend(
-        cameras
-            .into_iter()
-            .filter_map(|camera| subject(world, camera))
-            .map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))),
-    );
+    let mut near: Vec<(Vec3, voxear_scene::DimensionId)> = Vec::new();
+    if let Some(viewer) = viewer {
+        near.push((viewer, crate::dimensions::seen_from(world)));
+        let cameras: Vec<Entity> =
+            world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
+        near.extend(
+            cameras
+                .into_iter()
+                .filter_map(|camera| subject(world, camera))
+                .map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))),
+        );
+    }
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let switched = Switched::of(world);
     // Of the Portals into dimensions loaded for them, the nearest a place of its own dimension within the dimension
-    // distance is open, and no other: one such dimension at most is loaded at a time.
-    let mut nearest: Option<(Entity, f32)> = None;
-    for (entity, portal, transform, placed) in world
+    // distance is open, and no other: one such dimension at most is loaded at a time for where the game is seen
+    // from, and on a server one for each player.
+    let loaded: Vec<(Entity, PortalPose, Vec2, voxear_scene::DimensionId)> = world
         .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity) && leads_into_loaded(world, *entity))
-    {
-        let pose = PortalPose::of(transform, placed);
-        let here = voxear_scene::dimension_of(world, entity);
-        let distance = near
-            .iter()
-            .filter(|(_, dimension)| *dimension == here)
-            .map(|(from, _)| voxear_render::portals::away(&pose, portal.size, *from))
-            .fold(f32::MAX, f32::min);
-        let open = quality.dimension_distance + if was.active == Some(entity) { DIMENSION_KEPT_PAST } else { 0.0 };
-        if distance <= open && nearest.is_none_or(|(_, best)| distance < best) {
-            nearest = Some((entity, distance));
+        .map(|(entity, portal, transform, placed)| {
+            (entity, PortalPose::of(transform, placed), portal.size, voxear_scene::dimension_of(world, entity))
+        })
+        .collect();
+    let nearest = |places: &[(Vec3, voxear_scene::DimensionId)], was: Option<Entity>| {
+        let mut nearest: Option<(Entity, f32)> = None;
+        for (entity, pose, size, here) in &loaded {
+            let distance = places
+                .iter()
+                .filter(|(_, dimension)| dimension == here)
+                .map(|(from, _)| voxear_render::portals::away(pose, *size, *from))
+                .fold(f32::MAX, f32::min);
+            let open = quality.dimension_distance + if was == Some(*entity) { DIMENSION_KEPT_PAST } else { 0.0 };
+            if distance <= open && nearest.is_none_or(|(_, best)| distance < best) {
+                nearest = Some((*entity, distance));
+            }
         }
-    }
-    let active = nearest.map(|(entity, _)| entity);
+        nearest.map(|(entity, _)| entity)
+    };
+    let active = nearest(&near, was.active);
+    let for_players: HashMap<crate::net::PlayerId, Entity> = players
+        .iter()
+        .filter_map(|&(player, at, dimension)| {
+            Some((player, nearest(&[(at, dimension)], was.for_players.get(&player).copied())?))
+        })
+        .collect();
+    near.extend(players.iter().map(|&(_, at, dimension)| (at, dimension)));
     let mut unlinked = Vec::new();
     let exits: Vec<PortalExit> = world
         .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity))
-        // A Portal into a dimension loaded for it has its far side made only while it is the one open.
-        .filter(|(entity, ..)| !leads_into_loaded(world, *entity) || active == Some(*entity))
+        // A Portal into a dimension loaded for it has its far side made only while it is one open.
+        .filter(|(entity, ..)| {
+            !leads_into_loaded(world, *entity)
+                || active == Some(*entity)
+                || for_players.values().any(|open| open == entity)
+        })
         .filter_map(|(entity, portal, transform, placed)| {
             let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to));
             let pose = PortalPose::of(transform, placed);
@@ -328,10 +372,11 @@ pub(crate) fn find_exits(world: &mut World) {
             Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, dimension })
         })
         .collect();
-    if exits.is_empty() && was.made_for.is_empty() && unlinked.is_empty() && active.is_none() {
+    if exits.is_empty() && was.made_for.is_empty() && unlinked.is_empty() && active.is_none() && for_players.is_empty()
+    {
         return;
     }
-    world.insert_resource(PortalExits { exits, made_for: was.made_for, unlinked, active });
+    world.insert_resource(PortalExits { exits, made_for: was.made_for, unlinked, active, for_players });
 }
 
 /// Where Portals are seen from: where the world is, each camera switched on
@@ -353,6 +398,8 @@ fn seen_from(world: &World) -> Vec<(Vec3, voxear_scene::DimensionId)> {
         let subject = subject(world, camera);
         from.extend(subject.map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))));
     }
+    // And on a server, where each player is.
+    from.extend(crate::net::player_places(world).into_iter().map(|(_, at, dimension)| (at, dimension)));
     from
 }
 
@@ -392,7 +439,9 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
         // Portal's far side. Where nothing streams, it is there as it stands.
         let far_dimension = to.map_or(voxear_scene::DimensionId::LEVEL, |to| voxear_scene::dimension_of(world, to));
         let made = far.map(|far| crate::blocks::made_round(world, (far.position, far_dimension), round));
-        let ready = match made {
+        // On a player's machine, a dimension whose edits the server is still sending stays shut.
+        let edits_in = crate::net::edits_in(world, far_dimension);
+        let ground = match made {
             Some(Some(made)) => {
                 let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
                 made_for.insert(entity, ticks);
@@ -401,6 +450,7 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
             Some(None) => true,
             None => false,
         };
+        let ready = ground && edits_in;
         let pose = PortalPose::of_obj(world, entity);
         let here = voxear_scene::dimension_of(world, entity);
         let nearest = pose.map_or(f32::MAX, |pose| {
@@ -465,6 +515,8 @@ fn travellers(world: &World) -> Vec<(Entity, u8)> {
         .without::<Destroying>()
         .into_iter()
         .filter(|(_, _, character, body, traveller, _)| character.is_some() || body.is_some() || traveller.is_some())
+        // A networked Obj another machine moves goes where it says.
+        .filter(|(entity, ..)| crate::net::moves_here(world, *entity))
         .map(|(entity, .., layer)| (entity, layer.map_or(0, |layer| layer.0)))
         .collect()
 }
@@ -503,7 +555,8 @@ pub(crate) fn carry_objs(world: &mut World) {
         // Only a Portal of its own dimension: one at the same place in another is not there for it.
         let here = voxear_scene::dimension_of(world, entity);
         let through = ways.iter().filter(|way| way.from == here).find_map(|way| {
-            let passes = way.portal.passes & (1 << (layer & 31)) != 0;
+            // Into a dimension whose edits a player's machine is still taking in, not yet.
+            let passes = way.portal.passes & (1 << (layer & 31)) != 0 && crate::net::may_cross(world, entity, way.into);
             let side = crossing(&way.pose, way.portal.size, before, now, MARGIN).filter(|_| passes)?;
             Some((*way, side))
         });

@@ -146,6 +146,10 @@ pub struct BlockDef {
     /// `blocks::light`).
     #[serde(skip_serializing_if = "is_no_light")]
     pub light: u8,
+    /// What ground it makes for navigation: as it is, or an area of the
+    /// project's, as a road is.
+    #[serde(skip_serializing_if = "BlockNavArea::is_auto")]
+    pub nav_area: BlockNavArea,
     /// Whether its colour takes the biome it is in: grass and leaves green
     /// in a forest and yellowed on a savanna, fading from one to the other
     /// where biomes meet (see `generate::tints`).
@@ -332,6 +336,79 @@ pub struct BlockSounds {
 impl BlockSounds {
     pub fn is_none(&self) -> bool {
         *self == Self::default()
+    }
+}
+
+/// What ground a block makes to walk on, for navigation: as it is by
+/// itself (Walkable, water waded, a shut door), or an area a game set, its
+/// cost the project's (see Project Settings ▸ Navigation).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockNavArea {
+    /// As the block is: plain ground, water waded or swum, a door.
+    #[default]
+    Auto,
+    Walkable,
+    /// Ground sought out: a road, a path through a town.
+    Road,
+    /// Ground walked as if wading.
+    Water,
+    /// Ground nothing walks on: lava, spikes, a crop field.
+    NotWalkable,
+    /// The project's own areas.
+    Custom1,
+    Custom2,
+    Custom3,
+    Custom4,
+}
+
+impl BlockNavArea {
+    /// Every area, in the order a dropdown shows them.
+    pub const ALL: [Self; 9] = [
+        Self::Auto,
+        Self::Walkable,
+        Self::Road,
+        Self::Water,
+        Self::NotWalkable,
+        Self::Custom1,
+        Self::Custom2,
+        Self::Custom3,
+        Self::Custom4,
+    ];
+
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
+
+    /// What it is called, as a dropdown shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "As It Is",
+            Self::Walkable => "Walkable",
+            Self::Road => "Road",
+            Self::Water => "Water",
+            Self::NotWalkable => "Not Walkable",
+            Self::Custom1 => "Custom 1",
+            Self::Custom2 => "Custom 2",
+            Self::Custom3 => "Custom 3",
+            Self::Custom4 => "Custom 4",
+        }
+    }
+
+    /// Its area's number, as navigation keeps areas (see `voxear_nav`), one
+    /// more, so 0 says as the block is.
+    pub fn number(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Walkable => 1,
+            Self::Road => 2,
+            Self::Water => 3,
+            Self::NotWalkable => 6,
+            Self::Custom1 => 7,
+            Self::Custom2 => 8,
+            Self::Custom3 => 9,
+            Self::Custom4 => 10,
+        }
     }
 }
 
@@ -522,6 +599,7 @@ impl Default for BlockDef {
             sounds: BlockSounds::default(),
             heat: None,
             light: 0,
+            nav_area: BlockNavArea::Auto,
             tint: BlockTint::None,
             usable: false,
             press_time: None,
@@ -630,6 +708,7 @@ impl BlockDef {
         kind.part = self.part_look();
         kind.tint = self.tint;
         kind.light = self.light.min(MOST_BLOCK_LIGHT);
+        kind.nav_area = self.nav_area.number();
         // A cube made a slab is one still.
         kind.shaped();
     }

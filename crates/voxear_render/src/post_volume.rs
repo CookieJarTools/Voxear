@@ -78,9 +78,19 @@ impl PostVolume {
 /// The settings as the camera at `point` sees them: `post` with every post
 /// volume blended over it, lowest priority first.
 pub fn blend_volumes(world: &World, post: PostProcess, point: Vec3) -> PostProcess {
+    blend_volumes_in(world, post, point, &voxear_scene::Switched::of(world))
+}
+
+/// As [`blend_volumes`], of the volumes `switched` counts as on: those of
+/// one dimension, for a view in it.
+pub fn blend_volumes_in(
+    world: &World,
+    post: PostProcess,
+    point: Vec3,
+    switched: &voxear_scene::Switched,
+) -> PostProcess {
     let volumes =
         world.query_ref::<(Entity, &PostVolume, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
-    let switched = voxear_scene::Switched::of(world);
     let mut found: Vec<(i32, &PostVolume, f32)> = volumes
         .into_iter()
         .filter(|(entity, ..)| switched.is_on(world, *entity, voxear_scene::Switch::PostVolume))

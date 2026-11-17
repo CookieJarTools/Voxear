@@ -63,6 +63,7 @@ mod selector;
 mod shaders;
 mod sheet;
 mod style;
+mod text_raster;
 mod theme;
 mod tree;
 
@@ -88,6 +89,7 @@ pub use sheet::StyleSheet;
 pub use style::{
     Animated, Easing, Family, KeyframeAnimation, Overflow, Shadow, Style, TextAlign, TextStyle, Transition,
 };
+pub use text_raster::{TextCoverage, TextRaster};
 pub use theme::Theme;
 pub use tree::{Gradient, ImageRef};
 pub use tree::{Kind, NodeId, Ui};

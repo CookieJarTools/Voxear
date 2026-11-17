@@ -1522,6 +1522,10 @@ pub struct ModelData {
     /// as a part worn on a body.
     #[serde(default, skip_serializing_if = "is_false")]
     pub follow_parent: bool,
+    /// For a box model, a picture, by GUID or project path, its pixels are
+    /// drawn from in place of the sheet inside its file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// The parts this Obj changes from the model, each by its node.
     #[serde(default, rename = "part", skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartData>,
@@ -1558,6 +1562,7 @@ impl Default for ModelData {
             tint2: white(),
             tint3: white(),
             follow_parent: false,
+            sheet: None,
             parts: Vec::new(),
         }
     }
@@ -1838,6 +1843,18 @@ pub fn spawn(
     };
     let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
     apply_environment(engine, Environment { lighting, sky: scene.sky, post: scene.post.as_ref() })?;
+    spawn_objs(engine, content, renderer, scene, skip)
+}
+
+/// Spawns a scene's Objs, but for those at the paths in `skip`, leaving the
+/// world's sky and post-processing as they are.
+pub fn spawn_objs(
+    engine: &mut Engine,
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    scene: &SceneFile,
+    skip: &HashSet<ObjPath>,
+) -> Result<Vec<(ObjPath, Entity)>> {
     let objs = without(prefab::expand(content, &scene.objs)?, skip);
     let template = Template::resolve(content, renderer, &objs)?;
     let entities = engine.spawn_template(&template, None, None)?;
@@ -2856,7 +2873,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.character = world.get::<CharacterController>(entity).copied();
     obj.joint = world.get::<Joint>(entity).map(|joint| JointData::of(joint, &|e| file_path(world, ids, e)));
     let portal = world.get::<voxear_render::Portal>(entity);
-    obj.portal = portal.map(|portal| crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e)));
+    obj.portal = portal.map(|portal| crate::portals::PortalData {
+        into: world.get::<crate::portals::PortalInto>(entity).map(|into| into.0.clone()),
+        ..crate::portals::PortalData::of(portal, &|e| file_path(world, ids, e))
+    });
     let follows = world.get::<voxear_render::CameraFollows>(entity).and_then(|follows| file_path(world, ids, follows.0));
     obj.camera_follows = follows.map(|path| crate::lod_groups::FileRef::new(&path));
     obj.collider2d = world.get::<Collider2D>(entity).copied();

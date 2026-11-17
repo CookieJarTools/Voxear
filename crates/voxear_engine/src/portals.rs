@@ -103,6 +103,10 @@ struct Way {
     pose: PortalPose,
     portal: Portal,
     carry: Carry,
+    /// The dimension it is in, which only what is in it goes through, and
+    /// the one it leads into.
+    from: voxear_scene::DimensionId,
+    into: voxear_scene::DimensionId,
 }
 
 /// Every Portal an Obj can go through now: open, on, leading to a Portal
@@ -119,7 +123,8 @@ fn ways(world: &World) -> Vec<Way> {
             let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to))?;
             let pose = PortalPose::of(transform, placed);
             let carry = Carry::between(&pose, &PortalPose::of_obj(world, to)?);
-            Some(Way { entity, to, pose, portal: *portal, carry })
+            let (from, into) = (voxear_scene::dimension_of(world, entity), voxear_scene::dimension_of(world, to));
+            Some(Way { entity, to, pose, portal: *portal, carry, from, into })
         })
         .collect()
 }
@@ -165,6 +170,8 @@ pub struct PortalExit {
     pub at: Vec3,
     /// How far round it a world without end makes its own blocks.
     pub distance: f32,
+    /// The dimension the Portal it leads to is in, whose worlds make it.
+    pub dimension: voxear_scene::DimensionId,
 }
 
 /// The far sides being made this tick, as a world's resource, and how many
@@ -173,6 +180,17 @@ pub struct PortalExit {
 struct PortalExits {
     exits: Vec<PortalExit>,
     made_for: HashMap<Entity, u32>,
+    /// Portals near enough to show their far side that lead into a
+    /// dimension's file and are not linked to it yet.
+    unlinked: Vec<Entity>,
+}
+
+/// The Portals near enough to show their far sides that lead into a
+/// dimension not made yet (a [`PortalInto`]), to make it and link them.
+pub fn link_wanted(world: &World) -> Vec<(Entity, DimensionLink)> {
+    let Some(exits) = world.resource::<PortalExits>() else { return Vec::new() };
+    let link = |entity: &Entity| Some((*entity, world.get::<PortalInto>(*entity)?.0.clone()));
+    exits.unlinked.iter().filter_map(link).collect()
 }
 
 /// The far sides the world is made round this tick (see [`find_exits`]).
@@ -207,45 +225,66 @@ const CLEARS_IN: f32 = 0.4;
 pub(crate) fn find_exits(world: &mut World) {
     let was = world.remove_resource::<PortalExits>().unwrap_or_default();
     let Some(viewer) = crate::terrain::viewer(world) else { return };
-    // Where the world is seen from, and what each camera films: through a Portal ahead of its camera, it stands by
-    // one whose far side is the place the camera is still in.
-    let mut near = vec![viewer];
-    let cameras: Vec<Entity> = world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
-    near.extend(cameras.into_iter().filter_map(|camera| subject(world, camera)).map(|subject| place(world, subject)));
+    // Where the world is seen from, and what each camera films, each in its dimension: through a Portal ahead of
+    // its camera, it stands by one whose far side is the place the camera is still in.
+    let mut near = vec![(viewer, crate::dimensions::seen_from(world))];
+    let cameras: Vec<Entity> =
+        world.query_ref::<(Entity, &Camera)>().without::<Destroying>().into_iter().map(|(e, _)| e).collect();
+    near.extend(
+        cameras
+            .into_iter()
+            .filter_map(|camera| subject(world, camera))
+            .map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))),
+    );
     let quality = world.resource::<voxear_render::portals::PortalQuality>().copied().unwrap_or_default();
     let switched = Switched::of(world);
+    let mut unlinked = Vec::new();
     let exits: Vec<PortalExit> = world
         .query_ref::<(Entity, &Portal, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, portal, ..)| portal.open && switched.is_active(*entity))
         .filter_map(|(entity, portal, transform, placed)| {
-            let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to))?;
+            let to = portal.to.filter(|to| *to != entity && world.has::<Portal>(*to) && !world.has::<Destroying>(*to));
             let pose = PortalPose::of(transform, placed);
             let kept = was.exits.iter().any(|exit| exit.portal == entity);
             let reach = portal.reach(&quality) + MADE_BEFORE + if kept { KEPT_PAST } else { 0.0 };
-            let within = |from: &Vec3| {
+            // Near a place in its own dimension: one at the same numbers in another is nowhere near.
+            let here = voxear_scene::dimension_of(world, entity);
+            let within = |(from, dimension): &(Vec3, voxear_scene::DimensionId)| {
+                if *dimension != here {
+                    return false;
+                }
                 let local = pose.local(*from);
                 let (half, high) = (portal.size.x * 0.5, portal.size.y);
                 let nearest = Vec3::new(local.x.clamp(-half, half), local.y.clamp(0.0, high), 0.0);
                 local.distance(nearest) <= reach
             };
             near.iter().any(within).then_some(())?;
+            // One that leads into a dimension not made yet waits for it.
+            let Some(to) = to else {
+                if world.has::<PortalInto>(entity) {
+                    unlinked.push(entity);
+                }
+                return None;
+            };
             let at = PortalPose::of_obj(world, to)?.position;
-            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance })
+            let dimension = voxear_scene::dimension_of(world, to);
+            Some(PortalExit { portal: entity, at, distance: quality.far_side_distance, dimension })
         })
         .collect();
-    if exits.is_empty() && was.made_for.is_empty() {
+    if exits.is_empty() && was.made_for.is_empty() && unlinked.is_empty() {
         return;
     }
-    world.insert_resource(PortalExits { exits, made_for: was.made_for });
+    world.insert_resource(PortalExits { exits, made_for: was.made_for, unlinked });
 }
 
 /// Where Portals are seen from: where the world is, each camera switched on
 /// (from the far side of a Portal that carries its view), and what each
 /// films.
-fn seen_from(world: &World) -> Vec<Vec3> {
-    let mut from: Vec<Vec3> = crate::terrain::viewer(world).into_iter().collect();
+fn seen_from(world: &World) -> Vec<(Vec3, voxear_scene::DimensionId)> {
+    let viewer = crate::terrain::viewer(world).map(|viewer| (viewer, crate::dimensions::seen_from(world)));
+    let mut from: Vec<(Vec3, voxear_scene::DimensionId)> = viewer.into_iter().collect();
     let cameras: Vec<Entity> = world
         .query_ref::<(Entity, &Camera)>()
         .without::<Destroying>()
@@ -255,8 +294,9 @@ fn seen_from(world: &World) -> Vec<Vec3> {
         .collect();
     for camera in cameras {
         let (_, rotation, position) = voxear_scene::world_matrix(world, camera).to_scale_rotation_translation();
-        from.push(ViewCarry::of(world, camera, position, rotation).0);
-        from.extend(subject(world, camera).map(|subject| place(world, subject)));
+        from.push((ViewCarry::of(world, camera, position, rotation).0, ViewCarry::dimension(world, camera)));
+        let subject = subject(world, camera);
+        from.extend(subject.map(|subject| (place(world, subject), voxear_scene::dimension_of(world, subject))));
     }
     from
 }
@@ -295,7 +335,8 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
         let far = to.and_then(|to| PortalPose::of_obj(world, to));
         // Whether the ground is made where it leads, whoever it was made for: round the camera, or as another
         // Portal's far side. Where nothing streams, it is there as it stands.
-        let made = far.map(|far| crate::blocks::made_round(world, far.position, round));
+        let far_dimension = to.map_or(voxear_scene::DimensionId::LEVEL, |to| voxear_scene::dimension_of(world, to));
+        let made = far.map(|far| crate::blocks::made_round(world, (far.position, far_dimension), round));
         let ready = match made {
             Some(Some(made)) => {
                 let ticks = if made { exits.made_for.get(&entity).map_or(1, |ticks| ticks + 1) } else { 0 };
@@ -306,8 +347,12 @@ pub(crate) fn update_far(world: &mut World, delta: f32) {
             None => false,
         };
         let pose = PortalPose::of_obj(world, entity);
+        let here = voxear_scene::dimension_of(world, entity);
         let nearest = pose.map_or(f32::MAX, |pose| {
-            from.iter().map(|point| voxear_render::portals::away(&pose, portal.size, *point)).fold(f32::MAX, f32::min)
+            from.iter()
+                .filter(|(_, dimension)| *dimension == here)
+                .map(|(point, _)| voxear_render::portals::away(&pose, portal.size, *point))
+                .fold(f32::MAX, f32::min)
         });
         let reach = portal.reach(&quality);
         let was_near = was.is_some_and(|was| was.near);
@@ -400,7 +445,9 @@ pub(crate) fn carry_objs(world: &mut World) {
             seen.insert(entity, now);
             continue;
         };
-        let through = ways.iter().find_map(|way| {
+        // Only a Portal of its own dimension: one at the same place in another is not there for it.
+        let here = voxear_scene::dimension_of(world, entity);
+        let through = ways.iter().filter(|way| way.from == here).find_map(|way| {
             let passes = way.portal.passes & (1 << (layer & 31)) != 0;
             let side = crossing(&way.pose, way.portal.size, before, now, MARGIN).filter(|_| passes)?;
             Some((*way, side))
@@ -411,6 +458,10 @@ pub(crate) fn carry_objs(world: &mut World) {
         };
         set_down(world, entity, &way.carry);
         clear_of(world, entity, way.to, side);
+        // Into the dimension the far Portal is in, and everything under it with it.
+        if way.into != way.from {
+            voxear_scene::put_in_dimension(world, entity, way.into);
+        }
         if let Some(mut physics) = world.remove_resource::<PhysicsScene>() {
             physics.teleported(world, entity, way.carry.rotation);
             world.insert_resource(physics);
@@ -489,17 +540,28 @@ pub(crate) fn carry_views(world: &mut World) {
         let subject = subject(world, camera);
         // The Portal between the camera and what it films, walking from the subject to the camera: in at one face
         // of it, the camera looks from where coming out of the other puts it.
-        let carry = subject.and_then(|subject| {
+        // Of a Portal in the subject's dimension, the camera looking from the dimension that Portal leads into.
+        let carried = subject.and_then(|subject| {
             let up = voxear_scene::world_matrix(world, subject).y_axis.truncate().normalize_or_zero();
             let filmed = place(world, subject) + up * SUBJECT_HEIGHT;
-            ways.iter().find(|way| crossing(&way.pose, way.portal.size, filmed, here, MARGIN).is_some()).map(|way| way.carry)
+            let there = voxear_scene::dimension_of(world, subject);
+            let crossed = |way: &&Way| way.from == there && crossing(&way.pose, way.portal.size, filmed, here, MARGIN).is_some();
+            ways.iter().find(crossed).map(|way| (way.carry, way.into))
         });
-        match carry {
-            Some(carry) => {
-                world.insert(camera, ViewCarry(carry));
+        let carry = carried.map(|(carry, _)| carry);
+        match carried {
+            Some((carry, into)) => {
+                world.insert(camera, ViewCarry(carry, into));
             }
             None => {
                 world.remove::<ViewCarry>(camera);
+                // A camera that films something in another dimension, with no Portal between them, goes there too:
+                // it followed it through.
+                if let Some(there) = subject.map(|subject| voxear_scene::dimension_of(world, subject))
+                    && voxear_scene::dimension_of(world, camera) != there
+                {
+                    voxear_scene::put_in_dimension(world, camera, there);
+                }
             }
         }
         // Where it looks from went through a Portal when its Obj did, with its subject, or its carry changed: the
@@ -771,6 +833,9 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
 pub struct PortalData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<crate::lod_groups::FileRef>,
+    /// The Portal it leads to in a dimension's file, in place of `to`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into: Option<DimensionLink>,
     #[serde(default = "default_size", skip_serializing_if = "is_default_size")]
     pub size: [f32; 2],
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
@@ -791,6 +856,7 @@ impl PortalData {
         let layers: Vec<u8> = (0..32).filter(|layer| portal.passes & (1 << layer) != 0).collect();
         Self {
             to: portal.to.and_then(path).map(|path| crate::lod_groups::FileRef::new(&path)),
+            into: None,
             size: portal.size.to_array(),
             open: portal.open,
             passes: (portal.passes != u32::MAX).then_some(layers),
@@ -841,6 +907,28 @@ impl PortalData {
         Ok(toml::Value::Table(table))
     }
 }
+
+/// A Portal in a dimension's file, which a Portal in another file leads
+/// to: the `.dimension`, as files name an asset, and the Portal's Obj in it.
+///
+/// ```toml
+/// [obj.portal]
+/// into = { dimension = "Dimensions/Caves.dimension", portal = 3 }
+/// ```
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DimensionLink {
+    pub dimension: String,
+    pub portal: crate::lod_groups::FileRef,
+}
+
+/// On a Portal's Obj: the Portal it leads to in a dimension's file, which
+/// is linked to it once the game has made that dimension, as a camera comes
+/// near enough to see through it (see [`link_wanted`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortalInto(pub DimensionLink);
+
+impl voxear_ecs::Component for PortalInto {}
 
 fn default_size() -> [f32; 2] {
     Portal::default().size.to_array()

@@ -138,10 +138,13 @@ pub fn plant(world: &mut World, content: &mut Content, entity: Entity, at: [i32;
 /// The world of blocks `point`, in metres, lies in, and the block over the
 /// ground under it there: what a sapling dropped there takes root in.
 fn ground_under(world: &World, point: Vec3) -> Option<(Entity, [i32; 3])> {
+    // In the dimension the game is seen from.
+    let current = crate::dimensions::current(world);
     world
         .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == current)
         .find_map(|(entity, blocks, local, placed)| {
             let corner = voxear_terrain::corner(local, placed);
             let (place, _) = blocks.block_at((point - corner).to_array());

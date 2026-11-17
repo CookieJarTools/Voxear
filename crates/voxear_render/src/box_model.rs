@@ -372,6 +372,33 @@ impl Sheet {
         base64::encode(lz4_flex::compress_prepend_size(&body))
     }
 
+    /// The pixels as a PNG picture, to paint in another program.
+    pub fn to_png(&self) -> Result<Vec<u8>> {
+        let picture = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
+            .context("a sheet's pixels do not fill it")?;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        picture.write_to(&mut bytes, image::ImageFormat::Png).context("writing the sheet as a picture")?;
+        Ok(bytes.into_inner())
+    }
+
+    /// A sheet from a picture file, a PNG or any other the engine reads,
+    /// pixel for pixel.
+    pub fn from_picture(bytes: &[u8]) -> Result<Self> {
+        let picture = image::load_from_memory(bytes).context("reading the picture")?.to_rgba8();
+        let (width, height) = picture.dimensions();
+        Self::from_rgba(width, height, picture.into_raw())
+    }
+
+    /// A sheet from pixels already read: four bytes a pixel, row by row.
+    pub fn from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self> {
+        ensure!(
+            (1..=LARGEST_SHEET).contains(&width) && (1..=LARGEST_SHEET).contains(&height),
+            "a picture of {width} × {height} pixels; a sheet is {LARGEST_SHEET} a side at most"
+        );
+        ensure!(rgba.len() == (width * height * 4) as usize, "{} bytes for {width} × {height} pixels", rgba.len());
+        Ok(Self { width, height, rgba })
+    }
+
     /// A sheet of `width` × `height` pixels from [`to_text`](Self::to_text)'s text.
     pub fn from_text(width: u32, height: u32, text: &str) -> Result<Self> {
         let packed = base64::decode(text.trim()).context("the pixels are not base64")?;
@@ -838,6 +865,7 @@ impl BoxModel {
                 clips: self.clips.iter().map(|clip| self.baked(clip)).collect(),
             }),
             roles: self.bones.iter().map(|bone| bone.role).collect(),
+            source: None,
         };
         let (mut data, far) = self.build(&self.rest_matrices());
         if data.indices.is_empty() {
@@ -854,6 +882,43 @@ impl BoxModel {
             lods.push(crate::lod::Lod::new(&far, tallest * self.pixel_size(), &data.vertices));
         }
         model.meshes.push((data, lods));
+        self.add_look(&mut model);
+        let name = std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned());
+        model.nodes.push(PreparedNode {
+            name: name.unwrap_or_default(),
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            mesh: 0,
+            material: Some(0),
+            mesh_part: "mesh0.0".to_string(),
+            material_part: Some("material0".to_string()),
+            skin: Some(0),
+        });
+        model
+    }
+
+    /// The model's look alone, ready to upload: its sheet, its tint mask and
+    /// its material, which another sheet of the same layout draws it with,
+    /// with none of its boxes.
+    pub fn look(&self, path: &str) -> PreparedModel {
+        let mut model = PreparedModel {
+            path: path.to_string(),
+            meshes: Vec::new(),
+            textures: Vec::new(),
+            materials: Vec::new(),
+            nodes: Vec::new(),
+            animation: None,
+            roles: Vec::new(),
+            source: None,
+        };
+        self.add_look(&mut model);
+        model
+    }
+
+    /// Its texture, its tint mask where it has one, and the material drawn
+    /// with them, as the model's first.
+    fn add_look(&self, model: &mut PreparedModel) {
         let texture = self.texture();
         model.textures.push(PreparedTexture {
             name: SHEET.to_string(),
@@ -896,19 +961,6 @@ impl BoxModel {
             emissive: None,
             tint_mask,
         });
-        let name = std::path::Path::new(path).file_stem().map(|stem| stem.to_string_lossy().into_owned());
-        model.nodes.push(PreparedNode {
-            name: name.unwrap_or_default(),
-            position: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-            mesh: 0,
-            material: Some(0),
-            mesh_part: "mesh0.0".to_string(),
-            material_part: Some("material0".to_string()),
-            skin: Some(0),
-        });
-        model
     }
 
     /// Which of an Obj's tints a colour takes: the first unless the model
@@ -1072,7 +1124,10 @@ fn write_box(model_box: &ModelBox) -> FileBox {
 pub(crate) fn prepare(path: &str, read: &mut crate::gltf_import::ReadFile) -> Result<PreparedModel> {
     let bytes = read(path)?;
     let text = std::str::from_utf8(&bytes).context("the file is not text")?;
-    Ok(BoxModel::parse(text)?.prepared(path))
+    let mut model = BoxModel::parse(text)?.prepared(path);
+    // Kept, so a build can draw the model with another sheet as the editor does.
+    model.source = Some(text.to_string());
+    Ok(model)
 }
 
 #[cfg(test)]
@@ -1162,6 +1217,34 @@ mod tests {
         model.set_tint_of(belt, Some(TintSlot::First));
         model.set_tint_of(trim, Some(TintSlot::First));
         assert!(model.tints.is_empty() && model.tint_mask().is_none(), "back to the first, as if never set");
+    }
+
+    #[test]
+    fn a_sheet_goes_out_as_a_picture_and_comes_back_pixel_for_pixel() {
+        let mut sheet = Sheet::filled(8, 4, [0; 4]);
+        sheet.set(1, 2, [200, 40, 40, 255]);
+        sheet.set(7, 3, [10, 20, 30, 128]);
+        let png = sheet.to_png().unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        assert_eq!(Sheet::from_picture(&png).unwrap(), sheet, "holes and half-solid pixels kept");
+        assert!(Sheet::from_rgba(2, 2, vec![0; 15]).is_err(), "too few bytes");
+        assert!(Sheet::from_rgba(2048, 1, vec![0; 2048 * 4]).is_err(), "too wide");
+    }
+
+    #[test]
+    fn a_models_look_alone_is_its_sheet_and_material_and_its_file_is_kept_cooked() {
+        let model = figure();
+        let look = model.look("Figure.boxmodel");
+        assert!(look.meshes.is_empty() && look.nodes.is_empty());
+        assert_eq!((look.textures.len(), look.materials.len()), (1, 1));
+        let desc = look.materials[0].desc;
+        assert!(desc.pixels && desc.alpha_cutoff == Some(0.5) && look.materials[0].base_color == Some(0), "as its own");
+
+        let text = model.to_text();
+        let prepared = prepare("Figure.boxmodel", &mut |_| Ok(text.clone().into_bytes())).unwrap();
+        assert_eq!(prepared.box_source(), Some(text.as_str()), "kept for drawing it with another sheet");
+        let cooked = crate::CookedModel::from_bytes("Figure.boxmodel", &prepared.cook().unwrap().to_bytes()).unwrap();
+        assert_eq!(cooked.box_source(), Some(text.as_str()), "and in a build");
     }
 
     #[test]

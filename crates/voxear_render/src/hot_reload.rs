@@ -74,6 +74,15 @@ impl ShaderSet {
         self.spirv.get(name).map(|bytes| bytes.as_ref()).with_context(|| format!("no shader named {name}"))
     }
 
+    /// A number that differs when any of the shaders does, for naming what
+    /// was made from them (see `pipeline_cache`).
+    pub fn fingerprint(&self) -> u64 {
+        let mut names: Vec<&String> = self.spirv.keys().collect();
+        names.sort();
+        let bytes = names.into_iter().flat_map(|name| name.as_bytes().iter().chain(self.spirv[name].iter()));
+        crate::pipeline_cache::fnv(bytes.copied())
+    }
+
     /// These shaders, with some compiled again in their place.
     pub fn replaced(&self, modules: &[(String, Vec<u8>)]) -> Self {
         let mut spirv = self.spirv.clone();
@@ -303,7 +312,7 @@ impl Drop for ShaderWatcher {
 /// The Slang compiler: `SLANGC`, else the one shipped beside the executable
 /// (`slang/bin/`, its libraries in `slang/lib/` where it looks for them),
 /// else `slangc` on the path.
-fn slangc() -> String {
+pub(crate) fn slangc() -> String {
     if let Ok(path) = std::env::var("SLANGC") {
         return path;
     }

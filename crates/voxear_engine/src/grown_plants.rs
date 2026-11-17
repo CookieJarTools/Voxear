@@ -355,10 +355,21 @@ pub fn update(world: &mut World, content: &mut Content) {
             (None, _) => Vec3::ZERO,
         };
         let size = blocks.block_size.max(0.01);
-        let from = viewer.map(|viewer| [(viewer.x - corner.x) / size, (viewer.z - corner.z) / size]);
+        // Seen from where the viewer is, where that is in its world's dimension, or else from the first far side of
+        // a Portal into it; a world seen from neither is left as it is.
+        let here = voxear_scene::dimension_of(world, grower.world);
+        let exits_here: Vec<&crate::portals::PortalExit> = exits.iter().filter(|exit| exit.dimension == here).collect();
+        let seen_here = viewer.filter(|_| crate::dimensions::seen_from(world) == here);
+        if viewer.is_some() && seen_here.is_none() && exits_here.is_empty() {
+            continue;
+        }
+        let viewer_here = seen_here.or_else(|| exits_here.first().map(|exit| exit.at)).or(viewer);
+        let from = viewer_here.map(|viewer| [(viewer.x - corner.x) / size, (viewer.z - corner.z) / size]);
         let reach = grower.draw_distance.max(0.0) / size;
         let also: Vec<[f32; 2]> = match from {
-            Some(_) => exits.iter().map(|exit| [(exit.at.x - corner.x) / size, (exit.at.z - corner.z) / size]).collect(),
+            Some(_) => {
+                exits_here.iter().map(|exit| [(exit.at.x - corner.x) / size, (exit.at.z - corner.z) / size]).collect()
+            }
             None => Vec::new(),
         };
         let near = |column: [i32; 2], slack: f32| {

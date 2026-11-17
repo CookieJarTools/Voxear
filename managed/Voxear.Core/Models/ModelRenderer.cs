@@ -24,6 +24,12 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 	private const int FollowsValue = 6;
 	private const int ModelText = 0;
 	private const int SetModelText = 1;
+	private const int PartNameText = 2;
+	private const int PartMaterialText = 3;
+	private const int SetPartMaterialText = 4;
+	private const int SheetText = 5;
+	private const int SetSheetText = 6;
+	private const int EveryPart = 0xFFFFFF;
 
 	public static readonly ModelRenderer None = default;
 
@@ -79,6 +85,54 @@ public readonly struct ModelRenderer : IEquatable<ModelRenderer>, IObjComponent
 
 	/// <summary>How many parts it draws.</summary>
 	public int PartCount => (int)NativeComponent.Number(NativeComponent.ModelRenderer, Obj, PartsValue, 0f);
+
+	/// <summary>
+	/// For a box model, the picture it draws its pixels from in place of the sheet inside its file: a picture of the
+	/// same size and layout, as a face or a pattern painted on the model's own sheet and saved as a picture. Its
+	/// cubes keep their palette's colours, and each colour of the picture takes the tint the model gives that colour.
+	/// <see cref="Texture.None"/> draws the model's own sheet.
+	/// </summary>
+	public Texture Sheet
+	{
+		get
+		{
+			var reference = NativeComponent.Text(NativeComponent.ModelRenderer, Obj, SheetText);
+			return string.IsNullOrEmpty(reference) ? Texture.None : Texture.Load(reference);
+		}
+		set { NativeComponent.Ask(NativeComponent.ModelRenderer, Obj, SetSheetText, value.Reference); }
+	}
+
+	/// <summary>A part's name in the model, by its place among the parts it draws; empty past the last.</summary>
+	public string PartName(int part)
+	{
+		return part >= 0 ? NativeComponent.Text(NativeComponent.ModelRenderer, Obj, part << 8 | PartNameText) ?? string.Empty : string.Empty;
+	}
+
+	/// <summary>The material a part draws with in place of the model's own; <see cref="MaterialAsset.None"/> for its own.</summary>
+	public MaterialAsset GetMaterial(int part)
+	{
+		var reference = part >= 0 ? NativeComponent.Text(NativeComponent.ModelRenderer, Obj, part << 8 | PartMaterialText) : null;
+		return string.IsNullOrEmpty(reference) ? MaterialAsset.None : MaterialAsset.Load(reference);
+	}
+
+	/// <summary>
+	/// Draws one part, by its place among the parts it draws, with a material in place of the model's own, from this
+	/// frame; <see cref="MaterialAsset.None"/> puts the model's own back. As the Inspector's part material, and kept
+	/// when the scene is saved.
+	/// </summary>
+	public void SetMaterial(int part, MaterialAsset material)
+	{
+		if (part >= 0 && part < EveryPart)
+		{
+			NativeComponent.Ask(NativeComponent.ModelRenderer, Obj, part << 8 | SetPartMaterialText, material.Reference);
+		}
+	}
+
+	/// <summary>Draws every part with a material in place of the model's own; <see cref="MaterialAsset.None"/> puts theirs back.</summary>
+	public void SetMaterial(MaterialAsset material)
+	{
+		NativeComponent.Ask(NativeComponent.ModelRenderer, Obj, EveryPart << 8 | SetPartMaterialText, material.Reference);
+	}
 
 	/// <summary>
 	/// The Obj whose skeleton poses the model every frame, bone by bone by name, as a part worn on a body follows it;

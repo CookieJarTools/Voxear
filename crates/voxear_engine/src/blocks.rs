@@ -1078,6 +1078,9 @@ pub fn biome_at(world: &World, content: &mut Content, position: voxear_core::mat
         .filter(|(_, asset, ..)| asset.file.generate.as_ref().is_some_and(|generate| generate.placed.is_some()))
         .map(|(entity, asset, local, placed)| (entity, asset.clone(), voxear_terrain::corner(local, placed)))
         .collect();
+    // Of the dimension the game is seen from.
+    let current = crate::dimensions::current(world);
+    worlds.retain(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == current);
     worlds.sort_by_key(|(entity, ..)| entity.to_bits());
     for (_, asset, corner) in worlds {
         let Some(generate) = asset.file.generate.as_ref() else { continue };
@@ -1289,9 +1292,15 @@ pub fn stream(world: &mut World, content: &mut Content) {
     }
     let Some(viewer) = crate::terrain::viewer(world) else { return };
     let budget = voxear_terrain::WorldBudget::of(world);
-    // The haze closes in where the furthest far view ends, so its last land fades into the sky.
+    // Each world is made round the places in its own dimension: the viewer where it is in it.
+    let seen = crate::dimensions::seen_from(world);
+    let dimension_of = |entity: voxear_ecs::Entity| voxear_scene::dimension_of(world, entity);
+    let dimensions: std::collections::HashMap<voxear_ecs::Entity, voxear_scene::DimensionId> =
+        endless.iter().map(|(entity, ..)| (*entity, dimension_of(*entity))).collect();
+    // The haze closes in where the furthest far view of the dimension seen ends, so its last land fades into the sky.
     let furthest = endless
         .iter()
+        .filter(|(entity, ..)| dimensions[entity] == seen)
         .filter_map(|(_, asset, _)| asset.file.generate.as_ref()?.endless)
         .map(|far| budget.far(far.far, budget.near(far.distance)))
         .fold(0.0f32, f32::max);
@@ -1311,6 +1320,13 @@ pub fn stream(world: &mut World, content: &mut Content) {
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
+        // The far sides of Portals into its dimension; and where it is seen from, if that is in it. A world with
+        // neither is left as it is, its streamer kept for when it is seen again.
+        let here = dimensions[&entity];
+        let exits_here: Vec<&crate::portals::PortalExit> = exits.iter().filter(|exit| exit.dimension == here).collect();
+        if here != seen && exits_here.is_empty() {
+            continue;
+        }
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
         let made = voxear_core::profile_marker!("Making").scope();
         let Some(mut making) = making(content, &asset) else { continue };
@@ -1334,8 +1350,11 @@ pub fn stream(world: &mut World, content: &mut Content) {
             true => 1.0,
             false => budget.far_pushed_for(near, asset.file.block_size, fov),
         };
-        let mut from = vec![StreamFrom { at: camera, distance: distances.0, far: distances.1, pushed }];
-        from.extend(exits.iter().map(|exit| StreamFrom {
+        let mut from = Vec::new();
+        if here == seen {
+            from.push(StreamFrom { at: camera, distance: distances.0, far: distances.1, pushed });
+        }
+        from.extend(exits_here.iter().map(|exit| StreamFrom {
             at: [exit.at.x - corner.x, exit.at.z - corner.z],
             distance: exit.distance.min(distances.0),
             far: distances.1,
@@ -1353,11 +1372,18 @@ pub fn stream(world: &mut World, content: &mut Content) {
 /// their faces, within `radius` metres of `at`: there is ground to see
 /// there, and to stand on once physics has taken it up. `None` where no
 /// world of blocks is without end, so nothing is being made anywhere.
-pub fn made_round(world: &World, at: voxear_core::math::Vec3, radius: f32) -> Option<bool> {
+pub fn made_round(
+    world: &World,
+    (at, dimension): (voxear_core::math::Vec3, voxear_scene::DimensionId),
+    radius: f32,
+) -> Option<bool> {
     use voxear_scene::{Transform, WorldTransform};
     let streams = world.resource::<Streams>()?;
     let mut made = None;
-    for (entity, streamer) in &streams.0 {
+    // Only the worlds of the dimension the place is in.
+    for (entity, streamer) in
+        streams.0.iter().filter(|(entity, _)| voxear_scene::dimension_of(world, **entity) == dimension)
+    {
         let Some(local) = world.get::<Transform>(*entity) else { continue };
         let corner = voxear_terrain::corner(local, world.get::<WorldTransform>(*entity));
         made = Some(made.unwrap_or(true) && streamer.drawn_round([at.x - corner.x, at.z - corner.z], radius));
@@ -1400,10 +1426,17 @@ pub fn flow(world: &mut World, delta: f32) {
     }
 }
 
-/// Whether every world of blocks without end has made all its chunks round
-/// where it is seen from.
+/// Whether every world of blocks without end in the dimension the game is
+/// seen from has made all its chunks round where it is seen from.
 pub fn streamed(world: &World) -> bool {
-    world.resource::<Streams>().is_none_or(|streams| streams.0.values().all(|s| s.settled()))
+    let seen = crate::dimensions::seen_from(world);
+    world.resource::<Streams>().is_none_or(|streams| {
+        streams
+            .0
+            .iter()
+            .filter(|(entity, _)| voxear_scene::dimension_of(world, **entity) == seen)
+            .all(|(_, s)| s.settled())
+    })
 }
 
 #[cfg(test)]

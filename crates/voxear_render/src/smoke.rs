@@ -490,12 +490,18 @@ pub fn smoke_origin(middle: Vec3, cell: f32) -> Vec3 {
 
 /// This frame's smokes, the nearest `camera` first, and their cells, at
 /// `time`.
-pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, Vec<u32>, Vec<[f32; 4]>) {
-    let query = world.query_ref::<(&Smoke, &SmokeFill, Option<&SmokeHoles>, &Transform, Option<&WorldTransform>)>();
+pub(crate) fn gather(
+    world: &World,
+    (camera, sees): (Vec3, &dyn Fn(voxear_ecs::Entity) -> bool),
+    time: f32,
+) -> (Vec<GpuSmoke>, Vec<u32>, Vec<[f32; 4]>) {
+    let query = world
+        .query_ref::<(voxear_ecs::Entity, &Smoke, &SmokeFill, Option<&SmokeHoles>, &Transform, Option<&WorldTransform>)>();
     let mut smokes: Vec<(f32, &Smoke, &SmokeFill, Option<&SmokeHoles>)> = query
         .without::<Destroying>()
         .into_iter()
-        .map(|(smoke, fill, holes, transform, at)| {
+        .filter(|(entity, ..)| sees(*entity))
+        .map(|(_, smoke, fill, holes, transform, at)| {
             let middle = at.map_or(transform.position, |w| w.0.w_axis.truncate());
             (middle.distance_squared(camera), smoke, fill, holes)
         })

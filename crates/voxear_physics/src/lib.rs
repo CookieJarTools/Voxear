@@ -196,8 +196,9 @@ pub struct BodyDesc {
     pub continuous: bool,
     /// A number of the game's, such as its Obj's entity.
     pub user_data: u64,
-    /// Its layer, from 0 to 31.
-    pub layer: u8,
+    /// Its layer, from 0 to 31, and its dimension, 32 more for each: bodies
+    /// of two dimensions never collide.
+    pub layer: u16,
 }
 
 impl BodyDesc {
@@ -272,9 +273,10 @@ pub struct CharacterDesc {
     pub step_height: f32,
     /// What it pushes other bodies with, in kilograms.
     pub mass: f32,
-    /// Its layer, from 0 to 31: it walks through bodies on layers its own
-    /// does not collide with.
-    pub layer: u8,
+    /// Its layer, from 0 to 31, and its dimension, 32 more for each: it
+    /// walks through bodies on layers its own does not collide with, and
+    /// every body of another dimension.
+    pub layer: u16,
 }
 
 impl Default for CharacterDesc {
@@ -328,6 +330,8 @@ pub const MAX_BODIES: u32 = 65_536;
 /// A physics world on Jolt: see the crate's documentation.
 pub struct PhysicsWorld {
     world: *mut ffi::VxWorld,
+    /// The dimension rays and overlaps ask in: only its bodies are met.
+    asking_in: u16,
 }
 
 // The world is changed from one thread at a time; Jolt's own jobs run inside
@@ -348,14 +352,30 @@ impl Drop for PhysicsWorld {
     }
 }
 
+/// How many dimensions' layers a world keeps apart.
+pub const DIMENSIONS: u16 = 1024;
+
 impl PhysicsWorld {
     /// A world for up to `max_bodies` bodies, with Earth's gravity.
     pub fn new(max_bodies: u32) -> Self {
         let world = unsafe { ffi::vx_world_create(max_bodies) };
         assert!(!world.is_null(), "Jolt made no world");
-        let mut made = Self { world };
+        let mut made = Self { world, asking_in: 0 };
         made.set_gravity(EARTH_GRAVITY);
         made
+    }
+
+    /// Asks rays and overlaps from now on in the dimension numbered
+    /// `dimension` (see `voxear_scene::DimensionId`), whose bodies alone they
+    /// meet: a body is in the dimension its layer is given in, the dimension
+    /// times 32 plus its own layer.
+    pub fn ask_in(&mut self, dimension: u16) {
+        self.asking_in = dimension;
+    }
+
+    /// The query flags' bits for the dimension asked in.
+    fn asking_in(&self) -> u32 {
+        u32::from(self.asking_in) << 16
     }
 
     pub fn set_gravity(&mut self, gravity: Vec3) {
@@ -464,7 +484,7 @@ impl PhysicsWorld {
             sensor: u32::from(desc.sensor),
             continuous: u32::from(desc.continuous),
             user_data: desc.user_data,
-            layer: u32::from(desc.layer % 32),
+            layer: u32::from(desc.layer % (32 * DIMENSIONS)),
         };
         let body = unsafe { ffi::vx_body_add(self.world, &raw) };
         (body != u32::MAX).then_some(BodyId(body))
@@ -503,6 +523,17 @@ impl PhysicsWorld {
     pub fn set_velocity(&mut self, body: BodyId, linear: Vec3, angular: Vec3) {
         let (linear, angular) = (linear.to_array(), angular.to_array());
         unsafe { ffi::vx_body_set_velocity(self.world, body.0, linear.as_ptr(), angular.as_ptr()) };
+    }
+
+    /// Puts a body on another layer, its dimension's times 32 plus its own
+    /// (see [`BodyDesc::layer`]), keeping how fast it goes.
+    pub fn set_body_layer(&mut self, body: BodyId, layer: u16) {
+        unsafe { ffi::vx_body_set_layer(self.world, body.0, u32::from(layer % (32 * DIMENSIONS))) };
+    }
+
+    /// Puts a character on another layer, keeping how it moves.
+    pub fn set_character_layer(&mut self, character: CharacterId, layer: u16) {
+        unsafe { ffi::vx_character_set_layer(self.world, character.0, u32::from(layer % (32 * DIMENSIONS))) };
     }
 
     pub fn push(&mut self, body: BodyId, push: Push) {
@@ -547,7 +578,7 @@ impl PhysicsWorld {
         let mut hit = ffi::VxHit::default();
         let (origin, direction) = (origin.to_array(), direction.to_array());
         let ignore = ignore.map_or(u32::MAX, |body| body.0);
-        let flags = u32::from(sensors);
+        let flags = u32::from(sensors) | self.asking_in();
         let found =
             unsafe { ffi::vx_raycast(self.world, origin.as_ptr(), direction.as_ptr(), ignore, flags, mask, &mut hit) };
         (found != 0).then(|| RayHit {
@@ -575,7 +606,7 @@ impl PhysicsWorld {
     /// with sensors when `sensors`.
     pub fn bodies_in_sphere(&self, center: Vec3, radius: f32, mask: u32, sensors: bool) -> Vec<BodyId> {
         let center = center.to_array();
-        let flags = u32::from(sensors);
+        let flags = u32::from(sensors) | self.asking_in();
         let overlap = |found: &mut Vec<u32>| unsafe {
             let (out, capacity) = (found.as_mut_ptr(), found.len() as i32);
             ffi::vx_overlap_sphere(self.world, center.as_ptr(), radius, flags, mask, out, capacity)
@@ -618,7 +649,7 @@ impl PhysicsWorld {
             max_slope_degrees: desc.max_slope,
             step_height: desc.step_height,
             mass: desc.mass,
-            layer: u32::from(desc.layer % 32),
+            layer: u32::from(desc.layer % (32 * DIMENSIONS)),
         };
         CharacterId(unsafe { ffi::vx_character_add(self.world, &raw) })
     }

@@ -65,6 +65,8 @@ const ALPHA_THRESHOLD: f32 = 0.5;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AssetAction {
     Open(ProjectItem),
+    /// A shader pack's page: wear it or take it off, or set an option.
+    ShaderPack(crate::shader_pack_inspector::PackChange),
     /// A setting of the lighting settings shown, written into their file.
     Lighting(LightingAction),
     /// A change to the lighting of the scene at this path: the lighting
@@ -327,6 +329,8 @@ pub struct AssetView {
     lighting: Option<(LightingFields, PathBuf)>,
     /// A shader's state, compiled or not, and the state it shows.
     shader_state: Option<(NodeId, voxear_render::CustomShaderState)>,
+    /// A shader pack's page: whether it is worn, its passes and options.
+    shader_pack: Option<crate::shader_pack_inspector::ShaderPackFields>,
     /// A scene's lighting: the lighting settings it names, and theirs.
     scene_lighting: Option<LightingPanel>,
     /// Whether server builds take it whole, for what they leave out or
@@ -517,6 +521,7 @@ impl AssetView {
             lighting: None,
             scene_lighting: None,
             shader_state: None,
+            shader_pack: None,
             server: None,
         };
         match item.kind {
@@ -634,6 +639,13 @@ impl AssetView {
                 texture_pack_rows(ui, root, game, &file);
                 code(ui, root, &file, "toml", dark);
             }
+            // Its passes and options, then its manifest's text.
+            ItemKind::Asset(AssetKind::ShaderPack) => {
+                let guid = game.content.db().guid_of(&item.path);
+                let reference = guid.map_or_else(|| item.path.clone(), |guid| guid.to_string());
+                view.shader_pack = crate::shader_pack_inspector::rows(ui, root, &reference, &file);
+                code(ui, root, &file, "toml", dark);
+            }
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
                 let rows = part(ui, root, "Lighting", "light");
@@ -730,6 +742,7 @@ impl AssetView {
             lighting: None,
             scene_lighting: None,
             shader_state: None,
+            shader_pack: None,
             server: None,
         })
     }
@@ -745,6 +758,9 @@ impl AssetView {
         }
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if let Some(change) = self.shader_pack.as_mut().and_then(|fields| fields.update(ui)) {
+            return Some(AssetAction::ShaderPack(change));
         }
         if let Some((toggle, meta)) = self.server.as_ref().filter(|(toggle, _)| ui.changed(*toggle)) {
             let server = ui.is_checked(*toggle);
@@ -1098,6 +1114,14 @@ impl AssetView {
         }
         if let Some(panel) = &mut self.scene_lighting {
             show_scene_lighting(ui, panel, game, &self.item.path);
+        }
+    }
+
+    /// Shows on a shader pack's page whether it is worn, how it compiled, and
+    /// its options as worn.
+    pub fn show_shader_pack(&mut self, ui: &mut Ui, game: &Game) {
+        if let Some(fields) = &mut self.shader_pack {
+            fields.show(ui, game);
         }
     }
 
@@ -1884,6 +1908,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Script => "C# script",
         ItemKind::Asset(AssetKind::Level) => "Level",
         ItemKind::Asset(AssetKind::Scene) => "Scene",
+        ItemKind::Asset(AssetKind::Dimension) => "Dimension",
         ItemKind::Asset(AssetKind::Prefab) => "Prefab",
         ItemKind::Asset(AssetKind::Model) => "Model",
         ItemKind::Asset(AssetKind::Material) => "Material",
@@ -1900,6 +1925,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
+        ItemKind::Asset(AssetKind::ShaderPack) => "Shader pack",
         ItemKind::Asset(AssetKind::TexturePack) => "Texture pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::VoxShade) => "VoxShade",
@@ -1925,6 +1951,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Script => "code",
         ItemKind::Asset(AssetKind::Level) => "level",
         ItemKind::Asset(AssetKind::Scene) => "scene",
+        ItemKind::Asset(AssetKind::Dimension) => "globe",
         ItemKind::Asset(AssetKind::Prefab) => "cube",
         ItemKind::Asset(AssetKind::Model) => "box",
         ItemKind::Asset(AssetKind::Material) => "material",
@@ -1940,6 +1967,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::LookPack) => "eye",
+        ItemKind::Asset(AssetKind::ShaderPack) => "layers",
         ItemKind::Asset(AssetKind::TexturePack) => "image",
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::VoxShade) => "nodes",

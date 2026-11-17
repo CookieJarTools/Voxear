@@ -197,7 +197,8 @@ pub fn panels(world: &World, eye: Vec3) -> Vec<(Entity, PanelRect, UiPanel)> {
         true => rect.turned(),
         false => rect,
     };
-    let switched = voxear_scene::Switched::of(world);
+    // The panels of the dimension the game is seen from.
+    let switched = voxear_scene::Switched::in_dimension(world, voxear_scene::CurrentDimension::of(world));
     query
         .without::<Destroying>()
         .into_iter()

@@ -185,6 +185,7 @@ mod tests {
             ],
             animation: None,
             roles: Vec::new(),
+            source: None,
         }
     }
 

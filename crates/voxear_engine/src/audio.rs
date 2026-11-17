@@ -694,7 +694,8 @@ impl GameAudio {
             self.audio.set_listener(listener);
             listener
         });
-        let switched = Switched::of(world);
+        // Only what plays in the dimension the game is heard from: one at the same place in another is not there.
+        let switched = Switched::in_dimension(world, crate::dimensions::current(world));
         let found: Vec<(Entity, AudioSource, Vec3)> = world
             .query_ref::<(Entity, &AudioSource, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>()

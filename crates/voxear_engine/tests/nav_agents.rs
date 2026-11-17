@@ -306,3 +306,65 @@ fn an_agent_jumps_a_trench_by_its_controller_and_along_the_nav() {
         assert!(lowest > 5.5, "{moves:?}: over it, never down in it: {lowest}");
     }
 }
+
+#[test]
+fn an_agent_goes_round_a_nav_area_nothing_walks_on() {
+    use voxear_engine::navigation::NavArea;
+    use voxear_terrain::blocks::block::BlockNavArea;
+    let (_dir, mut game, _) = game(32);
+    // A box nothing walks on across the field, its far end open.
+    let middle = Transform::from_position(Vec3::new(16.0, 6.5, 11.0));
+    game.engine.world.spawn((middle, NavArea { size: [4.0, 3.0, 22.0], area: BlockNavArea::NotWalkable }));
+    let walker = agent(&mut game, 6.5, 8.5, NavMoves::AlongTheNav);
+    let to = Vec3::new(26.5, 6.0, 8.5);
+    for _ in 0..10 {
+        game.tick(FRAME, None);
+    }
+    game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+    let mut frames = 0;
+    let mut inside = false;
+    while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+        game.tick(FRAME, None);
+        frames += 1;
+        let now = at(&game, walker);
+        inside |= (14.0..18.0).contains(&now.x) && now.z < 22.0;
+    }
+    let now = at(&game, walker);
+    assert!(frames < 1800 && (now - to).length() < 0.5, "it got there: {now} after {frames}");
+    assert!(!inside, "never through the box");
+}
+
+#[test]
+fn an_agent_climbs_a_nav_link_onto_a_platform_it_cannot_walk_up_to() {
+    use voxear_engine::navigation::{NavLink, NavLinkKind};
+    for moves in [NavMoves::CharacterController, NavMoves::AlongTheNav] {
+        let (_dir, mut game, field) = game(32);
+        // A platform four blocks high, its west side at x = 16.
+        let mut raised = Vec::new();
+        for x in 16..24 {
+            for z in 4..12 {
+                for y in 6..10 {
+                    raised.push(([x, y, z], 1));
+                }
+            }
+        }
+        game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(raised);
+        // A ladder up its side: from the ground at its foot to its top.
+        let foot = Transform::from_position(Vec3::new(15.5, 6.0, 8.5));
+        let ladder = NavLink { end: [1.0, 4.0, 0.0], kind: NavLinkKind::Climb, both_ways: true, cost: 1.0 };
+        game.engine.world.spawn((foot, ladder));
+        let walker = agent(&mut game, 6.5, 8.5, moves);
+        let to = Vec3::new(20.5, 10.0, 8.5);
+        for _ in 0..10 {
+            game.tick(FRAME, None);
+        }
+        game.engine.world.get_mut::<NavAgent>(walker).unwrap().go_to(to);
+        let mut frames = 0;
+        while frames < 1800 && !(frames > 10 && arrived(&game, walker)) {
+            game.tick(FRAME, None);
+            frames += 1;
+        }
+        let now = at(&game, walker);
+        assert!(frames < 1800 && (now - to).length() < 0.6, "{moves:?}: up on the platform: {now} after {frames}");
+    }
+}

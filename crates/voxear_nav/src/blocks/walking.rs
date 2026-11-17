@@ -91,8 +91,10 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
         return Walking::default();
     }
     let Some(kind) = faces.get(usize::from(id)) else { return Walking::UNKNOWN };
+    // An area its block gives it, or as it is.
+    let given = |otherwise: u8| if kind.nav_area > 0 { kind.nav_area - 1 } else { otherwise };
     if is_water(faces, id) {
-        return Walking { bits: WET, floor: 0, area: WATER };
+        return Walking { bits: WET, floor: 0, area: given(WATER) };
     }
     let climbs = matches!(kind.shape, BlockShape::Vine | BlockShape::Rope);
     if !is_ground(faces, id) {
@@ -111,7 +113,7 @@ fn walking(faces: &[BlockFaces], id: BlockId) -> Walking {
             .unwrap_or(16),
         false => 16,
     };
-    Walking { bits: GROUND | stands | door, floor, area: WALKABLE }
+    Walking { bits: GROUND | stands | door, floor, area: given(WALKABLE) }
 }
 
 /// How something walks a world of blocks, in sixteenths of a block: how

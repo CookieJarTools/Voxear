@@ -54,6 +54,10 @@ pub struct ProjectFile {
     /// Which input actions the game plays with (see [`InputSettings`]).
     #[serde(default)]
     pub input: InputSettings,
+    /// What each kind of ground costs things finding their way (see
+    /// `crate::navigation::NavigationSettings`).
+    #[serde(default)]
+    pub navigation: crate::navigation::NavigationSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +83,7 @@ impl ProjectFile {
             foliage: voxear_render::FoliageMotion::default(),
             time: TimeSettings::default(),
             input: InputSettings::default(),
+            navigation: crate::navigation::NavigationSettings::default(),
             modules: None,
         }
     }

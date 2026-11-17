@@ -184,7 +184,7 @@ fn ways_reach_where_a_search_a_block_at_a_time_reaches_and_the_coarse_graph_keep
             let alone = SCRATCH.with(|scratch| {
                 let start = nav.nearest(on(from), ask.walker, 1.0, 2.0).unwrap();
                 let goal = nav.nearest(on(to), ask.walker, 3.0, 4.0);
-                fine(&mut scratch.borrow_mut(), &nav, None, start, goal, on(to), None, &ask)
+                fine(&mut scratch.borrow_mut(), &nav, None, start, goal, on(to), None, &ask, &Joins::default())
             });
             assert!(alone.reached);
             let best = alone.cost.max(1.0);
@@ -315,4 +315,52 @@ fn a_gap_is_jumped_by_what_jumps_and_only_as_wide_as_it_jumps() {
             assert_eq!((before[0], after[0]), (7, 8 + wide), "from the edge to the far edge: {:?}", found.corners);
         }
     }
+}
+
+#[test]
+fn a_road_is_walked_cheaply_ground_nothing_walks_on_is_gone_round_and_a_box_gives_its_area() {
+    // A road (block 3) across the floor at z = 2, and a strip nothing walks on (block 4) across it at x = 8,
+    // with a gap at z = 14.
+    let mut faces = FACES.to_vec();
+    faces.push(BlockFaces { nav_area: crate::ROAD + 1, ..BlockFaces::new(0, 0, 0) });
+    faces.push(BlockFaces { nav_area: crate::NOT_WALKABLE + 1, ..BlockFaces::new(0, 0, 0) });
+    let mut blocks = floor();
+    for x in 0..16 {
+        blocks.set([x, 0, 2], 3);
+    }
+    let nav = nav_with(&blocks, &faces);
+    let along = way(&nav, [1, 1, 2], [13, 1, 2]);
+    assert!((along.cost - 12.0 * 0.6).abs() < 1e-3, "along the road, at its cost: {}", along.cost);
+    for z in 0..14 {
+        blocks.set([8, 0, z], 4);
+    }
+    let nav = nav_with(&blocks, &faces);
+    let round = way(&nav, [1, 1, 2], [13, 1, 2]);
+    assert_eq!(round.status, PathStatus::Complete);
+    assert!(round.corners.iter().any(|at| cell(*at)[2] >= 14), "through the gap: {:?}", round.corners);
+    // A box over the gap, nothing to walk on: no way through.
+    let mut ask = PathAsk::new(on([1, 1, 2]), on([13, 1, 2]), Walker::blocks(2));
+    ask.boxes.push(crate::AreaBox { min: [7.0, 0.0, 13.0], max: [10.0, 4.0, 16.0], area: crate::NOT_WALKABLE });
+    assert_eq!(find_path(&nav, &ask).status, PathStatus::Partial);
+}
+
+#[test]
+fn a_link_is_taken_where_there_is_no_other_way_and_its_ends_are_corners() {
+    // A wall two blocks high all the way across the floor: no way over it but a link.
+    let mut blocks = floor();
+    for z in 0..16 {
+        blocks.set([8, 1, z], STONE);
+        blocks.set([8, 2, z], STONE);
+    }
+    let nav = nav_of(&blocks);
+    let mut ask = PathAsk::new(on([3, 1, 4]), on([13, 1, 4]), Walker::blocks(2));
+    assert_eq!(find_path(&nav, &ask).status, PathStatus::Partial);
+    ask.links.push(crate::Link { from: on([7, 1, 10]), to: on([9, 1, 10]), both_ways: false, cost: 1.0, kind: 3 });
+    let over = find_path(&nav, &ask);
+    assert_eq!(over.status, PathStatus::Complete, "{:?}", over.corners);
+    let at = over.links.iter().position(|link| *link == Some(3)).expect("a corner reached by the link");
+    assert_eq!((cell(over.corners[at - 1]), cell(over.corners[at])), ([7, 1, 10], [9, 1, 10]));
+    // One way only: no way back over it.
+    let back = find_path(&nav, &PathAsk { from: on([13, 1, 4]), to: on([3, 1, 4]), ..ask.clone() });
+    assert_eq!(back.status, PathStatus::Partial);
 }

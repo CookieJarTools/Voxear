@@ -138,6 +138,10 @@ pub enum Part {
     Storms,
     /// What finds its Obj's way and walks it (see `nav_props`).
     NavAgent,
+    /// A box of the world given an area of ground (see `nav_props`).
+    NavArea,
+    /// A way joining two places walking does not (see `nav_props`).
+    NavLink,
     HeatSource,
     HeatZone,
     HeatBody,
@@ -217,6 +221,8 @@ impl Part {
             Part::Climate => "climate".into(),
             Part::Storms => "storms".into(),
             Part::NavAgent => "nav_agent".into(),
+            Part::NavArea => "nav_area".into(),
+            Part::NavLink => "nav_link".into(),
             Part::HeatSource => "heat_source".into(),
             Part::HeatZone => "heat_zone".into(),
             Part::HeatBody => "heat_body".into(),
@@ -299,6 +305,8 @@ impl Part {
             Part::Climate => "Climate",
             Part::Storms => "Storms",
             Part::NavAgent => "Nav Agent",
+            Part::NavArea => "Nav Area",
+            Part::NavLink => "Nav Link",
             Part::HeatSource => "Heat Source",
             Part::HeatZone => "Heat Zone",
             Part::HeatBody => "Heat Body",
@@ -395,6 +403,8 @@ impl Part {
             Part::Climate => "globe",
             Part::Storms => "cloud-lightning",
             Part::NavAgent => "map-arrow",
+            Part::NavArea => "map-pin",
+            Part::NavLink => "map-arrow",
             Part::HeatSource | Part::HeatBody => "sun",
             Part::HeatZone => "box",
             Part::NetObject => "globe",
@@ -856,6 +866,10 @@ pub enum Prop {
     Storm(crate::storm_props::StormField),
     /// A value of an Obj's Nav Agent (see `nav_props`).
     Nav(crate::nav_props::NavField),
+    /// A value of an Obj's Nav Area (see `nav_props`).
+    NavArea(crate::nav_props::NavAreaField),
+    /// A value of an Obj's Nav Link (see `nav_props`).
+    NavLink(crate::nav_props::NavLinkField),
     FieldOfView,
     Near,
     Exposure,
@@ -1004,6 +1018,8 @@ impl Prop {
             Prop::Heat(field) => crate::heat_props::part(*field),
             Prop::Storm(_) => Part::Storms,
             Prop::Nav(_) => Part::NavAgent,
+            Prop::NavArea(_) => Part::NavArea,
+            Prop::NavLink(_) => Part::NavLink,
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -1397,6 +1413,8 @@ impl Prop {
             Prop::Heat(field) => crate::heat_props::key(*field),
             Prop::Storm(field) => crate::storm_props::key(*field),
             Prop::Nav(field) => crate::nav_props::key(*field),
+            Prop::NavArea(field) => crate::nav_props::area_key(*field),
+            Prop::NavLink(field) => crate::nav_props::link_key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1905,6 +1923,8 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     crate::heat_props::parts(world, entity, &mut parts);
     crate::storm_props::parts(world, entity, &mut parts);
     crate::nav_props::parts(world, entity, &mut parts);
+    crate::nav_props::area_parts(world, entity, &mut parts);
+    crate::nav_props::link_parts(world, entity, &mut parts);
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -2196,6 +2216,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         Part::Storms => crate::storm_props::props(world, entity),
         Part::NavAgent => crate::nav_props::props(world, entity),
+        Part::NavArea => crate::nav_props::area_props(),
+        Part::NavLink => crate::nav_props::link_props(),
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
@@ -2602,6 +2624,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::Heat(field) => return crate::heat_props::label(*field),
         Prop::Storm(field) => return crate::storm_props::label(*field),
         Prop::Nav(field) => return crate::nav_props::label(*field),
+        Prop::NavArea(field) => return crate::nav_props::area_label(*field),
+        Prop::NavLink(field) => return crate::nav_props::link_label(*field),
         Prop::Terrain(field) => crate::terrain_props::label(*field),
         Prop::BlockWorld(field) => crate::block_props::label(*field),
         Prop::Plants(field) => crate::plants_props::label(*field),
@@ -3054,6 +3078,8 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::Heat(field), _) => crate::heat_props::unit(*field),
         (Prop::Storm(field), _) => crate::storm_props::unit(*field),
         (Prop::Nav(field), _) => crate::nav_props::unit(*field),
+        (Prop::NavArea(crate::nav_props::NavAreaField::Size), _) => Some("m"),
+        (Prop::NavLink(crate::nav_props::NavLinkField::End | crate::nav_props::NavLinkField::Cost), _) => Some("m"),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -3215,6 +3241,8 @@ pub fn add(
         }
         Part::Storms => crate::storm_props::add(world, entity),
         Part::NavAgent => crate::nav_props::add(world, entity),
+        Part::NavArea => crate::nav_props::area_add(world, entity),
+        Part::NavLink => crate::nav_props::link_add(world, entity),
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -3358,6 +3386,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         }
         Part::Storms => crate::storm_props::remove(world, entity),
         Part::NavAgent => crate::nav_props::remove(world, entity),
+        Part::NavArea => crate::nav_props::area_remove(world, entity),
+        Part::NavLink => crate::nav_props::link_remove(world, entity),
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
         }
@@ -3469,6 +3499,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::Heat(field) => return crate::heat_props::get(game, entity, *field),
         Prop::Storm(field) => return crate::storm_props::get(game, entity, *field),
         Prop::Nav(field) => return crate::nav_props::get(game, entity, *field),
+        Prop::NavArea(field) => return crate::nav_props::area_get(game, entity, *field),
+        Prop::NavLink(field) => return crate::nav_props::link_get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -4260,6 +4292,8 @@ pub fn set(
         (Prop::Heat(field), value) => crate::heat_props::set(game, entity, *field, value),
         (Prop::Storm(field), value) => crate::storm_props::set(game, entity, *field, value),
         (Prop::Nav(field), value) => crate::nav_props::set(game, entity, *field, value),
+        (Prop::NavArea(field), value) => crate::nav_props::area_set(game, entity, *field, value),
+        (Prop::NavLink(field), value) => crate::nav_props::link_set(game, entity, *field, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {

@@ -30,12 +30,49 @@ pub const AREAS: usize = 32;
 
 /// The area a place is when nothing says otherwise: plain ground.
 pub const WALKABLE: u8 = 0;
+/// The area of ground sought out: a road, a path through a town.
+pub const ROAD: u8 = 1;
 /// The area of a place in water shallow enough to wade.
 pub const WATER: u8 = 2;
 /// The area of a place on the top of water too deep to stand in: swum.
 pub const SWIM: u8 = 3;
 /// The area of a place in a shut door, which is opened to go through.
 pub const DOOR: u8 = 4;
+/// The area of ground nothing walks on.
+pub const NOT_WALKABLE: u8 = 5;
+/// The first of a project's own areas, four of them.
+pub const CUSTOM: u8 = 6;
+
+/// A link a level's maker puts between two places: a ladder, a gap to jump,
+/// a hole to drop down, a door that takes you elsewhere. A search may take
+/// it as one step, from the place to stand nearest `from` to the one
+/// nearest `to` (and back where `both_ways`), costing as far as it goes and
+/// `cost` more. `kind` says how what walks it crosses it. In blocks from
+/// the world's corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Link {
+    pub from: [f32; 3],
+    pub to: [f32; 3],
+    pub both_ways: bool,
+    pub cost: f32,
+    pub kind: u8,
+}
+
+/// A box of a world given an area, as a Nav Area component marks a road
+/// through a town: a place whose feet are in it is of that area, whatever
+/// it stands on. In blocks from the world's corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub area: u8,
+}
+
+impl AreaBox {
+    pub fn holds(&self, at: [f32; 3]) -> bool {
+        (0..3).all(|axis| (self.min[axis]..=self.max[axis]).contains(&at[axis]))
+    }
+}
 
 /// What each area costs to cross, a block of it at a time: 1 for plain
 /// ground, more for what is avoided, less for what is sought out, as a road
@@ -47,8 +84,10 @@ impl Default for AreaCosts {
     fn default() -> Self {
         let mut costs = [1.0; AREAS];
         costs[usize::from(WATER)] = 3.0;
+        costs[usize::from(ROAD)] = 0.6;
         costs[usize::from(SWIM)] = 4.0;
         costs[usize::from(DOOR)] = 2.0;
+        costs[usize::from(NOT_WALKABLE)] = f32::INFINITY;
         Self(costs)
     }
 }
@@ -64,10 +103,12 @@ impl AreaCosts {
         self.of(area).is_finite()
     }
 
-    /// The least any area that may be entered costs: how cheaply a block
-    /// can be crossed at best, so a search never guesses a way dearer than
-    /// it can be.
+    /// What a search guesses a block ahead costs: plain ground's, never
+    /// more than the dearest of the ground it may cross. Ground cheaper than
+    /// plain, as a road, is sought out where a search comes near it, but is
+    /// not guessed to lie ahead, or every search would look at far more
+    /// places for the sake of roads that are mostly not there.
     pub fn least(&self) -> f32 {
-        self.0.iter().copied().filter(|cost| cost.is_finite()).fold(f32::INFINITY, f32::min).clamp(0.05, 1.0)
+        self.of(crate::WALKABLE).clamp(0.05, 1.0)
     }
 }

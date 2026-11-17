@@ -35,6 +35,14 @@ There is only so much room in each update a player gets. What matters most goes 
 - **Priority**: 1 as usual, 2 to be sent twice as often as others when there is not room for everything.
 - **Range**: how far, in metres, a player's own Objs may be from it for it to be sent to them. Further away, it is taken away from their machine, and made again when they come back in range. 0 sends it to everyone.
 
+## Dimensions
+
+Each player has the dimension their first Obj is in, and the one the Portal open for them leads into (see [[Dimensions]]). A shared Obj is sent to a player only while it is in a dimension they have, and its range is measured in that dimension: an Obj at the same numbers in another dimension is nowhere near. Every player has the level's own dimension, so an Obj there with a range of 0 still goes to everyone.
+
+When an Obj goes into another dimension on the server, through a Portal or moved by a script, each player who has it sees it go as it reaches the Portal. A player who does not have the dimension it went into has it taken away. An Obj a scene placed is only let be on their machine, where it was, and found again when it comes back; one made from a prefab is made again.
+
+The server decides which dimension each Obj is in. Players' machines never take an Obj the server moves through a Portal of their own. With [[Shared Authority|shared authority]], a player's machine takes its own Objs through, and the server checks that there is a Portal by the Obj into that dimension. If there is not, the Obj is put back where the server has it.
+
 ## Smooth movement
 
 A player's machine shows shared Objs a moment in the past, about two ticks behind the newest update, and longer when updates arrive unevenly. That way it always has an update on either side to move smoothly between, even when one is late or lost. Positions are sent to about a millimetre.

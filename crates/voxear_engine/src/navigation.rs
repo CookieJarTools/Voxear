@@ -76,3 +76,234 @@ pub fn settle(world: &mut World) {
     }
     world.insert_resource(navs);
 }
+
+/// What each kind of ground costs things finding their way, a block of it
+/// at a time, plain ground costing 1: what is cheaper is sought out, what
+/// is dearer kept off where there is another way. And the names of the
+/// project's own four areas.
+///
+/// ```toml
+/// [navigation]
+/// road_cost = 0.6          # ground blocks and Nav Areas mark as a road
+/// water_cost = 3.0         # water a block deep, waded
+/// swim_cost = 4.0          # water too deep to stand in, swum
+/// door_cost = 2.0          # a shut door, opened to go through
+/// custom_1_name = "Mud"    # the project's own areas, named and costed
+/// custom_1_cost = 2.5
+/// ```
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NavigationSettings {
+    pub road_cost: f32,
+    pub water_cost: f32,
+    pub swim_cost: f32,
+    pub door_cost: f32,
+    pub custom_1_name: String,
+    pub custom_1_cost: f32,
+    pub custom_2_name: String,
+    pub custom_2_cost: f32,
+    pub custom_3_name: String,
+    pub custom_3_cost: f32,
+    pub custom_4_name: String,
+    pub custom_4_cost: f32,
+}
+
+impl Default for NavigationSettings {
+    fn default() -> Self {
+        let costs = voxear_nav::AreaCosts::default();
+        let cost = |area: u8| costs.of(area);
+        Self {
+            road_cost: cost(voxear_nav::ROAD),
+            water_cost: cost(voxear_nav::WATER),
+            swim_cost: cost(voxear_nav::SWIM),
+            door_cost: cost(voxear_nav::DOOR),
+            custom_1_name: String::new(),
+            custom_1_cost: 1.0,
+            custom_2_name: String::new(),
+            custom_2_cost: 1.0,
+            custom_3_name: String::new(),
+            custom_3_cost: 1.0,
+            custom_4_name: String::new(),
+            custom_4_cost: 1.0,
+        }
+    }
+}
+
+/// What each area costs things finding their way, as the project says.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NavCosts(pub voxear_nav::AreaCosts);
+
+impl NavigationSettings {
+    /// What each area costs, by these settings.
+    pub fn costs(&self) -> voxear_nav::AreaCosts {
+        let mut costs = voxear_nav::AreaCosts::default();
+        let cost = |cost: f32| if cost.is_finite() { cost.clamp(0.05, 1000.0) } else { 1.0 };
+        let set = [
+            (voxear_nav::ROAD, self.road_cost),
+            (voxear_nav::WATER, self.water_cost),
+            (voxear_nav::SWIM, self.swim_cost),
+            (voxear_nav::DOOR, self.door_cost),
+            (voxear_nav::CUSTOM, self.custom_1_cost),
+            (voxear_nav::CUSTOM + 1, self.custom_2_cost),
+            (voxear_nav::CUSTOM + 2, self.custom_3_cost),
+            (voxear_nav::CUSTOM + 3, self.custom_4_cost),
+        ];
+        for (area, value) in set {
+            costs.0[usize::from(area)] = cost(value);
+        }
+        costs
+    }
+
+    /// Puts these settings in `world`, for what finds its way from now on.
+    pub fn put(&self, world: &mut World) {
+        world.insert_resource(NavCosts(self.costs()));
+    }
+}
+
+/// What each area costs in `world`: the project's, or the defaults.
+pub fn costs(world: &World) -> voxear_nav::AreaCosts {
+    world.resource::<NavCosts>().map(|costs| costs.0).unwrap_or_default()
+}
+
+/// A box of the world given an area of ground: a road through a town, a
+/// danger round a fire, a field nothing walks on. Centred on its Obj, as
+/// wide, high and long as `size`, square to the world. The places whose
+/// feet are in it are of its area, whatever they stand on.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NavArea {
+    pub size: [f32; 3],
+    pub area: voxear_terrain::blocks::block::BlockNavArea,
+}
+
+impl voxear_ecs::Component for NavArea {}
+
+impl Default for NavArea {
+    fn default() -> Self {
+        Self {
+            size: [4.0, 2.0, 4.0],
+            area: voxear_terrain::blocks::block::BlockNavArea::Road,
+        }
+    }
+}
+
+/// Every Nav Area's box, in blocks from the corner of a world of blocks at
+/// `corner` whose blocks are `size` metres a side, of dimension
+/// `dimension`.
+pub fn area_boxes(
+    world: &World,
+    corner: voxear_core::math::Vec3,
+    size: f32,
+    dimension: voxear_scene::DimensionId,
+) -> Vec<voxear_nav::AreaBox> {
+    world
+        .query_ref::<(Entity, &NavArea, &voxear_scene::Transform)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter(|(entity, ..)| voxear_scene::dimension_of(world, *entity) == dimension)
+        .map(|(entity, area, transform)| {
+            let middle = world
+                .get::<voxear_scene::WorldTransform>(entity)
+                .map_or(transform.position, |placed| placed.0.w_axis.truncate());
+            let half = voxear_core::math::Vec3::from_array(area.size).abs() * 0.5;
+            let local = |at: voxear_core::math::Vec3| ((at - corner) / size.max(1e-3)).to_array();
+            let number = area.area.number().max(1) - 1;
+            voxear_nav::AreaBox { min: local(middle - half), max: local(middle + half), area: number }
+        })
+        .collect()
+}
+
+/// How what walks a Nav Link crosses it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NavLinkKind {
+    /// Straight along it, as through a gap in a fence.
+    #[default]
+    Walk,
+    /// Over it in a leap, as across a gap too wide to walk.
+    Jump,
+    /// Up or down it slowly, as on a ladder or a rope.
+    Climb,
+    /// From one end to the other at once, as through a door that takes you elsewhere.
+    Teleport,
+}
+
+impl NavLinkKind {
+    pub const ALL: [Self; 4] = [Self::Walk, Self::Jump, Self::Climb, Self::Teleport];
+
+    pub fn number(self) -> u8 {
+        self as u8
+    }
+
+    pub fn of_number(number: u8) -> Self {
+        Self::ALL.get(usize::from(number)).copied().unwrap_or_default()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Walk => "Walk",
+            Self::Jump => "Jump",
+            Self::Climb => "Climb",
+            Self::Teleport => "Teleport",
+        }
+    }
+}
+
+/// A way a level's maker joins two places that walking does not: from its
+/// Obj to `end` (in the Obj's own space, so it moves and turns with it), by
+/// a ladder, a gap, a drop or a door that takes you elsewhere. A search may
+/// take it as one step, costing as far as it goes and `cost` more; what
+/// walks it crosses it as `kind` says. One way, unless `both_ways`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NavLink {
+    pub end: [f32; 3],
+    pub kind: NavLinkKind,
+    pub both_ways: bool,
+    pub cost: f32,
+}
+
+impl voxear_ecs::Component for NavLink {}
+
+impl Default for NavLink {
+    fn default() -> Self {
+        Self { end: [0.0, 0.0, 2.0], kind: NavLinkKind::Climb, both_ways: true, cost: 1.0 }
+    }
+}
+
+/// Every Nav Link's two ends in the world: from where, to where, and it.
+pub fn link_ends(world: &World, entity: Entity, link: &NavLink) -> Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)> {
+    let placed = match world.get::<voxear_scene::WorldTransform>(entity) {
+        Some(placed) => placed.0,
+        None => world.get::<voxear_scene::Transform>(entity)?.matrix(),
+    };
+    let end = voxear_core::math::Vec3::from_array(link.end);
+    Some((placed.w_axis.truncate(), placed.transform_point3(end)))
+}
+
+/// Every Nav Link of dimension `dimension`, in blocks from the corner of a
+/// world of blocks at `corner` whose blocks are `size` metres a side.
+pub fn links(
+    world: &World,
+    corner: voxear_core::math::Vec3,
+    size: f32,
+    dimension: voxear_scene::DimensionId,
+) -> Vec<voxear_nav::Link> {
+    let local = |at: voxear_core::math::Vec3| ((at - corner) / size.max(1e-3)).to_array();
+    world
+        .query_ref::<(Entity, &NavLink)>()
+        .without::<voxear_scene::Destroying>()
+        .into_iter()
+        .filter(|(entity, _)| voxear_scene::dimension_of(world, *entity) == dimension)
+        .filter_map(|(entity, link)| {
+            let (from, to) = link_ends(world, entity, link)?;
+            Some(voxear_nav::Link {
+                from: local(from),
+                to: local(to),
+                both_ways: link.both_ways,
+                cost: link.cost.max(0.0) / size.max(1e-3),
+                kind: link.kind.number(),
+            })
+        })
+        .collect()
+}

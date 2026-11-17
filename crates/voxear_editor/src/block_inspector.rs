@@ -16,7 +16,7 @@
 
 use voxear_terrain::blocks::{
     block::{
-        BlockDef, BlockDrop, BlockHeat, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH, MOST_BLOCK_LIGHT,
+        BlockDef, BlockDrop, BlockHeat, BlockNavArea, BlockShape, BlockTint, BoxHinge, Liquid, MAX_HEAT_REACH, MOST_BLOCK_LIGHT,
     },
     shape::{BlockFacing, BlockMotion, BoxDef, MOST_BOXES, MOST_KEYS, MOST_SWING, MotionEase, MotionKey, UseKind},
 };
@@ -191,6 +191,8 @@ pub struct BlockFields {
     /// Whether it sways in the wind; none for a liquid.
     sways: Option<NodeId>,
     tint: Option<NodeId>,
+    /// What ground it makes for navigation.
+    nav_area: NodeId,
     /// How far up the order of blocks that meet it lies; none for a liquid.
     overlap: Option<NodeId>,
     /// How much light it gives.
@@ -278,6 +280,14 @@ impl BlockFields {
                        Block Light";
             ui.set_tooltip(row, tip, None);
         }
+        let row = prop(ui, rows, "Nav Area");
+        let tip = "What ground it makes for things that find their way: As It Is (plain ground, water waded, a door), \
+                   or an area whose cost Project Settings ▸ Navigation sets. A Road is sought out, Not Walkable is \
+                   never stood on, as lava or a crop field";
+        ui.set_tooltip(row, tip, None);
+        let picked = BlockNavArea::ALL.iter().position(|area| *area == block.nav_area).unwrap_or_default();
+        let nav_area = ui.dropdown(row, &BlockNavArea::ALL.map(BlockNavArea::name), picked);
+        ui.add_class(nav_area, "value-choice");
         if block.liquid.is_none() {
             field(ui, rows, BlockRef::Covered, "Covered");
         }
@@ -373,6 +383,7 @@ impl BlockFields {
                 unbreakable,
                 sways,
                 tint,
+                nav_area,
                 overlap,
                 light,
                 shape,
@@ -477,6 +488,10 @@ impl BlockFields {
         }
         if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
             (block.sways, typed) = (ui.is_checked(sways), true);
+        }
+        if ui.changed(self.nav_area) {
+            let picked = ui.selected_option(self.nav_area).min(BlockNavArea::ALL.len() - 1);
+            (block.nav_area, typed) = (BlockNavArea::ALL[picked], true);
         }
         if let Some(tint) = self.tint.filter(|&tint| ui.changed(tint)) {
             (block.tint, typed) = (BlockTint::ALL[ui.selected_option(tint).min(BlockTint::ALL.len() - 1)], true);

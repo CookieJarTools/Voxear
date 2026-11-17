@@ -205,7 +205,7 @@ High ground counts for more than low, as rain and snow gather sooner off hills a
 
 Under Advanced: **Spacing** (how far apart the grid's points are) and **Seed**.
 
-A river's water always runs downhill. Its bed is cut into the ground, and where the ground beside it is lower than its water, banks are raised, so water never stands over the air beside it.
+A river's water always runs downhill. Its bed is cut into the ground in a bowl, dropping steeply from its edge to a broad middle, and its banks rise from just over its water up its valley's sides: in some stretches at once, where it has cut into them as on the outside of a bend, elsewhere along a low shelving strip. Where the ground beside it is lower than its water, a low rim holds it in, so water never stands over the air beside it.
 
 Where a river comes from and where it goes:
 

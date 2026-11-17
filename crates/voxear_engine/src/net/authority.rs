@@ -76,6 +76,15 @@ pub(super) fn hold_body(world: &mut World, entity: Entity) {
     world.insert(entity, HeldBody { kinematic });
 }
 
+/// Lets a Rigidbody networked play held still move as it would again, as
+/// for an Obj the server no longer moves.
+pub(super) fn unhold_body(world: &mut World, entity: Entity) {
+    let Some(held) = world.remove::<HeldBody>(entity) else { return };
+    if let Some(body) = world.get_mut::<Rigidbody>(entity) {
+        body.kinematic = held.kinematic;
+    }
+}
+
 /// Lets a held Rigidbody move as it would, or holds it, by whether this
 /// machine has authority over its Obj.
 fn hold(world: &mut World, entity: Entity, here: bool) {

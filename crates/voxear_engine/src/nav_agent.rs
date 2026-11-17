@@ -33,6 +33,7 @@ use voxear_terrain::blocks::BlockWorld;
 
 use crate::{
     block_mob::{BlockMob, BlockMobState},
+    navigation::NavLinkKind,
     physics::{CharacterController, PhysicsScene},
 };
 
@@ -189,6 +190,10 @@ pub struct NavAgentState {
     /// A jump along the nav under way: from where, to where, how far into
     /// it, how long it lasts, and how high it goes.
     jumping: Option<(Vec3, Vec3, f32, f32, f32)>,
+    /// For each corner, the kind of the Nav Link it is reached by, where it
+    /// is; and whether the jump under way is a link being crossed.
+    links: Vec<Option<u8>>,
+    crossing_link: bool,
 }
 
 impl Component for NavAgentState {}
@@ -255,6 +260,10 @@ struct Walked {
     nav: Arc<BlockNav>,
     blocks: BlockWorld,
     dimension: DimensionId,
+    /// What each area costs, and the Nav Areas' boxes over it.
+    costs: voxear_nav::AreaCosts,
+    boxes: Vec<voxear_nav::AreaBox>,
+    links: Vec<voxear_nav::Link>,
 }
 
 impl Walked {
@@ -335,7 +344,15 @@ pub fn step_agents(world: &mut World, delta: f32) {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
+            {
+                let dimension = dimension_of(world, entity);
+                let (costs, boxes) =
+                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
+                {
+                    let links = crate::navigation::links(world, corner, size, dimension);
+                    Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes, links })
+                }
+            }
         })
         .collect();
 
@@ -462,6 +479,12 @@ struct Budget {
 
 /// Whether an agent at `at` has just reached the edge it jumps from: the
 /// corner before the one it heads for, which is jumped to.
+fn link_reached(state: &NavAgentState, at: Vec3, size: f32) -> Option<u8> {
+    let kind = (*state.links.get(state.next)?)?;
+    let edge = state.corners.get(state.next.checked_sub(1)?)?;
+    ((steer::flat(*edge) - steer::flat(at)).length() < 0.6 * size).then_some(kind)
+}
+
 fn takes_off(state: &NavAgentState, at: Vec3, size: f32) -> bool {
     state.next > 0
         && state.jumps.get(state.next) == Some(&true)
@@ -505,7 +528,7 @@ fn plan(
         state.next = 1.min(state.corners.len().saturating_sub(1));
         (state.status, state.cost) = (found.status, found.cost);
         state.found = Some(Found { version: found.version, chunks: found.chunks });
-        (state.jumps, state.doors) = (found.jumps, found.doors);
+        (state.jumps, state.doors, state.links) = (found.jumps, found.doors, found.links);
     }
     state.place = walked.standing(at, walker, 2.0);
     state.planned_for = agent.destination.filter(|_| !agent.stopped);
@@ -531,6 +554,7 @@ fn plan(
         budget.asked -= 1;
         let from = state.place.and_then(|place| walked.nav.point(place)).unwrap_or(walked.local(at));
         let mut ask = PathAsk::new(from, walked.local(destination), walker);
+        (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
         (ask.most, ask.refine) = (MOST_LOOKED_AT, Some(REFINED));
         let nav = walked.nav.clone();
         state.asked = Some(Asked(Job::start(move || find_path(&nav, &ask)), 0));
@@ -590,7 +614,46 @@ fn finish(
     let flat = steer::accelerate(velocity, chosen, agent.acceleration.max(0.01) * 4.0, delta);
     let walked = step.walked.map(|index| &walked[index]);
     let facing = Vec3::new(flat.x, 0.0, flat.y);
+    // A Nav Link reached, or one being crossed: along its line, or its arc for a jump, whatever moves the agent.
+    let mut on_link = false;
+    if agent.moves != NavMoves::NotAtAll
+        && let Some(walked) = walked
+    {
+        if !state.crossing_link
+            && let Some(kind) = link_reached(state, step.at, walked.size)
+        {
+            let to = state.corners[state.next];
+            let along = (to - step.at).length();
+            let (pace, high) = match NavLinkKind::of_number(kind) {
+                NavLinkKind::Jump => (1.0, JUMP_HEIGHT * walked.size),
+                NavLinkKind::Climb => (0.5, 0.0),
+                NavLinkKind::Teleport => (f32::INFINITY, 0.0),
+                NavLinkKind::Walk => (1.0, 0.0),
+            };
+            let lasts = if pace.is_finite() { (along / (agent.speed * pace).max(0.3)).max(0.2) } else { 0.0 };
+            (state.jumping, state.crossing_link) = (Some((step.at, to, 0.0, lasts, high)), true);
+        }
+        if state.crossing_link
+            && let Some((from, to, into, lasts, high)) = state.jumping
+        {
+            let into = (into + delta).min(lasts);
+            let share = if lasts > 0.0 { into / lasts } else { 1.0 };
+            let next = from.lerp(to, share) + Vec3::Y * (4.0 * high * share * (1.0 - share));
+            if let Some(transform) = world.get_mut::<Transform>(step.entity) {
+                transform.position += next - step.at;
+            }
+            if into >= lasts {
+                (state.jumping, state.crossing_link, state.fall) = (None, false, 2.0);
+                state.place = walked.standing(to, walked.walker(agent.height), 1.0);
+            } else {
+                state.jumping = Some((from, to, into, lasts, high));
+            }
+            state.velocity = if lasts > 0.0 { (to - from) / lasts } else { Vec3::ZERO };
+            on_link = true;
+        }
+    }
     match (agent.moves, physics, step.controller) {
+        _ if on_link => {}
         (NavMoves::CharacterController, Some(physics), Some(controller)) => {
             // Off the edge it was to jump from: up, as high as a jump goes.
             let gravity = physics.gravity().length();
@@ -731,6 +794,8 @@ const NEAREST: i32 = 8;
 const NEAREST_FOUND: i32 = 9;
 const RANDOM: i32 = 11;
 const RANDOM_FOUND: i32 = 12;
+const AREA_AT: i32 = 13;
+const AREA_FOUND: i32 = 14;
 
 /// What a script last asked of navigation.
 #[derive(Default)]
@@ -741,6 +806,7 @@ struct ScriptAsked {
     corner: usize,
     nearest: Option<Vec3>,
     random: Option<Vec3>,
+    area: Option<u8>,
     seed: u32,
 }
 
@@ -895,7 +961,15 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
         .into_iter()
         .filter_map(|(entity, corner, size, blocks)| {
             let nav = crate::navigation::nav_of(world, entity)?;
-            Some(Walked { entity, corner, size, nav, blocks, dimension: dimension_of(world, entity) })
+            {
+                let dimension = dimension_of(world, entity);
+                let (costs, boxes) =
+                    (crate::navigation::costs(world), crate::navigation::area_boxes(world, corner, size, dimension));
+                {
+                    let links = crate::navigation::links(world, corner, size, dimension);
+                    Some(Walked { entity, corner, size, nav, blocks, dimension, costs, boxes, links })
+                }
+            }
         })
         .collect();
     // Scripts ask in the dimension the game is seen from.
@@ -903,6 +977,41 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
     let walked: Vec<Walked> = walked.into_iter().filter(|walked| walked.dimension == current).collect();
     let index = walked.iter().position(|walked| walked.standing(at, walked.walker(height), 4.0).is_some()).unwrap_or(0);
     walked.into_iter().nth(index)
+}
+
+/// The way from `from` to `to` for something `height` metres tall that
+/// swims, opens doors and jumps, over the world of blocks `from` is in, of
+/// the dimension the game is seen from: how it ends, its corners in the
+/// world, and what it costs.
+pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathStatus, Vec<Vec3>, f32) {
+    let found = walked_at(world, from, height).map(|walked| {
+        let walker = walked.walker_of(&NavAgent::default(), height);
+        let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
+        (ask.costs, ask.boxes, ask.links) = (walked.costs, walked.boxes.clone(), walked.links.clone());
+        let found = find_path(&walked.nav, &ask);
+        (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
+    });
+    found.unwrap_or((PathStatus::None, Vec::new(), 0.0))
+}
+
+/// The place to stand nearest `at`, on its floor, no more than `reach`
+/// metres off, in the dimension the game is seen from.
+pub fn nearest_place(world: &mut World, at: Vec3, reach: f32) -> Option<Vec3> {
+    let walked = walked_at(world, at, 1.8)?;
+    let reach = (reach / walked.size).max(0.5);
+    let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
+    Some(walked.world(walked.nav.point(place)?))
+}
+
+/// The area of ground of the place to stand nearest `at`, no more than
+/// `reach` metres off: as its block or a Nav Area box marks it.
+pub fn area_at(world: &mut World, at: Vec3, reach: f32) -> Option<u8> {
+    let walked = walked_at(world, at, 1.8)?;
+    let reach = (reach / walked.size).max(0.5);
+    let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
+    let point = walked.nav.point(place)?;
+    let boxed = walked.boxes.iter().rev().find(|area_box| area_box.holds(point));
+    Some(boxed.map_or(walked.nav.place(place)?.0.area, |area_box| area_box.area))
 }
 
 fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
@@ -914,13 +1023,7 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
         }
         (FIND, Some([x, y, z, _])) => {
             let (from, height) = { (asked(world).from, asked(world).height) };
-            let to = Vec3::new(x, y, z);
-            let found = walked_at(world, from, height).map(|walked| {
-                let ask = PathAsk::new(walked.local(from), walked.local(to), walked.walker(height));
-                let found = find_path(&walked.nav, &ask);
-                (found.status, found.corners.iter().map(|corner| walked.world(*corner)).collect(), found.cost)
-            });
-            asked(world).found = found.unwrap_or((PathStatus::None, Vec::new(), 0.0));
+            asked(world).found = find_way(world, from, Vec3::new(x, y, z), height);
         }
         (FOUND, None) => {
             let (status, corners, cost) = &asked(world).found;
@@ -932,15 +1035,7 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
             let corner = *asked.found.1.get(asked.corner)?;
             return Some([corner.x, corner.y, corner.z, 0.0]);
         }
-        (NEAREST, Some([x, y, z, reach])) => {
-            let at = Vec3::new(x, y, z);
-            let nearest = walked_at(world, at, 1.8).and_then(|walked| {
-                let reach = (reach / walked.size).max(0.5);
-                let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
-                Some(walked.world(walked.nav.point(place)?))
-            });
-            asked(world).nearest = nearest;
-        }
+        (NEAREST, Some([x, y, z, reach])) => asked(world).nearest = nearest_place(world, Vec3::new(x, y, z), reach),
         (NEAREST_FOUND, None) => return found_point(asked(world).nearest),
         (RANDOM, Some([x, y, z, radius])) => {
             let at = Vec3::new(x, y, z);
@@ -966,6 +1061,11 @@ fn navigation_values(world: &mut World, _: Entity, what: i32, written: Option<[f
             asked(world).random = random;
         }
         (RANDOM_FOUND, None) => return found_point(asked(world).random),
+        (AREA_AT, Some([x, y, z, reach])) => asked(world).area = area_at(world, Vec3::new(x, y, z), reach),
+        (AREA_FOUND, None) => {
+            let area = asked(world).area;
+            return Some([f32::from(area.unwrap_or(0)), f32::from(u8::from(area.is_some())), 0.0, 0.0]);
+        }
         _ => return None,
     }
     Some([0.0; 4])

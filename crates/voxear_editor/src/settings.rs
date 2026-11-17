@@ -373,6 +373,14 @@ pub const PREFERENCES: &[Setting] = &[
         "Every Vehicle's wheels drawn while playing: their suspension, contacts and slip.",
     ),
     Setting::new(
+        ("Scene View", "Gizmos"),
+        "nav_gizmos",
+        "Navigation",
+        Kind::Toggle,
+        "Where things can walk in each Block World near the camera, a square on each place's floor coloured by \
+         what it is, and each Nav Agent's and Block Mob's way. Off by default.",
+    ),
+    Setting::new(
         ("Tools", "Editor Link"),
         "tools_may_change",
         "Let tools change the project",
@@ -458,6 +466,9 @@ pub struct Settings {
     /// Every Vehicle's wheels drawn while playing: their suspension,
     /// contacts and slip.
     pub vehicle_gizmos: bool,
+    /// Where things can walk in each Block World near the camera, and each
+    /// agent's way.
+    pub nav_gizmos: bool,
     pub hidden_gizmos: Vec<String>,
     /// How the Scene view shades: lit, unlit, or as wireframe.
     pub scene_shading: usize,
@@ -551,6 +562,7 @@ impl Default for Settings {
             camera_gizmos: true,
             audio_gizmos: true,
             vehicle_gizmos: false,
+            nav_gizmos: false,
             hidden_gizmos: Vec::new(),
             scene_shading: 0,
             prefab_parts: false,
@@ -604,6 +616,7 @@ impl Settings {
             "camera_gizmos" => json!(self.camera_gizmos),
             "audio_gizmos" => json!(self.audio_gizmos),
             "vehicle_gizmos" => json!(self.vehicle_gizmos),
+            "nav_gizmos" => json!(self.nav_gizmos),
             "scene_shading" => json!(SHADING.get(self.scene_shading).map_or("Lit", |(label, _)| *label)),
             "prefab_parts" => json!(self.prefab_parts),
             "start_paused" => json!(self.start_paused),
@@ -656,6 +669,7 @@ impl Settings {
             "camera_gizmos" => self.camera_gizmos = on,
             "audio_gizmos" => self.audio_gizmos = on,
             "vehicle_gizmos" => self.vehicle_gizmos = on,
+            "nav_gizmos" => self.nav_gizmos = on,
             "scene_shading" => self.scene_shading = at(SHADING).unwrap_or(0),
             "prefab_parts" => self.prefab_parts = on,
             "tools_may_change" => self.tools_may_change = on,

@@ -93,6 +93,7 @@ mod ui_panels;
 mod volumetric;
 mod vsm;
 mod water;
+pub mod water_trails;
 pub mod water_bodies;
 pub mod weather;
 pub mod weather_maps;
@@ -162,6 +163,7 @@ pub use lightmaps::{
 };
 pub use foliage::{Foliage, FoliageInteraction, FoliageMotion, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
+pub use water_trails::{Stir, Stirs, TrailFlow, TrailLook, TrailQuality, WaterTrails, WaterWake};
 pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer, NO_TINT, TINTS, TintSlot};
@@ -2363,6 +2365,9 @@ struct View {
     /// Track Makers were last frame (see `tracks`).
     tracks: Buffer,
     track_memory: tracks::TrackMemory,
+    /// Where what stirs the water was last frame, and which image holds its
+    /// trails (see `water_trails`).
+    trail_memory: water_trails::TrailMemory,
     /// Auto exposure's adapted EV and whether it has started.
     exposure: Buffer,
     /// Last frame's model matrices and camera, for motion vectors.
@@ -2595,6 +2600,7 @@ impl View {
             foliage_pushes,
             tracks,
             track_memory: tracks::TrackMemory::default(),
+            trail_memory: water_trails::TrailMemory::default(),
             exposure,
             prev_models: HashMap::new(),
             prev_entities: Vec::new(),
@@ -2890,6 +2896,7 @@ impl View {
             }
         }
         self.track_memory.shift(by);
+        self.trail_memory.shift(by);
         self.ocean.shift(by);
         self.foliage.shift(by);
         // A view through a Portal has a space of its own, which moves with its Portal: only the plants it keeps
@@ -3076,6 +3083,15 @@ impl View {
             extracted.ocean = None;
             extracted.water_bodies = Default::default();
         }
+        // What stirs the water, from where each was last frame; none on the water seen through a Portal.
+        let trails = match features.water && portal.is_none() {
+            true => {
+                let settings = world.resource::<WaterTrails>().copied().unwrap_or_default();
+                let flow = world.resource::<TrailFlow>();
+                self.trail_memory.frame(camera, &extracted.stirs, flow, settings, setup.delta_time)
+            }
+            false => None,
+        };
         // The scene is drawn at its render size, which TAA upscales to the view's.
         let output_extent = extent;
         let panel_projection = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
@@ -3692,6 +3708,21 @@ impl View {
         };
         if let Some(water) = &water {
             frame_data.ocean = water.frame;
+        }
+        // The trails on the water round the camera, moved on before it is drawn: from the image that held them last
+        // frame into whichever holds them after this frame's passes.
+        let mut water = water;
+        if let (Some(water), Some(mut trails)) = (water.as_mut(), trails) {
+            let images = water_trails::images(fg, (gpu, bindless), trails.texels)?;
+            if fg.is_new(images[0]) || fg.is_new(images[1]) {
+                trails.fresh = 1;
+            }
+            let parity = self.trail_memory.parity();
+            self.trail_memory.ran(&trails);
+            let now = images[usize::from(self.trail_memory.parity())];
+            trails.texture = fg.texture(now).0;
+            frame_data.trails = trails;
+            water.trails = Some(water::Trails { images, parity, gpu: trails, now });
         }
         // A look pack's colour for the water of worlds of blocks, in place of each block's own.
         frame_data.ocean.block_water = extracted.block_water;

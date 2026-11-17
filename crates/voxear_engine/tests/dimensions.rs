@@ -527,6 +527,10 @@ fn a_dungeon_is_its_gate_in_the_land_and_a_walker_goes_through_its_portal_into_i
         game.tick(FRAME, None);
         let events = game.engine.world.resource::<voxear_engine::portals::PortalEvents>();
         passed.extend(events.map(|events| events.passed.clone()).unwrap_or_default());
+        // Through, it stops: walking on the same way would take it back out by the way out, the gate still there.
+        if !passed.is_empty() {
+            *walking.lock().unwrap() = (Vec3::ZERO, 6.0);
+        }
     }
     *walking.lock().unwrap() = (Vec3::ZERO, 6.0);
     for _ in 0..30 {

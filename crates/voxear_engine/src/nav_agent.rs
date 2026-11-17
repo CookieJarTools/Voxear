@@ -356,6 +356,7 @@ pub fn step_agents(world: &mut World, delta: f32) {
         })
         .collect();
 
+    let level_mesh = crate::navigation::level_nav(world);
     // Each agent: its way taken or asked for, and the velocity it wants.
     let mut steps: Vec<Stepping> = Vec::with_capacity(agents.len());
     let mut budget = Budget { asked: MOST_ASKED, taken_here: MOST_TAKEN_HERE, doors: Vec::new() };
@@ -378,6 +379,9 @@ pub fn step_agents(world: &mut World, delta: f32) {
         state.world = index.map(|index| walked[index].entity);
         if let Some(walked) = index.map(|index| &walked[index]) {
             plan(world, &agent, &mut state, walked, at, height, delta, &mut budget);
+        } else if let Some((mesh, offset)) = &level_mesh {
+            // No world of blocks under it: the level's nav mesh, where it has one.
+            plan_mesh(&agent, &mut state, mesh, *offset, at, delta, &mut budget);
         } else {
             state.wanted = Vec3::ZERO;
         }
@@ -451,12 +455,12 @@ pub fn step_agents(world: &mut World, delta: f32) {
     let Some(mut physics) = world.remove_resource::<PhysicsScene>() else {
         // With no physics there is nothing to stand on or fall on: only those moving along the nav move.
         for (step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
-            finish(world, step, chosen, &walked, None, delta);
+            finish(world, step, chosen, &walked, None, level_mesh.as_ref(), delta);
         }
         return;
     };
     for (step, chosen) in steps.into_iter().zip(chosen.into_iter().take(agents_count)) {
-        finish(world, step, chosen, &walked, Some(&mut physics), delta);
+        finish(world, step, chosen, &walked, Some(&mut physics), level_mesh.as_ref(), delta);
     }
     world.insert_resource(physics);
 }
@@ -596,6 +600,59 @@ fn plan(
         && !state.pending();
 }
 
+/// Finds an agent's way over the level's nav mesh where it is asked for (a
+/// search there costs too little to do on a thread), and works out the
+/// velocity it wants along it. `offset` is the mesh's from the world.
+fn plan_mesh(
+    agent: &NavAgent,
+    state: &mut NavAgentState,
+    mesh: &voxear_nav::mesh::NavMesh,
+    offset: Vec3,
+    at: Vec3,
+    delta: f32,
+    budget: &mut Budget,
+) {
+    state.planned_for = agent.destination.filter(|_| !agent.stopped);
+    let Some(destination) = state.planned_for else {
+        state.corners.clear();
+        (state.wanted, state.arrived, state.status) = (Vec3::ZERO, true, PathStatus::None);
+        return;
+    };
+    let key = (destination / 0.25).round().as_ivec3().to_array();
+    state.search_in -= delta;
+    if (state.asked_to != Some(key) || state.search_in <= 0.0) && budget.asked > 0 {
+        budget.asked -= 1;
+        let found = mesh.find_path(at + offset, destination + offset, 2.0);
+        state.corners = found.corners.iter().map(|corner| *corner - offset).collect();
+        state.next = 1.min(state.corners.len().saturating_sub(1));
+        state.status = match found.status {
+            voxear_nav::mesh::MeshPathStatus::Complete => PathStatus::Complete,
+            voxear_nav::mesh::MeshPathStatus::Partial => PathStatus::Partial,
+            voxear_nav::mesh::MeshPathStatus::None => PathStatus::None,
+        };
+        state.cost = state.corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        (state.asked_to, state.search_in) = (Some(key), SEARCH_EVERY);
+        (state.jumps, state.doors, state.links) = (Vec::new(), Vec::new(), Vec::new());
+    }
+    let steering = Steering {
+        speed: agent.speed,
+        acceleration: agent.acceleration,
+        stopping: agent.stopping_distance,
+        brakes: agent.auto_brake,
+        corner: agent.radius.max(0.3),
+    };
+    let mut corners = state.corners.clone();
+    if corners.is_empty() {
+        corners.push(at);
+    }
+    state.next = steer::next_corner(at, &corners, state.next.max(1).min(corners.len() - 1), &steering);
+    let wanted = steer::wanted(at, &corners, state.next, &steering);
+    state.wanted = Vec3::new(wanted.x, 0.0, wanted.y);
+    let left = steer::remaining(at, &corners, state.next);
+    state.arrived =
+        left <= agent.stopping_distance + 0.15 && matches!(state.status, PathStatus::Complete | PathStatus::None);
+}
+
 /// Moves an agent by the velocity chosen for it, as it moves, and keeps
 /// what it is doing.
 fn finish(
@@ -604,6 +661,7 @@ fn finish(
     chosen: Vec2,
     walked: &[Walked],
     physics: Option<&mut PhysicsScene>,
+    level_mesh: Option<&(Arc<voxear_nav::mesh::NavMesh>, Vec3)>,
     delta: f32,
 ) {
     let agent = &step.agent;
@@ -728,6 +786,28 @@ fn finish(
                     y = floor;
                 }
                 let next = Vec3::new(walked.world(moved).x, y, walked.world(moved).z);
+                if let Some(transform) = world.get_mut::<Transform>(step.entity) {
+                    transform.position += next - step.at;
+                }
+            } else if let (None, Some((mesh, offset))) = (walked, level_mesh) {
+                // On the level's nav mesh: each way kept to where it has a floor, the floor followed.
+                let mut next = step.at;
+                for by in [Vec3::new(facing.x, 0.0, 0.0), Vec3::new(0.0, 0.0, facing.z)] {
+                    let tried = next + by * delta + *offset;
+                    if mesh.height_at(tried.x, tried.z, next.y + offset.y).is_some() {
+                        next += by * delta;
+                    }
+                }
+                let on = next + *offset;
+                if let Some(floor) = mesh.height_at(on.x, on.z, on.y).map(|floor| floor - offset.y) {
+                    let gravity = physics.map_or(9.81, |physics| physics.gravity().length());
+                    if next.y > floor + 0.01 {
+                        state.fall = (state.fall + gravity * delta).min(50.0);
+                        next.y = (next.y - state.fall * delta).max(floor);
+                    } else {
+                        (state.fall, next.y) = (0.0, floor);
+                    }
+                }
                 if let Some(transform) = world.get_mut::<Transform>(step.entity) {
                     transform.position += next - step.at;
                 }
@@ -984,6 +1064,20 @@ fn walked_at(world: &mut World, at: Vec3, height: f32) -> Option<Walked> {
 /// the dimension the game is seen from: how it ends, its corners in the
 /// world, and what it costs.
 pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathStatus, Vec<Vec3>, f32) {
+    // A level of models: its baked nav mesh.
+    if walked_at(world, from, height).is_none()
+        && let Some((mesh, offset)) = crate::navigation::level_nav(world)
+    {
+        let found = mesh.find_path(from + offset, to + offset, 2.0);
+        let corners: Vec<Vec3> = found.corners.iter().map(|corner| *corner - offset).collect();
+        let length = corners.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        let status = match found.status {
+            voxear_nav::mesh::MeshPathStatus::Complete => PathStatus::Complete,
+            voxear_nav::mesh::MeshPathStatus::Partial => PathStatus::Partial,
+            voxear_nav::mesh::MeshPathStatus::None => PathStatus::None,
+        };
+        return (status, corners, length);
+    }
     let found = walked_at(world, from, height).map(|walked| {
         let walker = walked.walker_of(&NavAgent::default(), height);
         let mut ask = PathAsk::new(walked.local(from), walked.local(to), walker);
@@ -997,7 +1091,10 @@ pub fn find_way(world: &mut World, from: Vec3, to: Vec3, height: f32) -> (PathSt
 /// The place to stand nearest `at`, on its floor, no more than `reach`
 /// metres off, in the dimension the game is seen from.
 pub fn nearest_place(world: &mut World, at: Vec3, reach: f32) -> Option<Vec3> {
-    let walked = walked_at(world, at, 1.8)?;
+    let Some(walked) = walked_at(world, at, 1.8) else {
+        let (mesh, offset) = crate::navigation::level_nav(world)?;
+        return mesh.locate(at + offset, reach).map(|(_, point)| point - offset);
+    };
     let reach = (reach / walked.size).max(0.5);
     let place = walked.nav.nearest(walked.local(at), walked.walker(1.8), reach, reach)?;
     Some(walked.world(walked.nav.point(place)?))

@@ -693,6 +693,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             if kind == AssetKind::Level && db.file(&lightmaps).is_file() {
                 needs.companions.push(lightmaps);
             }
+            // And its baked nav mesh, for what walks its models to find its way.
+            let nav = crate::navigation::nav_file(path);
+            if kind == AssetKind::Level && db.file(&nav).is_file() {
+                needs.companions.push(nav);
+            }
             // A world of blocks' changes from its ground go with it.
             let changes = voxear_terrain::blocks::edits::blocks_file(path);
             if kind == AssetKind::BlockWorld && db.file(&changes).is_file() {

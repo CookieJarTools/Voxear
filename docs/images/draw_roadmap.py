@@ -20,7 +20,7 @@ MILESTONES = [
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, 3D and 2D physics", "done"),
     ("M5", "Lighting", "GI, lightmaps, probes, ray-traced sound, soft shadows, clouds, weather, HDR", "done"),
     ("", "Vegetation", "Foliage swaying in the wind, pushed aside, turning with the seasons", "done"),
-    ("", "Water", "The sea, pools, rivers and lava: shores, foam, going under, buoyancy", "done"),
+    ("", "Water", "The sea, pools, rivers and lava: shores, foam, trails, going under, buoyancy", "done"),
     ("M6", "Animation", "GPU skinning, motion matching, rigs and IK, box models, state machines", "now"),
     ("", "Gameplay kits", "Guns with procedural recoil, heat and cold, controllers, destruction", "now"),
     ("M7", "Materials and particles", "Custom shaders, VoxShade, material variants, GPU particles", "now"),

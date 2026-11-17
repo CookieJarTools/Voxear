@@ -554,6 +554,44 @@ fn a_tool_finds_ways_over_a_block_world_and_sends_a_nav_agent() {
 }
 
 #[test]
+fn a_tool_bakes_a_levels_nav_mesh_from_its_colliders_and_finds_a_way_over_it() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    // A floor 40 metres square and a wall across it, its gap at one end.
+    for (name, position, size) in [("Floor", [0.0, -0.5, 0.0], [40.0, 1.0, 40.0]), ("Wall", [0.0, 1.5, -3.0], [1.0, 3.0, 34.0])] {
+        let made = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Empty", "name": name, "position": position }));
+        let obj = made["obj"].clone();
+        done(&mut editor, &mut renderer, "component.add", json!({ "obj": obj, "component": "collider" }));
+        done(&mut editor, &mut renderer, "field.set", json!({ "obj": obj, "component": "collider", "field": "size", "value": size }));
+    }
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let baked = done(&mut editor, &mut renderer, "navigation.bake", json!({}));
+    assert!(baked["polygons"].as_u64().unwrap() > 0, "{baked}");
+    let file = dir.path().join(baked["path"].as_str().unwrap());
+    assert!(file.is_file(), "written beside the level: {}", file.display());
+    let way = done(&mut editor, &mut renderer, "navigation.path", json!({ "from": [-8.0, 0.0, 5.0], "to": [8.0, 0.0, 5.0] }));
+    assert_eq!(way["status"], "Complete", "{way}");
+    let corners = way["corners"].as_array().unwrap();
+    assert!(corners.len() > 2, "round the wall's end: {way}");
+    assert!(corners.iter().any(|corner| corner[2].as_f64().unwrap() > 13.0), "through the gap: {way}");
+
+    // The gizmo shows the mesh: its polygons over the floor, none on the wall's top.
+    done(&mut editor, &mut renderer, "view.set", json!({ "position": [-6.0, 14.0, -14.0], "look_at": [0.0, 0.0, 0.0] }));
+    let picture = |editor: &mut Editor, renderer: &mut Renderer, name: &str| {
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+        frames(editor, renderer, 3);
+        done(editor, renderer, "capture", json!({ "view": "scene", "path": path.display().to_string() }));
+        frames(editor, renderer, 3);
+        image::open(&path).unwrap().to_rgba8()
+    };
+    let off = picture(&mut editor, &mut renderer, "nav-mesh-gizmo-off.png");
+    done(&mut editor, &mut renderer, "settings.set", json!({ "key": "nav_gizmos", "value": true }));
+    let on = picture(&mut editor, &mut renderer, "nav-mesh-gizmo-on.png");
+    let tinted = off.pixels().zip(on.pixels()).filter(|(a, b)| (0..3).any(|c| a.0[c].abs_diff(b.0[c]) > 24)).count();
+    assert!(tinted > (on.width() * on.height()) as usize / 10, "the floor is tinted: {tinted} pixels");
+}
+
+#[test]
 fn every_component_and_its_fields_are_reached() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
@@ -989,4 +1027,203 @@ fn a_tool_puts_an_obj_inside_another_while_editing_and_while_playing() {
     let off = done(&mut editor, &mut renderer, "obj.parent", json!({ "obj": rider }));
     assert_eq!((off["changed"].clone(), parent(&editor, &rider)), (json!(true), None), "back at the top");
     editor.stop(&mut renderer);
+}
+
+#[test]
+fn a_dimension_opens_beside_the_level_in_a_view_of_its_own_and_saves_with_its_settings() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let state = done(&mut editor, &mut renderer, "editor.state", json!({}));
+    let scenes: Vec<String> =
+        state["scenes"].as_array().unwrap().iter().map(|scene| scene["path"].as_str().unwrap().to_string()).collect();
+    let level =
+        || scenes.iter().map(|scene| std::fs::read_to_string(dir.path().join(scene)).unwrap()).collect::<String>();
+    let made = done(&mut editor, &mut renderer, "dimension.create", json!({ "kind": "caves" }));
+    let file = made["asset"]["path"].as_str().unwrap().to_string();
+    assert_eq!(file, "Dimensions/New Dimension.dimension");
+    let id =
+        done(&mut editor, &mut renderer, "dimension.make", json!({ "dimension": file }))["dimension"].as_u64().unwrap();
+    assert!(id > 0, "a dimension of its own");
+    frames(&mut editor, &mut renderer, 2);
+    let listed = done(&mut editor, &mut renderer, "dimension.list", json!({}));
+    assert_eq!(listed["shown"], id, "the Scene view shows the dimension made");
+    let dimensions = listed["dimensions"].as_array().unwrap();
+    assert_eq!(dimensions.len(), 2, "{listed}");
+    let caves = &dimensions[1];
+    assert_eq!(
+        (caves["kind"].as_str(), caves["sky"].as_bool(), caves["saved"].as_bool()),
+        (Some("caves"), Some(false), Some(true))
+    );
+    assert_eq!(caves["objs"][0]["name"], "Way Back", "its file's Portal");
+    assert!(
+        dimensions[0]["objs"].as_array().unwrap().iter().all(|obj| obj["name"] != "Way Back"),
+        "not in the level's"
+    );
+
+    // A new Obj made while the Scene view shows it goes into its file, which keeps its settings as it saves.
+    done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Cube", "name": "Stalagmite" }));
+    frames(&mut editor, &mut renderer, 1);
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let text = std::fs::read_to_string(dir.path().join(&file)).unwrap();
+    assert!(text.contains("Stalagmite") && text.contains("[dimension]") && text.contains("kind = \"caves\""), "{text}");
+    let saved = level();
+    assert!(
+        !saved.contains("Stalagmite") && !saved.contains("Way Back"),
+        "the level's scenes took the dimension's Objs"
+    );
+
+    // Back in the level's, a Portal there leads into the dimension's Way Back: picked, never a name in a string.
+    assert_eq!(done(&mut editor, &mut renderer, "dimension.show", json!({ "dimension": 0 }))["shown"], 0);
+    let gate = done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Cube", "name": "Gate" }))["obj"].clone();
+    done(&mut editor, &mut renderer, "component.add", json!({ "obj": gate, "component": "portal" }));
+    let choices =
+        done(&mut editor, &mut renderer, "field.choices", json!({ "obj": gate, "component": "portal", "field": "to" }));
+    assert!(choices.to_string().contains("Way Back · New Dimension"), "{choices}");
+    let into = json!({ "dimension": file, "obj": 1 });
+    let set = done(
+        &mut editor,
+        &mut renderer,
+        "field.set",
+        json!({ "obj": gate, "component": "portal", "field": "to", "value": into }),
+    );
+    assert_eq!(set["value"], json!({ "dimension": file, "obj": "1" }), "a tool reads it back as it gave it");
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let saved = level();
+    assert!(saved.contains("into") && saved.contains("Dimensions/New Dimension.dimension"), "{saved}");
+
+    // Going through shows the far Portal in its dimension; the Scene view kept its place in each.
+    let gate = link::resolve_obj(&editor.game, &gate).unwrap();
+    let far = editor.go_through(gate, &mut renderer).unwrap();
+    assert_eq!(editor.scene_dimension().0 as u64, id);
+    assert_eq!(editor.selected(), Some(far));
+    // Selecting an Obj of the level's shows the level's again.
+    let gate = link::obj_ref(&editor.game, gate);
+    done(&mut editor, &mut renderer, "select", json!({ "objs": [gate] }));
+    assert_eq!(editor.scene_dimension().0, 0);
+
+    // An Obj moved into it goes into its file; letting it go with edits waiting needs `discard`.
+    let lamp =
+        done(&mut editor, &mut renderer, "obj.create", json!({ "kind": "Point Light", "name": "Lantern" }))["obj"]
+            .clone();
+    done(
+        &mut editor,
+        &mut renderer,
+        "obj.move_to_dimension",
+        json!({ "obj": lamp, "dimension": id, "at": [0.0, 2.0, 3.0] }),
+    );
+    let listed = done(&mut editor, &mut renderer, "dimension.list", json!({}));
+    assert!(listed["dimensions"][1]["objs"].to_string().contains("Lantern"), "{listed}");
+    let refused = ask(&mut editor, &mut renderer, "dimension.let_go", json!({ "dimension": id }));
+    assert_eq!(refused.unwrap_err().kind, ErrorKind::UnsavedConflict);
+    done(&mut editor, &mut renderer, "dimension.let_go", json!({ "dimension": id, "discard": true }));
+    frames(&mut editor, &mut renderer, 1);
+    let listed = done(&mut editor, &mut renderer, "dimension.list", json!({}));
+    assert_eq!((listed["dimensions"].as_array().unwrap().len(), listed["shown"].as_u64()), (1, Some(0)), "{listed}");
+}
+
+/// Keeps the window's picture as `name` where `VOXEAR_TEST_OUTPUT` says.
+fn shot(renderer: &mut Renderer, name: &str) {
+    let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    image::RgbaImage::from_raw(width, height, pixels).unwrap().save(Path::new(&dir).join(name)).unwrap();
+}
+
+/// A level of rolling hills without end with a small dungeon every 240 m or
+/// so, each in a dimension of its own.
+fn dungeons_project() -> tempfile::TempDir {
+    use voxear_terrain::{
+        blocks::{
+            file::BlockFile,
+            generate::{BlockEndless, BlockGenerate},
+        },
+        generate::Preset,
+    };
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let mut file = BlockFile { block_size: 1.0, ..BlockFile::default() };
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -60,
+        caves: 0.0,
+        endless: Some(BlockEndless { distance: 70.0, far: 0.0 }),
+        structures: vec!["Structures/Dungeon.structure".into()],
+        ..BlockGenerate::default()
+    });
+    let structure = "ground = \"leave\"\n\n[placement]\nspacing = 240.0\nseparation = 60.0\nchance = 1.0\non = \"land\"\n\
+                     height = [0.0, 500.0]\nslope = 60.0\n\n[dungeon]\nsize = \"small\"\nfloors = [2, 2]\n\n\
+                     [dungeon.blocks]\nstone = \"Blocks/Temple Stone.block\"\nlight = \"Blocks/Fire.block\"\n";
+    let scene =
+        "format = 1\n\n[[obj]]\nid = 1\nname = \"Hills\"\n[obj.block_world]\ndata = \"Blocks/Hills.blockworld\"\n";
+    let files = [
+        ("voxear.toml", "[project]\nname = \"Dungeons\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
+        ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Hills.scene\"\n".into()),
+        ("Scenes/Hills.scene", scene.into()),
+        ("Blocks/Hills.blockworld", file.to_text()),
+        ("Structures/Dungeon.structure", structure.into()),
+        ("Blocks/Temple Stone.block", "color = [0.62, 0.58, 0.5]\n".into()),
+        ("Blocks/Fire.block", "color = [1.0, 0.62, 0.25]\nlight = 15\n".into()),
+        ("Worlds/Hills.worldgen", Preset::RollingHills.world().to_text()),
+    ];
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn a_dungeons_gate_opens_its_dimension_in_the_editor_and_its_way_out_goes_back() {
+    let dir = dungeons_project();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let found = done(&mut editor, &mut renderer, "dungeon.layouts", json!({ "near": [0.0, 0.0, 0.0], "reach": 800.0 }));
+    let first = &found["dungeons"][0];
+    assert_eq!(
+        (first["place"].as_str(), first["dimension"].is_null(), first["stage"].as_u64()),
+        (Some("own_dimension"), true, Some(0))
+    );
+    let entrance: Vec<f32> =
+        first["entrance"]["at"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect();
+
+    // Looked at from over its entrance, its gate stands in the editor too, with Open Dungeon.
+    let camera = editor.scene_view_cameras()[0].1;
+    let over = voxear_core::math::Vec3::new(entrance[0], entrance[1] + 12.0, entrance[2] - 16.0);
+    editor.game.engine.world.get_mut::<voxear_scene::Transform>(camera).unwrap().position = over;
+    let by = voxear_core::math::Vec3::new(entrance[0], entrance[1], entrance[2]);
+    let gate = (0..240).find_map(|_| {
+        frames(&mut editor, &mut renderer, 1);
+        let world = &editor.game.engine.world;
+        let gates =
+            world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Transform, &voxear_engine::dungeons::DungeonGate)>();
+        let near = gates.into_iter().filter(|(_, placed, _)| placed.position.distance(by) < 40.0);
+        near.map(|(entity, ..)| entity).next()
+    });
+    let gate = gate.expect("a Portal stands in the dungeon's gate");
+    let gate_ref = link::obj_ref(&editor.game, gate);
+    let opened = done(&mut editor, &mut renderer, "dungeon.open", json!({ "obj": gate_ref }));
+    let id = opened["dimension"].as_u64().unwrap();
+    assert_eq!(editor.scene_dimension().0 as u64, id, "the Scene view shows the dungeon");
+    frames(&mut editor, &mut renderer, 2);
+    let listed = done(&mut editor, &mut renderer, "dimension.list", json!({}));
+    let dungeon = &listed["dimensions"][1];
+    assert_eq!((dungeon["kind"].as_str(), dungeon["saved"].as_bool()), (Some("dungeon"), Some(false)), "{listed}");
+    frames(&mut editor, &mut renderer, 90);
+    shot(&mut renderer, "dimension-dungeon.png");
+    let names = dungeon["objs"].to_string();
+    assert!(names.contains("Way Out") && names.contains("Dungeon"), "{names}");
+    let found = done(&mut editor, &mut renderer, "dungeon.layouts", json!({ "near": entrance, "reach": 64.0 }));
+    assert!(found["dungeons"].as_array().unwrap().iter().any(|d| d["dimension"].as_u64() == Some(id)), "{found}");
+
+    // Its way out leads back to the gate, in the level's.
+    let way_out = link::resolve_obj(&editor.game, &opened["way_out"]).unwrap();
+    assert_eq!(editor.go_through(way_out, &mut renderer).unwrap(), gate);
+    assert_eq!(editor.scene_dimension().0, 0);
+    frames(&mut editor, &mut renderer, 90);
+    shot(&mut renderer, "dimension-gate.png");
+    // Saving leaves the dungeon's Objs out of the level's file.
+    done(&mut editor, &mut renderer, "save", json!({}));
+    let level = std::fs::read_to_string(dir.path().join("Scenes/Hills.scene")).unwrap();
+    assert!(!level.contains("Way Out") && !level.contains("Dungeon"), "{level}");
+    done(&mut editor, &mut renderer, "dimension.let_go", json!({ "dimension": id }));
+    let listed = done(&mut editor, &mut renderer, "dimension.list", json!({}));
+    assert_eq!(listed["dimensions"].as_array().unwrap().len(), 1, "{listed}");
 }

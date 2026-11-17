@@ -35,6 +35,9 @@ pub struct ProjectFile {
     /// What Portals may spend (see [`PortalSettings`]).
     #[serde(default)]
     pub portals: PortalSettings,
+    /// How trails on water are worked out (see [`WaterTrailSettings`]).
+    #[serde(default)]
+    pub water_trails: WaterTrailSettings,
     /// How plants move in the wind and when pushed (see
     /// `voxear_render::FoliageMotion`).
     ///
@@ -80,6 +83,7 @@ impl ProjectFile {
             quality: QualitySettings::default(),
             world: voxear_terrain::WorldBudget::default(),
             portals: PortalSettings::default(),
+            water_trails: WaterTrailSettings::default(),
             foliage: voxear_render::FoliageMotion::default(),
             time: TimeSettings::default(),
             input: InputSettings::default(),
@@ -217,6 +221,42 @@ impl PortalSettings {
             view_distance: self.view_distance.max(0.0),
             dimension_distance: self.dimension_distance.clamp(2.0, 1000.0),
         });
+    }
+}
+
+/// How the trails things leave on water are worked out (see
+/// `voxear_render::water_trails`): how finely, Off for none; how far
+/// across the square of water round the camera they cover, in metres; and
+/// how they look, blocky on worlds of blocks and smooth on other water with
+/// `match_water`.
+///
+/// ```toml
+/// [water_trails]
+/// quality = "medium"      # off, low, medium or high: 256, 512 or 1024 texels a side
+/// area = 64.0             # metres across, round the camera
+/// look = "match_water"    # match_water, smooth or blocky
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WaterTrailSettings {
+    pub quality: voxear_render::TrailQuality,
+    pub area: f32,
+    pub look: voxear_render::TrailLook,
+}
+
+impl Default for WaterTrailSettings {
+    fn default() -> Self {
+        let trails = voxear_render::WaterTrails::default();
+        Self { quality: trails.quality, area: trails.area, look: trails.look }
+    }
+}
+
+impl WaterTrailSettings {
+    /// Puts the project's settings where the renderer and the engine read them.
+    pub fn put(&self, world: &mut voxear_ecs::World) {
+        let (least, most) = voxear_render::WaterTrails::AREA;
+        let area = self.area.clamp(least, most);
+        world.insert_resource(voxear_render::WaterTrails { quality: self.quality, area, look: self.look });
     }
 }
 

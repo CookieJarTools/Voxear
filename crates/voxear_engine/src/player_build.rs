@@ -229,6 +229,7 @@ pub fn build(
         particles: project.file.quality.particles,
         world: project.file.world,
         portals: project.file.portals,
+        water_trails: project.file.water_trails,
         navigation: project.file.navigation.clone(),
         foliage: project.file.foliage,
         validation_layers: profile.development.validation_layers,

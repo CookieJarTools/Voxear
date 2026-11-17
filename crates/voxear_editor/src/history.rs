@@ -91,6 +91,7 @@ pub struct ObjState {
     pub seasons: Option<Box<Seasons>>,
     pub foliage_interaction: Option<FoliageInteraction>,
     pub track_maker: Option<voxear_render::TrackMaker>,
+    pub water_wake: Option<voxear_render::WaterWake>,
     pub cave_shape: Option<voxear_terrain::generate::CaveShape>,
     pub cave_exit: Option<voxear_terrain::generate::CaveExit>,
     /// A Foliage, its plants and how it was written; the plants are shared,
@@ -106,6 +107,8 @@ pub struct ObjState {
     pub block_world: Option<Box<BlockWorldState>>,
     pub joint: Option<Box<Joint>>,
     pub portal: Option<Box<voxear_render::Portal>>,
+    /// The Portal it leads to in a dimension's file.
+    pub portal_into: Option<Box<voxear_engine::portals::PortalInto>>,
     pub post_volume: Option<Box<voxear_render::PostVolume>>,
     pub camera_follows: Option<voxear_render::CameraFollows>,
     pub collider2d: Option<Box<Collider2D>>,
@@ -213,6 +216,7 @@ impl ObjState {
             seasons: world.get::<Seasons>(entity).copied().map(Box::new),
             foliage_interaction: world.get::<FoliageInteraction>(entity).copied(),
             track_maker: world.get::<voxear_render::TrackMaker>(entity).copied(),
+            water_wake: world.get::<voxear_render::WaterWake>(entity).copied(),
             cave_shape: world.get::<voxear_terrain::generate::CaveShape>(entity).copied(),
             cave_exit: world.get::<voxear_terrain::generate::CaveExit>(entity).copied(),
             foliage: match (
@@ -234,6 +238,7 @@ impl ObjState {
             block_world: BlockWorldState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             portal: world.get::<voxear_render::Portal>(entity).copied().map(Box::new),
+            portal_into: world.get::<voxear_engine::portals::PortalInto>(entity).cloned().map(Box::new),
             post_volume: world.get::<voxear_render::PostVolume>(entity).cloned().map(Box::new),
             camera_follows: world.get::<voxear_render::CameraFollows>(entity).copied(),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
@@ -320,6 +325,7 @@ impl ObjState {
         put(world, entity, self.seasons.as_deref().copied());
         put(world, entity, self.foliage_interaction);
         put(world, entity, self.track_maker);
+        put(world, entity, self.water_wake);
         put(world, entity, self.cave_shape);
         put(world, entity, self.cave_exit);
         put(world, entity, self.foliage.as_deref().map(|(foliage, ..)| foliage.clone()));
@@ -339,6 +345,7 @@ impl ObjState {
         put(world, entity, blocks.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.portal.as_deref().copied());
+        put(world, entity, self.portal_into.as_deref().cloned());
         put(world, entity, self.post_volume.as_deref().cloned());
         put(world, entity, self.camera_follows);
         put(world, entity, self.collider2d.as_deref().copied());

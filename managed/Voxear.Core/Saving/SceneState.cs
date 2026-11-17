@@ -56,6 +56,15 @@ public sealed class SceneState
 			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
 			root["blocks"] = SaveNode.Bytes(Blocks.CaptureEdits());
 			root["storms"] = SaveNode.Bytes(Storms.CaptureState());
+			// Each dimension's changes apart, none for one never changed; the dungeons' stages beside their sites;
+			// and the Objs in other dimensions than the level's, to put back there.
+			var dimensions = NativeDimensions.CaptureEdits();
+			if (dimensions.Length > 0)
+			{
+				root["dimensions"] = SaveNode.Bytes(dimensions);
+			}
+			root["dungeons"] = SaveNode.NewList(DimensionSaves.Stages());
+			root["elsewhere"] = SaveNode.NewList(DimensionSaves.Elsewhere());
 		}
 		return new SceneState(root);
 	}
@@ -114,6 +123,10 @@ public sealed class SceneState
 			Storms.ApplyState(Root["storms"].AsBytes());
 		}
 
+		// The dungeons' stages before any dungeon is made, and each dimension's changes, put back as it is made.
+		DimensionSaves.ApplyStages(Root["dungeons"]);
+		NativeDimensions.ApplyEdits(Root["dimensions"].IsNull ? [] : Root["dimensions"].AsBytes());
+
 		var made = MakeCopies();
 		using (SpawnedKeys.Reading(made))
 		using (SaveReader.Begin(Context))
@@ -127,6 +140,7 @@ public sealed class SceneState
 			{
 				SceneComponents.Restore(component);
 			}
+			DimensionSaves.MoveBack(Root["elsewhere"]);
 		}
 	}
 

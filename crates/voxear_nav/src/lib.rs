@@ -15,6 +15,7 @@
 
 pub mod avoid;
 pub mod blocks;
+pub mod mesh;
 pub mod steer;
 pub mod threads;
 

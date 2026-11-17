@@ -85,7 +85,9 @@ impl Engine {
         crate::mist::register();
         crate::cameras::register();
         crate::portals::register();
+        crate::dimension_scripts::register();
         crate::reflection_probes::register();
+        crate::water_trails::register();
         crate::reverb_probes::register();
         crate::lightmaps::register();
         crate::ui_panels::register();
@@ -561,6 +563,10 @@ impl Engine {
         }
         // Characters push through the plants they walk among.
         crate::walkers::update(&mut self.world);
+        // What cuts the water's surface leaves trails on it.
+        if crate::modules::has(&self.world, crate::modules::Module::Water) {
+            crate::water_trails::update(&mut self.world);
+        }
         // The look pack worn is laid over the level's lighting as it is now.
         crate::look_packs::update(&mut self.world);
         // The shader pack worn is put on once compiled, compiled again as its files change, and given the clock.

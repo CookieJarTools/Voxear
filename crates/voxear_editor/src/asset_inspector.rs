@@ -73,6 +73,8 @@ pub enum AssetAction {
     /// settings it names, a setting of theirs, or a copy of them.
     SceneLighting(String, LightingAction),
     SaveMaterial(String, MaterialData),
+    /// Write these settings into the `.dimension` file at this path.
+    SaveDimension(String, voxear_engine::dimensions::DimensionSettings),
     /// Change the scenes of the level at this path.
     EditLevel(String, LevelEdit),
     /// Write these import settings for the asset at this path, and import
@@ -234,6 +236,8 @@ pub enum AssetAction {
     BakePaths(String),
     /// Bake the reflection probes of the level at this path.
     BakeProbes(String),
+    /// Bake the nav mesh of the level at this path.
+    BakeNav(String),
     /// Bake the reverb probes of the level at this path.
     BakeReverb(String),
     /// Show where the asset at this path is in the Project panel.
@@ -312,6 +316,7 @@ pub struct AssetView {
     block: Option<crate::block_inspector::BlockFields>,
     biome: Option<crate::biome_inspector::BiomeFields>,
     plant: Option<crate::plant_inspector::PlantFields>,
+    dimension: Option<crate::dimension_inspector::DimensionFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -323,6 +328,7 @@ pub struct AssetView {
     bake: Option<NodeId>,
     /// A level's Bake Probes button.
     bake_probes: Option<NodeId>,
+    bake_nav: Option<NodeId>,
     /// A level's Bake Reverb button.
     bake_reverb: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
@@ -511,12 +517,14 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            dimension: None,
             prompt_icons: None,
             preview,
             listen: None,
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_nav: None,
             bake_reverb: None,
             lighting: None,
             scene_lighting: None,
@@ -575,6 +583,13 @@ impl AssetView {
                     Some(db.get(guid)?.path.clone())
                 };
                 view.plant = Some(crate::plant_inspector::PlantFields::new(ui, root, plant, &path_of));
+            }
+            ItemKind::Asset(AssetKind::Dimension) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let read = voxear_engine::dimensions::DimensionFile::parse(&text, &item.path);
+                let settings = read.map(|file| file.settings).unwrap_or_default();
+                view.dimension = Some(crate::dimension_inspector::DimensionFields::new(ui, root, settings));
+                objs(ui, root, "Objs", &file);
             }
             ItemKind::Asset(AssetKind::Particles) => particle_effect(ui, root, &file),
             ItemKind::Asset(AssetKind::PromptIcons) => {
@@ -665,6 +680,7 @@ impl AssetView {
             ItemKind::Asset(AssetKind::Level) => {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
+                view.bake_nav = Some(navigation_bake(ui, root, &item.path, game));
                 view.bake_probes = Some(reflection_probes(ui, root, &item.path, game));
                 view.bake_reverb = Some(reverb_probes(ui, root, &item.path, game));
             }
@@ -698,7 +714,12 @@ impl AssetView {
             item.kind,
             ItemKind::Script
                 | ItemKind::Asset(
-                    AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions | AssetKind::VoxShade
+                    AssetKind::Level
+                        | AssetKind::Scene
+                        | AssetKind::Dimension
+                        | AssetKind::Prefab
+                        | AssetKind::InputActions
+                        | AssetKind::VoxShade
                 )
         );
         if opens {
@@ -732,12 +753,14 @@ impl AssetView {
             block: None,
             biome: None,
             plant: None,
+            dimension: None,
             prompt_icons: None,
             preview: None,
             listen: None,
             strings: None,
             bake: None,
             bake_probes: None,
+            bake_nav: None,
             bake_reverb: None,
             lighting: None,
             scene_lighting: None,
@@ -773,6 +796,9 @@ impl AssetView {
         }
         if self.bake.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakePaths(self.item.path.clone()));
+        }
+        if self.bake_nav.is_some_and(|button| ui.clicked(button)) {
+            return Some(AssetAction::BakeNav(self.item.path.clone()));
         }
         if self.bake_probes.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakeProbes(self.item.path.clone()));
@@ -845,6 +871,11 @@ impl AssetView {
                 BlockChange::Ping(path) => AssetAction::Ping(path),
                 BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
             });
+        }
+        if let Some(fields) = self.dimension.as_mut()
+            && fields.update(ui)
+        {
+            return Some(AssetAction::SaveDimension(self.item.path.clone(), fields.settings.clone()));
         }
         if let Some(fields) = self.plant.as_mut()
             && let Some(change) = fields.update(ui)
@@ -1319,6 +1350,26 @@ fn sound_paths(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
     );
     let button = ui.button(rows, "Bake Paths");
     ui.add_class(button, "add-component");
+    button
+}
+
+/// Whether a level's nav mesh is baked, and the button that bakes it,
+/// which this returns.
+fn navigation_bake(ui: &mut Ui, root: NodeId, level: &str, game: &Game) -> NodeId {
+    let rows = part(ui, root, "Navigation", "map-arrow");
+    let file = game.project.root.join(voxear_engine::navigation::nav_file(level));
+    let baked = std::fs::metadata(file).map(|meta| meta.len()).ok();
+    text_row(
+        ui,
+        rows,
+        "Nav Mesh",
+        &baked.map_or_else(|| "Not baked".to_string(), |bytes| format!("Baked · {}", size(bytes))),
+    );
+    let button = ui.button(rows, "Bake Navigation");
+    ui.add_class(button, "add-component");
+    let tip = "Bakes where things can walk on the level's still colliders (neither triggers nor moved by physics), \
+               for Nav Agents and Block Mobs on levels of models. Worlds of blocks need no bake";
+    ui.set_tooltip(button, tip, None);
     button
 }
 

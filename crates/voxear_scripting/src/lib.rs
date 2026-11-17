@@ -18,7 +18,7 @@ mod input;
 mod inspector;
 mod interop;
 mod layers;
-mod blocks;
+pub mod blocks;
 mod physics;
 mod plants;
 mod post;

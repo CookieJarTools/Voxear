@@ -24,7 +24,7 @@ public readonly struct PortalPassage
 	private readonly Vector3 from;
 	private readonly Vector3 to;
 
-	internal PortalPassage(Obj obj, Portal from, Portal to, Quaternion turn, Vector3 fromPlace, Vector3 toPlace, bool atBack)
+	internal PortalPassage(Obj obj, Portal from, Portal to, Quaternion turn, Vector3 fromPlace, Vector3 toPlace, bool atBack, (DimensionInstance From, DimensionInstance To) dimensions)
 	{
 		Obj = obj;
 		From = from;
@@ -33,6 +33,7 @@ public readonly struct PortalPassage
 		this.from = fromPlace;
 		this.to = toPlace;
 		WentInAtBack = atBack;
+		(FromDimension, ToDimension) = dimensions;
 	}
 
 	/// <summary>The Obj that went through.</summary>
@@ -43,6 +44,15 @@ public readonly struct PortalPassage
 
 	/// <summary>The Portal it came out of.</summary>
 	public Portal To { get; }
+
+	/// <summary>The dimension it went in from: the From Portal's.</summary>
+	public DimensionInstance FromDimension { get; }
+
+	/// <summary>The dimension it came out in: the To Portal's. The same as FromDimension for two Portals of one dimension.</summary>
+	public DimensionInstance ToDimension { get; }
+
+	/// <summary>Whether it went into another dimension.</summary>
+	public bool ChangedDimension => FromDimension != ToDimension;
 
 	/// <summary>The turn from directions on the near side to directions on the far side.</summary>
 	public Quaternion Turn { get; }

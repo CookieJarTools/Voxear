@@ -59,6 +59,8 @@ mod columns;
 mod curve_fields;
 mod console;
 mod data_assets;
+mod dimension_inspector;
+mod dimension_views;
 mod editor;
 pub mod entities_panel;
 mod field_drawers;

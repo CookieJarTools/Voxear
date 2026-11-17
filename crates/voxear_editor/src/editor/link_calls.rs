@@ -102,6 +102,8 @@ pub(super) enum Waiting {
     ReverbBake,
     /// The open level's lighting baking.
     LightingBake,
+    /// The open level's nav mesh baking.
+    NavBake,
 }
 
 /// A call done, or one that answers later.
@@ -299,6 +301,35 @@ impl Editor {
                 self.dungeon_starter(args, renderer)
             }
             "dungeon.layouts" => self.dungeon_layouts(args),
+            "dungeon.open" => self.dungeon_open(args, renderer),
+            "dimension.list" => done(self.dimension_list()),
+            "dimension.show" => {
+                let id = self.dimension_arg(args)?;
+                self.show_dimension(id);
+                done(json!({ "shown": self.scene_dimension().0 }))
+            }
+            "dimension.create" => {
+                self.refuse_while_playing("make a dimension's file")?;
+                self.dimension_create(args, renderer)
+            }
+            "dimension.make" => {
+                let (guid, ..) = link::resolve_project_asset(&self.game, need(args, "dimension")?)?;
+                let id = self.open_dimension(guid, renderer).map_err(|error| refuse(ErrorKind::Failed, error))?;
+                done(json!({ "dimension": id.0 }))
+            }
+            "dimension.let_go" => {
+                let id = self.dimension_arg(args)?;
+                let discard = opt_bool(args, "discard").unwrap_or(false);
+                self.let_go_of_dimension(id, discard).map_err(|error| refuse(ErrorKind::UnsavedConflict, error))?;
+                done(json!({}))
+            }
+            "obj.move_to_dimension" => {
+                let entity = self.obj_arg(args)?;
+                let id = self.dimension_arg(args)?;
+                let at = opt_vector(args, "at")?.map(Vec3::from_array);
+                self.move_to_dimension(entity, id, at).map_err(|error| refuse(ErrorKind::NotAllowed, error))?;
+                done(json!({ "dimension": id.0 }))
+            }
             "navigation.status" => self.navigation_status(),
             "navigation.path" => self.navigation_path(args),
             "navigation.nearest" => {
@@ -322,6 +353,17 @@ impl Editor {
                 let probe = probe.ok_or_else(|| refuse(ErrorKind::NoSuchComponent, "the Obj has no Reflection Probe"))?;
                 probe.capture();
                 done(json!({}))
+            }
+            "navigation.bake" => {
+                self.refuse_while_playing("bake the navigation")?;
+                if self.game.levels.current().is_none() {
+                    return Err(refuse(ErrorKind::Failed, "no level is open"));
+                }
+                self.game.engine.world.remove_resource::<voxear_engine::navigation::LevelNav>();
+                if !self.is_baking_nav() {
+                    self.bake_nav();
+                }
+                Ok(Outcome::Later(Waiting::NavBake))
             }
             "lighting.bake" => {
                 self.refuse_while_playing("bake the lighting")?;
@@ -580,6 +622,17 @@ impl Editor {
                 (false, None) => Err(refuse(ErrorKind::Failed, "the bake stopped")),
                 (true, _) => Ok(Outcome::Later(Waiting::ReverbBake)),
             },
+            Waiting::NavBake if self.is_baking_nav() => Ok(Outcome::Later(Waiting::NavBake)),
+            Waiting::NavBake => {
+                let level = self.game.levels.current().unwrap_or_default().to_string();
+                match self.game.engine.world.resource::<voxear_engine::navigation::LevelNav>() {
+                    Some(nav) => done(json!({
+                        "path": voxear_engine::navigation::nav_file(&level),
+                        "polygons": nav.0.counts().0,
+                    })),
+                    None => Err(refuse(ErrorKind::Failed, "the level has no still colliders to bake navigation from")),
+                }
+            }
             Waiting::LightingBake => match (self.baking_lighting(), self.lighting_bake_end()) {
                 (false, Some(Ok(baked))) => done(json!({
                     "file": baked.file, "bytes": baked.bytes, "parts": baked.parts, "lightmaps": baked.lightmaps,
@@ -868,7 +921,7 @@ impl Editor {
         };
         let scene = match args.get("scene").filter(|s| !s.is_null()) {
             Some(scene) => Some(link::resolve_project_asset(&self.game, scene)?.0),
-            None => None,
+            None => self.scene_for_new_objs(),
         };
         // A kind that stands on the ground, made where nothing says, goes on the ground in the middle of the view.
         let standing = opt_text(args, "kind").and_then(|kind| {
@@ -1231,7 +1284,7 @@ impl Editor {
             let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
             let answer = match call {
                 "batch" | "play" | "step" | "capture" | "scripts.build" | "editor.wait" | "editor.quit"
-                | "reflection_probes.bake" | "reverb_probes.bake" | "lighting.bake" => {
+                | "reflection_probes.bake" | "reverb_probes.bake" | "lighting.bake" | "navigation.bake" => {
                     Err(bad(format!("`{call}` waits on frames, so it is not made in a batch")))
                 }
                 _ => self.run_call(call, &step_args, renderer),
@@ -1601,8 +1654,122 @@ impl Editor {
         let world = &self.game.engine.world;
         let text = voxear_engine::dungeons::dungeons_json(world, &mut self.game.content, obj, [near[0], near[1], near[2], reach])
             .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
-        let answer: Json = serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        let mut answer: Json =
+            serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        // A dungeon's dimension by the number `dimension.list` gives it, where scripts have their handle for it.
+        let world = &self.game.engine.world;
+        for dungeon in answer["dungeons"].as_array_mut().into_iter().flatten() {
+            let handle = dungeon["dimension"].as_u64().and_then(|handle| u32::try_from(handle).ok());
+            let id = handle.and_then(|handle| voxear_engine::dimensions::from_handle(world, handle));
+            dungeon["dimension"] = id.map_or(Json::Null, |id| json!(id.0));
+        }
         done(answer)
+    }
+
+    /// The made dimension a call names: by its number, or by its
+    /// `.dimension` file.
+    fn dimension_arg(&self, args: &Json) -> Result<voxear_engine::dimensions::DimensionId, LinkError> {
+        use voxear_engine::dimensions::{DimensionId, Dimensions};
+        let given = need(args, "dimension")?;
+        let made = self.game.engine.world.resource::<Dimensions>();
+        if let Some(number) = given.as_u64() {
+            let id = DimensionId(u16::try_from(number).map_err(|_| bad(format!("{number} is no dimension's number")))?);
+            if id.is_level() || made.is_some_and(|made| made.exists(id)) {
+                return Ok(id);
+            }
+            return Err(refuse(ErrorKind::Gone, format!("no dimension {number} is made: `dimension.list` lists them")));
+        }
+        let (guid, path, kind) = link::resolve_project_asset(&self.game, given)?;
+        if kind != AssetKind::Dimension {
+            return Err(bad(format!("{path} is not a .dimension file")));
+        }
+        let open = self.game.levels.dimension_of_scene(guid);
+        let found = open.or_else(|| made.and_then(|made| made.find(guid, 0)));
+        found.ok_or_else(|| refuse(ErrorKind::Gone, format!("{path} is not made: `dimension.make` makes it")))
+    }
+
+    fn dimension_list(&self) -> Json {
+        use voxear_engine::dimensions::{self, DimensionId, Dimensions};
+        let world = &self.game.engine.world;
+        let content = &self.game.content;
+        let dimensioned = voxear_scene::Dimensioned::of(world);
+        let roots = |id: DimensionId| -> Vec<Json> {
+            let mut found: Vec<Entity> = world
+                .query_ref::<(Entity, &Name)>()
+                .without::<Parent>()
+                .without::<EditorOnly>()
+                .without::<voxear_scene::Destroying>()
+                .into_iter()
+                .map(|(entity, _)| entity)
+                .filter(|&entity| dimensioned.of_obj(entity) == id)
+                .collect();
+            found.sort_by_key(|entity| entity.index());
+            let named = |entity: Entity| world.get::<Name>(entity).map_or(String::new(), |name| name.0.clone());
+            let listed = |entity: Entity| json!({ "obj": obj_ref(&self.game, entity), "name": named(entity) });
+            found.into_iter().map(listed).collect()
+        };
+        let listed = |id: DimensionId, file: Option<voxear_assets::AssetGuid>, key: u64| {
+            let settings = world.resource::<Dimensions>().map_or_else(
+                || dimensions::DimensionSettings::of(dimensions::DimensionKind::Overworld),
+                |made| made.settings(id),
+            );
+            let file = file.and_then(|guid| content.db().get(guid));
+            let file = file.map(|entry| link::asset_ref(&self.game, &entry.path));
+            let word = |value: &dyn std::fmt::Debug| format!("{value:?}").to_lowercase();
+            let one = settings.instances() == dimensions::DimensionInstances::One;
+            json!({
+                "dimension": id.0, "name": dimensions::name_of(world, content, id), "file": file,
+                "key": key.to_string(), "kind": word(&settings.kind), "sky": settings.sky(),
+                "weather": settings.weather(), "clock": word(&settings.clock()), "keep_loaded": settings.keep_loaded(),
+                "instances": if one { "one" } else { "each_site" },
+                "saved": id.is_level() || self.game.levels.dimension_scene(id).is_some(),
+                "objs": roots(id),
+            })
+        };
+        let mut list = vec![listed(DimensionId::LEVEL, None, 0)];
+        if let Some(made) = world.resource::<Dimensions>() {
+            let mut all: Vec<&dimensions::Made> = made.made().collect();
+            all.sort_by_key(|made| made.id.0);
+            list.extend(all.into_iter().map(|made| listed(made.id, made.asset, made.key)));
+        }
+        json!({ "shown": self.scene_dimension().0, "dimensions": list })
+    }
+
+    fn dimension_create(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        use voxear_engine::dimensions::DimensionKind;
+        let kind = match need_text(args, "kind")? {
+            "overworld" => DimensionKind::Overworld,
+            "dungeon" => DimensionKind::Dungeon,
+            "caves" => DimensionKind::Caves,
+            other => return Err(bad(format!("`{other}` is not a kind: overworld, dungeon or caves"))),
+        };
+        let folder = opt_text(args, "folder").unwrap_or("Dimensions").trim_matches('/').to_string();
+        let root = self.game.project.root.clone();
+        std::fs::create_dir_all(root.join(&folder)).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        let path = project_files::create(&root, &folder, NewFile::Dimension(kind), "")
+            .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
+        self.project_event(ProjectEvent::Changed { select: None, rename: false }, renderer);
+        done(json!({ "asset": link::asset_ref(&self.game, &path) }))
+    }
+
+    fn dungeon_open(&mut self, args: &Json, renderer: &mut Renderer) -> Called {
+        let given = args.get("obj").filter(|obj| !obj.is_null());
+        let given = given.map(|obj| link::resolve_obj(&self.game, obj)).transpose()?;
+        let world = &self.game.engine.world;
+        let standing = given.and_then(|entity| world.get::<voxear_engine::dungeons::DungeonGate>(entity).copied());
+        // Its site as `dungeon.layouts` gives it, or where that is, [x, z].
+        let site = args.get("site").map(|site| site.get("at").unwrap_or(site));
+        let gate = match (standing, site.and_then(link::numbers)) {
+            (Some(gate), _) => gate,
+            (None, Some(site)) if site.len() >= 2 => {
+                let within = given.map_or(0, |entity| entity.to_bits());
+                voxear_engine::dungeons::gate_at(world, &mut self.game.content, within, [site[0], site[site.len() - 1]])
+                    .ok_or_else(|| refuse(ErrorKind::Gone, "no dungeon in a dimension of its own has its site there"))?
+            }
+            _ => return Err(bad("give a dungeon's `site`, [x, z] as `dungeon.layouts` gives it, or its gate as `obj`")),
+        };
+        let (id, back) = self.open_dungeon(gate, renderer).map_err(|error| refuse(ErrorKind::Failed, error))?;
+        done(json!({ "dimension": id.0, "way_out": obj_ref(&self.game, back) }))
     }
 
     fn navigation_status(&mut self) -> Called {
@@ -2117,6 +2284,7 @@ fn new_files() -> Vec<NewFile> {
         match new {
             NewFile::Folder
             | NewFile::Scene
+            | NewFile::Dimension(_)
             | NewFile::Level
             | NewFile::Material
             | NewFile::Lighting
@@ -2141,6 +2309,9 @@ fn new_files() -> Vec<NewFile> {
     [
         NewFile::Folder,
         NewFile::Scene,
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Overworld),
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Dungeon),
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Caves),
         NewFile::Level,
         NewFile::Material,
         NewFile::Lighting,

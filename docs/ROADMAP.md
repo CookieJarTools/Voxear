@@ -2258,8 +2258,23 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   back; a dedicated server and two machines, one player walking through a Portal into caves the server dug a
   75-block pit in (359 bytes of edits), the pit dug on their machine and their walker and camera in, the other
   player in the level sent nothing of it; the server's ground made round two players 1.2 km apart and each standing
-  on it. Manual: Dimensions, Playing over the Network, Sharing Objs. To come: the script API (dungeon stages and
-  growth among it), saves per dimension, and terrains of height round every player.
+  on it. Manual: Dimensions, Playing over the Network, Sharing Objs.
+  Scripts and saves: `Ref<Dimension>` fields picked in the Inspector, `Dimension.Current`, `obj.Dimension`,
+  `obj.MoveTo(dimension, position)` (made first, awaited until its ground stands), `Dimension.Entered` and `Left`,
+  `Portal.CreatePair` across two dimensions and `PortalPassage` saying both; Objs scripts make at the top of the
+  hierarchy go into the current dimension; the full way `Dimensions.Make(dimension, key)`, `Dimensions.Made`, and a
+  `DimensionInstance` with `KeepLoaded`, `LetGo()`, `WhenReady`, its own `Blocks`, `Physics`, `Weather`, `Sky` and
+  `Clock`, and `Use()` to ask every call of it. Dungeons grow: `dungeon.Stage`, `Grow()` (only while nobody is in its
+  dimension), `IsCleared`, `Dimension`, `Portal` and `MakeDimension()`; a stage adds a floor under the last, every
+  space of the floors above where it stood (the last floor's end is laid as an arena would be, then made its way
+  down). A dimension let go keeps its changes and gets them back when made again; a save of the scene keeps each
+  dimension's apart (a `VXDM` entry, none for one never changed: 99 bytes for three blocks, put back in under a
+  millisecond), which dimension each Obj is in, and the dungeons' stages beside their sites. Fixed in passing: an
+  endless world's script save left out changes to chunks streamed away. Tests: a dimension's changes kept through
+  streaming out, let go and made again, and a save; a dungeon grown with nobody in it, made a floor deeper with
+  its first floor and a tower kept, refused while somebody is in it; a grown plan keeping its floors in three
+  seeds; a C# script making a dimension, asking its blocks from the level, moving itself and the camera in,
+  hearing it, making Portals across, and a save putting them back. To come: terrains of height round every player.
 - **First-person controller:** walk, run, crouch, jump and slide, slopes and steps, head bob and camera sway, and
   the hands and camera the gun kit mounts on.
 - **Third-person controller:** an orbit camera that keeps out of walls, movement relative to the camera, lock-on,

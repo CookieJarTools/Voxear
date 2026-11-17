@@ -1614,7 +1614,15 @@ impl Editor {
         let world = &self.game.engine.world;
         let text = voxear_engine::dungeons::dungeons_json(world, &mut self.game.content, obj, [near[0], near[1], near[2], reach])
             .map_err(|error| refuse(ErrorKind::Failed, format!("{error:#}")))?;
-        let answer: Json = serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        let mut answer: Json =
+            serde_json::from_str(&text).map_err(|error| refuse(ErrorKind::Failed, error.to_string()))?;
+        // A dungeon's dimension by the number `dimension.list` gives it, where scripts have their handle for it.
+        let world = &self.game.engine.world;
+        for dungeon in answer["dungeons"].as_array_mut().into_iter().flatten() {
+            let handle = dungeon["dimension"].as_u64().and_then(|handle| u32::try_from(handle).ok());
+            let id = handle.and_then(|handle| voxear_engine::dimensions::from_handle(world, handle));
+            dungeon["dimension"] = id.map_or(Json::Null, |id| json!(id.0));
+        }
         done(answer)
     }
 
@@ -1709,7 +1717,9 @@ impl Editor {
         let given = given.map(|obj| link::resolve_obj(&self.game, obj)).transpose()?;
         let world = &self.game.engine.world;
         let standing = given.and_then(|entity| world.get::<voxear_engine::dungeons::DungeonGate>(entity).copied());
-        let gate = match (standing, args.get("site").and_then(link::numbers)) {
+        // Its site as `dungeon.layouts` gives it, or where that is, [x, z].
+        let site = args.get("site").map(|site| site.get("at").unwrap_or(site));
+        let gate = match (standing, site.and_then(link::numbers)) {
             (Some(gate), _) => gate,
             (None, Some(site)) if site.len() >= 2 => {
                 let within = given.map_or(0, |entity| entity.to_bits());

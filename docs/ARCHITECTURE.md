@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine and the editor, with Portals between them, dungeons in their own and networked play; scripts and saves planned)*
+### Dimensions *(in the engine and the editor, with Portals between them, dungeons in their own, networked play, scripts and saves)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -591,6 +591,35 @@ dimension to another.
   now take the blocks, the rest go with the world's pending changes), and answers `Ready`; until then its Portals
   into the dimension stay shut (`edits_in`) and the server takes none of that player's Objs through
   (`may_cross`). The level's edits go the same way once a player has an Obj of their own.
+- **Scripts** (`voxear_engine::dimension_scripts`, `Dimension`, `DimensionInstance` and `Dimensions` in Voxear.Core)
+  reach dimensions through `kind_value` and `kind_text` as `ComponentKind::Dimension`, a dimension travelling as its
+  handle in the place of an Obj: its number, and above it its serial (`Made::serial`), so a handle kept past its
+  dimension's going is never taken for a later one with the same number (`Dimensions::handle`, `from_handle`; 0 is
+  the level's). Moving an Obj into a dimension made, its `KeepLoaded`, its sky, clock and weather are answered at
+  once; making one from its file or a dungeon's site, and letting one go, are asked (`DimensionAsks`, an ask for the
+  same thing still waiting being the same ask, as C# calls each text twice) and done by `Game::serve_dimension_asks`
+  right after scripts run, a script polling how it went the next frame. `DimensionInstance.Use()` asks every call that
+  takes a place of one dimension: it sets `CurrentDimension` and the physics' `ask_in` until disposed, and
+  `dimensions::update` sets both again each tick anyway. `instantiate` in `voxear_scripting` and `Portal.Create` put
+  a new root in the current dimension.
+- **Saves** (`voxear_engine::dimension_saves`). A dimension's worlds, Foliage and saplings are captured in the bytes
+  `Blocks.CaptureEdits` makes (`voxear_scripting::blocks::capture_edits`, `apply_edits`), with services lent for that
+  dimension alone (`OneDimension`): each keyed by its path in the dimension's file, or `dungeon` for a dungeon's rock.
+  `apply_edits` touches only Objs the lent services give a key, so one dimension's put back leaves the others' and the
+  level's alone. `DimensionEdits` keeps them by `DimensionName` (asset and key) when a dimension is let go, and
+  `make_dimension` and `make_dungeon_dimension` put them back; `capture_all` writes every dimension's, made and let
+  go, as one `VXDM` entry for `SceneState` (a mark, a version, and per dimension its asset, key and bytes), and
+  `apply_all` reads it back. `SceneState` also keeps, by save keys, the Objs at the top of the hierarchy in other
+  dimensions (`ELSEWHERE`), each moved back after its dimension is made, and each dungeon's `DungeonStages` entry
+  beside its site. A world without end's changes are all its changes from its ground
+  (`blocks::endless_changes`, its streamer's base and `pending`), and are put back into the chunks made now and the
+  rest into `pending` (`put_endless_changes`), through two services every host lends.
+- **Dungeon stages.** `DungeonStages` holds each dungeon's stage and cleared flag by its site (`DungeonSite`: its
+  world, structure and site); `make_dungeon_dimension` plans `floors_at_stage` floors. `dimension_scripts::grow`
+  refuses while a camera or a character is in the dungeon's dimension, and otherwise lets the dimension go so it is
+  made again grown. In rock, `plan::place_floor` lays each floor's way down where and as large as the boss's arena
+  would be, and `as_way_down` makes it the shaft once the floor is laid, so a floor is laid the same whether it is
+  the last or one is grown under it. `DungeonGate::key` is a fixed FNV-1a hash, as saves keep it.
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes

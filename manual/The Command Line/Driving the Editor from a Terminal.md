@@ -300,7 +300,7 @@ vox editor call field.set obj=… component=portal field=to value='{"dimension":
 
 `field.choices` on the same field lists each Portal it can lead to, those in dimensions' files among them.
 
-A dungeon in a dimension of its own is opened by its site, as `dungeon.layouts` gives it, or by the Portal in its gate: `dungeon.open site=[-307.8,-820.7]`. It answers with the dimension's number and its way out. `dungeon.layouts` gives each dungeon's `site`, its `place`, its `dimension` once made, and its `stage`, 0 until dungeons grow.
+A dungeon in a dimension of its own is opened by its site, as `dungeon.layouts` gives it or where it is, or by the Portal in its gate: `dungeon.open site=[-307.8,-820.7]`. It answers with the dimension's number and its way out. `dungeon.layouts` gives each dungeon's `site`, its `place`, its `dimension` once made (its number, as `dimension.list` gives it), its `stage` and whether it is `cleared`.
 
 ## What tools cannot do yet
 

@@ -479,7 +479,7 @@ pub const CALLS: &[CallInfo] = &[
         name: "dungeon.open",
         about: "Makes the dimension of a dungeon that is in a dimension of its own, as its gate's Open Dungeon does, and shows its way out in the Scene view: to look round it while editing. Its dimension is made by code, as the game makes it, and nothing of it is saved.",
         args: &[
-            maybe("site", ArgKind::Value, "The dungeon's site, [x, z] in metres, as `dungeon.layouts` gives it."),
+            maybe("site", ArgKind::Value, "The dungeon's site as `dungeon.layouts` gives it, or where it is: [x, z] in metres."),
             maybe("obj", ArgKind::Obj, "A dungeon's gate, the Portal standing in it, in place of its site; or the Block World to look for the site in."),
         ],
         changes: false,

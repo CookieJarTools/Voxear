@@ -1,19 +1,39 @@
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text.Json;
+using Voxear.Interop;
 
 namespace Voxear;
 
 /// <summary>
 /// A dungeon as a world of blocks lays it out: its entrance at the surface, its floors, its spaces from the first
 /// floor's landing down to the boss's arena, the ways between them and its lights. Read from <see cref="Dungeons"/>.
+/// A dungeon in a dimension of its own is only its gate in the land, with a Portal in it; inside its dimension,
+/// Dungeons lists it whole.
+/// <code>
+/// var dungeon = Dungeons.Nearest(player.Position);
+/// if (dungeon is { IsCleared: true } &amp;&amp; dungeon.Grow())
+/// {
+///     dungeon.IsCleared = false;   // a floor deeper, and its new boss waiting
+/// }
+/// </code>
 /// </summary>
 public sealed class Dungeon
 {
+	/// <summary>Its site as the engine reads it, to ask of its stage and its dimension by.</summary>
+	private readonly string? site;
+	private bool cleared;
+
 	internal Dungeon(JsonElement json)
 	{
 		World = json.GetProperty("world").GetUInt64();
 		Floors = json.GetProperty("floors").GetInt32();
+		site = json.TryGetProperty("site", out var at) ? at.GetRawText() : null;
+		Stage = json.TryGetProperty("stage", out var stage) ? stage.GetInt32() : 0;
+		cleared = json.TryGetProperty("cleared", out var done) && done.GetBoolean();
+		IsInside = json.TryGetProperty("inside", out var inside) && inside.GetBoolean();
+		Dimension = json.TryGetProperty("dimension", out var made) && made.ValueKind == JsonValueKind.Number ? new DimensionInstance(made.GetUInt32()) : null;
+		Portal = json.TryGetProperty("portal", out var portal) && portal.ValueKind == JsonValueKind.Number ? new Portal(new Obj(portal.GetUInt64())) : Portal.None;
 		var entrance = json.GetProperty("entrance");
 		Entrance = new DungeonEntrance(
 			DungeonJson.Kind<DungeonEntranceKind>(entrance.GetProperty("kind")),
@@ -39,8 +59,38 @@ public sealed class Dungeon
 		Lights = lights;
 	}
 
-	/// <summary>The Obj id of the world of blocks it is in.</summary>
+	/// <summary>The Obj id of the world of blocks it is in: inside its own dimension, that dimension's world of rock.</summary>
 	public ulong World { get; }
+
+	/// <summary>
+	/// How far it has grown: 0 as its site makes it, and a floor more under the last for each stage. Saved with the
+	/// scene, beside its site.
+	/// </summary>
+	public int Stage { get; private set; }
+
+	/// <summary>Whether it was cleared: a flag for the game's own rules, saved with the scene beside its stage.</summary>
+	public bool IsCleared
+	{
+		get { return cleared; }
+		set
+		{
+			cleared = value;
+			if (site != null)
+			{
+				var flag = value ? "true" : "false";
+				NativeDimensions.Tell(NativeDimensions.SetStageText, 0, $$"""{"site":{{site}},"cleared":{{flag}}}""");
+			}
+		}
+	}
+
+	/// <summary>Whether it was read inside its own dimension, its spaces in that dimension's coordinates.</summary>
+	public bool IsInside { get; }
+
+	/// <summary>Its own dimension, where it is made now; null where it is not, or the dungeon is in the land.</summary>
+	public DimensionInstance? Dimension { get; }
+
+	/// <summary>The Portal stood in its gate in the land, while one stands there; None otherwise, and inside.</summary>
+	public Portal Portal { get; }
 
 	/// <summary>How many floors it goes down.</summary>
 	public int Floors { get; }
@@ -86,6 +136,31 @@ public sealed class Dungeon
 				yield return space;
 			}
 		}
+	}
+
+	/// <summary>
+	/// Grows it a stage: a floor more under its last, whose arena becomes its way down, a new arena on the new floor.
+	/// The floors above keep their layout and what was changed in them. Only while nobody is in its dimension, and
+	/// not past the deepest a dungeon goes; false where it did not grow. Its dimension, made with nobody in it, is
+	/// let go and made again grown when it is next needed.
+	/// </summary>
+	public bool Grow()
+	{
+		if (site == null || !NativeDimensions.Tell(NativeDimensions.SetStageText, 0, $$"""{"site":{{site}},"grow":true}"""))
+		{
+			return false;
+		}
+		Stage++;
+		return true;
+	}
+
+	/// <summary>
+	/// Makes its own dimension, or gives the one made already, without going near its gate: for a script that fills
+	/// it before anybody arrives. It goes once nothing needs it, unless <paramref name="keepLoaded"/>.
+	/// </summary>
+	public DimensionMake MakeDimension(bool keepLoaded = false)
+	{
+		return Dimensions.MakeDungeon(site ?? "null", keepLoaded);
 	}
 
 	/// <summary>The space <paramref name="position"/> is inside; null where it is in none.</summary>

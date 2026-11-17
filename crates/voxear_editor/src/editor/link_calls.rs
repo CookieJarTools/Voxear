@@ -490,6 +490,13 @@ impl Editor {
             "project.set" => self.project_set(args),
             "docs.search" => done(self.docs_search(args)),
             "docs.read" => self.docs_read(need_text(args, "reference")?),
+            "layout.use" => {
+                let name = need_text(args, "name")?;
+                match self.use_layout(name) {
+                    true => done(json!({ "layout": self.layout_name() })),
+                    false => Err(bad(format!("no layout is called `{name}`; the Layout menu lists them"))),
+                }
+            }
             "editor.wait" => {
                 let frames = args.get("frames").and_then(Json::as_u64).unwrap_or(1).clamp(1, 600) as u32;
                 Ok(Outcome::Later(Waiting::Frames(frames)))

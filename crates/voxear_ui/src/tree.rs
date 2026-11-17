@@ -197,11 +197,22 @@ pub(crate) struct Text {
     pub shaped: Option<((f32, bool), Layout<u16>)>,
     /// For rich text: how parts of it differ, and its links.
     pub spans: Vec<crate::Span>,
+    /// The width its shaped lines were broken at and the way they were
+    /// aligned when it was last drawn, so a frame that changes neither
+    /// draws them as they are; none once measuring or shaping it again has
+    /// broken them otherwise.
+    pub drawn_at: Option<(Option<u32>, parley::Alignment)>,
 }
 
 impl Text {
     pub fn new(content: &str) -> Self {
-        Self { content: content.to_owned(), style: TextStyle::default(), shaped: None, spans: Vec::new() }
+        Self {
+            content: content.to_owned(),
+            style: TextStyle::default(),
+            shaped: None,
+            spans: Vec::new(),
+            drawn_at: None,
+        }
     }
 
     /// Shaped at physical size, so hinting and line breaks match the pixels
@@ -215,6 +226,7 @@ impl Text {
         stack: &crate::fonts::FontStack,
     ) -> &mut Layout<u16> {
         if self.shaped.as_ref().is_none_or(|(at, _)| *at != (scale, whole_pixels)) {
+            self.drawn_at = None;
             let mut builder = layouts.ranged_builder(fonts, &self.content, scale, whole_pixels);
             builder.push_default(StyleProperty::FontSize(self.style.size));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));

@@ -83,20 +83,44 @@ pub struct Sample {
     pub cpu: Samples,
     /// Milliseconds per render pass, from the latest frame the GPU finished.
     pub gpu: Vec<(String, f32)>,
+    /// That frame's milliseconds on the GPU, from its first pass's start to
+    /// its last's end: less than its passes added up, which overlap.
+    pub gpu_frame_ms: f32,
     pub stats: RenderStats,
+    /// What [`cpu_ms`](Self::cpu_ms) and [`gpu_ms`](Self::gpu_ms) say,
+    /// worked out once, as the chart reads every frame kept each frame.
+    worked_ms: f32,
+    passes_ms: f32,
 }
 
 impl Sample {
+    pub fn new(
+        frame: u64,
+        frame_ms: f32,
+        cpu: Samples,
+        gpu: Vec<(String, f32)>,
+        gpu_frame_ms: f32,
+        stats: RenderStats,
+    ) -> Self {
+        let waits = WAITING.map(profiling::Marker::new);
+        let waited: f32 = (0..cpu.nodes.len())
+            .filter(|&node| waits.contains(&cpu.nodes[node].marker))
+            .map(|node| cpu.total_ms(node))
+            .sum();
+        let worked_ms = (cpu.total_ms(Samples::FRAME) - waited).max(0.0);
+        let passes_ms = gpu.iter().map(|(_, ms)| ms).sum();
+        Self { frame, frame_ms, cpu, gpu, gpu_frame_ms, stats, worked_ms, passes_ms }
+    }
+
     /// Milliseconds the main thread worked: the frame's samples, less its
     /// waits for the GPU and the display, which fill the frame with vsync on.
     pub fn cpu_ms(&self) -> f32 {
-        let waits = (0..self.cpu.nodes.len()).filter(|&node| WAITING.contains(&self.cpu.name(node).as_str()));
-        let waited: f32 = waits.map(|node| self.cpu.total_ms(node)).sum();
-        (self.cpu.total_ms(Samples::FRAME) - waited).max(0.0)
+        self.worked_ms
     }
 
+    /// Milliseconds of the GPU's passes, added up.
     pub fn gpu_ms(&self) -> f32 {
-        self.gpu.iter().map(|(_, ms)| ms).sum()
+        self.passes_ms
     }
 }
 
@@ -131,8 +155,14 @@ pub struct Profiler {
     picked_label: NodeId,
     tree: NodeId,
     calls: Rc<RefCell<CallTree>>,
-    /// The GPU's passes and the frame's counts, beside the Hierarchy.
+    /// The GPU's passes and the frame's counts, beside the Hierarchy, in
+    /// the view that scrolls them, and their rows, kept and filled again.
     side: [NodeId; 2],
+    side_view: NodeId,
+    pass_rows: Vec<SideRow>,
+    count_rows: Vec<SideRow>,
+    /// Where each guide's label was put last, to move it only when that changes.
+    guide_tops: Vec<f32>,
     samples: VecDeque<Sample>,
     recording: bool,
     /// Whether samples were being taken this frame, so it is kept.
@@ -219,10 +249,10 @@ impl Profiler {
         ui.add_class(timeline_canvas, "profiler-canvas");
         ui.take_wheel(timeline_canvas, true);
         ui.set_visible(timeline, false);
-        let side = ui.panel(lower, Style::default());
-        ui.add_class(side, "profiler-side");
+        let side_view = ui.panel(lower, Style::default());
+        ui.add_class(side_view, "profiler-side");
         let side = ["GPU", "Frame"].map(|title| {
-            let column = ui.panel(side, Style::default());
+            let column = ui.panel(side_view, Style::default());
             ui.add_class(column, "profiler-column");
             let heading = ui.add_label(column, title);
             ui.add_class(heading, "profiler-heading");
@@ -250,6 +280,10 @@ impl Profiler {
             tree,
             calls,
             side,
+            side_view,
+            pass_rows: Vec::new(),
+            count_rows: Vec::new(),
+            guide_tops: vec![f32::NAN; GUIDES.len()],
             samples: VecDeque::with_capacity(FRAMES),
             recording: true,
             sampling: false,
@@ -273,7 +307,8 @@ impl Profiler {
             self.samples.pop_front();
         }
         let gpu = renderer.timings().to_vec();
-        self.samples.push_back(Sample { frame: self.frames, frame_ms, cpu, gpu, stats: renderer.stats() });
+        let (gpu_frame_ms, stats) = (renderer.gpu_frame_ms(), renderer.stats());
+        self.samples.push_back(Sample::new(self.frames, frame_ms, cpu, gpu, gpu_frame_ms, stats));
     }
 
     pub fn samples(&self) -> &VecDeque<Sample> {
@@ -286,7 +321,17 @@ impl Profiler {
     pub fn read_frames(&mut self, after: Option<u64>, limit: usize) -> serde_json::Value {
         use voxear_engine::profile_frames::{frame_json, read_frames};
         self.watched_until = Some(Instant::now() + WATCHED);
-        let frames = self.samples.iter().map(|s| frame_json(s.frame, s.frame_ms, &s.cpu, &s.gpu));
+        let frames = self.samples.iter().map(|s| {
+            let mut frame = frame_json(s.frame, s.frame_ms, &s.cpu, &s.gpu);
+            frame["gpu_frame_ms"] = serde_json::json!(s.gpu_frame_ms);
+            let blocks = s.stats.blocks;
+            frame["blocks"] = serde_json::json!({
+                "draws": blocks.draws,
+                "triangles": blocks.triangles + blocks.water_triangles,
+                "shadow_draws": blocks.shadow_draws,
+            });
+            frame
+        });
         read_frames(frames, after, limit, self.frames + 1)
     }
 
@@ -380,13 +425,18 @@ impl Profiler {
         let step = width / (FRAMES - 1) as f32;
         let x = |i: usize| width - (self.samples.len() - 1 - i) as f32 * step;
         let mut shapes = Vec::new();
-        for (&(ms, _), &label) in GUIDES.iter().zip(&self.guides) {
+        for ((&(ms, _), &label), shown_top) in GUIDES.iter().zip(&self.guides).zip(&mut self.guide_tops) {
             let fits = ms < scale;
             ui.set_visible(label, fits);
             if fits {
                 let at = y(ms);
                 shapes.push(Shape::Line { from: [0.0, at], to: [width, at], width: 1.0, color: Color::hex(GUIDE) });
-                ui.set_inline_style(label, &format!("top: {}px", (at - 14.0).max(0.0)));
+                // Moved only when it moves, as a style set again lays the panel out again.
+                let top = (at - 14.0).max(0.0);
+                if *shown_top != top {
+                    *shown_top = top;
+                    ui.set_inline_style(label, &format!("top: {top}px"));
+                }
             }
         }
         let mut line = |value: fn(&Sample) -> f32, color: u32| {
@@ -433,13 +483,30 @@ impl Profiler {
             self.draw_timeline(ui, &sample.cpu);
         }
 
-        for column in self.side {
-            for row in ui.children(column).into_iter().skip(1) {
-                ui.remove(row);
+        // The rows are kept and filled again, those scrolled out of sight left as they are until they come
+        // into it: made anew each time, their styles and text took several milliseconds a time.
+        let [_, top, _, height] = ui.rect(self.side_view);
+        let in_sight = |ui: &Ui, row: &SideRow| {
+            let [_, y, _, h] = ui.rect(row.row);
+            row.fresh || (y + h >= top && y <= top + height)
+        };
+        for (index, (pass, ms)) in sample.gpu.iter().enumerate() {
+            if index == self.pass_rows.len() {
+                self.pass_rows.push(SideRow::new(ui, self.side[0], true));
+            }
+            let row = &mut self.pass_rows[index];
+            // Shown again, it was laid out as nothing, and is filled whatever it shows.
+            if !ui.is_visible(row.row) {
+                ui.set_visible(row.row, true);
+                row.fresh = true;
+            }
+            if in_sight(ui, row) {
+                let share = if gpu_ms > 0.0 { (ms / gpu_ms).clamp(0.0, 1.0) } else { 0.0 };
+                row.fill(ui, pass, &format!("{ms:.2} ms"), Some(share));
             }
         }
-        for (pass, ms) in &sample.gpu {
-            timing_row(ui, self.side[0], pass, *ms, gpu_ms);
+        for row in &self.pass_rows[sample.gpu.len()..] {
+            ui.set_visible(row.row, false);
         }
         let stats = &sample.stats;
         let usage = game.content.usage();
@@ -463,13 +530,14 @@ impl Profiler {
             ("Prefabs", usage.prefabs.to_string()),
             ("Materials", usage.materials.to_string()),
         ];
-        for (label, value) in counts {
-            let row = ui.panel(self.side[1], Style::row());
-            ui.add_class(row, "profiler-row");
-            let name = ui.add_label(row, label);
-            ui.add_class(name, "profiler-name");
-            let value = ui.add_label(row, &value);
-            ui.add_class(value, "profiler-value");
+        for (index, (label, value)) in counts.into_iter().enumerate() {
+            if index == self.count_rows.len() {
+                self.count_rows.push(SideRow::new(ui, self.side[1], false));
+            }
+            let row = &mut self.count_rows[index];
+            if in_sight(ui, row) {
+                row.fill(ui, label, &value, None);
+            }
         }
     }
 }
@@ -765,20 +833,52 @@ fn divider(ui: &mut Ui, root: NodeId) {
     ui.add_class(line, "divider");
 }
 
-/// A pass: its name, its milliseconds, and a bar for its share of `total`.
-fn timing_row(ui: &mut Ui, column: NodeId, name: &str, ms: f32, total: f32) {
-    let row = ui.panel(column, Style::row());
-    ui.add_class(row, "profiler-row");
-    let label = ui.add_label(row, name);
-    ui.add_class(label, "profiler-name");
-    let track = ui.panel(row, Style::default());
-    ui.add_class(track, "profiler-track");
-    let fill = ui.panel(track, Style::default());
-    ui.add_class(fill, "profiler-fill");
-    let share = if total > 0.0 { (ms / total).clamp(0.0, 1.0) } else { 0.0 };
-    ui.set_inline_style(fill, &format!("width: {:.1}%", share * 100.0));
-    let value = ui.add_label(row, &format!("{ms:.2} ms"));
-    ui.add_class(value, "profiler-value");
+/// A row beside the Hierarchy: a name and a value, and for a GPU pass a bar
+/// for its share of the frame between them. Kept from one breakdown to the
+/// next and filled again, with what it shows now, to set again only what
+/// changed.
+struct SideRow {
+    row: NodeId,
+    name: NodeId,
+    bar: Option<NodeId>,
+    value: NodeId,
+    /// The bar's width in tenths of a percent, as last set.
+    share: Option<u32>,
+    /// Made and not filled yet.
+    fresh: bool,
+}
+
+impl SideRow {
+    fn new(ui: &mut Ui, column: NodeId, with_bar: bool) -> Self {
+        let row = ui.panel(column, Style::row());
+        ui.add_class(row, "profiler-row");
+        let name = ui.add_label(row, "");
+        ui.add_class(name, "profiler-name");
+        let bar = with_bar.then(|| {
+            let track = ui.panel(row, Style::default());
+            ui.add_class(track, "profiler-track");
+            let fill = ui.panel(track, Style::default());
+            ui.add_class(fill, "profiler-fill");
+            fill
+        });
+        let value = ui.add_label(row, "");
+        ui.add_class(value, "profiler-value");
+        Self { row, name, bar, value, share: None, fresh: true }
+    }
+
+    /// Shows `name` and `value`, and the bar at `share` of its track.
+    fn fill(&mut self, ui: &mut Ui, name: &str, value: &str, share: Option<f32>) {
+        self.fresh = false;
+        ui.set_text(self.name, name);
+        ui.set_text(self.value, value);
+        if let (Some(fill), Some(share)) = (self.bar, share) {
+            let tenths = (share * 1000.0).round() as u32;
+            if self.share != Some(tenths) {
+                self.share = Some(tenths);
+                ui.set_inline_style(fill, &format!("width: {:.1}%", tenths as f32 / 10.0));
+            }
+        }
+    }
 }
 
 /// How much memory the editor holds, from Linux's /proc.

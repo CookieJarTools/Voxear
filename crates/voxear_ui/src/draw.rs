@@ -91,6 +91,8 @@ pub(crate) fn measure(
                 AvailableSpace::MinContent => Some(0.0),
                 AvailableSpace::MaxContent => None,
             };
+            // Broken here at the width measured, its lines are drawn otherwise than when last drawn.
+            text.drawn_at = None;
             let layout = text.shaped(fonts, layouts, (scale, whole_pixels), stack);
             layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
@@ -288,6 +290,7 @@ impl Draw<'_> {
             if let Some(text) = &mut element.text
                 && let Some((_, shaped)) = &mut text.shaped
             {
+                let drawn_at = &mut text.drawn_at;
                 // Broken again at the width it ended up, which the last
                 // measure may not have been, and aligned in it. Kept to
                 // whole pixels, it is rounded up to one, but by less than a
@@ -300,7 +303,6 @@ impl Draw<'_> {
                     false => inner * self.scale * (1.0 + 1e-4),
                 };
                 let width = element.text_style.wrap.then_some(width);
-                shaped.break_all_lines(width);
                 // Right to left, the start is the right, whichever way the text itself runs.
                 let rtl = element.text_style.rtl;
                 let alignment = match (element.text_style.align, rtl) {
@@ -308,7 +310,13 @@ impl Draw<'_> {
                     (TextAlign::Start, true) | (TextAlign::End, false) => Alignment::Right,
                     (TextAlign::Center, _) => Alignment::Center,
                 };
-                shaped.align(alignment, AlignmentOptions::default());
+                // Broken and aligned as last frame, its lines are as they were: only a change does it again.
+                let at = (width.map(f32::to_bits), alignment);
+                if *drawn_at != Some(at) {
+                    shaped.break_all_lines(width);
+                    shaped.align(alignment, AlignmentOptions::default());
+                    *drawn_at = Some(at);
+                }
                 // Text that does not wrap is laid out at its own width, so its
                 // alignment has nothing to align it in: it is placed in its box
                 // here, and starts at the start when it does not fit.

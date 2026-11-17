@@ -1,5 +1,5 @@
 format = 1
-description = "Long warm evenings: warm sun and cool shade on every block, leaves glowing against the sun, shafts of sun through them, a golden haze and a warm grade."
+description = "Long warm evenings: warm sun and cool shade on every block, leaves glowing against the sun, a golden path of sun on the water, shafts of sun through the leaves, a golden haze and a warm grade."
 
 [options]
 rays = { kind = "toggle", default = true, label = "Rays", about = "Shafts of sunlight where it breaks through leaves and between blocks" }
@@ -8,9 +8,11 @@ haze = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Haze", abo
 warmth = { kind = "number", range = [0.0, 1.0], default = 0.7, label = "Warmth", about = "How far the grade warms the picture: golden light, cool shade" }
 leaf_glow = { kind = "number", range = [0.0, 2.0], default = 1.0, label = "Leaf glow", about = "How much leaves glow with the sun through them, seen against a low sun" }
 
-# How block faces are lit: warm sun, cool shade, warm torchlight, and leaves lit through from behind.
+# How block faces are lit: warm sun, cool shade, warm torchlight, and leaves lit through from behind; and water: the
+# sun's path on it golden.
 [surface]
 blocks = "faces.slang"
+water = "water.slang"
 
 # The sky round the sun, marched towards it from each pixel at half size: what stands in the way casts the shafts.
 [[pass]]

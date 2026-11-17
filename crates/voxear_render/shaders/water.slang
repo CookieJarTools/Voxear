@@ -11,6 +11,12 @@
 #include "lava.slang"
 #include "block_quads.slang"
 
+#ifdef VOXEAR_PACK_WATER
+// A worn shader pack's water program, as src/shader_packs.rs's `surface_wrapper` writes it: it defines packWaterColor,
+// which lights the water in place of the engine.
+#include "project_pack_water.slang"
+#endif
+
 // The cascades' resolution and how many there are (OCEAN_CASCADES in src/ocean.rs).
 static const uint OCEAN_N = 256;
 static const uint OCEAN_CASCADES = 6;
@@ -2590,7 +2596,10 @@ FragmentOut waterFragment(WaterOut input)
         foamLit += sunLight * shadow * sparkle * 3.0 * saturate(rapid * 1.5 + wake);
     }
     float sparse = stream ? 1.0 : lerp(0.75, 1.0, saturate(pattern * 1.4));
-    color = lerp(color, foamLit, foam * (1.0 - 0.35 * spot.age) * sparse);
+    // Its colour without the foam, and how much foam there is, for a shader pack's water program.
+    float3 packClear = color;
+    float packFoam = foam * (1.0 - 0.35 * spot.age) * sparse;
+    color = lerp(color, foamLit, packFoam);
     // A Stream fades in over its first two points and out over its last two, and across its mouth into the water it
     // runs into, drawn under it, so it becomes that water rather than lying on it.
     if (stream)
@@ -2602,6 +2611,34 @@ FragmentOut waterFragment(WaterOut input)
         color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, shown);
     }
 
+#ifdef VOXEAR_PACK_WATER
+    {
+        WaterSurface packed;
+        packed.position = input.world;
+        packed.normal = n;
+        packed.view = v;
+        packed.depth = thickness;
+        packed.foam = packFoam;
+        packed.skyLight = 1.0;
+        packed.blockLight = 0.0;
+        packed.kind = sea ? PACK_WATER_SEA : stream ? PACK_WATER_STREAM : PACK_WATER_POOL;
+        packed.pixel = pixel;
+        WaterLighting packLight;
+        packLight.sunDirection = l;
+        packLight.sunLight = sunLight;
+        packLight.shadow = shadow;
+        packLight.sky = ambient;
+        packLight.fresnel = fresnel;
+        packLight.reflection = reflected;
+        packLight.behind = behind;
+        packLight.through = through;
+        packLight.scatter = under - behind * through;
+        packLight.glints = glints;
+        packLight.clear = packClear;
+        packLight.engine = color;
+        color = packWaterColor(packed, packLight);
+    }
+#endif
     if (atmosphere)
     {
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
@@ -4293,6 +4330,9 @@ FragmentOut blockWaterLit(
     float3 glow = waterGlow(frame, medium, 0.0, bentView, 0.0, thickness, 0.0, shadow, ambient, sunLight);
     float3 under = behind * through + glow;
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
+    // Its colour without foam or white water, and how much of those there is, for a shader pack's water program.
+    float3 packClear = color;
+    float packFoam = 0.0;
     // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it;
     // and foam churned up beside where a fall lands, drifting and thinning out from it.
     if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0))
@@ -4320,6 +4360,7 @@ FragmentOut blockWaterLit(
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
         float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, foam);
+        packFoam = max(packFoam, foam);
     }
     // Falling water: its body paler with the air in it, and white threads running down its side, more of them the
     // further it has fallen.
@@ -4333,6 +4374,7 @@ FragmentOut blockWaterLit(
         float3 pale = lerp(whiteLit, whiteLit * look.scatter / max(max(look.scatter.r, look.scatter.g), max(look.scatter.b, 1e-3)), 0.55);
         color = lerp(color, pale, white.y);
         color = lerp(color, whiteLit, white.x);
+        packFoam = max(packFoam, max(white.x, white.y));
     }
     // A column's side is the water's own body, lit as a block's face is, so the columns read as blocks of water.
     if (swollen && !level)
@@ -4371,6 +4413,7 @@ FragmentOut blockWaterLit(
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
         float3 foamLit = 0.85 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, white * (0.82 + 0.18 * seaGrain(cell + 77)));
+        packFoam = max(packFoam, white);
     }
     // A warm sea glows at night where its water breaks, and in specks that come and go all over it.
     if (frame->sea.glow > 0.0 && sea && level)
@@ -4382,6 +4425,36 @@ FragmentOut blockWaterLit(
     }
     // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
+#ifdef VOXEAR_PACK_WATER
+    {
+        BlockWorld lit = buffers()->blockWorlds[input.water.x];
+        bool kept = (lit.flags & BLOCKS_LIT) != 0;
+        WaterSurface packed;
+        packed.position = at;
+        packed.normal = n;
+        packed.view = v;
+        packed.depth = thickness;
+        packed.foam = packFoam;
+        packed.skyLight = kept ? input.lit.x : 1.0;
+        packed.blockLight = kept ? input.lit.y : 0.0;
+        packed.kind = PACK_WATER_BLOCKS | (sea ? PACK_WATER_SEA : 0) | (below ? PACK_WATER_FROM_BELOW : 0);
+        packed.pixel = pixel;
+        WaterLighting packLight;
+        packLight.sunDirection = l;
+        packLight.sunLight = sunLight;
+        packLight.shadow = shadow;
+        packLight.sky = ambient;
+        packLight.fresnel = fresnel;
+        packLight.reflection = reflected;
+        packLight.behind = behind;
+        packLight.through = through;
+        packLight.scatter = glow;
+        packLight.glints = glints;
+        packLight.clear = packClear;
+        packLight.engine = color;
+        color = packWaterColor(packed, packLight);
+    }
+#endif
     if (atmosphere)
     {
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), here);

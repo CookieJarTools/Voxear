@@ -13,6 +13,13 @@ static const uint PACK_BLOCK_GLOWS = 16;
 static const uint PACK_BLOCK_SMOOTH = 32;
 static const uint PACK_BLOCK_CUBES = 64;
 
+// What water is, for a pack's water program (shader_pack_surface.slang names them WATER_IS_SEA and the rest).
+static const uint PACK_WATER_SEA = 1;
+static const uint PACK_WATER_POOL = 2;
+static const uint PACK_WATER_STREAM = 4;
+static const uint PACK_WATER_BLOCKS = 8;
+static const uint PACK_WATER_FROM_BELOW = 16;
+
 static const uint PACK_TARGETS = 8;
 static const uint PACK_OPTIONS = 32;
 static const float PACK_PI = 3.14159265;

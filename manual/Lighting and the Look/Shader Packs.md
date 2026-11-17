@@ -2,13 +2,13 @@
 order: 8
 ---
 
-A **shader pack** is a set of small programs that change how a game is lit and finished. A **pass** runs over the picture as each frame is drawn: shafts of sun through leaves, a fog of your own, outlines round blocks, a painted look, a colour grade. It reads what the frame has drawn so far (its colour, how far away each pixel is, which way each surface faces, how it moved, the light kept for the blocks round the camera) and writes a new colour, or a picture of its own for a later pass to read. A **surface program** lights the faces of blocks in place of the engine: warmer sun, bluer shade, leaves that glow with the sun behind them, torchlight of another colour.
+A **shader pack** is a set of small programs that change how a game is lit and finished. A **pass** runs over the picture as each frame is drawn: shafts of sun through leaves, a fog of your own, outlines round blocks, a painted look, a colour grade. It reads what the frame has drawn so far (its colour, how far away each pixel is, which way each surface faces, how it moved, the light kept for the blocks round the camera) and writes a new colour, or a picture of its own for a later pass to read. A **surface program** lights the faces of blocks or the water in place of the engine: warmer sun, bluer shade, leaves that glow with the sun behind them, torchlight of another colour, a golden path of sun across the sea.
 
 A [[Look Packs|look pack]] sets the engine's own lighting; a shader pack adds passes of its own to it. A player can wear one of each, and anything a shader pack leaves out the engine draws as it always does. With none worn nothing of this runs, and a frame costs what it did.
 
 ## The pack Voxear comes with
 
-**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, and a grade that warms the light and cools the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
+**Evening** gives long warm evenings: warm sun and cooler shade on every block, warmer torchlight, leaves that glow green-gold seen against a low sun, a golden path of sun on the water, shafts of sun where it breaks through leaves and between blocks, a golden haze in the air that is thicker far off and towards the sun, and a grade that warms the light and cools the shade. In a cave, or anywhere the blocks round the camera keep the sky out, the haze and the rays fade away.
 
 | Option | What it does |
 | --- | --- |
@@ -183,7 +183,48 @@ float3 run(BlockSurface surface, BlockLighting light)
 | `sunTerm`, `ambientTerm`, `reflectionTerm`, `lamps`, `emission` | The engine's terms, which add up to `engine` |
 | `engine` | The colour the engine gives the face |
 
-Surface programs have the pack's `options()` and `frame()` as passes do. A world drawn smooth, a block of parts and a face cut into small cubes are all lit by `blocks`, told apart by `kind`; block water is still drawn by the engine.
+Surface programs have the pack's `options()` and `frame()` as passes do. A world drawn smooth, a block of parts and a face cut into small cubes are all lit by `blocks`, told apart by `kind`.
+
+### Lighting water
+
+`water` in `[surface]` names a program that lights the sea, Pools, Streams and worlds of blocks' water:
+
+```toml
+[surface]
+water = "water.slang"
+```
+
+```slang
+// water.slang: what the water mirrors bluer, and the engine's foam kept.
+float3 run(WaterSurface surface, WaterLighting light)
+{
+	float3 under = light.behind * light.through + light.scatter;
+	float3 clear = (1.0 - light.fresnel) * under + light.fresnel * light.reflection * float3(0.9, 0.95, 1.1) + light.glints;
+	return clear + (light.engine - light.clear);
+}
+```
+
+`light.clear` is the engine's colour of the water without its foam and white water, and `light.engine` with them, so adding their difference to a colour of your own keeps the engine's foam on it.
+
+| `surface.` | |
+| --- | --- |
+| `position`, `normal`, `view` | Where it is, the way its rippled surface faces there, and the way to the camera |
+| `depth` | How far the view goes through it to what lies behind, in metres |
+| `foam` | How much of it is foam or white water, 0 to 1 |
+| `skyLight`, `blockLight` | A world of blocks' water's sky light and block light; open sky for the rest |
+| `kind` | `WATER_IS_SEA`, `WATER_IS_POOL`, `WATER_IS_STREAM`, `WATER_IS_BLOCKS` and `WATER_FROM_BELOW`, a bit each |
+| `pixel` | Where it shows in the picture |
+
+| `light.` | |
+| --- | --- |
+| `sunDirection`, `sunLight`, `shadow` | The way to the sun, its light as it arrives, and how much reaches the water |
+| `sky` | The sky's light from all round reaching it |
+| `fresnel`, `reflection` | How much it mirrors, and what it mirrors |
+| `behind`, `through`, `scatter` | What lies behind it as it would be without the water, how much of that comes through by colour, and the water's own light along the view into it |
+| `glints` | The sun's and the lamps' glints on it |
+| `clear`, `engine` | The engine's colour of it without its foam, and with it |
+
+Seen from under the sea or a Pool, water is still the engine's own; a world of blocks' water seen from below has `WATER_FROM_BELOW`. Lava is never water's. The engine's water shader is large: a pack with a water program takes about a minute to compile the first time it is worn.
 
 ### Things to make
 

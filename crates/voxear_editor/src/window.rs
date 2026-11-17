@@ -150,6 +150,7 @@ impl App {
         let handles =
             WindowHandles { display: window.display_handle()?.as_raw(), window: window.window_handle()?.as_raw() };
         let mut renderer = unsafe { Renderer::new(handles, size.width, size.height, &self.settings)? };
+        renderer.show_splash(&format!("Opening {}", project.name()));
         let mut editor = Editor::open(project, &mut renderer, self.log.clone())?;
         if let Err(error) = editor.serve_link(false) {
             tracing::warn!("tools cannot reach this editor yet: {error:#}");

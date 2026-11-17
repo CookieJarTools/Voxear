@@ -22,6 +22,9 @@ public readonly struct Bone : IEquatable<Bone>
 	private const int RotationValue = 5;
 	private const int RestPositionValue = 6;
 	private const int RestRotationValue = 7;
+	private const int LocalScaleValue = 8;
+	private const int RestScaleValue = 9;
+	private const int HiddenValue = 10;
 	private const int NameText = 0;
 
 	public static readonly Bone None = default;
@@ -90,6 +93,32 @@ public readonly struct Bone : IEquatable<Bone>
 		set { Set(LocalRotationValue, new Vector4(value.X, value.Y, value.Z, value.W)); }
 	}
 
+	/// <summary>
+	/// How large it is in its parent bone's space, each way: 1 as the model was made. The bones under it grow and
+	/// shrink with it, so it squashes and stretches whatever it carries. Animation poses it again as it poses the rest.
+	/// </summary>
+	public Vector3 LocalScale
+	{
+		get
+		{
+			var scale = Point(LocalScaleValue);
+			return scale == Vector3.Zero && !IsValid ? Vector3.One : scale;
+		}
+		set { Set(LocalScaleValue, new Vector4(value, 0f)); }
+	}
+
+	/// <summary>
+	/// Whether the bone, and every bone under it, is drawn: hidden, the skin bound to them is drawn nowhere, its
+	/// shadow neither, as an ear or a nose a character has not picked. The bones stay where they are posed, so what is
+	/// attached to them stays put. It stays hidden whatever animation does, until shown again, or until the Obj draws
+	/// a model of other bones.
+	/// </summary>
+	public bool Hidden
+	{
+		get { return Get(HiddenValue).X != 0f; }
+		set { Set(HiddenValue, new Vector4(value ? 1f : 0f, 0f, 0f, 0f)); }
+	}
+
 	/// <summary>Where it is in the world.</summary>
 	public Vector3 Position
 	{
@@ -109,6 +138,9 @@ public readonly struct Bone : IEquatable<Bone>
 
 	/// <summary>How it is turned in its parent bone's space at rest, as the model was made.</summary>
 	public Quaternion RestRotation => Turn(RestRotationValue);
+
+	/// <summary>How large it is in its parent bone's space at rest, as the model was made.</summary>
+	public Vector3 RestScale => IsValid ? Point(RestScaleValue) : Vector3.One;
 
 	public static bool operator ==(Bone left, Bone right)
 	{

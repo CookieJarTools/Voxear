@@ -452,6 +452,28 @@ impl PlacedStructure {
         }
     }
 
+    /// The columns of ground it stands on, from its site, as it stands
+    /// unturned, each with how many blocks down from its top must be ground
+    /// (see [`Ground::holds`]): a plant's trunk, three down, as deep as its
+    /// roots reach; a model's middle and corners, a town's middle's. None
+    /// for a dungeon, which is under the ground.
+    fn feet(&self) -> Vec<([i32; 2], i32)> {
+        let model = |size: [u32; 3]| {
+            let (sx, sz) = (size[0] as i32, size[2] as i32);
+            let (low, high) = ([-(sx / 2), -(sz / 2)], [sx - 1 - sx / 2, sz - 1 - sz / 2]);
+            let corners = [[low[0], low[1]], [high[0], low[1]], [low[0], high[1]], [high[0], high[1]]];
+            std::iter::once([0, 0]).chain(corners).map(|at| (at, 1)).collect()
+        };
+        match &self.blocks {
+            StructureBlocks::Plant { .. } => vec![([0, 0], 3)],
+            StructureBlocks::Model { size, .. } => model(*size),
+            StructureBlocks::Town(town) => {
+                town.middle.as_ref().map_or_else(|| vec![([0, 0], 1)], |middle| model(middle.size))
+            }
+            StructureBlocks::Dungeon(_) => Vec::new(),
+        }
+    }
+
     /// How far from its site it reaches along the ground, in blocks, at the
     /// most.
     fn reach(&self) -> f32 {
@@ -684,6 +706,12 @@ impl Town {
                 cell = [cell[0] + step[0], cell[1] + step[1]];
             }
             if !paths.contains(&cell) {
+                continue;
+            }
+            // On ground, its middle and corners: not over a cave's opening.
+            let feet = [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]
+                .map(|[sx, sz]| ([at[0] + sx * half[0], at[1] + sz * half[1]], 1));
+            if !ground.holds(&feet).into_iter().all(|holds| holds) {
                 continue;
             }
             stubs.extend(stub);
@@ -926,6 +954,7 @@ pub fn plant_shore(structure: &PlacedStructure, biomes: Option<&WorldBiomes>) ->
 
 /// The ground under a place, for building: the generator's height there,
 /// in metres in its world.
+#[derive(Clone, Copy)]
 pub(crate) struct Ground<'a> {
     pub(crate) world: &'a WorldGen,
     pub(crate) size: f32,
@@ -969,6 +998,53 @@ impl Ground<'_> {
         self.top_of(height)
     }
 
+    /// Whether the highest whole block of ground in each of `feet`'s
+    /// columns (see [`Ground::top`]), and the blocks under it down to as
+    /// many as the number beside the column, are still ground once the
+    /// generator's Volume has pushed and hollowed it, as the column's chunk
+    /// is made: no cave, ravine or overhang has opened them. What stands on
+    /// the ground stands only where it holds. All hold where the generator
+    /// has no Volume, or its Volume takes nothing out.
+    pub(crate) fn holds(&self, feet: &[([i32; 2], i32)]) -> Vec<bool> {
+        let volume = self.world.volume().filter(|volume| !volume.plain() || volume.caved());
+        let Some(volume) = volume.filter(|_| !feet.is_empty()) else { return vec![true; feet.len()] };
+        let size = self.size;
+        let middle = |axis: usize, v: i32| self.position[axis] + (v as f32 + 0.5) * size;
+        let columns: Vec<[i32; 2]> = feet.iter().map(|(column, _)| *column).collect();
+        let (xs, zs): (Vec<f32>, Vec<f32>) = columns.iter().map(|&[x, z]| (middle(0, x), middle(1, z))).unzip();
+        let mut heights = vec![0.0; columns.len()];
+        self.world.heights(&xs, &zs, &mut heights);
+        let carried = volume.carried_columns(&columns, middle, &heights);
+        // Each block asked about, read where its chunk reads it: a world's own caves from its corner.
+        let corner = self.world.volume_at_corner();
+        let (mut cx, mut cy, mut cz, mut of) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for (at, &([x, z], deep)) in feet.iter().enumerate() {
+            let top = self.top_of(heights[at]);
+            let (px, pz) = match corner {
+                true => ((x as f32 + 0.5) * size, (z as f32 + 0.5) * size),
+                false => (xs[at], zs[at]),
+            };
+            for y in top + 1 - deep.max(1)..=top {
+                cx.push(px);
+                cy.push((y as f32 + 0.5) * size);
+                cz.push(pz);
+                of.push(at);
+            }
+        }
+        let rows: Vec<Vec<f32>> = carried.rows().iter().map(|row| of.iter().map(|&at| row[at]).collect()).collect();
+        let rows: Vec<&[f32]> = rows.iter().map(Vec::as_slice).collect();
+        let (mut inside, mut whole) = (vec![0.0; of.len()], vec![0.0; of.len()]);
+        let cells = crate::generate::Cells { x: &cx, y: &cy, z: &cz, carried: &rows, size };
+        volume.densities(cells, false, &mut inside, &mut whole);
+        // Under a plain height, a block the caves leave alone is ground: every one asked about is under the surface.
+        let plain = volume.plain();
+        let mut holds = vec![true; feet.len()];
+        for (k, &at) in of.iter().enumerate() {
+            holds[at] &= inside[k] > 0.0 || plain && inside[k] == whole[k];
+        }
+        holds
+    }
+
     /// Which of the world's biomes column `(x, z)` is; none where it lists
     /// none.
     fn biome(&self, [x, z]: [i32; 2]) -> Option<usize> {
@@ -997,11 +1073,10 @@ impl Ground<'_> {
 /// far view it reaches, and each answer reads the ground, the climate and
 /// the water there.
 struct SiteFits<'a> {
-    world: &'a WorldGen,
-    biomes: Option<&'a WorldBiomes>,
-    size: f32,
+    ground: Ground<'a>,
     /// What tells each structure's answers from every other's: its world,
-    /// biomes and placement.
+    /// biomes and placement, where the world's blocks lie and what it
+    /// stands on.
     keys: Vec<(*const PlacedStructure, u64)>,
 }
 
@@ -1014,20 +1089,23 @@ static FITS: std::sync::LazyLock<Vec<Fits>> =
 const FITS_KEPT: usize = 1 << 17;
 
 impl<'a> SiteFits<'a> {
-    fn new(world: &'a WorldGen, biomes: Option<&'a WorldBiomes>, size: f32, structures: &WorldStructures) -> Self {
-        let lie = biomes.map_or(0, |biomes| crate::layers::stable_hash(format!("{biomes:?}").as_bytes()));
+    fn new(ground: Ground<'a>, structures: &WorldStructures) -> Self {
+        let (world, size) = (ground.world, ground.size);
+        let lie = ground.biomes.map_or(0, |biomes| crate::layers::stable_hash(format!("{biomes:?}").as_bytes()));
+        let laid = format!("{:?}{}{}", ground.position, ground.halved, world.volume_at_corner());
         let keys = structures
             .list
             .iter()
             .map(|structure| {
                 let plant = matches!(structure.blocks, StructureBlocks::Plant { .. });
-                let own = format!("{:?}{:?}{plant}{size}", structure.placement, structure.biomes);
+                let feet = structure.feet();
+                let own = format!("{:?}{:?}{plant}{size}{laid}{feet:?}", structure.placement, structure.biomes);
                 let bytes = [world.hash().to_le_bytes(), lie.to_le_bytes()].concat();
                 let key = crate::layers::stable_hash(&[bytes, own.into_bytes()].concat());
                 (structure as *const PlacedStructure, key)
             })
             .collect();
-        Self { world, biomes, size, keys }
+        Self { ground, keys }
     }
 
     /// Whether each of `sites` fits `structure`.
@@ -1058,10 +1136,40 @@ impl<'a> SiteFits<'a> {
     }
 
     /// Whether each of `sites` fits `structure`, worked out together: its
-    /// ground's height over the sea, its slope and its biome; and a plant's
-    /// distance from the shore, rivers and lakes.
+    /// ground's height over the sea, its slope and its biome; a plant's
+    /// distance from the shore, rivers and lakes; and whether what it
+    /// stands on is ground once caves and overhangs are cut, so nothing
+    /// stands over a cave's opening or a ravine, near or far.
     fn work_out(&self, structure: &PlacedStructure, sites: &[&Site]) -> Vec<bool> {
-        let (world, size, count) = (self.world, self.size, sites.len());
+        let mut fits = self.placed(structure, sites);
+        let feet = structure.feet();
+        let standing: Vec<usize> = (0..sites.len()).filter(|&at| fits[at]).collect();
+        if feet.is_empty() || standing.is_empty() {
+            return fits;
+        }
+        // Every column each stands on, turned as it is, by the block its site falls on.
+        let Ground { size, position, .. } = self.ground;
+        let asked: Vec<([i32; 2], i32)> = standing
+            .iter()
+            .flat_map(|&at| {
+                let site = sites[at];
+                let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
+                let turned =
+                    turned(feet.iter().map(|&([x, z], deep)| ([x, deep, z], 0)).collect(), site.turns, site.mirrored);
+                turned.into_iter().map(move |([x, deep, z], _)| ([block[0] + x, block[1] + z], deep))
+            })
+            .collect();
+        let holds = self.ground.holds(&asked);
+        for (k, &at) in standing.iter().enumerate() {
+            fits[at] = holds[k * feet.len()..(k + 1) * feet.len()].iter().all(|&holds| holds);
+        }
+        fits
+    }
+
+    /// Whether each of `sites` fits `structure` by the generator's own
+    /// ground (see [`SiteFits::work_out`]): all but what caves cut.
+    fn placed(&self, structure: &PlacedStructure, sites: &[&Site]) -> Vec<bool> {
+        let (world, size, count) = (self.ground.world, self.ground.size, sites.len());
         // Each site, and a block east and north of it, for its slope.
         let mut xs = Vec::with_capacity(count * 3);
         let mut zs = Vec::with_capacity(count * 3);
@@ -1073,7 +1181,7 @@ impl<'a> SiteFits<'a> {
         world.heights(&xs, &zs, &mut heights);
         let (xs, zs) = (&xs[..count], &zs[..count]);
         let (height, east, north) = (&heights[..count], &heights[count..count * 2], &heights[count * 2..]);
-        let biome_of: Vec<Option<usize>> = match self.biomes {
+        let biome_of: Vec<Option<usize>> = match self.ground.biomes {
             Some(biomes) => {
                 let (mut warmth, mut wetness) = (vec![0.0; count], vec![0.0; count]);
                 world.climates(xs, zs, height, &mut warmth, &mut wetness);
@@ -1100,7 +1208,7 @@ impl<'a> SiteFits<'a> {
                 let (rise_east, rise_north) = (east[at] - height[at], north[at] - height[at]);
                 let slope = (rise_east * rise_east + rise_north * rise_north).sqrt() / size;
                 // Where the land lies in levels, a site's height counts from the floor of its area.
-                let lift = self.biomes.map_or(0.0, |biomes| biomes.lift(xs[at], zs[at], height[at]));
+                let lift = self.ground.biomes.map_or(0.0, |biomes| biomes.lift(xs[at], zs[at], height[at]));
                 let ground = SiteGround { above_sea: height[at] - lift - world.sea_level(), slope, biome: biome_of[at] };
                 structure.placement.fits(ground, |b| structure.biomes.contains(&b))
             })
@@ -1111,7 +1219,7 @@ impl<'a> SiteFits<'a> {
             return fits;
         }
         for (at, fits) in fits.iter_mut().enumerate() {
-            let biome = biome_of[at].and_then(|b| self.biomes?.biomes.list().get(b));
+            let biome = biome_of[at].and_then(|b| self.ground.biomes?.biomes.list().get(b));
             let shore = biome.map_or(0.0, |biome| biome.ground.shore_height);
             if height[at] - world.sea_level() < shore.max(BEACH) {
                 *fits = false;
@@ -1220,7 +1328,7 @@ pub fn dungeons_near(
     near: [f32; 2],
     reach: f32,
 ) -> Vec<(usize, Site, Arc<super::dungeon::DungeonLayout>)> {
-    let checks = SiteFits::new(world, biomes, at.0, structures);
+    let checks = SiteFits::new(Ground { world, size: at.0, position: at.1, biomes, halved: at.3 }, structures);
     let mut found = Vec::new();
     for (which, structure) in structures.list.iter().enumerate() {
         let StructureBlocks::Dungeon(dungeon) = &structure.blocks else { continue };
@@ -1317,7 +1425,7 @@ fn build_looking(
     let mut kept = KeptSites::default();
     // Whether the ground at a site fits a structure's placement: worked out for all of a structure's sites at once,
     // and kept for every thread (see `SiteFits`).
-    let checks = SiteFits::new(world, biomes, size, structures);
+    let checks = SiteFits::new(ground, structures);
     let fits = |structure: &PlacedStructure, site: &Site| checks.fits(structure, std::slice::from_ref(site))[0];
     let within = |x: i32, z: i32| {
         let (cx, cz) = (x.div_euclid(side), z.div_euclid(side));

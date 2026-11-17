@@ -34,6 +34,11 @@ pub struct WorldGen {
     /// `land::add_land`), with a hash of those biomes: none for a graph as
     /// its file has it.
     land: Option<Arc<(u64, super::land::Shaped)>>,
+    /// Whether its Volume is read from a world of blocks' corner rather
+    /// than where the world lies in its world: a world's own overhangs and
+    /// caves, wired into a generator that has none (see
+    /// `blocks::generate::cells::source`).
+    corner_volume: bool,
 }
 
 /// The square of ground the graph editor's previews show: its middle, in
@@ -257,13 +262,7 @@ impl Volume<'_> {
             .flat_map(|z| (0..wide).map(move |x| (x, z)))
             .map(|(x, z)| (place(0, at(from_x, x)), place(1, at(from_z, z))))
             .unzip();
-        let mut ground = Vec::new();
-        if voxels.spread.reads(crate::generate::eval::Given::Ground) {
-            ground = vec![0.0; lx.len()];
-            self.height.run(lx.len(), Givens { x: &lx, z: &lz, ..Givens::default() }, &mut [&mut ground]);
-        }
-        let given = Givens { x: &lx, z: &lz, ground: &ground, ..Givens::default() };
-        let spread = made(&voxels.spread, lx.len(), given).rows;
+        let spread = self.spread(&lx, &lz);
         // Each column's number read between the four made round it.
         let between = |row: &[f32]| -> Vec<f32> {
             let mut read = Vec::with_capacity(all);
@@ -293,6 +292,73 @@ impl Volume<'_> {
         let mut spread = spread.iter().map(|row| between(row));
         let rows = voxels.between.iter().map(|between| if *between { spread.next() } else { Some(exact.remove(0)) });
         Carried { rows: rows.map(Option::unwrap_or_default).collect() }
+    }
+
+    /// What it reads of each of `columns`, apart from one another, as
+    /// [`Volume::carried_grid`] gives it for a grid holding the column:
+    /// column `v` along axis `axis` lies at `place(axis, v)` metres in the
+    /// generator's world, and `heights` are the generator's own there. So
+    /// the ground under what stands here and there, a tree's foot, is asked
+    /// about as the chunk it is in makes it.
+    pub fn carried_columns(&self, columns: &[[i32; 2]], place: impl Fn(usize, i32) -> f32, heights: &[f32]) -> Carried {
+        let all = columns.len().min(heights.len());
+        let columns = &columns[..all];
+        let (xs, zs): (Vec<f32>, Vec<f32>) = columns.iter().map(|&[x, z]| (place(0, x), place(1, z))).unzip();
+        let voxels = self.voxels;
+        let given = Givens { x: &xs, z: &zs, ground: &heights[..all], ..Givens::default() };
+        let mut exact = made(&voxels.exact, all, given).rows;
+        if !voxels.between.contains(&true) || all == 0 {
+            return Carried { rows: exact };
+        }
+        // The slow rows at the four columns of every fourth round each, which a grid reads it between: each made
+        // once, as columns near one another share them.
+        let line = |v: i32| v.div_euclid(BETWEEN) * BETWEEN;
+        let mut lines: std::collections::HashMap<[i32; 2], usize> = std::collections::HashMap::new();
+        let (mut lx, mut lz) = (Vec::new(), Vec::new());
+        let corners: Vec<[usize; 4]> = columns
+            .iter()
+            .map(|&[x, z]| {
+                let (x, z) = (line(x), line(z));
+                [[x, z], [x + BETWEEN, z], [x, z + BETWEEN], [x + BETWEEN, z + BETWEEN]].map(|corner| {
+                    *lines.entry(corner).or_insert_with(|| {
+                        lx.push(place(0, corner[0]));
+                        lz.push(place(1, corner[1]));
+                        lx.len() - 1
+                    })
+                })
+            })
+            .collect();
+        let spread = self.spread(&lx, &lz);
+        // Read between them as a grid does, to the bit.
+        let between = |row: &[f32]| -> Vec<f32> {
+            let share = |part: i32| part as f32 / BETWEEN as f32;
+            columns
+                .iter()
+                .zip(&corners)
+                .map(|(&[x, z], corner)| {
+                    let (part_x, part_z) = (x.rem_euclid(BETWEEN), z.rem_euclid(BETWEEN));
+                    let along =
+                        |low: f32, high: f32| if part_x == 0 { low } else { low + (high - low) * share(part_x) };
+                    let a = along(row[corner[0]], row[corner[1]]);
+                    if part_z == 0 { a } else { a + (along(row[corner[2]], row[corner[3]]) - a) * share(part_z) }
+                })
+                .collect()
+        };
+        let mut spread = spread.iter().map(|row| between(row));
+        let rows = voxels.between.iter().map(|between| if *between { spread.next() } else { Some(exact.remove(0)) });
+        Carried { rows: rows.map(Option::unwrap_or_default).collect() }
+    }
+
+    /// The rows that change slowly from column to column (see
+    /// [`Volume::carried_grid`]), made at each `(xs[i], zs[i])`.
+    fn spread(&self, xs: &[f32], zs: &[f32]) -> Vec<Vec<f32>> {
+        let mut ground = Vec::new();
+        if self.voxels.spread.reads(crate::generate::eval::Given::Ground) {
+            ground = vec![0.0; xs.len()];
+            self.height.run(xs.len(), Givens { x: xs, z: zs, ..Givens::default() }, &mut [&mut ground]);
+        }
+        let given = Givens { x: xs, z: zs, ground: &ground, ..Givens::default() };
+        made(&self.voxels.spread, xs.len(), given).rows
     }
 
     /// How far into the ground each of `cells` is, in metres, out of it
@@ -415,7 +481,22 @@ impl WorldGen {
             preview: PreviewArea::default(),
             made: Arc::new(Made { compiled, hash, faults, previews: OnceLock::new(), sea_climate: OnceLock::new() }),
             land: None,
+            corner_volume: false,
         }
+    }
+
+    /// Says its Volume is read from a world of blocks' corner (see
+    /// [`WorldGen::volume_at_corner`]).
+    pub(crate) fn with_volume_at_corner(mut self) -> Self {
+        self.corner_volume = true;
+        self
+    }
+
+    /// Whether its Volume is read with a world of blocks' places counted
+    /// from the world's corner, not where the world lies in its own world:
+    /// a world's own overhangs and caves are, as they always were.
+    pub(crate) fn volume_at_corner(&self) -> bool {
+        self.corner_volume
     }
 
     /// The land of the biomes hashed `lands` already shaped into its graph,
@@ -710,7 +791,7 @@ mod tests {
     }
 
     /// The hash of the Alpine preset's generator, which has no Volume.
-    const ALPINE_HASH: u64 = 0x92a5_08a6_e616_4acd;
+    const ALPINE_HASH: u64 = 0x1eab_ff5c_9a5d_403c;
 
     /// Hills of noise shaped by a curve, raised by a constant: a graph of every plain kind of node.
     fn hills() -> WorldGen {

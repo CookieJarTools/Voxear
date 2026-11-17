@@ -34,7 +34,7 @@ use crate::{
 /// bends and flutters in the wind, for a plant that is a box model. 14:
 /// meshes' lightmap UVs in the payload. 15: whether each material is
 /// two-sided.
-pub const COOKED_VERSION: u32 = 15;
+pub const COOKED_VERSION: u32 = 17;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -51,6 +51,8 @@ pub struct CookedModel {
     pub(crate) animation: Option<ModelAnimation>,
     /// What part of a body each bone moves, for a model that says.
     pub(crate) roles: Vec<crate::BoneRole>,
+    /// A box model's own file, for drawing it with another sheet.
+    pub(crate) source: Option<String>,
     pub(crate) payload: Payload,
 }
 
@@ -159,6 +161,7 @@ impl PreparedModel {
             nodes: self.nodes.clone(),
             animation: self.animation.clone(),
             roles: self.roles.clone(),
+            source: self.source.clone(),
             payload: Payload::compress(data)?,
         })
     }
@@ -173,6 +176,11 @@ impl CookedModel {
     /// What part of a body each of its bones moves, for a model that says.
     pub fn roles(&self) -> &[crate::BoneRole] {
         &self.roles
+    }
+
+    /// A box model's own file, as it was cooked.
+    pub fn box_source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     pub fn path(&self) -> &str {
@@ -252,7 +260,8 @@ impl CookedModel {
             w.u32(u32::from(desc.pixels));
             w.f32s(&[desc.wind_bend, desc.wind_flutter]);
             w.u32(u32::from(desc.two_sided));
-            for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
+            let maps = [material.base_color, material.metallic_roughness, material.normal, material.emissive];
+            for texture in maps.into_iter().chain([material.tint_mask]) {
                 w.option(texture.map(|t| t as u32));
             }
             w.str(&material.name);
@@ -279,6 +288,13 @@ impl CookedModel {
         w.u32(self.roles.len() as u32);
         for role in &self.roles {
             w.u32(crate::BoneRole::ALL.iter().position(|other| other == role).unwrap_or(0) as u32);
+        }
+        match &self.source {
+            Some(text) => {
+                w.u32(1);
+                w.str(text);
+            }
+            None => w.u32(0),
         }
         match &self.payload {
             Payload::Raw(bytes) => {
@@ -380,8 +396,9 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));
         let (base_color, metallic_roughness, normal, emissive) = (texture()?, texture()?, texture()?, texture()?);
+        let tint_mask = texture()?;
         let name = r.str()?;
-        materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive });
+        materials.push(PreparedMaterial { name, desc, base_color, metallic_roughness, normal, emissive, tint_mask });
     }
     let mut nodes = Vec::new();
     for _ in 0..r.u32()? {
@@ -402,6 +419,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
     for _ in 0..r.u32()? {
         roles.push(crate::BoneRole::ALL.get(r.u32()? as usize).copied().unwrap_or_default());
     }
+    let source = if r.u32()? != 0 { Some(r.str()?) } else { None };
     if let Some(skin) = nodes.iter().filter_map(|node| node.skin).max() {
         let found = animation.as_ref().is_some_and(|a| skin < a.skins.len());
         ensure!(found, "a node uses skin {skin}, which is not there");
@@ -460,7 +478,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             texture.name
         );
     }
-    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, animation, roles, payload })
+    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, animation, roles, source, payload })
 }
 
 struct Writer(Vec<u8>);

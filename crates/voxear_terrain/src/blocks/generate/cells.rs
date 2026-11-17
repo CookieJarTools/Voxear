@@ -84,7 +84,7 @@ const MOVED_KEPT: usize = 16;
 
 /// How many hectares drain into a place before a river starts there, where
 /// the land lies in levels.
-const LEVEL_RIVERS: f32 = 40.0;
+const LEVEL_RIVERS: f32 = 24.0;
 
 /// The generator the ground `generate` asks of `world` is made by, for a
 /// world of blocks `block_size` metres a side.
@@ -136,7 +136,10 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
         graph.add_voxels(own, false);
     }
     crate::generate::land::add_land_volume(&mut graph, biomes, &shaped);
-    let world = Arc::new(world.with_graph(graph));
+    let world = world.with_graph(graph);
+    // The world's own overhangs and caves are read from its corner: by its chunks, and by what asks of the ground
+    // under what is built on it.
+    let world = Arc::new(if voxels || landed { world } else { world.with_volume_at_corner() });
     if moved.len() >= MOVED_KEPT {
         moved.remove(0);
     }

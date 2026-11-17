@@ -159,6 +159,11 @@ pub struct MaterialDesc {
     /// `voxear_physics::scene::Acoustic`; 0 to guess from its look: metal
     /// where it is metallic, glass for glass, and otherwise generic.
     pub acoustic: u32,
+    /// Which of an Obj's tints fall where on it, read as its base colour is:
+    /// its red, green and blue how much of the first, second and third tint
+    /// a pixel takes, and black none, so that pixel keeps its own colour.
+    /// `None` lays the first tint over all of it (see `ModelRenderer::tints`).
+    pub tint_mask: Option<TextureId>,
 }
 
 impl Default for MaterialDesc {
@@ -194,6 +199,7 @@ impl Default for MaterialDesc {
             displacement: 0.0,
             detail: 6.0,
             acoustic: 0,
+            tint_mask: None,
         }
     }
 }
@@ -364,6 +370,8 @@ pub struct Assets {
     moving_materials: std::collections::HashSet<MaterialHandle>,
     /// Two-sided materials, whose casters shadows draw from lists of their own.
     two_sided_materials: std::collections::HashSet<MaterialHandle>,
+    /// Materials with a tint mask.
+    tint_masked: std::collections::HashSet<MaterialHandle>,
     /// How many times a material has been written again, so what keeps
     /// shadows drawn with them knows when to draw them again.
     material_writes: u64,
@@ -446,6 +454,7 @@ impl Assets {
             foliage_materials: Default::default(),
             moving_materials: Default::default(),
             two_sided_materials: Default::default(),
+            tint_masked: Default::default(),
             material_writes: 0,
             ltc: [TextureId(0); 2],
             smoke_noise: TextureId(0),
@@ -1057,6 +1066,11 @@ impl Assets {
         self.two_sided_materials.contains(&material)
     }
 
+    /// Whether a material has a tint mask.
+    pub fn tint_masked(&self, material: MaterialHandle) -> bool {
+        self.tint_masked.contains(&material)
+    }
+
     /// How many times a material has been written again so far: one added
     /// is drawn with nothing yet, so it changes nothing drawn.
     pub fn material_writes(&self) -> u64 {
@@ -1093,6 +1107,11 @@ impl Assets {
             self.two_sided_materials.insert(handle);
         } else {
             self.two_sided_materials.remove(&handle);
+        }
+        if desc.tint_mask.is_some() {
+            self.tint_masked.insert(handle);
+        } else {
+            self.tint_masked.remove(&handle);
         }
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         // Diced only as the standard shader, opaque, one-sided and not glass, foliage or an impostor, draws it.
@@ -1133,7 +1152,7 @@ impl Assets {
             detail: desc.detail.clamp(1.0, 64.0),
             ground_blend: desc.ground_blend.clamp(0.0, 10.0),
             acoustic: desc.acoustic,
-            _pad: 0,
+            tint_mask: desc.tint_mask.map_or(0, |mask| mask.0 + 1),
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {
@@ -1288,6 +1307,7 @@ impl Assets {
             Retiring::Material(material) => {
                 self.glass.retain(|&glass| glass != material);
                 self.two_sided_materials.remove(&material);
+                self.tint_masked.remove(&material);
                 self.material_slots.free(material.0);
             }
             Retiring::Texture(texture) => {

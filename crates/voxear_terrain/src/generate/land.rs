@@ -938,7 +938,7 @@ mod tests {
             size: 900.0,
             levels: 3,
             low: 10.0,
-            high: 610.0,
+            high: 810.0,
             rolling: 0.0,
             steps: 0.0,
             canyons: 0.0,
@@ -965,8 +965,8 @@ mod tests {
         };
         let ((low, low_at), (high, high_at)) = (mean(&order[..quarter]), mean(&order[order.len() - quarter..]));
         assert!(high_at - low_at > 150.0, "high land at {high_at} m, low at {low_at} m");
-        // Without counting from the floor, 600 m higher would be several degrees colder.
-        let (cold, _) = world.climate(xs[0], zs[0], 610.0);
+        // Without counting from the floor, 800 m higher would be several degrees colder.
+        let (cold, _) = world.climate(xs[0], zs[0], 810.0);
         let (warm, _) = world.climate(xs[0], zs[0], 10.0);
         assert!(warm - cold > 3.0, "the generator cools with height: {warm} against {cold}");
         assert!((high - low).abs() < 2.5, "high {high} °C against low {low} °C");

@@ -127,6 +127,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `two_sided = true` draws it from both sides, as above.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
+- `tint_mask` names a picture that says where an Obj's tints fall on the material: red the first, green the second, blue the third, black none (see [[Tints and Parts]]).
 - `shader` names a custom shader by its ID, and `[properties]` holds the values the material gives it. See [[Custom Shaders]].
 
 A model's own materials, with their pictures, can be written out as material files to edit. See [[Models]].

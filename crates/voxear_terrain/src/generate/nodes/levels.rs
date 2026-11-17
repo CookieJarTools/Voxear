@@ -8,8 +8,9 @@
 //! levels are.
 //!
 //! Under the escarpments the land climbs from Lowest to Highest over a
-//! broad pattern many areas wide, and swells gently over hundreds of
-//! metres. Walls are cut back by gullies between buttresses, with more
+//! broad pattern many areas wide, most of it lying low, and swells gently
+//! over hundreds of metres. A biome's land rolls less over the lowland
+//! than over the uplands. Walls are cut back by gullies between buttresses, with more
 //! rubble at a gully's foot; here and there a stretch of wall is broken
 //! into steep slope, and the ground rounds over a wall's brow.
 //!
@@ -261,6 +262,12 @@ const LEDGE: f32 = 6.0;
 /// How far from an area's border what stands within it fades out, in
 /// metres: a ravine, a step, a field of spires.
 const KEEP_IN: f32 = 180.0;
+
+/// How much of its biome's land rolls over the lowest land, as a share of
+/// what its area's character says, and how far up the broad climb, in
+/// metres, it rolls in full: wide lowland lies flatter than the uplands.
+const LOW_ROLLS: f32 = 0.45;
+const ROLLS_FROM: f32 = 160.0;
 
 /// How far over a border one character of area blends into the next, in
 /// metres.
@@ -519,6 +526,8 @@ impl Lay {
             }
             false => character.relief(),
         };
+        // Lowland lies flatter than the uplands: a biome's land rolls less where the broad climb is low.
+        let relief = relief * (LOW_ROLLS + (1.0 - LOW_ROLLS) * smooth((lie.climb - self.areas.plan.low) / ROLLS_FROM));
         let mask = |of: Character| if character == of { kept } else { 0.0 };
         let floor_here = ground + (laid - ground) * land;
         [height, rock, relief * land, mask(Character::Spires) * land, mask(Character::Canyons) * land, floor_here]

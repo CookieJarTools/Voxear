@@ -766,6 +766,7 @@ fn lay(
             MaterialMap::Normal => look.normal_texture = texture,
             MaterialMap::Emissive => look.emissive_texture = texture,
             MaterialMap::Height => look.height_texture = texture,
+            MaterialMap::TintMask => look.tint_mask = texture,
         }
     }
     Ok(())

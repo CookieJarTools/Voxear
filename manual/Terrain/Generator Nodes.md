@@ -131,7 +131,7 @@ A mask wired into **Ramps** keeps the ramps to where it is over a half.
 
 ### Levels
 
-Land that climbs in escarpments: long, gentle slopes rising one way, now and then ending in a sheer wall, with rubble at its foot and now and then a ramp up it. From the edge you look down the wall onto the next slope's foot. The walls wind for kilometres, all facing much the same way; most of an escarpment fades away into the slope, and no wall stands more than 55 m tall. Under them the land climbs from Lowest to Highest over a broad pattern many areas wide. The land is also shared out in areas a few kilometres across, their borders winding, each with a character of its own.
+Land that climbs in escarpments: long, gentle slopes rising one way, now and then ending in a sheer wall, with rubble at its foot and now and then a ramp up it. From the edge you look down the wall onto the next slope's foot. The walls wind for kilometres, all facing much the same way; most of an escarpment fades away into the slope, and no wall stands more than 55 m tall. Under them the land climbs from Lowest to Highest over a broad pattern many areas wide: most of it lies low, in wide lowland that rolls more gently than the uplands, and the uplands rise out of it here and there. The land is also shared out in areas a few kilometres across, their borders winding, each with a character of its own.
 
 | Row | What it does |
 | --- | --- |

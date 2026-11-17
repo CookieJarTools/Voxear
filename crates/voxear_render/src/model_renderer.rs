@@ -33,13 +33,73 @@ pub struct ModelRenderer {
     /// The model's skeleton, skins and clips, for a model made to animate,
     /// whose skinned parts a `Pose` moves.
     pub animation: Option<Arc<crate::ModelAnimation>>,
+    /// Colours that multiply what it draws, in sRGB, white for none: the
+    /// first over the whole model, or where a part's material has a tint
+    /// mask, each where the mask says. This Obj's own, so two Objs drawing
+    /// one model can be tinted apart. A box model's pixels and cubes keep
+    /// their sharp edges and holes, near and far.
+    pub tints: [[f32; 3]; TINTS],
+    /// Whether any part's material has a tint mask, so its second and
+    /// third tints show where the mask says.
+    pub masked: bool,
+    /// Whether it draws a box model, whose sheet a picture can take the
+    /// place of.
+    pub box_model: bool,
 }
+
+/// Which of a Model Renderer's tints: without a tint mask the first tints
+/// the whole model; with one, each where the mask says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TintSlot {
+    #[default]
+    First,
+    Second,
+    Third,
+}
+
+impl TintSlot {
+    pub const ALL: [Self; TINTS] = [Self::First, Self::Second, Self::Third];
+
+    /// Its place among a Model Renderer's tints.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The colour a tint mask has where this tint falls: red, green or blue.
+    pub fn mask_color(slot: Option<Self>) -> [u8; 4] {
+        match slot {
+            Some(Self::First) => [255, 0, 0, 255],
+            Some(Self::Second) => [0, 255, 0, 255],
+            Some(Self::Third) => [0, 0, 255, 255],
+            None => [0, 0, 0, 255],
+        }
+    }
+}
+
+/// How many tints a Model Renderer has.
+pub const TINTS: usize = 3;
+
+/// A tint that changes nothing.
+pub const NO_TINT: [f32; 3] = [1.0; 3];
 
 impl Component for ModelRenderer {}
 
 impl ModelRenderer {
     pub fn new(parts: Vec<ModelPart>) -> Self {
-        Self { parts: parts.into(), lod_bias: 0.0, animation: None }
+        Self {
+            parts: parts.into(),
+            lod_bias: 0.0,
+            animation: None,
+            tints: [NO_TINT; TINTS],
+            masked: false,
+            box_model: false,
+        }
+    }
+
+    /// Its tints as an instance carries them: each sRGB RGBA8 in its bits,
+    /// 0 for one that changes nothing.
+    pub fn gpu_tints(&self) -> [u32; TINTS] {
+        self.tints.map(pack_tint)
     }
 
     /// Each part's box in the Obj's space, as the part's mesh's corners
@@ -67,5 +127,26 @@ impl ModelRenderer {
             }
         }
         found
+    }
+}
+
+/// A tint as the GPU reads it: sRGB RGBA8, 0 for white, which changes
+/// nothing, so black is still a tint.
+pub fn pack_tint(tint: [f32; 3]) -> u32 {
+    let [r, g, b] = tint.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u32);
+    if [r, g, b] == [255; 3] { 0 } else { r | g << 8 | b << 16 | 255 << 24 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn white_packs_to_no_tint_and_black_is_still_one() {
+        assert_eq!(pack_tint(NO_TINT), 0);
+        assert_eq!(pack_tint([0.0; 3]), 255 << 24);
+        assert_eq!(pack_tint([1.0, 0.5, 0.0]), 255 | 128 << 8 | 255 << 24);
+        let tinted = ModelRenderer { tints: [[0.2, 0.4, 0.6], NO_TINT, [0.0; 3]], ..ModelRenderer::new(Vec::new()) };
+        assert_eq!(tinted.gpu_tints(), [51 | 102 << 8 | 153 << 16 | 255 << 24, 0, 255 << 24]);
     }
 }

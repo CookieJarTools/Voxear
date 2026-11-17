@@ -36,6 +36,8 @@
 //! else, so a chunk made alone builds the part of a structure that reaches
 //! it exactly as it is built among its neighbours.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use super::dungeon::{
@@ -579,11 +581,11 @@ impl Town {
         }
         let middle_radius = self.middle.as_ref().map_or(1.5, TownPiece::radius);
         let streets = self.streets(&mut draws, centre, middle_radius, ground);
-        let mut paths: Vec<[i32; 2]> = Vec::new();
+        let (mut paths, mut laid) = (Vec::new(), crate::coord_hash::CoordSet::default());
         let width = self.path_width.max(1) as f32;
         for street in &streets {
             for &(point, _) in &street.points {
-                lay(&mut paths, point, width);
+                lay(&mut paths, &mut laid, point, width);
             }
         }
         let total: f32 = self.houses.iter().map(|kind| kind.weight.max(0.0)).sum();
@@ -796,8 +798,30 @@ impl Town {
     /// end, pulled harder to its end the nearer it is, so far from either
     /// town it curves round hills and nearer it heads in; a little wander in
     /// it from `seed`, and water crossed where there is no way round near. Worked out from its two towns alone, so every
-    /// chunk it crosses finds the same road.
-    fn road_between(&self, seed: u32, from: [i32; 2], to: [i32; 2], ground: &Ground) -> Vec<[f32; 2]> {
+    /// chunk it crosses finds the same road; and worked out once, kept for every thread, as each chunk column and far
+    /// tile along it would else walk it again, reading the ground twice at each of its turns (see [`ROADS`]).
+    fn road_between(&self, seed: u32, from: [i32; 2], to: [i32; 2], ground: &Ground) -> Arc<Vec<[f32; 2]>> {
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (ground.world.hash(), ground.size.to_bits(), ground.position.map(f32::to_bits), ground.halved)
+                .hash(&mut hasher);
+            (seed, from, to, self.radius.map(f32::to_bits), self.wander.to_bits()).hash(&mut hasher);
+            hasher.finish()
+        };
+        let cell = {
+            let mut kept = ROADS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            kept.get(&key).unwrap_or_else(|| {
+                let cell = Arc::default();
+                kept.insert(key, Arc::clone(&cell));
+                cell
+            })
+        };
+        cell.get_or_init(|| Arc::new(self.walk_road(seed, from, to, ground))).clone()
+    }
+
+    /// [`Town::road_between`], walked.
+    fn walk_road(&self, seed: u32, from: [i32; 2], to: [i32; 2], ground: &Ground) -> Vec<[f32; 2]> {
         // Turning by 18 and 35 degrees either side, without trigonometry.
         const TURNS: [(f32, f32); 5] =
             [(0.8192, -0.5736), (0.9511, -0.3090), (1.0, 0.0), (0.9511, 0.3090), (0.8192, 0.5736)];
@@ -845,21 +869,31 @@ impl Town {
     }
 }
 
+/// The roads between towns worked out, by what each was worked out from: its
+/// world, where the world's blocks lie in it, its two towns and its town's
+/// settings; [`ROADS_KEPT`] of those asked for lately, more than the far
+/// view's structures reach.
+type KeptRoads = crate::coord_hash::Lately<u64, Arc<std::sync::OnceLock<Arc<Vec<[f32; 2]>>>>>;
+static ROADS: std::sync::LazyLock<std::sync::Mutex<KeptRoads>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(KeptRoads::new(ROADS_KEPT)));
+const ROADS_KEPT: usize = 1 << 12;
+
 /// A street as grown: each step's place, in blocks, and the way it heads
 /// there.
 struct Street {
     points: Vec<([f32; 2], [f32; 2])>,
 }
 
-/// Lays a street `width` blocks wide round `point` into `cells`.
-fn lay(cells: &mut Vec<[i32; 2]>, point: [f32; 2], width: f32) {
+/// Lays a street `width` blocks wide round `point` into `cells`, each
+/// cell once: those already laid are in `laid`.
+fn lay(cells: &mut Vec<[i32; 2]>, laid: &mut crate::coord_hash::CoordSet<[i32; 2]>, point: [f32; 2], width: f32) {
     let reach = width * 0.5;
     let (from, to) = ((point[0] - reach).round() as i32, (point[0] + reach).round() as i32);
     let (near, far) = ((point[1] - reach).round() as i32, (point[1] + reach).round() as i32);
     for z in near..=far {
         for x in from..=to {
             let (dx, dz) = (x as f32 - point[0], z as f32 - point[1]);
-            if dx * dx + dz * dz <= reach * reach + 0.5 && !cells.contains(&[x, z]) {
+            if dx * dx + dz * dz <= reach * reach + 0.5 && laid.insert([x, z]) {
                 cells.push([x, z]);
             }
         }
@@ -972,10 +1006,12 @@ struct SiteFits<'a> {
 }
 
 /// The answers kept, by structure and site, in shards so threads seldom
-/// wait on one another; each shard let go of once it holds `FITS_KEPT`.
-type Fits = std::sync::Mutex<std::collections::HashMap<(u64, [u32; 2]), bool>>;
-static FITS: std::sync::LazyLock<Vec<Fits>> = std::sync::LazyLock::new(|| (0..16).map(|_| Fits::default()).collect());
-const FITS_KEPT: usize = 1 << 16;
+/// wait on one another; each shard keeps `FITS_KEPT` of those asked for
+/// lately, as the far view's rings ask about millions of sites.
+type Fits = std::sync::Mutex<crate::coord_hash::Lately<(u64, [u32; 2]), bool>>;
+static FITS: std::sync::LazyLock<Vec<Fits>> =
+    std::sync::LazyLock::new(|| (0..16).map(|_| Fits::new(crate::coord_hash::Lately::new(FITS_KEPT))).collect());
+const FITS_KEPT: usize = 1 << 17;
 
 impl<'a> SiteFits<'a> {
     fn new(world: &'a WorldGen, biomes: Option<&'a WorldBiomes>, size: f32, structures: &WorldStructures) -> Self {
@@ -1006,7 +1042,7 @@ impl<'a> SiteFits<'a> {
             .iter()
             .map(|site| {
                 let place = place(site);
-                shard(&place).lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&place).copied()
+                shard(&place).lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&place)
             })
             .collect();
         let missing: Vec<usize> = (0..sites.len()).filter(|&at| answers[at].is_none()).collect();
@@ -1015,11 +1051,7 @@ impl<'a> SiteFits<'a> {
             for (at, fits) in missing.into_iter().zip(self.work_out(structure, &asked)) {
                 answers[at] = Some(fits);
                 let place = place(&sites[at]);
-                let mut kept = shard(&place).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                if kept.len() >= FITS_KEPT {
-                    kept.clear();
-                }
-                kept.insert(place, fits);
+                shard(&place).lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(place, fits);
             }
         }
         answers.into_iter().map(|fits| fits.unwrap_or(false)).collect()
@@ -1187,7 +1219,7 @@ pub fn dungeons_near(
     at: (f32, [f32; 2], i32, bool),
     near: [f32; 2],
     reach: f32,
-) -> Vec<(usize, Site, std::sync::Arc<super::dungeon::DungeonLayout>)> {
+) -> Vec<(usize, Site, Arc<super::dungeon::DungeonLayout>)> {
     let checks = SiteFits::new(world, biomes, at.0, structures);
     let mut found = Vec::new();
     for (which, structure) in structures.list.iter().enumerate() {
@@ -1300,10 +1332,10 @@ fn build_looking(
             && town.road != AIR
         {
             let roads = roads_near(structure, town, world.seed(), (low, high), &ground, &fits);
-            let mut cells: Vec<[i32; 2]> = Vec::new();
+            let (mut cells, mut laid) = (Vec::new(), crate::coord_hash::CoordSet::default());
             for road in &roads {
-                for &point in road {
-                    lay(&mut cells, point, town.road_width.max(1) as f32);
+                for &point in road.iter() {
+                    lay(&mut cells, &mut laid, point, town.road_width.max(1) as f32);
                 }
             }
             let sea_top = (world.sea_level() / size - 0.5).ceil() as i32 - 1;
@@ -1479,7 +1511,7 @@ fn roads_near(
     (low, high): ([f32; 2], [f32; 2]),
     ground: &Ground,
     fits: &dyn Fn(&PlacedStructure, &Site) -> bool,
-) -> Vec<Vec<[f32; 2]>> {
+) -> Vec<Arc<Vec<[f32; 2]>>> {
     let size = ground.size;
     let spacing = structure.placement.spacing.max(1.0);
     // Towns as far off as a road between two cells' towns could bend through here.

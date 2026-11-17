@@ -2882,6 +2882,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     60 fps spent their time on. Flying at 30 m/s over a copy of a block game's world, frames slower than 60 fps
     went from 285 and 337 in 1,800 to 47 and 156, the 95th in 100 from 28–42 ms to 13–20 ms, with other work on the
     machine. Tests: physics' own, the engine's endless world, mobs and blocks, the renderer's blocks.
+  - ~~**Far rings made in half the work:**~~ done: the roads between towns are walked once and kept for every chunk
+    column and far tile they cross, where each walked them again, reading the ground twice at every turn, and a
+    road's cells are laid once each; whether a structure's site fits, the dungeons' layouts and the roads are kept
+    as asked for lately, the older half let go when full rather than all of them, as the pushed-out rings ask about
+    millions of sites and a few hundred dungeons; a ring that builds structures into the tile its ground would be
+    makes that tile from what its chunks asked of the generator; and with nothing nearer to make, the far view's
+    tiles take every thread. On a copy of a block game's world at High from a fresh start, all the far view shown
+    in 174 s where its third ring was not half made at 330 s, settled in 175 s where it took 409 s, and about half
+    the work (1,466 CPU-seconds where it was about 3,000), the settled picture the same. Tests: a tile made from a
+    column's answers is the tile made alone; what is kept lately.
   - ~~**Faster frames over block worlds:**~~ done: a chunk's box is where its faces are; the sun's cascades draw
     solid block faces as depth alone and cut-out ones apart, leaves solid in the last cascade, and cull casters to
     each slice as the sun sees it, all four tested at once against a box holding them; off-screen plants that

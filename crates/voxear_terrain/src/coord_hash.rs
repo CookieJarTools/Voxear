@@ -71,6 +71,52 @@ impl Hasher for CoordHasher {
     }
 }
 
+/// Work kept to be found again, by what it was worked out from: the newer
+/// of it, and that from before the newer last filled. Once the newer hold
+/// half of `most`, they become the older and the older are let go, so what
+/// is still asked for stays kept as the rest goes: never all of it at once.
+#[derive(Debug)]
+pub struct Lately<K, V> {
+    newer: CoordMap<K, V>,
+    older: CoordMap<K, V>,
+    most: usize,
+}
+
+impl<K: std::hash::Hash + Eq + Clone, V: Clone> Lately<K, V> {
+    /// Keeping `most` at most, two at least.
+    pub fn new(most: usize) -> Self {
+        Self { newer: CoordMap::default(), older: CoordMap::default(), most: most.max(2) }
+    }
+
+    /// What is kept for `key`, kept on with the newer.
+    pub fn get(&mut self, key: &K) -> Option<V> {
+        if let Some(value) = self.newer.get(key) {
+            return Some(value.clone());
+        }
+        let value = self.older.remove(key)?;
+        self.insert(key.clone(), value.clone());
+        Some(value)
+    }
+
+    /// Keeps `value` for `key`, with the newer.
+    pub fn insert(&mut self, key: K, value: V) {
+        if self.newer.len() >= self.most / 2 && !self.newer.contains_key(&key) {
+            self.older = std::mem::take(&mut self.newer);
+        }
+        self.older.remove(&key);
+        self.newer.insert(key, value);
+    }
+
+    /// How many are kept.
+    pub fn len(&self) -> usize {
+        self.newer.len() + self.older.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +138,27 @@ mod tests {
         let set: CoordSet<[i32; 2]> = keys.iter().copied().collect();
         assert_eq!(set.len(), keys.len());
         assert!(set.contains(&[5, -7]) && !set.contains(&[32, 0]));
+    }
+
+    #[test]
+    fn lately_keeps_what_is_asked_for_again_and_lets_the_rest_go_half_at_a_time() {
+        let mut kept: Lately<u32, u32> = Lately::new(8);
+        for key in 0..4 {
+            kept.insert(key, key * 10);
+        }
+        // Full: the next goes with the newer, the first four become the older.
+        kept.insert(4, 40);
+        assert_eq!((kept.len(), kept.get(&0)), (5, Some(0)), "the older still found, and kept on");
+        for key in 5..8 {
+            kept.insert(key, key * 10);
+        }
+        // 0 was asked for again and moved with the newer; 1 to 3 were not, and go as the newer fill again.
+        kept.insert(8, 80);
+        assert_eq!(kept.get(&0), Some(0));
+        assert_eq!((kept.get(&1), kept.get(&3)), (None, None));
+        assert!(kept.len() <= 8);
+        // Kept again under a key already there: one of it.
+        kept.insert(8, 81);
+        assert_eq!(kept.get(&8), Some(81));
     }
 }

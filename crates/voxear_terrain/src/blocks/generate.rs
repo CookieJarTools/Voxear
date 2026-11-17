@@ -33,7 +33,7 @@ pub mod far;
 pub mod tints;
 
 pub use cells::{CAVE_ROOF, ground_generator, landed, lays_land, write_land};
-pub use columns::column_chunks;
+pub use columns::{Asked, column_chunks, column_chunks_asking};
 
 /// Hands `then` the generator a world's ground is made by, rivers and its
 /// biomes' land with it (see `cells::source`): what its near ground and its

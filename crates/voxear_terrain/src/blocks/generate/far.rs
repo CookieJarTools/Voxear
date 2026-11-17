@@ -16,7 +16,7 @@ use anyhow::{Result, ensure};
 use super::{
     BlockGenerate,
     cells::{Sea, cell, source},
-    columns::{columns_at, sea_of, waters_of},
+    columns::{Asked, columns_at, sea_of, waters_of},
 };
 use crate::{
     blocks::{
@@ -206,23 +206,40 @@ impl Reader<'_> {
 /// height's are, its layers and its sea, as `column_chunks` makes them where
 /// the ground is not pushed about or hollowed.
 pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, level: u32, at: [i32; 2]) -> FarTile {
+    far_tile_from(file, generate, world, level, at, None)
+}
+
+/// As [`far_tile`], from what the chunk column of the same level and place
+/// asked of the generator, where it kept that (see `column_chunks_asking`):
+/// the same as the tile would ask, so none of it is asked again.
+pub fn far_tile_from(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &WorldGen,
+    level: u32,
+    at: [i32; 2],
+    asked: Option<Asked>,
+) -> FarTile {
     let scale = (1u32 << level.min(16)) as f32;
     let size = file.block_size.max(0.01) * scale;
     let side = CHUNK as i32;
     let source = source(generate, world, file.block_size.max(0.01));
     let world = source.world();
-    let middle = |v: i32, axis: usize| generate.position[axis] + (v as f32 + 0.5) * size;
-    let places = (0..side).flat_map(|z| (0..side).map(move |x| (at[0] * side + x, at[1] * side + z)));
-    let (xs, zs): (Vec<f32>, Vec<f32>) = places.map(|(x, z)| (middle(x, 0), middle(z, 1))).unzip();
-    let mut heights = vec![0.0; xs.len()];
-    world.heights(&xs, &zs, &mut heights);
-    let columns = columns_at(file, world, level, (&xs, &zs, &heights));
+    let Asked { xs, zs, heights, columns, waters } = asked.unwrap_or_else(|| {
+        let middle = |v: i32, axis: usize| generate.position[axis] + (v as f32 + 0.5) * size;
+        let places = (0..side).flat_map(|z| (0..side).map(move |x| (at[0] * side + x, at[1] * side + z)));
+        let (xs, zs): (Vec<f32>, Vec<f32>) = places.map(|(x, z)| (middle(x, 0), middle(z, 1))).unzip();
+        let mut heights = vec![0.0; xs.len()];
+        world.heights(&xs, &zs, &mut heights);
+        let columns = columns_at(file, world, level, (&xs, &zs, &heights));
+        // Rivers and lakes over the sea, each column's own; far off, no waterfall shows.
+        let waters = waters_of(file, generate, world, level, (&xs, &zs));
+        Asked { xs, zs, heights, columns, waters }
+    });
     let (sea, sea_top) = sea_of(file, generate, world, level);
     let low = generate.bottom.div_euclid(scale as i32);
     let mut tile = FarTile { level, at, sea: (sea, sea_top), surfaces: Vec::new(), starts: vec![0], runs: Vec::new() };
     let halves = generate.halves.as_deref().filter(|_| generate.slabs && !file.smooth);
-    // Rivers and lakes over the sea, each column's own; far off, no waterfall shows.
-    let waters = waters_of(file, generate, world, level, (&xs, &zs));
     for (index, column) in columns.iter().enumerate() {
         let water_top = waters.as_ref().map_or(sea_top, |waters| waters[index].0.max(sea_top));
         let high = (column.surface.max(water_top) + 1.0).ceil() as i32;
@@ -500,6 +517,47 @@ mod tests {
             }
             assert!(clear > 40 && found > 10, "world {which}: {clear} columns stand clear, {found} by 24 m or more");
         }
+    }
+
+    #[test]
+    fn a_tile_made_from_what_its_coarse_chunk_column_asked_is_the_tile_made_alone() {
+        use crate::{
+            blocks::generate::column_chunks_asking,
+            generate::{
+                Graph, NodeKind,
+                nodes::{Noise, Output, RaisedLand},
+            },
+        };
+        // Rolling hills with their sea and rivers; and hills with land raised over them, a Volume asked about.
+        let (file, generate, hills) = plain_with(false, true);
+        let generate = BlockGenerate { rivers: true, ..generate };
+        let mut graph = Graph::default();
+        let height =
+            graph.add(NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() }), [0.0; 2]);
+        let volume = graph.add(NodeKind::RaisedLand(RaisedLand { often: 0.7, ..RaisedLand::default() }), [0.0; 2]);
+        let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
+        assert!(graph.connect(height, 0, output, Output::HEIGHT));
+        assert!(graph.connect(volume, 0, output, Output::VOLUME));
+        let raised = WorldGen::new(4, 1.0, -50.0, graph);
+        let (mut asked, mut watered) = (0, 0);
+        for world in [&hills, &raised] {
+            for level in [1, 2] {
+                for at in [[0, 0], [3, -2], [-5, 7], [9, 4], [-12, -3]] {
+                    let mut kept = None;
+                    let chunks = column_chunks_asking(&file, &generate, world, level, at, Some(&mut kept));
+                    assert!(kept.is_some() || chunks.is_empty(), "kept where any chunks were made");
+                    asked += usize::from(kept.is_some());
+                    watered += usize::from(kept.as_ref().is_some_and(|kept| kept.waters.is_some()));
+                    let alone = far_tile(&file, &generate, world, level, at);
+                    assert_eq!(
+                        far_tile_from(&file, &generate, world, level, at, kept),
+                        alone,
+                        "level {level} at {at:?}"
+                    );
+                }
+            }
+        }
+        assert!(asked == 20 && watered > 0, "{asked} kept, {watered} with water");
     }
 
     #[test]

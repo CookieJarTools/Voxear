@@ -585,8 +585,47 @@ pub fn column_chunks(
     generate: &BlockGenerate,
     world: &crate::generate::WorldGen,
     level: u32,
-    [cx, cz]: [i32; 2],
+    at: [i32; 2],
     limit: Option<[u32; 2]>,
+) -> Vec<([i32; 3], Chunk)> {
+    column_chunks_within(file, generate, world, level, at, (limit, None))
+}
+
+/// What a chunk column asked of the generator for its columns, a row along
+/// x after another: where each lies in the generator's world, its ground's
+/// height, its column, and its own water. The far view's tile of the same
+/// place is made from the same (see `far::far_tile_from`), so a ring that
+/// builds into the tile its ground would be asks for it once.
+pub struct Asked {
+    pub(super) xs: Vec<f32>,
+    pub(super) zs: Vec<f32>,
+    pub(super) heights: Vec<f32>,
+    pub(super) columns: Vec<Column>,
+    pub(super) waters: Option<Vec<(f32, f32)>>,
+}
+
+/// As [`column_chunks`] for a whole chunk column, keeping in `keep` what it
+/// asked of the generator, at a coarser level, where it made any chunks and
+/// asked about its own columns alone: not where it reads those round them
+/// too, as a world drawn smooth does.
+pub fn column_chunks_asking(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &crate::generate::WorldGen,
+    level: u32,
+    [cx, cz]: [i32; 2],
+    keep: Option<&mut Option<Asked>>,
+) -> Vec<([i32; 3], Chunk)> {
+    column_chunks_within(file, generate, world, level, [cx, cz], (None, keep))
+}
+
+fn column_chunks_within(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &crate::generate::WorldGen,
+    level: u32,
+    [cx, cz]: [i32; 2],
+    (limit, keep): (Option<[u32; 2]>, Option<&mut Option<Asked>>),
 ) -> Vec<([i32; 3], Chunk)> {
     let scale = (1u32 << level.min(16)) as f32;
     let size = file.block_size.max(0.01) * scale;
@@ -945,7 +984,12 @@ pub fn column_chunks(
     }
     // The floor last, over whatever the ground, its caves or its water put there.
     lay_floor(&mut chunks, (file, generate, level), [cx, cz], (across, along));
-    chunks.into_iter().map(|(at, chunk)| (at, chunk.tidied())).collect()
+    let tidied = chunks.into_iter().map(|(at, chunk)| (at, chunk.tidied())).collect();
+    // At its own level a river's top may be lifted where it flows (see `waters_and_currents`), as a far tile's is not.
+    if let Some(keep) = keep.filter(|_| ring == 0 && limit.is_none() && level > 0) {
+        *keep = Some(Asked { xs, zs, heights, columns, waters });
+    }
+    tidied
 }
 
 /// Lays `generate`'s floor into `chunks`, those of chunk column `[cx, cz]`

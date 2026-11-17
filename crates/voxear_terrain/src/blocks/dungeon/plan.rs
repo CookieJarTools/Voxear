@@ -1402,20 +1402,23 @@ fn lights(spaces: &[Space], ways: &[Way], dungeon: &Dungeon) -> Vec<LightSpot> {
 }
 
 /// The layouts planned, by site, shared by every thread: a site is asked
-/// about by every chunk column it reaches.
-type Layouts = Mutex<HashMap<u64, Arc<OnceLock<Option<Arc<DungeonLayout>>>>>>;
-static LAYOUTS: LazyLock<Layouts> = LazyLock::new(Layouts::default);
-const LAYOUTS_KEPT: usize = 128;
+/// about by every chunk column it reaches, and by every far tile of the
+/// rings that build structures, which hold a few hundred dungeons between
+/// them. [`LAYOUTS_KEPT`] of those asked for lately.
+type Layouts = Mutex<crate::coord_hash::Lately<u64, Arc<OnceLock<Option<Arc<DungeonLayout>>>>>>;
+static LAYOUTS: LazyLock<Layouts> = LazyLock::new(|| Mutex::new(crate::coord_hash::Lately::new(LAYOUTS_KEPT)));
+const LAYOUTS_KEPT: usize = 512;
 
 /// The layout kept for `key`, planned by `make` the first time any thread
 /// asks.
 pub(crate) fn cached_layout(key: u64, make: impl FnOnce() -> Option<DungeonLayout>) -> Option<Arc<DungeonLayout>> {
     let cell = {
         let mut kept = LAYOUTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if kept.len() >= LAYOUTS_KEPT && !kept.contains_key(&key) {
-            kept.clear();
-        }
-        kept.entry(key).or_default().clone()
+        kept.get(&key).unwrap_or_else(|| {
+            let cell = Arc::default();
+            kept.insert(key, Arc::clone(&cell));
+            cell
+        })
     };
     cell.get_or_init(|| make().map(Arc::new)).clone()
 }

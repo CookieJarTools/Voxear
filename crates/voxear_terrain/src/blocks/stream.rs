@@ -46,8 +46,8 @@ use super::{
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
     generate::{
-        BlockGenerate, column_chunks,
-        far::{self, FarTile, far_chunks, far_tile},
+        BlockGenerate, column_chunks_asking,
+        far::{self, FarTile, far_chunks, far_tile, far_tile_from},
     },
     mesh::ChunkMesh,
     mesh_any, mesh_made,
@@ -988,10 +988,16 @@ impl BlockStreamer {
         let rings: Vec<usize> = (0..wanted.len()).filter(|&at| ring(&wanted[at].0)).take(short).collect();
         let first: Vec<(Option<u32>, [i32; 2], i64)> = rings.iter().rev().map(|&at| wanted.remove(at)).collect();
         wanted.splice(0..0, first.into_iter().rev());
-        // The far view's tiles take a while each: no more of them at once than leaves most threads to what is near.
-        let far_room = (self.at_once / 4).max(1);
+        // The far view's tiles take a while each: while anything nearer waits, no more of them at once than leaves
+        // most threads to it; with nothing else to make, one on each thread, and none waiting for a thread, so what
+        // comes near next waits only for one to finish.
+        let is_far = |level: &Option<u32>| level.is_some_and(|level| level >= FAR_FROM && level != FINE);
+        let far_room = match wanted.iter().any(|(level, ..)| !is_far(level)) {
+            true => (self.at_once / 4).max(1),
+            false => crate::workers::threads().max(self.at_once / 4).max(1),
+        };
         for (level, at, _) in wanted {
-            let far = level.is_some_and(|level| level >= FAR_FROM && level != FINE);
+            let far = is_far(&level);
             if room == 0 {
                 break;
             }
@@ -1050,11 +1056,15 @@ impl BlockStreamer {
                         making.build_into(level, &mut tile);
                         far_chunks(&tile, making.file.smooth)
                     } else {
-                        let mut chunks = column_chunks(&making.file, &making.generate, &making.world, level, at, None);
                         // What is built into a ring this near is built into the tile its ground would be, and put
-                        // into its chunks.
-                        if level > 0 && making.built_from().is_some_and(|first| first <= level) {
-                            let bare = far_tile(&making.file, &making.generate, &making.world, level, at);
+                        // into its chunks: the tile made from what its chunks asked of the generator.
+                        let builds = level > 0 && making.built_from().is_some_and(|first| first <= level);
+                        let (file, generate, world) = (&making.file, &making.generate, &making.world);
+                        let mut asked = None;
+                        let mut chunks =
+                            column_chunks_asking(file, generate, world, level, at, builds.then_some(&mut asked));
+                        if builds {
+                            let bare = far_tile_from(file, generate, world, level, at, asked);
                             let mut built = bare.clone();
                             making.build_into(level, &mut built);
                             put_built(&mut chunks, &bare, &built);

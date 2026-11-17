@@ -128,8 +128,6 @@ const fn maybe(name: &'static str, kind: ArgKind, about: &'static str) -> ArgInf
 pub const VIEWS: &[&str] = &["scene", "game", "editor"];
 /// The levels `console.read` keeps to.
 pub const LEVELS: &[&str] = &["info", "warning", "error"];
-/// The project's settings `project.set` changes, as `voxear.toml` names them.
-pub const PROJECT_KEYS: &[&str] = &["portals.view_distance", "quality.particles"];
 
 /// Every call the editor answers, easy ones first.
 pub const CALLS: &[CallInfo] = &[
@@ -738,17 +736,37 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "settings.get",
-        about: "The editor's settings, as the Settings panel shows them.",
-        args: &[],
+        about: "The editor's own settings, as Preferences shows them: its categories, and each setting with its category and section, label, tooltip (what it does), type, value, default, whether it is changed, and its options, range and unit. A choice's value is its option's label; a colour is #rrggbb; a folder is its path or null.",
+        args: &[
+            maybe("category", ArgKind::Text, "Only this category's, as `categories` names them."),
+            maybe("search", ArgKind::Text, "Only those with these words in their label, section, category or tooltip."),
+        ],
         changes: false,
-        returns: "{ settings: [{ key, title, group, type, value, options? }] }",
+        returns: "{ categories: [{ name, about, manual }], settings: [{ key, category, section, label, tooltip, type, value, default, changed, advanced, options?, min?, max?, unit?, whole? }] }",
     },
     CallInfo {
         name: "settings.set",
-        about: "Changes one of the editor's settings, by its key; a folder's value is its path, or null for none.",
-        args: &[arg("key", ArgKind::Text, ""), arg("value", ArgKind::Value, "")],
+        about: "Changes one of the editor's own settings by its key, as Preferences does: a value of its type, a choice by its option's label, or null for its default. A number outside its range is refused, saying the range.",
+        args: &[arg("key", ArgKind::Text, ""), maybe("value", ArgKind::Value, "Null for its default.")],
         changes: false,
         returns: "{ value }",
+    },
+    CallInfo {
+        name: "settings.show",
+        about: "Opens Project Settings or Preferences at a setting, by its key from `project_settings.get` or `settings.get`, scrolled to it and marked.",
+        args: &[arg("key", ArgKind::Text, "")],
+        changes: false,
+        returns: "{}",
+    },
+    CallInfo {
+        name: "project_settings.get",
+        about: "The project's settings, as Project Settings shows them: its categories, and each setting with its key (its table and key in voxear.toml), category and section, label, tooltip, type, value, default, whether it is changed, and its options, range and unit. Settings of type part or button are parts of the window, not values.",
+        args: &[
+            maybe("category", ArgKind::Text, "Only this category's: Audio, Physics, Time…"),
+            maybe("search", ArgKind::Text, "Only those with these words in their label, section, category or tooltip."),
+        ],
+        changes: false,
+        returns: "{ categories: [{ name, about, manual }], settings: [{ key, category, section, label, tooltip, type, value, default, changed, advanced, options?, min?, max?, unit?, whole?, count?, asset? }] }",
     },
     CallInfo {
         name: "project.get",
@@ -793,8 +811,11 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "project.set",
-        about: "Changes one of the project's settings in voxear.toml, as Project Settings does, and puts it into effect at once: `portals.view_distance` is how far off a Portal without its own still shows its far side, in metres; `quality.particles` the most simulated particles.",
-        args: &[arg("key", ArgKind::Choice(PROJECT_KEYS), ""), arg("value", ArgKind::Number, "")],
+        about: "Changes one of the project's settings, by its key from `project_settings.get`, as Project Settings does: written into voxear.toml (only where it differs from the default) and put into effect, at once or the next time the game plays. A choice by its option's label, an asset by its path, null for the default. A value outside its range is refused, saying the range.",
+        args: &[
+            arg("key", ArgKind::Text, "As `audio.reverb`, `physics.gravity`, `world.quality`."),
+            maybe("value", ArgKind::Value, "Null for its default."),
+        ],
         changes: true,
         returns: "{ value }",
     },

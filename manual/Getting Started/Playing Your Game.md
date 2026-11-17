@@ -27,14 +27,16 @@ The Game view looks through the first camera in the level that is switched on, a
 
 ## Play settings
 
-Open **Settings**, from the strip on the far left, and look under **Play mode**:
+Open **Preferences**, from the strip on the far left, and pick **Play Mode**:
 
 | Setting | What it does |
 | --- | --- |
 | Start paused | Starts the game paused, ready to Step |
 | Save before play | Saves the level each time you press Play |
-| Clear Console on play | Empties the Console each time you press Play |
 | Pause on error | Pauses the game when it logs an error |
-| Reload changed scripts while playing | Swaps saved scripts into the running game |
+| Reload scripts while playing | Swaps saved scripts into the running game |
+| Play as, Test players, Test network | How networked Play plays (see [[Playing over the Network]]) |
+
+**Clear on play**, which empties the Console each time you press Play, is under **Console**.
 
 Next: [[Making a Build]].

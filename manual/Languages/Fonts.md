@@ -22,7 +22,7 @@ Name the font by its path in `font-family`:
 A font made for English has no Japanese letters. Give Japanese a font that has them:
 
 1. Put the font into your project, such as `Fonts/NotoSansJP-Regular.otf`.
-2. Open **Project Settings** in the rail, and its **Localization** tab. Each of your languages has a row.
+2. Open **Project Settings** in the rail, and pick **Localization**. Under **Fonts**, each of your languages has a row.
 3. Click **Add Font** beside `ja` and pick the font. Add more and they are tried in order.
 
 `voxear.toml` keeps them, by GUID:

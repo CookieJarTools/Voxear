@@ -41,7 +41,7 @@ pub const POSE: &str = "Pose";
 const SCRIPT_POSE: usize = 5;
 
 /// Fixed steps allowed per frame, so a slow frame cannot snowball into
-/// ever more catch-up work.
+/// ever more catch-up work, unless the project says otherwise.
 const MAX_FIXED_STEPS: u32 = 5;
 
 /// The simulation: world, systems, behaviours and time. Rendering and
@@ -54,6 +54,10 @@ pub struct Engine {
     scripts: Option<ScriptRuntime>,
     time: Time,
     fixed_accumulator: f32,
+    /// The longest a frame counts as, in seconds, and the most fixed steps
+    /// a frame runs (see `crate::project::TimeSettings`).
+    longest_frame: f32,
+    most_fixed_steps: u32,
     /// The editor's edit mode: behaviours are kept as data, and no script runs.
     edit_mode: bool,
     /// The contacts and trigger crossings this frame's physics steps found.
@@ -132,6 +136,8 @@ impl Engine {
             scripts: None,
             time: Time::default(),
             fixed_accumulator: 0.0,
+            longest_frame: voxear_core::time::MAX_DELTA,
+            most_fixed_steps: MAX_FIXED_STEPS,
             edit_mode: false,
             physics_events: Vec::new(),
             physics_events_2d: Vec::new(),
@@ -363,6 +369,13 @@ impl Engine {
         self.time.fixed_delta = seconds.clamp(1.0 / 480.0, 0.5);
     }
 
+    /// Sets the longest a frame counts as, in seconds, so a hitch does not
+    /// throw everything forward, and the most fixed steps a frame runs.
+    pub fn set_frame_limits(&mut self, longest: f32, fixed_steps: u32) {
+        self.longest_frame = if longest.is_finite() { longest.clamp(0.01, 1.0) } else { voxear_core::time::MAX_DELTA };
+        self.most_fixed_steps = fixed_steps.clamp(1, 60);
+    }
+
     /// Creates an Obj and attaches behaviours by C# type name. Behaviours get
     /// their first callbacks at the next flush, as one batch.
     pub fn spawn_obj(&mut self, name: &str, transform: Transform, behaviours: &[String]) -> Result<Entity> {
@@ -519,7 +532,7 @@ impl Engine {
     /// next phase. Each step is a profiling sample (see
     /// `voxear_core::profiling`), with each behaviour's callback in it.
     pub fn tick(&mut self, unscaled_delta: f32) {
-        self.time.advance(unscaled_delta);
+        self.time.advance_within(unscaled_delta, self.longest_frame);
         crate::portals::begin_frame(&mut self.world);
         self.physics_events.clear();
         self.physics_events_2d.clear();
@@ -584,7 +597,7 @@ impl Engine {
         if smoothing {
             crate::tick_smoothing::begin_ticks(&mut self.world);
         }
-        while self.fixed_accumulator >= self.time.fixed_delta && steps < MAX_FIXED_STEPS {
+        while self.fixed_accumulator >= self.time.fixed_delta && steps < self.most_fixed_steps {
             profile_scope!("FixedUpdate");
             if smoothing {
                 crate::tick_smoothing::before_tick(&mut self.world);
@@ -609,7 +622,7 @@ impl Engine {
             steps += 1;
         }
         // Ticks a slow frame could not run are dropped, but never while networked: each is a tick of the session.
-        if steps == MAX_FIXED_STEPS && self.world.resource::<crate::net::NetSession>().is_none() {
+        if steps == self.most_fixed_steps && self.world.resource::<crate::net::NetSession>().is_none() {
             self.fixed_accumulator = 0.0;
         }
         if smoothing {
@@ -733,8 +746,17 @@ impl Engine {
         }
         let dt = self.time.fixed_delta;
         let mut told = Vec::new();
+        let gravity = self.world.resource::<crate::project::StartingGravity>().copied();
+        // A scene made now starts with the project's gravity; scripts may change it after.
+        let made = || {
+            let mut scene = PhysicsScene::new();
+            if let Some(gravity) = gravity {
+                scene.set_gravity(gravity.three);
+            }
+            scene
+        };
         let scene = self.world.remove_resource::<PhysicsScene>();
-        if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(PhysicsScene::new)) {
+        if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(made)) {
             {
                 profile_scope!("Physics");
                 let wet = crate::modules::has(&self.world, crate::modules::Module::Water);
@@ -749,7 +771,14 @@ impl Engine {
         }
         let scene = self.world.remove_resource::<PhysicsScene2D>();
         let flat = crate::modules::has(&self.world, crate::modules::Module::Physics2D);
-        let wanted = || (flat && PhysicsScene2D::wanted(&self.world)).then(PhysicsScene2D::new);
+        let made_2d = || {
+            let mut scene = PhysicsScene2D::new();
+            if let Some(gravity) = gravity {
+                scene.set_gravity(gravity.two);
+            }
+            scene
+        };
+        let wanted = || (flat && PhysicsScene2D::wanted(&self.world)).then(made_2d);
         if let Some(mut physics) = scene.filter(|_| flat).or_else(wanted) {
             {
                 profile_scope!("Physics 2D");

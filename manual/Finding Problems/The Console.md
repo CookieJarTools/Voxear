@@ -35,7 +35,7 @@ Click a message to see it in full below the list, with its **stack trace**: the 
 
 **My code only** folds away the parts of the trace that are not in your project, such as the engine's own code, so your own methods stand out. **Namespaces** and **Parameters** show or hide those parts of each line. **Hide libraries…** folds away a library you do not want to see in any trace. **Copy** puts the message and its trace on the clipboard.
 
-The file opens in the code editor picked in **Settings › Code editor**, Whisk unless you choose another (see [[Your First Script]]).
+The file opens in the code editor picked in **Preferences ▸ External Tools ▸ Code editor**, Whisk unless you choose another (see [[Your First Script]]).
 
 ## Sorting through many messages
 

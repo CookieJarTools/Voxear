@@ -124,8 +124,9 @@ mod terrain_tools;
 pub mod scene_tools;
 mod script_handles;
 mod settings;
-mod project_settings;
-mod settings_panel;
+pub mod project_settings;
+pub mod setting_info;
+pub mod settings_window;
 mod shader_fields;
 mod motion_set_inspector;
 mod prompt_icons_inspector;
@@ -151,7 +152,7 @@ pub use hierarchy::EditorOnly;
 pub use palette::{PaletteCommand, PaletteKey};
 pub use profiler::{Profiler, Sample};
 pub use project_view::{ItemKind, ProjectItem};
-pub use settings::{PlayAs, SETTINGS, SettingInfo, SettingKind, SettingValue, Settings, TestNetwork};
+pub use settings::{PREFERENCES, PlayAs, Settings, TestNetwork};
 pub use window::run_editor;
 
 /// Runs the editor without a window, answering tools over its link, as

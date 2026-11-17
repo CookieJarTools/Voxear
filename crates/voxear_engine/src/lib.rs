@@ -108,8 +108,9 @@ pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
-    ContentSettings, ENGINE_FILE, PROJECT_FILE, PortalSettings, Project, ProjectFile, QualitySettings, core_assembly,
-    engine_root, engine_version, is_install, manual_folder,
+    ContentSettings, ENGINE_FILE, InputSettings, PROJECT_FILE, PhysicsSettings, PortalSettings, Project, ProjectFile,
+    QualitySettings, StartingGravity, TimeSettings, core_assembly, engine_root, engine_version, is_install,
+    manual_folder,
 };
 pub use stats_overlay::StatsOverlay;
 pub use windowed::{Setup, WindowOptions, run_windowed};

@@ -75,6 +75,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use serde_json::Value as Json;
 use voxear_assets::AssetKind;
 use voxear_core::{
     logging::LogCapture,
@@ -110,7 +111,9 @@ use crate::{
     hierarchy::ObjAction,
     history::{Edit, History, ObjState},
     inspector::{Field, Inspector, RowAction},
+    layers_view::LayersView,
     levels_panel::{LevelAction, LevelsPanel},
+    lighting_panel::LightingPanel,
     input_panel::InputPanel,
     localization_panel::{LocalizationPanel, TablesAction},
     memory_panel::MemoryPanel,
@@ -123,10 +126,9 @@ use crate::{
     props::{self, Part, Prop},
     scene_tools::{Handle, SceneTools, Tool, ViewCamera, pick},
     script_handles::ScriptHandles,
-    settings::{self, CodeEditor, Memory, SNAPS, SettingKind, SettingValue, Settings},
-    lighting_panel::LightingPanel,
-    project_settings::ProjectSettingsPanel,
-    settings_panel::SettingsPanel,
+    setting_info::Kind as SettingKind,
+    settings::{self, CodeEditor, Memory, SNAPS, Settings},
+    settings_window::{Action as SettingsAction, SettingsWindow},
 };
 
 const MARKUP: &str = include_str!("../ui/Editor.vui");
@@ -186,8 +188,10 @@ struct Nodes {
     drawer_close: NodeId,
     drawer_levels: NodeId,
     drawer_lighting: NodeId,
-    drawer_project: NodeId,
-    drawer_settings: NodeId,
+    /// Where the Project Settings and Preferences windows are built, in
+    /// their dock panels.
+    project_settings_panel: NodeId,
+    preferences_panel: NodeId,
     /// The top bar's Layout menu button and the name on it, the box that
     /// asks for a new layout's name with its field and Save button, and the
     /// Profiler's panel.
@@ -287,10 +291,14 @@ pub struct Editor {
     palette_runs: Vec<Picked>,
     added: Vec<PaletteCommand>,
     /// The settings and what the palette ran recently, kept per project, and
-    /// the panel that shows the settings.
+    /// the windows that show the editor's and the project's settings, with
+    /// Project Settings' parts of their own: the layers, which collide, and
+    /// the languages' fonts.
     memory: Memory,
-    settings_panel: SettingsPanel,
-    project_settings: ProjectSettingsPanel,
+    preferences: SettingsWindow,
+    project_settings: SettingsWindow,
+    settings_layers: LayersView,
+    font_rows: modules::FontRows,
     /// The Lighting page, in the drawer.
     lighting_panel: LightingPanel,
     /// The theme the editor wears, which the default theme's own colours are
@@ -573,8 +581,8 @@ impl Editor {
             drawer_close: find(&ui, "drawer-close"),
             drawer_levels: find(&ui, "drawer-levels"),
             drawer_lighting: find(&ui, "drawer-lighting"),
-            drawer_project: find(&ui, "drawer-project"),
-            drawer_settings: find(&ui, "drawer-settings"),
+            project_settings_panel: find(&ui, "project-settings-panel"),
+            preferences_panel: find(&ui, "preferences-panel"),
             layouts: find(&ui, "layouts"),
             layout_name: find(&ui, "layout-name"),
             layout_prompt: find(&ui, "layout-prompt"),
@@ -632,14 +640,29 @@ impl Editor {
         }
         let (panel, list, empty) = (find(&ui, "palette"), find(&ui, "palette-list"), find(&ui, "palette-empty"));
         let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
-        let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
-        let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
-        let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
-        let (modules, origin) = (game.project.modules(), &game.project.file.floating_origin);
-        let quality = (&game.project.file.quality, &game.project.file.portals);
-        let budget = &voxear_terrain::WorldBudget::of(&game.engine.world);
-        let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
-        project_settings.show_machine(&mut ui, voxear_terrain::MachineBudget::of(&game.engine.world).kept);
+        let rail = [
+            (nodes.rail_levels, "Levels"),
+            (nodes.rail_lighting, "Lighting"),
+            (nodes.rail_project, "Project Settings"),
+            (nodes.rail_settings, "Preferences"),
+        ];
+        for (button, tip) in rail {
+            ui.set_tooltip(button, tip, None);
+        }
+        let described = (settings::PREFERENCES, settings::CATEGORIES, settings::HELP);
+        let preferences = SettingsWindow::new(&mut ui, nodes.preferences_panel, "preferences", described);
+        let described =
+            (crate::project_settings::settings(), crate::project_settings::CATEGORIES, crate::project_settings::HELP);
+        let mut project_settings =
+            SettingsWindow::new(&mut ui, nodes.project_settings_panel, "project-settings", described);
+        let (names, matrix) = (project_settings.part("layers.names"), project_settings.part("physics.ignore"));
+        let settings_layers = LayersView::in_settings(
+            &mut ui,
+            names.expect("a place for the layers"),
+            matrix.expect("and the matrix"),
+            &game.project.layers(),
+        );
+        project_settings.select(&mut ui, crate::project_settings::CATEGORIES[0].name);
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
         lighting_panel.set_upscalers(&mut ui, &renderer.upscalers());
@@ -686,8 +709,10 @@ impl Editor {
             added: Vec::new(),
             fly_speed: memory.settings.fly_speed.clamp(0.25, 250.0),
             memory,
-            settings_panel,
+            preferences,
             project_settings,
+            settings_layers,
+            font_rows: Default::default(),
             lighting_panel,
             theme: Theme::DARK,
             levels,
@@ -803,6 +828,7 @@ impl Editor {
             layout_checked: Instant::now(),
         };
         editor.show_language_fonts();
+        editor.show_keys();
         editor.restore_layout();
         Ok(editor)
     }
@@ -1054,7 +1080,7 @@ impl Editor {
             self.update_packages(renderer);
         }
         self.update_drawer();
-        self.update_modules();
+        self.update_project_settings();
         self.update_probe_captures();
         self.update_particle_preview();
         self.update_lighting(renderer);
@@ -1529,48 +1555,136 @@ impl Editor {
         self.added.push(command);
     }
 
-    /// The editor's settings, as the Settings panel shows them.
+    /// The editor's settings, as Preferences shows them.
     pub fn settings(&self) -> &Settings {
         &self.memory.settings
     }
 
-    /// Runs a setting as the palette does: a toggle flips, a choice moves on,
-    /// and a number opens the Settings panel at it, to type.
+    /// Runs a setting as the palette does: a toggle of Preferences flips, a
+    /// choice moves on, and anything else opens its window at it.
     fn run_setting(&mut self, key: &'static str) {
-        let Some(info) = settings::info(key) else { return };
-        let next = match (self.memory.settings.get(key), info.kind) {
-            (Some(SettingValue::Toggle(on)), _) => Some(SettingValue::Toggle(!on)),
-            (Some(SettingValue::Choice(i)), SettingKind::Choice(options)) => {
-                Some(SettingValue::Choice((i + 1) % options.len()))
+        let Some(info) = settings::info(key) else {
+            self.show_setting(key);
+            return;
+        };
+        let now = self.memory.settings.value(key);
+        let next = match (now, info.kind) {
+            (Some(Json::Bool(on)), _) => Some(Json::Bool(!on)),
+            (Some(Json::String(label)), SettingKind::Choice(options)) => {
+                let at = options.iter().position(|(shown, _)| *shown == label).unwrap_or(0);
+                Some(Json::from(options[(at + 1) % options.len()].0))
             }
             _ => None,
         };
         match next {
             Some(value) => {
-                self.memory.settings.set(key, value);
-                self.memory.save();
-                self.apply_settings();
+                self.set_preference(key, &value);
                 let now = self.memory.settings.describe(info);
-                self.notify(&format!("{}: {now}", info.title));
+                self.notify(&format!("{}: {now}", info.label));
             }
             None => {
-                self.show_panel("settings");
-                self.settings_panel.reveal(key);
+                self.show_setting(key);
             }
         }
     }
 
+    /// Sets one of Preferences' settings to a value `setting_info::check`
+    /// has passed, null for its default, kept and put into effect. Gives
+    /// whether it changed.
+    pub(crate) fn set_preference(&mut self, key: &str, value: &Json) -> bool {
+        let value = match value {
+            Json::Null => Settings::default().value(key).unwrap_or(Json::Null),
+            value => value.clone(),
+        };
+        let changed = if key == "fab_downloads" {
+            self.memory.settings.set_folder(key, value.as_str().map(std::path::PathBuf::from))
+        } else {
+            self.memory.settings.set_value(key, &value)
+        };
+        if changed {
+            self.memory.save();
+            self.apply_settings();
+        }
+        changed
+    }
+
+    /// Does what Preferences asked this frame.
+    fn preferences_action(&mut self, action: SettingsAction) {
+        match action {
+            SettingsAction::Set(key, value) => drop(self.set_preference(key, &value)),
+            SettingsAction::Reset(key) => drop(self.set_preference(key, &Json::Null)),
+            SettingsAction::ResetCategory(category) => {
+                let keys = settings::PREFERENCES.iter().filter(|s| s.category == category && s.settable());
+                for key in keys.map(|setting| setting.key).collect::<Vec<_>>() {
+                    self.set_preference(key, &Json::Null);
+                }
+            }
+            SettingsAction::PickColor { key, swatch } => self.open_setting_color(key, swatch),
+            SettingsAction::PickFolder(key) => self.choose_setting_folder(key),
+            SettingsAction::Press("console.settings") => {
+                self.show_panel("console");
+                self.console.open_settings(&mut self.ui, &self.memory.settings);
+            }
+            SettingsAction::OpenManual(page) => {
+                self.show_panel("docs");
+                self.docs.open_reference(&mut self.ui, page);
+            }
+            SettingsAction::Press(_) | SettingsAction::PickAsset { .. } => {}
+        }
+    }
+
+    /// Lists every command with keys, and its keys, under Preferences ▸ Keys.
+    fn show_keys(&mut self) {
+        let Some(holder) = self.preferences.part("keys") else { return };
+        let keyed: Vec<(String, String)> = crate::palette::command_list(&self.command_sources())
+            .into_iter()
+            .filter(|(_, _, keys, _)| !keys.is_empty())
+            .map(|(_, title, keys, _)| (title, keys))
+            .collect();
+        for child in self.ui.children(holder) {
+            self.ui.remove(child);
+        }
+        let count = keyed.len();
+        let rows = std::rc::Rc::new(keyed);
+        let items = voxear_ui::ItemFns {
+            make: |ui: &mut voxear_ui::Ui, row: NodeId| {
+                ui.add_class(row, "settings-key-row");
+                let title = ui.add_label(row, "");
+                ui.add_class(title, "settings-key-command");
+                let keys = ui.add_label(row, "");
+                ui.add_class(keys, "settings-key-keys");
+            },
+            bind: move |ui: &mut voxear_ui::Ui, row: NodeId, index: usize| {
+                let Some((title, keys)) = rows.get(index) else { return };
+                let labels: Vec<NodeId> = ui
+                    .children(row)
+                    .into_iter()
+                    .filter(|&c| ui.has_class(c, "settings-key-command") || ui.has_class(c, "settings-key-keys"))
+                    .collect();
+                if let [command, shortcut] = labels[..] {
+                    ui.set_text(command, title);
+                    ui.set_text(shortcut, keys);
+                }
+            },
+        };
+        let list = self.ui.list_view(holder, 26.0, count, items);
+        self.ui.add_class(list, "settings-keys");
+        self.ui.set_name(list, "preferences-keys");
+    }
+
     /// Puts the settings into effect: the tool strip and its handles, the fly
     /// camera's speed, and the overlays over the Scene view. Changes from the
-    /// tool strip, the wheel and the Settings panel are kept.
+    /// tool strip, the wheel and Preferences are kept.
     fn update_settings(&mut self) {
-        let mut changed = self.settings_panel.update(&mut self.ui, &mut self.memory.settings);
-        changed |= self.update_tool_strip();
+        for action in self.preferences.update(&mut self.ui) {
+            self.preferences_action(action);
+        }
+        let mut changed = self.update_tool_strip();
         changed |= self.update_scene_headers();
         // The wheel changes the speed while flying; the setting follows it once flying stops.
         let fly = &mut self.scene.fly;
         if fly.speed() != self.fly_speed && !fly.is_looking() {
-            changed |= self.memory.settings.set("fly_speed", SettingValue::Number(fly.speed()));
+            changed |= self.memory.settings.set_value("fly_speed", &Json::from(fly.speed()));
         } else if self.memory.settings.fly_speed != self.fly_speed && !fly.is_looking() {
             fly.set_speed(self.memory.settings.fly_speed);
         }
@@ -1580,6 +1694,10 @@ impl Editor {
             self.memory.save();
         }
         self.apply_settings();
+        if self.shown(self.nodes.preferences_panel) {
+            let (settings, defaults) = (&self.memory.settings, Settings::default());
+            self.preferences.show(&mut self.ui, &|key| Some((settings.value(key)?, defaults.value(key)?)));
+        }
     }
 
     /// Puts the settings into the tool strip, its handles and the overlays.
@@ -2361,15 +2479,14 @@ impl Editor {
         let settings = &mut self.memory.settings;
         let mut changed = false;
         if self.ui.clicked(self.scene.pivot) {
-            changed |= settings.set("handle_position", SettingValue::Choice(usize::from(!settings.centred)));
+            (settings.centred, changed) = (!settings.centred, true);
         }
         if self.ui.clicked(self.scene.space) {
-            changed |= settings.set("handle_space", SettingValue::Choice(usize::from(!settings.local)));
+            (settings.local, changed) = (!settings.local, true);
         }
-        if self.ui.clicked(self.scene.snap)
-            && let Some(SettingValue::Choice(at)) = settings.get("snap")
-        {
-            changed |= settings.set("snap", SettingValue::Choice((at + 1) % SNAPS.len()));
+        if self.ui.clicked(self.scene.snap) {
+            let at = SNAPS.iter().position(|snap| (snap - settings.snap).abs() < 1e-4).unwrap_or(1);
+            (settings.snap, changed) = (SNAPS[(at + 1) % SNAPS.len()], true);
         }
         changed
     }
@@ -2831,6 +2948,7 @@ impl Editor {
                 (PickFor::PlantRef { plant, field }, Chosen::Value(pick)) => self.pick_plant_ref(&plant, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
+                (PickFor::ProjectSetting(key), Chosen::Value(pick)) => self.pick_project_setting(key, &pick),
                 (PickFor::LanguageFont { language, at }, Chosen::Value(pick)) => {
                     self.pick_language_font(&language, at, &pick);
                 }

@@ -193,7 +193,7 @@ With the [[Floating Origin]] switched on, positions stay exact however far the c
 
 ### Quality and detail
 
-How much making worlds without end may spend, and how far they are drawn, is set in **Project Settings ▸ World ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**. A slow machine draws less; a fast one can draw a world further than it says, for a better view.
+How much making worlds without end may spend, and how far they are drawn, is set in **Project Settings ▸ Quality ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**. A slow machine draws less; a fast one can draw a world further than it says, for a better view.
 
 | Setting | What it does |
 | --- | --- |

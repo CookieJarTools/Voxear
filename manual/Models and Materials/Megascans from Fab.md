@@ -61,7 +61,7 @@ A surface is textures with no model. Drag `Mossy Floor.material` onto an Obj in 
 
 The editor can pick up downloads by itself, so you do not drag each one in:
 
-1. Open **Settings**, choose **Fab**, and click **Choose…** beside **Watch for downloads**.
+1. Open **Preferences**, pick **External Tools**, and click **None** beside **Watch for downloads**.
 2. Pick the folder your browser saves downloads into, such as `Downloads`.
 
 From then on, each Megascans zip that finishes downloading there is imported into `Megascans` when you come back to the editor. Only downloads that arrive while the project is open come in. Zips already in the folder are left alone, so drag older ones in yourself. Click the cross beside the folder to stop watching. Each project keeps its own folder to watch.

@@ -256,8 +256,9 @@ Done so far:
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with
   `Editor::add_command`.
-- **Settings:** the Scene view's and play mode's settings in the rail's Settings drawer, a tab per group with a
-  search over all of them, and in the palette, kept per project with the palette's recent items.
+- **Preferences:** the editor's own settings (Scene view, Play mode, Console, appearance, external tools, keys,
+  tools) in a window laid out as Project Settings is, and in the palette, kept per project with the palette's
+  recent items.
 - **Hierarchy order:** scene headers, Objs in their scene's order (saved as shown), dragging before, after or into a
   row or onto a scene, undo putting Objs back at their places, `IInstance` badges and tinted prefab instances.
 - **The Console, after Sifter:** one line per row in columns, categories nobody declared (a `[Tag]`, the scripts'
@@ -279,7 +280,8 @@ Done so far:
   script types, references to behaviours), OnDisable and OnEnable but no Awake or Start, and the old build unloads,
   checked to have left memory. `vox run`'s window reloads them too. A build that hangs is stopped.
 - **Windows, drawers and workspaces:** a context menu on panel tabs (Close, Close Other Tabs, Reset Layout), a
-  Window button listing every panel, the rail opening Levels and Settings as a drawer, the World and Profiling
+  Window button listing every panel, the rail opening Levels and Lighting as a drawer and Project Settings and
+  Preferences as windows, the World and Profiling
   workspaces each keeping its layout, and dropdowns as wide as their options and kept on screen.
 - **The Scene view's header:** Lit, Unlit and Wireframe shading, gizmos for lights and cameras with the selected
   one's reach or frustum, and full screen.
@@ -373,7 +375,7 @@ Done so far:
   its last line.
 - **Themes in OKLCH:** every colour of the default theme made from a base, an accent and a contrast, as Linear makes
   its themes, so dark, light and custom themes hold together. Dark gives the default theme's own colours; Light and
-  Custom are picked in the Settings drawer's Appearance group, a colour from its swatch.
+  Custom are picked in Preferences ▸ Appearance, a colour from its swatch.
 
 Next in M3:
 - UI core:
@@ -391,9 +393,17 @@ Next in M3:
     and `BindRow`, rows filled in the frame they show in, and the selection
   - [ ] **Project Settings**: a pass that exposes as much of the engine as Unity's Project Settings do, well
     organised, so a game can be tuned for each platform and quality level without touching code:
-    - a Project Settings window with a category list down its side, a search across every setting, values changed
-      from the default marked, reset per value or per category, a tooltip and a manual link on each, and changes
-      shown live in the editor
+    - [x] Project Settings and Preferences as windows laid out alike: the categories down the side, titled
+      sections with rarely wanted settings folded under Advanced, a search across every category that matches
+      names, sections and the words of tooltips, a tooltip on every setting with its default, values changed from
+      the default marked, reset per value or per category, a manual page per category, and changes shown live;
+      every setting listed with its category, tooltip, type and range, and set by key, through `vox editor call`
+      (`project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show`)
+    - [x] exposed there: audio, network, content, Portals, languages, the product name, start level and C#
+      project, Tags and Layers and the collision matrix, and new engine settings: gravity in 3D and 2D, the
+      fixed step, the longest frame and fixed steps a frame (`[time]`), and which input actions the game plays
+      with (`[input]`); Preferences gains the Console's rows, gizmos, networked Play's test players and network,
+      and a list of every shortcut
     - one `.toml` file per category in `ProjectSettings/`, written only where it differs from the default, so they
       read well in version control; build profiles change them key by key, as they do now
     - per-platform overrides (Linux and Windows now, more as platforms come), as Unity's platform tabs, and

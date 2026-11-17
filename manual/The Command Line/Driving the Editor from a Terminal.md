@@ -198,7 +198,8 @@ An error has a `kind` a script can test for: `no_such_obj`, `no_such_component`,
 | `profiler.frames` | Read the Profiler's latest frames, each sample's time and each drawing pass's, from where the last read stopped |
 | `capture` | Save a picture of the Scene view, the Game view or the whole editor |
 | `scripts.build` | Build the C# scripts and get back each error with its file and line |
-| `settings.get`, `settings.set`, `project.get` | The editor's settings, and the project's |
+| `project_settings.get`, `project.set`, `settings.get`, `settings.set`, `settings.show` | Every setting of [[Project Settings]] and [[Preferences]]: each with its category, section, tooltip, type, range and default, set by its key, and shown in its window |
+| `project.get` | The project's `voxear.toml`, as JSON |
 | `docs.search`, `docs.read` | Find and read pages of this manual and your own |
 | `editor.wait`, `editor.quit` | Wait a few frames, and close the editor |
 
@@ -217,7 +218,7 @@ The editor looks at the open scenes and `voxear.toml` twice a second. `files.loo
 
 ## Letting tools only read
 
-In **Settings**, under **Tools**, turn off **Let tools change the project**. Tools can still read anything, but every call that would change something is refused with exit code 4. A tool can turn the setting off for itself, but only you can turn it back on.
+In **Preferences**, under **Tools**, turn off **Let tools change the project**. Tools can still read anything, but every call that would change something is refused with exit code 4. A tool can turn the setting off for itself, but only you can turn it back on.
 
 Each change a tool makes writes a line to the Console, starting `[Tools]`, so you can see what was done and when.
 

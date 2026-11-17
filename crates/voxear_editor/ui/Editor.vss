@@ -167,7 +167,7 @@
     background-color: transparent;
 }
 
-/* The Settings panel: groups of settings, laid out as the Inspector's rows. */
+/* Settings pages (Lighting, a look pack's, a volume's): groups of settings, laid out as the Inspector's rows. */
 .settings-body {
     padding: 4px 12px 12px 12px;
 }
@@ -260,6 +260,248 @@
     flex-shrink: 0;
     width: 22px;
     height: 22px;
+}
+
+/* Project Settings and Preferences: a search across the top, the categories down the left, and the chosen
+   category's sections beside them, each a titled list of rows. */
+.settings-window {
+    flex-direction: column;
+    font-size: 12px;
+    /* Sized by its dock area, as the Build window is, rather than by the settings in it. */
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    right: 0px;
+    bottom: 0px;
+}
+
+.settings-window-bar {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 40px;
+    padding: 0px 10px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.settings-search {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: 340px;
+    height: 26px;
+    padding: 0px 8px;
+    border-radius: 6px;
+    background-color: var(--vx-field);
+    border: 1px solid var(--vx-field-line);
+}
+
+.settings-search-icon {
+    flex-shrink: 0;
+    width: 13px;
+    height: 13px;
+    color: var(--vx-muted);
+}
+
+.settings-window-main {
+    flex-direction: row;
+    align-items: stretch;
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+.settings-categories {
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 190px;
+    padding: 6px 0px;
+    background-color: var(--vx-bg);
+    min-height: 0px;
+}
+
+.settings-category-list {
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+.settings-category {
+    padding-left: 14px;
+    color: var(--vx-text-2);
+}
+
+.list-row:selected .settings-category {
+    color: var(--vx-text);
+}
+
+.settings-detail {
+    flex-direction: column;
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    min-height: 0px;
+}
+
+.settings-head {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    height: 44px;
+    padding: 0px 10px 0px 20px;
+}
+
+.settings-title {
+    flex-grow: 1;
+    min-width: 0px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--vx-text);
+}
+
+.settings-scroll {
+    flex-grow: 1;
+    min-height: 0px;
+}
+
+.settings-content {
+    flex-direction: column;
+    max-width: 760px;
+    padding: 0px 20px 24px 20px;
+}
+
+.settings-section {
+    flex-direction: column;
+    margin-bottom: 16px;
+}
+
+.settings-window .settings-group {
+    margin-top: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--vx-text);
+}
+
+.settings-help {
+    margin-bottom: 4px;
+    font-size: 11px;
+    white-space: normal;
+    color: var(--vx-muted);
+}
+
+.settings-rows {
+    flex-direction: column;
+}
+
+.settings-window .prop.setting {
+    grid-template-columns: minmax(0px, 2fr) minmax(0px, 3fr);
+    min-height: 28px;
+}
+
+.settings-window .setting > .prop-label {
+    padding-left: 8px;
+}
+
+/* A value changed from its default: a bar beside its label, as a prefab's override has. */
+.settings-window .setting.changed > .prop-label {
+    border-left: 2px solid var(--vx-accent);
+    border-radius: 0px;
+    padding-left: 6px;
+    color: var(--vx-text);
+}
+
+.settings-window .setting.found > .prop-label {
+    color: var(--vx-accent);
+}
+
+.setting-slider {
+    flex-grow: 1;
+    min-width: 60px;
+}
+
+.prop-value > .setting-slider-field {
+    flex-grow: 0;
+    width: 64px;
+}
+
+.setting-axis {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+.setting-info {
+    color: var(--vx-text-2);
+}
+
+.settings-button {
+    align-self: flex-start;
+    height: 24px;
+    padding: 0px 10px;
+    border-radius: 6px;
+}
+
+.settings-window .prop.setting-list-row {
+    align-items: start;
+    height: auto;
+}
+
+.settings-window .setting-list-row > .prop-label {
+    padding-top: 6px;
+}
+
+.setting-list {
+    flex-direction: column;
+    gap: 4px;
+    padding: 3px 0px;
+    min-width: 0px;
+}
+
+.setting-list-item {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+}
+
+.setting-list-item > TextField, .setting-list-item > Dropdown {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.setting-part {
+    flex-direction: column;
+    padding: 2px 0px 6px 0px;
+}
+
+.settings-advanced > .foldout-header {
+    height: 26px;
+    color: var(--vx-muted);
+}
+
+.settings-nothing {
+    padding: 20px 0px;
+    color: var(--vx-muted);
+}
+
+/* Preferences ▸ Keys: each command beside its keys. */
+.settings-keys {
+    height: 420px;
+}
+
+.settings-key-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 0px 8px;
+}
+
+.settings-key-command {
+    flex-grow: 1;
+    min-width: 0px;
+    color: var(--vx-text-2);
+}
+
+.settings-key-keys {
+    flex-shrink: 0;
+    font-family: mono;
+    color: var(--vx-text);
 }
 
 /* The command palette, under the command bar. */
@@ -447,7 +689,7 @@
     flex-grow: 1;
 }
 
-/* The rail's drawer: Levels or Settings, over the left of the dock, a third of the window wide: under the 40px
+/* The rail's drawer: Levels or Lighting, over the left of the dock, a third of the window wide: under the 40px
    top bar, over the 22px status bar, and right of the 44px rail. */
 .drawer {
     position: absolute;
@@ -480,7 +722,7 @@
     flex-direction: column;
 }
 
-/* Settings: a tab for each group down the left, its settings beside them. */
+/* Lighting: a tab for each group down the left, its settings beside them. */
 .settings-root {
     flex-direction: row;
 }

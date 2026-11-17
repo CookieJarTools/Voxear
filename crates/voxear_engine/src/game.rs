@@ -171,6 +171,8 @@ impl Game {
         game.project.file.quality.put(&mut game.engine.world);
         voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
+        game.project.file.physics.put(&mut game.engine.world);
+        game.project.file.time.put(&mut game.engine);
         game
     }
 
@@ -187,9 +189,9 @@ impl Game {
         }
     }
 
-    /// Reads the project's input actions: its `.inputactions` file, the
-    /// first by path when it has several, or else Voxear's own. A package's
-    /// are its own, and never the game's.
+    /// Reads the project's input actions: the `.inputactions` file its
+    /// `[input]` picks, or else the first by path when it has several, or
+    /// else Voxear's own. A package's are its own, and never the game's.
     pub fn load_input_actions(&mut self) {
         let db = self.content.db();
         let mut files: Vec<(String, AssetGuid)> = (db.entries())
@@ -197,6 +199,13 @@ impl Game {
             .map(|entry| (entry.path.clone(), entry.guid))
             .collect();
         files.sort();
+        if let Some(picked) = self.project.file.input.actions.as_deref() {
+            let guid = picked.parse::<AssetGuid>().ok().or_else(|| db.guid_of(picked));
+            match files.iter().position(|(_, file)| Some(*file) == guid) {
+                Some(at) => files.swap(0, at),
+                None => tracing::warn!("[input] actions names {picked}, which is not the project's; the first is used"),
+            }
+        }
         if let Some((path, guid)) = files.into_iter().next() {
             let read = self.content.asset_text(guid, AssetKind::InputActions);
             if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {

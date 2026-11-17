@@ -92,6 +92,12 @@
                 <DockPanel id="build" title="Build" class="dock-content">
                     <Panel name="build-panel" class="fill build-panel" />
                 </DockPanel>
+                <DockPanel id="project-settings" title="Project Settings" icon="modules" class="dock-content">
+                    <Panel name="project-settings-panel" class="fill" />
+                </DockPanel>
+                <DockPanel id="preferences" title="Preferences" icon="settings" class="dock-content">
+                    <Panel name="preferences-panel" class="fill" />
+                </DockPanel>
                 <DockPanel id="inspector" title="Inspector">
                     <Panel class="panel-actions">
                         <Button name="inspector-lock" class="icon-button inspector-lock"><Icon icon="lock" /></Button>
@@ -115,7 +121,7 @@
         </Panel>
         <!-- Debug draw's texts, at the points in the 3D view they name. Under the drawer and menus. -->
         <Panel name="debug-texts" class="debug-texts" />
-        <!-- Opens from the rail over the dock's left side: Levels, Lighting, Project Settings, or Settings. -->
+        <!-- Opens from the rail over the dock's left side: Levels or Lighting. -->
         <Panel name="drawer" class="drawer">
             <Panel class="drawer-header">
                 <Label name="drawer-title" class="drawer-title">Levels</Label>
@@ -140,26 +146,6 @@
                     <Panel class="settings-main">
                         <Panel name="lighting-scene" class="lighting-scene" />
                         <ScrollView name="lighting" class="fill settings" />
-                    </Panel>
-                </Panel>
-            </Panel>
-            <Panel name="drawer-project" class="fill drawer-page">
-                <Panel class="fill settings-root">
-                    <Panel name="project-tabs" class="settings-tabs" />
-                    <Panel class="settings-main">
-                        <ScrollView name="project-settings" class="fill settings" />
-                    </Panel>
-                </Panel>
-            </Panel>
-            <Panel name="drawer-settings" class="fill drawer-page">
-                <Panel class="fill settings-root">
-                    <Panel name="settings-tabs" class="settings-tabs" />
-                    <Panel class="settings-main">
-                        <Panel class="search">
-                            <Icon icon="search" class="search-icon" />
-                            <TextField name="settings-filter" class="search-field" placeholder="Search settings" />
-                        </Panel>
-                        <ScrollView name="settings" class="fill settings" />
                     </Panel>
                 </Panel>
             </Panel>

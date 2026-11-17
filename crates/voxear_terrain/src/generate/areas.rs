@@ -178,7 +178,8 @@ impl Character {
 }
 
 /// How a world's land lies in levels: how many, from what height to what,
-/// and how often each character of area comes, each a weight.
+/// how often each character of area comes, each a weight, and how much of
+/// the world lies under open ocean.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelPlan {
     pub levels: u32,
@@ -186,6 +187,10 @@ pub struct LevelPlan {
     pub high: f32,
     /// Weights of the characters, in the order of [`Character::ALL`].
     pub characters: [f32; 7],
+    /// How much of the world lies under open ocean, 0 to 0.9: broad basins
+    /// tens of kilometres across, the land between them continents and
+    /// great islands.
+    pub oceans: f32,
     /// A place whose area is open plain at the lowest level, where the
     /// world starts, so the ground kept round it meets level land.
     pub keep: Option<[f32; 2]>,
@@ -254,6 +259,24 @@ fn lowland(share: f32) -> f32 {
     t * t
 }
 
+/// How far across the open oceans' pattern rises and falls, in spacings;
+/// over how much of the pattern a coast falls from the land to the open
+/// ocean's floor; and how far under the ground wired in that floor lies, in
+/// metres, deeper than any of that ground stands over the sea.
+const OCEAN_SIZE: f32 = 9.0;
+const OCEAN_SHELF: f32 = 0.08;
+const OCEAN_DEPTH: f32 = 240.0;
+
+/// How far from where the world starts the land is never open ocean, in
+/// metres, and from how far it may be.
+const OCEAN_KEEP: [f32; 2] = [2500.0, 6000.0];
+
+/// How many places of the oceans' pattern, a side, are read to find where
+/// as much of it as is ocean lies under, and how far apart, in sizes of the
+/// pattern.
+const OCEAN_SAMPLES: usize = 64;
+const OCEAN_SAMPLE_STEP: f32 = 0.61;
+
 /// How far from where the world starts the land lies low, in metres, and
 /// over how many spacings past that it climbs to its full height.
 const START_LOW: f32 = 400.0;
@@ -289,6 +312,8 @@ pub struct Areas {
     pub plan: LevelPlan,
     /// The site of the area kept open and low, where there is one.
     kept: Option<[i32; 2]>,
+    /// The oceans' pattern under which the open oceans lie.
+    ocean_line: f32,
     /// What tells these areas from any others.
     id: u64,
 }
@@ -314,9 +339,57 @@ impl Areas {
         }
         let keep = plan.keep.filter(|keep| keep.iter().all(|v| v.is_finite()));
         let kept = keep.map(|[x, z]| sites.nearest(sites.warped(x, z)).0);
-        let plan = LevelPlan { levels, low, high, characters, keep };
+        let oceans = if plan.oceans.is_finite() { plan.oceans.clamp(0.0, 0.9) } else { 0.0 };
+        let plan = LevelPlan { levels, low, high, characters, oceans, keep };
         let id = crate::layers::stable_hash(format!("{sites:?} {plan:?}").as_bytes());
-        Self { sites, plan, kept, id }
+        let mut areas = Self { sites, plan, kept, ocean_line: f32::MIN, id };
+        if oceans > 0.0 {
+            // As much of the pattern lies under the line as is ocean, read over a few hundred of its rises and falls.
+            let size = areas.sites.spacing() * OCEAN_SIZE;
+            let step = size * OCEAN_SAMPLE_STEP;
+            let mut read: Vec<f32> = (0..OCEAN_SAMPLES * OCEAN_SAMPLES)
+                .map(|k| {
+                    let (x, z) = ((k % OCEAN_SAMPLES) as f32 * step, (k / OCEAN_SAMPLES) as f32 * step);
+                    areas.ocean_pattern(x, z)
+                })
+                .collect();
+            read.sort_by(f32::total_cmp);
+            areas.ocean_line = read[((read.len() as f32 * oceans) as usize).min(read.len() - 1)];
+        }
+        areas
+    }
+
+    /// The broad pattern the open oceans lie where it is low, at `(x, z)`.
+    fn ocean_pattern(&self, x: f32, z: f32) -> f32 {
+        let size = self.sites.spacing() * OCEAN_SIZE;
+        noise::fractal(noise::NoiseStyle::Fractal, x / size, z / size, 3, self.sites.seed() ^ 0x0CEA)
+    }
+
+    /// How far the open ocean sinks the ground wired in under the land at
+    /// `(x, z)`, in metres: nothing on the continents and their islands,
+    /// falling over a broad shelf to the open ocean's floor, deeper than
+    /// that ground stands anywhere, so it lies under the sea however high.
+    /// None near where the world starts.
+    pub fn ocean(&self, x: f32, z: f32) -> f32 {
+        if self.plan.oceans <= 0.0 {
+            return 0.0;
+        }
+        let ease = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let deep = ease(0.5 + (self.ocean_line - self.ocean_pattern(x, z)) / OCEAN_SHELF);
+        if deep <= 0.0 {
+            return 0.0;
+        }
+        let open = match self.plan.keep {
+            Some([kx, kz]) => {
+                let far = ((x - kx) * (x - kx) + (z - kz) * (z - kz)).sqrt();
+                ease((far - OCEAN_KEEP[0]) / (OCEAN_KEEP[1] - OCEAN_KEEP[0]))
+            }
+            None => 1.0,
+        };
+        OCEAN_DEPTH * deep * open
     }
 
     pub fn id(&self) -> u64 {
@@ -525,7 +598,7 @@ mod tests {
     use super::*;
 
     fn areas() -> Areas {
-        let plan = LevelPlan { levels: 4, low: 10.0, high: 400.0, characters: [1.0; 7], keep: None };
+        let plan = LevelPlan { levels: 4, low: 10.0, high: 400.0, characters: [1.0; 7], oceans: 0.0, keep: None };
         Areas::new(Sites::new(2000.0, 77), plan)
     }
 

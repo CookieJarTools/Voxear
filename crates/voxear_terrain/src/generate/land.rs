@@ -945,6 +945,7 @@ mod tests {
             spires: 0.0,
             peaks: 0.0,
             basins: 0.0,
+            oceans: 0.0,
             ..Levels::default()
         };
         let biomes = [BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() }];

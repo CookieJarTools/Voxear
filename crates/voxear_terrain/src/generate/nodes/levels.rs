@@ -21,6 +21,11 @@
 //! is and where the sea: land rises out of the sea over Coast metres of
 //! that ground's height, high land in a cliff no more than 25 m tall, and
 //! slopes down to the shore as that ground does, a few times as steep.
+//! Oceans is how much of the world lies under open ocean: broad basins
+//! tens of kilometres across, where that ground is sunk under the sea over
+//! a wide shelf, so the land between stands as continents and great
+//! islands, their coasts still that ground's own. None lies within a few
+//! kilometres of a world's start.
 //!
 //! Each area has a character, picked by the weights: Plains are nearly
 //! level, Rolling ground rolls as its biome's land does, Steps rise in
@@ -74,6 +79,7 @@ pub struct Levels {
     pub spires: f32,
     pub peaks: f32,
     pub basins: f32,
+    pub oceans: f32,
     pub seed: u32,
     /// The areas, where a world of blocks lays the node for itself: its
     /// biomes' regions. Never kept in a file.
@@ -104,6 +110,7 @@ impl Default for Levels {
             spires: 0.1,
             peaks: 0.3,
             basins: 0.15,
+            oceans: 0.35,
             seed: 0,
             areas: None,
             world_areas: false,
@@ -128,7 +135,14 @@ impl Levels {
 
     /// Its levels and characters as areas lay them out.
     pub fn plan(&self) -> LevelPlan {
-        LevelPlan { levels: self.levels, low: self.low, high: self.high, characters: self.characters(), keep: None }
+        LevelPlan {
+            levels: self.levels,
+            low: self.low,
+            high: self.high,
+            characters: self.characters(),
+            oceans: self.oceans,
+            keep: None,
+        }
     }
 }
 
@@ -147,6 +161,7 @@ const VALUES: &[ValueSpec] = &[
     ValueSpec::number("spires", "Spires", 0.0, 10.0, ""),
     ValueSpec::number("peaks", "Peaks", 0.0, 10.0, ""),
     ValueSpec::number("basins", "Basins", 0.0, 10.0, ""),
+    ValueSpec::number("oceans", "Oceans", 0.0, 0.9, ""),
     ValueSpec::whole("seed", "Seed", 0, u32::MAX).advanced(),
     ValueSpec::choice("areas", "Areas", AREAS).advanced(),
 ];
@@ -191,8 +206,9 @@ impl Kind for Levels {
             5 => Value::Number(self.ramps),
             6 => Value::Number(self.coast),
             7..=13 => Value::Number(self.characters()[at - 7]),
-            14 => Value::Whole(self.seed),
-            15 => Value::Choice(usize::from(self.world_areas)),
+            14 => Value::Number(self.oceans),
+            15 => Value::Whole(self.seed),
+            16 => Value::Choice(usize::from(self.world_areas)),
             _ => return None,
         })
     }
@@ -213,8 +229,9 @@ impl Kind for Levels {
             (11, Value::Number(number)) => self.spires = number,
             (12, Value::Number(number)) => self.peaks = number,
             (13, Value::Number(number)) => self.basins = number,
-            (14, Value::Whole(whole)) => self.seed = whole,
-            (15, Value::Choice(choice)) => self.world_areas = choice == 1,
+            (14, Value::Number(number)) => self.oceans = number,
+            (15, Value::Whole(whole)) => self.seed = whole,
+            (16, Value::Choice(choice)) => self.world_areas = choice == 1,
             _ => {}
         }
     }
@@ -388,6 +405,8 @@ impl Lay {
     /// The height, walls, relief, spires, bridges and floor at `(x, z)`
     /// over ground `ground`.
     fn at(&self, x: f32, z: f32, ground: f32) -> [f32; 6] {
+        // The open oceans sink the ground wired in under the sea, which then says where the coasts are.
+        let ground = ground - self.areas.ocean(x, z);
         let sites = &self.areas.sites;
         let spacing = sites.spacing();
         let seed = sites.seed();

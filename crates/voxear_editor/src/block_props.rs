@@ -535,7 +535,8 @@ pub enum BlockField {
     /// Whether its generated land lies in levels: areas at a few set
     /// heights with sheer walls between, how many, from what height to
     /// what, how wide an area is, how much of the walls are ramps, and how
-    /// often each character of area comes.
+    /// often each character of area comes, and how much of the world lies
+    /// under open ocean.
     Levels,
     LevelCount,
     LevelLow,
@@ -549,6 +550,7 @@ pub enum BlockField {
     Spires,
     Peaks,
     Basins,
+    Oceans,
     /// Whether its generated ground goes on without end, made round the
     /// camera, and how far its own chunks and its coarser ones reach.
     Endless,
@@ -671,6 +673,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                             F::Spires,
                             F::Peaks,
                             F::Basins,
+                            F::Oceans,
                         ]),
                         None => fields.extend([F::BiomeSize, F::Levels]),
                     }
@@ -736,6 +739,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Spires => "Spires",
         F::Peaks => "Peaks",
         F::Basins => "Basins",
+        F::Oceans => "Oceans",
         F::Endless => "Endless",
         F::ViewDistance => "View distance",
         F::FarDistance => "Far distance",
@@ -791,6 +795,7 @@ const LIGHTINGS: [(BlockLighting, &str); 2] = [(BlockLighting::Blocks, "Block Li
 pub fn range(field: BlockField) -> Option<[f32; 2]> {
     match field {
         F::Caves | F::Ramps => Some([0.0, 1.0]),
+        F::Oceans => Some([0.0, 0.9]),
         F::Glow => Some([0.0, 4.0]),
         F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => Some([0.0, 4.0]),
         _ => None,
@@ -1006,6 +1011,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::LevelHigh => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.high),
         F::AreaSize => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.size),
         F::Ramps => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.ramps),
+        F::Oceans => Value::Number(file()?.generate.as_ref()?.levels.as_ref()?.oceans),
         F::Plains | F::Rolling | F::Steps | F::Canyons | F::Spires | F::Peaks | F::Basins => {
             let levels = file()?.generate.as_ref()?.levels.as_ref()?;
             Value::Number(levels.characters()[character_of(field)?])
@@ -1211,7 +1217,8 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             | F::Canyons
             | F::Spires
             | F::Peaks
-            | F::Basins,
+            | F::Basins
+            | F::Oceans,
             v,
         ) => {
             let Some(levels) = file.generate.as_mut().and_then(|generate| generate.levels.as_mut()) else { return false };
@@ -1228,6 +1235,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
                 F::Canyons => levels.canyons = n.clamp(0.0, 10.0),
                 F::Spires => levels.spires = n.clamp(0.0, 10.0),
                 F::Peaks => levels.peaks = n.clamp(0.0, 10.0),
+                F::Oceans => levels.oceans = n.clamp(0.0, 0.9),
                 _ => levels.basins = n.clamp(0.0, 10.0),
             }
         }

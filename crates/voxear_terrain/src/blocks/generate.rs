@@ -617,6 +617,7 @@ mod tests {
             spires: 0.0,
             peaks: 0.0,
             basins: 0.0,
+            oceans: 0.0,
             coast: 0.5,
             ..Levels::default()
         };

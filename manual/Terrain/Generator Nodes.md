@@ -141,6 +141,7 @@ Land that climbs in escarpments: long, gentle slopes rising one way, now and the
 | Wall | How steep the walls stand |
 | Ramps | How much of the walls' length is a ramp instead, 0 to 1 |
 | Plains, Rolling, Steps, Canyons, Spires, Peaks, Basins | How often each character of area comes, as weights: see below |
+| Oceans | How much of the world lies under open ocean, 0 to 0.9: broad basins tens of kilometres across, where the ground wired in sinks under the sea over a wide shelf, so the land between stands as continents and great islands. None lies within a few kilometres of a world's start |
 
 Under Advanced: **Coast** (how many metres the ground wired in rises out of the sea before the land stands over it; high land meets the sea in a cliff no more than 25 m tall, then stands over that ground no more than three and a half times as high as the ground stands over the sea), **Seed**, and **Areas**: **Its Own**, laid out by the node, or **The World's Regions**, the biome regions of the world of blocks the generator makes ground for, so each area is one biome's.
 

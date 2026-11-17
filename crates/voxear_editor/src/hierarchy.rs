@@ -14,6 +14,9 @@
 //! scene opened alongside the open level is marked "Not in level", and its
 //! header's menu offers to add it to the level; any scene's, while more than
 //! one is open, to close it.
+//! A `.dimension` file open alongside is marked "Dimension", and each
+//! dimension made by code, as a dungeon opened from its gate, has a header
+//! of its own marked "Not saved", its Objs under it.
 //! Dragging an Obj onto the middle of another puts it inside; near another's
 //! top or bottom edge, beside it, before or after; onto a scene's header, at
 //! the top of that scene; and below the rest, at the top of its own scene.
@@ -445,7 +448,7 @@ impl Hierarchy {
         if *self.shown.borrow() == snapshot {
             return;
         }
-        let headers: Vec<u64> = snapshot.scenes.keys().copied().collect();
+        let headers: Vec<u64> = snapshot.roots.iter().copied().filter(|&item| is_header(item)).collect();
         *self.shown.borrow_mut() = snapshot;
         for header in headers {
             if self.opened.insert(header) {
@@ -627,6 +630,14 @@ fn snapshot(
     for (scene, (_, _, entities)) in scenes.iter().enumerate() {
         places.extend(entities.iter().enumerate().map(|(at, entity)| (*entity, (scene, at))));
     }
+    // A dimension made by code, as a dungeon's, is in no scene: its Objs show under a header of its own, after the
+    // scenes'.
+    let made: Vec<voxear_engine::dimensions::DimensionId> = world
+        .resource::<voxear_engine::dimensions::Dimensions>()
+        .map(|dimensions| dimensions.made().map(|made| made.id).collect())
+        .unwrap_or_default();
+    let made: Vec<_> = made.into_iter().filter(|id| levels.dimension_scene(*id).is_none()).collect();
+    let dimensioned = voxear_scene::Dimensioned::of(world);
     let objs = world.query_ref::<(Entity, &Name, Option<&Parent>)>().without::<EditorOnly>().without::<Destroying>();
     let switched = voxear_scene::Switched::of(world);
     let mut all: Vec<(Entity, Option<Entity>, Place)> = Vec::new();
@@ -642,7 +653,11 @@ fn snapshot(
         let inactive = !switched.is_active(entity);
         let row = Row { name: name.0.clone(), icon, header: false, badge, prefab, model, part: false, inactive };
         snapshot.rows.insert(entity.to_bits(), row);
-        let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
+        let own = || {
+            let at = made.iter().position(|id| *id == dimensioned.of_obj(entity))?;
+            Some((scenes.len() + at, usize::MAX))
+        };
+        let (scene, at) = places.get(&entity).copied().or_else(own).unwrap_or((active, usize::MAX));
         all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));
     }
     all.sort_by_key(|(.., place)| *place);
@@ -654,13 +669,19 @@ fn snapshot(
     snapshot.level = levels.current().filter(|path| path.ends_with(".level")).map(|path| stem(path).to_string());
     for (index, (guid, path, _)) in scenes.iter().enumerate() {
         let header = index as u64 + 1;
-        let alongside = snapshot.level.is_some() && levels.opened_alongside(*guid);
-        let badge = if alongside { "Not in level" } else { "" };
+        // A dimension's file is in no level: it is made as something leads into it.
+        let dimension = levels.dimension_of_scene(*guid).is_some_and(|id| !id.is_level());
+        let alongside = snapshot.level.is_some() && levels.opened_alongside(*guid) && !dimension;
+        let badge = match (dimension, alongside) {
+            (true, _) => "Dimension",
+            (false, true) => "Not in level",
+            (false, false) => "",
+        };
         snapshot
             .rows
             .insert(header, Row {
                 name: stem(path).to_string(),
-                icon: "scene",
+                icon: if dimension { "globe" } else { "scene" },
                 header: true,
                 badge,
                 prefab: None,
@@ -672,6 +693,25 @@ fn snapshot(
         if alongside {
             snapshot.alongside.insert(header);
         }
+        snapshot.roots.push(header);
+        snapshot.children.insert(header, Vec::new());
+    }
+    for (at, id) in made.iter().enumerate() {
+        let header = (scenes.len() + at) as u64 + 1;
+        let made = world.resource::<voxear_engine::dimensions::Dimensions>().and_then(|made| made.get(*id));
+        let dungeon = made.is_some_and(|made| {
+            made.asset.is_none() && made.settings.kind == voxear_engine::dimensions::DimensionKind::Dungeon
+        });
+        snapshot.rows.insert(header, Row {
+            name: voxear_engine::dimensions::name_of(world, content, *id),
+            icon: if dungeon { "map-dungeon" } else { "globe" },
+            header: true,
+            badge: "Not saved",
+            prefab: None,
+            model: None,
+            part: false,
+            inactive: false,
+        });
         snapshot.roots.push(header);
         snapshot.children.insert(header, Vec::new());
     }

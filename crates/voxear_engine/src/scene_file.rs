@@ -428,6 +428,9 @@ pub struct ObjData {
     /// Leaves tracks in the ground where the Obj touches it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_maker: Option<voxear_render::TrackMaker>,
+    /// How the Obj stirs the water it moves through (`voxear_render::WaterWake`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub water_wake: Option<voxear_render::WaterWake>,
     /// One shape of a cave room, and where a tunnel may join one: what a Cave Network's rooms are made of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cave_shape: Option<CaveShape>,
@@ -541,6 +544,7 @@ impl ObjData {
             heat_body: None,
             foliage_interaction: None,
             track_maker: None,
+            water_wake: None,
             cave_shape: None,
             cave_exit: None,
             foliage: None,
@@ -2299,6 +2303,9 @@ fn capture_instance(
     if root.track_maker.is_some() && root.track_maker != prefab_root.track_maker {
         instance.track_maker = root.track_maker;
     }
+    if root.water_wake.is_some() && root.water_wake != prefab_root.water_wake {
+        instance.water_wake = root.water_wake;
+    }
     if root.cave_shape.is_some() && root.cave_shape != prefab_root.cave_shape {
         instance.cave_shape = root.cave_shape;
     }
@@ -2562,6 +2569,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(maker) = actual.track_maker.filter(|m| Some(*m) != expected.track_maker) {
         put("track_maker", whole(&maker, &voxear_render::TrackMaker::default())?);
+    }
+    if let Some(wake) = actual.water_wake.filter(|w| Some(*w) != expected.water_wake) {
+        put("water_wake", whole(&wake, &voxear_render::WaterWake::default())?);
     }
     if let Some(shape) = actual.cave_shape.filter(|s| Some(*s) != expected.cave_shape) {
         put("cave_shape", whole(&shape, &CaveShape::default())?);
@@ -2869,6 +2879,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.heat_body = world.get::<crate::heat::HeatBody>(entity).cloned();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
+    obj.water_wake = world.get::<voxear_render::WaterWake>(entity).copied();
     obj.cave_shape = world.get::<CaveShape>(entity).copied();
     obj.cave_exit = world.get::<CaveExit>(entity).copied();
     obj.model =
@@ -2959,6 +2970,7 @@ pub fn has_component(world: &World, entity: Entity, switch: Switch) -> bool {
         Switch::TrackMaker => world.has::<voxear_render::TrackMaker>(entity),
         Switch::ReflectionProbe => world.has::<ReflectionProbe>(entity),
         Switch::LightProbeGroup => world.has::<LightProbeGroup>(entity),
+        Switch::WaterWake => world.has::<voxear_render::WaterWake>(entity),
     }
 }
 

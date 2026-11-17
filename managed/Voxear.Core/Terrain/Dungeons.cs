@@ -19,7 +19,11 @@ namespace Voxear;
 /// </summary>
 public static class Dungeons
 {
-	/// <summary>The dungeons of every world of blocks of the level within <paramref name="reach"/> metres.</summary>
+	/// <summary>
+	/// The dungeons of every world of blocks of the dimension the game is seen from within <paramref name="reach"/>
+	/// metres. In the level, a dungeon in a dimension of its own is its gate alone; inside its dimension, it is listed
+	/// whole, its spaces in that dimension's coordinates.
+	/// </summary>
 	public static IReadOnlyList<Dungeon> Near(Vector3 position, float reach = 500f)
 	{
 		return Read(0, position, reach);

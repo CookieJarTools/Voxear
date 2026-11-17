@@ -173,6 +173,7 @@ impl Game {
         game.project.file.quality.put(&mut game.engine.world);
         voxear_terrain::MachineBudget::open(&mut game.engine.world, game.project.file.world, None);
         game.project.file.portals.put(&mut game.engine.world);
+        game.project.file.water_trails.put(&mut game.engine.world);
         game.project.file.navigation.put(&mut game.engine.world);
         game.engine.world.insert_resource(game.project.file.foliage.bounded());
         game.project.file.physics.put(&mut game.engine.world);
@@ -185,6 +186,19 @@ impl Game {
     /// keeps anything; and lets a game's options keep what they set there
     /// (see `voxear_terrain::MachineBudget`). A built game, `vox run` and the
     /// editor do this; tests and pictures keep to the project's.
+    /// Puts an Obj inside another, or at the top of its scene with none,
+    /// while the game runs, as a script's `Obj.SetParent` does (see
+    /// [`crate::set_parent`]): refused into another scene, another
+    /// dimension, or inside itself.
+    pub fn set_parent(
+        &mut self,
+        entity: Entity,
+        parent: Option<Entity>,
+        keep_world: bool,
+    ) -> Result<bool, crate::ParentError> {
+        crate::obj_hierarchy::set_parent(&mut self.engine.world, Some(&self.levels), entity, parent, keep_world)
+    }
+
     pub fn use_machine_budget(&mut self, company: Option<&str>) {
         let file = crate::player::machine_file(company, self.project.name());
         let project = self.project.file.world;
@@ -473,7 +487,8 @@ impl Game {
         }
         let (text, path) = self.content.asset_text(asset, voxear_assets::AssetKind::Dimension)?;
         let file = DimensionFile::parse(&text, &path)?;
-        let surroundings = self.dimension_surroundings(&file).with_context(|| format!("loading {path}"))?;
+        let surroundings = dimensions::file_surroundings(&mut self.engine, &mut self.content, &file)
+            .with_context(|| format!("loading {path}"))?;
         let world = &mut self.engine.world;
         let id = dimensions::make_empty(world, file.settings.clone(), Some(surroundings), self.levels.current())
             .with_context(|| format!("making {path}: there are as many dimensions as there can be"))?;
@@ -507,6 +522,8 @@ impl Game {
             }
         }
         dimensions::record_made(world, id, (Some(asset), key), objs);
+        // The changes made in it before it was last let go, or a save put back.
+        crate::dimension_saves::put_back(&mut self.engine.world, &mut self.content, id, self.levels.current());
         Ok(id)
     }
 
@@ -646,7 +663,9 @@ impl Game {
             stone => stone,
         };
         let turn = |placed, turns| built.turned_block(placed, turns, false);
-        let floors = dungeon.floors_at(gate.seed);
+        // As many floors as its site gives it and its stage has grown it by.
+        let stage = crate::dungeons::DungeonStages::of(world, gate.site()).stage;
+        let floors = crate::dungeons::floors_at_stage(dungeon, gate.seed, stage);
         let started = std::time::Instant::now();
         let inside = voxear_terrain::blocks::dungeon::in_rock(
             dungeon,
@@ -671,6 +690,7 @@ impl Game {
         };
         dimensions::made_on_demand(&mut self.engine.world, id);
         dimensions::note_key(&mut self.engine.world, id, key);
+        dimensions::note_dungeon(&mut self.engine.world, id, gate);
         let world = &mut self.engine.world;
         // Its world: the overworld's blocks, numbered as there, laid as the dungeon was built.
         let ground_file = voxear_terrain::blocks::file::BlockFile { generate: None, ..file };
@@ -696,12 +716,16 @@ impl Game {
         let placed = voxear_scene::Transform::new(at, turn, voxear_core::math::Vec3::ONE);
         let back = world.spawn((name, placed, portal, crate::dungeons::DungeonWayOut));
         dimensions::set_dimension(world, back, id);
+        // The changes made in it before it was last let go, or a save put back.
+        crate::dimension_saves::put_back(&mut self.engine.world, &mut self.content, id, self.levels.current());
         Ok((id, back))
     }
 
     /// Lets a dimension go, destroying its Objs at the end of the frame:
     /// persistent ones are moved to the level's. False where it was not made.
+    /// What was changed in it is kept, and put back when it is made again.
     pub fn let_go_dimension(&mut self, id: crate::dimensions::DimensionId) -> bool {
+        crate::dimension_saves::keep(&mut self.engine.world, &mut self.content, id, self.levels.current());
         match crate::dimensions::let_go(&mut self.engine.world, id) {
             Some(doomed) => {
                 self.engine.destroy_objs(&doomed);
@@ -709,50 +733,6 @@ impl Game {
             }
             None => false,
         }
-    }
-
-    /// A dimension file's sky, sun, post-processing and weather: the level's,
-    /// with its own lighting, `[sky]` and `[post]` laid over them as a
-    /// scene's are; dark all round where it has no sky, and clear where it
-    /// has no weather.
-    fn dimension_surroundings(
-        &mut self,
-        file: &crate::dimensions::DimensionFile,
-    ) -> Result<crate::dimensions::Surroundings> {
-        use crate::dimensions::{DimensionId, Dimensions, Surroundings};
-        let world = &self.engine.world;
-        let level = match world.resource::<Dimensions>() {
-            Some(dimensions) => dimensions.surroundings(world, DimensionId::LEVEL),
-            None => Surroundings::copy(world),
-        };
-        let scene = &file.scene;
-        let own = match scene.lighting.is_some() || scene.sky.is_some() || scene.post.is_some() {
-            true => {
-                let before = Surroundings::copy(&self.engine.world);
-                level.put(&mut self.engine.world);
-                let lighting = match &scene.lighting {
-                    Some(reference) => {
-                        Some((reference.as_str(), self.content.lighting(&self.content.parse(reference)?)?))
-                    }
-                    None => None,
-                };
-                let lighting = lighting.as_ref().map(|(reference, lit)| (*reference, lit));
-                let environment =
-                    crate::scene_file::Environment { lighting, sky: scene.sky, post: scene.post.as_ref() };
-                let applied = crate::scene_file::apply_environment(&mut self.engine, environment);
-                let own = Surroundings::copy(&self.engine.world);
-                before.put(&mut self.engine.world);
-                applied?;
-                own
-            }
-            false => level,
-        };
-        let settings = &file.settings;
-        Ok(match (settings.sky(), settings.weather()) {
-            (false, _) => Surroundings::enclosed(own.post()),
-            (true, false) => own.cleared(),
-            (true, true) => own,
-        })
     }
 
     /// Changes level now, then frees what the old one used and the new one
@@ -1232,10 +1212,9 @@ impl Game {
         // once its own is.
         {
             profile_scope!("Portals");
-            // A Portal in the gate of each dungeon in a dimension of its own near where the game is seen from.
-            if !self.engine.is_edit_mode() {
-                crate::dungeons::stand_gates(&mut self.engine.world, &mut self.content);
-            }
+            // A Portal in the gate of each dungeon in a dimension of its own near where the game is seen from, in
+            // the editor too, where it is opened from to look round.
+            crate::dungeons::stand_gates(&mut self.engine.world, &mut self.content);
             crate::portals::find_exits(&mut self.engine.world);
             // A Portal into a dimension not made yet makes it once near enough, and its far side is found next tick.
             self.link_dimensions(delta, renderer.as_deref_mut());
@@ -1304,6 +1283,8 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // What scripts asked of dimensions, made or let go before the frame is drawn.
+        self.serve_dimension_asks(renderer.as_deref_mut());
         // Before the frame is drawn: what went through a Portal did not cross the world in a frame.
         {
             profile_scope!("Portals");
@@ -1665,6 +1646,27 @@ impl ScriptServices for GameServices<'_> {
         crate::dungeons::dungeons_json(world, self.content, obj, at)
     }
 
+    fn endless_changes(&mut self, world: &World, entity: Entity) -> Option<voxear_terrain::blocks::edits::BlockEdits> {
+        crate::blocks::endless_changes(world, entity)
+    }
+
+    fn put_endless_changes(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        edits: &voxear_terrain::blocks::edits::BlockEdits,
+    ) -> bool {
+        crate::blocks::put_endless_changes(world, entity, edits)
+    }
+
+    fn dimension_edits(&mut self, world: &mut World) -> Option<Vec<u8>> {
+        Some(crate::dimension_saves::capture_all(world, self.content, self.levels.current()))
+    }
+
+    fn apply_dimension_edits(&mut self, world: &mut World, bytes: &[u8]) -> Result<i32> {
+        crate::dimension_saves::apply_all(world, self.content, self.levels.current(), bytes)
+    }
+
     fn block_guid(&mut self, world: &World, entity: Entity, block: u16) -> Option<String> {
         crate::blocks::block_guid(world, entity, block)
     }
@@ -2001,6 +2003,17 @@ impl ScriptServices for GameServices<'_> {
         self.content.keep_prefab(PrefabId(prefab), keep);
     }
 
+    fn set_parent(
+        &mut self,
+        world: &mut World,
+        entity: Entity,
+        parent: Option<Entity>,
+        keep_world: bool,
+    ) -> Option<Result<bool, String>> {
+        let done = crate::obj_hierarchy::set_parent(world, Some(self.levels), entity, parent, keep_world);
+        Some(done.map_err(|error| error.to_string()))
+    }
+
     fn obj_key(&self, world: &World, entity: Entity) -> Option<String> {
         if let Some((scene, path)) = self.levels.place_of(entity) {
             return Some(format!("{scene}:{path}"));
@@ -2048,7 +2061,29 @@ impl ScriptServices for GameServices<'_> {
         plants.sort();
         let plants: Vec<serde_json::Value> =
             plants.into_iter().map(|(key, gone)| serde_json::json!({ "obj": key, "gone": gone })).collect();
-        Some(serde_json::json!({ "level": level, "gone": gone, "spawned": spawned, "plants": plants }).to_string())
+        // The Objs scripts put inside others, or at the top, but the copies' roots, which `spawned` places.
+        let mut moved: Vec<(Entity, String)> = world
+            .query_ref::<(Entity, &crate::obj_hierarchy::Reparented, Option<&Spawned>)>()
+            .into_iter()
+            .filter(|(entity, _, spawned)| spawned.is_none_or(|spawned| spawned.root != *entity))
+            .filter(|(entity, ..)| !is_doomed(world, doomed, *entity))
+            .filter_map(|(entity, ..)| Some((entity, self.obj_key(world, entity)?)))
+            .collect();
+        moved.sort_by_key(|(entity, _)| entity.index());
+        // One inside an Obj a save cannot find again is left where its scene or prefab puts it.
+        let moved: Vec<serde_json::Value> = moved
+            .into_iter()
+            .filter_map(|(entity, key)| {
+                let parent = match world.get::<Parent>(entity) {
+                    Some(parent) => Some(self.obj_key(world, parent.0)?),
+                    None => None,
+                };
+                Some(serde_json::json!({ "obj": entity.to_bits(), "key": key, "parent": parent }))
+            })
+            .collect();
+        let state =
+            serde_json::json!({ "level": level, "gone": gone, "spawned": spawned, "plants": plants, "moved": moved });
+        Some(state.to_string())
     }
 
     fn asset_guid(&self, asset: AssetName<'_>) -> Option<String> {

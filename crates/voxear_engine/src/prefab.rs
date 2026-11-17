@@ -465,6 +465,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     }
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.track_maker = instance.track_maker.or(root.track_maker);
+    root.water_wake = instance.water_wake.or(root.water_wake);
     root.cave_shape = instance.cave_shape.or(root.cave_shape);
     root.cave_exit = instance.cave_exit.or(root.cave_exit);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
@@ -559,6 +560,7 @@ pub struct TemplateObj {
     pub heat_body: Option<crate::heat::HeatBody>,
     pub foliage_interaction: Option<FoliageInteraction>,
     pub track_maker: Option<voxear_render::TrackMaker>,
+    pub water_wake: Option<voxear_render::WaterWake>,
     pub cave_shape: Option<voxear_terrain::generate::CaveShape>,
     pub cave_exit: Option<voxear_terrain::generate::CaveExit>,
     /// A Foliage, where there is a renderer to draw it, and how it was
@@ -828,6 +830,9 @@ impl Template {
             }
             if let Some(maker) = obj.track_maker {
                 world.insert(entity, maker);
+            }
+            if let Some(wake) = obj.water_wake {
+                world.insert(entity, wake);
             }
             if let Some(shape) = obj.cave_shape {
                 world.insert(entity, shape);
@@ -1441,6 +1446,7 @@ pub(crate) fn resolve_obj(
         heat_body: data.heat_body.clone(),
         foliage_interaction: data.foliage_interaction,
         track_maker: data.track_maker,
+        water_wake: data.water_wake,
         cave_shape: data.cave_shape,
         cave_exit: data.cave_exit,
         layer: data.layer.clone(),

@@ -182,7 +182,10 @@ await Save.LoadScene("slot1");
 - every component of a struct marked `[Saved]`, whole, on each Obj in a scene file or made from a prefab, as `[Saved] public struct Charge : IComponent { public float Amount; }` keeps every Obj's charge. Plain entities with no Obj are not kept
 - which of the Objs loaded from scene files have been destroyed, so a coin the player picked up stays gone, with nothing to mark
 - every Obj your scripts made from a prefab, with its parent, position, rotation and scale, and its own `[Saved]` values
+- every Obj your scripts put inside another, or at the top, with `SetParent`, with its new parent and where it is there (see [[Working with Objs]])
 - the plants scripts took away or cut down, and the ground they changed: craters, holes, paint and grass (see [[Changing Terrain from Scripts]])
+- the blocks scripts and players changed, in each world of blocks, a world without end's included, its changes far from the player too
+- each [[Dimensions|dimension]]'s changes, kept apart, none for a dimension never changed; which dimension each Obj is in, where it can be found again; and each dungeon's stage and cleared flag (see [[Dimensions#What is kept|What is kept]])
 
 `LoadScene` loads the saved level again, with all its scenes loaded fresh. Then it destroys the Objs that were destroyed, removes any Objs your scripts had spawned, makes the saved ones again, and sets every `[Saved]` value. Values that point at a spawned Obj, such as a spawner's list of its enemies, point at the new copies:
 

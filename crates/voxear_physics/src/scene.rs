@@ -619,6 +619,10 @@ struct Kept {
     key: BodyKey,
     /// Where it was put last, to tell when the game moved it.
     placed: (Vec3, Quat),
+    /// Where a kinematic body was before it was brought to its Obj ahead of
+    /// the step, for a rider (see [`PhysicsScene::bring_up_platforms`]): the
+    /// step sweeps it on from there, so it still pushes what is in its way.
+    swept_from: Option<(Vec3, Quat)>,
 }
 
 /// A Character Controller's character, what it was made from, where its
@@ -926,15 +930,22 @@ impl PhysicsScene {
     /// Tells physics an Obj was set down somewhere else, turned by `turn`,
     /// as going through a Portal does: its body or character is put where
     /// its Obj now is at once, a kinematic body too, which would otherwise
-    /// sweep there, and its speed and spin are turned with it.
+    /// sweep there, and its speed and spin are turned with it; a kinematic
+    /// body is left with none.
     pub fn teleported(&mut self, world: &World, entity: Entity, turn: Quat) {
         let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
         if let Some(kept) = self.bodies.get_mut(&entity) {
             kept.placed = (position, rotation);
+            kept.swept_from = None;
             let body = kept.body;
             let (linear, angular) = self.world.velocity(body);
             self.world.set_transform(body, position, rotation);
-            self.world.set_velocity(body, turn * linear, turn * angular);
+            // A kinematic body's speed is only ever its Obj's last move, and a teleport is none.
+            let (linear, angular) = match kept.key.rigidbody.is_some_and(|body| body.kinematic) {
+                true => (Vec3::ZERO, Vec3::ZERO),
+                false => (turn * linear, turn * angular),
+            };
+            self.world.set_velocity(body, linear, angular);
         }
         if let Some(walker) = self.characters.get_mut(&entity) {
             walker.placed = position;
@@ -1595,15 +1606,64 @@ impl PhysicsScene {
             }
             return self.add(entity, key, mesh.cloned(), position, rotation);
         };
-        if same_place(kept.placed, (position, rotation)) {
+        let moved = !same_place(kept.placed, (position, rotation));
+        let early = kept.swept_from.take();
+        kept.placed = if moved { (position, rotation) } else { kept.placed };
+        let body = kept.body;
+        if !(key.rigidbody.is_some_and(|body| body.kinematic) && dt > 0.0) {
+            if moved {
+                self.world.set_transform(body, position, rotation);
+            }
             return;
         }
-        kept.placed = (position, rotation);
-        let body = kept.body;
-        match key.rigidbody.is_some_and(|body| body.kinematic) && dt > 0.0 {
-            true => self.world.move_kinematic(body, position, rotation, dt),
-            false => self.world.set_transform(body, position, rotation),
+        // A kinematic body moves at the speed that takes it where its Obj is over the step, and only then: one
+        // left with the speed of its last move would carry on at it, and what stands on it with it.
+        if let Some(from) = early {
+            self.world.set_transform(body, from.0, from.1);
         }
+        if moved || early.is_some() {
+            let (position, rotation) = kept.placed;
+            return self.world.move_kinematic(body, position, rotation, dt);
+        }
+        if self.world.velocity(body) != (Vec3::ZERO, Vec3::ZERO) {
+            self.world.set_velocity(body, Vec3::ZERO, Vec3::ZERO);
+        }
+    }
+
+    /// Brings the bodies of the Objs `entity` is inside to where those Objs
+    /// are now, ahead of the step, as a Character Controller moves: one
+    /// riding a deck it was put inside stands on the deck where the deck is
+    /// this step, not where the last step left it. A kinematic body is swept
+    /// on from where it was all the same when the step comes. Their speeds
+    /// are held at none while it moves, as the deck carries it already and
+    /// would otherwise push it on again; the dynamic ones' are given back,
+    /// as these, after its move.
+    fn bring_up_platforms(&mut self, world: &World, entity: Entity) -> Vec<(BodyId, Vec3, Vec3)> {
+        let mut held = Vec::new();
+        let mut at = world.get::<Parent>(entity).map(|parent| parent.0);
+        for _ in 0..64 {
+            let Some(platform) = at else { break };
+            at = world.get::<Parent>(platform).map(|parent| parent.0);
+            let Some(kept) = self.bodies.get_mut(&platform) else { continue };
+            let (body, kinematic) = (kept.body, kept.key.rigidbody.map(|body| body.kinematic));
+            let (_, rotation, position) = voxear_scene::world_matrix(world, platform).to_scale_rotation_translation();
+            if !same_place(kept.placed, (position, rotation)) {
+                if kinematic == Some(true) && kept.swept_from.is_none() {
+                    kept.swept_from = Some(kept.placed);
+                }
+                kept.placed = (position, rotation);
+                self.world.set_transform(body, position, rotation);
+            }
+            let (linear, angular) = self.world.velocity(body);
+            if kinematic.is_some() && (linear, angular) != (Vec3::ZERO, Vec3::ZERO) {
+                self.world.set_velocity(body, Vec3::ZERO, Vec3::ZERO);
+                // A kinematic body's speed is the step's to set again.
+                if kinematic == Some(false) {
+                    held.push((body, linear, angular));
+                }
+            }
+        }
+        held
     }
 
     fn add(&mut self, entity: Entity, key: BodyKey, mesh: Option<ColliderMesh>, position: Vec3, rotation: Quat) {
@@ -1632,7 +1692,7 @@ impl PhysicsScene {
             return tracing::warn!("physics is full; an Obj's collider is left out");
         };
         self.owners.insert(body, entity);
-        self.bodies.insert(entity, Kept { body, shape, key, placed: (position, rotation) });
+        self.bodies.insert(entity, Kept { body, shape, key, placed: (position, rotation), swept_from: None });
     }
 
     fn remove(&mut self, entity: Entity) {
@@ -1927,6 +1987,7 @@ impl PhysicsScene {
         dt: f32,
     ) -> Option<CharacterState> {
         let controller = *world.get::<CharacterController>(entity)?;
+        let held = self.bring_up_platforms(world, entity);
         self.sync_character(world, entity, controller);
         let walker = self.characters.get_mut(&entity)?;
         let gravity = gravity_at(world, self.gravity, walker.placed);
@@ -1936,6 +1997,10 @@ impl PhysicsScene {
         let step = blocks_step(&self.block_worlds, walker.controller.step_offset);
         let walker = self.characters.get_mut(&entity)?;
         let state = self.world.move_character(walker.id, velocity, dt, step, gravity);
+        for (body, linear, angular) in held {
+            self.world.set_velocity(body, linear, angular);
+        }
+        let walker = self.characters.get_mut(&entity)?;
         walker.placed = state.position;
         walker.state = Some(state);
         let parent = world.get::<Parent>(entity).map(|parent| voxear_scene::world_matrix(world, parent.0));
@@ -2245,6 +2310,103 @@ mod tests {
         let z = world.get::<Transform>(walker).unwrap().position.z;
         assert!((z - 2.0).abs() < 0.1, "two metres on in a second: {z}");
         assert_eq!(state.map(|s| s.ground), Some(crate::Ground::Ground));
+    }
+
+    #[test]
+    fn a_kinematic_body_moves_at_its_objs_speed_and_stops_with_it() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let lift = world.spawn((Transform::IDENTITY,));
+        world.insert(lift, Collider::default());
+        world.insert(lift, Rigidbody { kinematic: true, ..Rigidbody::default() });
+        // A kinematic body under an Obj with none, moved by it.
+        let arm = world.spawn((Transform::IDENTITY,));
+        let hand = world.spawn((Transform::from_position(Vec3::new(0.0, 0.0, 5.0)), Parent(arm)));
+        world.insert(hand, Collider::default());
+        world.insert(hand, Rigidbody { kinematic: true, ..Rigidbody::default() });
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        physics.step(&mut world, dt);
+        for _ in 0..30 {
+            let transform = world.get_mut::<Transform>(lift).unwrap();
+            transform.position.y += 2.0 * dt;
+            transform.rotation = Quat::from_rotation_y(1.0 * dt) * transform.rotation;
+            world.get_mut::<Transform>(arm).unwrap().position.x += 3.0 * dt;
+            physics.step(&mut world, dt);
+        }
+        let speed = |physics: &PhysicsScene, of| physics.world().velocity(physics.body(of).unwrap());
+        let (linear, angular) = speed(&physics, lift);
+        assert!(linear.abs_diff_eq(Vec3::new(0.0, 2.0, 0.0), 0.01), "it rises as its Obj does: {linear}");
+        assert!(angular.abs_diff_eq(Vec3::new(0.0, 1.0, 0.0), 0.01), "and turns as it does: {angular}");
+        assert!(speed(&physics, hand).0.abs_diff_eq(Vec3::new(3.0, 0.0, 0.0), 0.01), "carried by its parent");
+
+        // Its Obj stops: so does it, the step it stops, and it stays where its Obj is.
+        physics.step(&mut world, dt);
+        assert_eq!(speed(&physics, lift), (Vec3::ZERO, Vec3::ZERO), "no speed left over from its last move");
+        assert_eq!(speed(&physics, hand), (Vec3::ZERO, Vec3::ZERO), "nor one moved through its parent");
+        for _ in 0..60 {
+            physics.step(&mut world, dt);
+        }
+        let (at, _) = physics.world().transform(physics.body(lift).unwrap());
+        assert!((at.y - 1.0).abs() < 1e-3, "it has not carried on: {at}");
+
+        // Moving again, then set down elsewhere at once, as through a Portal, it has no speed from the jump.
+        world.get_mut::<Transform>(lift).unwrap().position.y += 0.1;
+        physics.step(&mut world, dt);
+        assert!(speed(&physics, lift).0.y > 5.0);
+        world.get_mut::<Transform>(lift).unwrap().position = Vec3::new(40.0, 0.0, 0.0);
+        physics.teleported(&world, lift, Quat::IDENTITY);
+        assert_eq!(speed(&physics, lift).0, Vec3::ZERO, "a teleport is no move");
+        physics.step(&mut world, dt);
+        let (at, _) = physics.world().transform(physics.body(lift).unwrap());
+        assert!(at.abs_diff_eq(Vec3::new(40.0, 0.0, 0.0), 1e-3) && speed(&physics, lift).0 == Vec3::ZERO, "{at}");
+    }
+
+    #[test]
+    fn a_rider_inside_a_kinematic_deck_rides_it_and_stays_on_when_it_stops() {
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let deck = world.spawn((Transform::IDENTITY,));
+        world.insert(deck, Collider { size: [6.0, 0.5, 6.0], center: [0.0, -0.25, 0.0], ..Collider::default() });
+        world.insert(deck, Rigidbody { kinematic: true, gravity: false, ..Rigidbody::default() });
+        let rider = world.spawn((Transform::from_position(Vec3::new(0.0, 0.05, 0.0)), Parent(deck)));
+        world.insert(rider, CharacterController::default());
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        physics.step(&mut world, dt);
+        let feet = |world: &World| voxear_scene::world_matrix(world, rider).w_axis.truncate();
+        for _ in 0..30 {
+            physics.move_character(&mut world, rider, Vec3::new(0.0, -2.0, 0.0), dt);
+            physics.step(&mut world, dt);
+        }
+        let standing = world.get::<Transform>(rider).unwrap().position.y;
+        let mut worst: f32 = 0.0;
+        for step in 0..240 {
+            // Sailing on, bobbing and swinging round, as a boat on waves; the rider only stands.
+            let time = step as f32 * dt;
+            let transform = world.get_mut::<Transform>(deck).unwrap();
+            transform.position = Vec3::new(6.0 * time, 0.5 * (time * 6.0).sin(), 0.0);
+            transform.rotation = Quat::from_rotation_y(0.5 * time);
+            physics.move_character(&mut world, rider, Vec3::new(0.0, -2.0, 0.0), dt);
+            physics.step(&mut world, dt);
+            worst = worst.max((world.get::<Transform>(rider).unwrap().position.y - standing).abs());
+        }
+        // A deck a step behind would leave it a few centimetres up or sunk in each step the deck rises or falls.
+        assert!(worst < 0.005, "the rider stands on the deck as it bobs, never sunk in or left behind: {worst}");
+        let on = world.get::<Transform>(rider).unwrap().position;
+        assert!(on.x.abs() < 0.05 && on.z.abs() < 0.05, "and where it was put on it: {on}");
+
+        // The deck stops: so does its body, and the rider stays on it rather than falling through.
+        let stopped = world.get::<Transform>(deck).unwrap().position;
+        for _ in 0..120 {
+            physics.move_character(&mut world, rider, Vec3::new(0.0, -2.0, 0.0), dt);
+            physics.step(&mut world, dt);
+        }
+        let (linear, angular) = physics.world().velocity(physics.body(deck).unwrap());
+        assert_eq!((linear, angular), (Vec3::ZERO, Vec3::ZERO), "the stopped deck has no speed");
+        let (body_at, _) = physics.world().transform(physics.body(deck).unwrap());
+        assert!(body_at.abs_diff_eq(stopped, 1e-3), "its body is where the deck is: {body_at} {stopped}");
+        assert!((feet(&world).y - stopped.y).abs() < 0.02, "still on it: {}", feet(&world));
     }
 
     #[test]

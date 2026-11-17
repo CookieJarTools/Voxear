@@ -9,5 +9,6 @@ Voxear's water is built in: a sea with towering waves, lakes and ponds at any he
 3. [[Streams]]: rivers and brooks running along a Path you draw in the Scene view
 4. [[Lava]]: Pools and Streams of lava that glow, crust over and crack as they cool
 5. [[Floating Objects]]: Buoyancy, and asking about the water from scripts
+6. [[Trails]]: the ripples, waves and foam that whatever moves on the water leaves behind it
 
 Every part of it is under **Add Component ▸ Water**.

@@ -10,8 +10,8 @@ namespace Voxear;
 
 /// <summary>
 /// The open scenes as the player left them: the values behaviours marked [Saved] and the components of structs
-/// marked [Saved], the Objs the scenes loaded that have been destroyed since, and the Objs scripts made from
-/// prefabs, with where each one is. Capture takes it now, and it saves like any value, so it can be one part of a
+/// marked [Saved], the Objs the scenes loaded that have been destroyed since, the Objs scripts made from prefabs,
+/// with where each one is, and the Objs scripts put inside others with Obj.SetParent, with where each one went. Capture takes it now, and it saves like any value, so it can be one part of a
 /// SaveFile. LoadAsync loads its level again and puts it back; Save.WriteScene and Save.LoadScene do both in one
 /// call.
 /// </summary>
@@ -35,7 +35,7 @@ public sealed class SceneState
 	/// <summary>Takes the state of the open scenes now.</summary>
 	public static SceneState Capture()
 	{
-		var (level, gone, copies) = Describe();
+		var (level, gone, copies, moved) = Describe();
 		var numbers = new Dictionary<ulong, int>();
 		for (var number = 0; number < copies.Count; number++)
 		{
@@ -49,12 +49,22 @@ public sealed class SceneState
 			root["level"] = level;
 			root["gone"] = SaveNode.From(gone);
 			root["spawned"] = SaveNode.NewList(copies.Select(Copy));
+			root["moved"] = SaveNode.NewList(moved.Select(Moved).OfType<SaveNode>());
 			root["saved"] = SaveNode.NewList(BehaviourTable.Live().Select(Values).OfType<SaveNode>());
 			root["components"] = SaveNode.NewList(SceneComponents.Capture());
 			root["plants"] = SaveNode.NewList(RemovedPlants().Select(PlantsNode));
 			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
 			root["blocks"] = SaveNode.Bytes(Blocks.CaptureEdits());
 			root["storms"] = SaveNode.Bytes(Storms.CaptureState());
+			// Each dimension's changes apart, none for one never changed; the dungeons' stages beside their sites;
+			// and the Objs in other dimensions than the level's, to put back there.
+			var dimensions = NativeDimensions.CaptureEdits();
+			if (dimensions.Length > 0)
+			{
+				root["dimensions"] = SaveNode.Bytes(dimensions);
+			}
+			root["dungeons"] = SaveNode.NewList(DimensionSaves.Stages());
+			root["elsewhere"] = SaveNode.NewList(DimensionSaves.Elsewhere());
 		}
 		return new SceneState(root);
 	}
@@ -113,10 +123,15 @@ public sealed class SceneState
 			Storms.ApplyState(Root["storms"].AsBytes());
 		}
 
+		// The dungeons' stages before any dungeon is made, and each dimension's changes, put back as it is made.
+		DimensionSaves.ApplyStages(Root["dungeons"]);
+		NativeDimensions.ApplyEdits(Root["dimensions"].IsNull ? [] : Root["dimensions"].AsBytes());
+
 		var made = MakeCopies();
 		using (SpawnedKeys.Reading(made))
 		using (SaveReader.Begin(Context))
 		{
+			PutMoved();
 			foreach (var values in Root["saved"].Items)
 			{
 				Restore(values);
@@ -125,6 +140,7 @@ public sealed class SceneState
 			{
 				SceneComponents.Restore(component);
 			}
+			DimensionSaves.MoveBack(Root["elsewhere"]);
 		}
 	}
 
@@ -158,15 +174,19 @@ public sealed class SceneState
 		}
 	}
 
-	/// <summary>What the engine says about the open scenes: the level's GUID, the keys of the Objs gone, and each copy scripts made.</summary>
-	private static (string? Level, List<string> Gone, List<(ulong Root, string Prefab, string? Parent)> Copies) Describe()
+	/// <summary>
+	/// What the engine says about the open scenes: the level's GUID, the keys of the Objs gone, each copy scripts made,
+	/// and each Obj scripts put inside another, or at the top, with its key and its parent's.
+	/// </summary>
+	private static (string? Level, List<string> Gone, List<(ulong Root, string Prefab, string? Parent)> Copies, List<(ulong Obj, string Key, string? Parent)> Moved) Describe()
 	{
 		var gone = new List<string>();
 		var copies = new List<(ulong Root, string Prefab, string? Parent)>();
+		var moved = new List<(ulong Obj, string Key, string? Parent)>();
 		var json = NativeSaves.SceneState();
 		if (json == null)
 		{
-			return (null, gone, copies);
+			return (null, gone, copies, moved);
 		}
 
 		using var document = JsonDocument.Parse(json);
@@ -176,7 +196,14 @@ public sealed class SceneState
 		{
 			copies.Add((copy.GetProperty("root").GetUInt64(), copy.GetProperty("prefab").GetString()!, copy.GetProperty("parent").GetString()));
 		}
-		return (state.GetProperty("level").GetString(), gone, copies);
+		if (state.TryGetProperty("moved", out var movedObjs))
+		{
+			foreach (var obj in movedObjs.EnumerateArray())
+			{
+				moved.Add((obj.GetProperty("obj").GetUInt64(), obj.GetProperty("key").GetString()!, obj.GetProperty("parent").GetString()));
+			}
+		}
+		return (state.GetProperty("level").GetString(), gone, copies, moved);
 	}
 
 	/// <summary>What the engine says of the plants scripts took away: each Foliage's Obj's key and the plants' numbers.</summary>
@@ -231,6 +258,73 @@ public sealed class SceneState
 			node["level"] = SaveNode.NewList(level.X, level.Y, level.Z);
 		}
 		return node;
+	}
+
+	/// <summary>
+	/// An Obj a script put inside another, or at the top, to put there again: its key, its parent's, and where it is
+	/// there. One at the top is kept from the level's real middle, as a copy is. Null for one the save cannot find again.
+	/// </summary>
+	private static SaveNode? Moved((ulong Obj, string Key, string? Parent) moved)
+	{
+		var key = SpawnedKeys.ForSave(moved.Key);
+		var parent = SpawnedKeys.ForSave(moved.Parent);
+		if (key == null || (moved.Parent != null && parent == null))
+		{
+			return null;
+		}
+
+		var node = Copy((moved.Obj, string.Empty, moved.Parent));
+		node.Remove("prefab");
+		node["obj"] = key;
+		return node;
+	}
+
+	/// <summary>
+	/// Puts each Obj scripts moved where it went: all of them at the top first, so that none goes inside another still
+	/// inside it, then each inside its parent, at its place there.
+	/// </summary>
+	private void PutMoved()
+	{
+		var placed = new List<(Obj Obj, Obj Parent, SaveNode Saved)>();
+		foreach (var saved in Root["moved"].Items)
+		{
+			var key = SpawnedKeys.ForLookup(saved["obj"].AsString() ?? string.Empty);
+			var obj = key == null ? Obj.None : NativeSaves.FindObj(key);
+			var parentKey = saved["parent"].AsString();
+			var parentFound = parentKey == null ? null : SpawnedKeys.ForLookup(parentKey);
+			var parent = parentFound == null ? Obj.None : NativeSaves.FindObj(parentFound);
+			if (!obj.IsValid || (parentKey != null && !parent.IsValid))
+			{
+				Log.Warning("A save of the scene put an Obj inside another, but one of them is not here now, so it is left where its scene puts it.");
+				continue;
+			}
+			placed.Add((obj, parent, saved));
+		}
+		foreach (var (obj, _, _) in placed)
+		{
+			Reparent(obj, Obj.None);
+		}
+		foreach (var (obj, parent, saved) in placed)
+		{
+			if (Reparent(obj, parent))
+			{
+				obj.Transform = Placed(saved, parent.IsValid);
+			}
+		}
+	}
+
+	private static bool Reparent(Obj obj, Obj parent)
+	{
+		try
+		{
+			obj.SetParent(parent, keepWorldPlace: false);
+			return true;
+		}
+		catch (System.InvalidOperationException refused)
+		{
+			Log.Warning($"A save of the scene put {obj.Name} inside another Obj, which it cannot go inside now: {refused.Message}");
+			return false;
+		}
 	}
 
 	/// <summary>A behaviour's [Saved] values, with what finds it again: its Obj, its class, and which of that class on the Obj it is.</summary>

@@ -13,6 +13,8 @@ pub mod dungeons;
 mod content;
 pub mod content_build;
 pub mod debug_texts;
+pub mod dimension_saves;
+pub mod dimension_scripts;
 pub mod dimensions;
 pub mod field_checks;
 pub mod first_person;
@@ -95,6 +97,7 @@ pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;
 pub mod walkers;
+pub mod water_trails;
 pub mod water;
 pub mod weather;
 pub mod weather_maps;
@@ -111,11 +114,12 @@ pub use levels::{
     LEVEL_FORMAT, LevelChange, LevelFile, LevelOptions, LevelScene, LevelSummary, Levels, Tracked, summarise,
 };
 pub use loading::{LoadId, LoadState, LoadStatus, LoadTarget, Loads, ModelWork};
+pub use obj_hierarchy::{ParentError, Reparented, family, set_parent};
 pub use prefab::{ObjPath, PrefabId, Template};
 pub use previews::{AssetPreviews, ScriptPreviews, preview_parts};
 pub use project::{
     ContentSettings, ENGINE_FILE, InputSettings, PROJECT_FILE, PhysicsSettings, PortalSettings, Project, ProjectFile,
-    QualitySettings, StartingGravity, TimeSettings, core_assembly, engine_root, engine_version, is_install,
+    QualitySettings, StartingGravity, TimeSettings, WaterTrailSettings, core_assembly, engine_root, engine_version, is_install,
     manual_folder,
 };
 pub use stats_overlay::StatsOverlay;

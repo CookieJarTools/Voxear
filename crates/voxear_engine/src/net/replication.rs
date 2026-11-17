@@ -18,6 +18,12 @@
 //! camera, and the server, whose middle stays put, agree on where everything
 //! is. A child's position is its parent's, as it is.
 //!
+//! An Obj inside a networked Obj says which, so one a script puts inside
+//! another while the game runs (see `crate::set_parent`), as a boat takes
+//! a player aboard, is inside it on every machine; one taken out to the top
+//! is at the top on every machine. One inside an Obj that is not networked
+//! is inside whatever each machine's own scene put it in.
+//!
 //! Each Obj is in a dimension (see `voxear_scene::dimensions`), and goes to
 //! a player only while it is in one they are in or see into through a
 //! Portal, its range measured within that dimension: see `dimensions`.
@@ -89,6 +95,9 @@ pub struct ObjState {
     /// Its position is in the world rather than from a parent: it goes
     /// between machines measured from the level's middle.
     pub root: bool,
+    /// The networked Obj it is inside: none at the top, or inside one that
+    /// is not networked.
+    pub parent: Option<NetId>,
 }
 
 impl ObjState {
@@ -97,7 +106,33 @@ impl ObjState {
         let mist = world.get::<voxear_render::Mist>(entity).map(|mist| mist.emitting);
         let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
         let root = parent.is_none_or(|parent| !world.has::<Transform>(parent));
-        Some(Self { position: transform.position, rotation: transform.rotation, scale: transform.scale, mist, root })
+        let parent = parent.and_then(|parent| world.get::<Networked>(parent)).map(|networked| networked.id);
+        let (position, rotation, scale) = (transform.position, transform.rotation, transform.scale);
+        Some(Self { position, rotation, scale, mist, root, parent })
+    }
+
+    /// Puts the Obj inside the networked Obj the state says, or at the top
+    /// when the state's is, where it is not already: as it is on the
+    /// machine the state came from. Its Transform is the state's to set.
+    pub fn apply_parent(&self, world: &mut World, entity: Entity) {
+        let now = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+        let wanted = match self.parent {
+            Some(id) => {
+                if now.and_then(|now| world.get::<Networked>(now)).is_some_and(|networked| networked.id == id) {
+                    return;
+                }
+                let found =
+                    world.query_ref::<(Entity, &Networked)>().into_iter().find(|(_, networked)| networked.id == id);
+                // Inside one not made here yet, it waits till it is.
+                let Some((parent, _)) = found else { return };
+                Some(parent)
+            }
+            None if self.root && now.is_some_and(|now| world.has::<Transform>(now)) => None,
+            None => return,
+        };
+        if let Err(error) = crate::obj_hierarchy::set_parent(world, None, entity, wanted, false) {
+            tracing::warn!("a networked Obj could not go where the server has it: {error}");
+        }
     }
 
     /// Moves a root Obj's state by `by`, as this machine's origin moves
@@ -126,7 +161,12 @@ impl ObjState {
         let rotation = quantize_rotation(self.rotation) != quantize_rotation(other.rotation);
         let scale = self.scale != other.scale;
         let mist = self.mist != other.mist;
-        u8::from(position) | u8::from(rotation) << 1 | u8::from(scale) << 2 | u8::from(mist) << 3
+        let parent = self.parent != other.parent;
+        u8::from(position)
+            | u8::from(rotation) << 1
+            | u8::from(scale) << 2
+            | u8::from(mist) << 3
+            | u8::from(parent) << 5
     }
 
     pub fn lerp(&self, other: &Self, t: f32) -> Self {
@@ -136,11 +176,17 @@ impl ObjState {
             scale: self.scale.lerp(other.scale, t),
             mist: if t < 0.5 { self.mist } else { other.mist },
             root: other.root,
+            parent: other.parent,
         }
     }
 }
 
-pub(super) const ALL: u8 = 0b1_1111;
+pub(super) const ALL: u8 = 0b11_1111;
+
+/// The bit of a change mask for the networked Obj an Obj is inside.
+pub(super) const PARENT: u8 = 32;
+/// Bits in a change mask.
+const MASK_BITS: u32 = 6;
 
 /// How far a remote Obj may move in a tick and still be shown moving there,
 /// in metres: further, it was set down there, as tick smoothing takes it.
@@ -211,7 +257,7 @@ fn quantize_rotation(q: Quat) -> u32 {
 /// Writes the parts of `state` in `mask`, but its fields, from a machine
 /// whose world's middle is `origin` from the level's.
 pub(super) fn write_state(w: &mut BitWriter, state: &ObjState, mask: u8, origin: I64Vec3) {
-    w.write_bits(u32::from(mask), 5);
+    w.write_bits(u32::from(mask), MASK_BITS);
     if mask & 1 != 0 {
         write_position(w, state.position, state.root, origin);
     }
@@ -227,12 +273,18 @@ pub(super) fn write_state(w: &mut BitWriter, state: &ObjState, mask: u8, origin:
         w.write_bool(state.mist.is_some());
         w.write_bool(state.mist.unwrap_or(false));
     }
+    if mask & PARENT != 0 {
+        w.write_bool(state.parent.is_some());
+        if let Some(parent) = state.parent {
+            w.write_varint(u64::from(parent.0));
+        }
+    }
 }
 
 /// Reads parts written by [`write_state`] over `into`, and which they were,
 /// on a machine whose world's middle is `origin` from the level's.
 pub(super) fn read_state(r: &mut BitReader, into: &mut ObjState, origin: I64Vec3) -> Option<u8> {
-    let mask = r.read_bits(5)? as u8;
+    let mask = r.read_bits(MASK_BITS)? as u8;
     if mask & 1 != 0 {
         (into.position, into.root) = read_position(r, origin)?;
     }
@@ -245,6 +297,12 @@ pub(super) fn read_state(r: &mut BitReader, into: &mut ObjState, origin: I64Vec3
     if mask & 8 != 0 {
         let (has, emitting) = (r.read_bool()?, r.read_bool()?);
         into.mist = has.then_some(emitting);
+    }
+    if mask & PARENT != 0 {
+        into.parent = match r.read_bool()? {
+            true => Some(NetId(u32::try_from(r.read_varint()?).ok()?)),
+            false => None,
+        };
     }
     Some(mask)
 }
@@ -430,7 +488,8 @@ impl Replication {
                 let ((t0, s0), (t1, s1)) = (samples[i - 1], samples[i]);
                 // Further apart than anything moves in the ticks between them: it went through a Portal, or was
                 // set down elsewhere. It is shown where it was until it is there, never sliding from one to the other.
-                if s0.position.distance(s1.position) > SET_DOWN * (t1 - t0).max(1) as f32 {
+                // So too one put inside another Obj, its position measured from the new one from then on.
+                if s0.parent != s1.parent || s0.position.distance(s1.position) > SET_DOWN * (t1 - t0).max(1) as f32 {
                     return Some(if at >= t1 as f64 { s1 } else { s0 });
                 }
                 let t = ((at - t0 as f64) / (t1 - t0).max(1) as f64) as f32;
@@ -465,6 +524,7 @@ impl Replication {
             let (Some(entity), Some(state)) = (remote.entity, Self::sample(&remote.samples, self.shown)) else {
                 continue;
             };
+            state.apply_parent(world, entity);
             state.apply(world, entity);
         }
     }
@@ -482,6 +542,7 @@ mod tests {
             scale: Vec3::ONE,
             mist: None,
             root: true,
+            parent: None,
         };
         // Walking 5 cm a tick, then through a Portal to a place 7 km off, then walking on.
         let samples: VecDeque<(u64, ObjState)> =
@@ -494,6 +555,22 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_obj_put_inside_another_is_never_shown_between_its_two_parents() {
+        let at = |x: f32, parent: Option<NetId>| ObjState {
+            position: Vec3::new(x, 0.0, 0.0),
+            parent,
+            ..crate::net::messages::BLANK
+        };
+        // Taken aboard on tick 12: its position is the boat's from then on.
+        let samples: VecDeque<(u64, ObjState)> =
+            [(10, at(1.0, None)), (12, at(-3.0, Some(NetId(4))))].into_iter().collect();
+        let shown = |tick: f64| Replication::sample(&samples, tick).unwrap();
+        assert_eq!((shown(11.0).position.x, shown(11.0).parent), (1.0, None), "where it was until it is aboard");
+        assert_eq!((shown(12.0).position.x, shown(12.0).parent), (-3.0, Some(NetId(4))));
+        assert_eq!(at(0.0, Some(NetId(4))).changed(&at(0.0, None)), PARENT, "the change is sent");
+    }
+
+    #[test]
     fn a_state_survives_being_sent_to_a_millimetre() {
         let state = ObjState {
             position: Vec3::new(123.4567, -2.0001, 4000.25),
@@ -501,6 +578,7 @@ mod tests {
             scale: Vec3::new(1.0, 2.0, 1.0),
             mist: Some(true),
             root: true,
+            parent: Some(NetId(70_000)),
         };
         let mut w = BitWriter::new();
         write_state(&mut w, &state, ALL, I64Vec3::ZERO);
@@ -511,10 +589,11 @@ mod tests {
         assert!(back.position.distance(state.position) < 0.001, "{} against {}", back.position, state.position);
         assert!(back.rotation.dot(state.rotation).abs() > 0.9999);
         assert_eq!((back.scale, back.mist, back.root), (state.scale, state.mist, true));
+        assert_eq!(back.parent, state.parent, "the networked Obj it is inside");
         let mut moved = BitWriter::new();
         write_state(&mut moved, &state, 0b11, I64Vec3::ZERO);
-        assert!(moved.bits() <= 5 + 2 + 72 + 32, "a moving Obj in {} bits", moved.bits());
-        assert!(bits < 222);
+        assert!(moved.bits() <= MASK_BITS as usize + 2 + 72 + 32, "a moving Obj in {} bits", moved.bits());
+        assert!(bits < 248, "{bits}");
     }
 
     #[test]
@@ -532,14 +611,16 @@ mod tests {
         let player = I64Vec3::new(99 * 1024, 0, -50 * 1024);
         let (seen, bits) = send(&far(Vec3::new(102_400.25, 3.0, -51_200.5), true), I64Vec3::ZERO, player);
         assert_eq!(seen.position, Vec3::new(1024.25, 3.0, -0.5), "exact in the player's world");
-        assert_eq!(bits, 5 + 2 + 72 + 48, "far out, 16 bits an axis more");
+        assert_eq!(bits, MASK_BITS as usize + 2 + 72 + 48, "far out, 16 bits an axis more");
         // Back from the player, the server reads it where it was; a child's is its parent's either way.
         assert_eq!(send(&seen, player, I64Vec3::ZERO).0.position, Vec3::new(102_400.25, 3.0, -51_200.5));
         let child = far(Vec3::new(0.5, 1.0, 2.0), false);
         assert_eq!(send(&child, I64Vec3::ZERO, player).0, child);
         // Near the level's middle as ever, 8 km either way, its edge too.
         let (edge, bits) = send(&far(Vec3::new(8191.999, -8192.0, 0.0), true), I64Vec3::ZERO, I64Vec3::ZERO);
-        assert!(edge.position.distance(Vec3::new(8191.999, -8192.0, 0.0)) < 0.001 && bits == 5 + 2 + 72);
+        assert!(
+            edge.position.distance(Vec3::new(8191.999, -8192.0, 0.0)) < 0.001 && bits == MASK_BITS as usize + 2 + 72
+        );
         assert_eq!(send(&far(Vec3::new(8192.0, 0.0, 0.0), true), I64Vec3::ZERO, I64Vec3::ZERO).0.position.x, 8192.0);
     }
 

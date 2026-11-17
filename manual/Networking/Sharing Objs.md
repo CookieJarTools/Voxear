@@ -43,6 +43,12 @@ When an Obj goes into another dimension on the server, through a Portal or moved
 
 The server decides which dimension each Obj is in. Players' machines never take an Obj the server moves through a Portal of their own. With [[Shared Authority|shared authority]], a player's machine takes its own Objs through, and the server checks that there is a Portal by the Obj into that dimension. If there is not, the Obj is put back where the server has it.
 
+## Inside other Objs
+
+When a script on the server puts a shared Obj inside another with `SetParent`, as a boat takes a player aboard, each player's machine puts its copy inside the same Obj, as long as that Obj is shared too. When the server puts it back at the top, it goes back to the top on every machine. A player's own predicted Obj follows when the server puts it right, so a player taken aboard rides the boat on their own machine as well.
+
+Give the Obj it goes inside a Net Object. An Obj inside one that is not shared stays inside whatever each player's own scene put it in. The server can't say which Obj that is.
+
 ## Smooth movement
 
 A player's machine shows shared Objs a moment in the past, about two ticks behind the newest update, and longer when updates arrive unevenly. That way it always has an update on either side to move smoothly between, even when one is late or lost. Positions are sent to about a millimetre.

@@ -52,6 +52,9 @@ pub struct PortalPassed {
     pub to: Entity,
     /// What going through did to its place, its turn and its speed.
     pub carry: Carry,
+    /// The dimension it went from, and the one it came into: the same for
+    /// two Portals of one dimension.
+    pub dimensions: [voxear_scene::DimensionId; 2],
 }
 
 /// The Objs that went through Portals this frame, in order, as a world's
@@ -573,7 +576,8 @@ pub(crate) fn carry_objs(world: &mut World) {
         }
         crate::tick_smoothing::carried(world, entity, &way.carry);
         seen.insert(entity, place(world, entity));
-        let passed = PortalPassed { obj: entity, from: way.entity, side, to: way.to, carry: way.carry };
+        let dimensions = [way.from, way.into];
+        let passed = PortalPassed { obj: entity, from: way.entity, side, to: way.to, carry: way.carry, dimensions };
         let mut events = world.remove_resource::<PortalEvents>().unwrap_or_default();
         events.push(passed);
         world.insert_resource(events);
@@ -820,6 +824,11 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             4 => place(passed.carry.from),
             5 => place(passed.carry.to),
             6 => number(f32::from(u8::from(passed.side == PortalSide::Back))),
+            // The dimensions it went from and into, as scripts hold them (see `dimensions::handle_of`).
+            7 => {
+                let [from, into] = passed.dimensions.map(|id| crate::dimensions::handle_of(world, id).unwrap_or(0));
+                Some([f32::from_bits(from), f32::from_bits(into), 0.0, 0.0])
+            }
             _ => None,
         };
     }
@@ -841,6 +850,9 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 Transform::from_position(Vec3::new(x, y, z)),
                 Portal::default(),
             ));
+            // In the dimension the game is seen from, as every Obj a script makes at the top is.
+            let current = voxear_scene::CurrentDimension::of(world);
+            voxear_scene::set_dimension(world, made, current);
             world.insert_resource(PortalAsked { made: Some(made), ..PortalAsked::default() });
             return Some([0.0; 4]);
         }

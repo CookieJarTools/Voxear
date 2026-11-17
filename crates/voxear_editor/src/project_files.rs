@@ -152,6 +152,8 @@ pixels = true
 pub enum NewFile {
     Folder,
     Scene,
+    /// A dimension of a kind: a scene of its own for a Portal to lead into.
+    Dimension(voxear_engine::dimensions::DimensionKind),
     Level,
     Material,
     Lighting,
@@ -186,9 +188,12 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 21] = [
+    pub const ALL: [NewFile; 24] = [
         NewFile::Folder,
         NewFile::Scene,
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Overworld),
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Dungeon),
+        NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Caves),
         NewFile::Level,
         NewFile::Material,
         NewFile::Lighting,
@@ -226,6 +231,9 @@ impl NewFile {
         match self {
             NewFile::Folder => "New Folder",
             NewFile::Scene => "New Scene",
+            NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Overworld) => "New Dimension: Overworld",
+            NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Dungeon) => "New Dimension: Dungeon",
+            NewFile::Dimension(voxear_engine::dimensions::DimensionKind::Caves) => "New Dimension: Caves",
             NewFile::Level => "New Level",
             NewFile::Material => "New Material",
             NewFile::Lighting => "New Lighting Settings",
@@ -254,6 +262,7 @@ impl NewFile {
         match self {
             NewFile::Folder => ("New Folder", ""),
             NewFile::Scene => ("New Scene", ".scene"),
+            NewFile::Dimension(_) => ("New Dimension", ".dimension"),
             NewFile::Level => ("New Level", ".level"),
             NewFile::Material => ("New Material", ".material"),
             NewFile::Lighting => ("New Lighting", ".lighting"),
@@ -287,6 +296,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
     match kind {
         NewFile::Folder => std::fs::create_dir_all(&file),
         NewFile::Scene => std::fs::write(&file, "# Voxear scene\nformat = 1\n"),
+        NewFile::Dimension(kind) => std::fs::write(&file, crate::dimension_inspector::new_file(kind)),
         NewFile::Level => std::fs::write(&file, "# Voxear level: list its scenes as [[scene]] tables.\nformat = 1\n"),
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),

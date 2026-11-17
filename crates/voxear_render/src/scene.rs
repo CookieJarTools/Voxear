@@ -310,6 +310,9 @@ pub struct ExtractedFrame {
     pub water_bodies: crate::water::WaterBodies,
     /// The Track Makers over a terrain (see `tracks`).
     pub track_makers: Vec<crate::tracks::Maker>,
+    /// What stirs the water, each with where its Obj is now (see
+    /// `water_trails`).
+    pub stirs: Vec<(crate::water_trails::Stir, voxear_core::math::Vec3)>,
     /// Where the world's middle is from the level's, in whole metres (see
     /// `voxear_scene::WorldOrigin`).
     pub origin: voxear_core::math::I64Vec3,
@@ -965,6 +968,19 @@ pub fn extract(
             Some((entity, at, at.y - ground.height, *maker))
         })
         .collect();
+    // What stirs the water, where each is now: water seen through a Portal lies still.
+    let stirs = match (through, world.resource::<crate::water_trails::Stirs>()) {
+        (None, Some(stirs)) => stirs
+            .0
+            .iter()
+            .filter(|stir| world.is_alive(stir.entity))
+            .map(|stir| {
+                let at = world.get::<WorldTransform>(stir.entity).map(|w| w.0.w_axis.truncate());
+                (*stir, at.or_else(|| world.get::<Transform>(stir.entity).map(|t| t.position)).unwrap_or_default())
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     // The level's Wind Zone, or a fair day's wind, as the weather makes it.
     let blows = |entity: Entity| on(entity, Switch::WindZone);
     frame.wind = crate::wind::plants_wind_where(world, weather, motion, &blows);
@@ -1168,6 +1184,7 @@ pub fn extract(
         ocean,
         water_bodies,
         track_makers,
+        stirs,
         origin,
         dimension,
         dimensioned,

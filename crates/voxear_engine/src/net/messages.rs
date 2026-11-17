@@ -127,6 +127,7 @@ pub const BLANK: ObjState = ObjState {
     scale: voxear_core::math::Vec3::ONE,
     mist: None,
     root: true,
+    parent: None,
 };
 
 const WELCOME: u32 = 0;

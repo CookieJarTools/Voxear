@@ -90,6 +90,28 @@ impl Editor {
                 debug_draw::solid(triangles, color, 0.0, style);
             }
         }
+        // The level's baked nav mesh: each polygon near the camera, a little over its floor.
+        if let Some((mesh, offset)) = voxear_engine::navigation::level_nav(world) {
+            let seen = eye + offset;
+            let mut triangles = Vec::new();
+            for poly in &mesh.polys {
+                let nearest =
+                    Vec3::new(seen.x.clamp(poly.min[0], poly.max[0]), seen.y, seen.z.clamp(poly.min[1], poly.max[1]));
+                if (nearest - seen).length() > REACH {
+                    continue;
+                }
+                let inset = 0.04;
+                let corner = |x: f32, z: f32| Vec3::new(x, poly.height_at(x, z) + 0.05, z) - offset;
+                let (x0, z0, x1, z1) =
+                    (poly.min[0] + inset, poly.min[1] + inset, poly.max[0] - inset, poly.max[1] - inset);
+                let [a, b, c, d] = [corner(x0, z0), corner(x1, z0), corner(x1, z1), corner(x0, z1)];
+                triangles.extend([[a, c, b], [a, d, c]]);
+                if triangles.len() > MOST * 2 {
+                    break;
+                }
+            }
+            debug_draw::solid(triangles, STAND, 0.0, style);
+        }
         // Each Nav Link, from its Obj to its end, an arrow, both ways where it goes both ways.
         let links: Vec<(Vec3, Vec3, bool)> = world
             .query_ref::<(Entity, &voxear_engine::navigation::NavLink)>()

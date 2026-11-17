@@ -227,6 +227,10 @@ impl Editor {
     /// Shows the selection in every Inspector not locked.
     pub(super) fn show_selection(&mut self, entity: Option<Entity>) {
         self.selection = entity;
+        // An Obj of another dimension shows in its own.
+        if let Some(entity) = entity {
+            self.show_dimension_of(entity);
+        }
         // A part stays picked while its Obj does, as through an undo.
         if self.selected_part.is_some_and(|(owner, _)| Some(owner) != entity) {
             self.selected_part = None;

@@ -137,7 +137,9 @@ pub fn corrections(world: &mut World) -> Vec<Correction> {
         let kept =
             session.prediction.history.get(&id).and_then(|h| h.iter().find(|(t, _)| *t == tick)).map(|(_, s)| *s);
         // A tick this machine never ran, as just after joining, is put right too.
-        if kept.is_none_or(|kept| kept.position.distance(state.position) > TOLERANCE) && tick < session.tick {
+        let differs =
+            |kept: ObjState| kept.position.distance(state.position) > TOLERANCE || kept.parent != state.parent;
+        if kept.is_none_or(differs) && tick < session.tick {
             found.push(Correction { entity, id, tick, state });
         }
     }
@@ -149,6 +151,7 @@ pub fn corrections(world: &mut World) -> Vec<Correction> {
 /// in at once.
 pub fn begin_replay(world: &mut World, correction: &Correction) {
     let before = world.get::<voxear_scene::Transform>(correction.entity).map_or(Vec3::ZERO, |t| t.position);
+    correction.state.apply_parent(world, correction.entity);
     correction.state.apply(world, correction.entity);
     // In the dimension the server has it in, too.
     if let Some(session) = world.remove_resource::<NetSession>() {

@@ -10,6 +10,7 @@
 #include "particle_shared.slang"
 #include "lava.slang"
 #include "block_quads.slang"
+#include "water_trails.slang"
 
 #ifdef VOXEAR_PACK_WATER
 // A worn shader pack's water program, as src/shader_packs.rs's `surface_wrapper` writes it: it defines packWaterColor,
@@ -2365,6 +2366,10 @@ FragmentOut waterFragment(WaterOut input)
     {
         addWaves(frame, rest, waves, 1.0, slope, variance, folded, moved, sea ? seaDepth(frame, input.world.xz) : 1e4);
     }
+    // What has moved across the water lately: its trails' ripples, and their foam below (water_trails.slang).
+    Trail stirred = trailAt(frame, input.world.xz, trailFootprint(input.world.xz), 0.0);
+    slope += stirred.slope;
+    variance += stirred.variance;
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) + input.up);
     float3 v = normalize(frame->cameraPosition - input.world);
     // From under the water the surface shows its underside; from the air, a wave above the camera its front. Which
@@ -2504,7 +2509,9 @@ FragmentOut waterFragment(WaterOut input)
     // their foam longer than others, the patches shifting slowly.
     float4 trail = sea ? keptFoam(frame, rest) : 0.0;
     float patchy = 0.6 + 0.8 * foamNoise((rest + toLevel) / 40.0 + frame->time * 0.02);
-    float fresh = max(max(breaking, shore), trail.g * 1.2 * patchy);
+    // And what the trails churned up, as fresh foam ageing to lace; in the blocky look, laid square by square below.
+    float churnedUp = stirred.square > 0.0 ? 0.0 : stirred.foam;
+    float fresh = max(max(max(breaking, shore), trail.g * 1.2 * patchy), stirred.square > 0.0 ? 0.0 : stirred.fresh);
     // Where on the foam's pattern: riding the waves; down a Stream, drawn out along it and carried with it.
     FoamSpot spot;
     spot.shift = moved.xz * 0.3;
@@ -2534,7 +2541,7 @@ FragmentOut waterFragment(WaterOut input)
         }
         fresh = 1.0;
     }
-    float coverage = saturate(max(max(breaking, shore), trail.r * 1.2 * patchy));
+    float coverage = saturate(max(max(max(breaking, shore), trail.r * 1.2 * patchy), churnedUp * 0.9));
     // Old foam breaks up into islands as its bubbles burst, rather than thinning evenly.
     spot.age = coverage > 0.0 ? 1.0 - saturate(fresh / coverage) : 0.0;
     coverage *= 1.0 - spot.age * 0.6 * smoothstep(0.35, 0.65, foamNoise((rest + toLevel) * 0.6 + frame->time * 0.05));
@@ -2600,6 +2607,12 @@ FragmentOut waterFragment(WaterOut input)
     float3 packClear = color;
     float packFoam = foam * (1.0 - 0.35 * spot.age) * sparse;
     color = lerp(color, foamLit, packFoam);
+    // The blocky look's trails: raised squares lighter and lowered ones darker, the steps between them, and their
+    // foam a square at a time.
+    color *= (1.0 + 0.18 * stirred.raised) * (1.0 + 0.3 * stirred.lip);
+    float squares = trailSquares(stirred, input.world.xz);
+    color = lerp(color, foamLit, squares);
+    packFoam = max(packFoam, squares);
     // A Stream fades in over its first two points and out over its last two, and across its mouth into the water it
     // runs into, drawn under it, so it becomes that water rather than lying on it.
     if (stream)
@@ -4230,10 +4243,16 @@ FragmentOut blockWaterLit(
     float variance = 0.0;
     float folded = 1.0;
     float3 moved = 0.0;
+    // What has moved across it lately: its trails, in squares of a quarter of a block unless the project has them
+    // smooth (water_trails.slang); only on its top.
+    float footprint = trailFootprint(at.xz);
+    Trail stirred = trailAt(frame, at.xz, footprint, blockSize);
     if (level)
     {
         float2 drifted = at.xz - input.flow * fmod(frame->time, BLOCK_DRIFT_PERIOD);
         addWaves(frame, drifted, 0.0, 1.0, slope, variance, folded, moved);
+        slope += stirred.slope;
+        variance += stirred.variance;
     }
     float3 n = normalize(float3(-slope.x, 0.0, -slope.y) * face.y + face);
     float slopes = sqrt(0.02 * 0.02 + 2.0 * variance);
@@ -4335,7 +4354,7 @@ FragmentOut blockWaterLit(
     float packFoam = 0.0;
     // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it;
     // and foam churned up beside where a fall lands, drifting and thinning out from it.
-    if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0))
+    if (face.y > 0.5 && (oceanHas(frame, OCEAN_WET_EDGES) || input.fall.y > 0.0 || stirred.foam > 0.0))
     {
         float2 level = levelXZ(frame, at.xz, 4096.0);
         float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(level, float2(1.3, 0.7)));
@@ -4351,7 +4370,7 @@ FragmentOut blockWaterLit(
             float surge = 0.85 + 0.15 * sin(frame->time * 3.3 + dot(level, float2(2.1, 1.7)));
             churned = 0.6 * near * near * surge;
         }
-        float coverage = max(0.65 * contact * contact, churned);
+        float coverage = max(max(0.65 * contact * contact, churned), stirred.square > 0.0 ? 0.0 : stirred.foam * 0.9);
         // Churned foam is pushed out from the foot and turned over as it goes.
         float2 churning = float2(sin(frame->time * 0.9), cos(frame->time * 0.7)) * (churned > 0.0 ? 0.3 : 0.0);
         float pattern = foamPatternAt(frame, level + churning).x;
@@ -4361,6 +4380,16 @@ FragmentOut blockWaterLit(
         float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
         color = lerp(color, foamLit, foam);
         packFoam = max(packFoam, foam);
+        // The blocky look's trails: raised squares lighter and lowered ones darker, a lit lip where a square stands
+        // a step over the one beside it and a shadow where it stands under, and their foam a square at a time.
+        color *= (1.0 + 0.18 * stirred.raised) * (1.0 + 0.3 * stirred.lip);
+        float squares = trailSquares(stirred, at.xz);
+        color = lerp(color, foamLit, squares);
+        packFoam = max(packFoam, squares);
+    }
+    else if (face.y > 0.5 && stirred.square > 0.0)
+    {
+        color *= (1.0 + 0.18 * stirred.raised) * (1.0 + 0.3 * stirred.lip);
     }
     // Falling water: its body paler with the air in it, and white threads running down its side, more of them the
     // further it has fallen.

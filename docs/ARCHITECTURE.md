@@ -466,7 +466,7 @@ physics stays f32 from the level's middle, so its Objs more than about 10 km out
   level changes to it through the scripts' `Level.LoadAsync`, so every event fires and the game behaves as it would in
   a build; the bar at the bottom follows any level change, whoever started it.
 
-### Dimensions *(in the engine, with Portals between them, dungeons in their own and networked play; the editor, scripts and saves planned)*
+### Dimensions *(in the engine and the editor, with Portals between them, dungeons in their own, networked play, scripts and saves)*
 
 A **dimension** is a world of its own in the one game: its own Block Worlds, sky, sun, post-processing and weather,
 at coordinates of its own that may be the same as another's. Nothing in one is drawn, lit, heard, collided with or
@@ -547,6 +547,24 @@ dimension to another.
   deep dungeon. Edits read from a `.blocks` file of a version before 4 (`edits::VERSION`) lose the changes in the
   spaces and ways of a dungeon that was under the land (`dungeons::drop_old_dungeon_edits`, the dungeons planned in
   the land again to find them; `BlockEdits::retain_blocks`).
+- **In the editor** (`voxear_editor::editor::dimensions`, `dimension_views`, `dimension_inspector`). A `.dimension`
+  opens as a scene does: `Levels` loads it as a scene of its own kind (`OpenDimension`: its dimension and its
+  settings), spawning its Objs with `spawn_objs` into a dimension made for it (`file_surroundings`, as
+  `make_dimension` does), and saves it back as a `DimensionFile`, its settings over its Objs. Closing it lets its
+  dimension go. Objs made at run time go into the scene of their dimension (`adopt_runtime_objs`): the active scene
+  for the level's, a dimension's own file, or none for one made by code, which is not saved; each frame
+  `keep_scene_dimensions` puts each scene's roots in its scene's dimension, so moving an Obj between headers in the
+  Hierarchy moves it between dimensions. While another dimension is current, setting the level's lighting goes to
+  the level's kept surroundings (`level_aside`, `level_back`). Each Scene view's camera is in the dimension it shows
+  (its own `InDimension`), so each view draws one; the one in use sets `ViewerDimension` as soon as it changes, and
+  keeps a camera place for each dimension. Gizmos, icons and clicks are of the view's dimension (`ViewCamera::dimension`,
+  `Switched::in_dimension`). A Portal's Leads To may pick `Pick::Portal`, a Portal of a dimension's file read from it
+  or, where open, from its Objs, which sets `PortalInto`; Go Through finds the far Portal (`dimension_views::far_portal`:
+  its `to` in another dimension, its `into` in an open file, or the level's Portal whose `into` names it). Dungeon
+  gates stand in edit mode too (`stand_gates`, which takes a gate away only once every place in its own dimension is
+  well past it, so one seen from inside its dungeon stays); Open Dungeon calls
+  `make_dungeon_dimension` and links the gate and the way out both ways. The calls are `dimension.*`,
+  `obj.move_to_dimension` and `dungeon.open`; `dungeons::gate_at` finds a dungeon by its site without a gate standing.
 - **Networked** (`net::dimensions`, the game's part in `game::net_dimensions`). A server or host has a place for
   each player, their first owned Obj in its dimension (`net::player_places`): every world of blocks without end
   streams round each player in its own dimension (near ground alone where no camera is, so a dedicated server needs
@@ -573,6 +591,35 @@ dimension to another.
   now take the blocks, the rest go with the world's pending changes), and answers `Ready`; until then its Portals
   into the dimension stay shut (`edits_in`) and the server takes none of that player's Objs through
   (`may_cross`). The level's edits go the same way once a player has an Obj of their own.
+- **Scripts** (`voxear_engine::dimension_scripts`, `Dimension`, `DimensionInstance` and `Dimensions` in Voxear.Core)
+  reach dimensions through `kind_value` and `kind_text` as `ComponentKind::Dimension`, a dimension travelling as its
+  handle in the place of an Obj: its number, and above it its serial (`Made::serial`), so a handle kept past its
+  dimension's going is never taken for a later one with the same number (`Dimensions::handle`, `from_handle`; 0 is
+  the level's). Moving an Obj into a dimension made, its `KeepLoaded`, its sky, clock and weather are answered at
+  once; making one from its file or a dungeon's site, and letting one go, are asked (`DimensionAsks`, an ask for the
+  same thing still waiting being the same ask, as C# calls each text twice) and done by `Game::serve_dimension_asks`
+  right after scripts run, a script polling how it went the next frame. `DimensionInstance.Use()` asks every call that
+  takes a place of one dimension: it sets `CurrentDimension` and the physics' `ask_in` until disposed, and
+  `dimensions::update` sets both again each tick anyway. `instantiate` in `voxear_scripting` and `Portal.Create` put
+  a new root in the current dimension.
+- **Saves** (`voxear_engine::dimension_saves`). A dimension's worlds, Foliage and saplings are captured in the bytes
+  `Blocks.CaptureEdits` makes (`voxear_scripting::blocks::capture_edits`, `apply_edits`), with services lent for that
+  dimension alone (`OneDimension`): each keyed by its path in the dimension's file, or `dungeon` for a dungeon's rock.
+  `apply_edits` touches only Objs the lent services give a key, so one dimension's put back leaves the others' and the
+  level's alone. `DimensionEdits` keeps them by `DimensionName` (asset and key) when a dimension is let go, and
+  `make_dimension` and `make_dungeon_dimension` put them back; `capture_all` writes every dimension's, made and let
+  go, as one `VXDM` entry for `SceneState` (a mark, a version, and per dimension its asset, key and bytes), and
+  `apply_all` reads it back. `SceneState` also keeps, by save keys, the Objs at the top of the hierarchy in other
+  dimensions (`ELSEWHERE`), each moved back after its dimension is made, and each dungeon's `DungeonStages` entry
+  beside its site. A world without end's changes are all its changes from its ground
+  (`blocks::endless_changes`, its streamer's base and `pending`), and are put back into the chunks made now and the
+  rest into `pending` (`put_endless_changes`), through two services every host lends.
+- **Dungeon stages.** `DungeonStages` holds each dungeon's stage and cleared flag by its site (`DungeonSite`: its
+  world, structure and site); `make_dungeon_dimension` plans `floors_at_stage` floors. `dimension_scripts::grow`
+  refuses while a camera or a character is in the dungeon's dimension, and otherwise lets the dimension go so it is
+  made again grown. In rock, `plan::place_floor` lays each floor's way down where and as large as the boss's arena
+  would be, and `as_way_down` makes it the shaft once the floor is laid, so a floor is laid the same whether it is
+  the last or one is grown under it. `DungeonGate::key` is a fixed FNV-1a hash, as saves keep it.
 - **Everything else.** Sound is heard only from the current dimension's sources, off its walls. Rain and snow fall
   in the dimension seen. The level's clock is its first Climate in the level's dimension; it turns the first sun of
   each dimension on the level's clock, and a dimension with its own turns its own. Water, trees, saplings, biomes
@@ -3798,6 +3845,54 @@ changes smoothly along it, with nothing for the user to place.
 - **Spray** is a particle system the renderer adds for each of the nearest Streams with rapids, its drops finding
   white water along the Stream's points in the vertex shader, as the sea's finds fresh foam.
 
+### Trails *(implemented)*
+
+What moves on water leaves a wake (`water_trails.rs`, `shaders/water_trails.slang`): ripples, a V of waves behind
+what moves faster than they run, rings where something goes in or out, and foam.
+
+- **A wave simulation, not shapes laid on the water.** A wake drawn as a shape (a V of quads behind each body, or
+  rings placed where it went in) has to be told what to look like in every case and never meets what else is on the
+  water. A height field that runs by the wave equation makes all of them from one rule: each step a body pushes the
+  water out of where it now is and lets it back where it was, as much as it displaces, so moving it is a hollow ahead
+  of a hump, going in a hollow that opens and coming out one that closes. What spreads from there is a ring from a
+  still swimmer, a V behind a boat faster than the waves (its half angle the arcsine of the waves' speed over the
+  boat's, so narrower the faster it goes, as wakes are past a certain speed), and the two wakes of two boats crossing
+  each other. A body pressing the water down for as long as it moves, the first way tried, left a smooth trench behind
+  it whose sides were too gentle to see beside the water's own ripples: displacement makes ridges. A swimmer's
+  strokes, and anything fast's pitching, lift and drop what it displaces, which puts chevrons of waves inside its V. The
+  equation is the simplest that runs: no dispersion, so a ring is one ring and a V has sharp arms, which reads well
+  at the size of a voxel game's swimmers and boats. A dispersive kernel would give the true wake angle at any speed
+  at the cost of a convolution a texel; not needed for the look.
+- **Round the camera, scrolling with nothing moved.** Each view keeps a square of `TrailQuality` texels a side over
+  `WaterTrails::area` metres, its texels holding the world's cells modulo its size as the track map's do, in two
+  images it steps from one to the other: x the water's height, y how fast it rises, z its foam, w the foam's
+  freshness. A first pass a frame clears what came into the square and carries the rest along the current; then a
+  step or a few, each at most half a texel's crossing for the waves, so it stays steady. The waves die away over two
+  seconds, and within an eighth of the square of its edges in a few frames, so what reaches the edge does not come
+  back round from the far side. The shaders sample it with a repeating sampler, which the modulo layout makes exact.
+- **Stirred by bodies the engine finds.** `voxear_engine::water_trails` notes each frame every Character
+  Controller, every body with a Collider and every Obj with a Water Wake near the viewer whose height reaches across
+  the water's surface, with the water's height and flow there; the renderer takes where each is when it draws, so a
+  stir follows what is shown, and how fast it moved since its last frame. Only what moves against the water stirs it:
+  where it was is taken where the water under it has flowed to since, so a swimmer carried down a river at its own
+  speed leaves no wake. The share of a body that cuts the surface goes
+  from 0 to 1 within a few centimetres of its ends, so going in and coming out stir the water as they cross it, with
+  nothing to tell apart. A long body is a capsule along its longest side, so a hull makes a bow wave and a stern wave.
+- **The current, by a grid the engine keeps.** Trails drift down rivers with the water, so a swimmer's rings go with
+  it. The renderer cannot find a block's flow from a compute pass, and the shaders find a Stream's only by walking its
+  points, so the engine works out the current (`water::current`: blocks' and Streams' water, never the sea's waves,
+  which only carry it round and back) on a 16 cells a side grid round the viewer, a few cells a frame, the new ones
+  first. Carried along by a spline over the sixteen texels round where it came from, not linearly, which would blur
+  the ripples away over a few seconds of a river.
+- **Read by every water.** `trailAt` gives slopes, which the sea's, Pools', Streams' and blocks' shaders add to their
+  own before working out their normal, the share finer than a pixel as roughness, and foam, which each lays with its
+  own foam (the sea's froth, a Stream's streaks, the blocks' lapping lines), so a trail's foam looks as that water's
+  does. Blocky (by default on worlds of blocks) it reads the square in squares a quarter of a block across, each flat
+  and a whole number of steps high, with a lit lip or a shadow where one stands over another, and lays foam square by
+  square, from a hashed number each.
+- **Not the same on every machine, and only drawn.** Nothing floats on trails, physics never sees them, and they are
+  not sent over the network: each machine stirs its own from the bodies it shows.
+
 ## Terrain
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block
@@ -4478,8 +4573,11 @@ engine's glue is `voxear_engine::navigation`.
   crossed by agents along their line or arc. Jumps, swimming and doors are done, and areas:
   a place's area comes from the block it stands on (`BlockFaces::nav_area`) or a Nav Area's box (`AreaBox`, given
   to each search), what each costs from Project Settings ▸ Navigation (`navigation::NavCosts`).)
-- **Mesh levels**: a polygon nav mesh baked from still colliders and terrain in tiles, saved beside the level
-  (`.nav`), with run-time cutting for Nav Obstacles.
+- **Mesh levels**: run-time cutting for Nav Obstacles, terrain heightfields in the bake, and bake settings per
+  agent type. (The baked nav mesh is done: `voxear_nav::mesh::bake` lays still colliders' triangles into a grid
+  of spans, keeps the walkable tops with room over them, shrinks them by the walker's radius and gathers them
+  into rectangles joined by shared edges; searches are an A* over rectangles and the funnel; `.nav` beside the
+  level, `navigation::LevelNav`, used by agents with no world of blocks under them.)
 - **Project Settings ▸ Navigation**: agent types, areas and their costs, budgets. (The Navigation gizmo and the
   `navigation.*` calls are done: `editor/nav_view.rs`, `nav_agent::{find_way, nearest_place}`.)
 - **Co-op and dimensions**: agents only where they have authority; Portals as links, within a dimension and

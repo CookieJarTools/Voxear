@@ -159,6 +159,11 @@ pub struct Pipelines {
     pub ocean_mip: vk::Pipeline,
     pub ocean_foam: vk::Pipeline,
     pub ocean_mips: vk::Pipeline,
+    /// Trails on water: what came into the square round the camera cleared
+    /// and the rest carried along the water's flow, then a step of the
+    /// waves (see `water_trails`).
+    pub water_trails_carry: vk::Pipeline,
+    pub water_trails: vk::Pipeline,
     /// The sunlight the waves focus and spread under them (see `water`).
     pub caustics: vk::Pipeline,
     pub floor_depth: vk::Pipeline,
@@ -694,6 +699,8 @@ impl Pipelines {
             ocean_mip: maker.compute("Ocean mips", water, c"oceanMipMain")?,
             ocean_foam: maker.compute("Ocean foam", water, c"oceanFoamMain")?,
             ocean_mips: maker.compute("Ocean mips, four at once", water, c"oceanMipsMain")?,
+            water_trails_carry: maker.compute("Water trails carried", water, c"waterTrailsCarryMain")?,
+            water_trails: maker.compute("Water trails", water, c"waterTrailsMain")?,
             caustics: maker.compute("Caustics", water, c"causticsMain")?,
             floor_depth: maker.compute("Sea floor depth", water, c"floorDepthMain")?,
             foam_pattern: maker.compute("Foam pattern", water, c"foamPatternMain")?,
@@ -1273,6 +1280,8 @@ impl Pipelines {
             self.ocean_mip,
             self.ocean_foam,
             self.ocean_mips,
+            self.water_trails_carry,
+            self.water_trails,
             self.caustics,
             self.floor_depth,
             self.foam_pattern,

@@ -900,8 +900,14 @@ fn read_all(bytes: &[u8]) -> anyhow::Result<Everything> {
 }
 
 /// Every world of blocks scripts changed, by its Obj's key: its changes
-/// since its level built it, and the blocks it numbered since.
-fn capture(world: &World) -> Vec<u8> {
+/// since its level built it, and the blocks it numbered since. A world
+/// without end keeps all its changes from its ground, those of chunks not
+/// made now among them (see [`ScriptServices::endless_changes`]). Only the
+/// Objs the lent services give a key are kept, so a host can keep one
+/// dimension's worlds apart from another's.
+///
+/// [`ScriptServices::endless_changes`]: crate::ScriptServices::endless_changes
+pub fn capture_edits(world: &World) -> Vec<u8> {
     let mut kept: Vec<Kept> = world
         .query_ref::<(Entity, &BlockWorld, &BuiltBlocks)>()
         .without::<Destroying>()
@@ -913,7 +919,8 @@ fn capture(world: &World) -> Vec<u8> {
             let states = numbered.iter().map(|(number, _)| blocks.faces.get(usize::from(*number)).map_or(0, |f| f.state));
             let states: Vec<u8> = states.collect();
             let states = if states.iter().all(|&state| state == 0) { Vec::new() } else { states };
-            let mut edits = BlockEdits::between(&built.0, &blocks.blocks);
+            let endless = with_services(|services| services.endless_changes(world, entity)).flatten();
+            let mut edits = endless.unwrap_or_else(|| BlockEdits::between(&built.0, &blocks.blocks));
             edits.links = blocks.link_list();
             Some(Kept { key, edits: edits.to_bytes(), numbered, states })
         })
@@ -956,17 +963,21 @@ fn capture(world: &World) -> Vec<u8> {
     out
 }
 
-/// Puts each world of blocks `bytes` (from [`capture`]) names back as it
-/// was built, then makes its changes; how many it found. A block the
+/// Puts each world of blocks `bytes` (from [`capture_edits`]) names back as
+/// it was built, then makes its changes; how many it found. A block the
 /// changes numbered is the number this game has it by, one given it now
 /// where the world has none yet; a number of no block here, as of one taken
-/// out of the world since, is air.
-fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
+/// out of the world since, is air. Only the Objs the lent services give a
+/// key are touched.
+pub fn apply_edits(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
     use anyhow::Context;
     let mut found = 0;
     let (worlds, cuts, saplings) = read_all(bytes)?;
+    let keyed =
+        |world: &World, entity: Entity| with_services(|services| services.obj_key(world, entity)).flatten().is_some();
     // The saplings growing are those the bytes say.
     let had: Vec<Entity> = world.query_ref::<(Entity, &Saplings)>().into_iter().map(|(entity, _)| entity).collect();
+    let had: Vec<Entity> = had.into_iter().filter(|&entity| keyed(world, entity)).collect();
     for entity in had {
         world.remove::<Saplings>(entity);
     }
@@ -977,6 +988,7 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
     }
     // The plants taken away are those the bytes say, and no others: a Foliage they do not name has all of its.
     let had: Vec<Entity> = world.query_ref::<(Entity, &CutPlants)>().into_iter().map(|(entity, _)| entity).collect();
+    let had: Vec<Entity> = had.into_iter().filter(|&entity| keyed(world, entity)).collect();
     for entity in had {
         world.remove::<CutPlants>(entity);
     }
@@ -1014,6 +1026,11 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
             None => AIR,
         };
         edits = edits.remapped(&renumber);
+        // A world without end takes them into the chunks made now and keeps the rest for those not.
+        if with_services(|services| services.put_endless_changes(world, entity, &edits)) == Some(true) {
+            found += 1;
+            continue;
+        }
         // Read once the blocks are numbered: a world numbering one takes its faces on.
         let Some(now) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let built = world.get::<BuiltBlocks>(entity).map_or_else(|| now.blocks.clone(), |built| built.0.clone());
@@ -1034,27 +1051,44 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
 /// `Blocks.CaptureEdits` (`what` 0): every changed world's changes into
 /// `out`, their length returned, written when it fits. `Blocks.ApplyEdits`
 /// (`what` 1): puts the changes in `data` back, returning how many worlds it
-/// found, or -1 with an error logged for bytes that are not changes.
+/// found, or -1 with an error logged for bytes that are not changes. And the
+/// same for the dimensions other than the level's (`what` 2 and 3), each
+/// dimension's changes kept apart (see [`ScriptServices::dimension_edits`]).
+///
+/// [`ScriptServices::dimension_edits`]: crate::ScriptServices::dimension_edits
 pub(crate) unsafe extern "C" fn block_edits(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32 {
+    let give = |bytes: Vec<u8>| {
+        if !out.is_null() && bytes.len() <= capacity.max(0) as usize {
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
+        }
+        bytes.len() as i32
+    };
+    let taken = || (!data.is_null() && len >= 0).then(|| unsafe { std::slice::from_raw_parts(data, len as usize) });
+    let told = |result: Option<anyhow::Result<i32>>, call: &str| match result {
+        Some(Ok(found)) => found,
+        Some(Err(error)) => {
+            tracing::error!("{call}: {error:#}");
+            -1
+        }
+        None => 0,
+    };
     match what {
-        0 => {
-            let bytes = with_world(|world| Some(capture(world))).unwrap_or_else(|| 0u32.to_le_bytes().to_vec());
-            if !out.is_null() && bytes.len() <= capacity.max(0) as usize {
-                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
+        0 => give(with_world(|world| Some(capture_edits(world))).unwrap_or_else(|| 0u32.to_le_bytes().to_vec())),
+        1 => match taken() {
+            Some(bytes) => told(with_world(|world| Some(apply_edits(world, bytes))), "Blocks.ApplyEdits"),
+            None => -1,
+        },
+        2 => give(
+            with_world(|world| with_services(|services| services.dimension_edits(world)).flatten()).unwrap_or_default(),
+        ),
+        3 => match taken() {
+            Some(bytes) => {
+                let applied =
+                    with_world(|world| with_services(|services| services.apply_dimension_edits(world, bytes)));
+                told(applied, "Dimensions.ApplyEdits")
             }
-            bytes.len() as i32
-        }
-        1 if !data.is_null() && len >= 0 => {
-            let bytes = unsafe { std::slice::from_raw_parts(data, len as usize) };
-            match with_world(|world| Some(restore(world, bytes))) {
-                Some(Ok(found)) => found,
-                Some(Err(error)) => {
-                    tracing::error!("Blocks.ApplyEdits: {error:#}");
-                    -1
-                }
-                None => 0,
-            }
-        }
+            None => -1,
+        },
         _ => -1,
     }
 }
@@ -1148,7 +1182,7 @@ mod tests {
         let keyless = world.spawn((cut(&[([1, 1], &[1])]), Transform::default()));
         let mut services = Keys(oaks, pines);
         let _scope = crate::services::ServicesScope::enter(&mut services);
-        let bytes = capture(&world);
+        let bytes = capture_edits(&world);
         let (worlds, cuts) = read_bytes(&bytes).unwrap();
         assert!(worlds.is_empty());
         let oak_cuts = KeptCuts { key: "scene:7".into(), columns: vec![([0, 0], vec![5]), ([3, -2], vec![0, 70])] };
@@ -1157,12 +1191,12 @@ mod tests {
         // Put back over a game that went on: what the bytes say, and nothing a Foliage lost since.
         world.insert(oaks, cut(&[([8, 8], &[1])]));
         world.remove::<CutPlants>(pines);
-        assert_eq!(restore(&mut world, &bytes).unwrap(), 0);
+        assert_eq!(apply_edits(&mut world, &bytes).unwrap(), 0);
         assert_eq!(world.get::<CutPlants>(oaks), Some(&cut(&[([3, -2], &[0, 70]), ([0, 0], &[5])])));
         assert_eq!(world.get::<CutPlants>(pines), Some(&cut(&[([-1, 4], &[2])])));
-        assert!(world.get::<CutPlants>(keyless).is_none(), "one the bytes do not name has all its plants");
+        assert!(world.get::<CutPlants>(keyless).is_some(), "one with no key is no part of what is kept: left as it is");
         // Bytes with no plants taken away give every Foliage its plants back.
-        assert_eq!(restore(&mut world, &to_bytes(&[])).unwrap(), 0);
+        assert_eq!(apply_edits(&mut world, &to_bytes(&[])).unwrap(), 0);
         assert!(world.get::<CutPlants>(oaks).is_none() && world.get::<CutPlants>(pines).is_none());
         // After the blocks' numbers too; a newer version is an error, and bytes cut short are.
         let numbered = vec![Kept { key: "scene:4".into(), edits: vec![5], numbered: vec![(6, "planks".into())], states: Vec::new() }];
@@ -1197,17 +1231,17 @@ mod tests {
         let field = world.spawn((growing.clone(), Transform::default()));
         let mut services = Keys(field);
         let _scope = crate::services::ServicesScope::enter(&mut services);
-        let bytes = capture(&world);
+        let bytes = capture_edits(&world);
         assert!(bytes.len() < 100, "a few bytes a sapling: {}", bytes.len());
         let (worlds, cuts, saplings) = read_all(&bytes).unwrap();
         assert!(worlds.is_empty() && cuts.is_empty());
         assert_eq!(saplings, vec![("scene:4".to_string(), growing.clone())]);
         // Put back over a game that went on: those the bytes say.
         world.insert(field, Saplings::default());
-        restore(&mut world, &bytes).unwrap();
+        apply_edits(&mut world, &bytes).unwrap();
         assert_eq!(world.get::<Saplings>(field), Some(&growing));
         // Bytes with none take away those growing now.
-        restore(&mut world, &to_bytes(&[])).unwrap();
+        apply_edits(&mut world, &to_bytes(&[])).unwrap();
         assert!(world.get::<Saplings>(field).is_none());
     }
 
@@ -1247,7 +1281,7 @@ mod tests {
         }];
         let mut services = Numbers(entity);
         let _scope = crate::services::ServicesScope::enter(&mut services);
-        assert_eq!(restore(&mut world, &to_bytes(&kept)).unwrap(), 1);
+        assert_eq!(apply_edits(&mut world, &to_bytes(&kept)).unwrap(), 1);
         let now = world.get::<BlockWorld>(entity).unwrap();
         assert_eq!([0, 1, 2, 3].map(|x| now.blocks.get([x, 1, 0])), [5, AIR, AIR, 3]);
         assert_eq!(now.blocks.get([2, 0, 0]), 1, "its ground as it was built");

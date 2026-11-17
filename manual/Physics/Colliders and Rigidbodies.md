@@ -42,7 +42,7 @@ Turn on **Convex** to wrap the mesh in its convex hull instead: the smallest sha
 | Setting | What it does |
 | --- | --- |
 | Mass | How heavy it is, in kilograms. A heavy body pushes a light one aside |
-| Is kinematic | Physics stops moving it. Your code or an animation moves it instead, and it pushes whatever is in its way. Use it for lifts, moving platforms and doors |
+| Is kinematic | Physics stops moving it. Your code or an animation moves it instead, and it pushes whatever is in its way. Use it for lifts, moving platforms and doors. Its speed is how far its Obj moved in the last physics step, so it is still the step its Obj stops, and a teleport gives it none |
 | Use gravity | Whether it falls. Turn it off for things that float, like a balloon or a ship in space |
 | Drag | How quickly it slows down as it moves through the air |
 | Angular drag | How quickly it stops spinning |
